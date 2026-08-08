@@ -1,0 +1,134 @@
+#include "media/net/tcp_connection.h"
+
+#include <boost/system/error_code.hpp>
+
+#include <cstring>
+#include <utility>
+
+namespace media_server
+{
+
+tcp_connection::tcp_connection(boost::asio::ip::tcp::socket socket)
+    : socket_(std::move(socket))
+{
+}
+
+void tcp_connection::start(read_handler on_read, close_handler on_close)
+{
+    on_read_ = std::move(on_read);
+    on_close_ = std::move(on_close);
+    read_next();
+}
+
+void tcp_connection::write(std::span<const std::uint8_t> data)
+{
+    if (closed_ || data.empty())
+    {
+        return;
+    }
+
+    auto buffer = std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end());
+    write_queue_.push_back(std::move(buffer));
+    if (!writing_)
+    {
+        write_next();
+    }
+}
+
+void tcp_connection::write(const void* data, std::size_t bytes)
+{
+    if (!data || bytes == 0)
+    {
+        return;
+    }
+    write(std::span{
+        static_cast<const std::uint8_t*>(data),
+        bytes,
+    });
+}
+
+void tcp_connection::close()
+{
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
+    boost::system::error_code error;
+    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
+    socket_.close(error);
+    finish_close();
+}
+
+boost::asio::ip::tcp::socket& tcp_connection::socket() noexcept
+{
+    return socket_;
+}
+
+void tcp_connection::read_next()
+{
+    if (closed_)
+    {
+        return;
+    }
+
+    const auto self = shared_from_this();
+    socket_.async_read_some(
+        boost::asio::buffer(read_buffer_),
+        [this, self](const boost::system::error_code& error, std::size_t bytes) {
+            if (error)
+            {
+                close();
+                return;
+            }
+            if (bytes != 0 && on_read_)
+            {
+                on_read_(std::span{read_buffer_.data(), bytes});
+            }
+            read_next();
+        });
+}
+
+void tcp_connection::write_next()
+{
+    if (closed_)
+    {
+        writing_ = false;
+        return;
+    }
+    if (write_queue_.empty())
+    {
+        writing_ = false;
+        return;
+    }
+
+    writing_ = true;
+    const auto self = shared_from_this();
+    const auto buffer = write_queue_.front();
+    boost::asio::async_write(
+        socket_,
+        boost::asio::buffer(*buffer),
+        [this, self, buffer](const boost::system::error_code& error, std::size_t) {
+            if (error)
+            {
+                close();
+                return;
+            }
+            write_queue_.pop_front();
+            write_next();
+        });
+}
+
+void tcp_connection::finish_close()
+{
+    write_queue_.clear();
+    writing_ = false;
+    on_read_ = {};
+    if (on_close_)
+    {
+        auto handler = std::move(on_close_);
+        handler();
+    }
+}
+
+}    // namespace media_server

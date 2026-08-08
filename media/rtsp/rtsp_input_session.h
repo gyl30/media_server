@@ -1,0 +1,103 @@
+#ifndef MEDIA_RTSP_RTSP_INPUT_SESSION_H
+#define MEDIA_RTSP_RTSP_INPUT_SESSION_H
+
+#include "media/core/stream_registry.h"
+#include "media/net/tcp_connection.h"
+
+#include <boost/asio.hpp>
+
+#include <array>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
+
+extern "C"
+{
+#include "avpkt2bs.h"
+#include "rtsp-client.h"
+}
+
+struct rtsp_client_t;
+struct rtsp_demuxer_t;
+struct avpacket_t;
+
+namespace media_server
+{
+
+class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_session>
+{
+   public:
+    rtsp_input_session(
+        boost::asio::io_context& io,
+        stream_registry& registry,
+        std::string stream_name,
+        std::string url,
+        std::string username = {},
+        std::string password = {});
+    ~rtsp_input_session();
+
+    bool start();
+    void close();
+
+   private:
+    struct parsed_url
+    {
+        std::string host;
+        std::uint16_t port{554};
+    };
+
+    static int send_callback(void* param, const char* uri, const void* request, std::size_t bytes);
+    static int rtp_port_callback(
+        void* param,
+        int media,
+        const char* source,
+        unsigned short port[2],
+        char* ip,
+        int length);
+    static int describe_callback(void* param, const char* sdp, int length);
+    static int setup_callback(void* param, int timeout, std::int64_t duration);
+    static int play_callback(
+        void* param,
+        int media,
+        const std::uint64_t* begin,
+        const std::uint64_t* end,
+        const double* scale,
+        const rtsp_rtp_info_t* info,
+        int count);
+    static int pause_callback(void* param);
+    static int teardown_callback(void* param);
+    static void rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);
+    static int packet_callback(void* param, avpacket_t* packet);
+
+    [[nodiscard]] static std::optional<parsed_url> parse_url(std::string_view url);
+    void on_connect(const boost::system::error_code& error, boost::asio::ip::tcp::socket socket);
+    void on_read(std::span<const std::uint8_t> data);
+    void on_connection_close();
+    int on_describe(const char* sdp, int length);
+    int on_setup(int timeout, std::int64_t duration);
+    void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
+    int on_packet(avpacket_t* packet);
+    void publish_track_if_needed(const avpacket_t& packet);
+
+    boost::asio::io_context& io_;
+    stream_registry& registry_;
+    std::string stream_name_;
+    std::string url_;
+    std::string username_;
+    std::string password_;
+    boost::asio::ip::tcp::resolver resolver_;
+    std::shared_ptr<tcp_connection> connection_;
+    std::shared_ptr<media_stream> stream_;
+    rtsp_client_t* client_{};
+    std::array<rtsp_demuxer_t*, 8> demuxers_{};
+    avpkt2bs_t bitstream_{};
+    bool bitstream_created_{};
+    bool closed_{};
+    bool video_track_published_{};
+    bool audio_track_published_{};
+};
+
+}    // namespace media_server
+
+#endif
