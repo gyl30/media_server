@@ -29,8 +29,12 @@ struct http_session::flv_chunk
     chunk_type chunk;
 };
 
-http_session::http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls)
-    : stream_(std::move(socket)), registry_(registry), hls_(hls), hls_wait_timer_(stream_.get_executor())
+http_session::http_session(
+    boost::asio::ip::tcp::socket socket,
+    stream_registry& registry,
+    hls_service& hls,
+    whep_service& whep)
+    : stream_(std::move(socket)), registry_(registry), hls_(hls), whep_(whep), hls_wait_timer_(stream_.get_executor())
 {
 }
 
@@ -59,12 +63,6 @@ void http_session::on_request(boost::system::error_code error, std::size_t bytes
 
 void http_session::handle_request()
 {
-    if (request_.method() != http::verb::get)
-    {
-        send_text_response(http::status::method_not_allowed, "text/plain", "method not allowed\n");
-        return;
-    }
-
     const auto parsed = urls::parse_origin_form(request_.target());
     if (!parsed)
     {
@@ -76,6 +74,18 @@ void http_session::handle_request()
     if (segments.empty())
     {
         send_text_response(http::status::not_found, "text/plain", "not found\n");
+        return;
+    }
+
+    if (segments.front() == "whep")
+    {
+        handle_whep(*parsed);
+        return;
+    }
+
+    if (request_.method() != http::verb::get)
+    {
+        send_text_response(http::status::method_not_allowed, "text/plain", "method not allowed\n");
         return;
     }
 
@@ -92,6 +102,77 @@ void http_session::handle_request()
     }
 
     send_text_response(http::status::not_found, "text/plain", "not found\n");
+}
+
+void http_session::handle_whep(const urls::url_view& target)
+{
+    const auto segments = path_segments(target);
+    if (request_.method() == http::verb::post)
+    {
+        handle_whep_post(segments);
+        return;
+    }
+    if (request_.method() == http::verb::delete_)
+    {
+        handle_whep_delete(segments);
+        return;
+    }
+
+    // 本实现只支持一次完整 SDP POST/answer，不支持 PATCH/Trickle ICE。
+    send_text_response(http::status::method_not_allowed, "text/plain", "whep supports post and delete only\n");
+}
+
+void http_session::handle_whep_post(const std::vector<std::string>& segments)
+{
+    if (segments.size() < 2 || segments.front() != "whep" || segments[1] == "session")
+    {
+        send_text_response(http::status::not_found, "text/plain", "not found\n");
+        return;
+    }
+
+    const auto content_type = request_[http::field::content_type];
+    if (!beast::iequals(content_type, "application/sdp"))
+    {
+        send_text_response(http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
+        return;
+    }
+
+    const auto stream_name = join_segments(segments, 1, segments.size());
+    const auto result = whep_.create(stream_name, request_.body());
+    switch (result.error)
+    {
+    case whep_create_error::none:
+        send_whep_response(result.location, result.answer_sdp);
+        return;
+    case whep_create_error::stream_not_found:
+        send_text_response(http::status::not_found, "text/plain", "stream not found\n");
+        return;
+    case whep_create_error::stream_not_ready:
+        send_text_response(http::status::service_unavailable, "text/plain", "stream not ready\n");
+        return;
+    case whep_create_error::invalid_offer:
+        send_text_response(http::status::bad_request, "text/plain", "invalid or unsupported sdp offer\n");
+        return;
+    case whep_create_error::internal_error:
+        send_text_response(http::status::internal_server_error, "text/plain", "whep session create failed\n");
+        return;
+    }
+}
+
+void http_session::handle_whep_delete(const std::vector<std::string>& segments)
+{
+    if (segments.size() != 3 || segments[0] != "whep" || segments[1] != "session")
+    {
+        send_text_response(http::status::not_found, "text/plain", "not found\n");
+        return;
+    }
+
+    if (!whep_.remove(segments[2]))
+    {
+        send_text_response(http::status::not_found, "text/plain", "whep session not found\n");
+        return;
+    }
+    send_empty_response(http::status::no_content);
 }
 
 void http_session::handle_flv(const urls::url_view& target)
@@ -257,6 +338,42 @@ void http_session::send_text_response(http::status status, std::string_view cont
     response->keep_alive(false);
     response->body() = std::move(body);
     response->prepare_payload();
+
+    const auto self = shared_from_this();
+    http::async_write(stream_, *response, [self, response](boost::system::error_code error, std::size_t bytes) {
+        static_cast<void>(response);
+        static_cast<void>(error);
+        static_cast<void>(bytes);
+        self->close();
+    });
+}
+
+void http_session::send_whep_response(std::string location, std::string answer_sdp)
+{
+    auto response = std::make_shared<http::response<http::string_body>>(http::status::created, request_.version());
+    response->set(http::field::server, "media_server");
+    response->set(http::field::content_type, "application/sdp");
+    response->set(http::field::location, std::move(location));
+    response->set(http::field::cache_control, "no-store");
+    response->keep_alive(false);
+    response->body() = std::move(answer_sdp);
+    response->prepare_payload();
+
+    const auto self = shared_from_this();
+    http::async_write(stream_, *response, [self, response](boost::system::error_code error, std::size_t bytes) {
+        static_cast<void>(response);
+        static_cast<void>(error);
+        static_cast<void>(bytes);
+        self->close();
+    });
+}
+
+void http_session::send_empty_response(http::status status)
+{
+    auto response = std::make_shared<http::response<http::empty_body>>(status, request_.version());
+    response->set(http::field::server, "media_server");
+    response->set(http::field::cache_control, "no-store");
+    response->keep_alive(false);
 
     const auto self = shared_from_this();
     http::async_write(stream_, *response, [self, response](boost::system::error_code error, std::size_t bytes) {

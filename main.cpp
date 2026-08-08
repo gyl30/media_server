@@ -5,6 +5,7 @@
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_server.h"
+#include "media/webrtc/whep_service.h"
 
 #include <boost/asio.hpp>
 
@@ -24,6 +25,7 @@ struct options
     std::uint16_t rtmp_port{1935};
     std::uint16_t rtsp_port{8554};
     std::uint16_t http_port{8080};
+    std::string webrtc_address{"127.0.0.1"};
     std::vector<std::pair<std::string, std::string>> rtsp_pulls;
 };
 
@@ -83,6 +85,11 @@ std::optional<options> parse_options(int argc, char** argv)
             }
             continue;
         }
+        if (const auto value = read_value("--webrtc-address"))
+        {
+            result.webrtc_address = *value;
+            continue;
+        }
         if (const auto value = read_value("--rtsp-pull"))
         {
             const auto equal = value->find('=');
@@ -107,6 +114,7 @@ void print_usage()
         << "  --rtmp-port <port>\n"
         << "  --rtsp-port <port>\n"
         << "  --http-port <port>\n"
+        << "  --webrtc-address <ip>\n"
         << "  --rtsp-pull <stream_name=rtsp_url>\n";
 }
 
@@ -121,12 +129,26 @@ int main(int argc, char** argv)
         return argc > 1 ? 1 : 0;
     }
 
+    boost::system::error_code address_error;
+    const auto webrtc_address = boost::asio::ip::make_address(parsed->webrtc_address, address_error);
+    if (address_error)
+    {
+        media_server::log_line("main", "invalid webrtc address", parsed->webrtc_address);
+        return 1;
+    }
+
     boost::asio::io_context io;
     media_server::stream_registry registry;
     media_server::hls_service hls(registry);
+    media_server::whep_service whep(io, registry, webrtc_address);
+    if (!whep.ready())
+    {
+        media_server::log_line("main", "dtls certificate create failed");
+        return 2;
+    }
     media_server::rtmp_server rtmp(io, registry, parsed->rtmp_port);
     media_server::rtsp_server rtsp(io, registry, parsed->rtsp_port);
-    media_server::http_server http(io, registry, hls, parsed->http_port);
+    media_server::http_server http(io, registry, hls, whep, parsed->http_port);
 
     rtmp.start();
     rtsp.start();
@@ -151,6 +173,7 @@ int main(int argc, char** argv)
     media_server::log_line("main", "rtsp play path app/stream");
     media_server::log_line("main", "http flv path app/stream.flv");
     media_server::log_line("main", "hls path hls/app/stream/index.m3u8");
+    media_server::log_line("main", "whep path whep/app/stream");
 
     boost::asio::signal_set signals(io, SIGINT, SIGTERM);
     signals.async_wait([&](const boost::system::error_code&, int) {
@@ -159,6 +182,7 @@ int main(int argc, char** argv)
             pull->close();
         }
         http.close();
+        whep.close();
         rtsp.close();
         rtmp.close();
         io.stop();
