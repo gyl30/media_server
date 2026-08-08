@@ -4,6 +4,7 @@
 #include "media/core/stream_registry.h"
 #include "media/hls/hls_service.h"
 #include "media/http/http_flv_output.h"
+#include "media/webrtc/whep_service.h"
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -24,7 +25,11 @@ namespace media_server
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
-    http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls);
+    http_session(
+        boost::asio::ip::tcp::socket socket,
+        stream_registry& registry,
+        hls_service& hls,
+        whep_service& whep);
 
     void start();
 
@@ -36,10 +41,15 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void handle_request();
     void handle_flv(const boost::urls::url_view& target);
     void handle_hls(const boost::urls::url_view& target);
+    void handle_whep(const boost::urls::url_view& target);
+    void handle_whep_post(const std::vector<std::string>& segments);
+    void handle_whep_delete(const std::vector<std::string>& segments);
     void wait_hls_playlist(std::string stream_name);
     void check_hls_playlist();
 
     void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body);
+    void send_whep_response(std::string location, std::string answer_sdp);
+    void send_empty_response(boost::beast::http::status status);
     void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
     void start_flv(std::shared_ptr<media_stream> stream);
     void enqueue_flv(std::span<const std::uint8_t> data);
@@ -53,9 +63,10 @@ class http_session final : public std::enable_shared_from_this<http_session>
 
     boost::beast::tcp_stream stream_;
     boost::beast::flat_buffer buffer_;
-    boost::beast::http::request<boost::beast::http::empty_body> request_;
+    boost::beast::http::request<boost::beast::http::string_body> request_;
     stream_registry& registry_;
     hls_service& hls_;
+    whep_service& whep_;
     boost::asio::steady_timer hls_wait_timer_;
     std::chrono::steady_clock::time_point hls_wait_deadline_{};
     std::string hls_wait_stream_name_;

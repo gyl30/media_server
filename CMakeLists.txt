@@ -13,6 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 include(CTest)
 include(cmake/boost.cmake)
@@ -30,6 +31,10 @@ add_library(media_core STATIC
     media/http/http_flv_output.cpp
     media/http/http_session.cpp
     media/http/http_server.cpp
+    media/webrtc/dtls_certificate.cpp
+    media/webrtc/webrtc_sdp.cpp
+    media/webrtc/whep_session.cpp
+    media/webrtc/whep_service.cpp
     media/webrtc/webrtc_output.cpp
     media/rtmp/rtmp_session.cpp
     media/rtmp/rtmp_server.cpp
@@ -49,6 +54,8 @@ target_include_directories(media_core SYSTEM PUBLIC
 target_link_libraries(media_core PUBLIC
     ireader_media
     Threads::Threads
+    OpenSSL::SSL
+    OpenSSL::Crypto
     ${MEDIA_SERVER_BOOST_LIBS}
 )
 
@@ -82,4 +89,19 @@ if(BUILD_TESTING)
         )
     endif()
     add_test(NAME media_pipeline_tests COMMAND media_pipeline_tests)
+
+    add_executable(webrtc_signaling_tests tests/webrtc_signaling_tests.cpp)
+    target_link_libraries(webrtc_signaling_tests PRIVATE media_core)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(webrtc_signaling_tests PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wconversion
+            -Wsign-conversion
+            -Wshadow
+            -Werror
+        )
+    endif()
+    add_test(NAME webrtc_signaling_tests COMMAND webrtc_signaling_tests)
 endif()
