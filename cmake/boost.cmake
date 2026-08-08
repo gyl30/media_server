@@ -1,0 +1,6 @@
+find_package(Boost REQUIRED)
+find_library(BOOST_URL_LIBRARY NAMES boost_url REQUIRED)
+
+set(MEDIA_SERVER_BOOST_LIBS
+    ${BOOST_URL_LIBRARY}
+)

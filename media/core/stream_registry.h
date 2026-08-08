@@ -1,0 +1,27 @@
+#ifndef MEDIA_CORE_STREAM_REGISTRY_H
+#define MEDIA_CORE_STREAM_REGISTRY_H
+
+#include "media/core/media_stream.h"
+
+#include <map>
+#include <memory>
+#include <string>
+#include <string_view>
+
+namespace media_server
+{
+
+class stream_registry final
+{
+   public:
+    bool add(const std::shared_ptr<media_stream>& stream);
+    bool remove(std::string_view name, const media_stream* expected = nullptr);
+    [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view name) const;
+
+   private:
+    std::map<std::string, std::shared_ptr<media_stream>, std::less<>> streams_;
+};
+
+}    // namespace media_server
+
+#endif
