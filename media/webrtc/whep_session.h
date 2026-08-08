@@ -9,15 +9,18 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/udp.hpp>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
 namespace media_server
 {
 
-class whep_session final
+class whep_session final : public std::enable_shared_from_this<whep_session>
 {
    public:
     whep_session(
@@ -32,19 +35,30 @@ class whep_session final
     [[nodiscard]] const std::string& id() const noexcept;
     [[nodiscard]] const std::string& answer_sdp() const noexcept;
     [[nodiscard]] std::uint16_t local_port() const noexcept;
+    [[nodiscard]] bool ice_connected() const noexcept;
+    [[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> remote_endpoint() const;
 
    private:
+    void receive();
+    void handle_packet(std::size_t size);
+    void handle_stun(std::size_t size);
+
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
     boost::asio::ip::udp::socket socket_;
+    std::array<std::uint8_t, 2048> receive_buffer_{};
+    boost::asio::ip::udp::endpoint receive_endpoint_;
+    std::optional<boost::asio::ip::udp::endpoint> remote_endpoint_;
     std::string id_;
     std::string ice_ufrag_;
     std::string ice_pwd_;
+    std::string remote_ice_ufrag_;
     webrtc_offer offer_;
     std::string answer_sdp_;
     std::uint16_t local_port_{};
     bool started_{};
+    bool ice_connected_{};
 };
 
 }    // namespace media_server

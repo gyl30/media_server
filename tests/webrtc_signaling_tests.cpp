@@ -1,14 +1,26 @@
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
+#include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/whep_service.h"
+#include "media/webrtc/whep_session.h"
 
+#include <boost/asio/buffer.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/crc.hpp>
 
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+
+#include <array>
+#include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -75,6 +87,156 @@ void require(bool condition, std::string_view message)
     {
         fail(message);
     }
+}
+
+
+constexpr std::uint32_t stun_magic_cookie = 0x2112a442U;
+
+void append_u16(std::vector<std::uint8_t>& output, std::uint16_t value)
+{
+    output.push_back(static_cast<std::uint8_t>(value >> 8U));
+    output.push_back(static_cast<std::uint8_t>(value & 0xffU));
+}
+
+void append_u32(std::vector<std::uint8_t>& output, std::uint32_t value)
+{
+    output.push_back(static_cast<std::uint8_t>(value >> 24U));
+    output.push_back(static_cast<std::uint8_t>((value >> 16U) & 0xffU));
+    output.push_back(static_cast<std::uint8_t>((value >> 8U) & 0xffU));
+    output.push_back(static_cast<std::uint8_t>(value & 0xffU));
+}
+
+void set_stun_length(std::vector<std::uint8_t>& packet, std::size_t body_size)
+{
+    packet[2] = static_cast<std::uint8_t>(body_size >> 8U);
+    packet[3] = static_cast<std::uint8_t>(body_size & 0xffU);
+}
+
+void append_stun_attribute(std::vector<std::uint8_t>& packet, std::uint16_t type, std::span<const std::uint8_t> value)
+{
+    append_u16(packet, type);
+    append_u16(packet, static_cast<std::uint16_t>(value.size()));
+    packet.insert(packet.end(), value.begin(), value.end());
+    while ((packet.size() % 4U) != 0U)
+    {
+        packet.push_back(0);
+    }
+}
+
+std::array<std::uint8_t, 20> stun_hmac(std::string_view password, std::span<const std::uint8_t> data)
+{
+    std::array<std::uint8_t, 20> digest{};
+    unsigned int size = 0;
+    const auto* result = HMAC(
+        EVP_sha1(),
+        password.data(),
+        static_cast<int>(password.size()),
+        data.data(),
+        data.size(),
+        digest.data(),
+        &size);
+    require(result != nullptr && size == digest.size(), "stun hmac");
+    return digest;
+}
+
+std::uint32_t stun_fingerprint(std::span<const std::uint8_t> data)
+{
+    boost::crc_32_type crc;
+    crc.process_bytes(data.data(), data.size());
+    return crc.checksum() ^ 0x5354554eU;
+}
+
+std::vector<std::uint8_t> make_stun_request(
+    std::string_view username,
+    std::string_view password,
+    const std::array<std::uint8_t, 12>& transaction_id,
+    bool use_candidate)
+{
+    std::vector<std::uint8_t> packet;
+    append_u16(packet, 0x0001);
+    append_u16(packet, 0);
+    append_u32(packet, stun_magic_cookie);
+    packet.insert(packet.end(), transaction_id.begin(), transaction_id.end());
+
+    append_stun_attribute(
+        packet,
+        0x0006,
+        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(username.data()), username.size()));
+    if (use_candidate)
+    {
+        append_stun_attribute(packet, 0x0025, {});
+    }
+
+    set_stun_length(packet, packet.size() - 20U + 24U);
+    const auto digest = stun_hmac(password, packet);
+    append_stun_attribute(packet, 0x0008, digest);
+
+    set_stun_length(packet, packet.size() - 20U + 8U);
+    const auto fingerprint = stun_fingerprint(packet);
+    const std::array<std::uint8_t, 4> fingerprint_bytes{
+        static_cast<std::uint8_t>(fingerprint >> 24U),
+        static_cast<std::uint8_t>((fingerprint >> 16U) & 0xffU),
+        static_cast<std::uint8_t>((fingerprint >> 8U) & 0xffU),
+        static_cast<std::uint8_t>(fingerprint & 0xffU),
+    };
+    append_stun_attribute(packet, 0x8028, fingerprint_bytes);
+    return packet;
+}
+
+std::string sdp_attribute(std::string_view sdp, std::string_view name)
+{
+    const auto prefix = "a=" + std::string(name) + ":";
+    const auto begin = sdp.find(prefix);
+    if (begin == std::string_view::npos)
+    {
+        return {};
+    }
+    const auto value_begin = begin + prefix.size();
+    const auto end = sdp.find("\r\n", value_begin);
+    return std::string(sdp.substr(value_begin, end == std::string_view::npos ? sdp.size() - value_begin : end - value_begin));
+}
+
+std::vector<std::uint8_t> exchange_stun(
+    boost::asio::io_context& io,
+    boost::asio::ip::udp::socket& client,
+    const boost::asio::ip::udp::endpoint& server_endpoint,
+    const std::vector<std::uint8_t>& request)
+{
+    std::array<std::uint8_t, 2048> buffer{};
+    boost::asio::ip::udp::endpoint sender;
+    boost::system::error_code receive_error;
+    std::size_t received = 0;
+    bool complete = false;
+
+    client.async_receive_from(
+        boost::asio::buffer(buffer),
+        sender,
+        [&](boost::system::error_code error, std::size_t size) {
+            receive_error = error;
+            received = size;
+            complete = true;
+        });
+    static_cast<void>(client.send_to(boost::asio::buffer(request), server_endpoint));
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!complete && std::chrono::steady_clock::now() < deadline)
+    {
+        io.run_for(std::chrono::milliseconds(20));
+        io.restart();
+    }
+
+    require(complete && !receive_error, "stun response receive");
+    return {buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(received)};
+}
+
+void require_stun_success(
+    std::span<const std::uint8_t> response,
+    const std::array<std::uint8_t, 12>& transaction_id)
+{
+    require(response.size() >= 20U, "stun response size");
+    require(response[0] == 0x01 && response[1] == 0x01, "stun binding success type");
+    require(response[4] == 0x21 && response[5] == 0x12 && response[6] == 0xa4 && response[7] == 0x42, "stun response cookie");
+    require(std::equal(transaction_id.begin(), transaction_id.end(), response.begin() + 8), "stun response transaction id");
 }
 
 media_track make_video_track()
@@ -152,6 +314,67 @@ void test_whep_session_lifecycle()
     require(!whep.remove(created.session_id), "whep delete once");
 }
 
+
+void test_whep_ice_lite()
+{
+    boost::asio::io_context io;
+    auto stream = std::make_shared<media_stream>("live/ice");
+    require(stream->update_track(make_video_track()), "ice video track");
+    require(stream->update_track(make_audio_track()), "ice audio track");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "ice parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "ice certificate");
+
+    auto session = std::make_shared<whep_session>(
+        io,
+        stream,
+        boost::asio::ip::make_address("127.0.0.1"),
+        certificate);
+    require(session->start(*offer), "ice session start");
+
+    const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
+    const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
+    require(!local_ufrag.empty() && !local_pwd.empty(), "ice local credentials");
+
+    boost::asio::ip::udp::socket client(
+        io,
+        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const boost::asio::ip::udp::endpoint server_endpoint(
+        boost::asio::ip::make_address("127.0.0.1"),
+        session->local_port());
+    const auto username = local_ufrag + ":remotevideo";
+
+    const std::array<std::uint8_t, 12> check_id{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    const auto check_response = exchange_stun(
+        io,
+        client,
+        server_endpoint,
+        make_stun_request(username, local_pwd, check_id, false));
+    require_stun_success(check_response, check_id);
+    require(!session->ice_connected(), "ice check not nominated");
+
+    const std::array<std::uint8_t, 12> nominate_id{11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+    const auto nominate_response = exchange_stun(
+        io,
+        client,
+        server_endpoint,
+        make_stun_request(username, local_pwd, nominate_id, true));
+    require_stun_success(nominate_response, nominate_id);
+    require(session->ice_connected(), "ice nominated");
+
+    const auto remote = session->remote_endpoint();
+    require(remote.has_value(), "ice remote endpoint");
+    require(remote->address().is_loopback(), "ice remote address");
+    require(remote->port() == client.local_endpoint().port(), "ice remote port");
+
+    session->close();
+    boost::system::error_code error;
+    client.close(error);
+}
+
+
 }    // namespace
 }    // namespace media_server
 
@@ -162,6 +385,8 @@ int main()
     std::cout << "[pass] webrtc_sdp_answer\n";
     test_whep_session_lifecycle();
     std::cout << "[pass] whep_session_lifecycle\n";
-    std::cout << "all tests passed: 2/2\n";
+    test_whep_ice_lite();
+    std::cout << "[pass] whep_ice_lite\n";
+    std::cout << "all tests passed: 3/3\n";
     return 0;
 }

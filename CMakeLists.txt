@@ -32,6 +32,7 @@ add_library(media_core STATIC
     media/http/http_session.cpp
     media/http/http_server.cpp
     media/webrtc/dtls_certificate.cpp
+    media/webrtc/stun_message.cpp
     media/webrtc/webrtc_sdp.cpp
     media/webrtc/whep_session.cpp
     media/webrtc/whep_service.cpp
