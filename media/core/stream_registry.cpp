@@ -5,11 +5,24 @@ namespace media_server
 
 bool stream_registry::add(const std::shared_ptr<media_stream>& stream)
 {
-    if (!stream || stream->name().empty())
+    if (!stream || stream->name().empty() || stream->ended())
     {
         return false;
     }
-    return streams_.emplace(stream->name(), stream).second;
+
+    const auto iterator = streams_.find(stream->name());
+    if (iterator == streams_.end())
+    {
+        streams_.emplace(stream->name(), stream);
+        return true;
+    }
+    if (!iterator->second->ended())
+    {
+        return false;
+    }
+
+    iterator->second = stream;
+    return true;
 }
 
 bool stream_registry::remove(std::string_view name, const media_stream* expected)
@@ -19,7 +32,7 @@ bool stream_registry::remove(std::string_view name, const media_stream* expected
     {
         return false;
     }
-    if (expected && iterator->second.get() != expected)
+    if (expected == nullptr || iterator->second.get() != expected)
     {
         return false;
     }
