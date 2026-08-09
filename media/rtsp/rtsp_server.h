@@ -5,6 +5,7 @@
 #include "media/net/tcp_listener.h"
 
 #include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
 #include <cstdint>
 
 namespace media_server
@@ -18,7 +19,7 @@ class rtsp_server final
         stream_registry& registry,
         std::uint16_t port);
 
-    void start();
+    [[nodiscard]] boost::system::error_code start();
     void close();
 
    private:

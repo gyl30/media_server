@@ -13,6 +13,7 @@ extern "C"
 }
 
 #include <boost/url/parse.hpp>
+#include <boost/url/url.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -56,15 +57,11 @@ rtsp_input_session::rtsp_input_session(
     boost::asio::io_context& io,
     stream_registry& registry,
     std::string stream_name,
-    std::string url,
-    std::string username,
-    std::string password)
+    std::string url)
     : io_(io),
       registry_(registry),
       stream_name_(std::move(stream_name)),
       url_(std::move(url)),
-      username_(std::move(username)),
-      password_(std::move(password)),
       resolver_(io)
       {
 }
@@ -97,6 +94,10 @@ bool rtsp_input_session::start()
     {
         return false;
     }
+
+    url_ = parsed->request_url;
+    username_ = parsed->username;
+    password_ = parsed->password;
 
     stream_ = std::make_shared<media_stream>(stream_name_);
     if (!registry_.add(stream_))
@@ -243,9 +244,20 @@ std::optional<rtsp_input_session::parsed_url> rtsp_input_session::parse_url(std:
         return std::nullopt;
     }
 
+    if (parsed->has_port() && parsed->port_number() == 0)
+    {
+        return std::nullopt;
+    }
+
+    boost::urls::url request_url(*parsed);
+    request_url.remove_userinfo();
+
     parsed_url result;
+    result.request_url = std::string(request_url.buffer());
     result.host = std::string(host);
     result.port = parsed->has_port() ? parsed->port_number() : static_cast<std::uint16_t>(554);
+    result.username = std::string(parsed->user());
+    result.password = std::string(parsed->password());
     return result;
 }
 
@@ -287,7 +299,7 @@ void rtsp_input_session::on_connect(
         [self](std::span<const std::uint8_t> data) { self->on_read(data); },
         [self]() { self->on_connection_close(); });
 
-    spdlog::info("rtsp input connected url {} stream {}", url_, stream_name_);
+    spdlog::info("rtsp input connected stream {}", stream_name_);
     if (rtsp_client_describe(client_) != 0)
     {
         close();

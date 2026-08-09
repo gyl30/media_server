@@ -19,9 +19,9 @@ rtmp_server::rtmp_server(
       {
 }
 
-void rtmp_server::start()
+boost::system::error_code rtmp_server::start()
 {
-    listener_.start();
+    return listener_.start();
 }
 
 void rtmp_server::close()
