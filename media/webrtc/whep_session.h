@@ -4,6 +4,7 @@
 #include "media/core/media_stream.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/dtls_transport.h"
+#include "media/webrtc/rtcp_receiver.h"
 #include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/webrtc_output.h"
 #include "media/webrtc/webrtc_sdp.h"
@@ -27,6 +28,12 @@
 
 namespace media_server
 {
+
+struct whep_rtcp_stats
+{
+    std::size_t receiver_reports{};
+    std::size_t plis{};
+};
 
 struct whep_session_timeouts
 {
@@ -58,6 +65,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     [[nodiscard]] bool srtp_started() const noexcept;
     [[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> remote_endpoint() const;
     [[nodiscard]] const std::optional<dtls_srtp_keying_material>& srtp_keying_material() const noexcept;
+    [[nodiscard]] const whep_rtcp_stats& rtcp_stats() const noexcept;
 
    private:
     void receive();
@@ -83,6 +91,8 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::shared_ptr<media_sink> stream_observer_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
+    rtcp_receiver rtcp_receiver_;
+    whep_rtcp_stats rtcp_stats_;
     std::shared_ptr<webrtc_output> output_;
     boost::asio::ip::udp::socket socket_;
     boost::asio::steady_timer dtls_timer_;
