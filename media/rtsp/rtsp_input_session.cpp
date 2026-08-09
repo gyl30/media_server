@@ -196,9 +196,9 @@ int rtsp_input_session::setup_callback(void* param, int timeout, std::int64_t du
     return static_cast<rtsp_input_session*>(param)->on_setup(timeout, duration);
 }
 
-int rtsp_input_session::play_callback(void* param, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
+int rtsp_input_session::play_callback(void*, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
 {
-    return static_cast<rtsp_input_session*>(param)->on_play();
+    return 0;
 }
 
 int rtsp_input_session::pause_callback(void*) { return 0; }
@@ -328,14 +328,9 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
         }
     }
 
+    keepalive_deadline_ = std::chrono::steady_clock::now() + keepalive_interval_;
     std::uint64_t npt{};
     return rtsp_client_play(client_, &npt, nullptr);
-}
-
-int rtsp_input_session::on_play()
-{
-    keepalive_deadline_ = std::chrono::steady_clock::now() + keepalive_interval_;
-    return 0;
 }
 
 void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
