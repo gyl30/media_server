@@ -14,6 +14,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -27,6 +28,12 @@
 namespace media_server
 {
 
+struct whep_session_timeouts
+{
+    std::chrono::milliseconds establishment{15'000};
+    std::chrono::milliseconds ice_activity{30'000};
+};
+
 class whep_session final : public std::enable_shared_from_this<whep_session>
 {
    public:
@@ -37,7 +44,8 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
         std::shared_ptr<media_stream> stream,
         boost::asio::ip::address advertised_address,
         std::shared_ptr<dtls_certificate> certificate,
-        closed_handler handler = {});
+        closed_handler handler = {},
+        whep_session_timeouts timeouts = {});
 
     bool start(webrtc_offer offer);
     void close();
@@ -64,17 +72,22 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     void write_udp();
     void schedule_dtls_timeout();
     void handle_dtls_timeout();
+    void start_establishment_timeout();
+    void refresh_ice_activity_timeout();
 
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
     closed_handler closed_handler_;
+    whep_session_timeouts timeouts_;
     std::shared_ptr<media_sink> stream_observer_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::shared_ptr<webrtc_output> output_;
     boost::asio::ip::udp::socket socket_;
     boost::asio::steady_timer dtls_timer_;
+    boost::asio::steady_timer establishment_timer_;
+    boost::asio::steady_timer ice_activity_timer_;
     std::array<std::uint8_t, 2048> receive_buffer_{};
     boost::asio::ip::udp::endpoint receive_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_endpoint_;

@@ -727,6 +727,114 @@ void test_whep_multi_session_isolation()
 }
 
 
+void test_whep_establishment_timeout()
+{
+    boost::asio::io_context io;
+    auto stream = std::make_shared<media_stream>("live/establishment-timeout");
+    require(stream->update_track(make_video_track()), "establishment timeout video track");
+    require(stream->update_track(make_audio_track()), "establishment timeout audio track");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "establishment timeout parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "establishment timeout certificate");
+
+    std::size_t close_count = 0;
+    auto session = std::make_shared<whep_session>(
+        io,
+        stream,
+        boost::asio::ip::make_address("127.0.0.1"),
+        certificate,
+        [&close_count](std::string_view) { ++close_count; },
+        whep_session_timeouts{
+            .establishment = std::chrono::milliseconds(20),
+            .ice_activity = std::chrono::seconds(1),
+        });
+    require(session->start(*offer), "establishment timeout session start");
+    require(session->local_port() != 0, "establishment timeout socket open");
+
+    io.run_for(std::chrono::milliseconds(80));
+    io.restart();
+
+    require(session->local_port() == 0, "establishment timeout closes socket");
+    require(!session->ice_connected(), "establishment timeout clears ice");
+    require(close_count == 1, "establishment timeout closes once");
+
+    session->close();
+    require(close_count == 1, "establishment timeout repeated close ignored");
+}
+
+void test_whep_ice_activity_timeout()
+{
+    boost::asio::io_context io;
+    auto stream = std::make_shared<media_stream>("live/ice-activity-timeout");
+    require(stream->update_track(make_video_track()), "ice activity timeout video track");
+    require(stream->update_track(make_audio_track()), "ice activity timeout audio track");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "ice activity timeout parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "ice activity timeout certificate");
+
+    std::size_t close_count = 0;
+    auto session = std::make_shared<whep_session>(
+        io,
+        stream,
+        boost::asio::ip::make_address("127.0.0.1"),
+        certificate,
+        [&close_count](std::string_view) { ++close_count; },
+        whep_session_timeouts{
+            .establishment = std::chrono::seconds(1),
+            .ice_activity = std::chrono::milliseconds(80),
+        });
+    require(session->start(*offer), "ice activity timeout session start");
+
+    const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
+    const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
+    boost::asio::ip::udp::socket client(
+        io,
+        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const boost::asio::ip::udp::endpoint server_endpoint(
+        boost::asio::ip::make_address("127.0.0.1"),
+        session->local_port());
+
+    const std::array<std::uint8_t, 12> nominate_id{4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
+    require_stun_success(
+        exchange_stun(
+            io,
+            client,
+            server_endpoint,
+            make_stun_request(local_ufrag + ":remotevideo", local_pwd, nominate_id, true)),
+        nominate_id);
+    require(session->ice_connected(), "ice activity timeout nominated");
+
+    io.run_for(std::chrono::milliseconds(50));
+    io.restart();
+    require(session->local_port() != 0, "ice activity timeout still active before refresh");
+
+    const std::array<std::uint8_t, 12> refresh_id{5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5};
+    require_stun_success(
+        exchange_stun(
+            io,
+            client,
+            server_endpoint,
+            make_stun_request(local_ufrag + ":remotevideo", local_pwd, refresh_id, false)),
+        refresh_id);
+
+    io.run_for(std::chrono::milliseconds(50));
+    io.restart();
+    require(session->local_port() != 0, "ice activity timeout refreshed by valid stun");
+
+    io.run_for(std::chrono::milliseconds(70));
+    io.restart();
+    require(session->local_port() == 0, "ice activity timeout closes inactive session");
+    require(!session->ice_connected(), "ice activity timeout clears ice");
+    require(close_count == 1, "ice activity timeout closes once");
+
+    boost::system::error_code error;
+    client.close(error);
+}
+
 void test_whep_ice_lite()
 {
     boost::asio::io_context io;
@@ -958,10 +1066,14 @@ int main()
     std::cout << "[pass] whep_session_lifecycle\n";
     test_whep_multi_session_isolation();
     std::cout << "[pass] whep_multi_session_isolation\n";
+    test_whep_establishment_timeout();
+    std::cout << "[pass] whep_establishment_timeout\n";
+    test_whep_ice_activity_timeout();
+    std::cout << "[pass] whep_ice_activity_timeout\n";
     test_whep_ice_lite();
     std::cout << "[pass] whep_ice_lite\n";
     test_whep_dtls();
     std::cout << "[pass] whep_dtls\n";
-    std::cout << "all tests passed: 5/5\n";
+    std::cout << "all tests passed: 8/8\n";
     return 0;
 }
