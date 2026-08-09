@@ -870,7 +870,7 @@ void test_whep_establishment_timeout()
         stream,
         boost::asio::ip::make_address("127.0.0.1"),
         certificate,
-        [&close_count](std::string_view) { ++close_count; },
+        [&close_count](const whep_session&) { ++close_count; },
         whep_session_timeouts{
             .establishment = std::chrono::milliseconds(20),
             .ice_activity = std::chrono::seconds(1),
@@ -907,7 +907,7 @@ void test_whep_ice_activity_timeout()
         stream,
         boost::asio::ip::make_address("127.0.0.1"),
         certificate,
-        [&close_count](std::string_view) { ++close_count; },
+        [&close_count](const whep_session&) { ++close_count; },
         whep_session_timeouts{
             .establishment = std::chrono::seconds(1),
             .ice_activity = std::chrono::milliseconds(80),

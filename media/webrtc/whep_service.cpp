@@ -86,10 +86,12 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
         stream,
         advertised_address_,
         certificate_,
-        [this](std::string_view session_id) {
-            if (sessions_.erase(std::string(session_id)) > 0)
+        [this](const whep_session& closed_session) {
+            const auto iterator = sessions_.find(closed_session.id());
+            if (iterator != sessions_.end() && iterator->second.get() == &closed_session)
             {
-                spdlog::info("whep session released {}", session_id);
+                spdlog::info("whep session released {}", closed_session.id());
+                sessions_.erase(iterator);
             }
         });
     if (!session->start(std::move(*offer)))

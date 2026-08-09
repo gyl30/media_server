@@ -8,7 +8,6 @@
 
 #include <openssl/rand.h>
 
-#include <array>
 #include <utility>
 #include <vector>
 
@@ -243,11 +242,9 @@ void whep_session::close()
     auto handler = std::move(closed_handler_);
     closed_handler_ = {};
     started_ = false;
-    ice_connected_ = false;
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
     send_queue_.clear();
-    send_in_progress_ = false;
     if (output_ && stream_)
     {
         stream_->remove_sink(output_.get());
@@ -277,7 +274,6 @@ void whep_session::close()
     audio_channel_count_.reset();
     local_port_ = 0;
     boost::system::error_code error;
-    socket_.cancel(error);
     socket_.close(error);
 
     if (was_started)
@@ -285,7 +281,7 @@ void whep_session::close()
         spdlog::info("webrtc whep session closed {}", id_);
         if (handler)
         {
-            handler(id_);
+            handler(*this);
         }
     }
 }
@@ -307,7 +303,7 @@ std::uint16_t whep_session::local_port() const noexcept
 
 bool whep_session::ice_connected() const noexcept
 {
-    return ice_connected_;
+    return remote_endpoint_.has_value();
 }
 
 bool whep_session::dtls_connected() const noexcept
@@ -378,7 +374,7 @@ void whep_session::handle_packet(std::size_t size)
         return;
     }
 
-    if (!ice_connected_ || !remote_endpoint_.has_value() || receive_endpoint_ != *remote_endpoint_)
+    if (!remote_endpoint_.has_value() || receive_endpoint_ != *remote_endpoint_)
     {
         spdlog::trace(
             "webrtc udp packet dropped before ice nomination session {} remote {} {} size {}",
@@ -446,14 +442,13 @@ void whep_session::handle_stun(std::size_t size)
     {
         const bool changed = !remote_endpoint_.has_value() || *remote_endpoint_ != receive_endpoint_;
         remote_endpoint_ = receive_endpoint_;
-        ice_connected_ = true;
         refresh_ice_activity_timeout();
         if (changed)
         {
             spdlog::info("webrtc ice connected session {} remote {} {}", id_, remote_address, remote_port);
         }
     }
-    else if (ice_connected_ && remote_endpoint_.has_value() && receive_endpoint_ == *remote_endpoint_)
+    else if (remote_endpoint_.has_value() && receive_endpoint_ == *remote_endpoint_)
     {
         refresh_ice_activity_timeout();
     }
@@ -665,19 +660,22 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet)
         return;
     }
 
+    const bool start_write = send_queue_.empty();
     send_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(std::move(packet)));
     spdlog::trace("webrtc udp queued session {} queue_size {}", id_, send_queue_.size());
-    write_udp();
+    if (start_write)
+    {
+        write_udp();
+    }
 }
 
 void whep_session::write_udp()
 {
-    if (send_in_progress_ || send_queue_.empty() || !started_ || !socket_.is_open() || !remote_endpoint_.has_value())
+    if (send_queue_.empty() || !started_ || !socket_.is_open() || !remote_endpoint_.has_value())
     {
         return;
     }
 
-    send_in_progress_ = true;
     const auto data = send_queue_.front();
     const auto endpoint = *remote_endpoint_;
     const auto self = shared_from_this();
@@ -691,7 +689,6 @@ void whep_session::write_udp()
                 return;
             }
 
-            self->send_in_progress_ = false;
             if (!self->send_queue_.empty())
             {
                 self->send_queue_.pop_front();
@@ -770,7 +767,7 @@ void whep_session::start_establishment_timeout()
 
 void whep_session::refresh_ice_activity_timeout()
 {
-    if (!started_ || !ice_connected_ || timeouts_.ice_activity.count() <= 0)
+    if (!started_ || !remote_endpoint_.has_value() || timeouts_.ice_activity.count() <= 0)
     {
         return;
     }
@@ -778,7 +775,7 @@ void whep_session::refresh_ice_activity_timeout()
     ice_activity_timer_.expires_after(timeouts_.ice_activity);
     const auto self = shared_from_this();
     ice_activity_timer_.async_wait([self](boost::system::error_code error) {
-        if (error || !self->started_ || !self->ice_connected_)
+        if (error || !self->started_ || !self->remote_endpoint_.has_value())
         {
             return;
         }
