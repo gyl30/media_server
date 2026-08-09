@@ -1,7 +1,7 @@
 #include "media/webrtc/webrtc_output.h"
 
 #include "media/codec/codec_utils.h"
-#include "media/core/log.h"
+#include <spdlog/spdlog.h>
 
 extern "C"
 {
@@ -59,7 +59,7 @@ void webrtc_output::on_track(const media_track& track)
         static_cast<int>(avcc.size()));
     if (payload_index < 0)
     {
-        log_line("webrtc", "add h264 payload failed");
+        spdlog::error("webrtc add h264 payload failed");
         return;
     }
 
@@ -67,7 +67,7 @@ void webrtc_output::on_track(const media_track& track)
         muxer_, payload_index, RTP_PAYLOAD_H264, avcc.data(), static_cast<int>(avcc.size()));
     if (media_id < 0)
     {
-        log_line("webrtc", "add h264 media failed");
+        spdlog::error("webrtc add h264 media failed");
         return;
     }
 
@@ -102,7 +102,7 @@ void webrtc_output::on_frame(const media_frame& frame)
         frame.key_frame ? 1 : 0);
     if (result < 0)
     {
-        log_line("webrtc", "rtp packetize failed", result);
+        spdlog::error("webrtc rtp packetize failed result {}", result);
     }
 }
 
@@ -130,10 +130,36 @@ int webrtc_output::on_packet(
     }
 
     ++self->packet_count_;
+    const auto packet = std::span<const std::uint8_t>(
+        static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes));
+    if (packet.size() >= 12U)
+    {
+        const auto sequence = static_cast<std::uint16_t>(
+            (static_cast<std::uint16_t>(packet[2]) << 8U) |
+            static_cast<std::uint16_t>(packet[3]));
+        const auto timestamp =
+            (static_cast<std::uint32_t>(packet[4]) << 24U) |
+            (static_cast<std::uint32_t>(packet[5]) << 16U) |
+            (static_cast<std::uint32_t>(packet[6]) << 8U) |
+            static_cast<std::uint32_t>(packet[7]);
+        const auto ssrc =
+            (static_cast<std::uint32_t>(packet[8]) << 24U) |
+            (static_cast<std::uint32_t>(packet[9]) << 16U) |
+            (static_cast<std::uint32_t>(packet[10]) << 8U) |
+            static_cast<std::uint32_t>(packet[11]);
+        spdlog::trace(
+            "webrtc rtp packet pt {} seq {} timestamp {} ssrc {} marker {} size {}",
+            packet[1] & 0x7fU,
+            sequence,
+            timestamp,
+            ssrc,
+            (packet[1] & 0x80U) != 0,
+            packet.size());
+    }
+
     if (self->handler_)
     {
-        self->handler_(std::span<const std::uint8_t>(
-            static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes)));
+        self->handler_(packet);
     }
     return 0;
 }

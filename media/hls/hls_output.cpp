@@ -1,7 +1,7 @@
 #include "media/hls/hls_output.h"
 
 #include "media/codec/codec_utils.h"
-#include "media/core/log.h"
+#include <spdlog/spdlog.h>
 
 extern "C"
 {
@@ -107,7 +107,7 @@ void hls_output::on_frame(const media_frame& frame)
     if (result != 0)
 
     {
-        log_line("hls", "ts write failed track", frame.track, "result", result);
+        spdlog::error("hls ts write failed track {} result {}", frame.track, result);
     }
     last_pts_ns_ = frame.pts_ns;
 }

@@ -9,6 +9,8 @@
 
 #include <boost/asio.hpp>
 
+#include <spdlog/spdlog.h>
+
 #include <charconv>
 #include <cstdint>
 #include <iostream>
@@ -122,6 +124,8 @@ void print_usage()
 
 int main(int argc, char** argv)
 {
+    media_server::configure_log_level();
+
     const auto parsed = parse_options(argc, argv);
     if (!parsed)
     {
@@ -133,7 +137,7 @@ int main(int argc, char** argv)
     const auto webrtc_address = boost::asio::ip::make_address(parsed->webrtc_address, address_error);
     if (address_error)
     {
-        media_server::log_line("main", "invalid webrtc address", parsed->webrtc_address);
+        spdlog::error("invalid webrtc address {}", parsed->webrtc_address);
         return 1;
     }
 
@@ -143,7 +147,7 @@ int main(int argc, char** argv)
     media_server::whep_service whep(io, registry, webrtc_address);
     if (!whep.ready())
     {
-        media_server::log_line("main", "dtls certificate create failed");
+        spdlog::error("dtls certificate create failed");
         return 2;
     }
     media_server::rtmp_server rtmp(io, registry, parsed->rtmp_port);
@@ -160,20 +164,20 @@ int main(int argc, char** argv)
         auto pull = std::make_shared<media_server::rtsp_input_session>(io, registry, name, url);
         if (!pull->start())
         {
-            media_server::log_line("main", "rtsp pull start failed", name, url);
+            spdlog::error("rtsp pull start failed stream {} url {}", name, url);
             return 2;
         }
         pulls.push_back(std::move(pull));
     }
 
-    media_server::log_line("main", "rtmp listen", parsed->rtmp_port);
-    media_server::log_line("main", "rtsp listen", parsed->rtsp_port);
-    media_server::log_line("main", "http listen", parsed->http_port);
-    media_server::log_line("main", "rtmp publish/play path app/stream");
-    media_server::log_line("main", "rtsp play path app/stream");
-    media_server::log_line("main", "http flv path app/stream.flv");
-    media_server::log_line("main", "hls path hls/app/stream/index.m3u8");
-    media_server::log_line("main", "whep path whep/app/stream");
+    spdlog::info("rtmp listen {}", parsed->rtmp_port);
+    spdlog::info("rtsp listen {}", parsed->rtsp_port);
+    spdlog::info("http listen {}", parsed->http_port);
+    spdlog::info("rtmp publish play path app/stream");
+    spdlog::info("rtsp play path app/stream");
+    spdlog::info("http flv path app/stream.flv");
+    spdlog::info("hls path hls/app/stream/index.m3u8");
+    spdlog::info("whep path whep/app/stream");
 
     boost::asio::signal_set signals(io, SIGINT, SIGTERM);
     signals.async_wait([&](const boost::system::error_code&, int) {

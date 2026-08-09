@@ -3,6 +3,8 @@
 #include <openssl/err.h>
 #include <openssl/srtp.h>
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -126,6 +128,7 @@ bool dtls_transport::start()
 {
     if (started_ || !certificate_ || !send_ || !parse_sha256_fingerprint(remote_fingerprint_))
     {
+        spdlog::debug("webrtc dtls start rejected invalid state or fingerprint");
         return false;
     }
 
@@ -139,6 +142,7 @@ bool dtls_transport::start()
         SSL_CTX_use_PrivateKey(context_.get(), certificate_->private_key()) != 1 ||
         SSL_CTX_check_private_key(context_.get()) != 1)
     {
+        spdlog::debug("webrtc dtls context configure failed");
         close();
         return false;
     }
@@ -182,6 +186,7 @@ bool dtls_transport::start()
     SSL_set_accept_state(ssl_.get());
 
     started_ = true;
+    spdlog::debug("webrtc dtls transport started");
     return true;
 }
 
@@ -203,6 +208,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
         return false;
     }
 
+    spdlog::trace("webrtc dtls datagram input size {} content_type {}", packet.size(), packet.front());
     const auto written = BIO_write(read_bio_, packet.data(), static_cast<int>(packet.size()));
     if (written != static_cast<int>(packet.size()))
     {
@@ -220,8 +226,10 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
         const auto error = SSL_get_error(ssl_.get(), result);
         if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
         {
+            spdlog::debug("webrtc dtls handshake failed ssl_error {}", error);
             return false;
         }
+        spdlog::trace("webrtc dtls handshake pending ssl_error {}", error);
     }
 
     if (!connected_ && SSL_is_init_finished(ssl_.get()) != 0)
@@ -284,15 +292,18 @@ bool dtls_transport::finish_handshake()
 {
     if (!verify_peer_fingerprint())
     {
+        spdlog::debug("webrtc dtls peer fingerprint verification failed");
         return false;
     }
 
     auto keying_material = export_srtp_keying_material();
     if (!keying_material)
     {
+        spdlog::debug("webrtc dtls srtp keying material export failed");
         return false;
     }
 
+    spdlog::debug("webrtc dtls handshake complete srtp profile {}", keying_material->profile);
     srtp_keying_material_ = std::move(keying_material);
     connected_ = true;
     return true;
@@ -415,6 +426,10 @@ bool dtls_transport::pump_outgoing()
                 return false;
             }
 
+            spdlog::trace(
+                "webrtc dtls datagram output size {} content_type {}",
+                record_size,
+                output[offset]);
             send_(std::span<const std::uint8_t>(output.data() + offset, record_size));
             offset += record_size;
         }
