@@ -690,6 +690,44 @@ void test_webrtc_h265_sdp_answer()
     require(answer->sdp.find("H264/90000") == std::string::npos, "webrtc h265 answer excludes h264");
 }
 
+void test_webrtc_payload_type_membership()
+{
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+    };
+    const auto answer_for = [&config](const std::string& sdp, std::vector<media_track> tracks)
+    {
+        const auto offer = parse_webrtc_offer(sdp);
+        require(offer.has_value(), "webrtc parse payload membership offer");
+        return make_webrtc_answer(*offer, tracks, config);
+    };
+
+    auto h264_sdp = webrtc_offer_sdp;
+    constexpr std::string_view video_formats = "m=video 9 UDP/TLS/RTP/SAVPF 102 127";
+    const auto video_formats_offset = h264_sdp.find(video_formats);
+    require(video_formats_offset != std::string::npos, "webrtc video payload membership source");
+    h264_sdp.replace(video_formats_offset, video_formats.size(), "m=video 9 UDP/TLS/RTP/SAVPF 127");
+    const auto h264_answer = answer_for(h264_sdp, {make_video_track(), make_audio_track()});
+    require(h264_answer.has_value() && !h264_answer->video_payload_type.has_value(), "webrtc reject unoffered h264 payload");
+
+    auto h265_sdp = h264_sdp;
+    h265_sdp.replace(h265_sdp.find("H264/90000"), 10U, "H265/90000");
+    const auto h265_answer = answer_for(h265_sdp, {make_h265_track(), make_audio_track()});
+    require(h265_answer.has_value() && !h265_answer->video_payload_type.has_value(), "webrtc reject unoffered h265 payload");
+
+    auto opus_sdp = webrtc_offer_sdp;
+    constexpr std::string_view audio_formats = "m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8";
+    const auto audio_formats_offset = opus_sdp.find(audio_formats);
+    require(audio_formats_offset != std::string::npos, "webrtc audio payload membership source");
+    opus_sdp.replace(audio_formats_offset, audio_formats.size(), "m=audio 9 UDP/TLS/RTP/SAVPF 0 8");
+    const auto opus_answer = answer_for(opus_sdp, {make_video_track(), make_audio_track()});
+    require(opus_answer.has_value() && !opus_answer->audio_payload_type.has_value(), "webrtc reject unoffered opus payload");
+}
+
 void test_webrtc_single_media_per_kind()
 {
     auto duplicate_sdp = webrtc_offer_sdp;
@@ -1350,6 +1388,8 @@ int main()
     std::cout << "[pass] webrtc_sdp_answer\n";
     media_server::test_webrtc_h265_sdp_answer();
     std::cout << "[pass] webrtc_h265_sdp_answer\n";
+    media_server::test_webrtc_payload_type_membership();
+    std::cout << "[pass] webrtc_payload_type_membership\n";
     media_server::test_webrtc_single_media_per_kind();
     std::cout << "[pass] webrtc_single_media_per_kind\n";
     media_server::test_webrtc_opus_mono_default();
@@ -1372,6 +1412,6 @@ int main()
     std::cout << "[pass] rtcp_receiver\n";
     media_server::test_whep_dtls();
     std::cout << "[pass] whep_dtls\n";
-    std::cout << "all tests passed: 10/10\n";
+    std::cout << "all tests passed\n";
     return 0;
 }
