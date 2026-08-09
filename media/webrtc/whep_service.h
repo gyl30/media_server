@@ -29,7 +29,6 @@ struct whep_create_result
 {
     whep_create_error error{whep_create_error::internal_error};
     std::string session_id;
-    std::string location;
     std::string answer_sdp;
 };
 
@@ -44,7 +43,7 @@ class whep_service final
 
     [[nodiscard]] bool ready() const noexcept;
     [[nodiscard]] whep_create_result create(std::string_view stream_name, std::string_view offer_sdp);
-    bool remove(std::string_view session_id);
+    [[nodiscard]] bool remove(std::string_view session_id);
     void close();
 
    private:

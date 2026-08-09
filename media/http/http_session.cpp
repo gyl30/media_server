@@ -77,7 +77,7 @@ void http_session::handle_request()
 
     if (segments.front() == "whep")
     {
-        handle_whep(*parsed);
+        handle_whep(segments);
         return;
     }
 
@@ -102,9 +102,8 @@ void http_session::handle_request()
     send_text_response(http::status::not_found, "text/plain", "not found\n");
 }
 
-void http_session::handle_whep(const urls::url_view& target)
+void http_session::handle_whep(const std::vector<std::string>& segments)
 {
-    const auto segments = path_segments(target);
     if (request_.method() == http::verb::post)
     {
         handle_whep_post(segments);
@@ -122,7 +121,7 @@ void http_session::handle_whep(const urls::url_view& target)
 
 void http_session::handle_whep_post(const std::vector<std::string>& segments)
 {
-    if (segments.size() < 2 || segments.front() != "whep" || segments[1] == "session")
+    if (segments.size() < 2 || segments[1] == "session")
     {
         send_text_response(http::status::not_found, "text/plain", "not found\n");
         return;
@@ -136,11 +135,11 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
     }
 
     const auto stream_name = join_segments(segments, 1, segments.size());
-    const auto result = whep_.create(stream_name, request_.body());
+    auto result = whep_.create(stream_name, request_.body());
     switch (result.error)
     {
     case whep_create_error::none:
-        send_whep_response(result.location, result.answer_sdp);
+        send_whep_response(std::move(result.session_id), std::move(result.answer_sdp));
         return;
     case whep_create_error::stream_not_found:
         send_text_response(http::status::not_found, "text/plain", "stream not found\n");
@@ -159,7 +158,7 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
 
 void http_session::handle_whep_delete(const std::vector<std::string>& segments)
 {
-    if (segments.size() != 3 || segments[0] != "whep" || segments[1] != "session")
+    if (segments.size() != 3 || segments[1] != "session")
     {
         send_text_response(http::status::not_found, "text/plain", "not found\n");
         return;
@@ -346,12 +345,12 @@ void http_session::send_text_response(http::status status, std::string_view cont
     });
 }
 
-void http_session::send_whep_response(std::string location, std::string answer_sdp)
+void http_session::send_whep_response(std::string session_id, std::string answer_sdp)
 {
     auto response = std::make_shared<http::response<http::string_body>>(http::status::created, request_.version());
     response->set(http::field::server, "media_server");
     response->set(http::field::content_type, "application/sdp");
-    response->set(http::field::location, std::move(location));
+    response->set(http::field::location, "/whep/session/" + session_id);
     response->set(http::field::cache_control, "no-store");
     response->keep_alive(false);
     response->body() = std::move(answer_sdp);

@@ -36,24 +36,24 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
     if (!stream)
     {
         spdlog::debug("whep create stream not found {}", stream_name);
-        return {.error = whep_create_error::stream_not_found, .session_id = {}, .location = {}, .answer_sdp = {}};
+        return {.error = whep_create_error::stream_not_found, .session_id = {}, .answer_sdp = {}};
     }
     if (stream->ended() || stream->tracks().empty())
     {
         spdlog::debug("whep create stream not ready {}", stream_name);
-        return {.error = whep_create_error::stream_not_ready, .session_id = {}, .location = {}, .answer_sdp = {}};
+        return {.error = whep_create_error::stream_not_ready, .session_id = {}, .answer_sdp = {}};
     }
     if (!certificate_)
     {
         spdlog::error("whep create missing dtls certificate");
-        return {.error = whep_create_error::internal_error, .session_id = {}, .location = {}, .answer_sdp = {}};
+        return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
     }
 
     auto offer = parse_webrtc_offer(offer_sdp);
     if (!offer)
     {
         spdlog::debug("whep create invalid offer stream {}", stream_name);
-        return {.error = whep_create_error::invalid_offer, .session_id = {}, .location = {}, .answer_sdp = {}};
+        return {.error = whep_create_error::invalid_offer, .session_id = {}, .answer_sdp = {}};
     }
 
     spdlog::debug("whep offer parsed stream {} media_count {} bundle_mid_count {}", stream_name, offer->media.size(), offer->bundle_mids.size());
@@ -97,24 +97,22 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
     if (!session->start(std::move(*offer)))
     {
         spdlog::debug("whep session start failed stream {}", stream_name);
-        return {.error = whep_create_error::invalid_offer, .session_id = {}, .location = {}, .answer_sdp = {}};
+        return {.error = whep_create_error::invalid_offer, .session_id = {}, .answer_sdp = {}};
     }
 
-    const auto session_id = session->id();
-    const auto [iterator, inserted] = sessions_.emplace(session_id, session);
-    static_cast<void>(iterator);
+    const auto& session_id = session->id();
+    const bool inserted = sessions_.emplace(session_id, session).second;
     if (!inserted)
     {
         spdlog::error("whep session id collision {}", session_id);
         session->close();
-        return {.error = whep_create_error::internal_error, .session_id = {}, .location = {}, .answer_sdp = {}};
+        return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
     }
 
     spdlog::info("whep session created {} stream {}", session_id, stream_name);
     return {
         .error = whep_create_error::none,
         .session_id = session_id,
-        .location = "/whep/session/" + session_id,
         .answer_sdp = session->answer_sdp(),
     };
 }
