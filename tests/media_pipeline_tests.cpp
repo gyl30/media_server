@@ -5,6 +5,8 @@
 #include "media/hls/hls_output.h"
 #include "media/hls/hls_service.h"
 #include "media/net/tcp_connection.h"
+#include "media/net/tcp_listener.h"
+#include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/http/http_flv_output.h"
 #include "media/rtmp/rtmp_timestamp.h"
@@ -589,6 +591,83 @@ std::string rtsp_header_value(std::string_view response, std::string_view name)
     const auto end = response.find("\r\n", begin);
     require(end != std::string_view::npos, "rtsp response header end");
     return std::string(response.substr(begin, end - begin));
+}
+
+std::string read_rtsp_headers(boost::asio::ip::tcp::socket& socket)
+{
+    std::string request;
+    boost::asio::read_until(socket, boost::asio::dynamic_buffer(request), "\r\n\r\n");
+    return request;
+}
+
+void test_tcp_listener_startup_error()
+{
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor occupied(
+        io,
+        boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+
+    tcp_listener listener(
+        io,
+        occupied.local_endpoint().port(),
+        [](boost::asio::ip::tcp::socket) {});
+    require(static_cast<bool>(listener.start()), "tcp listener reports bind failure");
+}
+
+void test_rtsp_pull_url_contract()
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(
+        server_io,
+        boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    auto invalid = std::make_shared<rtsp_input_session>(
+        client_io, registry, "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
+    require(!invalid->start(), "rtsp invalid port rejected");
+    require(!registry.find("relay/invalid"), "rtsp invalid url leaves registry unchanged");
+
+    const auto port = acceptor.local_endpoint().port();
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/test";
+    const auto credential_url = "rtsp://us%65r:p%40ss@127.0.0.1:" + std::to_string(port) + "/live/test";
+    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/auth", credential_url);
+    require(pull->start(), "rtsp auth pull start");
+
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto first = read_rtsp_headers(socket);
+    require(first.starts_with("DESCRIBE " + request_url + " RTSP/1.0\r\n"), "rtsp auth sanitized request uri");
+    require(first.find("user") == std::string::npos, "rtsp auth request hides username");
+    require(first.find("p@ss") == std::string::npos, "rtsp auth request hides password");
+    const auto first_cseq = rtsp_header_value(first, "CSeq:");
+    require(!first_cseq.empty(), "rtsp auth first cseq");
+
+    const auto unauthorized =
+        "RTSP/1.0 401 Unauthorized\r\n"
+        "CSeq: " + first_cseq + "\r\n"
+        "WWW-Authenticate: Basic realm=\"media_server_test\"\r\n"
+        "Content-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(unauthorized));
+
+    const auto second = read_rtsp_headers(socket);
+    require(second.starts_with("DESCRIBE " + request_url + " RTSP/1.0\r\n"), "rtsp auth retry request uri");
+    require(second.find("Authorization: Basic dXNlcjpwQHNz\r\n") != std::string::npos, "rtsp auth credentials");
+    const auto second_cseq = rtsp_header_value(second, "CSeq:");
+    require(!second_cseq.empty(), "rtsp auth second cseq");
+
+    const auto not_found =
+        "RTSP/1.0 404 Not Found\r\n"
+        "CSeq: " + second_cseq + "\r\n"
+        "Content-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(not_found));
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+
+    require(!registry.find("relay/auth"), "rtsp auth failed pull removes stream");
 }
 
 class rtsp_output_test_peer final
@@ -1493,6 +1572,10 @@ int main()
     std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
     test_rtsp_client_session_timeout();
     std::cout << "[pass] rtsp_client_session_timeout\n";
+    test_tcp_listener_startup_error();
+    std::cout << "[pass] tcp_listener_startup_error\n";
+    test_rtsp_pull_url_contract();
+    std::cout << "[pass] rtsp_pull_url_contract\n";
     test_rtsp_client_rejects_empty_media_selection();
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
     test_rtsp_output_session_contract();

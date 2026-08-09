@@ -29,6 +29,7 @@ struct options
     std::uint16_t http_port{8080};
     std::string webrtc_address{"127.0.0.1"};
     std::vector<std::pair<std::string, std::string>> rtsp_pulls;
+    bool help{};
 };
 
 bool parse_port(std::string_view text, std::uint16_t& value)
@@ -59,9 +60,9 @@ std::optional<options> parse_options(int argc, char** argv)
         };
 
         if (argument == "--help")
-
         {
-            return std::nullopt;
+            result.help = true;
+            continue;
         }
         if (const auto value = read_value("--rtmp-port"))
         {
@@ -113,6 +114,7 @@ void print_usage()
 {
     std::cout
         << "usage: media_server [options]\n"
+        << "  --help\n"
         << "  --rtmp-port <port>\n"
         << "  --rtsp-port <port>\n"
         << "  --http-port <port>\n"
@@ -130,7 +132,12 @@ int main(int argc, char** argv)
     if (!parsed)
     {
         print_usage();
-        return argc > 1 ? 1 : 0;
+        return 1;
+    }
+    if (parsed->help)
+    {
+        print_usage();
+        return 0;
     }
 
     boost::system::error_code address_error;
@@ -154,9 +161,21 @@ int main(int argc, char** argv)
     media_server::rtsp_server rtsp(io, registry, parsed->rtsp_port);
     media_server::http_server http(io, registry, hls, whep, parsed->http_port);
 
-    rtmp.start();
-    rtsp.start();
-    http.start();
+    if (const auto error = rtmp.start())
+    {
+        spdlog::error("rtmp listen failed port {} error {}", parsed->rtmp_port, error.message());
+        return 2;
+    }
+    if (const auto error = rtsp.start())
+    {
+        spdlog::error("rtsp listen failed port {} error {}", parsed->rtsp_port, error.message());
+        return 2;
+    }
+    if (const auto error = http.start())
+    {
+        spdlog::error("http listen failed port {} error {}", parsed->http_port, error.message());
+        return 2;
+    }
 
     std::vector<std::shared_ptr<media_server::rtsp_input_session>> pulls;
     for (const auto& [name, url] : parsed->rtsp_pulls)
@@ -164,7 +183,7 @@ int main(int argc, char** argv)
         auto pull = std::make_shared<media_server::rtsp_input_session>(io, registry, name, url);
         if (!pull->start())
         {
-            spdlog::error("rtsp pull start failed stream {} url {}", name, url);
+            spdlog::error("rtsp pull start failed stream {}", name);
             return 2;
         }
         pulls.push_back(std::move(pull));

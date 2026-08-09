@@ -87,6 +87,10 @@ add_executable(media_server main.cpp)
 target_link_libraries(media_server PRIVATE media_core)
 
 if(BUILD_TESTING)
+    add_test(NAME media_server_help COMMAND media_server --help)
+    add_test(NAME media_server_invalid_config COMMAND media_server --invalid)
+    set_tests_properties(media_server_invalid_config PROPERTIES WILL_FAIL TRUE)
+
     add_executable(media_pipeline_tests tests/media_pipeline_tests.cpp)
     target_link_libraries(media_pipeline_tests PRIVATE media_core)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

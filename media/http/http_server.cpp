@@ -20,9 +20,9 @@ http_server::http_server(
 {
 }
 
-void http_server::start()
+boost::system::error_code http_server::start()
 {
-    listener_.start();
+    return listener_.start();
 }
 
 void http_server::close()

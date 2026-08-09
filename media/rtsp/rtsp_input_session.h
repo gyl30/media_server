@@ -33,9 +33,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
         boost::asio::io_context& io,
         stream_registry& registry,
         std::string stream_name,
-        std::string url,
-        std::string username = {},
-        std::string password = {});
+        std::string url);
     ~rtsp_input_session();
 
     bool start();
@@ -44,8 +42,11 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
    private:
     struct parsed_url
     {
+        std::string request_url;
         std::string host;
         std::uint16_t port{554};
+        std::string username;
+        std::string password;
     };
 
     static int send_callback(void* param, const char* uri, const void* request, std::size_t bytes);

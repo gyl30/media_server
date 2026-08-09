@@ -19,9 +19,9 @@ rtsp_server::rtsp_server(
       {
 }
 
-void rtsp_server::start()
+boost::system::error_code rtsp_server::start()
 {
-    listener_.start();
+    return listener_.start();
 }
 
 void rtsp_server::close()
