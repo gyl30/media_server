@@ -3,6 +3,8 @@
 
 #include "media/core/media_sink.h"
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -14,6 +16,12 @@
 namespace media_server
 {
 
+struct hls_config
+{
+    double target_duration_seconds{2.0};
+    std::size_t window_size{6};
+};
+
 struct hls_segment
 {
     std::uint64_t sequence{};
@@ -24,7 +32,7 @@ struct hls_segment
 class hls_output final : public media_sink
 {
    public:
-    explicit hls_output(double target_duration_seconds = 2.0, std::size_t window_size = 6);
+    explicit hls_output(hls_config config = {});
     ~hls_output() override;
 
     void on_track(const media_track& track) override;
@@ -34,6 +42,7 @@ class hls_output final : public media_sink
     [[nodiscard]] std::string playlist(std::string_view base_path) const;
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> segment(std::uint64_t sequence) const;
     [[nodiscard]] std::size_t segment_count() const noexcept;
+    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ended_at() const noexcept;
 
    private:
     static void* ts_alloc(void* param, std::size_t bytes);
@@ -54,7 +63,7 @@ class hls_output final : public media_sink
     std::uint64_t next_sequence_{};
     std::int64_t segment_start_pts_ns_{-1};
     std::int64_t last_pts_ns_{};
-    bool ended_{};
+    std::optional<std::chrono::steady_clock::time_point> ended_at_;
     bool has_video_{};
     bool waiting_for_key_frame_{};
 };

@@ -4,6 +4,7 @@
 #include "media/core/stream_registry.h"
 #include "media/hls/hls_output.h"
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <optional>
@@ -17,7 +18,7 @@ namespace media_server
 class hls_service final
 {
    public:
-    explicit hls_service(stream_registry& registry);
+    explicit hls_service(stream_registry& registry, hls_config config = {});
 
     [[nodiscard]] std::optional<std::string> playlist(std::string_view stream_name);
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> segment(
@@ -33,8 +34,11 @@ class hls_service final
     };
 
     [[nodiscard]] std::shared_ptr<hls_output> get_or_create(std::string_view stream_name);
+    void remove_expired_outputs(std::chrono::steady_clock::time_point now);
+    [[nodiscard]] std::chrono::steady_clock::duration ended_retention() const;
 
     stream_registry& registry_;
+    hls_config config_;
     std::map<std::string, entry, std::less<>> outputs_;
 };
 
