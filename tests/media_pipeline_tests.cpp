@@ -1,6 +1,7 @@
 #include "media/codec/codec_utils.h"
 #include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
+#include "media/core/stream_registry.h"
 #include "media/hls/hls_output.h"
 #include "media/hls/hls_service.h"
 #include "media/webrtc/webrtc_output.h"
@@ -308,6 +309,31 @@ void test_media_stream_fanout_and_reentrancy()
     require(frame_after->frames == 0 && frame_after->ends == 1, "publish stops callbacks after end");
 }
 
+
+void test_stream_registry_generation_lifecycle()
+{
+    stream_registry registry;
+
+    auto first = std::make_shared<media_stream>("live/generation");
+    auto second = std::make_shared<media_stream>("live/generation");
+    require(registry.add(first), "registry first generation add");
+    require(!registry.add(second), "registry active generation duplicate reject");
+    require(registry.find("live/generation").get() == first.get(), "registry first generation remains");
+
+    first->end();
+    require(registry.add(second), "registry ended generation replace");
+    require(registry.find("live/generation").get() == second.get(), "registry replacement generation visible");
+    require(!registry.remove("live/generation", first.get()), "registry stale generation remove reject");
+    require(registry.find("live/generation").get() == second.get(), "registry stale remove preserves replacement");
+
+    auto ended = std::make_shared<media_stream>("live/ended");
+    ended->end();
+    require(!registry.add(ended), "registry ended generation add reject");
+
+    require(registry.remove("live/generation", second.get()), "registry replacement remove");
+    require(!registry.find("live/generation"), "registry replacement removed");
+}
+
 void test_hls_output()
 {
     hls_output output(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
@@ -587,6 +613,8 @@ int main()
     std::cout << "[pass] internal_format_contract\n";
     test_media_stream_fanout_and_reentrancy();
     std::cout << "[pass] media_stream_fanout_and_reentrancy\n";
+    test_stream_registry_generation_lifecycle();
+    std::cout << "[pass] stream_registry_generation_lifecycle\n";
     test_hls_output();
     std::cout << "[pass] hls_output\n";
     test_hls_service_lifecycle();
@@ -597,6 +625,6 @@ int main()
     std::cout << "[pass] webrtc_opus_packetizer\n";
     test_webrtc_rtcp_sender();
     std::cout << "[pass] webrtc_rtcp_sender\n";
-    std::cout << "all tests passed: 6/6\n";
+    std::cout << "all tests passed: 7/7\n";
     return 0;
 }
