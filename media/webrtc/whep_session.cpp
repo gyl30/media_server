@@ -82,22 +82,6 @@ class whep_stream_observer final : public media_sink
     close_handler handler_;
 };
 
-const webrtc_media_offer* transport_media(const webrtc_offer& offer)
-{
-    if (!offer.bundle_mids.empty())
-    {
-        for (const auto& media : offer.media)
-        {
-            if (media.mid == offer.bundle_mids.front())
-            {
-                return &media;
-            }
-        }
-        return nullptr;
-    }
-
-    return offer.media.empty() ? nullptr : &offer.media.front();
-}
 
 }    // namespace
 
@@ -139,7 +123,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
         return whep_session_start_error::stream_not_ready;
     }
 
-    const auto* media = transport_media(offer);
+    const auto* media = webrtc_bundle_transport(offer);
     if (media == nullptr || media->ice_ufrag.empty() || media->ice_pwd.empty() ||
         !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
     {
@@ -224,6 +208,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     spdlog::debug("webrtc session {} remote fingerprint {}", id_, media->fingerprint);
 
     answer_sdp_ = answer->sdp;
+    video_codec_ = answer->video_codec;
     video_payload_type_ = answer->video_payload_type;
     audio_payload_type_ = answer->audio_payload_type;
     audio_channel_count_ = answer->audio_channel_count;
@@ -290,6 +275,7 @@ void whep_session::close()
     ice_activity_timer_.cancel();
     dtls_.reset();
     answer_sdp_.clear();
+    video_codec_.reset();
     video_payload_type_.reset();
     audio_payload_type_.reset();
     audio_channel_count_.reset();
@@ -588,7 +574,8 @@ bool whep_session::start_media()
     const auto weak = weak_from_this();
     auto output = std::make_shared<webrtc_output>(
         webrtc_output_config{
-            .h264_payload_type = video_payload_type_.value_or(-1),
+            .video_codec = video_codec_.value_or(codec_id::h264),
+            .video_payload_type = video_payload_type_.value_or(-1),
             .opus_payload_type = audio_payload_type_.value_or(-1),
             .opus_channel_count = audio_channel_count_.value_or(1),
             .rtcp_cname = id_,
@@ -608,8 +595,12 @@ bool whep_session::start_media()
 
     srtp_ = std::move(srtp);
     output_ = std::move(output);
-    if (!stream_->add_sink(output_))
+    if (!output_->valid() || !stream_->add_sink(output_) || !output_->valid())
     {
+        if (output_)
+        {
+            stream_->remove_sink(*output_);
+        }
         output_.reset();
         srtp_.reset();
         return false;

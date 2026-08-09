@@ -331,6 +331,28 @@ int rtmp_session::on_flv_demux(
         return 0;
     }
 
+    if (codec == FLV_VIDEO_HVCC)
+    {
+        auto config = h265_hvcc_to_annex_b(data);
+        if (config.empty())
+        {
+            return -1;
+        }
+        media_track track{
+            .id = video_track_id,
+            .kind = media_kind::video,
+            .codec = codec_id::h265,
+            .clock_rate = 90'000,
+            .channel_count = 0,
+            .codec_config = std::move(config),
+        };
+        if (stream_->update_track(std::move(track)))
+        {
+            spdlog::info("rtmp input track video h265");
+        }
+        return 0;
+    }
+
     if (codec == FLV_AUDIO_ASC)
 
     {
@@ -355,7 +377,7 @@ int rtmp_session::on_flv_demux(
     }
 
     track_id id{};
-    if (codec == FLV_VIDEO_H264)
+    if (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265)
     {
         id = video_track_id;
     } else if (codec == FLV_AUDIO_AAC)
@@ -376,7 +398,7 @@ int rtmp_session::on_flv_demux(
         .track = id,
         .dts_ns = milliseconds_to_ns(dts_ms),
         .pts_ns = milliseconds_to_ns(pts_ms),
-        .key_frame = codec == FLV_VIDEO_H264 && flags != 0,
+        .key_frame = (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265) && flags != 0,
         .payload = std::move(payload),
     };
     stream_->publish(std::move(frame));

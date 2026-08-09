@@ -45,31 +45,48 @@ void flv_output_muxer::on_track(const media_track& track)
         for (const auto& [id, current] : tracks_)
         {
             static_cast<void>(id);
-            prime_h264_config(current);
+            prime_video_config(current);
         }
         return;
     }
 
-    prime_h264_config(track);
+    prime_video_config(track);
 }
 
-void flv_output_muxer::prime_h264_config(const media_track& track)
+void flv_output_muxer::prime_video_config(const media_track& track)
 {
-    if (track.codec != codec_id::h264 || track.codec_config.empty())
+    if (track.codec_config.empty())
     {
         return;
     }
 
-    // 仅 SPS/PPS，不包含 VCL。flv_muxer 会据此输出 AVC sequence header。
-    const auto result = flv_muxer_avc(
-        muxer_,
-        track.codec_config.data(),
-        track.codec_config.size(),
-        0,
-        0);
+    int result = 0;
+    if (track.codec == codec_id::h264)
+    {
+        result = flv_muxer_avc(
+            muxer_,
+            track.codec_config.data(),
+            track.codec_config.size(),
+            0,
+            0);
+    }
+    else if (track.codec == codec_id::h265)
+    {
+        result = flv_muxer_hevc(
+            muxer_,
+            track.codec_config.data(),
+            track.codec_config.size(),
+            0,
+            0);
+    }
+    else
+    {
+        return;
+    }
+
     if (result != 0)
     {
-        spdlog::error("flv prime h264 config failed result {}", result);
+        spdlog::error("flv prime video config codec {} result {}", to_string(track.codec), result);
     }
 }
 
@@ -90,6 +107,10 @@ void flv_output_muxer::on_frame(const media_frame& frame)
     {
     case codec_id::h264:
         result = flv_muxer_avc(
+            muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
+        break;
+    case codec_id::h265:
+        result = flv_muxer_hevc(
             muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
         break;
     case codec_id::aac:

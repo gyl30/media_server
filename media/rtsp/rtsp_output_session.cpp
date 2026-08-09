@@ -41,6 +41,12 @@ std::string local_ip(const tcp_connection& connection)
     const auto endpoint = const_cast<tcp_connection&>(connection).socket().local_endpoint(error);
     return error ? "0.0.0.0" : endpoint.address().to_string();
 }
+
+bool supported_track(const media_track& track)
+{
+    return (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
+        (track.kind == media_kind::audio && track.codec == codec_id::aac);
+}
 }    // namespace
 
 rtsp_output_session::rtsp_output_session(
@@ -168,12 +174,15 @@ int rtsp_output_session::setup_callback(
 int rtsp_output_session::play_callback(
     void* param,
     rtsp_server_t*,
-    const char*,
+    const char* uri,
     const char* session,
     const std::int64_t* npt,
     const double*)
     {
-    return static_cast<rtsp_output_session*>(param)->on_play(session != nullptr ? session : "", npt);
+    return static_cast<rtsp_output_session*>(param)->on_play(
+        uri != nullptr ? uri : "",
+        session != nullptr ? session : "",
+        npt);
 }
 
 int rtsp_output_session::pause_callback(
@@ -344,7 +353,15 @@ int rtsp_output_session::on_setup(
     std::string_view session,
     const rtsp_header_transport_t transports[],
     std::size_t count)
+{
+    if (playing_)
     {
+        return rtsp_server_reply_setup(server_, 455, nullptr, nullptr);
+    }
+    if (stream_name_from_uri(uri) != stream_name_)
+    {
+        return rtsp_server_reply_setup(server_, 404, nullptr, nullptr);
+    }
 
     const auto id = track_id_from_uri(uri);
     if (!id)
@@ -360,6 +377,10 @@ int rtsp_output_session::on_setup(
     {
         return rtsp_server_reply_setup(server_, 503, nullptr, nullptr);
     }
+    if (!description_current())
+    {
+        return rtsp_server_reply_setup(server_, 455, nullptr, nullptr);
+    }
     if (!session_id_.empty() && session != session_id_)
     {
         return rtsp_server_reply_setup(server_, 454, nullptr, nullptr);
@@ -374,9 +395,24 @@ int rtsp_output_session::on_setup(
             break;
         }
     }
-    if (selected == nullptr)
+    if (selected == nullptr || selected->interleaved1 < 0 || selected->interleaved1 > 255 ||
+        selected->interleaved2 < 0 || selected->interleaved2 > 255 ||
+        !channels_available(*id, selected->interleaved1, selected->interleaved2))
     {
         return rtsp_server_reply_setup(server_, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
+    }
+
+    if (iterator->second.setup)
+    {
+        if (session == session_id_ && iterator->second.rtp_channel == selected->interleaved1 &&
+            iterator->second.rtcp_channel == selected->interleaved2)
+        {
+            std::ostringstream transport;
+            transport << "RTP/AVP/TCP;unicast;interleaved="
+                      << selected->interleaved1 << '-' << selected->interleaved2;
+            return rtsp_server_reply_setup(server_, 200, session_id_.c_str(), transport.str().c_str());
+        }
+        return rtsp_server_reply_setup(server_, 455, nullptr, nullptr);
     }
 
     if (session_id_.empty())
@@ -385,7 +421,7 @@ int rtsp_output_session::on_setup(
         {
             return rtsp_server_reply_setup(server_, 454, nullptr, nullptr);
         }
-        session_id_ = std::to_string(reinterpret_cast<std::uintptr_t>(this));
+        session_id_ = std::to_string(random_u32());
     }
 
     iterator->second.rtp_channel = static_cast<std::uint8_t>(selected->interleaved1);
@@ -398,19 +434,30 @@ int rtsp_output_session::on_setup(
     return rtsp_server_reply_setup(server_, 200, session_id_.c_str(), transport.str().c_str());
 }
 
-int rtsp_output_session::on_play(std::string_view session, const std::int64_t* npt)
+int rtsp_output_session::on_play(std::string_view uri, std::string_view session, const std::int64_t* npt)
 {
-    if (session_id_.empty() || session != session_id_ || !stream_)
+    if (stream_name_from_uri(uri) != stream_name_)
+    {
+        return rtsp_server_reply_play(server_, 404, nullptr, nullptr, nullptr);
+    }
+    if (session_id_.empty() || session != session_id_)
     {
         return rtsp_server_reply_play(server_, 454, nullptr, nullptr, nullptr);
     }
+    if (!stream_ || stream_->ended())
+    {
+        return rtsp_server_reply_play(server_, 503, nullptr, nullptr, nullptr);
+    }
+    if (!description_current())
+    {
+        return rtsp_server_reply_play(server_, 455, nullptr, nullptr, nullptr);
+    }
 
     if (!playing_)
-
     {
         if (!stream_->add_sink(shared_from_this()))
         {
-            return rtsp_server_reply_play(server_, 454, nullptr, nullptr, nullptr);
+            return rtsp_server_reply_play(server_, 503, nullptr, nullptr, nullptr);
         }
         playing_ = true;
     }
@@ -480,17 +527,28 @@ bool rtsp_output_session::configure_tracks(
             extra = h264_annex_b_to_avcc(track.codec_config);
             if (extra.empty())
             {
-                continue;
+                return false;
             }
             encoding = "H264";
             rtp_codec = RTP_PAYLOAD_H264;
+            frequency = 90'000;
+        }
+        else if (track.codec == codec_id::h265)
+        {
+            extra = h265_annex_b_to_hvcc(track.codec_config);
+            if (extra.empty())
+            {
+                return false;
+            }
+            encoding = "H265";
+            rtp_codec = RTP_PAYLOAD_H265;
             frequency = 90'000;
         } else if (track.codec == codec_id::aac)
         {
             extra = track.codec_config;
             if (extra.empty() || track.clock_rate == 0)
             {
-                continue;
+                return false;
             }
             encoding = "MPEG4-GENERIC";
             rtp_codec = RTP_PAYLOAD_MP4A;
@@ -546,6 +604,52 @@ bool rtsp_output_session::configure_tracks(
 
     sdp = output.str();
     return !tracks_.empty();
+}
+
+bool rtsp_output_session::description_current() const
+{
+    if (!stream_ || stream_->ended())
+    {
+        return false;
+    }
+
+    const auto current = stream_->tracks();
+    std::size_t supported_count = 0;
+    for (const auto& track : current)
+    {
+        if (!supported_track(track))
+        {
+            continue;
+        }
+        ++supported_count;
+        const auto iterator = tracks_.find(track.id);
+        if (iterator == tracks_.end() || iterator->second.config_version != track.config_version)
+        {
+            return false;
+        }
+    }
+    return supported_count == tracks_.size();
+}
+
+bool rtsp_output_session::channels_available(track_id id, int rtp_channel, int rtcp_channel) const
+{
+    if (rtp_channel == rtcp_channel)
+    {
+        return false;
+    }
+    for (const auto& [track, state] : tracks_)
+    {
+        if (track == id || !state.setup)
+        {
+            continue;
+        }
+        if (state.rtp_channel == rtp_channel || state.rtp_channel == rtcp_channel ||
+            state.rtcp_channel == rtp_channel || state.rtcp_channel == rtcp_channel)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::string rtsp_output_session::stream_name_from_uri(std::string_view uri)

@@ -4,6 +4,7 @@ extern "C"
 {
 #include "mpeg4-aac.h"
 #include "mpeg4-avc.h"
+#include "mpeg4-hevc.h"
 }
 
 #include <array>
@@ -48,6 +49,45 @@ std::vector<std::uint8_t> h264_annex_b_to_avcc(std::span<const std::uint8_t> ann
 
     std::vector<std::uint8_t> result(sizeof(configuration.data) + 256U);
     const auto bytes = mpeg4_avc_decoder_configuration_record_save(
+        &configuration, result.data(), result.size());
+    if (bytes <= 0)
+    {
+        return {};
+    }
+    result.resize(static_cast<std::size_t>(bytes));
+    return result;
+}
+
+std::vector<std::uint8_t> h265_hvcc_to_annex_b(std::span<const std::uint8_t> hvcc)
+{
+    mpeg4_hevc_t configuration{};
+    if (mpeg4_hevc_decoder_configuration_record_load(
+            hvcc.data(), hvcc.size(), &configuration) <= 0)
+    {
+        return {};
+    }
+
+    std::vector<std::uint8_t> result(sizeof(configuration.data) + 4096U);
+    const auto bytes = mpeg4_hevc_to_nalu(&configuration, result.data(), result.size());
+    if (bytes <= 0)
+    {
+        return {};
+    }
+    result.resize(static_cast<std::size_t>(bytes));
+    return result;
+}
+
+std::vector<std::uint8_t> h265_annex_b_to_hvcc(std::span<const std::uint8_t> annex_b)
+{
+    mpeg4_hevc_t configuration{};
+    if (mpeg4_hevc_from_nalu(annex_b.data(), annex_b.size(), &configuration) < 0 ||
+        configuration.numOfArrays < 3)
+    {
+        return {};
+    }
+
+    std::vector<std::uint8_t> result(sizeof(configuration.data) + 256U);
+    const auto bytes = mpeg4_hevc_decoder_configuration_record_save(
         &configuration, result.data(), result.size());
     if (bytes <= 0)
     {

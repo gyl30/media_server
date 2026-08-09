@@ -29,6 +29,7 @@ struct webrtc_media_offer
     std::string protocol;
     std::string mid;
     std::string direction;
+    std::string setup;
     std::string ice_ufrag;
     std::string ice_pwd;
     std::string fingerprint;
@@ -46,6 +47,7 @@ struct webrtc_offer
 struct webrtc_answer
 {
     std::string sdp;
+    std::optional<codec_id> video_codec;
     std::optional<int> video_payload_type;
     std::optional<int> audio_payload_type;
     std::optional<int> audio_channel_count;
@@ -61,6 +63,7 @@ struct webrtc_answer_config
 };
 
 [[nodiscard]] std::optional<webrtc_offer> parse_webrtc_offer(std::string_view sdp);
+[[nodiscard]] const webrtc_media_offer* webrtc_bundle_transport(const webrtc_offer& offer);
 [[nodiscard]] std::optional<webrtc_answer> make_webrtc_answer(
     const webrtc_offer& offer,
     const std::vector<media_track>& tracks,

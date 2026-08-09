@@ -46,6 +46,18 @@ const std::vector<std::uint8_t> h264_config{
     0x68, 0xce, 0x3c, 0x80,
 };
 
+const std::vector<std::uint8_t> h265_config{
+    0x00, 0x00, 0x00, 0x01,
+    0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x03, 0x00, 0x78, 0x9d, 0xc0, 0x90,
+    0x00, 0x00, 0x00, 0x01,
+    0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03,
+    0x00, 0x78, 0xa0, 0x03, 0xc0, 0x80, 0x32, 0x16, 0x59, 0xde, 0x49, 0x1b, 0x6b, 0x80, 0x40, 0x00,
+    0x00, 0xfa, 0x00, 0x00, 0x17, 0x70, 0x02,
+    0x00, 0x00, 0x00, 0x01,
+    0x44, 0x01, 0xc1, 0x73, 0xd1, 0x89,
+};
+
 const std::vector<std::uint8_t> aac_asc{0x12, 0x10};
 
 const std::vector<std::vector<std::uint8_t>> valid_aac_adts_frames{
@@ -641,6 +653,18 @@ media_track make_video_track()
     };
 }
 
+media_track make_h265_track()
+{
+    return media_track{
+        .id = video_track_id,
+        .kind = media_kind::video,
+        .codec = codec_id::h265,
+        .clock_rate = 90'000,
+        .channel_count = 0,
+        .codec_config = h265_config,
+    };
+}
+
 media_track make_audio_track()
 {
     return media_track{
@@ -683,6 +707,7 @@ void test_webrtc_sdp_answer()
             .fingerprint = "AA:BB:CC:DD",
         });
     require(answer.has_value(), "make webrtc answer");
+    require(answer->video_codec == codec_id::h264, "webrtc negotiated h264 codec");
     require(answer->video_payload_type == 102, "webrtc negotiated h264 payload");
     require(answer->audio_payload_type == 111, "webrtc negotiated opus payload");
     require(answer->audio_channel_count == 2, "webrtc negotiated opus stereo");
@@ -696,6 +721,37 @@ void test_webrtc_sdp_answer()
     require(answer->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos, "webrtc opus rtpmap");
     require(answer->sdp.find("sprop-stereo=1") != std::string::npos, "webrtc opus stereo sender property");
     require(answer->sdp.find("a=sendonly\r\n") != std::string::npos, "webrtc sendonly");
+}
+
+void test_webrtc_h265_sdp_answer()
+{
+    auto h265_offer_sdp = webrtc_offer_sdp;
+    const std::string h264_rtpmap = "a=rtpmap:102 H264/90000\r\n";
+    const std::string h264_fmtp = "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
+    const auto rtpmap_offset = h265_offer_sdp.find(h264_rtpmap);
+    const auto fmtp_offset = h265_offer_sdp.find(h264_fmtp);
+    require(rtpmap_offset != std::string::npos && fmtp_offset != std::string::npos, "webrtc h265 offer source");
+    h265_offer_sdp.replace(rtpmap_offset, h264_rtpmap.size(), "a=rtpmap:102 H265/90000\r\n");
+    const auto updated_fmtp_offset = h265_offer_sdp.find(h264_fmtp);
+    h265_offer_sdp.erase(updated_fmtp_offset, h264_fmtp.size());
+
+    const auto offer = parse_webrtc_offer(h265_offer_sdp);
+    require(offer.has_value(), "parse webrtc h265 offer");
+    const auto answer = make_webrtc_answer(
+        *offer,
+        {make_h265_track(), make_audio_track()},
+        webrtc_answer_config{
+            .address = boost::asio::ip::make_address("127.0.0.1"),
+            .port = 40000,
+            .ice_ufrag = "serverufrag",
+            .ice_pwd = "serverpassword1234567890",
+            .fingerprint = "AA:BB:CC:DD",
+        });
+    require(answer.has_value(), "make webrtc h265 answer");
+    require(answer->video_codec == codec_id::h265, "webrtc negotiated h265 codec");
+    require(answer->video_payload_type == 102, "webrtc negotiated h265 payload");
+    require(answer->sdp.find("a=rtpmap:102 H265/90000\r\n") != std::string::npos, "webrtc h265 rtpmap");
+    require(answer->sdp.find("H264/90000") == std::string::npos, "webrtc h265 answer excludes h264");
 }
 
 void test_webrtc_opus_mono_default()
@@ -722,6 +778,81 @@ void test_webrtc_opus_mono_default()
     require(answer.has_value(), "make webrtc mono answer");
     require(answer->audio_channel_count == 1, "webrtc opus mono default");
     require(answer->sdp.find("sprop-stereo=0") != std::string::npos, "webrtc opus mono sender property");
+}
+
+void test_webrtc_transport_contract()
+{
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+    };
+    const auto tracks = std::vector<media_track>{make_video_track(), make_audio_track()};
+
+    auto no_bundle_sdp = webrtc_offer_sdp;
+    const std::string bundle = "a=group:BUNDLE 0 1\r\n";
+    const auto no_bundle_offset = no_bundle_sdp.find(bundle);
+    require(no_bundle_offset != std::string::npos, "webrtc bundle offer");
+    no_bundle_sdp.erase(no_bundle_offset, bundle.size());
+    const auto no_bundle = parse_webrtc_offer(no_bundle_sdp);
+    require(no_bundle.has_value(), "webrtc parse unbundled offer");
+    require(webrtc_bundle_transport(*no_bundle) == nullptr, "webrtc require bundle transport");
+    require(!make_webrtc_answer(*no_bundle, tracks, config).has_value(), "webrtc reject unbundled offer");
+
+    auto no_rtcp_mux_sdp = webrtc_offer_sdp;
+    const std::string rtcp_mux = "a=rtcp-mux\r\n";
+    const auto rtcp_mux_offset = no_rtcp_mux_sdp.find(rtcp_mux);
+    require(rtcp_mux_offset != std::string::npos, "webrtc rtcp mux offer");
+    no_rtcp_mux_sdp.erase(rtcp_mux_offset, rtcp_mux.size());
+    const auto no_rtcp_mux = parse_webrtc_offer(no_rtcp_mux_sdp);
+    require(no_rtcp_mux.has_value(), "webrtc parse no rtcp mux offer");
+    require(!make_webrtc_answer(*no_rtcp_mux, tracks, config).has_value(), "webrtc require rtcp mux");
+
+    auto wrong_protocol_sdp = webrtc_offer_sdp;
+    const std::string protocol = "UDP/TLS/RTP/SAVPF";
+    const auto protocol_offset = wrong_protocol_sdp.find(protocol);
+    require(protocol_offset != std::string::npos, "webrtc protocol offer");
+    wrong_protocol_sdp.replace(protocol_offset, protocol.size(), "RTP/AVP");
+    const auto wrong_protocol = parse_webrtc_offer(wrong_protocol_sdp);
+    require(wrong_protocol.has_value(), "webrtc parse wrong protocol offer");
+    require(!make_webrtc_answer(*wrong_protocol, tracks, config).has_value(), "webrtc require dtls srtp protocol");
+
+    auto passive_offer_sdp = webrtc_offer_sdp;
+    const std::string actpass = "a=setup:actpass\r\n";
+    const auto setup_offset = passive_offer_sdp.find(actpass);
+    require(setup_offset != std::string::npos, "webrtc setup offer");
+    passive_offer_sdp.replace(setup_offset, actpass.size(), "a=setup:passive\r\n");
+    const auto passive_offer = parse_webrtc_offer(passive_offer_sdp);
+    require(passive_offer.has_value(), "webrtc parse passive setup offer");
+    require(!make_webrtc_answer(*passive_offer, tracks, config).has_value(), "webrtc require initial actpass");
+
+    auto video_only_bundle_sdp = webrtc_offer_sdp;
+    const auto bundle_offset = video_only_bundle_sdp.find(bundle);
+    require(bundle_offset != std::string::npos, "webrtc bundle offer");
+    video_only_bundle_sdp.replace(bundle_offset, bundle.size(), "a=group:BUNDLE 0\r\n");
+    const auto video_only_bundle = parse_webrtc_offer(video_only_bundle_sdp);
+    require(video_only_bundle.has_value(), "webrtc parse partial bundle offer");
+    const auto partial_answer = make_webrtc_answer(*video_only_bundle, tracks, config);
+    require(partial_answer.has_value(), "webrtc answer bundled video");
+    require(partial_answer->video_payload_type == 102, "webrtc bundled video accepted");
+    require(!partial_answer->audio_payload_type.has_value(), "webrtc unbundled audio rejected");
+    require(partial_answer->sdp.find("a=group:BUNDLE 0\r\n") != std::string::npos, "webrtc answer bundle mids");
+    require(partial_answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF") != std::string::npos, "webrtc unbundled audio inactive");
+
+    const auto audio_only_offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(audio_only_offer.has_value(), "webrtc parse audio only source offer");
+    const auto audio_only_answer = make_webrtc_answer(*audio_only_offer, {make_audio_track()}, config);
+    require(audio_only_answer.has_value(), "webrtc answer audio only source");
+    require(audio_only_answer->sdp.find("a=group:BUNDLE 1\r\n") != std::string::npos, "webrtc answer selects accepted bundle tag");
+    require(audio_only_answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF") != std::string::npos, "webrtc reject unavailable bundled video");
+
+    auto unknown_bundle_mid_sdp = webrtc_offer_sdp;
+    const auto unknown_bundle_offset = unknown_bundle_mid_sdp.find(bundle);
+    require(unknown_bundle_offset != std::string::npos, "webrtc bundle mid offer");
+    unknown_bundle_mid_sdp.replace(unknown_bundle_offset, bundle.size(), "a=group:BUNDLE 0 missing\r\n");
+    require(!parse_webrtc_offer(unknown_bundle_mid_sdp).has_value(), "webrtc reject unknown bundle mid");
 }
 
 void test_whep_session_start_errors()
@@ -1323,8 +1454,12 @@ int main()
     using namespace media_server;
     test_webrtc_sdp_answer();
     std::cout << "[pass] webrtc_sdp_answer\n";
+    test_webrtc_h265_sdp_answer();
+    std::cout << "[pass] webrtc_h265_sdp_answer\n";
     test_webrtc_opus_mono_default();
     std::cout << "[pass] webrtc_opus_mono_default\n";
+    test_webrtc_transport_contract();
+    std::cout << "[pass] webrtc_transport_contract\n";
     test_whep_session_start_errors();
     std::cout << "[pass] whep_session_start_errors\n";
     test_whep_session_lifecycle();

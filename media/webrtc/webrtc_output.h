@@ -19,7 +19,8 @@ namespace media_server
 
 struct webrtc_output_config
 {
-    int h264_payload_type{-1};
+    codec_id video_codec{codec_id::h264};
+    int video_payload_type{-1};
     int opus_payload_type{-1};
     int opus_channel_count{1};
     std::string rtcp_cname;
@@ -36,6 +37,8 @@ class webrtc_output final : public media_sink
     void on_track(const media_track& track) override;
     void on_frame(const media_frame& frame) override;
     void on_end() override;
+
+    [[nodiscard]] bool valid() const noexcept;
 
    private:
     static int on_packet(
@@ -58,10 +61,11 @@ class webrtc_output final : public media_sink
     };
 
     bool add_h264_track(const media_track& track);
+    bool add_h265_track(const media_track& track);
     bool add_aac_track(const media_track& track);
     bool configure_rtcp(int payload_id);
     void emit_rtcp(int payload_id);
-    void input_h264(track_state& state, const media_frame& frame);
+    void input_video(track_state& state, const media_frame& frame);
     void input_aac(track_state& state, const media_frame& frame);
 
     webrtc_output_config config_;

@@ -112,6 +112,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
     std::string answer_sdp_;
+    std::optional<codec_id> video_codec_;
     std::optional<int> video_payload_type_;
     std::optional<int> audio_payload_type_;
     std::optional<int> audio_channel_count_;
