@@ -111,8 +111,6 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     std::string stream_name_;
     role role_{role::none};
     bool closed_{};
-    std::uint64_t video_config_version_{};
-    std::uint64_t audio_config_version_{};
 };
 
 }    // namespace media_server

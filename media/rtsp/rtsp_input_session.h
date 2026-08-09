@@ -78,7 +78,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     int on_setup(int timeout, std::int64_t duration);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
     int on_packet(avpacket_t* packet);
-    void publish_track_if_needed(const avpacket_t& packet);
+    void update_track_from_packet(const avpacket_t& packet);
 
     boost::asio::io_context& io_;
     stream_registry& registry_;
@@ -94,8 +94,6 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     avpkt2bs_t bitstream_{};
     bool bitstream_created_{};
     bool closed_{};
-    bool video_track_published_{};
-    bool audio_track_published_{};
 };
 
 }    // namespace media_server

@@ -81,7 +81,7 @@ void media_stream::remove_sink(const media_sink& sink)
 
 bool media_stream::update_track(media_track track)
 {
-    if (ended_ || track.id == 0 || track.config_version == 0 || track.codec_config.empty())
+    if (ended_ || track.id == 0 || track.codec_config.empty())
     {
         return false;
     }
@@ -89,9 +89,7 @@ bool media_stream::update_track(media_track track)
     const auto existing = tracks_.find(track.id);
     if (existing != tracks_.end())
     {
-        if (existing->second.kind != track.kind ||
-            existing->second.codec != track.codec ||
-            track.config_version <= existing->second.config_version)
+        if (existing->second.kind != track.kind || existing->second.codec != track.codec)
         {
             return false;
         }
@@ -99,8 +97,13 @@ bool media_stream::update_track(media_track track)
             existing->second.channel_count == track.channel_count &&
             existing->second.codec_config == track.codec_config)
         {
-            return true;
+            return false;
         }
+        track.config_version = existing->second.config_version + 1;
+    }
+    else
+    {
+        track.config_version = 1;
     }
 
     const auto id = track.id;

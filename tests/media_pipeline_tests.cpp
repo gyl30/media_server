@@ -68,7 +68,6 @@ media_track make_video_track()
         .clock_rate = 90'000,
         .channel_count = 0,
         .codec_config = h264_config,
-        .config_version = 1,
     };
 }
 
@@ -81,23 +80,20 @@ media_track make_audio_track()
         .clock_rate = 44'100,
         .channel_count = 2,
         .codec_config = aac_asc,
-        .config_version = 1,
     };
 }
 
-media_track make_video_track(std::uint64_t config_version)
+media_track make_video_track(std::uint8_t config_marker)
 {
     auto track = make_video_track();
-    track.config_version = config_version;
-    track.codec_config.push_back(static_cast<std::uint8_t>(config_version));
+    track.codec_config.push_back(config_marker);
     return track;
 }
 
-media_track make_audio_track(std::uint64_t config_version)
+media_track make_audio_track(std::uint8_t config_marker)
 {
     auto track = make_audio_track();
-    track.config_version = config_version;
-    track.codec_config.push_back(static_cast<std::uint8_t>(config_version));
+    track.codec_config.push_back(config_marker);
     return track;
 }
 
@@ -459,28 +455,27 @@ void test_media_stream_fanout_and_reentrancy()
     require(frame_after->frames == 0 && frame_after->ends == 1, "publish stops callbacks after end");
 
     media_stream version_stream("live/version");
-    require(version_stream.update_track(make_video_track()), "version first track");
+    auto first_version = make_video_track();
+    first_version.config_version = 99;
+    require(version_stream.update_track(std::move(first_version)), "version first track");
+    require(version_stream.tracks().front().config_version == 1, "stream owns initial config version");
     auto version_observer = std::make_shared<track_version_sink>();
     require(version_stream.add_sink(version_observer), "version observer add");
-    require(!version_stream.update_track(make_video_track()), "version duplicate rejected");
-    auto identical_update = make_video_track();
-    identical_update.config_version = 2;
-    require(version_stream.update_track(std::move(identical_update)), "identical config update accepted");
+    require(!version_stream.update_track(make_video_track()), "identical config ignored");
     require(
         version_observer->versions == std::vector<std::pair<track_id, std::uint64_t>>{{video_track_id, 1}},
-        "identical config update not fanned out");
-    require(version_stream.tracks().front().config_version == 1, "identical config keeps semantic version");
-    auto zero_version = make_audio_track();
-    zero_version.config_version = 0;
-    require(!version_stream.update_track(std::move(zero_version)), "version zero rejected");
+        "identical config not fanned out");
     auto changed_kind = make_video_track(2);
     changed_kind.kind = media_kind::audio;
     require(!version_stream.update_track(std::move(changed_kind)), "track kind change rejected");
     auto changed_codec = make_video_track(2);
     changed_codec.codec = codec_id::aac;
     require(!version_stream.update_track(std::move(changed_codec)), "track codec change rejected");
-    require(version_stream.update_track(make_video_track(2)), "version increase accepted");
-    require(!version_stream.update_track(make_video_track()), "older version rejected");
+    auto second_version = make_video_track(2);
+    second_version.config_version = 99;
+    require(version_stream.update_track(std::move(second_version)), "changed config accepted");
+    require(version_stream.tracks().front().config_version == 2, "stream increments config version");
+    require(!version_stream.update_track(make_video_track(2)), "changed config duplicate ignored");
 
     media_stream update_reentrant_stream("live/update-reentrant");
     require(update_reentrant_stream.update_track(make_video_track()), "reentrant first track");
