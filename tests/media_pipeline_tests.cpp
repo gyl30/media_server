@@ -121,7 +121,6 @@ media_frame make_video_frame(std::int64_t pts_ns, bool key_frame)
         .track = video_track_id,
         .dts_ns = pts_ns,
         .pts_ns = pts_ns,
-        .duration_ns = 40'000'000,
         .key_frame = key_frame,
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes)),
     };
@@ -136,7 +135,6 @@ media_frame make_audio_frame(std::int64_t pts_ns)
         .track = audio_track_id,
         .dts_ns = pts_ns,
         .pts_ns = pts_ns,
-        .duration_ns = 23'219'954,
         .key_frame = false,
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(adts)),
     };
@@ -570,6 +568,19 @@ void test_hls_output()
     reconfigured.on_end();
     require(reconfigured.segment_count() == 2U, "hls config change starts new segment");
 
+    hls_output audio_only(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
+    audio_only.on_track(make_audio_track());
+    audio_only.on_frame(make_audio_frame(0));
+    audio_only.on_frame(make_audio_frame(500'000'000));
+    require(audio_only.segment_count() == 0U, "hls audio waits target duration");
+    audio_only.on_frame(make_audio_frame(1'000'000'000));
+    require(audio_only.segment_count() == 1U, "hls audio target duration segment");
+    audio_only.on_end();
+    require(audio_only.segment_count() == 2U, "hls audio final segment");
+    const auto audio_segment = audio_only.segment(0);
+    require(audio_segment.has_value() && !audio_segment->empty(), "hls audio segment data");
+    require(audio_segment->size() % 188U == 0U, "hls audio mpeg-ts alignment");
+
     std::size_t flv_end_count = 0;
     const std::vector<media_track> flv_tracks{make_video_track()};
     http_flv_output flv_output(
@@ -733,7 +744,6 @@ void test_webrtc_opus_channel_count(int channel_count)
             .track = audio_track_id,
             .dts_ns = pts_ns,
             .pts_ns = pts_ns,
-            .duration_ns = 23'219'954,
             .key_frame = false,
             .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
         });
@@ -780,7 +790,6 @@ void test_webrtc_rtcp_sender()
             .track = audio_track_id,
             .dts_ns = audio_pts_ns,
             .pts_ns = audio_pts_ns,
-            .duration_ns = 23'219'954,
             .key_frame = false,
             .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
         });

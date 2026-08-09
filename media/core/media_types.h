@@ -44,7 +44,6 @@ struct media_frame
     track_id track{};
     std::int64_t dts_ns{};
     std::int64_t pts_ns{};
-    std::int64_t duration_ns{};
     bool key_frame{};
 
     // H.264 为 Annex-B access unit；AAC 为完整 ADTS frame。

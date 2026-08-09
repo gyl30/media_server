@@ -356,21 +356,12 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     }
 
     track_id id{};
-    std::int64_t duration_ns{};
     if (packet->stream->codecid == AVCODEC_VIDEO_H264)
     {
         id = video_track_id;
-        if (packet->stream->fps > 0.0)
-        {
-            duration_ns = static_cast<std::int64_t>(1'000'000'000.0 / packet->stream->fps);
-        }
     } else if (packet->stream->codecid == AVCODEC_AUDIO_AAC)
     {
         id = audio_track_id;
-        if (packet->stream->sample_rate > 0)
-        {
-            duration_ns = 1'024'000'000'000LL / packet->stream->sample_rate;
-        }
     }
     else
     {
@@ -383,7 +374,6 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
         .track = id,
         .dts_ns = milliseconds_to_ns(packet->dts),
         .pts_ns = milliseconds_to_ns(packet->pts),
-        .duration_ns = duration_ns,
         .key_frame = (packet->flags & AVPACKET_FLAG_KEY) != 0,
         .payload = std::move(payload),
     };
