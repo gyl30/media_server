@@ -98,6 +98,10 @@ bool media_stream::update_track(media_track track)
     for (const auto& sink : sink_snapshot())
     {
         sink->on_track(track);
+        if (ended_)
+        {
+            break;
+        }
     }
     return true;
 }
@@ -110,9 +114,12 @@ bool media_stream::publish(media_frame frame)
     }
 
     for (const auto& sink : sink_snapshot())
-
     {
         sink->on_frame(frame);
+        if (ended_)
+        {
+            break;
+        }
     }
     return true;
 }
