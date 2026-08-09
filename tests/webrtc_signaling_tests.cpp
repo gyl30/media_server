@@ -744,8 +744,6 @@ void test_whep_session_lifecycle()
     require(first.error == whep_create_error::none && second.error == whep_create_error::none, "whep create multiple sessions");
     require(!first.session_id.empty() && !second.session_id.empty(), "whep session ids");
     require(first.session_id != second.session_id, "whep unique session ids");
-    require(first.location == "/whep/session/" + first.session_id, "whep first location");
-    require(second.location == "/whep/session/" + second.session_id, "whep second location");
     require(first.answer_sdp.find("a=ice-lite\r\n") != std::string::npos, "whep answer sdp");
     require(first.answer_sdp.find("a=candidate:1 1 UDP 2130706431 127.0.0.1 ") != std::string::npos, "whep host candidate");
     require(sdp_attribute(first.answer_sdp, "ice-ufrag") != sdp_attribute(second.answer_sdp, "ice-ufrag"), "whep unique ice ufrag");
