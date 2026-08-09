@@ -308,17 +308,6 @@ bool whep_session::srtp_started() const noexcept
     return srtp_ != nullptr;
 }
 
-std::optional<boost::asio::ip::udp::endpoint> whep_session::remote_endpoint() const
-{
-    return remote_endpoint_;
-}
-
-const std::optional<dtls_srtp_keying_material>& whep_session::srtp_keying_material() const noexcept
-{
-    static const std::optional<dtls_srtp_keying_material> empty;
-    return dtls_ == nullptr ? empty : dtls_->srtp_keying_material();
-}
-
 const whep_rtcp_stats& whep_session::rtcp_stats() const noexcept
 {
     return rtcp_stats_;
