@@ -49,14 +49,26 @@ bool media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
         }
     }
 
-    // 晚加入输出只重放轨道配置，不缓存历史媒体帧。
-    for (const auto& [id, track] : tracks_)
-    {
-        static_cast<void>(id);
-        sink->on_track(track);
-    }
-
+    // 先挂接再重放轨道配置，保证 on_track 中 remove_sink/end 的重入语义有效。
+    const auto track_snapshot = tracks();
     sinks_.push_back(sink);
+    for (const auto& track : track_snapshot)
+    {
+        sink->on_track(track);
+        if (ended_)
+        {
+            return false;
+        }
+
+        const auto attached = std::any_of(sinks_.begin(), sinks_.end(), [sink_ptr = sink.get()](const std::weak_ptr<media_sink>& weak_sink) {
+            const auto current = weak_sink.lock();
+            return current && current.get() == sink_ptr;
+        });
+        if (!attached)
+        {
+            return false;
+        }
+    }
     return true;
 }
 

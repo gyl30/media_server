@@ -159,6 +159,49 @@ private:
     media_stream& stream_;
 };
 
+class track_removing_sink final : public media_sink
+{
+public:
+    explicit track_removing_sink(media_stream& stream) : stream_(stream) {}
+
+    void on_track(const media_track&) override
+    {
+        ++tracks;
+        removed = stream_.remove_sink(this);
+    }
+    void on_frame(const media_frame&) override { ++frames; }
+    void on_end() override { ++ends; }
+
+    std::size_t tracks{};
+    std::size_t frames{};
+    std::size_t ends{};
+    bool removed{};
+
+private:
+    media_stream& stream_;
+};
+
+class track_ending_sink final : public media_sink
+{
+public:
+    explicit track_ending_sink(media_stream& stream) : stream_(stream) {}
+
+    void on_track(const media_track&) override
+    {
+        ++tracks;
+        stream_.end();
+    }
+    void on_frame(const media_frame&) override { ++frames; }
+    void on_end() override { ++ends; }
+
+    std::size_t tracks{};
+    std::size_t frames{};
+    std::size_t ends{};
+
+private:
+    media_stream& stream_;
+};
+
 void test_internal_format_contract()
 {
     const auto avcc = h264_annex_b_to_avcc(h264_config);
@@ -201,6 +244,26 @@ void test_media_stream_fanout_and_reentrancy()
 
     stream.end();
     require(first->ends == 1 && second->ends == 1, "stream end fanout");
+
+    media_stream track_remove_stream("live/track-remove");
+    require(track_remove_stream.update_track(make_video_track()), "track remove video");
+    require(track_remove_stream.update_track(make_audio_track()), "track remove audio");
+    auto track_removing = std::make_shared<track_removing_sink>(track_remove_stream);
+    require(!track_remove_stream.add_sink(track_removing), "track callback removes pending sink");
+    require(track_removing->removed, "track callback remove succeeds");
+    require(track_removing->tracks == 1, "removed sink stops track replay");
+    require(track_remove_stream.publish(make_video_frame(0, true)), "track remove publish");
+    require(track_removing->frames == 0, "track removed sink receives no frame");
+
+    media_stream track_end_stream("live/track-end");
+    require(track_end_stream.update_track(make_video_track()), "track end video");
+    require(track_end_stream.update_track(make_audio_track()), "track end audio");
+    auto track_ending = std::make_shared<track_ending_sink>(track_end_stream);
+    require(!track_end_stream.add_sink(track_ending), "track callback ends stream");
+    require(track_end_stream.ended(), "track callback stream ended");
+    require(track_ending->tracks == 1, "ended stream stops track replay");
+    require(track_ending->ends == 1, "new sink receives end during track replay");
+    require(!track_end_stream.remove_sink(track_ending.get()), "ended stream clears new sink");
 }
 
 void test_hls_output()
