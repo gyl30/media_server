@@ -1,7 +1,7 @@
 #include "media/rtsp/rtsp_output_session.h"
 
 #include "media/codec/codec_utils.h"
-#include "media/core/log.h"
+#include <spdlog/spdlog.h>
 
 extern "C"
 {
@@ -124,7 +124,7 @@ void rtsp_output_session::on_frame(const media_frame& frame)
         frame.key_frame ? 1 : 0);
     if (result < 0)
     {
-        log_line("rtsp_output", "mux failed", result);
+        spdlog::error("rtsp output mux failed result {}", result);
     }
 }
 
@@ -265,7 +265,7 @@ void rtsp_output_session::on_close()
         stream_->remove_sink(this);
     }
     stream_.reset();
-    log_line("rtsp_output", "close", stream_name_);
+    spdlog::debug("rtsp output close {}", stream_name_);
 }
 
 void rtsp_output_session::close()
@@ -310,7 +310,7 @@ int rtsp_output_session::on_describe(std::string_view uri)
         return rtsp_server_reply_describe(server_, 415, "");
     }
     sdp << media_sdp;
-    log_line("rtsp_output", "describe", stream_name_);
+    spdlog::info("rtsp output describe {}", stream_name_);
     return rtsp_server_reply_describe(server_, 200, sdp.str().c_str());
 }
 

@@ -14,6 +14,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(spdlog REQUIRED)
 
 include(CTest)
 include(cmake/boost.cmake)
@@ -21,6 +22,7 @@ include(cmake/ireader.cmake)
 include(cmake/srtp.cmake)
 
 add_library(media_core STATIC
+    media/core/log.cpp
     media/core/media_stream.cpp
     media/core/stream_registry.cpp
     media/codec/codec_utils.cpp
@@ -61,6 +63,7 @@ target_link_libraries(media_core PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     libSRTP::srtp2
+    spdlog::spdlog
     ${MEDIA_SERVER_BOOST_LIBS}
 )
 

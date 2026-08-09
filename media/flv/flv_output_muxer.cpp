@@ -1,7 +1,7 @@
 #include "media/flv/flv_output_muxer.h"
 
 #include "media/codec/codec_utils.h"
-#include "media/core/log.h"
+#include <spdlog/spdlog.h>
 
 extern "C"
 {
@@ -43,7 +43,7 @@ void flv_output_muxer::on_track(const media_track& track)
             0);
         if (result != 0)
         {
-            log_line("flv", "prime h264 config failed", result);
+            spdlog::error("flv prime h264 config failed result {}", result);
         }
     }
 }
@@ -76,7 +76,7 @@ void flv_output_muxer::on_frame(const media_frame& frame)
     if (result != 0)
 
     {
-        log_line("flv", "mux failed track", frame.track, "result", result);
+        spdlog::error("flv mux failed track {} result {}", frame.track, result);
     }
 }
 
