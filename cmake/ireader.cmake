@@ -33,6 +33,7 @@ target_compile_definitions(ireader_media PRIVATE
     MPEG_H26X_VERIFY
     MPEG_GUESS_STREAM
     MPEG_ZERO_PAYLOAD_LENGTH
+    RTP_MPEG4_GENERIC_SKIP_ADTS
 )
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ireader_media PRIVATE

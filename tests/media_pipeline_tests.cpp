@@ -23,7 +23,9 @@ extern "C"
 #include "rtmp-chunk-header.h"
 #include "rtmp-client.h"
 #include "rtmp-msgtypeid.h"
+#include "rtp-packet.h"
 #include "rtsp-client.h"
+#include "rtsp-demuxer.h"
 #include "rtsp-muxer.h"
 #include "rtsp-payloads.h"
 }
@@ -545,6 +547,35 @@ struct rtp_timeline_capture
 {
     std::vector<std::uint32_t> timestamps;
 };
+
+struct rtsp_aac_capture
+{
+    rtsp_demuxer_t* demuxer{};
+    avpkt2bs_t bitstream{};
+    std::vector<std::uint8_t> rtp_payload;
+    std::vector<std::uint8_t> frame;
+};
+
+int capture_rtsp_aac_frame(void* param, avpacket_t* packet)
+{
+    auto& capture = *static_cast<rtsp_aac_capture*>(param);
+    const auto bytes = avpkt2bs_input(&capture.bitstream, packet);
+    if (bytes > 0)
+    {
+        capture.frame.assign(capture.bitstream.ptr, capture.bitstream.ptr + bytes);
+    }
+    return bytes < 0 ? bytes : 0;
+}
+
+int forward_rtsp_aac_rtp(void* param, int, const void* packet, int bytes, std::uint32_t, int)
+{
+    auto& capture = *static_cast<rtsp_aac_capture*>(param);
+    rtp_packet_t decoded{};
+    require(rtp_packet_deserialize(&decoded, packet, bytes) == 0, "rtsp aac rtp packet");
+    const auto* begin = static_cast<const std::uint8_t*>(decoded.payload);
+    capture.rtp_payload.assign(begin, begin + decoded.payloadlen);
+    return rtsp_demuxer_input(capture.demuxer, packet, bytes);
+}
 
 struct rtsp_client_capture
 {
@@ -1414,6 +1445,37 @@ void test_rtsp_muxer_zero_origin_timeline()
     rtsp_muxer_destroy(muxer);
 }
 
+void test_rtsp_aac_adts_round_trip()
+{
+    rtsp_aac_capture capture;
+    require(avpkt2bs_create(&capture.bitstream) == 0, "rtsp aac bitstream create");
+    capture.demuxer = rtsp_demuxer_create(0, 0, &capture_rtsp_aac_frame, &capture);
+    require(capture.demuxer != nullptr, "rtsp aac demuxer create");
+    constexpr int payload_type = 96;
+    constexpr std::string_view fmtp = "96 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1210";
+    require(rtsp_demuxer_add_payload(capture.demuxer, 44'100, payload_type, "MPEG4-GENERIC", fmtp.data()) == 0, "rtsp aac demuxer payload");
+
+    auto* muxer = rtsp_muxer_create(&forward_rtsp_aac_rtp, &capture);
+    require(muxer != nullptr, "rtsp aac muxer create");
+    const auto payload = rtsp_muxer_add_payload(
+        muxer, "RTP/AVP", 44'100, payload_type, "MPEG4-GENERIC", 0, 0x12345678U, 0, aac_asc.data(), static_cast<int>(aac_asc.size()));
+    require(payload >= 0, "rtsp aac muxer payload");
+    const auto media = rtsp_muxer_add_media(muxer, payload, RTP_PAYLOAD_MP4A, aac_asc.data(), static_cast<int>(aac_asc.size()));
+    require(media >= 0, "rtsp aac muxer media");
+
+    const auto frame = make_audio_frame(20'000'000);
+    require(rtsp_muxer_input(muxer, media, 20, 20, frame.payload->data(), static_cast<int>(frame.payload->size()), 0) == 0, "rtsp aac muxer input");
+    require(capture.rtp_payload.size() >= 4U && capture.rtp_payload[0] == 0U && capture.rtp_payload[1] == 16U, "rtsp aac rtp au header");
+    const auto au_size = (static_cast<std::size_t>(capture.rtp_payload[2]) << 5U) | (capture.rtp_payload[3] >> 3U);
+    const auto raw_aac = std::span<const std::uint8_t>(*frame.payload).subspan(7U);
+    require(au_size == raw_aac.size() && std::ranges::equal(std::span<const std::uint8_t>(capture.rtp_payload).subspan(4U), raw_aac),
+            "rtsp aac rtp carries raw access unit");
+    require(capture.frame == *frame.payload, "rtsp aac round trip keeps one adts header");
+    require(rtsp_muxer_destroy(muxer) == 0, "rtsp aac muxer destroy");
+    require(rtsp_demuxer_destroy(capture.demuxer) == 0, "rtsp aac demuxer destroy");
+    require(avpkt2bs_destroy(&capture.bitstream) == 0, "rtsp aac bitstream destroy");
+}
+
 void test_media_stream_fanout_and_reentrancy()
 {
     media_stream stream("live/test");
@@ -1927,6 +1989,8 @@ int main()
     std::cout << "[pass] h265_output_paths\n";
     media_server::test_rtsp_muxer_zero_origin_timeline();
     std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
+    media_server::test_rtsp_aac_adts_round_trip();
+    std::cout << "[pass] rtsp_aac_adts_round_trip\n";
     media_server::test_rtsp_client_session_timeout();
     std::cout << "[pass] rtsp_client_session_timeout\n";
     media_server::test_tcp_listener_startup_error();
