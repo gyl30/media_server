@@ -13,21 +13,15 @@ struct rtmp_timestamp_state
     bool started{};
 };
 
-[[nodiscard]] constexpr std::int64_t rtmp_timestamp_delta(
-    std::uint32_t current,
-    std::uint32_t previous) noexcept
+[[nodiscard]] constexpr std::int64_t rtmp_timestamp_delta(std::uint32_t current, std::uint32_t previous) noexcept
 {
     constexpr std::int64_t cycle = std::int64_t{1} << 32;
     constexpr std::uint32_t half_cycle = std::uint32_t{1} << 31;
     const auto delta = current - previous;
-    return delta < half_cycle
-        ? static_cast<std::int64_t>(delta)
-        : static_cast<std::int64_t>(delta) - cycle;
+    return delta < half_cycle ? static_cast<std::int64_t>(delta) : static_cast<std::int64_t>(delta) - cycle;
 }
 
-[[nodiscard]] inline std::int64_t unwrap_rtmp_timestamp(
-    std::uint32_t timestamp,
-    rtmp_timestamp_state& state) noexcept
+[[nodiscard]] inline std::int64_t unwrap_rtmp_timestamp(std::uint32_t timestamp, rtmp_timestamp_state& state) noexcept
 {
     if (!state.started)
     {

@@ -14,10 +14,7 @@ namespace media_server
 class rtsp_server final
 {
    public:
-    rtsp_server(
-        boost::asio::io_context& io,
-        stream_registry& registry,
-        std::uint16_t port);
+    rtsp_server(boost::asio::io_context& io, stream_registry& registry, std::uint16_t port);
 
     [[nodiscard]] boost::system::error_code start();
     void close();

@@ -6,13 +6,17 @@
 namespace media_server
 {
 http_flv_output::http_flv_output(std::span<const media_track> tracks, write_handler on_write, end_handler on_end)
-    : on_write_(std::move(on_write)), on_end_(std::move(on_end)), muxer_([this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp) {
-          static_cast<void>(timestamp);
-          if (writer_ != nullptr)
+    : on_write_(std::move(on_write)),
+      on_end_(std::move(on_end)),
+      muxer_(
+          [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
           {
-              static_cast<void>(flv_writer_input(writer_, type, data.data(), data.size(), timestamp));
-          }
-      })
+              static_cast<void>(timestamp);
+              if (writer_ != nullptr)
+              {
+                  static_cast<void>(flv_writer_input(writer_, type, data.data(), data.size(), timestamp));
+              }
+          })
 {
     bool has_audio = false;
     bool has_video = false;

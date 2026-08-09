@@ -19,17 +19,12 @@ namespace
 
 constexpr std::string_view dtls_srtp_exporter_label = "EXTRACTOR-dtls_srtp";
 
-int accept_peer_certificate(int, X509_STORE_CTX*)
-{
-    return 1;
-}
+int accept_peer_certificate(int, X509_STORE_CTX*) { return 1; }
 
 std::string lower_copy(std::string_view value)
 {
     std::string result(value);
-    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
+    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     return result;
 }
 
@@ -114,13 +109,8 @@ std::optional<srtp_profile_size> profile_size(std::string_view profile)
 
 }    // namespace
 
-dtls_transport::dtls_transport(
-    std::shared_ptr<dtls_certificate> certificate,
-    std::string remote_fingerprint,
-    send_callback send)
-    : certificate_(std::move(certificate)),
-      remote_fingerprint_(std::move(remote_fingerprint)),
-      send_(std::move(send))
+dtls_transport::dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_callback send)
+    : certificate_(std::move(certificate)), remote_fingerprint_(std::move(remote_fingerprint)), send_(std::move(send))
 {
 }
 
@@ -133,14 +123,14 @@ bool dtls_transport::start()
     }
 
     context_.reset(SSL_CTX_new(DTLS_method()));
-    if (!context_ ||
-        SSL_CTX_set_min_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
+    if (!context_ || SSL_CTX_set_min_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
         SSL_CTX_set_max_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
-        SSL_CTX_set_cipher_list(context_.get(), "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384") != 1 ||
+        SSL_CTX_set_cipher_list(
+            context_.get(), "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384") !=
+            1 ||
         SSL_CTX_set_tlsext_use_srtp(context_.get(), "SRTP_AEAD_AES_128_GCM:SRTP_AES128_CM_SHA1_80") != 0 ||
         SSL_CTX_use_certificate(context_.get(), certificate_->certificate()) != 1 ||
-        SSL_CTX_use_PrivateKey(context_.get(), certificate_->private_key()) != 1 ||
-        SSL_CTX_check_private_key(context_.get()) != 1)
+        SSL_CTX_use_PrivateKey(context_.get(), certificate_->private_key()) != 1 || SSL_CTX_check_private_key(context_.get()) != 1)
     {
         spdlog::debug("webrtc dtls context configure failed");
         close();
@@ -250,15 +240,9 @@ bool dtls_transport::handle_timeout()
     return pump_outgoing();
 }
 
-bool dtls_transport::connected() const noexcept
-{
-    return srtp_keying_material_.has_value();
-}
+bool dtls_transport::connected() const noexcept { return srtp_keying_material_.has_value(); }
 
-bool dtls_transport::valid_sha256_fingerprint(std::string_view fingerprint)
-{
-    return parse_sha256_fingerprint(fingerprint).has_value();
-}
+bool dtls_transport::valid_sha256_fingerprint(std::string_view fingerprint) { return parse_sha256_fingerprint(fingerprint).has_value(); }
 
 std::optional<std::chrono::milliseconds> dtls_transport::timeout() const
 {
@@ -273,17 +257,12 @@ std::optional<std::chrono::milliseconds> dtls_transport::timeout() const
         return std::nullopt;
     }
 
-    const auto duration =
-        std::chrono::seconds(value.tv_sec) +
-        std::chrono::microseconds(value.tv_usec);
+    const auto duration = std::chrono::seconds(value.tv_sec) + std::chrono::microseconds(value.tv_usec);
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration);
     return milliseconds.count() > 0 ? milliseconds : std::chrono::milliseconds(1);
 }
 
-const std::optional<dtls_srtp_keying_material>& dtls_transport::srtp_keying_material() const noexcept
-{
-    return srtp_keying_material_;
-}
+const std::optional<dtls_srtp_keying_material>& dtls_transport::srtp_keying_material() const noexcept { return srtp_keying_material_; }
 
 bool dtls_transport::is_dtls_packet(std::span<const std::uint8_t> packet) noexcept
 {
@@ -357,14 +336,7 @@ std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_mate
     const auto total_size = 2U * (sizes->key_size + sizes->salt_size);
     std::vector<std::uint8_t> raw(total_size);
     if (SSL_export_keying_material(
-            ssl_.get(),
-            raw.data(),
-            raw.size(),
-            dtls_srtp_exporter_label.data(),
-            dtls_srtp_exporter_label.size(),
-            nullptr,
-            0,
-            0) != 1)
+            ssl_.get(), raw.data(), raw.size(), dtls_srtp_exporter_label.data(), dtls_srtp_exporter_label.size(), nullptr, 0, 0) != 1)
     {
         return std::nullopt;
     }
@@ -418,19 +390,14 @@ bool dtls_transport::pump_outgoing()
                 return false;
             }
 
-            const auto payload_size =
-                (static_cast<std::size_t>(output[offset + 11U]) << 8U) |
-                static_cast<std::size_t>(output[offset + 12U]);
+            const auto payload_size = (static_cast<std::size_t>(output[offset + 11U]) << 8U) | static_cast<std::size_t>(output[offset + 12U]);
             const auto record_size = record_header_size + payload_size;
             if (record_size > output.size() - offset)
             {
                 return false;
             }
 
-            spdlog::trace(
-                "webrtc dtls datagram output size {} content_type {}",
-                record_size,
-                output[offset]);
+            spdlog::trace("webrtc dtls datagram output size {} content_type {}", record_size, output[offset]);
             send_(std::span<const std::uint8_t>(output.data() + offset, record_size));
             offset += record_size;
         }
@@ -438,14 +405,8 @@ bool dtls_transport::pump_outgoing()
     return true;
 }
 
-void dtls_transport::ssl_context_deleter::operator()(SSL_CTX* value) const noexcept
-{
-    SSL_CTX_free(value);
-}
+void dtls_transport::ssl_context_deleter::operator()(SSL_CTX* value) const noexcept { SSL_CTX_free(value); }
 
-void dtls_transport::ssl_deleter::operator()(SSL* value) const noexcept
-{
-    SSL_free(value);
-}
+void dtls_transport::ssl_deleter::operator()(SSL* value) const noexcept { SSL_free(value); }
 
 }    // namespace media_server

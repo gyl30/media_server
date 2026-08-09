@@ -89,10 +89,7 @@ void webrtc_output::on_track(const media_track& track)
     }
 }
 
-bool webrtc_output::valid() const noexcept
-{
-    return muxer_ != nullptr;
-}
+bool webrtc_output::valid() const noexcept { return muxer_ != nullptr; }
 
 void webrtc_output::on_frame(const media_frame& frame)
 {
@@ -113,17 +110,9 @@ void webrtc_output::on_frame(const media_frame& frame)
     }
 }
 
-void webrtc_output::on_end()
-{
-}
+void webrtc_output::on_end() {}
 
-int webrtc_output::on_packet(
-    void* param,
-    int,
-    const void* data,
-    int bytes,
-    std::uint32_t,
-    int)
+int webrtc_output::on_packet(void* param, int, const void* data, int bytes, std::uint32_t, int)
 {
     auto* self = static_cast<webrtc_output*>(param);
     if (bytes <= 0 || data == nullptr)
@@ -131,31 +120,21 @@ int webrtc_output::on_packet(
         return 0;
     }
 
-    const auto packet = std::span<const std::uint8_t>(
-        static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes));
+    const auto packet = std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes));
     if (packet.size() >= 12U)
     {
-        const auto sequence = static_cast<std::uint16_t>(
-            (static_cast<std::uint16_t>(packet[2]) << 8U) |
-            static_cast<std::uint16_t>(packet[3]));
-        const auto timestamp =
-            (static_cast<std::uint32_t>(packet[4]) << 24U) |
-            (static_cast<std::uint32_t>(packet[5]) << 16U) |
-            (static_cast<std::uint32_t>(packet[6]) << 8U) |
-            static_cast<std::uint32_t>(packet[7]);
-        const auto ssrc =
-            (static_cast<std::uint32_t>(packet[8]) << 24U) |
-            (static_cast<std::uint32_t>(packet[9]) << 16U) |
-            (static_cast<std::uint32_t>(packet[10]) << 8U) |
-            static_cast<std::uint32_t>(packet[11]);
-        spdlog::trace(
-            "webrtc rtp packet pt {} seq {} timestamp {} ssrc {} marker {} size {}",
-            packet[1] & 0x7fU,
-            sequence,
-            timestamp,
-            ssrc,
-            (packet[1] & 0x80U) != 0,
-            packet.size());
+        const auto sequence = static_cast<std::uint16_t>((static_cast<std::uint16_t>(packet[2]) << 8U) | static_cast<std::uint16_t>(packet[3]));
+        const auto timestamp = (static_cast<std::uint32_t>(packet[4]) << 24U) | (static_cast<std::uint32_t>(packet[5]) << 16U) |
+                               (static_cast<std::uint32_t>(packet[6]) << 8U) | static_cast<std::uint32_t>(packet[7]);
+        const auto ssrc = (static_cast<std::uint32_t>(packet[8]) << 24U) | (static_cast<std::uint32_t>(packet[9]) << 16U) |
+                          (static_cast<std::uint32_t>(packet[10]) << 8U) | static_cast<std::uint32_t>(packet[11]);
+        spdlog::trace("webrtc rtp packet pt {} seq {} timestamp {} ssrc {} marker {} size {}",
+                      packet[1] & 0x7fU,
+                      sequence,
+                      timestamp,
+                      ssrc,
+                      (packet[1] & 0x80U) != 0,
+                      packet.size());
     }
 
     if (self->rtp_handler_)
@@ -178,16 +157,7 @@ bool webrtc_output::add_h264_track(const media_track& track)
         return false;
     }
     const auto payload_index = rtsp_muxer_add_payload(
-        muxer_,
-        "RTP/AVP",
-        90'000,
-        config_.video_payload_type,
-        "H264",
-        0,
-        random_u32(),
-        0,
-        avcc.data(),
-        static_cast<int>(avcc.size()));
+        muxer_, "RTP/AVP", 90'000, config_.video_payload_type, "H264", 0, random_u32(), 0, avcc.data(), static_cast<int>(avcc.size()));
     if (payload_index < 0)
     {
         spdlog::error("webrtc add h264 payload failed");
@@ -198,25 +168,23 @@ bool webrtc_output::add_h264_track(const media_track& track)
         return false;
     }
 
-    const auto media_id = rtsp_muxer_add_media(
-        muxer_, payload_index, RTP_PAYLOAD_H264, avcc.data(), static_cast<int>(avcc.size()));
+    const auto media_id = rtsp_muxer_add_media(muxer_, payload_index, RTP_PAYLOAD_H264, avcc.data(), static_cast<int>(avcc.size()));
     if (media_id < 0)
     {
         spdlog::error("webrtc add h264 media failed");
         return false;
     }
 
-    tracks_.insert_or_assign(
-        track.id,
-        track_state{
-            .codec = track.codec,
-            .transcoder = {},
-            .audio_pts_ns = 0,
-            .media_id = media_id,
-            .payload_id = payload_index,
-            .waiting_key_frame = true,
-            .audio_pts_started = false,
-        });
+    tracks_.insert_or_assign(track.id,
+                             track_state{
+                                 .codec = track.codec,
+                                 .transcoder = {},
+                                 .audio_pts_ns = 0,
+                                 .media_id = media_id,
+                                 .payload_id = payload_index,
+                                 .waiting_key_frame = true,
+                                 .audio_pts_started = false,
+                             });
     spdlog::debug("webrtc h264 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
@@ -234,16 +202,7 @@ bool webrtc_output::add_h265_track(const media_track& track)
         return false;
     }
     const auto payload_index = rtsp_muxer_add_payload(
-        muxer_,
-        "RTP/AVP",
-        90'000,
-        config_.video_payload_type,
-        "H265",
-        0,
-        random_u32(),
-        0,
-        hvcc.data(),
-        static_cast<int>(hvcc.size()));
+        muxer_, "RTP/AVP", 90'000, config_.video_payload_type, "H265", 0, random_u32(), 0, hvcc.data(), static_cast<int>(hvcc.size()));
     if (payload_index < 0)
     {
         spdlog::error("webrtc add h265 payload failed");
@@ -254,25 +213,23 @@ bool webrtc_output::add_h265_track(const media_track& track)
         return false;
     }
 
-    const auto media_id = rtsp_muxer_add_media(
-        muxer_, payload_index, RTP_PAYLOAD_H265, hvcc.data(), static_cast<int>(hvcc.size()));
+    const auto media_id = rtsp_muxer_add_media(muxer_, payload_index, RTP_PAYLOAD_H265, hvcc.data(), static_cast<int>(hvcc.size()));
     if (media_id < 0)
     {
         spdlog::error("webrtc add h265 media failed");
         return false;
     }
 
-    tracks_.insert_or_assign(
-        track.id,
-        track_state{
-            .codec = track.codec,
-            .transcoder = {},
-            .audio_pts_ns = 0,
-            .media_id = media_id,
-            .payload_id = payload_index,
-            .waiting_key_frame = true,
-            .audio_pts_started = false,
-        });
+    tracks_.insert_or_assign(track.id,
+                             track_state{
+                                 .codec = track.codec,
+                                 .transcoder = {},
+                                 .audio_pts_ns = 0,
+                                 .media_id = media_id,
+                                 .payload_id = payload_index,
+                                 .waiting_key_frame = true,
+                                 .audio_pts_started = false,
+                             });
     spdlog::debug("webrtc h265 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
@@ -297,17 +254,7 @@ bool webrtc_output::add_aac_track(const media_track& track)
         return false;
     }
 
-    const auto payload_index = rtsp_muxer_add_payload(
-        muxer_,
-        "RTP/AVP",
-        48'000,
-        config_.opus_payload_type,
-        "opus",
-        0,
-        random_u32(),
-        0,
-        nullptr,
-        0);
+    const auto payload_index = rtsp_muxer_add_payload(muxer_, "RTP/AVP", 48'000, config_.opus_payload_type, "opus", 0, random_u32(), 0, nullptr, 0);
     if (payload_index < 0)
     {
         spdlog::error("webrtc add opus payload failed");
@@ -325,17 +272,16 @@ bool webrtc_output::add_aac_track(const media_track& track)
         return false;
     }
 
-    tracks_.insert_or_assign(
-        track.id,
-        track_state{
-            .codec = track.codec,
-            .transcoder = std::move(transcoder),
-            .audio_pts_ns = 0,
-            .media_id = media_id,
-            .payload_id = payload_index,
-            .waiting_key_frame = false,
-            .audio_pts_started = false,
-        });
+    tracks_.insert_or_assign(track.id,
+                             track_state{
+                                 .codec = track.codec,
+                                 .transcoder = std::move(transcoder),
+                                 .audio_pts_ns = 0,
+                                 .media_id = media_id,
+                                 .payload_id = payload_index,
+                                 .waiting_key_frame = false,
+                                 .audio_pts_started = false,
+                             });
     spdlog::debug("webrtc opus output track ready id {} pt {} channels {}", track.id, config_.opus_payload_type, config_.opus_channel_count);
     return true;
 }
@@ -352,11 +298,7 @@ bool webrtc_output::configure_rtcp(int payload_id)
         return false;
     }
 
-    const auto result = rtsp_muxer_set_info(
-        muxer_,
-        payload_id,
-        config_.rtcp_cname.c_str(),
-        rtcp_name.data());
+    const auto result = rtsp_muxer_set_info(muxer_, payload_id, config_.rtcp_cname.c_str(), rtcp_name.data());
     if (result < 0)
     {
         spdlog::error("webrtc rtcp sender info failed payload {} result {}", payload_id, result);
@@ -373,11 +315,7 @@ void webrtc_output::emit_rtcp(int payload_id)
     }
 
     std::array<std::uint8_t, rtcp_buffer_size> buffer{};
-    const auto bytes = rtsp_muxer_rtcp(
-        muxer_,
-        payload_id,
-        buffer.data(),
-        static_cast<int>(buffer.size()));
+    const auto bytes = rtsp_muxer_rtcp(muxer_, payload_id, buffer.data(), static_cast<int>(buffer.size()));
     if (bytes < 0)
     {
         spdlog::error("webrtc rtcp report failed payload {} result {}", payload_id, bytes);
@@ -408,14 +346,13 @@ void webrtc_output::input_video(track_state& state, const media_frame& frame)
         state.waiting_key_frame = false;
     }
 
-    const auto result = rtsp_muxer_input(
-        muxer_,
-        state.media_id,
-        ns_to_milliseconds(frame.pts_ns),
-        ns_to_milliseconds(frame.dts_ns),
-        frame.payload->data(),
-        static_cast<int>(frame.payload->size()),
-        frame.key_frame ? 1 : 0);
+    const auto result = rtsp_muxer_input(muxer_,
+                                         state.media_id,
+                                         ns_to_milliseconds(frame.pts_ns),
+                                         ns_to_milliseconds(frame.dts_ns),
+                                         frame.payload->data(),
+                                         static_cast<int>(frame.payload->size()),
+                                         frame.key_frame ? 1 : 0);
     if (result < 0)
     {
         spdlog::error("webrtc video rtp packetize failed codec {} result {}", to_string(state.codec), result);
@@ -447,14 +384,8 @@ void webrtc_output::input_aac(track_state& state, const media_frame& frame)
     for (const auto& packet : packets)
     {
         const auto pts_ms = ns_to_milliseconds(state.audio_pts_ns);
-        const auto result = rtsp_muxer_input(
-            muxer_,
-            state.media_id,
-            pts_ms,
-            pts_ms,
-            packet.payload.data(),
-            static_cast<int>(packet.payload.size()),
-            0);
+        const auto result =
+            rtsp_muxer_input(muxer_, state.media_id, pts_ms, pts_ms, packet.payload.data(), static_cast<int>(packet.payload.size()), 0);
         if (result < 0)
         {
             spdlog::error("webrtc opus rtp packetize failed result {}", result);

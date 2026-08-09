@@ -50,7 +50,8 @@ std::optional<options> parse_options(int argc, char** argv)
     for (int index = 1; index < argc; ++index)
     {
         const std::string_view argument = argv[index];
-        auto read_value = [&](std::string_view name) -> std::optional<std::string_view> {
+        auto read_value = [&](std::string_view name) -> std::optional<std::string_view>
+        {
             if (argument != name || index + 1 >= argc)
             {
                 return std::nullopt;
@@ -100,9 +101,7 @@ std::optional<options> parse_options(int argc, char** argv)
             {
                 return std::nullopt;
             }
-            result.rtsp_pulls.emplace_back(
-                std::string(value->substr(0, equal)),
-                std::string(value->substr(equal + 1)));
+            result.rtsp_pulls.emplace_back(std::string(value->substr(0, equal)), std::string(value->substr(equal + 1)));
             continue;
         }
         return std::nullopt;
@@ -112,14 +111,13 @@ std::optional<options> parse_options(int argc, char** argv)
 
 void print_usage()
 {
-    std::cout
-        << "usage: media_server [options]\n"
-        << "  --help\n"
-        << "  --rtmp-port <port>\n"
-        << "  --rtsp-port <port>\n"
-        << "  --http-port <port>\n"
-        << "  --webrtc-address <ip>\n"
-        << "  --rtsp-pull <stream_name=rtsp_url>\n";
+    std::cout << "usage: media_server [options]\n"
+              << "  --help\n"
+              << "  --rtmp-port <port>\n"
+              << "  --rtsp-port <port>\n"
+              << "  --http-port <port>\n"
+              << "  --webrtc-address <ip>\n"
+              << "  --rtsp-pull <stream_name=rtsp_url>\n";
 }
 
 }    // namespace
@@ -199,17 +197,19 @@ int main(int argc, char** argv)
     spdlog::info("whep path whep/app/stream");
 
     boost::asio::signal_set signals(io, SIGINT, SIGTERM);
-    signals.async_wait([&](const boost::system::error_code&, int) {
-        for (const auto& pull : pulls)
+    signals.async_wait(
+        [&](const boost::system::error_code&, int)
         {
-            pull->close();
-        }
-        http.close();
-        whep.close();
-        rtsp.close();
-        rtmp.close();
-        io.stop();
-    });
+            for (const auto& pull : pulls)
+            {
+                pull->close();
+            }
+            http.close();
+            whep.close();
+            rtsp.close();
+            rtmp.close();
+            io.stop();
+        });
 
     io.run();
     return 0;

@@ -18,8 +18,7 @@ extern "C"
 namespace media_server
 {
 
-hls_output::hls_output(hls_config config)
-    : target_duration_seconds_(config.target_duration_seconds), window_size_(config.window_size)
+hls_output::hls_output(hls_config config) : target_duration_seconds_(config.target_duration_seconds), window_size_(config.window_size)
 {
     recreate_muxer();
 }
@@ -85,9 +84,8 @@ void hls_output::on_frame(const media_frame& frame)
 
     const auto elapsed_ns = frame.pts_ns - *segment_start_pts_ns_;
     const auto target_ns = static_cast<std::int64_t>(target_duration_seconds_ * 1'000'000'000.0);
-    const bool segment_boundary = has_video_
-        ? track_iterator->second.kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns
-        : elapsed_ns >= target_ns;
+    const bool segment_boundary =
+        has_video_ ? track_iterator->second.kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns : elapsed_ns >= target_ns;
     if (segment_boundary && !current_segment_.empty())
     {
         finish_segment(frame.pts_ns);
@@ -96,13 +94,7 @@ void hls_output::on_frame(const media_frame& frame)
 
     const auto flags = frame.key_frame ? 1 : 0;
     const auto result = mpeg_ts_write(
-        muxer_,
-        stream_iterator->second,
-        flags,
-        ns_to_90khz(frame.pts_ns),
-        ns_to_90khz(frame.dts_ns),
-        frame.payload->data(),
-        frame.payload->size());
+        muxer_, stream_iterator->second, flags, ns_to_90khz(frame.pts_ns), ns_to_90khz(frame.dts_ns), frame.payload->data(), frame.payload->size());
 
     if (result != 0)
 
@@ -156,9 +148,7 @@ std::string hls_output::playlist(std::string_view base_path) const
 
 std::optional<std::vector<std::uint8_t>> hls_output::segment(std::uint64_t sequence) const
 {
-    const auto iterator = std::find_if(
-        segments_.begin(), segments_.end(),
-        [sequence](const hls_segment& item) { return item.sequence == sequence; });
+    const auto iterator = std::find_if(segments_.begin(), segments_.end(), [sequence](const hls_segment& item) { return item.sequence == sequence; });
     if (iterator == segments_.end())
     {
         return std::nullopt;
@@ -166,25 +156,13 @@ std::optional<std::vector<std::uint8_t>> hls_output::segment(std::uint64_t seque
     return iterator->data;
 }
 
-std::size_t hls_output::segment_count() const noexcept
-{
-    return segments_.size();
-}
+std::size_t hls_output::segment_count() const noexcept { return segments_.size(); }
 
-std::optional<std::chrono::steady_clock::time_point> hls_output::ended_at() const noexcept
-{
-    return ended_at_;
-}
+std::optional<std::chrono::steady_clock::time_point> hls_output::ended_at() const noexcept { return ended_at_; }
 
-void* hls_output::ts_alloc(void*, std::size_t bytes)
-{
-    return std::malloc(bytes);
-}
+void* hls_output::ts_alloc(void*, std::size_t bytes) { return std::malloc(bytes); }
 
-void hls_output::ts_free(void*, void* packet)
-{
-    std::free(packet);
-}
+void hls_output::ts_free(void*, void* packet) { std::free(packet); }
 
 int hls_output::ts_write(void* param, const void* packet, std::size_t bytes)
 {
@@ -257,12 +235,12 @@ int hls_output::add_track_to_muxer(const media_track& track)
 {
     switch (track.codec)
     {
-    case codec_id::h264:
-        return mpeg_ts_add_stream(muxer_, PSI_STREAM_H264, nullptr, 0);
-    case codec_id::h265:
-        return mpeg_ts_add_stream(muxer_, PSI_STREAM_H265, nullptr, 0);
-    case codec_id::aac:
-        return mpeg_ts_add_stream(muxer_, PSI_STREAM_AAC, nullptr, 0);
+        case codec_id::h264:
+            return mpeg_ts_add_stream(muxer_, PSI_STREAM_H264, nullptr, 0);
+        case codec_id::h265:
+            return mpeg_ts_add_stream(muxer_, PSI_STREAM_H265, nullptr, 0);
+        case codec_id::aac:
+            return mpeg_ts_add_stream(muxer_, PSI_STREAM_AAC, nullptr, 0);
     }
     return -1;
 }

@@ -6,20 +6,11 @@
 namespace media_server
 {
 
-media_stream::media_stream(std::string name)
-    : name_(std::move(name))
-{
-}
+media_stream::media_stream(std::string name) : name_(std::move(name)) {}
 
-const std::string& media_stream::name() const noexcept
-{
-    return name_;
-}
+const std::string& media_stream::name() const noexcept { return name_; }
 
-bool media_stream::ended() const noexcept
-{
-    return ended_;
-}
+bool media_stream::ended() const noexcept { return ended_; }
 
 std::vector<media_track> media_stream::tracks() const
 {
@@ -73,10 +64,12 @@ bool media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
 
 void media_stream::remove_sink(const media_sink& sink)
 {
-    std::erase_if(sinks_, [&sink](const std::weak_ptr<media_sink>& weak_sink) {
-        const auto current = weak_sink.lock();
-        return !current || current.get() == &sink;
-    });
+    std::erase_if(sinks_,
+                  [&sink](const std::weak_ptr<media_sink>& weak_sink)
+                  {
+                      const auto current = weak_sink.lock();
+                      return !current || current.get() == &sink;
+                  });
 }
 
 bool media_stream::update_track(media_track track)
@@ -93,8 +86,7 @@ bool media_stream::update_track(media_track track)
         {
             return false;
         }
-        if (existing->second.clock_rate == track.clock_rate &&
-            existing->second.channel_count == track.channel_count &&
+        if (existing->second.clock_rate == track.clock_rate && existing->second.channel_count == track.channel_count &&
             existing->second.codec_config == track.codec_config)
         {
             return false;
@@ -170,10 +162,13 @@ void media_stream::end()
 
 bool media_stream::has_sink(const media_sink& sink) const
 {
-    return std::any_of(sinks_.begin(), sinks_.end(), [&sink](const std::weak_ptr<media_sink>& weak_sink) {
-        const auto current = weak_sink.lock();
-        return current && current.get() == &sink;
-    });
+    return std::any_of(sinks_.begin(),
+                       sinks_.end(),
+                       [&sink](const std::weak_ptr<media_sink>& weak_sink)
+                       {
+                           const auto current = weak_sink.lock();
+                           return current && current.get() == &sink;
+                       });
 }
 
 std::vector<std::shared_ptr<media_sink>> media_stream::sink_snapshot()
@@ -193,9 +188,7 @@ std::vector<std::shared_ptr<media_sink>> media_stream::sink_snapshot()
 
 void media_stream::remove_expired_sinks()
 {
-    std::erase_if(sinks_, [](const std::weak_ptr<media_sink>& weak_sink) {
-        return weak_sink.expired();
-    });
+    std::erase_if(sinks_, [](const std::weak_ptr<media_sink>& weak_sink) { return weak_sink.expired(); });
 }
 
 }    // namespace media_server

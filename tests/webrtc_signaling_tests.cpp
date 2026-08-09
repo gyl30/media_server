@@ -40,29 +40,22 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 
 const std::vector<std::uint8_t> h264_config{
-    0x00, 0x00, 0x00, 0x01,
-    0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f, 0x97, 0x01, 0x6e, 0x40,
-    0x00, 0x00, 0x00, 0x01,
-    0x68, 0xce, 0x3c, 0x80,
+    0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
+    0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80,
 };
 
 const std::vector<std::uint8_t> h265_config{
-    0x00, 0x00, 0x00, 0x01,
-    0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03,
-    0x00, 0x00, 0x03, 0x00, 0x78, 0x9d, 0xc0, 0x90,
-    0x00, 0x00, 0x00, 0x01,
-    0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03,
-    0x00, 0x78, 0xa0, 0x03, 0xc0, 0x80, 0x32, 0x16, 0x59, 0xde, 0x49, 0x1b, 0x6b, 0x80, 0x40, 0x00,
-    0x00, 0xfa, 0x00, 0x00, 0x17, 0x70, 0x02,
-    0x00, 0x00, 0x00, 0x01,
-    0x44, 0x01, 0xc1, 0x73, 0xd1, 0x89,
+    0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03, 0x00,
+    0x00, 0x03, 0x00, 0x78, 0x9d, 0xc0, 0x90, 0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80,
+    0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x78, 0xa0, 0x03, 0xc0, 0x80, 0x32, 0x16, 0x59, 0xde, 0x49, 0x1b, 0x6b, 0x80, 0x40,
+    0x00, 0x00, 0xfa, 0x00, 0x00, 0x17, 0x70, 0x02, 0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xc1, 0x73, 0xd1, 0x89,
 };
 
 const std::vector<std::uint8_t> aac_asc{0x12, 0x10};
 
 const std::vector<std::vector<std::uint8_t>> valid_aac_adts_frames{
-    {0xff, 0xf1, 0x50, 0x80, 0x03, 0xdf, 0xfc, 0xde, 0x02, 0x00, 0x4c, 0x61, 0x76, 0x63, 0x36, 0x31,
-     0x2e, 0x31, 0x39, 0x2e, 0x31, 0x30, 0x31, 0x00, 0x42, 0x20, 0x08, 0xc1, 0x18, 0x38},
+    {0xff, 0xf1, 0x50, 0x80, 0x03, 0xdf, 0xfc, 0xde, 0x02, 0x00, 0x4c, 0x61, 0x76, 0x63, 0x36,
+     0x31, 0x2e, 0x31, 0x39, 0x2e, 0x31, 0x30, 0x31, 0x00, 0x42, 0x20, 0x08, 0xc1, 0x18, 0x38},
     {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
     {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
     {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
@@ -101,7 +94,6 @@ const std::string webrtc_offer_sdp =
     "a=rtpmap:0 PCMU/8000\r\n"
     "a=rtpmap:8 PCMA/8000\r\n";
 
-
 std::string offer_with_fingerprint(std::string_view fingerprint)
 {
     std::string result = webrtc_offer_sdp;
@@ -117,18 +109,12 @@ std::string offer_with_fingerprint(std::string_view fingerprint)
 
 struct ssl_context_deleter
 {
-    void operator()(SSL_CTX* value) const noexcept
-    {
-        SSL_CTX_free(value);
-    }
+    void operator()(SSL_CTX* value) const noexcept { SSL_CTX_free(value); }
 };
 
 struct ssl_deleter
 {
-    void operator()(SSL* value) const noexcept
-    {
-        SSL_free(value);
-    }
+    void operator()(SSL* value) const noexcept { SSL_free(value); }
 };
 
 using ssl_context_ptr = std::unique_ptr<SSL_CTX, ssl_context_deleter>;
@@ -150,8 +136,7 @@ std::optional<dtls_test_client> make_dtls_test_client(const std::shared_ptr<dtls
         .read_bio = nullptr,
         .write_bio = nullptr,
     };
-    if (!client.context ||
-        SSL_CTX_set_min_proto_version(client.context.get(), DTLS1_2_VERSION) != 1 ||
+    if (!client.context || SSL_CTX_set_min_proto_version(client.context.get(), DTLS1_2_VERSION) != 1 ||
         SSL_CTX_set_max_proto_version(client.context.get(), DTLS1_2_VERSION) != 1 ||
         SSL_CTX_set_tlsext_use_srtp(client.context.get(), "SRTP_AEAD_AES_128_GCM:SRTP_AES128_CM_SHA1_80") != 0 ||
         SSL_CTX_use_certificate(client.context.get(), certificate->certificate()) != 1 ||
@@ -192,10 +177,7 @@ std::optional<dtls_test_client> make_dtls_test_client(const std::shared_ptr<dtls
     return client;
 }
 
-bool send_dtls_client_output(
-    dtls_test_client& client,
-    boost::asio::ip::udp::socket& socket,
-    const boost::asio::ip::udp::endpoint& server_endpoint)
+bool send_dtls_client_output(dtls_test_client& client, boost::asio::ip::udp::socket& socket, const boost::asio::ip::udp::endpoint& server_endpoint)
 {
     while (BIO_ctrl_pending(client.write_bio) > 0)
     {
@@ -220,29 +202,24 @@ bool send_dtls_client_output(
             {
                 return false;
             }
-            const auto payload_size =
-                (static_cast<std::size_t>(output[offset + 11U]) << 8U) |
-                static_cast<std::size_t>(output[offset + 12U]);
+            const auto payload_size = (static_cast<std::size_t>(output[offset + 11U]) << 8U) | static_cast<std::size_t>(output[offset + 12U]);
             const auto record_size = record_header_size + payload_size;
             if (record_size > output.size() - offset)
             {
                 return false;
             }
-            static_cast<void>(socket.send_to(
-                boost::asio::buffer(output.data() + offset, record_size),
-                server_endpoint));
+            static_cast<void>(socket.send_to(boost::asio::buffer(output.data() + offset, record_size), server_endpoint));
             offset += record_size;
         }
     }
     return true;
 }
 
-bool drive_dtls_client(
-    boost::asio::io_context& io,
-    boost::asio::ip::udp::socket& socket,
-    const boost::asio::ip::udp::endpoint& server_endpoint,
-    whep_session& session,
-    dtls_test_client& client)
+bool drive_dtls_client(boost::asio::io_context& io,
+                       boost::asio::ip::udp::socket& socket,
+                       const boost::asio::ip::udp::endpoint& server_endpoint,
+                       whep_session& session,
+                       dtls_test_client& client)
 {
     boost::system::error_code error;
     socket.non_blocking(true, error);
@@ -327,15 +304,7 @@ std::optional<dtls_srtp_keying_material> make_peer_srtp_material(SSL* ssl)
 
     std::vector<std::uint8_t> material(2U * (key_size + salt_size));
     constexpr std::string_view label = "EXTRACTOR-dtls_srtp";
-    if (SSL_export_keying_material(
-            ssl,
-            material.data(),
-            material.size(),
-            label.data(),
-            label.size(),
-            nullptr,
-            0,
-            0) != 1)
+    if (SSL_export_keying_material(ssl, material.data(), material.size(), label.data(), label.size(), nullptr, 0, 0) != 1)
     {
         return std::nullopt;
     }
@@ -367,7 +336,6 @@ void require(bool condition, std::string_view message)
     }
 }
 
-
 constexpr std::uint32_t stun_magic_cookie = 0x2112a442U;
 
 void append_u16(std::vector<std::uint8_t>& output, std::uint16_t value)
@@ -390,15 +358,14 @@ void set_stun_length(std::vector<std::uint8_t>& packet, std::size_t body_size)
     packet[3] = static_cast<std::uint8_t>(body_size & 0xffU);
 }
 
-void append_rtcp_report_block(
-    std::vector<std::uint8_t>& packet,
-    std::uint32_t source_ssrc,
-    std::uint8_t fraction_lost,
-    std::uint32_t cumulative_lost,
-    std::uint32_t highest_sequence,
-    std::uint32_t jitter,
-    std::uint32_t lsr,
-    std::uint32_t dlsr)
+void append_rtcp_report_block(std::vector<std::uint8_t>& packet,
+                              std::uint32_t source_ssrc,
+                              std::uint8_t fraction_lost,
+                              std::uint32_t cumulative_lost,
+                              std::uint32_t highest_sequence,
+                              std::uint32_t jitter,
+                              std::uint32_t lsr,
+                              std::uint32_t dlsr)
 {
     append_u32(packet, source_ssrc);
     packet.push_back(fraction_lost);
@@ -418,24 +385,8 @@ std::vector<std::uint8_t> make_rtcp_receiver_report()
     packet.push_back(201);
     append_u16(packet, 13);
     append_u32(packet, 0x0102'0304U);
-    append_rtcp_report_block(
-        packet,
-        0x1112'1314U,
-        7,
-        0x00FF'FFFEU,
-        0x2122'2324U,
-        0x3132'3334U,
-        0x4142'4344U,
-        0x5152'5354U);
-    append_rtcp_report_block(
-        packet,
-        0x6162'6364U,
-        3,
-        5,
-        0x7172'7374U,
-        0x8182'8384U,
-        0x9192'9394U,
-        0xA1A2'A3A4U);
+    append_rtcp_report_block(packet, 0x1112'1314U, 7, 0x00FF'FFFEU, 0x2122'2324U, 0x3132'3334U, 0x4142'4344U, 0x5152'5354U);
+    append_rtcp_report_block(packet, 0x6162'6364U, 3, 5, 0x7172'7374U, 0x8182'8384U, 0x9192'9394U, 0xA1A2'A3A4U);
     return packet;
 }
 
@@ -474,24 +425,17 @@ std::vector<std::uint8_t> make_rtcp_compound()
 std::uint16_t read_network_u16(std::span<const std::uint8_t> data, std::size_t offset)
 {
     require(offset + 2U <= data.size(), "read network u16 range");
-    return static_cast<std::uint16_t>(
-        (static_cast<std::uint16_t>(data[offset]) << 8U) |
-        static_cast<std::uint16_t>(data[offset + 1U]));
+    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(data[offset]) << 8U) | static_cast<std::uint16_t>(data[offset + 1U]));
 }
 
 std::uint32_t read_network_u32(std::span<const std::uint8_t> data, std::size_t offset)
 {
     require(offset + 4U <= data.size(), "read network u32 range");
-    return (static_cast<std::uint32_t>(data[offset]) << 24U) |
-        (static_cast<std::uint32_t>(data[offset + 1U]) << 16U) |
-        (static_cast<std::uint32_t>(data[offset + 2U]) << 8U) |
-        static_cast<std::uint32_t>(data[offset + 3U]);
+    return (static_cast<std::uint32_t>(data[offset]) << 24U) | (static_cast<std::uint32_t>(data[offset + 1U]) << 16U) |
+           (static_cast<std::uint32_t>(data[offset + 2U]) << 8U) | static_cast<std::uint32_t>(data[offset + 3U]);
 }
 
-void require_server_sender_report(
-    std::span<const std::uint8_t> packet,
-    std::uint32_t expected_ssrc,
-    std::string_view expected_cname)
+void require_server_sender_report(std::span<const std::uint8_t> packet, std::uint32_t expected_ssrc, std::string_view expected_cname)
 {
     require(packet.size() >= 40U, "server rtcp compound size");
     require((packet[0] >> 6U) == 2U, "server rtcp sr version");
@@ -508,9 +452,7 @@ void require_server_sender_report(
 
     const auto cname_size = static_cast<std::size_t>(packet[sr_size + 9U]);
     require(sr_size + 10U + cname_size <= packet.size(), "server rtcp cname range");
-    const auto cname = std::string_view(
-        reinterpret_cast<const char*>(packet.data() + sr_size + 10U),
-        cname_size);
+    const auto cname = std::string_view(reinterpret_cast<const char*>(packet.data() + sr_size + 10U), cname_size);
     require(cname == expected_cname, "server rtcp cname");
 }
 
@@ -529,14 +471,7 @@ std::array<std::uint8_t, 20> stun_hmac(std::string_view password, std::span<cons
 {
     std::array<std::uint8_t, 20> digest{};
     unsigned int size = 0;
-    const auto* result = HMAC(
-        EVP_sha1(),
-        password.data(),
-        static_cast<int>(password.size()),
-        data.data(),
-        data.size(),
-        digest.data(),
-        &size);
+    const auto* result = HMAC(EVP_sha1(), password.data(), static_cast<int>(password.size()), data.data(), data.size(), digest.data(), &size);
     require(result != nullptr && size == digest.size(), "stun hmac");
     return digest;
 }
@@ -548,11 +483,10 @@ std::uint32_t stun_fingerprint(std::span<const std::uint8_t> data)
     return crc.checksum() ^ 0x5354554eU;
 }
 
-std::vector<std::uint8_t> make_stun_request(
-    std::string_view username,
-    std::string_view password,
-    const std::array<std::uint8_t, 12>& transaction_id,
-    bool use_candidate)
+std::vector<std::uint8_t> make_stun_request(std::string_view username,
+                                            std::string_view password,
+                                            const std::array<std::uint8_t, 12>& transaction_id,
+                                            bool use_candidate)
 {
     std::vector<std::uint8_t> packet;
     append_u16(packet, 0x0001);
@@ -560,10 +494,7 @@ std::vector<std::uint8_t> make_stun_request(
     append_u32(packet, stun_magic_cookie);
     packet.insert(packet.end(), transaction_id.begin(), transaction_id.end());
 
-    append_stun_attribute(
-        packet,
-        0x0006,
-        std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(username.data()), username.size()));
+    append_stun_attribute(packet, 0x0006, std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(username.data()), username.size()));
     if (use_candidate)
     {
         append_stun_attribute(packet, 0x0025, {});
@@ -598,11 +529,10 @@ std::string sdp_attribute(std::string_view sdp, std::string_view name)
     return std::string(sdp.substr(value_begin, end == std::string_view::npos ? sdp.size() - value_begin : end - value_begin));
 }
 
-std::vector<std::uint8_t> exchange_stun(
-    boost::asio::io_context& io,
-    boost::asio::ip::udp::socket& client,
-    const boost::asio::ip::udp::endpoint& server_endpoint,
-    const std::vector<std::uint8_t>& request)
+std::vector<std::uint8_t> exchange_stun(boost::asio::io_context& io,
+                                        boost::asio::ip::udp::socket& client,
+                                        const boost::asio::ip::udp::endpoint& server_endpoint,
+                                        const std::vector<std::uint8_t>& request)
 {
     std::array<std::uint8_t, 2048> buffer{};
     boost::asio::ip::udp::endpoint sender;
@@ -610,14 +540,14 @@ std::vector<std::uint8_t> exchange_stun(
     std::size_t received = 0;
     bool complete = false;
 
-    client.async_receive_from(
-        boost::asio::buffer(buffer),
-        sender,
-        [&](boost::system::error_code error, std::size_t size) {
-            receive_error = error;
-            received = size;
-            complete = true;
-        });
+    client.async_receive_from(boost::asio::buffer(buffer),
+                              sender,
+                              [&](boost::system::error_code error, std::size_t size)
+                              {
+                                  receive_error = error;
+                                  received = size;
+                                  complete = true;
+                              });
     static_cast<void>(client.send_to(boost::asio::buffer(request), server_endpoint));
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -631,9 +561,7 @@ std::vector<std::uint8_t> exchange_stun(
     return {buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(received)};
 }
 
-void require_stun_success(
-    std::span<const std::uint8_t> response,
-    const std::array<std::uint8_t, 12>& transaction_id)
+void require_stun_success(std::span<const std::uint8_t> response, const std::array<std::uint8_t, 12>& transaction_id)
 {
     require(response.size() >= 20U, "stun response size");
     require(response[0] == 0x01 && response[1] == 0x01, "stun binding success type");
@@ -685,8 +613,18 @@ media_frame make_video_key_frame()
         .pts_ns = 0,
         .key_frame = true,
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::vector<std::uint8_t>{
-            0x00, 0x00, 0x00, 0x01,
-            0x65, 0x88, 0x84, 0x21, 0xa0, 0x10, 0x08, 0x04,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x65,
+            0x88,
+            0x84,
+            0x21,
+            0xa0,
+            0x10,
+            0x08,
+            0x04,
         }),
     };
 }
@@ -696,16 +634,15 @@ void test_webrtc_sdp_answer()
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
     require(offer.has_value(), "parse webrtc offer");
 
-    const auto answer = make_webrtc_answer(
-        *offer,
-        {make_video_track(), make_audio_track()},
-        webrtc_answer_config{
-            .address = boost::asio::ip::make_address("127.0.0.1"),
-            .port = 40000,
-            .ice_ufrag = "serverufrag",
-            .ice_pwd = "serverpassword1234567890",
-            .fingerprint = "AA:BB:CC:DD",
-        });
+    const auto answer = make_webrtc_answer(*offer,
+                                           {make_video_track(), make_audio_track()},
+                                           webrtc_answer_config{
+                                               .address = boost::asio::ip::make_address("127.0.0.1"),
+                                               .port = 40000,
+                                               .ice_ufrag = "serverufrag",
+                                               .ice_pwd = "serverpassword1234567890",
+                                               .fingerprint = "AA:BB:CC:DD",
+                                           });
     require(answer.has_value(), "make webrtc answer");
     require(answer->video_codec == codec_id::h264, "webrtc negotiated h264 codec");
     require(answer->video_payload_type == 102, "webrtc negotiated h264 payload");
@@ -737,16 +674,15 @@ void test_webrtc_h265_sdp_answer()
 
     const auto offer = parse_webrtc_offer(h265_offer_sdp);
     require(offer.has_value(), "parse webrtc h265 offer");
-    const auto answer = make_webrtc_answer(
-        *offer,
-        {make_h265_track(), make_audio_track()},
-        webrtc_answer_config{
-            .address = boost::asio::ip::make_address("127.0.0.1"),
-            .port = 40000,
-            .ice_ufrag = "serverufrag",
-            .ice_pwd = "serverpassword1234567890",
-            .fingerprint = "AA:BB:CC:DD",
-        });
+    const auto answer = make_webrtc_answer(*offer,
+                                           {make_h265_track(), make_audio_track()},
+                                           webrtc_answer_config{
+                                               .address = boost::asio::ip::make_address("127.0.0.1"),
+                                               .port = 40000,
+                                               .ice_ufrag = "serverufrag",
+                                               .ice_pwd = "serverpassword1234567890",
+                                               .fingerprint = "AA:BB:CC:DD",
+                                           });
     require(answer.has_value(), "make webrtc h265 answer");
     require(answer->video_codec == codec_id::h265, "webrtc negotiated h265 codec");
     require(answer->video_payload_type == 102, "webrtc negotiated h265 payload");
@@ -789,10 +725,8 @@ void test_webrtc_single_media_per_kind()
     require(answer.has_value(), "webrtc answer duplicate media offer");
     require(answer->video_payload_type == 102, "webrtc accept one video media");
     require(answer->audio_payload_type == 111, "webrtc accept one audio media");
-    require(answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF 103\r\n") != std::string::npos,
-            "webrtc reject duplicate video media");
-    require(answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 112\r\n") != std::string::npos,
-            "webrtc reject duplicate audio media");
+    require(answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF 103\r\n") != std::string::npos, "webrtc reject duplicate video media");
+    require(answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 112\r\n") != std::string::npos, "webrtc reject duplicate audio media");
 
     auto h265_sdp = duplicate_sdp;
     std::size_t offset = 0;
@@ -805,10 +739,8 @@ void test_webrtc_single_media_per_kind()
     require(h265_offer.has_value(), "webrtc parse duplicate h265 media offer");
     const auto h265_answer = make_webrtc_answer(*h265_offer, {make_h265_track(), make_audio_track()}, config);
     require(h265_answer.has_value(), "webrtc answer duplicate h265 media offer");
-    require(h265_answer->video_codec == codec_id::h265 && h265_answer->video_payload_type == 102,
-            "webrtc accept one h265 media");
-    require(h265_answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF 103\r\n") != std::string::npos,
-            "webrtc reject duplicate h265 media");
+    require(h265_answer->video_codec == codec_id::h265 && h265_answer->video_payload_type == 102, "webrtc accept one h265 media");
+    require(h265_answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF 103\r\n") != std::string::npos, "webrtc reject duplicate h265 media");
 }
 
 void test_webrtc_opus_mono_default()
@@ -822,16 +754,15 @@ void test_webrtc_opus_mono_default()
     const auto offer = parse_webrtc_offer(mono_offer_sdp);
     require(offer.has_value(), "parse webrtc mono offer");
 
-    const auto answer = make_webrtc_answer(
-        *offer,
-        {make_video_track(), make_audio_track()},
-        webrtc_answer_config{
-            .address = boost::asio::ip::make_address("127.0.0.1"),
-            .port = 40000,
-            .ice_ufrag = "serverufrag",
-            .ice_pwd = "serverpassword1234567890",
-            .fingerprint = "AA:BB:CC:DD",
-        });
+    const auto answer = make_webrtc_answer(*offer,
+                                           {make_video_track(), make_audio_track()},
+                                           webrtc_answer_config{
+                                               .address = boost::asio::ip::make_address("127.0.0.1"),
+                                               .port = 40000,
+                                               .ice_ufrag = "serverufrag",
+                                               .ice_pwd = "serverpassword1234567890",
+                                               .fingerprint = "AA:BB:CC:DD",
+                                           });
     require(answer.has_value(), "make webrtc mono answer");
     require(answer->audio_channel_count == 1, "webrtc opus mono default");
     require(answer->sdp.find("sprop-stereo=0") != std::string::npos, "webrtc opus mono sender property");
@@ -924,42 +855,30 @@ void test_whep_session_start_errors()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "start errors certificate");
 
-    const auto make_session = [&](std::shared_ptr<media_stream> source, std::shared_ptr<dtls_certificate> session_certificate) {
-        return std::make_shared<whep_session>(
-            io,
-            std::move(source),
-            boost::asio::ip::make_address("127.0.0.1"),
-            std::move(session_certificate));
-    };
+    const auto make_session = [&](std::shared_ptr<media_stream> source, std::shared_ptr<dtls_certificate> session_certificate)
+    { return std::make_shared<whep_session>(io, std::move(source), boost::asio::ip::make_address("127.0.0.1"), std::move(session_certificate)); };
 
     auto invalid_offer = *offer;
     require(!invalid_offer.media.empty(), "start errors media");
     invalid_offer.media.front().ice_ufrag.clear();
-    require(
-        make_session(stream, certificate)->start(std::move(invalid_offer)) == whep_session_start_error::invalid_offer,
-        "start errors invalid offer");
+    require(make_session(stream, certificate)->start(std::move(invalid_offer)) == whep_session_start_error::invalid_offer,
+            "start errors invalid offer");
 
     auto invalid_fingerprint_offer = *offer;
     invalid_fingerprint_offer.media.front().fingerprint = "invalid";
-    require(
-        make_session(stream, certificate)->start(std::move(invalid_fingerprint_offer)) == whep_session_start_error::invalid_offer,
-        "start errors invalid fingerprint");
+    require(make_session(stream, certificate)->start(std::move(invalid_fingerprint_offer)) == whep_session_start_error::invalid_offer,
+            "start errors invalid fingerprint");
 
-    require(
-        make_session(stream, nullptr)->start(*offer) == whep_session_start_error::internal_error,
-        "start errors internal error");
+    require(make_session(stream, nullptr)->start(*offer) == whep_session_start_error::internal_error, "start errors internal error");
 
     auto ended_stream = std::make_shared<media_stream>("live/start-errors-ended");
     require(ended_stream->update_track(make_video_track()), "start errors ended video track");
     ended_stream->end();
-    require(
-        make_session(ended_stream, certificate)->start(*offer) == whep_session_start_error::stream_not_ready,
-        "start errors stream not ready");
+    require(make_session(ended_stream, certificate)->start(*offer) == whep_session_start_error::stream_not_ready, "start errors stream not ready");
 
     auto empty_stream = std::make_shared<media_stream>("live/start-errors-empty");
-    require(
-        make_session(empty_stream, certificate)->start(*offer) == whep_session_start_error::stream_not_ready,
-        "start errors stream without tracks");
+    require(make_session(empty_stream, certificate)->start(*offer) == whep_session_start_error::stream_not_ready,
+            "start errors stream without tracks");
 }
 
 void test_whep_session_lifecycle()
@@ -976,18 +895,14 @@ void test_whep_session_lifecycle()
 
     auto empty_stream = std::make_shared<media_stream>("live/empty");
     require(registry.add(empty_stream), "whep empty stream add");
-    require(
-        whep.create("live/empty", webrtc_offer_sdp).error == whep_create_error::stream_not_ready,
-        "whep empty stream not ready");
+    require(whep.create("live/empty", webrtc_offer_sdp).error == whep_create_error::stream_not_ready, "whep empty stream not ready");
 
     auto missing_ice_offer = webrtc_offer_sdp;
     const std::string video_ice_ufrag = "a=ice-ufrag:remotevideo\r\n";
     const auto video_ice_offset = missing_ice_offer.find(video_ice_ufrag);
     require(video_ice_offset != std::string::npos, "whep invalid offer ice attribute");
     missing_ice_offer.erase(video_ice_offset, video_ice_ufrag.size());
-    require(
-        whep.create("live/test", missing_ice_offer).error == whep_create_error::invalid_offer,
-        "whep semantic invalid offer");
+    require(whep.create("live/test", missing_ice_offer).error == whep_create_error::invalid_offer, "whep semantic invalid offer");
 
     const auto first = whep.create("live/test", webrtc_offer_sdp);
     const auto second = whep.create("live/test", webrtc_offer_sdp);
@@ -1029,7 +944,6 @@ void test_whep_session_lifecycle()
     require(whep.remove(updated_session.session_id), "whep remove updated session");
 }
 
-
 void test_whep_multi_session_isolation()
 {
     boost::asio::io_context io;
@@ -1042,20 +956,10 @@ void test_whep_multi_session_isolation()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "multi certificate");
 
-    auto first = std::make_shared<whep_session>(
-        io,
-        stream,
-        boost::asio::ip::make_address("127.0.0.1"),
-        certificate);
-    auto second = std::make_shared<whep_session>(
-        io,
-        stream,
-        boost::asio::ip::make_address("127.0.0.1"),
-        certificate);
-    require(
-        first->start(*offer) == whep_session_start_error::none &&
-            second->start(*offer) == whep_session_start_error::none,
-        "multi sessions start");
+    auto first = std::make_shared<whep_session>(io, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+    auto second = std::make_shared<whep_session>(io, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+    require(first->start(*offer) == whep_session_start_error::none && second->start(*offer) == whep_session_start_error::none,
+            "multi sessions start");
     require(first->id() != second->id(), "multi unique session ids");
     require(first->local_port() != second->local_port(), "multi unique udp ports");
 
@@ -1065,35 +969,17 @@ void test_whep_multi_session_isolation()
     const auto second_pwd = sdp_attribute(second->answer_sdp(), "ice-pwd");
     require(first_ufrag != second_ufrag && first_pwd != second_pwd, "multi unique ice credentials");
 
-    boost::asio::ip::udp::socket first_client(
-        io,
-        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
-    boost::asio::ip::udp::socket second_client(
-        io,
-        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
-    const boost::asio::ip::udp::endpoint first_endpoint(
-        boost::asio::ip::make_address("127.0.0.1"),
-        first->local_port());
-    const boost::asio::ip::udp::endpoint second_endpoint(
-        boost::asio::ip::make_address("127.0.0.1"),
-        second->local_port());
+    boost::asio::ip::udp::socket first_client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    boost::asio::ip::udp::socket second_client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const boost::asio::ip::udp::endpoint first_endpoint(boost::asio::ip::make_address("127.0.0.1"), first->local_port());
+    const boost::asio::ip::udp::endpoint second_endpoint(boost::asio::ip::make_address("127.0.0.1"), second->local_port());
 
     const std::array<std::uint8_t, 12> first_id{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     const std::array<std::uint8_t, 12> second_id{2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
+    require_stun_success(exchange_stun(io, first_client, first_endpoint, make_stun_request(first_ufrag + ":remotevideo", first_pwd, first_id, true)),
+                         first_id);
     require_stun_success(
-        exchange_stun(
-            io,
-            first_client,
-            first_endpoint,
-            make_stun_request(first_ufrag + ":remotevideo", first_pwd, first_id, true)),
-        first_id);
-    require_stun_success(
-        exchange_stun(
-            io,
-            second_client,
-            second_endpoint,
-            make_stun_request(second_ufrag + ":remotevideo", second_pwd, second_id, true)),
-        second_id);
+        exchange_stun(io, second_client, second_endpoint, make_stun_request(second_ufrag + ":remotevideo", second_pwd, second_id, true)), second_id);
     require(first->ice_connected() && second->ice_connected(), "multi ice connected");
 
     first->close();
@@ -1102,11 +988,7 @@ void test_whep_multi_session_isolation()
 
     const std::array<std::uint8_t, 12> keepalive_id{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
     require_stun_success(
-        exchange_stun(
-            io,
-            second_client,
-            second_endpoint,
-            make_stun_request(second_ufrag + ":remotevideo", second_pwd, keepalive_id, false)),
+        exchange_stun(io, second_client, second_endpoint, make_stun_request(second_ufrag + ":remotevideo", second_pwd, keepalive_id, false)),
         keepalive_id);
     require(second->ice_connected(), "multi second survives first close");
 
@@ -1118,7 +1000,6 @@ void test_whep_multi_session_isolation()
     first_client.close(error);
     second_client.close(error);
 }
-
 
 void test_whep_establishment_timeout()
 {
@@ -1184,21 +1065,12 @@ void test_whep_ice_activity_timeout()
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
-    boost::asio::ip::udp::socket client(
-        io,
-        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
-    const boost::asio::ip::udp::endpoint server_endpoint(
-        boost::asio::ip::make_address("127.0.0.1"),
-        session->local_port());
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
 
     const std::array<std::uint8_t, 12> nominate_id{4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
-    require_stun_success(
-        exchange_stun(
-            io,
-            client,
-            server_endpoint,
-            make_stun_request(local_ufrag + ":remotevideo", local_pwd, nominate_id, true)),
-        nominate_id);
+    require_stun_success(exchange_stun(io, client, server_endpoint, make_stun_request(local_ufrag + ":remotevideo", local_pwd, nominate_id, true)),
+                         nominate_id);
     require(session->ice_connected(), "ice activity timeout nominated");
 
     io.run_for(std::chrono::milliseconds(50));
@@ -1206,13 +1078,8 @@ void test_whep_ice_activity_timeout()
     require(session->local_port() != 0, "ice activity timeout still active before refresh");
 
     const std::array<std::uint8_t, 12> refresh_id{5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5};
-    require_stun_success(
-        exchange_stun(
-            io,
-            client,
-            server_endpoint,
-            make_stun_request(local_ufrag + ":remotevideo", local_pwd, refresh_id, false)),
-        refresh_id);
+    require_stun_success(exchange_stun(io, client, server_endpoint, make_stun_request(local_ufrag + ":remotevideo", local_pwd, refresh_id, false)),
+                         refresh_id);
 
     io.run_for(std::chrono::milliseconds(50));
     io.restart();
@@ -1240,40 +1107,24 @@ void test_whep_ice_lite()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "ice certificate");
 
-    auto session = std::make_shared<whep_session>(
-        io,
-        stream,
-        boost::asio::ip::make_address("127.0.0.1"),
-        certificate);
+    auto session = std::make_shared<whep_session>(io, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     require(session->start(*offer) == whep_session_start_error::none, "ice session start");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
     require(!local_ufrag.empty() && !local_pwd.empty(), "ice local credentials");
 
-    boost::asio::ip::udp::socket client(
-        io,
-        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
-    const boost::asio::ip::udp::endpoint server_endpoint(
-        boost::asio::ip::make_address("127.0.0.1"),
-        session->local_port());
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
     const auto username = local_ufrag + ":remotevideo";
 
     const std::array<std::uint8_t, 12> check_id{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
-    const auto check_response = exchange_stun(
-        io,
-        client,
-        server_endpoint,
-        make_stun_request(username, local_pwd, check_id, false));
+    const auto check_response = exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, check_id, false));
     require_stun_success(check_response, check_id);
     require(!session->ice_connected(), "ice check not nominated");
 
     const std::array<std::uint8_t, 12> nominate_id{11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
-    const auto nominate_response = exchange_stun(
-        io,
-        client,
-        server_endpoint,
-        make_stun_request(username, local_pwd, nominate_id, true));
+    const auto nominate_response = exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, nominate_id, true));
     require_stun_success(nominate_response, nominate_id);
     require(session->ice_connected(), "ice nominated");
 
@@ -1281,7 +1132,6 @@ void test_whep_ice_lite()
     boost::system::error_code error;
     client.close(error);
 }
-
 
 void test_rtcp_receiver()
 {
@@ -1353,29 +1203,18 @@ void test_whep_dtls()
     const auto offer = parse_webrtc_offer(offer_sdp);
     require(offer.has_value(), "dtls parse offer");
 
-    auto session = std::make_shared<whep_session>(
-        io,
-        stream,
-        boost::asio::ip::make_address("127.0.0.1"),
-        server_certificate);
+    auto session = std::make_shared<whep_session>(io, stream, boost::asio::ip::make_address("127.0.0.1"), server_certificate);
     require(session->start(*offer) == whep_session_start_error::none, "dtls session start");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
     require(!local_ufrag.empty() && !local_pwd.empty(), "dtls ice credentials");
 
-    boost::asio::ip::udp::socket client_socket(
-        io,
-        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
-    const boost::asio::ip::udp::endpoint server_endpoint(
-        boost::asio::ip::make_address("127.0.0.1"),
-        session->local_port());
+    boost::asio::ip::udp::socket client_socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
     const std::array<std::uint8_t, 12> nominate_id{9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2};
-    const auto nominate_response = exchange_stun(
-        io,
-        client_socket,
-        server_endpoint,
-        make_stun_request(local_ufrag + ":remotevideo", local_pwd, nominate_id, true));
+    const auto nominate_response =
+        exchange_stun(io, client_socket, server_endpoint, make_stun_request(local_ufrag + ":remotevideo", local_pwd, nominate_id, true));
     require_stun_success(nominate_response, nominate_id);
     require(session->ice_connected(), "dtls ice connected");
 
@@ -1502,38 +1341,36 @@ void test_whep_dtls()
     client_socket.close(error);
 }
 
-
 }    // namespace
 }    // namespace media_server
 
 int main()
 {
-    using namespace media_server;
-    test_webrtc_sdp_answer();
+    media_server::test_webrtc_sdp_answer();
     std::cout << "[pass] webrtc_sdp_answer\n";
-    test_webrtc_h265_sdp_answer();
+    media_server::test_webrtc_h265_sdp_answer();
     std::cout << "[pass] webrtc_h265_sdp_answer\n";
-    test_webrtc_single_media_per_kind();
+    media_server::test_webrtc_single_media_per_kind();
     std::cout << "[pass] webrtc_single_media_per_kind\n";
-    test_webrtc_opus_mono_default();
+    media_server::test_webrtc_opus_mono_default();
     std::cout << "[pass] webrtc_opus_mono_default\n";
-    test_webrtc_transport_contract();
+    media_server::test_webrtc_transport_contract();
     std::cout << "[pass] webrtc_transport_contract\n";
-    test_whep_session_start_errors();
+    media_server::test_whep_session_start_errors();
     std::cout << "[pass] whep_session_start_errors\n";
-    test_whep_session_lifecycle();
+    media_server::test_whep_session_lifecycle();
     std::cout << "[pass] whep_session_lifecycle\n";
-    test_whep_multi_session_isolation();
+    media_server::test_whep_multi_session_isolation();
     std::cout << "[pass] whep_multi_session_isolation\n";
-    test_whep_establishment_timeout();
+    media_server::test_whep_establishment_timeout();
     std::cout << "[pass] whep_establishment_timeout\n";
-    test_whep_ice_activity_timeout();
+    media_server::test_whep_ice_activity_timeout();
     std::cout << "[pass] whep_ice_activity_timeout\n";
-    test_whep_ice_lite();
+    media_server::test_whep_ice_lite();
     std::cout << "[pass] whep_ice_lite\n";
-    test_rtcp_receiver();
+    media_server::test_rtcp_receiver();
     std::cout << "[pass] rtcp_receiver\n";
-    test_whep_dtls();
+    media_server::test_whep_dtls();
     std::cout << "[pass] whep_dtls\n";
     std::cout << "all tests passed: 10/10\n";
     return 0;

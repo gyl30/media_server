@@ -19,9 +19,7 @@ bool initialize_srtp()
 {
     static std::once_flag flag;
     static bool initialized = false;
-    std::call_once(flag, []() {
-        initialized = srtp_init() == srtp_err_status_ok;
-    });
+    std::call_once(flag, []() { initialized = srtp_init() == srtp_err_status_ok; });
     return initialized;
 }
 
@@ -44,9 +42,7 @@ bool set_crypto_policy(std::string_view profile, srtp_policy_t& policy)
     return false;
 }
 
-std::vector<std::uint8_t> make_master_key(
-    const std::vector<std::uint8_t>& key,
-    const std::vector<std::uint8_t>& salt)
+std::vector<std::uint8_t> make_master_key(const std::vector<std::uint8_t>& key, const std::vector<std::uint8_t>& salt)
 {
     std::vector<std::uint8_t> result;
     result.reserve(key.size() + salt.size());
@@ -55,11 +51,7 @@ std::vector<std::uint8_t> make_master_key(
     return result;
 }
 
-bool create_session(
-    std::string_view profile,
-    srtp_ssrc_type_t direction,
-    std::vector<std::uint8_t>& master_key,
-    srtp_t& session)
+bool create_session(std::string_view profile, srtp_ssrc_type_t direction, std::vector<std::uint8_t>& master_key, srtp_t& session)
 {
     srtp_policy_t policy{};
     if (!set_crypto_policy(profile, policy) || master_key.empty())
@@ -99,10 +91,7 @@ struct srtp_transport::context
 
 srtp_transport::srtp_transport() = default;
 
-srtp_transport::~srtp_transport()
-{
-    close();
-}
+srtp_transport::~srtp_transport() { close(); }
 
 bool srtp_transport::start(const dtls_srtp_keying_material& keying_material)
 {
@@ -217,9 +206,8 @@ std::optional<srtp_packet> srtp_transport::unprotect(std::span<const std::uint8_
     const bool packet_is_rtcp = is_rtcp(packet);
     std::vector<std::uint8_t> output(packet.begin(), packet.end());
     int size = static_cast<int>(output.size());
-    const auto status = packet_is_rtcp
-        ? srtp_unprotect_rtcp(context_->inbound, output.data(), &size)
-        : srtp_unprotect(context_->inbound, output.data(), &size);
+    const auto status =
+        packet_is_rtcp ? srtp_unprotect_rtcp(context_->inbound, output.data(), &size) : srtp_unprotect(context_->inbound, output.data(), &size);
     if (status != srtp_err_status_ok || size < 0)
     {
         spdlog::debug("webrtc srtp unprotect failed rtcp {} status {}", packet_is_rtcp, static_cast<int>(status));
@@ -230,9 +218,6 @@ std::optional<srtp_packet> srtp_transport::unprotect(std::span<const std::uint8_
     return srtp_packet{.rtcp = packet_is_rtcp, .bytes = std::move(output)};
 }
 
-bool srtp_transport::is_rtp_or_rtcp(std::span<const std::uint8_t> packet) noexcept
-{
-    return packet.size() >= 2U && (packet[0] & 0xC0U) == 0x80U;
-}
+bool srtp_transport::is_rtp_or_rtcp(std::span<const std::uint8_t> packet) noexcept { return packet.size() >= 2U && (packet[0] & 0xC0U) == 0x80U; }
 
 }    // namespace media_server

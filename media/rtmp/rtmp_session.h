@@ -20,9 +20,7 @@ namespace media_server
 class rtmp_session final : public media_sink, public std::enable_shared_from_this<rtmp_session>
 {
    public:
-    rtmp_session(
-        std::shared_ptr<tcp_connection> connection,
-        stream_registry& registry);
+    rtmp_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry);
     ~rtmp_session() override;
 
     void start();
@@ -39,69 +37,24 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
         player,
     };
 
-    static int send_callback(
-        void* param,
-        const void* header,
-        std::size_t header_bytes,
-        const void* payload,
-        std::size_t payload_bytes);
-    static int play_callback(
-        void* param,
-        const char* app,
-        const char* stream,
-        double start,
-        double duration,
-        std::uint8_t reset);
+    static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);
+    static int play_callback(void* param, const char* app, const char* stream, double start, double duration, std::uint8_t reset);
     static int pause_callback(void* param, int pause, std::uint32_t milliseconds);
     static int seek_callback(void* param, std::uint32_t milliseconds);
-    static int publish_callback(
-        void* param,
-        const char* app,
-        const char* stream,
-        const char* type);
-    static int video_callback(
-        void* param,
-        const void* data,
-        std::size_t bytes,
-        std::uint32_t timestamp);
-    static int audio_callback(
-        void* param,
-        const void* data,
-        std::size_t bytes,
-        std::uint32_t timestamp);
-    static int script_callback(
-        void* param,
-        const void* data,
-        std::size_t bytes,
-        std::uint32_t timestamp);
-    static int duration_callback(
-        void* param,
-        const char* app,
-        const char* stream,
-        double* duration);
-    static int demux_callback(
-        void* param,
-        int codec,
-        const void* data,
-        std::size_t bytes,
-        std::uint32_t pts,
-        std::uint32_t dts,
-        int flags);
+    static int publish_callback(void* param, const char* app, const char* stream, const char* type);
+    static int video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
+    static int audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
+    static int script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
+    static int duration_callback(void* param, const char* app, const char* stream, double* duration);
+    static int demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags);
 
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
-    int on_flv_demux(
-        int codec,
-        std::span<const std::uint8_t> data,
-        std::uint32_t pts,
-        std::uint32_t dts,
-        int flags);
+    int on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     void on_read(std::span<const std::uint8_t> data);
     void on_close();
     void close();
-    [[nodiscard]] static std::string make_stream_name(
-        std::string_view app,
-        std::string_view stream);
+    [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     std::shared_ptr<tcp_connection> connection_;
     stream_registry& registry_;

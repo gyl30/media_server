@@ -8,10 +8,7 @@
 namespace media_server
 {
 
-tcp_connection::tcp_connection(boost::asio::ip::tcp::socket socket)
-    : socket_(std::move(socket))
-{
-}
+tcp_connection::tcp_connection(boost::asio::ip::tcp::socket socket) : socket_(std::move(socket)) {}
 
 void tcp_connection::start(read_handler on_read, close_handler on_close)
 {
@@ -60,10 +57,7 @@ void tcp_connection::close()
     finish_close();
 }
 
-boost::asio::ip::tcp::socket& tcp_connection::socket() noexcept
-{
-    return socket_;
-}
+boost::asio::ip::tcp::socket& tcp_connection::socket() noexcept { return socket_; }
 
 void tcp_connection::read_next()
 {
@@ -73,20 +67,20 @@ void tcp_connection::read_next()
     }
 
     const auto self = shared_from_this();
-    socket_.async_read_some(
-        boost::asio::buffer(read_buffer_),
-        [this, self](const boost::system::error_code& error, std::size_t bytes) {
-            if (error)
-            {
-                close();
-                return;
-            }
-            if (bytes != 0 && on_read_)
-            {
-                on_read_(std::span{read_buffer_.data(), bytes});
-            }
-            read_next();
-        });
+    socket_.async_read_some(boost::asio::buffer(read_buffer_),
+                            [this, self](const boost::system::error_code& error, std::size_t bytes)
+                            {
+                                if (error)
+                                {
+                                    close();
+                                    return;
+                                }
+                                if (bytes != 0 && on_read_)
+                                {
+                                    on_read_(std::span{read_buffer_.data(), bytes});
+                                }
+                                read_next();
+                            });
 }
 
 void tcp_connection::write_next()
@@ -98,22 +92,22 @@ void tcp_connection::write_next()
 
     const auto self = shared_from_this();
     const auto buffer = write_queue_.front();
-    boost::asio::async_write(
-        socket_,
-        boost::asio::buffer(*buffer),
-        [this, self, buffer](const boost::system::error_code& error, std::size_t) {
-            if (closed_)
-            {
-                return;
-            }
-            if (error)
-            {
-                close();
-                return;
-            }
-            write_queue_.pop_front();
-            write_next();
-        });
+    boost::asio::async_write(socket_,
+                             boost::asio::buffer(*buffer),
+                             [this, self, buffer](const boost::system::error_code& error, std::size_t)
+                             {
+                                 if (closed_)
+                                 {
+                                     return;
+                                 }
+                                 if (error)
+                                 {
+                                     close();
+                                     return;
+                                 }
+                                 write_queue_.pop_front();
+                                 write_next();
+                             });
 }
 
 void tcp_connection::finish_close()
