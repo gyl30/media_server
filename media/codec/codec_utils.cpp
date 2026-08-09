@@ -132,7 +132,7 @@ std::int64_t milliseconds_to_ns(std::int64_t value) noexcept
 
 std::int64_t ns_to_milliseconds(std::int64_t value) noexcept
 {
-    return value <= 0 ? 0 : value / ns_per_millisecond;
+    return value / ns_per_millisecond;
 }
 
 std::uint32_t ns_to_flv_milliseconds(std::int64_t value) noexcept
@@ -142,11 +142,6 @@ std::uint32_t ns_to_flv_milliseconds(std::int64_t value) noexcept
 
 std::int64_t ns_to_90khz(std::int64_t value) noexcept
 {
-    if (value <= 0)
-    {
-        return 0;
-    }
-
     const auto seconds = value / ns_per_second;
     const auto nanoseconds = value % ns_per_second;
     return seconds * 90'000 + nanoseconds * 90'000 / ns_per_second;

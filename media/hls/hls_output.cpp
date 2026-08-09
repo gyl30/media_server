@@ -49,7 +49,7 @@ void hls_output::on_track(const media_track& track)
         recreate_muxer();
     }
 
-    segment_start_pts_ns_ = -1;
+    segment_start_pts_ns_.reset();
     waiting_for_key_frame_ = has_video_;
 }
 
@@ -77,13 +77,13 @@ void hls_output::on_frame(const media_frame& frame)
         waiting_for_key_frame_ = false;
     }
 
-    if (segment_start_pts_ns_ < 0)
+    if (!segment_start_pts_ns_)
 
     {
         segment_start_pts_ns_ = frame.pts_ns;
     }
 
-    const auto elapsed_ns = frame.pts_ns - segment_start_pts_ns_;
+    const auto elapsed_ns = frame.pts_ns - *segment_start_pts_ns_;
     const auto target_ns = static_cast<std::int64_t>(target_duration_seconds_ * 1'000'000'000.0);
     const bool segment_boundary = has_video_
         ? track_iterator->second.kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns
@@ -228,9 +228,9 @@ void hls_output::finish_segment(std::int64_t end_pts_ns)
     }
 
     double duration = target_duration_seconds_;
-    if (segment_start_pts_ns_ >= 0 && end_pts_ns >= segment_start_pts_ns_)
+    if (segment_start_pts_ns_ && end_pts_ns >= *segment_start_pts_ns_)
     {
-        duration = static_cast<double>(end_pts_ns - segment_start_pts_ns_) / 1'000'000'000.0;
+        duration = static_cast<double>(end_pts_ns - *segment_start_pts_ns_) / 1'000'000'000.0;
     }
     if (duration <= 0.0)
     {

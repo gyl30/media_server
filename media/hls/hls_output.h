@@ -61,7 +61,7 @@ class hls_output final : public media_sink
     std::vector<std::uint8_t> current_segment_;
     void* muxer_{};
     std::uint64_t next_sequence_{};
-    std::int64_t segment_start_pts_ns_{-1};
+    std::optional<std::int64_t> segment_start_pts_ns_;
     std::int64_t last_pts_ns_{};
     std::optional<std::chrono::steady_clock::time_point> ended_at_;
     bool has_video_{};
