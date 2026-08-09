@@ -82,7 +82,7 @@ struct rtsp_muxer_t
 
 static inline uint32_t rtsp_muxer_timeline_update(struct rtp_muxer_payload_t* pt, int64_t pts)
 {
-    if (0 == pt->timeline.pts)
+    if (INT64_MIN == pt->timeline.pts)
         pt->timeline.rtp = pt->rtp.timestamp;
     else
         pt->timeline.rtp += (int32_t)(pts - pt->timeline.pts);
@@ -293,7 +293,7 @@ int rtsp_muxer_add_payload(struct rtsp_muxer_t* muxer, const char* proto, int fr
 
     // init timeline
     pt->timeline.rtp = pt->rtp.timestamp;
-    pt->timeline.pts = 0;
+    pt->timeline.pts = INT64_MIN;
 
     // copy sdp
     pt->len = r;

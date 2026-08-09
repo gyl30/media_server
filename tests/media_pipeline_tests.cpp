@@ -7,7 +7,15 @@
 #include "media/http/http_flv_output.h"
 #include "media/webrtc/webrtc_output.h"
 
+extern "C"
+{
+#include "flv-proto.h"
+#include "rtsp-muxer.h"
+#include "rtsp-payloads.h"
+}
+
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -352,6 +360,26 @@ private:
     std::shared_ptr<media_stream> replacement_;
 };
 
+struct rtp_timeline_capture
+{
+    std::vector<std::uint32_t> timestamps;
+};
+
+int capture_rtp_timestamp(
+    void* param,
+    int,
+    const void*,
+    int bytes,
+    std::uint32_t timestamp,
+    int)
+{
+    if (bytes > 0)
+    {
+        static_cast<rtp_timeline_capture*>(param)->timestamps.push_back(timestamp);
+    }
+    return 0;
+}
+
 void test_timebase_conversions()
 {
     constexpr std::int64_t thirty_hours_ns = 30LL * 60 * 60 * 1'000'000'000;
@@ -380,6 +408,84 @@ void test_internal_format_contract()
     const auto aac = parse_aac_adts(adts);
     require(aac.has_value(), "parse adts");
     require(aac->sample_rate == 44'100 && aac->channel_count == 2, "adts aac config");
+}
+
+void test_flv_config_cache_lifecycle()
+{
+    std::size_t video_sequence_headers = 0;
+    std::size_t audio_sequence_headers = 0;
+    flv_output_muxer output(
+        [&video_sequence_headers, &audio_sequence_headers](
+            int type,
+            std::span<const std::uint8_t> data,
+            std::uint32_t) {
+            if (data.size() < 2U || data[1] != 0U)
+            {
+                return;
+            }
+            if (type == FLV_TYPE_VIDEO)
+            {
+                ++video_sequence_headers;
+            }
+            else if (type == FLV_TYPE_AUDIO)
+            {
+                ++audio_sequence_headers;
+            }
+        });
+
+    auto video = make_video_track();
+    video.config_version = 1;
+    output.on_track(video);
+    require(video_sequence_headers == 1U, "flv initial video sequence header");
+
+    auto audio = make_audio_track();
+    audio.config_version = 1;
+    output.on_track(audio);
+    output.on_frame(make_audio_frame(0));
+    require(audio_sequence_headers == 1U, "flv initial audio sequence header");
+
+    const std::vector<std::uint8_t> updated_asc{0x11, 0x90};
+    auto updated_audio = audio;
+    updated_audio.clock_rate = 48'000;
+    updated_audio.codec_config = updated_asc;
+    updated_audio.config_version = 2;
+    output.on_track(updated_audio);
+    require(video_sequence_headers == 2U, "flv config generation resets cached video header");
+
+    const std::vector<std::uint8_t> raw{0x21, 0x10, 0x56, 0xe5, 0x00, 0x11, 0x22, 0x33};
+    auto updated_adts = make_adts_frame(updated_asc, raw);
+    require(!updated_adts.empty(), "flv updated aac adts");
+    output.on_frame(media_frame{
+        .track = audio_track_id,
+        .dts_ns = 1'000'000'000,
+        .pts_ns = 1'000'000'000,
+        .key_frame = false,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(updated_adts)),
+    });
+    require(audio_sequence_headers == 2U, "flv config generation resets cached audio header");
+}
+
+void test_rtsp_muxer_zero_origin_timeline()
+{
+    rtp_timeline_capture capture;
+    auto* muxer = rtsp_muxer_create(&capture_rtp_timestamp, &capture);
+    require(muxer != nullptr, "rtsp muxer create");
+
+    const auto payload = rtsp_muxer_add_payload(
+        muxer, "RTP/AVP", 90'000, 96, "H264", 0, 0x12345678U, 0, nullptr, 0);
+    require(payload >= 0, "rtsp muxer add payload");
+    const auto media = rtsp_muxer_add_media(muxer, payload, RTP_PAYLOAD_H264, nullptr, 0);
+    require(media >= 0, "rtsp muxer add media");
+
+    const std::array<std::uint8_t, 8> frame{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x11};
+    require(rtsp_muxer_input(muxer, media, 0, 0, frame.data(), static_cast<int>(frame.size()), 0) == 0,
+            "rtsp muxer first frame");
+    require(rtsp_muxer_input(muxer, media, 40, 40, frame.data(), static_cast<int>(frame.size()), 0) == 0,
+            "rtsp muxer second frame");
+    require(capture.timestamps.size() == 2U, "rtsp muxer packet count");
+    require(capture.timestamps[1] - capture.timestamps[0] == 3'600U, "rtsp muxer zero origin timestamp step");
+
+    rtsp_muxer_destroy(muxer);
 }
 
 void test_media_stream_fanout_and_reentrancy()
@@ -856,6 +962,10 @@ int main()
     std::cout << "[pass] timebase_conversions\n";
     test_internal_format_contract();
     std::cout << "[pass] internal_format_contract\n";
+    test_flv_config_cache_lifecycle();
+    std::cout << "[pass] flv_config_cache_lifecycle\n";
+    test_rtsp_muxer_zero_origin_timeline();
+    std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
     test_media_stream_fanout_and_reentrancy();
     std::cout << "[pass] media_stream_fanout_and_reentrancy\n";
     test_stream_registry_generation_lifecycle();
@@ -870,6 +980,6 @@ int main()
     std::cout << "[pass] webrtc_opus_packetizer\n";
     test_webrtc_rtcp_sender();
     std::cout << "[pass] webrtc_rtcp_sender\n";
-    std::cout << "all tests passed: 8/8\n";
+    std::cout << "all tests passed\n";
     return 0;
 }
