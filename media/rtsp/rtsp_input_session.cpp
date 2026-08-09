@@ -14,7 +14,8 @@ extern "C"
 
 #include <boost/url/parse.hpp>
 
-#include <cstring>
+#include <algorithm>
+#include <chrono>
 #include <optional>
 #include <utility>
 
@@ -110,6 +111,7 @@ void rtsp_input_session::close()
         return;
     }
     closed_ = true;
+    keepalive_deadline_.reset();
     resolver_.cancel();
     if (connection_)
     {
@@ -173,9 +175,9 @@ int rtsp_input_session::setup_callback(void* param, int timeout, std::int64_t du
 }
 
 int rtsp_input_session::play_callback(
-    void*, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
+    void* param, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
     {
-    return 0;
+    return static_cast<rtsp_input_session*>(param)->on_play();
 }
 
 int rtsp_input_session::pause_callback(void*)
@@ -289,8 +291,11 @@ int rtsp_input_session::on_describe(const char* sdp, int length)
     return rtsp_client_setup(client_, sdp, length);
 }
 
-int rtsp_input_session::on_setup(int, std::int64_t)
+int rtsp_input_session::on_setup(int timeout, std::int64_t)
 {
+    const auto keepalive_seconds = timeout > 0 ? std::max(timeout / 2, 1) : 30;
+    keepalive_interval_ = std::chrono::seconds(keepalive_seconds);
+
     const auto media_count = rtsp_client_media_count(client_);
     if (media_count < 0 || static_cast<std::size_t>(media_count) > demuxers_.size())
     {
@@ -317,6 +322,12 @@ int rtsp_input_session::on_setup(int, std::int64_t)
     return rtsp_client_play(client_, &npt, nullptr);
 }
 
+int rtsp_input_session::on_play()
+{
+    keepalive_deadline_ = std::chrono::steady_clock::now() + keepalive_interval_;
+    return 0;
+}
+
 void rtsp_input_session::on_rtp(
     std::uint8_t channel,
     const void* data,
@@ -328,6 +339,23 @@ void rtsp_input_session::on_rtp(
         return;
     }
     static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
+
+    if (closed_ || client_ == nullptr || !keepalive_deadline_)
+    {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now < *keepalive_deadline_)
+    {
+        return;
+    }
+
+    keepalive_deadline_ = now + keepalive_interval_;
+    if (rtsp_client_options(client_, nullptr) != 0)
+    {
+        close();
+    }
 }
 
 int rtsp_input_session::on_packet(avpacket_t* packet)
