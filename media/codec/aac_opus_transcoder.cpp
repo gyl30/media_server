@@ -139,9 +139,24 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     {
         encoder = avcodec_find_encoder(AV_CODEC_ID_OPUS);
     }
-    if (encoder == nullptr || encoder->sample_fmts == nullptr)
+    if (encoder == nullptr)
     {
         spdlog::error("webrtc opus encoder not found");
+        cleanup();
+        return false;
+    }
+
+    const void* sample_formats{};
+    result = avcodec_get_supported_config(
+        nullptr,
+        encoder,
+        AV_CODEC_CONFIG_SAMPLE_FORMAT,
+        0,
+        &sample_formats,
+        nullptr);
+    if (result < 0 || sample_formats == nullptr)
+    {
+        spdlog::error("webrtc opus sample formats query failed {}", ffmpeg_error(result));
         cleanup();
         return false;
     }
@@ -156,7 +171,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
 
     av_channel_layout_default(&encoder_->ch_layout, output_channel_count);
     encoder_->sample_rate = opus_sample_rate;
-    encoder_->sample_fmt = encoder->sample_fmts[0];
+    encoder_->sample_fmt = static_cast<const AVSampleFormat*>(sample_formats)[0];
     encoder_->bit_rate = opus_bitrate_per_channel * output_channel_count;
     encoder_->time_base = AVRational{1, opus_sample_rate};
     encoder_->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
