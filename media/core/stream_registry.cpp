@@ -43,7 +43,11 @@ bool stream_registry::remove(std::string_view name, const media_stream* expected
 std::shared_ptr<media_stream> stream_registry::find(std::string_view name) const
 {
     const auto iterator = streams_.find(name);
-    return iterator == streams_.end() ? nullptr : iterator->second;
+    if (iterator == streams_.end() || iterator->second->ended())
+    {
+        return {};
+    }
+    return iterator->second;
 }
 
 }    // namespace media_server
