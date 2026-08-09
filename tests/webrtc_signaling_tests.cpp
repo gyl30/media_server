@@ -659,7 +659,6 @@ media_frame make_video_key_frame()
         .track = video_track_id,
         .dts_ns = 0,
         .pts_ns = 0,
-        .duration_ns = 40'000'000,
         .key_frame = true,
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::vector<std::uint8_t>{
             0x00, 0x00, 0x00, 0x01,
@@ -1135,7 +1134,6 @@ media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
         .track = audio_track_id,
         .dts_ns = pts_ns,
         .pts_ns = pts_ns,
-        .duration_ns = 23'219'954,
         .key_frame = false,
         .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.at(index)),
     };
