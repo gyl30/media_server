@@ -29,22 +29,47 @@ flv_output_muxer::~flv_output_muxer()
 
 void flv_output_muxer::on_track(const media_track& track)
 {
+    const auto existing = tracks_.find(track.id);
+    if (existing != tracks_.end() && existing->second.config_version == track.config_version)
+    {
+        return;
+    }
+
+    const bool reconfigured = existing != tracks_.end();
     tracks_.insert_or_assign(track.id, track);
 
-    if (track.codec == codec_id::h264 && !track.codec_config.empty())
-
+    if (reconfigured)
     {
-        // 仅 SPS/PPS，不包含 VCL。flv_muxer 会据此输出 AVC sequence header。
-        const auto result = flv_muxer_avc(
-            muxer_,
-            track.codec_config.data(),
-            track.codec_config.size(),
-            0,
-            0);
-        if (result != 0)
+        // flv_muxer 会缓存 AVC/AAC sequence-header 状态，配置代际变化时统一重置。
+        static_cast<void>(flv_muxer_reset(muxer_));
+        for (const auto& [id, current] : tracks_)
         {
-            spdlog::error("flv prime h264 config failed result {}", result);
+            static_cast<void>(id);
+            prime_h264_config(current);
         }
+        return;
+    }
+
+    prime_h264_config(track);
+}
+
+void flv_output_muxer::prime_h264_config(const media_track& track)
+{
+    if (track.codec != codec_id::h264 || track.codec_config.empty())
+    {
+        return;
+    }
+
+    // 仅 SPS/PPS，不包含 VCL。flv_muxer 会据此输出 AVC sequence header。
+    const auto result = flv_muxer_avc(
+        muxer_,
+        track.codec_config.data(),
+        track.codec_config.size(),
+        0,
+        0);
+    if (result != 0)
+    {
+        spdlog::error("flv prime h264 config failed result {}", result);
     }
 }
 

@@ -58,10 +58,7 @@ rtsp_input_session::~rtsp_input_session()
     {
         rtsp_client_destroy(client_);
     }
-    if (bitstream_created_)
-    {
-        avpkt2bs_destroy(&bitstream_);
-    }
+    avpkt2bs_destroy(&bitstream_);
 }
 
 bool rtsp_input_session::start()
@@ -83,14 +80,7 @@ bool rtsp_input_session::start()
         return false;
     }
 
-    if (avpkt2bs_create(&bitstream_) != 0)
-
-    {
-        registry_.remove(*stream_);
-        stream_.reset();
-        return false;
-    }
-    bitstream_created_ = true;
+    static_cast<void>(avpkt2bs_create(&bitstream_));
 
     const auto self = shared_from_this();
     resolver_.async_resolve(
@@ -348,7 +338,12 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     }
 
     // ireader 会随码流更新 packet.stream 中的配置，核心负责过滤未变化配置。
-    update_track_from_packet(*packet);
+    // avpkt2bs 会缓存首次解析的编解码配置，配置代际变化时重置后再转换当前帧。
+    if (update_track_from_packet(*packet))
+    {
+        avpkt2bs_destroy(&bitstream_);
+        static_cast<void>(avpkt2bs_create(&bitstream_));
+    }
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
     if (bytes <= 0 || bitstream_.ptr == nullptr)
     {
@@ -381,7 +376,7 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     return 0;
 }
 
-void rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
+bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
     if (input.codecid == AVCODEC_VIDEO_H264)
@@ -394,7 +389,7 @@ void rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
         }
         if (config.empty())
         {
-            return;
+            return false;
         }
         media_track track{
             .id = video_track_id,
@@ -404,10 +399,12 @@ void rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
             .channel_count = 0,
             .codec_config = std::move(config),
         };
-        if (stream_->update_track(std::move(track)))
+        const bool changed = stream_->update_track(std::move(track));
+        if (changed)
         {
             spdlog::info("rtsp input track video h264");
         }
+        return changed;
     }
 
     if (input.codecid == AVCODEC_AUDIO_AAC)
@@ -421,7 +418,7 @@ void rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
         }
         if (config.empty() || input.sample_rate <= 0 || input.channels <= 0)
         {
-            return;
+            return false;
         }
         media_track track{
             .id = audio_track_id,
@@ -431,11 +428,15 @@ void rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
             .channel_count = static_cast<std::uint16_t>(input.channels),
             .codec_config = std::move(config),
         };
-        if (stream_->update_track(std::move(track)))
+        const bool changed = stream_->update_track(std::move(track));
+        if (changed)
         {
             spdlog::info("rtsp input track audio aac sample_rate {} channels {}", input.sample_rate, input.channels);
         }
+        return changed;
     }
+
+    return false;
 }
 
 }    // namespace media_server
