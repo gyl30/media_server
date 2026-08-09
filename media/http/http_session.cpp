@@ -502,7 +502,7 @@ void http_session::detach_flv()
 {
     if (media_stream_ && flv_output_)
     {
-        static_cast<void>(media_stream_->remove_sink(flv_output_.get()));
+        media_stream_->remove_sink(*flv_output_);
     }
     flv_output_.reset();
     media_stream_.reset();

@@ -410,7 +410,7 @@ void rtmp_session::on_close()
     if (role_ == role::player && stream_)
 
     {
-        stream_->remove_sink(this);
+        stream_->remove_sink(*this);
     }
     if (role_ == role::publisher && stream_)
     {

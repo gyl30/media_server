@@ -262,7 +262,7 @@ void rtsp_output_session::on_close()
     closed_ = true;
     if (stream_ && playing_)
     {
-        stream_->remove_sink(this);
+        stream_->remove_sink(*this);
     }
     stream_.reset();
     spdlog::debug("rtsp output close {}", stream_name_);
