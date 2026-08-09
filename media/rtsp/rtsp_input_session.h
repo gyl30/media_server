@@ -77,7 +77,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<media_stream> stream_;
     rtsp_client_t* client_{};
-    std::array<rtsp_demuxer_t*, 8> demuxers_{};
+    std::array<rtsp_demuxer_t*, 2> demuxers_{};
     avpkt2bs_t bitstream_{};
     std::chrono::seconds keepalive_interval_{30};
     std::optional<std::chrono::steady_clock::time_point> keepalive_deadline_;

@@ -45,12 +45,26 @@ bool iequals(const char* value, std::string_view expected)
                       [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
 }
 
-bool supported_media(rtsp_client_t* client, int media)
+bool should_setup_media(rtsp_client_t* client, int media)
 {
     const auto type = rtsp_client_get_media_type(client, media);
     const auto* encoding = rtsp_client_get_media_encoding(client, media);
-    return (type == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H264") || iequals(encoding, "H265") || iequals(encoding, "HEVC"))) ||
-           (type == SDP_M_MEDIA_AUDIO && iequals(encoding, "MPEG4-GENERIC"));
+    const bool supported = (type == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H264") || iequals(encoding, "H265") || iequals(encoding, "HEVC"))) ||
+                           (type == SDP_M_MEDIA_AUDIO && iequals(encoding, "MPEG4-GENERIC"));
+    if (!supported)
+    {
+        return false;
+    }
+
+    // ireader 会压缩被忽略的 media，因此当前索引之前只有已经选择的 media。
+    for (int selected = 0; selected < media; ++selected)
+    {
+        if (rtsp_client_get_media_type(client, selected) == type)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 }    // namespace
 
@@ -161,10 +175,10 @@ int rtsp_input_session::rtp_port_callback(void* param, int media, const char*, u
     {
         return -1;
     }
-    if (!supported_media(self->client_, media))
+    if (!should_setup_media(self->client_, media))
     {
         const auto* encoding = rtsp_client_get_media_encoding(self->client_, media);
-        spdlog::debug("rtsp input ignore unsupported media {} encoding {}", media, encoding != nullptr ? encoding : "");
+        spdlog::debug("rtsp input ignore media {} encoding {}", media, encoding != nullptr ? encoding : "");
         return 0;
     }
     port[0] = static_cast<unsigned short>(media * 2);
