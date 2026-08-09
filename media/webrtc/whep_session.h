@@ -3,11 +3,13 @@
 
 #include "media/core/media_stream.h"
 #include "media/webrtc/dtls_certificate.h"
+#include "media/webrtc/dtls_transport.h"
 #include "media/webrtc/webrtc_sdp.h"
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include <array>
 #include <cstddef>
@@ -15,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <span>
 #include <string_view>
 
 namespace media_server
@@ -36,17 +39,25 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     [[nodiscard]] const std::string& answer_sdp() const noexcept;
     [[nodiscard]] std::uint16_t local_port() const noexcept;
     [[nodiscard]] bool ice_connected() const noexcept;
+    [[nodiscard]] bool dtls_connected() const noexcept;
     [[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> remote_endpoint() const;
+    [[nodiscard]] const std::optional<dtls_srtp_keying_material>& srtp_keying_material() const noexcept;
 
    private:
     void receive();
     void handle_packet(std::size_t size);
     void handle_stun(std::size_t size);
+    void handle_dtls(std::size_t size);
+    void send_dtls(std::span<const std::uint8_t> packet);
+    void schedule_dtls_timeout();
+    void handle_dtls_timeout();
 
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
+    std::unique_ptr<dtls_transport> dtls_;
     boost::asio::ip::udp::socket socket_;
+    boost::asio::steady_timer dtls_timer_;
     std::array<std::uint8_t, 2048> receive_buffer_{};
     boost::asio::ip::udp::endpoint receive_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_endpoint_;
