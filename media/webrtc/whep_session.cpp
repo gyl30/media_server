@@ -8,6 +8,7 @@
 
 #include <openssl/rand.h>
 
+#include <algorithm>
 #include <map>
 #include <utility>
 #include <vector>
@@ -114,13 +115,6 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
         return whep_session_start_error::stream_not_ready;
     }
 
-    const auto* media = webrtc_bundle_transport(offer);
-    if (media == nullptr || media->ice_ufrag.empty() || media->ice_pwd.empty() || !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
-    {
-        spdlog::debug("webrtc whep start rejected invalid transport attributes");
-        return whep_session_start_error::invalid_offer;
-    }
-
     boost::system::error_code error;
     const auto protocol = advertised_address_.is_v6() ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4();
     socket_.open(protocol, error);
@@ -171,6 +165,15 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     if (!answer)
     {
         spdlog::debug("webrtc answer create failed session {}", id_);
+        close();
+        return whep_session_start_error::invalid_offer;
+    }
+    const auto media = std::find_if(
+        offer.media.begin(), offer.media.end(), [&answer](const webrtc_media_offer& value) { return value.mid == answer->transport_mid; });
+    if (media == offer.media.end() || media->ice_ufrag.empty() || media->ice_pwd.empty() ||
+        !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
+    {
+        spdlog::debug("webrtc whep start rejected invalid transport attributes");
         close();
         return whep_session_start_error::invalid_offer;
     }
