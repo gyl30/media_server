@@ -354,22 +354,12 @@ int rtmp_session::on_flv_demux(
     }
 
     track_id id{};
-    std::int64_t duration_ns{};
     if (codec == FLV_VIDEO_H264)
     {
         id = video_track_id;
     } else if (codec == FLV_AUDIO_AAC)
     {
         id = audio_track_id;
-        const auto tracks = stream_->tracks();
-        for (const auto& track : tracks)
-        {
-            if (track.id == audio_track_id && track.clock_rate != 0)
-            {
-                duration_ns = static_cast<std::int64_t>(1'024'000'000'000LL / track.clock_rate);
-                break;
-            }
-        }
     }
     else
     {
@@ -381,7 +371,6 @@ int rtmp_session::on_flv_demux(
         .track = id,
         .dts_ns = milliseconds_to_ns(dts),
         .pts_ns = milliseconds_to_ns(pts),
-        .duration_ns = duration_ns,
         .key_frame = codec == FLV_VIDEO_H264 && flags != 0,
         .payload = std::move(payload),
     };

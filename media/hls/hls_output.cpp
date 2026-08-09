@@ -85,11 +85,11 @@ void hls_output::on_frame(const media_frame& frame)
 
     const auto elapsed_ns = frame.pts_ns - segment_start_pts_ns_;
     const auto target_ns = static_cast<std::int64_t>(target_duration_seconds_ * 1'000'000'000.0);
-    if (track_iterator->second.kind == media_kind::video &&
-        frame.key_frame &&
-        elapsed_ns >= target_ns &&
-        !current_segment_.empty())
-        {
+    const bool segment_boundary = has_video_
+        ? track_iterator->second.kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns
+        : elapsed_ns >= target_ns;
+    if (segment_boundary && !current_segment_.empty())
+    {
         finish_segment(frame.pts_ns);
         segment_start_pts_ns_ = frame.pts_ns;
     }
