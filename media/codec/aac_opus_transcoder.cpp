@@ -25,8 +25,7 @@ namespace
 {
 
 constexpr int opus_sample_rate = 48'000;
-constexpr int opus_channel_count = 1;
-constexpr std::int64_t opus_bitrate = 64'000;
+constexpr std::int64_t opus_bitrate_per_channel = 64'000;
 constexpr int default_opus_frame_samples = 960;
 
 std::string ffmpeg_error(int error)
@@ -81,9 +80,15 @@ aac_opus_transcoder::~aac_opus_transcoder()
     cleanup();
 }
 
-bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_config)
+bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_config, int output_channel_count)
 {
     cleanup();
+
+    if (output_channel_count != 1 && output_channel_count != 2)
+    {
+        spdlog::error("webrtc opus invalid output channel count {}", output_channel_count);
+        return false;
+    }
 
     const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_AAC);
     if (decoder == nullptr)
@@ -149,10 +154,10 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
         return false;
     }
 
-    av_channel_layout_default(&encoder_->ch_layout, opus_channel_count);
+    av_channel_layout_default(&encoder_->ch_layout, output_channel_count);
     encoder_->sample_rate = opus_sample_rate;
     encoder_->sample_fmt = encoder->sample_fmts[0];
-    encoder_->bit_rate = opus_bitrate;
+    encoder_->bit_rate = opus_bitrate_per_channel * output_channel_count;
     encoder_->time_base = AVRational{1, opus_sample_rate};
     encoder_->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
 
@@ -268,6 +273,8 @@ bool aac_opus_transcoder::transcode(
 
 void aac_opus_transcoder::cleanup()
 {
+    drain_encoder();
+
     if (input_packet_ != nullptr)
     {
         av_packet_free(&input_packet_);
@@ -303,6 +310,35 @@ void aac_opus_transcoder::cleanup()
     }
     next_pts_ = 0;
     encoder_frame_samples_ = 0;
+}
+
+
+void aac_opus_transcoder::drain_encoder()
+{
+    if (encoder_ == nullptr || output_packet_ == nullptr)
+    {
+        return;
+    }
+
+    const int send_result = avcodec_send_frame(encoder_, nullptr);
+    if (send_result < 0 && send_result != AVERROR_EOF)
+    {
+        return;
+    }
+
+    while (true)
+    {
+        av_packet_unref(output_packet_);
+        const int receive_result = avcodec_receive_packet(encoder_, output_packet_);
+        if (receive_result == AVERROR(EAGAIN) || receive_result == AVERROR_EOF)
+        {
+            return;
+        }
+        if (receive_result < 0)
+        {
+            return;
+        }
+    }
 }
 
 bool aac_opus_transcoder::configure_resampler(const AVFrame& frame)

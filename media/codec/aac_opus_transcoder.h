@@ -29,13 +29,14 @@ public:
     aac_opus_transcoder() = default;
     ~aac_opus_transcoder();
 
-    bool start(std::span<const std::uint8_t> audio_specific_config);
+    bool start(std::span<const std::uint8_t> audio_specific_config, int output_channel_count);
     bool transcode(
         std::span<const std::uint8_t> adts_frame,
         std::vector<opus_audio_packet>& packets);
 
 private:
     void cleanup();
+    void drain_encoder();
     bool configure_resampler(const AVFrame& frame);
     bool resample(const AVFrame& frame);
     bool encode_available(std::vector<opus_audio_packet>& packets);

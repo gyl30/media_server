@@ -20,6 +20,7 @@ struct webrtc_output_config
 {
     int h264_payload_type{-1};
     int opus_payload_type{-1};
+    int opus_channel_count{1};
 };
 
 class webrtc_output final : public media_sink

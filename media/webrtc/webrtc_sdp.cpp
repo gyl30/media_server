@@ -210,6 +210,15 @@ const webrtc_codec_offer* find_opus(const webrtc_media_offer& media)
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
+int opus_output_channel_count(const webrtc_codec_offer& codec, const media_track& track)
+{
+    if (track.channel_count >= 2 && has_parameter(codec.format_parameters, "stereo", "1"))
+    {
+        return 2;
+    }
+    return 1;
+}
+
 std::string h264_profile_level_id(const media_track& track)
 {
     const auto& data = track.codec_config;
@@ -364,6 +373,7 @@ std::optional<webrtc_answer> make_webrtc_answer(
     bool accepted_any = false;
     std::optional<int> video_payload_type;
     std::optional<int> audio_payload_type;
+    std::optional<int> audio_channel_count;
     for (const auto& media : offer.media)
     {
         const auto media_direction = lower_copy(media.direction);
@@ -409,7 +419,12 @@ std::optional<webrtc_answer> make_webrtc_answer(
         else
         {
             audio_payload_type = codec->payload_type;
-            spdlog::debug("webrtc answer audio mid {} pt {} codec opus", media.mid, codec->payload_type);
+            audio_channel_count = opus_output_channel_count(*codec, *audio_track);
+            spdlog::debug(
+                "webrtc answer audio mid {} pt {} codec opus channels {}",
+                media.mid,
+                codec->payload_type,
+                *audio_channel_count);
         }
         answer << "m=" << media.type << ' ' << config.port << ' ' << media.protocol << ' ' << codec->payload_type << "\r\n";
         answer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";
@@ -430,7 +445,9 @@ std::optional<webrtc_answer> make_webrtc_answer(
         else
         {
             answer << "a=rtpmap:" << codec->payload_type << " opus/48000/2\r\n";
-            answer << "a=fmtp:" << codec->payload_type << " minptime=10;useinbandfec=1\r\n";
+            answer << "a=fmtp:" << codec->payload_type
+                   << " minptime=10;useinbandfec=1;sprop-stereo="
+                   << (*audio_channel_count == 2 ? 1 : 0) << "\r\n";
         }
     }
 
@@ -438,7 +455,12 @@ std::optional<webrtc_answer> make_webrtc_answer(
     {
         return std::nullopt;
     }
-    return webrtc_answer{.sdp = answer.str(), .video_payload_type = video_payload_type, .audio_payload_type = audio_payload_type};
+    return webrtc_answer{
+        .sdp = answer.str(),
+        .video_payload_type = video_payload_type,
+        .audio_payload_type = audio_payload_type,
+        .audio_channel_count = audio_channel_count,
+    };
 }
 
 }    // namespace media_server

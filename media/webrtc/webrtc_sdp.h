@@ -48,6 +48,7 @@ struct webrtc_answer
     std::string sdp;
     std::optional<int> video_payload_type;
     std::optional<int> audio_payload_type;
+    std::optional<int> audio_channel_count;
 };
 
 struct webrtc_answer_config
