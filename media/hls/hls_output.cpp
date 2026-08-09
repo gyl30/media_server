@@ -18,8 +18,8 @@ extern "C"
 namespace media_server
 {
 
-hls_output::hls_output(double target_duration_seconds, std::size_t window_size)
-    : target_duration_seconds_(target_duration_seconds), window_size_(window_size)
+hls_output::hls_output(hls_config config)
+    : target_duration_seconds_(config.target_duration_seconds), window_size_(config.window_size)
 {
     recreate_muxer();
 }
@@ -55,7 +55,7 @@ void hls_output::on_track(const media_track& track)
 
 void hls_output::on_frame(const media_frame& frame)
 {
-    if (ended_ || muxer_ == nullptr || !frame.payload)
+    if (ended_at_.has_value() || muxer_ == nullptr || !frame.payload)
     {
         return;
     }
@@ -114,7 +114,7 @@ void hls_output::on_frame(const media_frame& frame)
 
 void hls_output::on_end()
 {
-    if (ended_)
+    if (ended_at_.has_value())
     {
         return;
     }
@@ -122,7 +122,7 @@ void hls_output::on_end()
     {
         finish_segment(last_pts_ns_);
     }
-    ended_ = true;
+    ended_at_ = std::chrono::steady_clock::now();
 }
 
 std::string hls_output::playlist(std::string_view base_path) const
@@ -146,7 +146,7 @@ std::string hls_output::playlist(std::string_view base_path) const
         output << base_path << '/' << item.sequence << ".ts\n";
     }
 
-    if (ended_)
+    if (ended_at_.has_value())
 
     {
         output << "#EXT-X-ENDLIST\n";
@@ -169,6 +169,11 @@ std::optional<std::vector<std::uint8_t>> hls_output::segment(std::uint64_t seque
 std::size_t hls_output::segment_count() const noexcept
 {
     return segments_.size();
+}
+
+std::optional<std::chrono::steady_clock::time_point> hls_output::ended_at() const noexcept
+{
+    return ended_at_;
 }
 
 void* hls_output::ts_alloc(void*, std::size_t bytes)

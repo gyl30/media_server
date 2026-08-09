@@ -2,9 +2,11 @@
 #include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
 #include "media/hls/hls_output.h"
+#include "media/hls/hls_service.h"
 #include "media/webrtc/webrtc_output.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -13,6 +15,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace media_server
@@ -202,7 +205,7 @@ void test_media_stream_fanout_and_reentrancy()
 
 void test_hls_output()
 {
-    hls_output output(1.0, 4);
+    hls_output output(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
     output.on_track(make_video_track());
     output.on_track(make_audio_track());
 
@@ -227,6 +230,49 @@ void test_hls_output()
     const auto playlist = output.playlist(".");
     require(playlist.find("#EXTM3U") != std::string::npos, "hls playlist header");
     require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls endlist");
+}
+
+
+void test_hls_service_lifecycle()
+{
+    stream_registry registry;
+    hls_service hls(registry, hls_config{.target_duration_seconds = 1.0, .window_size = 4});
+
+    auto first = std::make_shared<media_stream>("live/hls");
+    require(registry.add(first), "hls first stream add");
+    require(first->update_track(make_video_track()), "hls first track");
+    require(hls.segment_count("live/hls") == 0U, "hls first output create");
+
+    require(first->publish(make_video_frame(0, true)), "hls first key frame");
+    require(first->publish(make_video_frame(1'000'000'000, true)), "hls first segment boundary");
+    first->end();
+    require(registry.remove("live/hls", first.get()), "hls first stream remove");
+
+    const auto ended_playlist = hls.playlist("live/hls");
+    require(ended_playlist.has_value(), "hls ended playlist retained");
+    require(ended_playlist->find("#EXT-X-ENDLIST") != std::string::npos, "hls ended playlist marker");
+    const auto ended_segment = hls.segment("live/hls", 0);
+    require(ended_segment.has_value() && !ended_segment->empty(), "hls ended segment retained");
+
+    auto second = std::make_shared<media_stream>("live/hls");
+    require(registry.add(second), "hls replacement stream add");
+    require(second->update_track(make_video_track()), "hls replacement track");
+    require(hls.segment_count("live/hls") == 0U, "hls replacement output reset");
+    require(!hls.segment("live/hls", 0).has_value(), "hls replacement drops old segment");
+
+    stream_registry expiring_registry;
+    hls_service expiring_hls(
+        expiring_registry,
+        hls_config{.target_duration_seconds = 0.001, .window_size = 1});
+    auto expiring_stream = std::make_shared<media_stream>("live/expiring");
+    require(expiring_registry.add(expiring_stream), "hls expiring stream add");
+    require(expiring_stream->update_track(make_video_track()), "hls expiring track");
+    require(expiring_hls.segment_count("live/expiring") == 0U, "hls expiring output create");
+    expiring_stream->end();
+    require(expiring_registry.remove("live/expiring", expiring_stream.get()), "hls expiring stream remove");
+    require(expiring_hls.playlist("live/expiring").has_value(), "hls ended output initially retained");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    require(!expiring_hls.playlist("live/expiring").has_value(), "hls ended output expires");
 }
 
 
@@ -438,6 +484,8 @@ int main()
     std::cout << "[pass] media_stream_fanout_and_reentrancy\n";
     test_hls_output();
     std::cout << "[pass] hls_output\n";
+    test_hls_service_lifecycle();
+    std::cout << "[pass] hls_service_lifecycle\n";
     test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
     test_webrtc_opus_packetizer();
