@@ -36,6 +36,37 @@ std::string random_hex(std::size_t byte_count)
     return result;
 }
 
+
+class whep_stream_observer final : public media_sink
+{
+   public:
+    using end_handler = std::function<void()>;
+
+    explicit whep_stream_observer(end_handler handler)
+        : handler_(std::move(handler))
+    {
+    }
+
+    void on_track(const media_track&) override
+    {
+    }
+
+    void on_frame(const media_frame&) override
+    {
+    }
+
+    void on_end() override
+    {
+        if (handler_)
+        {
+            handler_();
+        }
+    }
+
+   private:
+    end_handler handler_;
+};
+
 const webrtc_media_offer* transport_media(const webrtc_offer& offer)
 {
     if (!offer.bundle_mids.empty())
@@ -59,10 +90,12 @@ whep_session::whep_session(
     boost::asio::io_context& io,
     std::shared_ptr<media_stream> stream,
     boost::asio::ip::address advertised_address,
-    std::shared_ptr<dtls_certificate> certificate)
+    std::shared_ptr<dtls_certificate> certificate,
+    closed_handler handler)
     : stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
+      closed_handler_(std::move(handler)),
       socket_(io),
       dtls_timer_(io)
 {
@@ -166,6 +199,21 @@ bool whep_session::start(webrtc_offer offer)
     audio_channel_count_ = answer->audio_channel_count;
     started_ = true;
 
+    const auto session_weak = weak_from_this();
+    stream_observer_ = std::make_shared<whep_stream_observer>([session_weak]() {
+        if (const auto self = session_weak.lock())
+        {
+            spdlog::info("webrtc source stream ended session {}", self->id_);
+            self->close();
+        }
+    });
+    if (!stream_->add_sink(stream_observer_))
+    {
+        spdlog::debug("webrtc source stream observer attach failed session {}", id_);
+        close();
+        return false;
+    }
+
     spdlog::info(
         "webrtc whep session started {} stream {} candidate {} {}",
         id_,
@@ -187,6 +235,8 @@ bool whep_session::start(webrtc_offer offer)
 void whep_session::close()
 {
     const bool was_started = started_;
+    auto handler = std::move(closed_handler_);
+    closed_handler_ = {};
     started_ = false;
     ice_connected_ = false;
     remote_endpoint_.reset();
@@ -197,7 +247,12 @@ void whep_session::close()
     {
         stream_->remove_sink(output_.get());
     }
+    if (stream_observer_ && stream_)
+    {
+        stream_->remove_sink(stream_observer_.get());
+    }
     output_.reset();
+    stream_observer_.reset();
     if (srtp_)
     {
         srtp_->close();
@@ -221,6 +276,10 @@ void whep_session::close()
     if (was_started)
     {
         spdlog::info("webrtc whep session closed {}", id_);
+        if (handler)
+        {
+            handler(id_);
+        }
     }
 }
 

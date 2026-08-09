@@ -18,6 +18,11 @@ whep_service::whep_service(
 {
 }
 
+whep_service::~whep_service()
+{
+    close();
+}
+
 bool whep_service::ready() const noexcept
 {
     return certificate_ != nullptr;
@@ -76,7 +81,17 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
         }
     }
 
-    auto session = std::make_shared<whep_session>(io_, stream, advertised_address_, certificate_);
+    auto session = std::make_shared<whep_session>(
+        io_,
+        stream,
+        advertised_address_,
+        certificate_,
+        [this](std::string_view session_id) {
+            if (sessions_.erase(std::string(session_id)) > 0)
+            {
+                spdlog::info("whep session released {}", session_id);
+            }
+        });
     if (!session->start(std::move(*offer)))
     {
         spdlog::debug("whep session start failed stream {}", stream_name);
@@ -110,20 +125,22 @@ bool whep_service::remove(std::string_view session_id)
         spdlog::debug("whep session remove not found {}", session_id);
         return false;
     }
-    iterator->second->close();
+    auto session = iterator->second;
     sessions_.erase(iterator);
+    session->close();
     spdlog::info("whep session removed {}", session_id);
     return true;
 }
 
 void whep_service::close()
 {
-    for (const auto& [id, session] : sessions_)
+    auto sessions = std::move(sessions_);
+    sessions_.clear();
+    for (const auto& [id, session] : sessions)
     {
         static_cast<void>(id);
         session->close();
     }
-    sessions_.clear();
 }
 
 }    // namespace media_server

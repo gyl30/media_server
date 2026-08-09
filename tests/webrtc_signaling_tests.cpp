@@ -603,14 +603,127 @@ void test_whep_session_lifecycle()
     whep_service whep(io, registry, boost::asio::ip::make_address("127.0.0.1"));
     require(whep.ready(), "whep certificate ready");
 
-    const auto created = whep.create("live/test", webrtc_offer_sdp);
-    require(created.error == whep_create_error::none, "whep create");
-    require(!created.session_id.empty(), "whep session id");
-    require(created.location == "/whep/session/" + created.session_id, "whep location");
-    require(created.answer_sdp.find("a=ice-lite\r\n") != std::string::npos, "whep answer sdp");
-    require(created.answer_sdp.find("a=candidate:1 1 UDP 2130706431 127.0.0.1 ") != std::string::npos, "whep host candidate");
-    require(whep.remove(created.session_id), "whep delete");
-    require(!whep.remove(created.session_id), "whep delete once");
+    const auto first = whep.create("live/test", webrtc_offer_sdp);
+    const auto second = whep.create("live/test", webrtc_offer_sdp);
+    require(first.error == whep_create_error::none && second.error == whep_create_error::none, "whep create multiple sessions");
+    require(!first.session_id.empty() && !second.session_id.empty(), "whep session ids");
+    require(first.session_id != second.session_id, "whep unique session ids");
+    require(first.location == "/whep/session/" + first.session_id, "whep first location");
+    require(second.location == "/whep/session/" + second.session_id, "whep second location");
+    require(first.answer_sdp.find("a=ice-lite\r\n") != std::string::npos, "whep answer sdp");
+    require(first.answer_sdp.find("a=candidate:1 1 UDP 2130706431 127.0.0.1 ") != std::string::npos, "whep host candidate");
+    require(sdp_attribute(first.answer_sdp, "ice-ufrag") != sdp_attribute(second.answer_sdp, "ice-ufrag"), "whep unique ice ufrag");
+    require(sdp_attribute(first.answer_sdp, "ice-pwd") != sdp_attribute(second.answer_sdp, "ice-pwd"), "whep unique ice password");
+
+    require(whep.remove(first.session_id), "whep remove first session");
+    require(!whep.remove(first.session_id), "whep remove first once");
+    require(whep.remove(second.session_id), "whep remove second session");
+
+    const auto third = whep.create("live/test", webrtc_offer_sdp);
+    require(third.error == whep_create_error::none, "whep recreate viewer");
+
+    stream->end();
+    require(!whep.remove(third.session_id), "whep source end releases session");
+    require(registry.remove("live/test", stream.get()), "whep remove ended source");
+
+    auto replacement = std::make_shared<media_stream>("live/test");
+    require(replacement->update_track(make_video_track()), "whep replacement video track");
+    require(replacement->update_track(make_audio_track()), "whep replacement audio track");
+    require(registry.add(replacement), "whep replacement registry add");
+
+    const auto replacement_session = whep.create("live/test", webrtc_offer_sdp);
+    require(replacement_session.error == whep_create_error::none, "whep create after republish");
+    require(replacement_session.session_id != third.session_id, "whep republish new session id");
+    require(whep.remove(replacement_session.session_id), "whep remove republished session");
+}
+
+
+void test_whep_multi_session_isolation()
+{
+    boost::asio::io_context io;
+    auto stream = std::make_shared<media_stream>("live/multi");
+    require(stream->update_track(make_video_track()), "multi video track");
+    require(stream->update_track(make_audio_track()), "multi audio track");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "multi parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "multi certificate");
+
+    auto first = std::make_shared<whep_session>(
+        io,
+        stream,
+        boost::asio::ip::make_address("127.0.0.1"),
+        certificate);
+    auto second = std::make_shared<whep_session>(
+        io,
+        stream,
+        boost::asio::ip::make_address("127.0.0.1"),
+        certificate);
+    require(first->start(*offer) && second->start(*offer), "multi sessions start");
+    require(first->id() != second->id(), "multi unique session ids");
+    require(first->local_port() != second->local_port(), "multi unique udp ports");
+
+    const auto first_ufrag = sdp_attribute(first->answer_sdp(), "ice-ufrag");
+    const auto first_pwd = sdp_attribute(first->answer_sdp(), "ice-pwd");
+    const auto second_ufrag = sdp_attribute(second->answer_sdp(), "ice-ufrag");
+    const auto second_pwd = sdp_attribute(second->answer_sdp(), "ice-pwd");
+    require(first_ufrag != second_ufrag && first_pwd != second_pwd, "multi unique ice credentials");
+
+    boost::asio::ip::udp::socket first_client(
+        io,
+        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    boost::asio::ip::udp::socket second_client(
+        io,
+        boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const boost::asio::ip::udp::endpoint first_endpoint(
+        boost::asio::ip::make_address("127.0.0.1"),
+        first->local_port());
+    const boost::asio::ip::udp::endpoint second_endpoint(
+        boost::asio::ip::make_address("127.0.0.1"),
+        second->local_port());
+
+    const std::array<std::uint8_t, 12> first_id{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    const std::array<std::uint8_t, 12> second_id{2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
+    require_stun_success(
+        exchange_stun(
+            io,
+            first_client,
+            first_endpoint,
+            make_stun_request(first_ufrag + ":remotevideo", first_pwd, first_id, true)),
+        first_id);
+    require_stun_success(
+        exchange_stun(
+            io,
+            second_client,
+            second_endpoint,
+            make_stun_request(second_ufrag + ":remotevideo", second_pwd, second_id, true)),
+        second_id);
+    require(first->ice_connected() && second->ice_connected(), "multi ice connected");
+    require(first->remote_endpoint()->port() == first_client.local_endpoint().port(), "multi first endpoint");
+    require(second->remote_endpoint()->port() == second_client.local_endpoint().port(), "multi second endpoint");
+
+    first->close();
+    require(first->local_port() == 0 && !first->ice_connected(), "multi first closed");
+    require(second->local_port() != 0 && second->ice_connected(), "multi second remains connected");
+
+    const std::array<std::uint8_t, 12> keepalive_id{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
+    require_stun_success(
+        exchange_stun(
+            io,
+            second_client,
+            second_endpoint,
+            make_stun_request(second_ufrag + ":remotevideo", second_pwd, keepalive_id, false)),
+        keepalive_id);
+    require(second->ice_connected(), "multi second survives first close");
+
+    stream->end();
+    require(second->local_port() == 0, "multi source end closes second");
+    require(!second->ice_connected(), "multi source end clears ice");
+
+    boost::system::error_code error;
+    first_client.close(error);
+    second_client.close(error);
 }
 
 
@@ -843,6 +956,8 @@ int main()
     std::cout << "[pass] webrtc_opus_mono_default\n";
     test_whep_session_lifecycle();
     std::cout << "[pass] whep_session_lifecycle\n";
+    test_whep_multi_session_isolation();
+    std::cout << "[pass] whep_multi_session_isolation\n";
     test_whep_ice_lite();
     std::cout << "[pass] whep_ice_lite\n";
     test_whep_dtls();
