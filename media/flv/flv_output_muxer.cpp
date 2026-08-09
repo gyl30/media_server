@@ -56,8 +56,8 @@ void flv_output_muxer::on_frame(const media_frame& frame)
         return;
     }
 
-    const auto pts = ns_to_milliseconds(frame.pts_ns);
-    const auto dts = ns_to_milliseconds(frame.dts_ns);
+    const auto pts = ns_to_flv_milliseconds(frame.pts_ns);
+    const auto dts = ns_to_flv_milliseconds(frame.dts_ns);
     int result = -1;
 
     switch (iterator->second.codec)

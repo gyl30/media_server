@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -350,6 +351,18 @@ private:
     stream_registry& registry_;
     std::shared_ptr<media_stream> replacement_;
 };
+
+void test_timebase_conversions()
+{
+    constexpr std::int64_t thirty_hours_ns = 30LL * 60 * 60 * 1'000'000'000;
+    require(ns_to_90khz(thirty_hours_ns) == 9'720'000'000LL, "90khz long timeline");
+
+    constexpr std::int64_t long_milliseconds =
+        static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max()) + 1'234;
+    const auto long_ns = milliseconds_to_ns(long_milliseconds);
+    require(ns_to_milliseconds(long_ns) == long_milliseconds, "millisecond timeline keeps int64 range");
+    require(ns_to_flv_milliseconds(long_ns) == 1'233U, "flv timestamp wraps uint32 timeline");
+}
 
 void test_internal_format_contract()
 {
@@ -839,6 +852,8 @@ void test_webrtc_opus_packetizer()
 int main()
 {
     using namespace media_server;
+    test_timebase_conversions();
+    std::cout << "[pass] timebase_conversions\n";
     test_internal_format_contract();
     std::cout << "[pass] internal_format_contract\n";
     test_media_stream_fanout_and_reentrancy();
@@ -855,6 +870,6 @@ int main()
     std::cout << "[pass] webrtc_opus_packetizer\n";
     test_webrtc_rtcp_sender();
     std::cout << "[pass] webrtc_rtcp_sender\n";
-    std::cout << "all tests passed: 7/7\n";
+    std::cout << "all tests passed: 8/8\n";
     return 0;
 }
