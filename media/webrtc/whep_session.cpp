@@ -163,6 +163,7 @@ bool whep_session::start(webrtc_offer offer)
     answer_sdp_ = answer->sdp;
     video_payload_type_ = answer->video_payload_type;
     audio_payload_type_ = answer->audio_payload_type;
+    audio_channel_count_ = answer->audio_channel_count;
     started_ = true;
 
     spdlog::info(
@@ -172,12 +173,13 @@ bool whep_session::start(webrtc_offer offer)
         advertised_address_.to_string(),
         local_port_);
     spdlog::debug(
-        "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {}",
+        "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {}",
         id_,
         ice_ufrag_,
         remote_ice_ufrag_,
         video_payload_type_.value_or(-1),
-        audio_payload_type_.value_or(-1));
+        audio_payload_type_.value_or(-1),
+        audio_channel_count_.value_or(0));
     receive();
     return true;
 }
@@ -210,6 +212,7 @@ void whep_session::close()
     answer_sdp_.clear();
     video_payload_type_.reset();
     audio_payload_type_.reset();
+    audio_channel_count_.reset();
     local_port_ = 0;
     boost::system::error_code error;
     socket_.cancel(error);
@@ -471,6 +474,7 @@ bool whep_session::start_media()
         webrtc_output_config{
             .h264_payload_type = video_payload_type_.value_or(-1),
             .opus_payload_type = audio_payload_type_.value_or(-1),
+            .opus_channel_count = audio_channel_count_.value_or(1),
         },
         [weak](std::span<const std::uint8_t> packet) {
             if (const auto self = weak.lock())

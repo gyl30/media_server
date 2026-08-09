@@ -200,8 +200,14 @@ bool webrtc_output::add_aac_track(const media_track& track)
         return false;
     }
 
+    if (config_.opus_channel_count != 1 && config_.opus_channel_count != 2)
+    {
+        spdlog::error("webrtc invalid opus channel count {}", config_.opus_channel_count);
+        return false;
+    }
+
     auto transcoder = std::make_unique<aac_opus_transcoder>();
-    if (!transcoder->start(track.codec_config))
+    if (!transcoder->start(track.codec_config, config_.opus_channel_count))
     {
         spdlog::error("webrtc aac opus transcoder start failed track {}", track.id);
         return false;
@@ -241,7 +247,7 @@ bool webrtc_output::add_aac_track(const media_track& track)
             .waiting_key_frame = false,
             .audio_pts_started = false,
         });
-    spdlog::debug("webrtc opus output track ready id {} pt {}", track.id, config_.opus_payload_type);
+    spdlog::debug("webrtc opus output track ready id {} pt {} channels {}", track.id, config_.opus_payload_type, config_.opus_channel_count);
     return true;
 }
 
