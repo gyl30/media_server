@@ -283,7 +283,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     demuxer_ = flv_demuxer_create(&rtmp_session::demux_callback, this);
     if (demuxer_ == nullptr)
     {
-        registry_.remove(stream_.get());
+        registry_.remove(*stream_);
         stream_.reset();
         return -1;
     }
@@ -415,7 +415,7 @@ void rtmp_session::on_close()
     if (role_ == role::publisher && stream_)
     {
         stream_->end();
-        registry_.remove(stream_.get());
+        registry_.remove(*stream_);
     }
     stream_.reset();
     output_muxer_.reset();
