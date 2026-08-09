@@ -14,14 +14,17 @@ struct rtsp_muxer_t;
 namespace media_server
 {
 
-// 第一阶段仅负责 WebRTC 媒体侧的 H.264 RTP 打包。
-// ICE/DTLS/SRTP 由后续 transport 层接入，不进入 media_stream。
+struct webrtc_output_config
+{
+    int h264_payload_type{};
+};
+
 class webrtc_output final : public media_sink
 {
    public:
     using rtp_handler = std::function<void(std::span<const std::uint8_t>)>;
 
-    explicit webrtc_output(rtp_handler handler);
+    webrtc_output(webrtc_output_config config, rtp_handler handler);
     ~webrtc_output() override;
 
     void on_track(const media_track& track) override;
@@ -40,12 +43,13 @@ class webrtc_output final : public media_sink
         int flags);
 
     struct track_state
-
     {
         media_track track;
         int media_id{-1};
+        bool waiting_key_frame{true};
     };
 
+    webrtc_output_config config_;
     rtp_handler handler_;
     rtsp_muxer_t* muxer_{};
     std::map<track_id, track_state> tracks_;

@@ -518,7 +518,7 @@ void http_session::close()
     closed_ = true;
     detach_flv();
     boost::system::error_code error;
-    hls_wait_timer_.cancel(error);
+    hls_wait_timer_.cancel();
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);
     keep_alive_.reset();

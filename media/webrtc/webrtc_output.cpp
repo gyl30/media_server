@@ -10,21 +10,23 @@ extern "C"
 }
 
 #include <random>
+#include <utility>
 
 namespace media_server
 {
-
 namespace
 {
+
 std::uint32_t random_u32()
 {
     std::random_device device;
     return (static_cast<std::uint32_t>(device()) << 16U) ^ static_cast<std::uint32_t>(device());
 }
+
 }    // namespace
 
-webrtc_output::webrtc_output(rtp_handler handler)
-    : handler_(std::move(handler)), muxer_(rtsp_muxer_create(&webrtc_output::on_packet, this))
+webrtc_output::webrtc_output(webrtc_output_config config, rtp_handler handler)
+    : config_(config), handler_(std::move(handler)), muxer_(rtsp_muxer_create(&webrtc_output::on_packet, this))
 {
 }
 
@@ -38,7 +40,7 @@ webrtc_output::~webrtc_output()
 
 void webrtc_output::on_track(const media_track& track)
 {
-    if (track.codec != codec_id::h264 || muxer_ == nullptr)
+    if (track.codec != codec_id::h264 || muxer_ == nullptr || config_.h264_payload_type < 0 || config_.h264_payload_type > 127)
     {
         return;
     }
@@ -48,7 +50,7 @@ void webrtc_output::on_track(const media_track& track)
         muxer_,
         "RTP/AVP",
         90'000,
-        96,
+        config_.h264_payload_type,
         "H264",
         0,
         random_u32(),
@@ -69,7 +71,7 @@ void webrtc_output::on_track(const media_track& track)
         return;
     }
 
-    tracks_.insert_or_assign(track.id, track_state{.track = track, .media_id = media_id});
+    tracks_.insert_or_assign(track.id, track_state{.track = track, .media_id = media_id, .waiting_key_frame = true});
 }
 
 void webrtc_output::on_frame(const media_frame& frame)
@@ -80,9 +82,19 @@ void webrtc_output::on_frame(const media_frame& frame)
         return;
     }
 
+    auto& state = iterator->second;
+    if (state.waiting_key_frame)
+    {
+        if (!frame.key_frame)
+        {
+            return;
+        }
+        state.waiting_key_frame = false;
+    }
+
     const auto result = rtsp_muxer_input(
         muxer_,
-        iterator->second.media_id,
+        state.media_id,
         ns_to_milliseconds(frame.pts_ns),
         ns_to_milliseconds(frame.dts_ns),
         frame.payload->data(),
@@ -110,13 +122,13 @@ int webrtc_output::on_packet(
     int bytes,
     std::uint32_t,
     int)
-    {
-
+{
     auto* self = static_cast<webrtc_output*>(param);
     if (bytes <= 0 || data == nullptr)
     {
         return 0;
     }
+
     ++self->packet_count_;
     if (self->handler_)
     {

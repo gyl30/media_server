@@ -18,6 +18,7 @@ find_package(OpenSSL REQUIRED)
 include(CTest)
 include(cmake/boost.cmake)
 include(cmake/ireader.cmake)
+include(cmake/srtp.cmake)
 
 add_library(media_core STATIC
     media/core/media_stream.cpp
@@ -34,6 +35,7 @@ add_library(media_core STATIC
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
     media/webrtc/stun_message.cpp
+    media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
     media/webrtc/whep_session.cpp
     media/webrtc/whep_service.cpp
@@ -58,6 +60,7 @@ target_link_libraries(media_core PUBLIC
     Threads::Threads
     OpenSSL::SSL
     OpenSSL::Crypto
+    libSRTP::srtp2
     ${MEDIA_SERVER_BOOST_LIBS}
 )
 
