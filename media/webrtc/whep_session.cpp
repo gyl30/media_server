@@ -201,6 +201,7 @@ bool whep_session::start(webrtc_offer offer)
     video_payload_type_ = answer->video_payload_type;
     audio_payload_type_ = answer->audio_payload_type;
     audio_channel_count_ = answer->audio_channel_count;
+    rtcp_stats_ = {};
     started_ = true;
 
     const auto session_weak = weak_from_this();
@@ -329,6 +330,11 @@ const std::optional<dtls_srtp_keying_material>& whep_session::srtp_keying_materi
 {
     static const std::optional<dtls_srtp_keying_material> empty;
     return dtls_ == nullptr ? empty : dtls_->srtp_keying_material();
+}
+
+const whep_rtcp_stats& whep_session::rtcp_stats() const noexcept
+{
+    return rtcp_stats_;
 }
 
 void whep_session::receive()
@@ -523,8 +529,43 @@ void whep_session::handle_srtp(std::size_t size)
 
     spdlog::trace("webrtc srtp unprotected session {} rtcp {} size {}", id_, packet->rtcp, packet->bytes.size());
 
-    // 第一阶段只完成接收侧 SRTP/SRTCP 解密和校验。
-    // RTCP 反馈不会触发关键帧请求，后续按需要增加统计处理。
+    if (!packet->rtcp)
+    {
+        return;
+    }
+
+    rtcp_receive_result result;
+    if (!rtcp_receiver_.input(packet->bytes, result))
+    {
+        spdlog::debug("webrtc rtcp rejected session {} size {}", id_, packet->bytes.size());
+        return;
+    }
+
+    for (const auto& report : result.receiver_reports)
+    {
+        ++rtcp_stats_.receiver_reports;
+        spdlog::trace(
+            "webrtc rtcp receiver report session {} sender_ssrc {} source_ssrc {} fraction_lost {} cumulative_lost {} highest_sequence {} jitter {} lsr {} dlsr {}",
+            id_,
+            report.sender_ssrc,
+            report.source_ssrc,
+            report.fraction_lost,
+            report.cumulative_lost,
+            report.highest_sequence,
+            report.jitter,
+            report.lsr,
+            report.dlsr);
+    }
+
+    for (const auto& pli : result.plis)
+    {
+        ++rtcp_stats_.plis;
+        spdlog::trace(
+            "webrtc rtcp pli session {} sender_ssrc {} media_ssrc {}",
+            id_,
+            pli.sender_ssrc,
+            pli.media_ssrc);
+    }
 }
 
 bool whep_session::start_media()
