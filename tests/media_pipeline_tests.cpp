@@ -916,6 +916,77 @@ void test_rtsp_pull_url_contract()
     require(!registry.find("relay/auth"), "rtsp auth failed pull removes stream");
 }
 
+void test_rtsp_input_selects_single_audio_and_video()
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/multi";
+    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/single-av", request_url);
+    require(pull->start(), "rtsp single audio video pull start");
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto describe = read_rtsp_headers(socket);
+    const auto describe_cseq = rtsp_header_value(describe, "CSeq:");
+    const auto sdp = std::string("v=0\r\n") +
+                     "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                     "s=test\r\n"
+                     "c=IN IP4 127.0.0.1\r\n"
+                     "t=0 0\r\n"
+                     "m=video 0 RTP/AVP 96\r\n"
+                     "a=rtpmap:96 VP8/90000\r\n"
+                     "a=control:vp8\r\n"
+                     "m=video 0 RTP/AVP 97\r\n"
+                     "a=rtpmap:97 H265/90000\r\n"
+                     "a=control:h265\r\n"
+                     "m=video 0 RTP/AVP 98\r\n"
+                     "a=rtpmap:98 H264/90000\r\n"
+                     "a=control:h264\r\n"
+                     "m=audio 0 RTP/AVP 99\r\n"
+                     "a=rtpmap:99 opus/48000/2\r\n"
+                     "a=control:opus\r\n"
+                     "m=audio 0 RTP/AVP 100\r\n"
+                     "a=rtpmap:100 MPEG4-GENERIC/44100/2\r\n"
+                     "a=fmtp:100 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1210\r\n"
+                     "a=control:aac-first\r\n"
+                     "m=audio 0 RTP/AVP 101\r\n"
+                     "a=rtpmap:101 MPEG4-GENERIC/48000/2\r\n"
+                     "a=fmtp:101 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1190\r\n"
+                     "a=control:aac-second\r\n";
+    const auto describe_response = "RTSP/1.0 200 OK\r\nCSeq: " + describe_cseq + "\r\nContent-Base: " + request_url +
+                                   "/\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
+    boost::asio::write(socket, boost::asio::buffer(describe_response));
+
+    const auto video_setup = read_rtsp_headers(socket);
+    require(video_setup.starts_with("SETUP " + request_url + "/h265 RTSP/1.0\r\n"), "rtsp selects first supported video");
+    require(video_setup.find("interleaved=0-1") != std::string::npos, "rtsp selected video channels");
+    const auto video_cseq = rtsp_header_value(video_setup, "CSeq:");
+    const auto video_response = "RTSP/1.0 200 OK\r\nCSeq: " + video_cseq +
+                                "\r\nSession: single-av;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(video_response));
+
+    const auto audio_setup = read_rtsp_headers(socket);
+    require(audio_setup.starts_with("SETUP " + request_url + "/aac-first RTSP/1.0\r\n"), "rtsp selects first supported audio");
+    require(audio_setup.find("interleaved=2-3") != std::string::npos, "rtsp selected audio channels");
+    const auto audio_cseq = rtsp_header_value(audio_setup, "CSeq:");
+    const auto audio_response = "RTSP/1.0 200 OK\r\nCSeq: " + audio_cseq +
+                                "\r\nSession: single-av;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(audio_response));
+
+    const auto play = read_rtsp_headers(socket);
+    require(play.starts_with("PLAY ") && play.find(request_url) != std::string::npos, "rtsp skips duplicate media before play");
+    const auto play_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: single-av;timeout=60\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(play_response));
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+    require(!registry.find("relay/single-av"), "rtsp single audio video pull closes");
+}
+
 class rtsp_output_test_peer final
 {
    public:
@@ -1862,6 +1933,8 @@ int main()
     std::cout << "[pass] tcp_listener_startup_error\n";
     media_server::test_rtsp_pull_url_contract();
     std::cout << "[pass] rtsp_pull_url_contract\n";
+    media_server::test_rtsp_input_selects_single_audio_and_video();
+    std::cout << "[pass] rtsp_input_selects_single_audio_and_video\n";
     media_server::test_rtsp_client_rejects_empty_media_selection();
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
     media_server::test_rtsp_output_session_contract();
