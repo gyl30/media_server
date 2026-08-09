@@ -15,7 +15,7 @@ class stream_registry final
 {
    public:
     bool add(const std::shared_ptr<media_stream>& stream);
-    bool remove(std::string_view name, const media_stream* expected = nullptr);
+    bool remove(std::string_view name, const media_stream* expected);
     [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view name) const;
 
    private:
