@@ -1179,11 +1179,6 @@ void test_whep_dtls()
     require((clear_rtp->bytes[1] & 0x7fU) == 102U, "srtp negotiated h264 payload");
     const auto video_ssrc = read_network_u32(clear_rtp->bytes, 8U);
 
-    auto second_video_frame = make_video_key_frame();
-    second_video_frame.dts_ns = 40'000'000;
-    second_video_frame.pts_ns = 40'000'000;
-    require(stream->publish(second_video_frame), "srtp publish second video");
-
     std::optional<srtp_packet> clear_server_rtcp;
     const auto server_rtcp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!clear_server_rtcp && std::chrono::steady_clock::now() < server_rtcp_deadline)

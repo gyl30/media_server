@@ -9,7 +9,6 @@
 #include <map>
 #include <memory>
 #include <span>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -38,8 +37,6 @@ class webrtc_output final : public media_sink
     void on_frame(const media_frame& frame) override;
     void on_end() override;
 
-    [[nodiscard]] std::size_t packet_count() const noexcept;
-
    private:
     static int on_packet(
         void* param,
@@ -49,30 +46,29 @@ class webrtc_output final : public media_sink
         std::uint32_t timestamp,
         int flags);
 
+    struct track_state
+    {
+        codec_id codec{};
+        std::unique_ptr<aac_opus_transcoder> transcoder;
+        std::int64_t audio_pts_ns{};
+        int media_id{-1};
+        int payload_id{-1};
+        bool waiting_key_frame{};
+        bool audio_pts_started{};
+    };
+
     bool add_h264_track(const media_track& track);
     bool add_aac_track(const media_track& track);
     bool configure_rtcp(int payload_id);
     void emit_rtcp(int payload_id);
-    void input_h264(track_id id, const media_frame& frame);
-    void input_aac(track_id id, const media_frame& frame);
-
-    struct track_state
-    {
-        media_track track;
-        std::unique_ptr<aac_opus_transcoder> transcoder;
-        std::int64_t audio_pts_ns{};
-        int media_id{-1};
-        bool waiting_key_frame{};
-        bool audio_pts_started{};
-    };
+    void input_h264(track_state& state, const media_frame& frame);
+    void input_aac(track_state& state, const media_frame& frame);
 
     webrtc_output_config config_;
     packet_handler rtp_handler_;
     packet_handler rtcp_handler_;
     rtsp_muxer_t* muxer_{};
     std::map<track_id, track_state> tracks_;
-    std::set<int> active_payloads_;
-    std::size_t packet_count_{};
 };
 
 }    // namespace media_server
