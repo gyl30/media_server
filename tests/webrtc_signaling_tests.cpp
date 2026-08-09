@@ -762,6 +762,42 @@ void test_webrtc_payload_type_range()
     require(!make_webrtc_answer(*h265_offer, {make_h265_track()}, config).has_value(), "webrtc reject out of range h265 payload");
 }
 
+void test_webrtc_disabled_media()
+{
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+    };
+    auto disabled_video_sdp = webrtc_offer_sdp;
+    disabled_video_sdp.replace(disabled_video_sdp.find("m=video 9 "), 10U, "m=video 0 ");
+    const auto disabled_video = parse_webrtc_offer(disabled_video_sdp);
+    require(disabled_video.has_value(), "webrtc parse disabled video offer");
+    require(!make_webrtc_answer(*disabled_video, {make_video_track()}, config).has_value(), "webrtc keep disabled h264 inactive");
+
+    disabled_video_sdp.replace(disabled_video_sdp.find("H264/90000"), 10U, "H265/90000");
+    const auto disabled_h265 = parse_webrtc_offer(disabled_video_sdp);
+    require(disabled_h265.has_value(), "webrtc parse disabled h265 offer");
+    require(!make_webrtc_answer(*disabled_h265, {make_h265_track()}, config).has_value(), "webrtc keep disabled h265 inactive");
+
+    auto disabled_audio_sdp = webrtc_offer_sdp;
+    disabled_audio_sdp.replace(disabled_audio_sdp.find("m=audio 9 "), 10U, "m=audio 0 ");
+    const auto disabled_audio = parse_webrtc_offer(disabled_audio_sdp);
+    require(disabled_audio.has_value(), "webrtc parse disabled audio offer");
+    require(!make_webrtc_answer(*disabled_audio, {make_audio_track()}, config).has_value(), "webrtc keep disabled opus inactive");
+
+    const std::string mid = "a=mid:1\r\n";
+    const auto mid_offset = disabled_audio_sdp.find(mid);
+    require(mid_offset != std::string::npos, "webrtc bundle only audio source");
+    disabled_audio_sdp.replace(mid_offset, mid.size(), mid + "a=bundle-only\r\n");
+    const auto bundle_only_audio = parse_webrtc_offer(disabled_audio_sdp);
+    require(bundle_only_audio.has_value(), "webrtc parse bundle only audio offer");
+    const auto bundle_only_answer = make_webrtc_answer(*bundle_only_audio, {make_video_track(), make_audio_track()}, config);
+    require(bundle_only_answer.has_value() && bundle_only_answer->audio_payload_type == 111, "webrtc accept bundle only opus");
+}
+
 void test_webrtc_single_media_per_kind()
 {
     auto duplicate_sdp = webrtc_offer_sdp;
@@ -1426,6 +1462,8 @@ int main()
     std::cout << "[pass] webrtc_payload_type_membership\n";
     media_server::test_webrtc_payload_type_range();
     std::cout << "[pass] webrtc_payload_type_range\n";
+    media_server::test_webrtc_disabled_media();
+    std::cout << "[pass] webrtc_disabled_media\n";
     media_server::test_webrtc_single_media_per_kind();
     std::cout << "[pass] webrtc_single_media_per_kind\n";
     media_server::test_webrtc_opus_mono_default();
