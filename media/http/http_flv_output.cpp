@@ -1,5 +1,6 @@
 #include "media/http/http_flv_output.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace media_server
@@ -19,6 +20,7 @@ http_flv_output::http_flv_output(std::span<const media_track> tracks, write_hand
     {
         has_audio = has_audio || track.kind == media_kind::audio;
         has_video = has_video || track.kind == media_kind::video;
+        track_ids_.push_back(track.id);
     }
 
     writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_output::writer_callback, this);
@@ -34,16 +36,33 @@ http_flv_output::~http_flv_output()
 
 void http_flv_output::on_track(const media_track& track)
 {
+    if (ended_)
+    {
+        return;
+    }
+    if (std::find(track_ids_.begin(), track_ids_.end(), track.id) == track_ids_.end())
+    {
+        on_end();
+        return;
+    }
     muxer_.on_track(track);
 }
 
 void http_flv_output::on_frame(const media_frame& frame)
 {
-    muxer_.on_frame(frame);
+    if (!ended_)
+    {
+        muxer_.on_frame(frame);
+    }
 }
 
 void http_flv_output::on_end()
 {
+    if (ended_)
+    {
+        return;
+    }
+    ended_ = true;
     if (on_end_)
     {
         on_end_();

@@ -822,7 +822,16 @@ void test_whep_session_lifecycle()
     const auto replacement_session = whep.create("live/test", webrtc_offer_sdp);
     require(replacement_session.error == whep_create_error::none, "whep create after republish");
     require(replacement_session.session_id != third.session_id, "whep republish new session id");
-    require(whep.remove(replacement_session.session_id), "whep remove republished session");
+
+    auto updated_video = make_video_track();
+    updated_video.config_version = 2;
+    updated_video.codec_config.push_back(0x01);
+    require(replacement->update_track(std::move(updated_video)), "whep source config update");
+    require(!whep.remove(replacement_session.session_id), "whep source config change releases session");
+
+    const auto updated_session = whep.create("live/test", webrtc_offer_sdp);
+    require(updated_session.error == whep_create_error::none, "whep create after config change");
+    require(whep.remove(updated_session.session_id), "whep remove updated session");
 }
 
 

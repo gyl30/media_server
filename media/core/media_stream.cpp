@@ -46,18 +46,24 @@ bool media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
         return false;
     }
 
-    // 先挂接再重放轨道配置，保证 on_track 中 remove_sink/end 的重入语义有效。
+    // 先挂接再重放轨道配置，保证 on_track 中 remove_sink/end/update_track 的重入语义有效。
     const auto track_snapshot = tracks();
     sinks_.push_back(sink);
     for (const auto& track : track_snapshot)
     {
-        sink->on_track(track);
-        if (ended_)
+        if (ended_ || !has_sink(*sink))
         {
             return false;
         }
 
-        if (!has_sink(*sink))
+        const auto current = tracks_.find(track.id);
+        if (current == tracks_.end() || current->second.config_version != track.config_version)
+        {
+            continue;
+        }
+
+        sink->on_track(current->second);
+        if (ended_ || !has_sink(*sink))
         {
             return false;
         }
@@ -75,23 +81,48 @@ void media_stream::remove_sink(const media_sink& sink)
 
 bool media_stream::update_track(media_track track)
 {
-    if (ended_ || track.id == 0 || track.codec_config.empty())
+    if (ended_ || track.id == 0 || track.config_version == 0 || track.codec_config.empty())
     {
         return false;
     }
 
-    tracks_[track.id] = track;
+    const auto existing = tracks_.find(track.id);
+    if (existing != tracks_.end())
+    {
+        if (existing->second.kind != track.kind ||
+            existing->second.codec != track.codec ||
+            track.config_version <= existing->second.config_version)
+        {
+            return false;
+        }
+        if (existing->second.clock_rate == track.clock_rate &&
+            existing->second.channel_count == track.channel_count &&
+            existing->second.codec_config == track.codec_config)
+        {
+            return true;
+        }
+    }
+
+    const auto id = track.id;
+    const auto config_version = track.config_version;
+    tracks_.insert_or_assign(id, std::move(track));
     for (const auto& sink : sink_snapshot())
     {
-        if (!has_sink(*sink))
-        {
-            continue;
-        }
-        sink->on_track(track);
         if (ended_)
         {
             break;
         }
+        if (!has_sink(*sink))
+        {
+            continue;
+        }
+
+        const auto current = tracks_.find(id);
+        if (current == tracks_.end() || current->second.config_version != config_version)
+        {
+            break;
+        }
+        sink->on_track(current->second);
     }
     return true;
 }

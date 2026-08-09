@@ -94,9 +94,9 @@ void rtsp_output_session::start()
 void rtsp_output_session::on_track(const media_track& track)
 {
     const auto iterator = tracks_.find(track.id);
-    if (iterator != tracks_.end() && iterator->second.config_version != track.config_version)
+    if (iterator == tracks_.end() || iterator->second.config_version != track.config_version)
     {
-        // RTSP SDP 已经发给客户端，配置改变时第一阶段直接结束旧会话。
+        // RTSP SDP 已经发给客户端，轨道集合或配置改变时直接结束旧会话。
         close();
     }
 }
@@ -260,8 +260,9 @@ void rtsp_output_session::on_close()
         return;
     }
     closed_ = true;
-    if (stream_ && playing_)
+    if (stream_)
     {
+        // remove_sink 对未挂接会话是 no-op，也覆盖 add_sink 重放配置时同步关闭的重入路径。
         stream_->remove_sink(*this);
     }
     stream_.reset();
