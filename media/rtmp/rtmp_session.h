@@ -4,6 +4,7 @@
 #include "media/core/media_sink.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_connection.h"
+#include "media/rtmp/rtmp_timestamp.h"
 #include "media/flv/flv_output_muxer.h"
 
 #include <cstdint>
@@ -107,6 +108,8 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     rtmp_server_t* server_{};
     flv_demuxer_t* demuxer_{};
     std::unique_ptr<flv_output_muxer> output_muxer_;
+    rtmp_timestamp_state video_timestamp_;
+    rtmp_timestamp_state audio_timestamp_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     role role_{role::none};

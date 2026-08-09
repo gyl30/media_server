@@ -1,6 +1,7 @@
 #include "media/rtmp/rtmp_session.h"
 
 #include "media/codec/codec_utils.h"
+#include "media/rtmp/rtmp_timestamp.h"
 #include <spdlog/spdlog.h>
 
 extern "C"
@@ -366,11 +367,15 @@ int rtmp_session::on_flv_demux(
         return 0;
     }
 
+    auto& timestamp_state = id == video_track_id ? video_timestamp_ : audio_timestamp_;
+    const auto dts_ms = unwrap_rtmp_timestamp(dts, timestamp_state);
+    const auto pts_ms = dts_ms + rtmp_timestamp_delta(pts, dts);
+
     auto payload = std::make_shared<const std::vector<std::uint8_t>>(data.begin(), data.end());
     media_frame frame{
         .track = id,
-        .dts_ns = milliseconds_to_ns(dts),
-        .pts_ns = milliseconds_to_ns(pts),
+        .dts_ns = milliseconds_to_ns(dts_ms),
+        .pts_ns = milliseconds_to_ns(pts_ms),
         .key_frame = codec == FLV_VIDEO_H264 && flags != 0,
         .payload = std::move(payload),
     };

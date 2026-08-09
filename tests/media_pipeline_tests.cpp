@@ -5,6 +5,7 @@
 #include "media/hls/hls_output.h"
 #include "media/hls/hls_service.h"
 #include "media/http/http_flv_output.h"
+#include "media/rtmp/rtmp_timestamp.h"
 #include "media/webrtc/webrtc_output.h"
 
 extern "C"
@@ -390,6 +391,27 @@ void test_timebase_conversions()
     const auto long_ns = milliseconds_to_ns(long_milliseconds);
     require(ns_to_milliseconds(long_ns) == long_milliseconds, "millisecond timeline keeps int64 range");
     require(ns_to_flv_milliseconds(long_ns) == 1'233U, "flv timestamp wraps uint32 timeline");
+
+    constexpr std::int64_t negative_ns = -40'000'000;
+    require(ns_to_milliseconds(negative_ns) == -40, "millisecond timeline keeps negative values");
+    require(ns_to_flv_milliseconds(negative_ns) == std::numeric_limits<std::uint32_t>::max() - 39U,
+            "flv timestamp keeps signed composition offset modulo uint32");
+    require(ns_to_90khz(negative_ns) == -3'600, "90khz timeline keeps negative values");
+}
+
+void test_rtmp_timestamp_timeline()
+{
+    rtmp_timestamp_state state;
+    const auto near_wrap = std::numeric_limits<std::uint32_t>::max() - 9U;
+    require(unwrap_rtmp_timestamp(near_wrap, state) == static_cast<std::int64_t>(near_wrap),
+            "rtmp timestamp initial value");
+    require(unwrap_rtmp_timestamp(5U, state) == static_cast<std::int64_t>(near_wrap) + 15,
+            "rtmp timestamp unwraps uint32 wrap");
+    require(unwrap_rtmp_timestamp(45U, state) == static_cast<std::int64_t>(near_wrap) + 55,
+            "rtmp timestamp continues after wrap");
+
+    require(rtmp_timestamp_delta(960U, 1'000U) == -40, "rtmp signed negative composition offset");
+    require(rtmp_timestamp_delta(1'040U, 1'000U) == 40, "rtmp signed positive composition offset");
 }
 
 void test_internal_format_contract()
@@ -414,12 +436,30 @@ void test_flv_config_cache_lifecycle()
 {
     std::size_t video_sequence_headers = 0;
     std::size_t audio_sequence_headers = 0;
+    std::optional<std::int32_t> video_composition_time;
+    std::optional<std::uint32_t> video_timestamp;
     flv_output_muxer output(
-        [&video_sequence_headers, &audio_sequence_headers](
+        [&video_sequence_headers, &audio_sequence_headers, &video_composition_time, &video_timestamp](
             int type,
             std::span<const std::uint8_t> data,
-            std::uint32_t) {
-            if (data.size() < 2U || data[1] != 0U)
+            std::uint32_t timestamp) {
+            if (data.size() < 2U)
+            {
+                return;
+            }
+            if (type == FLV_TYPE_VIDEO && data[1] == 1U && data.size() >= 5U)
+            {
+                const auto raw =
+                    (static_cast<std::uint32_t>(data[2]) << 16U) |
+                    (static_cast<std::uint32_t>(data[3]) << 8U) |
+                    static_cast<std::uint32_t>(data[4]);
+                video_composition_time = raw < 0x00800000U
+                    ? static_cast<std::int32_t>(raw)
+                    : static_cast<std::int32_t>(static_cast<std::int64_t>(raw) - 0x01000000LL);
+                video_timestamp = timestamp;
+                return;
+            }
+            if (data[1] != 0U)
             {
                 return;
             }
@@ -437,6 +477,11 @@ void test_flv_config_cache_lifecycle()
     video.config_version = 1;
     output.on_track(video);
     require(video_sequence_headers == 1U, "flv initial video sequence header");
+    auto reordered_video = make_video_frame(-40'000'000, true);
+    reordered_video.dts_ns = 0;
+    output.on_frame(reordered_video);
+    require(video_timestamp == 0U, "flv video dts stays on unsigned tag timeline");
+    require(video_composition_time == -40, "flv video keeps negative composition time");
 
     auto audio = make_audio_track();
     audio.config_version = 1;
@@ -700,6 +745,13 @@ void test_hls_output()
     require(audio_segment.has_value() && !audio_segment->empty(), "hls audio segment data");
     require(audio_segment->size() % 188U == 0U, "hls audio mpeg-ts alignment");
 
+    hls_output signed_timeline(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
+    signed_timeline.on_track(make_audio_track());
+    signed_timeline.on_frame(make_audio_frame(-500'000'000));
+    signed_timeline.on_frame(make_audio_frame(500'000'000));
+    require(signed_timeline.segment_count() == 1U, "hls signed pts reaches target duration");
+    signed_timeline.on_end();
+
     std::size_t flv_end_count = 0;
     const std::vector<media_track> flv_tracks{make_video_track()};
     http_flv_output flv_output(
@@ -960,6 +1012,8 @@ int main()
     using namespace media_server;
     test_timebase_conversions();
     std::cout << "[pass] timebase_conversions\n";
+    test_rtmp_timestamp_timeline();
+    std::cout << "[pass] rtmp_timestamp_timeline\n";
     test_internal_format_contract();
     std::cout << "[pass] internal_format_contract\n";
     test_flv_config_cache_lifecycle();
