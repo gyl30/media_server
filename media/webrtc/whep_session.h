@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -29,11 +30,14 @@ namespace media_server
 class whep_session final : public std::enable_shared_from_this<whep_session>
 {
    public:
+    using closed_handler = std::function<void(std::string_view)>;
+
     whep_session(
         boost::asio::io_context& io,
         std::shared_ptr<media_stream> stream,
         boost::asio::ip::address advertised_address,
-        std::shared_ptr<dtls_certificate> certificate);
+        std::shared_ptr<dtls_certificate> certificate,
+        closed_handler handler = {});
 
     bool start(webrtc_offer offer);
     void close();
@@ -64,6 +68,8 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
+    closed_handler closed_handler_;
+    std::shared_ptr<media_sink> stream_observer_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::shared_ptr<webrtc_output> output_;
