@@ -35,10 +35,7 @@ struct whep_create_result
 class whep_service final
 {
    public:
-    whep_service(
-        boost::asio::io_context& io,
-        stream_registry& registry,
-        boost::asio::ip::address advertised_address);
+    whep_service(boost::asio::io_context& io, stream_registry& registry, boost::asio::ip::address advertised_address);
     ~whep_service();
 
     [[nodiscard]] bool ready() const noexcept;

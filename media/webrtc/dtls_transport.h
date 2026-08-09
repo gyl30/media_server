@@ -33,10 +33,7 @@ class dtls_transport final
    public:
     using send_callback = std::function<void(std::span<const std::uint8_t>)>;
 
-    dtls_transport(
-        std::shared_ptr<dtls_certificate> certificate,
-        std::string remote_fingerprint,
-        send_callback send);
+    dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_callback send);
 
     bool start();
     bool handle_datagram(std::span<const std::uint8_t> packet);

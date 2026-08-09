@@ -15,10 +15,7 @@ class tcp_listener final
    public:
     using accept_handler = std::function<void(boost::asio::ip::tcp::socket)>;
 
-    tcp_listener(
-        boost::asio::io_context& io,
-        std::uint16_t port,
-        accept_handler handler);
+    tcp_listener(boost::asio::io_context& io, std::uint16_t port, accept_handler handler);
 
     [[nodiscard]] boost::system::error_code start();
     void close();

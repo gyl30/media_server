@@ -22,11 +22,9 @@ namespace
 {
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
-}
+}    // namespace
 
-rtmp_session::rtmp_session(
-    std::shared_ptr<tcp_connection> connection,
-    stream_registry& registry)
+rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry)
     : connection_(std::move(connection)), registry_(registry)
 {
 }
@@ -64,9 +62,7 @@ void rtmp_session::start()
     }
 
     const auto self = shared_from_this();
-    connection_->start(
-        [self](std::span<const std::uint8_t> data) { self->on_read(data); },
-        [self]() { self->on_close(); });
+    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->on_close(); });
 }
 
 void rtmp_session::on_track(const media_track& track)
@@ -85,61 +81,32 @@ void rtmp_session::on_frame(const media_frame& frame)
     }
 }
 
-void rtmp_session::on_end()
+void rtmp_session::on_end() { close(); }
+
+int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
 {
-    close();
-}
-
-int rtmp_session::send_callback(
-    void* param,
-    const void* header,
-    std::size_t header_bytes,
-    const void* payload,
-    std::size_t payload_bytes)
-    {
-
     auto* self = static_cast<rtmp_session*>(param);
     self->connection_->write(header, header_bytes);
     self->connection_->write(payload, payload_bytes);
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
-int rtmp_session::play_callback(
-    void* param,
-    const char* app,
-    const char* stream,
-    double,
-    double,
-    std::uint8_t)
-    {
+int rtmp_session::play_callback(void* param, const char* app, const char* stream, double, double, std::uint8_t)
+{
     return static_cast<rtmp_session*>(param)->on_play(app != nullptr ? app : "", stream != nullptr ? stream : "");
 }
 
-int rtmp_session::pause_callback(void*, int, std::uint32_t)
-{
-    return 0;
-}
+int rtmp_session::pause_callback(void*, int, std::uint32_t) { return 0; }
 
-int rtmp_session::seek_callback(void*, std::uint32_t)
-{
-    return 0;
-}
+int rtmp_session::seek_callback(void*, std::uint32_t) { return 0; }
 
-int rtmp_session::publish_callback(
-    void* param,
-    const char* app,
-    const char* stream,
-    const char*)
-    {
+int rtmp_session::publish_callback(void* param, const char* app, const char* stream, const char*)
+{
     return static_cast<rtmp_session*>(param)->on_publish(app != nullptr ? app : "", stream != nullptr ? stream : "");
 }
 
-int rtmp_session::video_callback(
-    void* param,
-    const void* data,
-    std::size_t bytes,
-    std::uint32_t timestamp)
-    {
+int rtmp_session::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
+{
     auto* self = static_cast<rtmp_session*>(param);
     if (self->demuxer_ == nullptr)
     {
@@ -148,12 +115,8 @@ int rtmp_session::video_callback(
     return flv_demuxer_input(self->demuxer_, FLV_TYPE_VIDEO, data, bytes, timestamp);
 }
 
-int rtmp_session::audio_callback(
-    void* param,
-    const void* data,
-    std::size_t bytes,
-    std::uint32_t timestamp)
-    {
+int rtmp_session::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
+{
     auto* self = static_cast<rtmp_session*>(param);
     if (self->demuxer_ == nullptr)
     {
@@ -162,21 +125,10 @@ int rtmp_session::audio_callback(
     return flv_demuxer_input(self->demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp);
 }
 
-int rtmp_session::script_callback(
-    void*,
-    const void*,
-    std::size_t,
-    std::uint32_t)
-    {
-    return 0;
-}
+int rtmp_session::script_callback(void*, const void*, std::size_t, std::uint32_t) { return 0; }
 
-int rtmp_session::duration_callback(
-    void*,
-    const char*,
-    const char*,
-    double* duration)
-    {
+int rtmp_session::duration_callback(void*, const char*, const char*, double* duration)
+{
     if (duration != nullptr)
     {
         *duration = 0.0;
@@ -184,27 +136,15 @@ int rtmp_session::duration_callback(
     return 0;
 }
 
-int rtmp_session::demux_callback(
-    void* param,
-    int codec,
-    const void* data,
-    std::size_t bytes,
-    std::uint32_t pts,
-    std::uint32_t dts,
-    int flags)
-    {
-
+int rtmp_session::demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
+{
     if (data == nullptr)
 
     {
         return -1;
     }
     return static_cast<rtmp_session*>(param)->on_flv_demux(
-        codec,
-        std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes),
-        pts,
-        dts,
-        flags);
+        codec, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), pts, dts, flags);
 }
 
 int rtmp_session::on_play(std::string app, std::string stream)
@@ -224,7 +164,8 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
     role_ = role::player;
     output_muxer_ = std::make_unique<flv_output_muxer>(
-        [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp) {
+        [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        {
             if (server_ == nullptr)
             {
                 return;
@@ -232,35 +173,36 @@ int rtmp_session::on_play(std::string app, std::string stream)
             if (type == FLV_TYPE_VIDEO)
             {
                 static_cast<void>(rtmp_server_send_video(server_, data.data(), data.size(), timestamp));
-            } else if (type == FLV_TYPE_AUDIO)
+            }
+            else if (type == FLV_TYPE_AUDIO)
             {
                 static_cast<void>(rtmp_server_send_audio(server_, data.data(), data.size(), timestamp));
             }
         });
 
     const auto self = shared_from_this();
-    boost::asio::post(
-        connection_->socket().get_executor(),
-        [self]() {
-            if (self->closed_ || self->server_ == nullptr || !self->stream_)
-            {
-                return;
-            }
+    boost::asio::post(connection_->socket().get_executor(),
+                      [self]()
+                      {
+                          if (self->closed_ || self->server_ == nullptr || !self->stream_)
+                          {
+                              return;
+                          }
 
-            if (rtmp_server_start(self->server_, 0, nullptr) != 0)
-            {
-                self->close();
-                return;
-            }
+                          if (rtmp_server_start(self->server_, 0, nullptr) != 0)
+                          {
+                              self->close();
+                              return;
+                          }
 
-            if (!self->stream_->add_sink(self))
-            {
-                self->close();
-                return;
-            }
+                          if (!self->stream_->add_sink(self))
+                          {
+                              self->close();
+                              return;
+                          }
 
-            spdlog::info("rtmp play {}", self->stream_name_);
-        });
+                          spdlog::info("rtmp play {}", self->stream_name_);
+                      });
 
     return RTMP_SERVER_ASYNC_START;
 }
@@ -294,14 +236,8 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     return 0;
 }
 
-int rtmp_session::on_flv_demux(
-    int codec,
-    std::span<const std::uint8_t> data,
-    std::uint32_t pts,
-    std::uint32_t dts,
-    int flags)
-    {
-
+int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
+{
     if (role_ != role::publisher || !stream_)
 
     {
@@ -380,7 +316,8 @@ int rtmp_session::on_flv_demux(
     if (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265)
     {
         id = video_track_id;
-    } else if (codec == FLV_AUDIO_AAC)
+    }
+    else if (codec == FLV_AUDIO_AAC)
     {
         id = audio_track_id;
     }
@@ -449,10 +386,8 @@ void rtmp_session::close()
     connection_->close();
 }
 
-std::string rtmp_session::make_stream_name(
-    std::string_view app,
-    std::string_view stream)
-    {
+std::string rtmp_session::make_stream_name(std::string_view app, std::string_view stream)
+{
     if (app.empty())
     {
         return std::string(stream);

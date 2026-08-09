@@ -48,9 +48,7 @@ bool validate_rtcp(std::span<const std::uint8_t> packet)
         const bool padding = (first & 0x20U) != 0U;
         const auto format = static_cast<std::uint8_t>(first & 0x1FU);
         const auto packet_type = packet[offset + 1U];
-        const auto length_words =
-            (static_cast<std::size_t>(packet[offset + 2U]) << 8U) |
-            static_cast<std::size_t>(packet[offset + 3U]);
+        const auto length_words = (static_cast<std::size_t>(packet[offset + 2U]) << 8U) | static_cast<std::size_t>(packet[offset + 3U]);
         const auto packet_size = (length_words + 1U) * 4U;
 
         if (version != 2U || packet_type < RTCP_SR || packet_type > RTCP_XR || packet_size < 4U || packet_size > remaining)
@@ -104,19 +102,10 @@ rtcp_receiver::rtcp_receiver()
 {
     rtp_event_t handler{};
     handler.on_rtcp = &rtcp_receiver::on_rtcp;
-    context_.reset(rtp_create(
-        &handler,
-        this,
-        parser_ssrc,
-        0,
-        parser_clock_rate,
-        parser_bandwidth,
-        1));
+    context_.reset(rtp_create(&handler, this, parser_ssrc, 0, parser_clock_rate, parser_bandwidth, 1));
 }
 
-bool rtcp_receiver::input(
-    std::span<const std::uint8_t> packet,
-    rtcp_receive_result& result)
+bool rtcp_receiver::input(std::span<const std::uint8_t> packet, rtcp_receive_result& result)
 {
     result.receiver_reports.clear();
     result.plis.clear();
@@ -127,10 +116,7 @@ bool rtcp_receiver::input(
     }
 
     result_ = &result;
-    const auto status = rtp_onreceived_rtcp(
-        context_.get(),
-        packet.data(),
-        static_cast<int>(packet.size()));
+    const auto status = rtp_onreceived_rtcp(context_.get(), packet.data(), static_cast<int>(packet.size()));
     result_ = nullptr;
     return status >= 0;
 }

@@ -38,9 +38,7 @@ std::uint16_t read_u16(const std::uint8_t* data)
 
 std::uint32_t read_u32(const std::uint8_t* data)
 {
-    return (static_cast<std::uint32_t>(data[0]) << 24U) |
-           (static_cast<std::uint32_t>(data[1]) << 16U) |
-           (static_cast<std::uint32_t>(data[2]) << 8U) |
+    return (static_cast<std::uint32_t>(data[0]) << 24U) | (static_cast<std::uint32_t>(data[1]) << 16U) | (static_cast<std::uint32_t>(data[2]) << 8U) |
            static_cast<std::uint32_t>(data[3]);
 }
 
@@ -83,9 +81,7 @@ void append_attribute(std::vector<std::uint8_t>& packet, std::uint16_t type, std
     }
 }
 
-std::optional<std::array<std::uint8_t, stun_message_integrity_size>> hmac_sha1(
-    std::string_view password,
-    std::span<const std::uint8_t> data)
+std::optional<std::array<std::uint8_t, stun_message_integrity_size>> hmac_sha1(std::string_view password, std::span<const std::uint8_t> data)
 {
     if (password.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
@@ -94,14 +90,7 @@ std::optional<std::array<std::uint8_t, stun_message_integrity_size>> hmac_sha1(
 
     std::array<std::uint8_t, stun_message_integrity_size> digest{};
     unsigned int digest_size = 0;
-    const auto* result = HMAC(
-        EVP_sha1(),
-        password.data(),
-        static_cast<int>(password.size()),
-        data.data(),
-        data.size(),
-        digest.data(),
-        &digest_size);
+    const auto* result = HMAC(EVP_sha1(), password.data(), static_cast<int>(password.size()), data.data(), data.size(), digest.data(), &digest_size);
     if (result == nullptr || digest_size != digest.size())
     {
         return std::nullopt;
@@ -116,10 +105,7 @@ std::uint32_t fingerprint(std::span<const std::uint8_t> data)
     return crc.checksum() ^ stun_fingerprint_xor;
 }
 
-bool verify_message_integrity(
-    std::span<const std::uint8_t> packet,
-    std::size_t attribute_offset,
-    std::string_view password)
+bool verify_message_integrity(std::span<const std::uint8_t> packet, std::size_t attribute_offset, std::string_view password)
 {
     if (attribute_offset < stun_header_size || attribute_offset + 24U > packet.size())
     {
@@ -158,9 +144,7 @@ std::vector<std::uint8_t> make_header(std::uint16_t type, const std::array<std::
     return packet;
 }
 
-std::vector<std::uint8_t> xor_mapped_address(
-    const boost::asio::ip::udp::endpoint& endpoint,
-    const std::array<std::uint8_t, 12>& transaction_id)
+std::vector<std::uint8_t> xor_mapped_address(const boost::asio::ip::udp::endpoint& endpoint, const std::array<std::uint8_t, 12>& transaction_id)
 {
     std::vector<std::uint8_t> value;
     value.reserve(endpoint.address().is_v4() ? 8U : 20U);
@@ -192,15 +176,12 @@ std::vector<std::uint8_t> xor_mapped_address(
 
 bool is_stun_message(std::span<const std::uint8_t> packet)
 {
-    return packet.size() >= stun_header_size &&
-           (packet[0] & 0xc0U) == 0 &&
-           read_u32(packet.data() + 4U) == stun_magic_cookie;
+    return packet.size() >= stun_header_size && (packet[0] & 0xc0U) == 0 && read_u32(packet.data() + 4U) == stun_magic_cookie;
 }
 
-std::optional<stun_binding_request> parse_stun_binding_request(
-    std::span<const std::uint8_t> packet,
-    std::string_view expected_username,
-    std::string_view password)
+std::optional<stun_binding_request> parse_stun_binding_request(std::span<const std::uint8_t> packet,
+                                                               std::string_view expected_username,
+                                                               std::string_view password)
 {
     if (!is_stun_message(packet))
     {
@@ -243,9 +224,7 @@ std::optional<stun_binding_request> parse_stun_binding_request(
 
         if (type == stun_attribute_username)
         {
-            username = std::string_view(
-                reinterpret_cast<const char*>(packet.data() + value_offset),
-                length);
+            username = std::string_view(reinterpret_cast<const char*>(packet.data() + value_offset), length);
             spdlog::trace("stun username {}", *username);
         }
         else if (type == stun_attribute_message_integrity)
@@ -320,10 +299,9 @@ std::optional<stun_binding_request> parse_stun_binding_request(
     return request;
 }
 
-std::vector<std::uint8_t> make_stun_binding_success_response(
-    const stun_binding_request& request,
-    const boost::asio::ip::udp::endpoint& remote_endpoint,
-    std::string_view password)
+std::vector<std::uint8_t> make_stun_binding_success_response(const stun_binding_request& request,
+                                                             const boost::asio::ip::udp::endpoint& remote_endpoint,
+                                                             std::string_view password)
 {
     auto packet = make_header(stun_binding_success_response_type, request.transaction_id);
     const auto mapped_address = xor_mapped_address(remote_endpoint, request.transaction_id);

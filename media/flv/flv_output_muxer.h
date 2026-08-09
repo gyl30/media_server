@@ -21,17 +21,11 @@ class flv_output_muxer final
     explicit flv_output_muxer(output_handler handler);
     ~flv_output_muxer();
 
-
     void on_track(const media_track& track);
     void on_frame(const media_frame& frame);
 
    private:
-    static int on_output(
-        void* param,
-        int type,
-        const void* data,
-        std::size_t bytes,
-        std::uint32_t timestamp);
+    static int on_output(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp);
 
     void prime_video_config(const media_track& track);
 

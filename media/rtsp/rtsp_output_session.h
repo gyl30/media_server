@@ -20,10 +20,7 @@ namespace media_server
 class rtsp_output_session final : public media_sink, public std::enable_shared_from_this<rtsp_output_session>
 {
    public:
-    rtsp_output_session(
-        std::shared_ptr<tcp_connection> connection,
-        stream_registry& registry,
-        std::uint16_t server_port);
+    rtsp_output_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry, std::uint16_t server_port);
     ~rtsp_output_session() override;
 
     void start();
@@ -47,62 +44,20 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
     static int send_callback(void* param, const void* data, std::size_t bytes);
     static int describe_callback(void* param, rtsp_server_t* server, const char* uri);
     static int setup_callback(
-        void* param,
-        rtsp_server_t* server,
-        const char* uri,
-        const char* session,
-        const rtsp_header_transport_t transports[],
-        std::size_t count);
-    static int play_callback(
-        void* param,
-        rtsp_server_t* server,
-        const char* uri,
-        const char* session,
-        const std::int64_t* npt,
-        const double* scale);
-    static int pause_callback(
-        void* param,
-        rtsp_server_t* server,
-        const char* uri,
-        const char* session,
-        const std::int64_t* npt);
-    static int teardown_callback(
-        void* param,
-        rtsp_server_t* server,
-        const char* uri,
-        const char* session);
+        void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count);
+    static int play_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale);
+    static int pause_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt);
+    static int teardown_callback(void* param, rtsp_server_t* server, const char* uri, const char* session);
     static int options_callback(void* param, rtsp_server_t* server, const char* uri);
-    static int get_parameter_callback(
-        void* param,
-        rtsp_server_t* server,
-        const char* uri,
-        const char* session,
-        const void* content,
-        int bytes);
-    static int set_parameter_callback(
-        void* param,
-        rtsp_server_t* server,
-        const char* uri,
-        const char* session,
-        const void* content,
-        int bytes);
-    static int muxer_packet_callback(
-        void* param,
-        int pid,
-        const void* data,
-        int bytes,
-        std::uint32_t timestamp,
-        int flags);
+    static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
+    static int set_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
+    static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
     void on_read(std::span<const std::uint8_t> data);
     void on_close();
     void close();
     int on_describe(std::string_view uri);
-    int on_setup(
-        std::string_view uri,
-        std::string_view session,
-        const rtsp_header_transport_t transports[],
-        std::size_t count);
+    int on_setup(std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_play(std::string_view uri, std::string_view session, const std::int64_t* npt);
     int on_muxer_packet(int pid, const void* data, int bytes);
     bool configure_tracks(std::span<const media_track> tracks, std::string& sdp);

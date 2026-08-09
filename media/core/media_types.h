@@ -51,26 +51,28 @@ struct media_frame
     byte_buffer payload;
 };
 
-[[nodiscard]] constexpr std::string_view to_string(media_kind kind) noexcept {
+[[nodiscard]] constexpr std::string_view to_string(media_kind kind) noexcept
+{
     switch (kind)
     {
-    case media_kind::audio:
-        return "audio";
-    case media_kind::video:
-        return "video";
+        case media_kind::audio:
+            return "audio";
+        case media_kind::video:
+            return "video";
     }
     return "unknown";
 }
 
-[[nodiscard]] constexpr std::string_view to_string(codec_id codec) noexcept {
+[[nodiscard]] constexpr std::string_view to_string(codec_id codec) noexcept
+{
     switch (codec)
     {
-    case codec_id::h264:
-        return "h264";
-    case codec_id::h265:
-        return "h265";
-    case codec_id::aac:
-        return "aac";
+        case codec_id::h264:
+            return "h264";
+        case codec_id::h265:
+            return "h265";
+        case codec_id::aac:
+            return "aac";
     }
     return "unknown";
 }
