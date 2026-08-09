@@ -62,8 +62,6 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     [[nodiscard]] bool ice_connected() const noexcept;
     [[nodiscard]] bool dtls_connected() const noexcept;
     [[nodiscard]] bool srtp_started() const noexcept;
-    [[nodiscard]] std::optional<boost::asio::ip::udp::endpoint> remote_endpoint() const;
-    [[nodiscard]] const std::optional<dtls_srtp_keying_material>& srtp_keying_material() const noexcept;
     [[nodiscard]] const whep_rtcp_stats& rtcp_stats() const noexcept;
 
    private:
