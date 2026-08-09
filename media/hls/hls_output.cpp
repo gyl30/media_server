@@ -259,6 +259,8 @@ int hls_output::add_track_to_muxer(const media_track& track)
     {
     case codec_id::h264:
         return mpeg_ts_add_stream(muxer_, PSI_STREAM_H264, nullptr, 0);
+    case codec_id::h265:
+        return mpeg_ts_add_stream(muxer_, PSI_STREAM_H265, nullptr, 0);
     case codec_id::aac:
         return mpeg_ts_add_stream(muxer_, PSI_STREAM_AAC, nullptr, 0);
     }

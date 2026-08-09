@@ -16,7 +16,9 @@ extern "C"
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 namespace media_server
@@ -26,6 +28,28 @@ namespace
 {
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+
+bool iequals(const char* value, std::string_view expected)
+{
+    if (value == nullptr)
+    {
+        return false;
+    }
+
+    const std::string_view actual(value);
+    return actual.size() == expected.size() &&
+        std::equal(actual.begin(), actual.end(), expected.begin(), [](unsigned char left, unsigned char right) {
+            return std::tolower(left) == std::tolower(right);
+        });
+}
+
+bool supported_media(rtsp_client_t* client, int media)
+{
+    const auto type = rtsp_client_get_media_type(client, media);
+    const auto* encoding = rtsp_client_get_media_encoding(client, media);
+    return (type == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H264") || iequals(encoding, "H265") || iequals(encoding, "HEVC"))) ||
+        (type == SDP_M_MEDIA_AUDIO && iequals(encoding, "MPEG4-GENERIC"));
+}
 }
 
 rtsp_input_session::rtsp_input_session(
@@ -154,9 +178,10 @@ int rtsp_input_session::rtp_port_callback(
     {
         return -1;
     }
-    const auto type = rtsp_client_get_media_type(self->client_, media);
-    if (type != SDP_M_MEDIA_AUDIO && type != SDP_M_MEDIA_VIDEO)
+    if (!supported_media(self->client_, media))
     {
+        const auto* encoding = rtsp_client_get_media_encoding(self->client_, media);
+        spdlog::debug("rtsp input ignore unsupported media {} encoding {}", media, encoding != nullptr ? encoding : "");
         return 0;
     }
     port[0] = static_cast<unsigned short>(media * 2);
@@ -379,7 +404,7 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     }
 
     track_id id{};
-    if (packet->stream->codecid == AVCODEC_VIDEO_H264)
+    if (packet->stream->codecid == AVCODEC_VIDEO_H264 || packet->stream->codecid == AVCODEC_VIDEO_H265)
     {
         id = video_track_id;
     } else if (packet->stream->codecid == AVCODEC_AUDIO_AAC)
@@ -431,6 +456,34 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
         if (changed)
         {
             spdlog::info("rtsp input track video h264");
+        }
+        return changed;
+    }
+
+    if (input.codecid == AVCODEC_VIDEO_H265)
+    {
+        std::vector<std::uint8_t> config;
+        if (input.extra != nullptr && input.bytes > 0)
+        {
+            config = h265_hvcc_to_annex_b(std::span<const std::uint8_t>(
+                static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+        }
+        if (config.empty())
+        {
+            return false;
+        }
+        media_track track{
+            .id = video_track_id,
+            .kind = media_kind::video,
+            .codec = codec_id::h265,
+            .clock_rate = 90'000,
+            .channel_count = 0,
+            .codec_config = std::move(config),
+        };
+        const bool changed = stream_->update_track(std::move(track));
+        if (changed)
+        {
+            spdlog::info("rtsp input track video h265");
         }
         return changed;
     }

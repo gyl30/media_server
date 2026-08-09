@@ -103,9 +103,11 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
         std::string_view session,
         const rtsp_header_transport_t transports[],
         std::size_t count);
-    int on_play(std::string_view session, const std::int64_t* npt);
+    int on_play(std::string_view uri, std::string_view session, const std::int64_t* npt);
     int on_muxer_packet(int pid, const void* data, int bytes);
     bool configure_tracks(std::span<const media_track> tracks, std::string& sdp);
+    [[nodiscard]] bool description_current() const;
+    [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
     [[nodiscard]] static std::string stream_name_from_uri(std::string_view uri);
     [[nodiscard]] static std::optional<track_id> track_id_from_uri(std::string_view uri);
 

@@ -143,6 +143,9 @@ int rtsp_client_setup(struct rtsp_client_t* rtsp, const char* sdp, int len)
         }
 	}
 
+	if (0 == rtsp->media_count)
+		return -1;
+
 	rtsp->aggregate = (rtsp->media_count > 1 && rtsp->media[0].session_uri[0]) ? 1 : 0;
 	if (rtsp->aggregate)
 	{

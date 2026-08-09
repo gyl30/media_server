@@ -23,6 +23,12 @@ struct aac_config
 [[nodiscard]] std::vector<std::uint8_t> h264_annex_b_to_avcc(
     std::span<const std::uint8_t> annex_b);
 
+[[nodiscard]] std::vector<std::uint8_t> h265_hvcc_to_annex_b(
+    std::span<const std::uint8_t> hvcc);
+
+[[nodiscard]] std::vector<std::uint8_t> h265_annex_b_to_hvcc(
+    std::span<const std::uint8_t> annex_b);
+
 [[nodiscard]] std::optional<aac_config> parse_aac_asc(
     std::span<const std::uint8_t> asc);
 
