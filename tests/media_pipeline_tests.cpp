@@ -202,6 +202,27 @@ private:
     media_stream& stream_;
 };
 
+class frame_ending_sink final : public media_sink
+{
+public:
+    explicit frame_ending_sink(media_stream& stream) : stream_(stream) {}
+
+    void on_track(const media_track&) override { ++tracks; }
+    void on_frame(const media_frame&) override
+    {
+        ++frames;
+        stream_.end();
+    }
+    void on_end() override { ++ends; }
+
+    std::size_t tracks{};
+    std::size_t frames{};
+    std::size_t ends{};
+
+private:
+    media_stream& stream_;
+};
+
 void test_internal_format_contract()
 {
     const auto avcc = h264_annex_b_to_avcc(h264_config);
@@ -264,6 +285,27 @@ void test_media_stream_fanout_and_reentrancy()
     require(track_ending->tracks == 1, "ended stream stops track replay");
     require(track_ending->ends == 1, "new sink receives end during track replay");
     require(!track_end_stream.remove_sink(track_ending.get()), "ended stream clears new sink");
+
+    media_stream update_end_stream("live/update-end");
+    auto update_ending = std::make_shared<track_ending_sink>(update_end_stream);
+    auto update_after = std::make_shared<counting_sink>();
+    require(update_end_stream.add_sink(update_ending), "add update ending sink");
+    require(update_end_stream.add_sink(update_after), "add update trailing sink");
+    require(update_end_stream.update_track(make_video_track()), "update callback ends stream");
+    require(update_end_stream.ended(), "update callback stream ended");
+    require(update_ending->tracks == 1 && update_ending->ends == 1, "update ending sink lifecycle");
+    require(update_after->tracks == 0 && update_after->ends == 1, "update stops callbacks after end");
+
+    media_stream publish_end_stream("live/publish-end");
+    require(publish_end_stream.update_track(make_video_track()), "publish end video");
+    auto frame_ending = std::make_shared<frame_ending_sink>(publish_end_stream);
+    auto frame_after = std::make_shared<counting_sink>();
+    require(publish_end_stream.add_sink(frame_ending), "add frame ending sink");
+    require(publish_end_stream.add_sink(frame_after), "add frame trailing sink");
+    require(publish_end_stream.publish(make_video_frame(0, true)), "frame callback ends stream");
+    require(publish_end_stream.ended(), "frame callback stream ended");
+    require(frame_ending->frames == 1 && frame_ending->ends == 1, "frame ending sink lifecycle");
+    require(frame_after->frames == 0 && frame_after->ends == 1, "publish stops callbacks after end");
 }
 
 void test_hls_output()
