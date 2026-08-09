@@ -638,7 +638,6 @@ media_track make_video_track()
         .clock_rate = 90'000,
         .channel_count = 0,
         .codec_config = h264_config,
-        .config_version = 1,
     };
 }
 
@@ -651,7 +650,6 @@ media_track make_audio_track()
         .clock_rate = 44'100,
         .channel_count = 2,
         .codec_config = aac_asc,
-        .config_version = 1,
     };
 }
 
@@ -824,7 +822,6 @@ void test_whep_session_lifecycle()
     require(replacement_session.session_id != third.session_id, "whep republish new session id");
 
     auto updated_video = make_video_track();
-    updated_video.config_version = 2;
     updated_video.codec_config.push_back(0x01);
     require(replacement->update_track(std::move(updated_video)), "whep source config update");
     require(!whep.remove(replacement_session.session_id), "whep source config change releases session");
