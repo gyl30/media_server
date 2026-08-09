@@ -11,6 +11,7 @@
 extern "C"
 {
 #include "flv-proto.h"
+#include "rtsp-client.h"
 #include "rtsp-muxer.h"
 #include "rtsp-payloads.h"
 }
@@ -365,6 +366,93 @@ struct rtp_timeline_capture
 {
     std::vector<std::uint32_t> timestamps;
 };
+
+struct rtsp_client_capture
+{
+    std::string request;
+    int setup_timeout{-1};
+};
+
+int capture_rtsp_request(void* param, const char*, const void* request, std::size_t bytes)
+{
+    auto& capture = *static_cast<rtsp_client_capture*>(param);
+    capture.request.assign(static_cast<const char*>(request), bytes);
+    return static_cast<int>(bytes);
+}
+
+int capture_rtsp_rtp_port(
+    void*,
+    int media,
+    const char*,
+    unsigned short port[2],
+    char*,
+    int)
+{
+    port[0] = static_cast<unsigned short>(media * 2);
+    port[1] = static_cast<unsigned short>(media * 2 + 1);
+    return RTSP_TRANSPORT_RTP_TCP;
+}
+
+int capture_rtsp_setup(void* param, int timeout, std::int64_t)
+{
+    static_cast<rtsp_client_capture*>(param)->setup_timeout = timeout;
+    return 0;
+}
+
+int rtsp_setup_timeout(std::string_view session_header)
+{
+    rtsp_client_capture capture;
+    rtsp_client_handler_t handler{};
+    handler.send = &capture_rtsp_request;
+    handler.rtpport = &capture_rtsp_rtp_port;
+    handler.onsetup = &capture_rtsp_setup;
+
+    auto* client = rtsp_client_create(
+        "rtsp://127.0.0.1/live/test",
+        nullptr,
+        nullptr,
+        &handler,
+        &capture);
+    require(client != nullptr, "rtsp client create");
+
+    constexpr std::string_view sdp =
+        "v=0\r\n"
+        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "s=test\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\n"
+        "a=rtpmap:96 H264/90000\r\n"
+        "a=control:trackID=0\r\n";
+    require(
+        rtsp_client_setup(client, sdp.data(), static_cast<int>(sdp.size())) == 0,
+        "rtsp client setup request");
+
+    const auto response = std::string("RTSP/1.0 200 OK\r\n") +
+        "CSeq: 1\r\n" +
+        "Session: " + std::string(session_header) + "\r\n" +
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n" +
+        "Content-Length: 0\r\n\r\n";
+    require(rtsp_client_input(client, response.data(), response.size()) == 0, "rtsp setup response");
+
+    require(rtsp_client_options(client, nullptr) == 0, "rtsp keepalive options");
+    require(capture.request.starts_with("OPTIONS * RTSP/1.0\r\n"), "rtsp keepalive method");
+    const auto separator = session_header.find(';');
+    const auto session_id = session_header.substr(0, separator);
+    require(
+        capture.request.find("Session: " + std::string(session_id) + "\r\n") != std::string::npos,
+        "rtsp keepalive session");
+
+    const auto timeout = capture.setup_timeout;
+    rtsp_client_destroy(client);
+    return timeout;
+}
+
+void test_rtsp_client_session_timeout()
+{
+    require(rtsp_setup_timeout("session-1;timeout=70") == 70, "rtsp setup explicit timeout");
+    require(rtsp_setup_timeout("session-2") == 60, "rtsp setup default timeout");
+}
 
 int capture_rtp_timestamp(
     void* param,
@@ -1020,6 +1108,8 @@ int main()
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     test_rtsp_muxer_zero_origin_timeline();
     std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
+    test_rtsp_client_session_timeout();
+    std::cout << "[pass] rtsp_client_session_timeout\n";
     test_media_stream_fanout_and_reentrancy();
     std::cout << "[pass] media_stream_fanout_and_reentrancy\n";
     test_stream_registry_generation_lifecycle();
