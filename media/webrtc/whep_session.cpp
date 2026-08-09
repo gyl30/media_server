@@ -8,6 +8,7 @@
 
 #include <openssl/rand.h>
 
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -39,15 +40,24 @@ std::string random_hex(std::size_t byte_count)
 class whep_stream_observer final : public media_sink
 {
    public:
-    using end_handler = std::function<void()>;
+    using close_handler = std::function<void()>;
 
-    explicit whep_stream_observer(end_handler handler)
+    whep_stream_observer(std::span<const media_track> tracks, close_handler handler)
         : handler_(std::move(handler))
     {
+        for (const auto& track : tracks)
+        {
+            config_versions_.emplace(track.id, track.config_version);
+        }
     }
 
-    void on_track(const media_track&) override
+    void on_track(const media_track& track) override
     {
+        const auto iterator = config_versions_.find(track.id);
+        if (iterator == config_versions_.end() || iterator->second != track.config_version)
+        {
+            close();
+        }
     }
 
     void on_frame(const media_frame&) override
@@ -56,14 +66,20 @@ class whep_stream_observer final : public media_sink
 
     void on_end() override
     {
+        close();
+    }
+
+   private:
+    void close()
+    {
         if (handler_)
         {
             handler_();
         }
     }
 
-   private:
-    end_handler handler_;
+    std::map<track_id, std::uint64_t> config_versions_;
+    close_handler handler_;
 };
 
 const webrtc_media_offer* transport_media(const webrtc_offer& offer)
@@ -164,9 +180,10 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     }
 
     local_port_ = endpoint.port();
+    const auto source_tracks = stream_->tracks();
     const auto answer = make_webrtc_answer(
         offer,
-        stream_->tracks(),
+        source_tracks,
         webrtc_answer_config{
             .address = advertised_address_,
             .port = local_port_,
@@ -209,10 +226,11 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     started_ = true;
 
     const auto session_weak = weak_from_this();
-    stream_observer_ = std::make_shared<whep_stream_observer>([session_weak]() {
+    // WHEP SDP 固定，源轨道集合或配置变化时结束旧会话，由新会话重新协商。
+    stream_observer_ = std::make_shared<whep_stream_observer>(source_tracks, [session_weak]() {
         if (const auto self = session_weak.lock())
         {
-            spdlog::info("webrtc source stream ended session {}", self->id_);
+            spdlog::info("webrtc source stream ended or changed session {}", self->id_);
             self->close();
         }
     });

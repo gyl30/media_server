@@ -4,6 +4,7 @@
 #include "media/core/stream_registry.h"
 #include "media/hls/hls_output.h"
 #include "media/hls/hls_service.h"
+#include "media/http/http_flv_output.h"
 #include "media/webrtc/webrtc_output.h"
 
 #include <algorithm>
@@ -82,6 +83,22 @@ media_track make_audio_track()
         .codec_config = aac_asc,
         .config_version = 1,
     };
+}
+
+media_track make_video_track(std::uint64_t config_version)
+{
+    auto track = make_video_track();
+    track.config_version = config_version;
+    track.codec_config.push_back(static_cast<std::uint8_t>(config_version));
+    return track;
+}
+
+media_track make_audio_track(std::uint64_t config_version)
+{
+    auto track = make_audio_track();
+    track.config_version = config_version;
+    track.codec_config.push_back(static_cast<std::uint8_t>(config_version));
+    return track;
 }
 
 
@@ -263,6 +280,59 @@ private:
     media_stream& stream_;
 };
 
+class track_updating_sink final : public media_sink
+{
+public:
+    track_updating_sink(
+        media_stream& stream,
+        track_id trigger_id,
+        std::uint64_t trigger_version,
+        media_track replacement)
+        : stream_(stream),
+          trigger_id_(trigger_id),
+          trigger_version_(trigger_version),
+          replacement_(std::move(replacement))
+    {
+    }
+
+    void on_track(const media_track& track) override
+    {
+        versions.emplace_back(track.id, track.config_version);
+        if (!updated && track.id == trigger_id_ && track.config_version == trigger_version_)
+        {
+            updated = true;
+            update_succeeded = stream_.update_track(replacement_);
+        }
+    }
+
+    void on_frame(const media_frame&) override {}
+    void on_end() override {}
+
+    std::vector<std::pair<track_id, std::uint64_t>> versions;
+    bool updated{};
+    bool update_succeeded{};
+
+private:
+    media_stream& stream_;
+    track_id trigger_id_{};
+    std::uint64_t trigger_version_{};
+    media_track replacement_;
+};
+
+class track_version_sink final : public media_sink
+{
+public:
+    void on_track(const media_track& track) override
+    {
+        versions.emplace_back(track.id, track.config_version);
+    }
+
+    void on_frame(const media_frame&) override {}
+    void on_end() override {}
+
+    std::vector<std::pair<track_id, std::uint64_t>> versions;
+};
+
 class generation_replacing_sink final : public media_sink
 {
 public:
@@ -387,6 +457,54 @@ void test_media_stream_fanout_and_reentrancy()
     require(publish_end_stream.ended(), "frame callback stream ended");
     require(frame_ending->frames == 1 && frame_ending->ends == 1, "frame ending sink lifecycle");
     require(frame_after->frames == 0 && frame_after->ends == 1, "publish stops callbacks after end");
+
+    media_stream version_stream("live/version");
+    require(version_stream.update_track(make_video_track()), "version first track");
+    auto version_observer = std::make_shared<track_version_sink>();
+    require(version_stream.add_sink(version_observer), "version observer add");
+    require(!version_stream.update_track(make_video_track()), "version duplicate rejected");
+    auto identical_update = make_video_track();
+    identical_update.config_version = 2;
+    require(version_stream.update_track(std::move(identical_update)), "identical config update accepted");
+    require(
+        version_observer->versions == std::vector<std::pair<track_id, std::uint64_t>>{{video_track_id, 1}},
+        "identical config update not fanned out");
+    require(version_stream.tracks().front().config_version == 1, "identical config keeps semantic version");
+    auto zero_version = make_audio_track();
+    zero_version.config_version = 0;
+    require(!version_stream.update_track(std::move(zero_version)), "version zero rejected");
+    auto changed_kind = make_video_track(2);
+    changed_kind.kind = media_kind::audio;
+    require(!version_stream.update_track(std::move(changed_kind)), "track kind change rejected");
+    auto changed_codec = make_video_track(2);
+    changed_codec.codec = codec_id::aac;
+    require(!version_stream.update_track(std::move(changed_codec)), "track codec change rejected");
+    require(version_stream.update_track(make_video_track(2)), "version increase accepted");
+    require(!version_stream.update_track(make_video_track()), "older version rejected");
+
+    media_stream update_reentrant_stream("live/update-reentrant");
+    require(update_reentrant_stream.update_track(make_video_track()), "reentrant first track");
+    auto update_reentrant = std::make_shared<track_updating_sink>(
+        update_reentrant_stream, video_track_id, 2, make_video_track(3));
+    auto update_observer = std::make_shared<track_version_sink>();
+    require(update_reentrant_stream.add_sink(update_reentrant), "reentrant updater add");
+    require(update_reentrant_stream.add_sink(update_observer), "reentrant observer add");
+    require(update_reentrant_stream.update_track(make_video_track(2)), "reentrant outer update");
+    require(update_reentrant->update_succeeded, "reentrant nested update");
+    require(
+        update_observer->versions == std::vector<std::pair<track_id, std::uint64_t>>{{video_track_id, 1}, {video_track_id, 3}},
+        "reentrant stale update skipped");
+
+    media_stream replay_reentrant_stream("live/replay-reentrant");
+    require(replay_reentrant_stream.update_track(make_video_track()), "replay video track");
+    require(replay_reentrant_stream.update_track(make_audio_track()), "replay audio track");
+    auto replay_reentrant = std::make_shared<track_updating_sink>(
+        replay_reentrant_stream, video_track_id, 1, make_audio_track(2));
+    require(replay_reentrant_stream.add_sink(replay_reentrant), "replay reentrant sink add");
+    require(replay_reentrant->update_succeeded, "replay nested update");
+    require(
+        replay_reentrant->versions == std::vector<std::pair<track_id, std::uint64_t>>{{video_track_id, 1}, {audio_track_id, 2}},
+        "replay stale track skipped");
 }
 
 
@@ -444,6 +562,31 @@ void test_hls_output()
     const auto playlist = output.playlist(".");
     require(playlist.find("#EXTM3U") != std::string::npos, "hls playlist header");
     require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls endlist");
+
+    hls_output reconfigured(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
+    reconfigured.on_track(make_video_track());
+    reconfigured.on_frame(make_video_frame(0, true));
+    reconfigured.on_frame(make_video_frame(500'000'000, false));
+    reconfigured.on_track(make_video_track(2));
+    require(reconfigured.segment_count() == 1U, "hls config change closes current segment");
+    reconfigured.on_frame(make_video_frame(600'000'000, false));
+    require(reconfigured.segment_count() == 1U, "hls config change waits key frame");
+    reconfigured.on_frame(make_video_frame(1'000'000'000, true));
+    reconfigured.on_end();
+    require(reconfigured.segment_count() == 2U, "hls config change starts new segment");
+
+    std::size_t flv_end_count = 0;
+    const std::vector<media_track> flv_tracks{make_video_track()};
+    http_flv_output flv_output(
+        flv_tracks,
+        [](std::span<const std::uint8_t>) {},
+        [&flv_end_count]() { ++flv_end_count; });
+    flv_output.on_track(make_video_track());
+    flv_output.on_track(make_video_track(2));
+    require(flv_end_count == 0U, "http flv existing track config update");
+    flv_output.on_track(make_audio_track());
+    flv_output.on_track(make_audio_track());
+    require(flv_end_count == 1U, "http flv topology change closes once");
 }
 
 

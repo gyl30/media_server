@@ -38,19 +38,19 @@ void hls_output::on_track(const media_track& track)
     if (track.kind == media_kind::video)
     {
         has_video_ = true;
-        if (segment_start_pts_ns_ < 0 && current_segment_.empty())
-        {
-            waiting_for_key_frame_ = true;
-        }
     }
-    if (muxer_ != nullptr)
+
+    if (!current_segment_.empty())
     {
-        const auto stream_id = add_track_to_muxer(track);
-        if (stream_id > 0)
-        {
-            stream_ids_.insert_or_assign(track.id, stream_id);
-        }
+        finish_segment(last_pts_ns_);
     }
+    else
+    {
+        recreate_muxer();
+    }
+
+    segment_start_pts_ns_ = -1;
+    waiting_for_key_frame_ = has_video_;
 }
 
 void hls_output::on_frame(const media_frame& frame)

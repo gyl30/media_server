@@ -33,8 +33,10 @@ class http_flv_output final : public media_sink
 
     write_handler on_write_;
     end_handler on_end_;
+    std::vector<track_id> track_ids_;
     void* writer_ = nullptr;
     flv_output_muxer muxer_;
+    bool ended_{};
 };
 }    // namespace media_server
 

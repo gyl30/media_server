@@ -38,7 +38,7 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
         spdlog::debug("whep create stream not found {}", stream_name);
         return {.error = whep_create_error::stream_not_found, .session_id = {}, .answer_sdp = {}};
     }
-    if (stream->ended() || stream->tracks().empty())
+    if (stream->tracks().empty())
     {
         spdlog::debug("whep create stream not ready {}", stream_name);
         return {.error = whep_create_error::stream_not_ready, .session_id = {}, .answer_sdp = {}};
