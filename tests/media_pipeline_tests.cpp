@@ -350,14 +350,14 @@ void test_stream_registry_generation_lifecycle()
     require(replacing->old_generation_hidden, "registry ended generation hidden during end callback");
     require(replacing->replacement_added, "registry ended generation replace during end callback");
     require(registry.find("live/generation").get() == second.get(), "registry replacement generation visible");
-    require(!registry.remove(first.get()), "registry stale generation remove reject");
+    registry.remove(*first);
     require(registry.find("live/generation").get() == second.get(), "registry stale remove preserves replacement");
 
     auto ended = std::make_shared<media_stream>("live/ended");
     ended->end();
     require(!registry.add(ended), "registry ended generation add reject");
 
-    require(registry.remove(second.get()), "registry replacement remove");
+    registry.remove(*second);
     require(!registry.find("live/generation"), "registry replacement removed");
 }
 
@@ -404,7 +404,7 @@ void test_hls_service_lifecycle()
     require(first->publish(make_video_frame(0, true)), "hls first key frame");
     require(first->publish(make_video_frame(1'000'000'000, true)), "hls first segment boundary");
     first->end();
-    require(registry.remove(first.get()), "hls first stream remove");
+    registry.remove(*first);
 
     const auto ended_playlist = hls.playlist("live/hls");
     require(ended_playlist.has_value(), "hls ended playlist retained");
@@ -427,7 +427,7 @@ void test_hls_service_lifecycle()
     require(expiring_stream->update_track(make_video_track()), "hls expiring track");
     require(expiring_hls.segment_count("live/expiring") == 0U, "hls expiring output create");
     expiring_stream->end();
-    require(expiring_registry.remove(expiring_stream.get()), "hls expiring stream remove");
+    expiring_registry.remove(*expiring_stream);
     require(expiring_hls.playlist("live/expiring").has_value(), "hls ended output initially retained");
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     require(!expiring_hls.playlist("live/expiring").has_value(), "hls ended output expires");

@@ -86,7 +86,7 @@ bool rtsp_input_session::start()
     if (avpkt2bs_create(&bitstream_) != 0)
 
     {
-        registry_.remove(stream_.get());
+        registry_.remove(*stream_);
         stream_.reset();
         return false;
     }
@@ -128,7 +128,7 @@ void rtsp_input_session::close()
     if (stream_)
     {
         stream_->end();
-        registry_.remove(stream_.get());
+        registry_.remove(*stream_);
         stream_.reset();
     }
     spdlog::debug("rtsp input close {}", stream_name_);
