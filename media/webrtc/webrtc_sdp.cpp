@@ -116,7 +116,8 @@ void on_rtpmap(void* param, const char*, const char* value)
     }
 
     auto* media = static_cast<webrtc_media_offer*>(param);
-    if (std::find(media->payload_types.begin(), media->payload_types.end(), payload_type) == media->payload_types.end())
+    if (payload_type < 0 || payload_type > 127 ||
+        std::find(media->payload_types.begin(), media->payload_types.end(), payload_type) == media->payload_types.end())
     {
         return;
     }
