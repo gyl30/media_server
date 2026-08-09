@@ -94,7 +94,7 @@ void rtsp_output_session::start()
 void rtsp_output_session::on_track(const media_track& track)
 {
     const auto iterator = tracks_.find(track.id);
-    if (iterator != tracks_.end() && iterator->second.track.config_version != track.config_version)
+    if (iterator != tracks_.end() && iterator->second.config_version != track.config_version)
     {
         // RTSP SDP 已经发给客户端，配置改变时第一阶段直接结束旧会话。
         close();
@@ -371,11 +371,11 @@ int rtsp_output_session::on_play(std::string_view session, const std::int64_t* n
     if (!playing_)
 
     {
-        playing_ = true;
         if (!stream_->add_sink(shared_from_this()))
         {
             return rtsp_server_reply_play(server_, 454, nullptr, nullptr, nullptr);
         }
+        playing_ = true;
     }
     return rtsp_server_reply_play(server_, 200, npt, nullptr, nullptr);
 }
@@ -501,10 +501,9 @@ bool rtsp_output_session::configure_tracks(
         tracks_.insert_or_assign(
             track.id,
             track_state{
-                .track = track,
+                .config_version = track.config_version,
                 .payload_index = payload_index,
                 .media_id = media_id,
-                .payload_type = payload_type,
             });
     }
 

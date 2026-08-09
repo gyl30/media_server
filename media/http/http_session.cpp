@@ -433,8 +433,9 @@ void http_session::enqueue_flv(std::span<const std::uint8_t> data)
         return;
     }
 
+    const bool start_write = flv_chunks_.empty();
     flv_chunks_.push_back(std::make_shared<flv_chunk>(data));
-    if (!flv_writing_)
+    if (start_write)
     {
         write_flv_chunk();
     }
@@ -448,7 +449,6 @@ void http_session::write_flv_chunk()
     }
     if (flv_chunks_.empty())
     {
-        flv_writing_ = false;
         if (flv_finishing_)
         {
             finish_flv();
@@ -456,12 +456,15 @@ void http_session::write_flv_chunk()
         return;
     }
 
-    flv_writing_ = true;
     const auto chunk = flv_chunks_.front();
     const auto self = shared_from_this();
     net::async_write(stream_, chunk->chunk, [self, chunk](boost::system::error_code error, std::size_t bytes) {
         static_cast<void>(chunk);
         static_cast<void>(bytes);
+        if (self->closed_)
+        {
+            return;
+        }
         if (error)
         {
             self->close();
@@ -478,7 +481,7 @@ void http_session::finish_flv()
     {
         return;
     }
-    if (flv_writing_ || !flv_chunks_.empty())
+    if (!flv_chunks_.empty())
     {
         flv_finishing_ = true;
         return;

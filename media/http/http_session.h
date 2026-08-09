@@ -74,7 +74,6 @@ class http_session final : public std::enable_shared_from_this<http_session>
     std::shared_ptr<http_flv_output> flv_output_;
     std::shared_ptr<http_session> keep_alive_;
     std::deque<std::shared_ptr<flv_chunk>> flv_chunks_;
-    bool flv_writing_ = false;
     bool flv_finishing_ = false;
     bool closed_ = false;
 };
