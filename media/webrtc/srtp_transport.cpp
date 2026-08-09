@@ -155,11 +155,6 @@ void srtp_transport::close()
     context_.reset();
 }
 
-bool srtp_transport::started() const noexcept
-{
-    return context_ != nullptr;
-}
-
 std::optional<std::vector<std::uint8_t>> srtp_transport::protect_rtp(std::span<const std::uint8_t> packet)
 {
     if (!context_ || packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
