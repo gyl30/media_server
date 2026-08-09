@@ -85,13 +85,14 @@ void webrtc_output::on_frame(const media_frame& frame)
         return;
     }
 
-    if (iterator->second.track.codec == codec_id::h264)
+    auto& state = iterator->second;
+    if (state.codec == codec_id::h264)
     {
-        input_h264(iterator->first, frame);
+        input_h264(state, frame);
     }
-    else if (iterator->second.track.codec == codec_id::aac)
+    else if (state.codec == codec_id::aac)
     {
-        input_aac(iterator->first, frame);
+        input_aac(state, frame);
     }
 }
 
@@ -99,14 +100,9 @@ void webrtc_output::on_end()
 {
 }
 
-std::size_t webrtc_output::packet_count() const noexcept
-{
-    return packet_count_;
-}
-
 int webrtc_output::on_packet(
     void* param,
-    int pid,
+    int,
     const void* data,
     int bytes,
     std::uint32_t,
@@ -118,7 +114,6 @@ int webrtc_output::on_packet(
         return 0;
     }
 
-    ++self->packet_count_;
     const auto packet = std::span<const std::uint8_t>(
         static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes));
     if (packet.size() >= 12U)
@@ -149,15 +144,6 @@ int webrtc_output::on_packet(
     if (self->rtp_handler_)
     {
         self->rtp_handler_(packet);
-    }
-
-    if (self->active_payloads_.contains(pid))
-    {
-        self->emit_rtcp(pid);
-    }
-    else
-    {
-        self->active_payloads_.insert(pid);
     }
     return 0;
 }
@@ -202,10 +188,11 @@ bool webrtc_output::add_h264_track(const media_track& track)
     tracks_.insert_or_assign(
         track.id,
         track_state{
-            .track = track,
+            .codec = track.codec,
             .transcoder = {},
             .audio_pts_ns = 0,
             .media_id = media_id,
+            .payload_id = payload_index,
             .waiting_key_frame = true,
             .audio_pts_started = false,
         });
@@ -264,10 +251,11 @@ bool webrtc_output::add_aac_track(const media_track& track)
     tracks_.insert_or_assign(
         track.id,
         track_state{
-            .track = track,
+            .codec = track.codec,
             .transcoder = std::move(transcoder),
             .audio_pts_ns = 0,
             .media_id = media_id,
+            .payload_id = payload_index,
             .waiting_key_frame = false,
             .audio_pts_started = false,
         });
@@ -332,15 +320,8 @@ void webrtc_output::emit_rtcp(int payload_id)
     rtcp_handler_(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(bytes)));
 }
 
-void webrtc_output::input_h264(track_id id, const media_frame& frame)
+void webrtc_output::input_h264(track_state& state, const media_frame& frame)
 {
-    auto iterator = tracks_.find(id);
-    if (iterator == tracks_.end())
-    {
-        return;
-    }
-
-    auto& state = iterator->second;
     if (state.waiting_key_frame)
     {
         if (!frame.key_frame)
@@ -361,18 +342,17 @@ void webrtc_output::input_h264(track_id id, const media_frame& frame)
     if (result < 0)
     {
         spdlog::error("webrtc h264 rtp packetize failed result {}", result);
+        return;
     }
+    emit_rtcp(state.payload_id);
 }
 
-void webrtc_output::input_aac(track_id id, const media_frame& frame)
+void webrtc_output::input_aac(track_state& state, const media_frame& frame)
 {
-    auto iterator = tracks_.find(id);
-    if (iterator == tracks_.end() || !iterator->second.transcoder)
+    if (!state.transcoder)
     {
         return;
     }
-
-    auto& state = iterator->second;
     if (!state.audio_pts_started)
     {
         state.audio_pts_ns = frame.pts_ns;
@@ -382,10 +362,11 @@ void webrtc_output::input_aac(track_id id, const media_frame& frame)
     std::vector<opus_audio_packet> packets;
     if (!state.transcoder->transcode(*frame.payload, packets))
     {
-        spdlog::error("webrtc aac opus transcode failed track {}", id);
+        spdlog::error("webrtc aac opus transcode failed track {}", frame.track);
         return;
     }
 
+    bool sent = false;
     for (const auto& packet : packets)
     {
         const auto pts_ms = rtp_milliseconds(state.audio_pts_ns);
@@ -403,6 +384,12 @@ void webrtc_output::input_aac(track_id id, const media_frame& frame)
             return;
         }
         state.audio_pts_ns += opus_samples_to_nanoseconds(packet.sample_count);
+        sent = true;
+    }
+
+    if (sent)
+    {
+        emit_rtcp(state.payload_id);
     }
 }
 

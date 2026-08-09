@@ -303,7 +303,6 @@ void test_webrtc_rtp_packetizer()
     require(packets.empty(), "webrtc waits natural key frame");
     output.on_frame(make_video_frame(0, true));
 
-    require(output.packet_count() > 0, "webrtc h264 rtp packet count");
     require(!packets.empty() && packets.front().size() >= 12, "rtp header size");
     require((packets.front()[0] >> 6U) == 2U, "rtp version 2");
     require((packets.front()[1] & 0x7fU) == 102U, "rtp negotiated payload type");
@@ -343,7 +342,6 @@ void test_webrtc_opus_channel_count(int channel_count)
         pts_ns += 23'219'954;
     }
 
-    require(output.packet_count() > 0, "webrtc opus rtp packet count");
     require(!packets.empty() && packets.front().size() >= 12, "opus rtp header size");
     require((packets.front()[0] >> 6U) == 2U, "opus rtp version 2");
     require((packets.front()[1] & 0x7fU) == 111U, "opus negotiated payload type");
@@ -376,7 +374,6 @@ void test_webrtc_rtcp_sender()
     output.on_track(make_video_track());
     output.on_track(make_audio_track());
     output.on_frame(make_video_frame(0, true));
-    output.on_frame(make_video_frame(40'000'000, false));
 
     std::int64_t audio_pts_ns = 0;
     for (const auto& adts : valid_aac_adts_frames)
