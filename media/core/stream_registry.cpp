@@ -25,14 +25,15 @@ bool stream_registry::add(const std::shared_ptr<media_stream>& stream)
     return true;
 }
 
-bool stream_registry::remove(std::string_view name, const media_stream* expected)
+bool stream_registry::remove(const media_stream* expected)
 {
-    const auto iterator = streams_.find(name);
-    if (iterator == streams_.end())
+    if (expected == nullptr)
     {
         return false;
     }
-    if (expected == nullptr || iterator->second.get() != expected)
+
+    const auto iterator = streams_.find(expected->name());
+    if (iterator == streams_.end() || iterator->second.get() != expected)
     {
         return false;
     }
