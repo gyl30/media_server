@@ -41,12 +41,9 @@ bool media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
     }
 
     remove_expired_sinks();
-    for (const auto& weak_sink : sinks_)
+    if (has_sink(*sink))
     {
-        if (const auto current = weak_sink.lock(); current && current.get() == sink.get())
-        {
-            return false;
-        }
+        return false;
     }
 
     // 先挂接再重放轨道配置，保证 on_track 中 remove_sink/end 的重入语义有效。
@@ -60,11 +57,7 @@ bool media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
             return false;
         }
 
-        const auto attached = std::any_of(sinks_.begin(), sinks_.end(), [sink_ptr = sink.get()](const std::weak_ptr<media_sink>& weak_sink) {
-            const auto current = weak_sink.lock();
-            return current && current.get() == sink_ptr;
-        });
-        if (!attached)
+        if (!has_sink(*sink))
         {
             return false;
         }
@@ -72,19 +65,12 @@ bool media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
     return true;
 }
 
-bool media_stream::remove_sink(const media_sink* sink)
+void media_stream::remove_sink(const media_sink& sink)
 {
-    if (!sink)
-    {
-        return false;
-    }
-
-    const auto old_size = sinks_.size();
-    std::erase_if(sinks_, [sink](const std::weak_ptr<media_sink>& weak_sink) {
+    std::erase_if(sinks_, [&sink](const std::weak_ptr<media_sink>& weak_sink) {
         const auto current = weak_sink.lock();
-        return !current || current.get() == sink;
+        return !current || current.get() == &sink;
     });
-    return sinks_.size() != old_size;
 }
 
 bool media_stream::update_track(media_track track)
@@ -97,6 +83,10 @@ bool media_stream::update_track(media_track track)
     tracks_[track.id] = track;
     for (const auto& sink : sink_snapshot())
     {
+        if (!has_sink(*sink))
+        {
+            continue;
+        }
         sink->on_track(track);
         if (ended_)
         {
@@ -115,6 +105,10 @@ bool media_stream::publish(media_frame frame)
 
     for (const auto& sink : sink_snapshot())
     {
+        if (!has_sink(*sink))
+        {
+            continue;
+        }
         sink->on_frame(frame);
         if (ended_)
         {
@@ -138,6 +132,14 @@ void media_stream::end()
     {
         sink->on_end();
     }
+}
+
+bool media_stream::has_sink(const media_sink& sink) const
+{
+    return std::any_of(sinks_.begin(), sinks_.end(), [&sink](const std::weak_ptr<media_sink>& weak_sink) {
+        const auto current = weak_sink.lock();
+        return current && current.get() == &sink;
+    });
 }
 
 std::vector<std::shared_ptr<media_sink>> media_stream::sink_snapshot()

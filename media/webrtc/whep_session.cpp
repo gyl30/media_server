@@ -253,11 +253,11 @@ void whep_session::close()
     send_queue_.clear();
     if (output_ && stream_)
     {
-        stream_->remove_sink(output_.get());
+        stream_->remove_sink(*output_);
     }
     if (stream_observer_ && stream_)
     {
-        stream_->remove_sink(stream_observer_.get());
+        stream_->remove_sink(*stream_observer_);
     }
     output_.reset();
     stream_observer_.reset();

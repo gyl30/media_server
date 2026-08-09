@@ -150,7 +150,7 @@ public:
     void on_frame(const media_frame&) override
     {
         ++frames;
-        static_cast<void>(stream_.remove_sink(this));
+        stream_.remove_sink(*this);
     }
     void on_end() override {}
 
@@ -168,7 +168,7 @@ public:
     void on_track(const media_track&) override
     {
         ++tracks;
-        removed = stream_.remove_sink(this);
+        stream_.remove_sink(*this);
     }
     void on_frame(const media_frame&) override { ++frames; }
     void on_end() override { ++ends; }
@@ -176,10 +176,49 @@ public:
     std::size_t tracks{};
     std::size_t frames{};
     std::size_t ends{};
-    bool removed{};
 
 private:
     media_stream& stream_;
+};
+
+class track_other_removing_sink final : public media_sink
+{
+public:
+    track_other_removing_sink(media_stream& stream, media_sink& target) : stream_(stream), target_(target) {}
+
+    void on_track(const media_track&) override
+    {
+        ++tracks;
+        stream_.remove_sink(target_);
+    }
+    void on_frame(const media_frame&) override {}
+    void on_end() override {}
+
+    std::size_t tracks{};
+
+private:
+    media_stream& stream_;
+    media_sink& target_;
+};
+
+class frame_other_removing_sink final : public media_sink
+{
+public:
+    frame_other_removing_sink(media_stream& stream, media_sink& target) : stream_(stream), target_(target) {}
+
+    void on_track(const media_track&) override {}
+    void on_frame(const media_frame&) override
+    {
+        ++frames;
+        stream_.remove_sink(target_);
+    }
+    void on_end() override {}
+
+    std::size_t frames{};
+
+private:
+    media_stream& stream_;
+    media_sink& target_;
 };
 
 class track_ending_sink final : public media_sink
@@ -296,7 +335,6 @@ void test_media_stream_fanout_and_reentrancy()
     require(track_remove_stream.update_track(make_audio_track()), "track remove audio");
     auto track_removing = std::make_shared<track_removing_sink>(track_remove_stream);
     require(!track_remove_stream.add_sink(track_removing), "track callback removes pending sink");
-    require(track_removing->removed, "track callback remove succeeds");
     require(track_removing->tracks == 1, "removed sink stops track replay");
     require(track_remove_stream.publish(make_video_frame(0, true)), "track remove publish");
     require(track_removing->frames == 0, "track removed sink receives no frame");
@@ -309,7 +347,25 @@ void test_media_stream_fanout_and_reentrancy()
     require(track_end_stream.ended(), "track callback stream ended");
     require(track_ending->tracks == 1, "ended stream stops track replay");
     require(track_ending->ends == 1, "new sink receives end during track replay");
-    require(!track_end_stream.remove_sink(track_ending.get()), "ended stream clears new sink");
+
+    media_stream update_remove_stream("live/update-remove");
+    auto update_removed = std::make_shared<counting_sink>();
+    auto update_removing = std::make_shared<track_other_removing_sink>(update_remove_stream, *update_removed);
+    require(update_remove_stream.add_sink(update_removing), "add update removing sink");
+    require(update_remove_stream.add_sink(update_removed), "add update removed sink");
+    require(update_remove_stream.update_track(make_video_track()), "update removes later sink");
+    require(update_removing->tracks == 1, "update removing sink receives track");
+    require(update_removed->tracks == 0, "update removed sink skips current track");
+
+    media_stream publish_remove_stream("live/publish-remove");
+    require(publish_remove_stream.update_track(make_video_track()), "publish remove video");
+    auto publish_removed = std::make_shared<counting_sink>();
+    auto publish_removing = std::make_shared<frame_other_removing_sink>(publish_remove_stream, *publish_removed);
+    require(publish_remove_stream.add_sink(publish_removing), "add publish removing sink");
+    require(publish_remove_stream.add_sink(publish_removed), "add publish removed sink");
+    require(publish_remove_stream.publish(make_video_frame(0, true)), "publish removes later sink");
+    require(publish_removing->frames == 1, "publish removing sink receives frame");
+    require(publish_removed->frames == 0, "publish removed sink skips current frame");
 
     media_stream update_end_stream("live/update-end");
     auto update_ending = std::make_shared<track_ending_sink>(update_end_stream);

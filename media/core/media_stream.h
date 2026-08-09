@@ -21,12 +21,13 @@ class media_stream final
     [[nodiscard]] std::vector<media_track> tracks() const;
 
     bool add_sink(const std::shared_ptr<media_sink>& sink);
-    bool remove_sink(const media_sink* sink);
+    void remove_sink(const media_sink& sink);
     bool update_track(media_track track);
     bool publish(media_frame frame);
     void end();
 
    private:
+    [[nodiscard]] bool has_sink(const media_sink& sink) const;
     [[nodiscard]] std::vector<std::shared_ptr<media_sink>> sink_snapshot();
     void remove_expired_sinks();
 
