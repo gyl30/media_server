@@ -40,6 +40,7 @@ class whep_service final
         boost::asio::io_context& io,
         stream_registry& registry,
         boost::asio::ip::address advertised_address);
+    ~whep_service();
 
     [[nodiscard]] bool ready() const noexcept;
     [[nodiscard]] whep_create_result create(std::string_view stream_name, std::string_view offer_sdp);
