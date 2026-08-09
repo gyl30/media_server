@@ -717,6 +717,30 @@ std::string read_rtsp_headers(boost::asio::ip::tcp::socket& socket)
     return request;
 }
 
+std::string read_rtsp_headers_until(boost::asio::ip::tcp::socket& socket, std::chrono::steady_clock::duration timeout)
+{
+    socket.non_blocking(true);
+    std::string request;
+    std::array<char, 2'048> buffer{};
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (request.find("\r\n\r\n") == std::string::npos && std::chrono::steady_clock::now() < deadline)
+    {
+        boost::system::error_code error;
+        const auto bytes = socket.read_some(boost::asio::buffer(buffer), error);
+        if (!error)
+        {
+            request.append(buffer.data(), bytes);
+        }
+        else if (error != boost::asio::error::would_block && error != boost::asio::error::try_again)
+        {
+            fail("rtsp timed read");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    socket.non_blocking(false);
+    return request;
+}
+
 struct rtmp_status
 {
     std::string level;
@@ -1016,6 +1040,64 @@ void test_rtsp_input_selects_single_audio_and_video()
     socket.close(error);
     runner.join();
     require(!registry.find("relay/single-av"), "rtsp single audio video pull closes");
+}
+
+void test_rtsp_input_media_driven_keepalive()
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/keepalive";
+    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/keepalive", request_url);
+    require(pull->start(), "rtsp keepalive pull start");
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto describe = read_rtsp_headers(socket);
+    constexpr std::string_view sdp =
+        "v=0\r\n"
+        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "s=test\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\n"
+        "a=rtpmap:96 H264/90000\r\n"
+        "a=control:trackID=0\r\n";
+    const auto describe_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(describe, "CSeq:") + "\r\nContent-Base: " + request_url +
+                                   "/\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" +
+                                   std::string(sdp);
+    boost::asio::write(socket, boost::asio::buffer(describe_response));
+
+    const auto setup = read_rtsp_headers(socket);
+    const auto setup_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(setup, "CSeq:") +
+                                "\r\nSession: keepalive-session;timeout=2\r\n"
+                                "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(setup_response));
+
+    const auto play = read_rtsp_headers(socket);
+    const auto play_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: keepalive-session;timeout=2\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(play_response));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1'100));
+    constexpr std::array<std::uint8_t, 21> interleaved_rtp{
+        0x24, 0x00, 0x00, 0x11, 0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0,
+    };
+    boost::asio::write(socket, boost::asio::buffer(interleaved_rtp));
+
+    const auto options = read_rtsp_headers_until(socket, std::chrono::seconds(1));
+    require(options.starts_with("OPTIONS * RTSP/1.0\r\n"), "rtsp media drives keepalive options");
+    require(options.find("Session: keepalive-session\r\n") != std::string::npos, "rtsp keepalive carries session");
+    const auto options_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(options, "CSeq:") + "\r\nPublic: OPTIONS\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(options_response));
+
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+    require(!registry.find("relay/keepalive"), "rtsp keepalive pull closes");
 }
 
 class rtsp_output_test_peer final
@@ -1999,6 +2081,8 @@ int main()
     std::cout << "[pass] rtsp_pull_url_contract\n";
     media_server::test_rtsp_input_selects_single_audio_and_video();
     std::cout << "[pass] rtsp_input_selects_single_audio_and_video\n";
+    media_server::test_rtsp_input_media_driven_keepalive();
+    std::cout << "[pass] rtsp_input_media_driven_keepalive\n";
     media_server::test_rtsp_client_rejects_empty_media_selection();
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
     media_server::test_rtsp_output_session_contract();

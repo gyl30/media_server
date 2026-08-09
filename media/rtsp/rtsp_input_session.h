@@ -62,7 +62,6 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     void on_connection_close();
     int on_describe(const char* sdp, int length);
     int on_setup(int timeout, std::int64_t duration);
-    int on_play();
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
     int on_packet(avpacket_t* packet);
     [[nodiscard]] bool update_track_from_packet(const avpacket_t& packet);
