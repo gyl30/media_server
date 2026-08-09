@@ -27,9 +27,9 @@ void tcp_connection::write(std::span<const std::uint8_t> data)
         return;
     }
 
-    auto buffer = std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end());
-    write_queue_.push_back(std::move(buffer));
-    if (!writing_)
+    const bool start_write = write_queue_.empty();
+    write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
+    if (start_write)
     {
         write_next();
     }
@@ -91,24 +91,21 @@ void tcp_connection::read_next()
 
 void tcp_connection::write_next()
 {
-    if (closed_)
+    if (closed_ || write_queue_.empty())
     {
-        writing_ = false;
-        return;
-    }
-    if (write_queue_.empty())
-    {
-        writing_ = false;
         return;
     }
 
-    writing_ = true;
     const auto self = shared_from_this();
     const auto buffer = write_queue_.front();
     boost::asio::async_write(
         socket_,
         boost::asio::buffer(*buffer),
         [this, self, buffer](const boost::system::error_code& error, std::size_t) {
+            if (closed_)
+            {
+                return;
+            }
             if (error)
             {
                 close();
@@ -122,7 +119,6 @@ void tcp_connection::write_next()
 void tcp_connection::finish_close()
 {
     write_queue_.clear();
-    writing_ = false;
     on_read_ = {};
     if (on_close_)
     {
