@@ -347,7 +347,8 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
         return -1;
     }
 
-    publish_track_if_needed(*packet);
+    // ireader 会随码流更新 packet.stream 中的配置，核心负责过滤未变化配置。
+    update_track_from_packet(*packet);
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
     if (bytes <= 0 || bitstream_.ptr == nullptr)
     {
@@ -390,10 +391,10 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     return 0;
 }
 
-void rtsp_input_session::publish_track_if_needed(const avpacket_t& packet)
+void rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
-    if (input.codecid == AVCODEC_VIDEO_H264 && !video_track_published_)
+    if (input.codecid == AVCODEC_VIDEO_H264)
     {
         std::vector<std::uint8_t> config;
         if (input.extra != nullptr && input.bytes > 0)
@@ -412,16 +413,14 @@ void rtsp_input_session::publish_track_if_needed(const avpacket_t& packet)
             .clock_rate = 90'000,
             .channel_count = 0,
             .codec_config = std::move(config),
-            .config_version = 1,
         };
         if (stream_->update_track(std::move(track)))
         {
-            video_track_published_ = true;
             spdlog::info("rtsp input track video h264");
         }
     }
 
-    if (input.codecid == AVCODEC_AUDIO_AAC && !audio_track_published_)
+    if (input.codecid == AVCODEC_AUDIO_AAC)
 
     {
         std::vector<std::uint8_t> config;
@@ -441,11 +440,9 @@ void rtsp_input_session::publish_track_if_needed(const avpacket_t& packet)
             .clock_rate = static_cast<std::uint32_t>(input.sample_rate),
             .channel_count = static_cast<std::uint16_t>(input.channels),
             .codec_config = std::move(config),
-            .config_version = 1,
         };
         if (stream_->update_track(std::move(track)))
         {
-            audio_track_published_ = true;
             spdlog::info("rtsp input track audio aac sample_rate {} channels {}", input.sample_rate, input.channels);
         }
     }

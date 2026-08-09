@@ -322,10 +322,11 @@ int rtmp_session::on_flv_demux(
             .clock_rate = 90'000,
             .channel_count = 0,
             .codec_config = std::move(config),
-            .config_version = ++video_config_version_,
         };
-        stream_->update_track(std::move(track));
-        spdlog::info("rtmp input track video h264");
+        if (stream_->update_track(std::move(track)))
+        {
+            spdlog::info("rtmp input track video h264");
+        }
         return 0;
     }
 
@@ -344,10 +345,11 @@ int rtmp_session::on_flv_demux(
             .clock_rate = config->sample_rate,
             .channel_count = config->channel_count,
             .codec_config = {data.begin(), data.end()},
-            .config_version = ++audio_config_version_,
         };
-        stream_->update_track(std::move(track));
-        spdlog::info("rtmp input track audio aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
+        if (stream_->update_track(std::move(track)))
+        {
+            spdlog::info("rtmp input track audio aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
+        }
         return 0;
     }
 

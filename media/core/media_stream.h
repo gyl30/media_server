@@ -22,6 +22,7 @@ class media_stream final
 
     bool add_sink(const std::shared_ptr<media_sink>& sink);
     void remove_sink(const media_sink& sink);
+    // 仅在新增轨道或实际配置变化时返回 true。
     bool update_track(media_track track);
     bool publish(media_frame frame);
     void end();
