@@ -4,6 +4,8 @@
 #include "media/core/stream_registry.h"
 #include "media/hls/hls_output.h"
 #include "media/hls/hls_service.h"
+#include "media/net/tcp_connection.h"
+#include "media/rtsp/rtsp_output_session.h"
 #include "media/http/http_flv_output.h"
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/webrtc/webrtc_output.h"
@@ -17,6 +19,9 @@ extern "C"
 }
 
 #include <algorithm>
+#include <boost/asio/read.hpp>
+#include <boost/asio/read_until.hpp>
+#include <boost/asio/write.hpp>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -44,6 +49,18 @@ const std::vector<std::uint8_t> h264_config{
     0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f, 0x97, 0x01, 0x6e, 0x40,
     0x00, 0x00, 0x00, 0x01,
     0x68, 0xce, 0x3c, 0x80,
+};
+
+const std::vector<std::uint8_t> h265_config{
+    0x00, 0x00, 0x00, 0x01,
+    0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03,
+    0x00, 0x00, 0x03, 0x00, 0x78, 0x9d, 0xc0, 0x90,
+    0x00, 0x00, 0x00, 0x01,
+    0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03,
+    0x00, 0x78, 0xa0, 0x03, 0xc0, 0x80, 0x32, 0x16, 0x59, 0xde, 0x49, 0x1b, 0x6b, 0x80, 0x40, 0x00,
+    0x00, 0xfa, 0x00, 0x00, 0x17, 0x70, 0x02,
+    0x00, 0x00, 0x00, 0x01,
+    0x44, 0x01, 0xc1, 0x73, 0xd1, 0x89,
 };
 
 const std::vector<std::uint8_t> aac_asc{0x12, 0x10};
@@ -79,6 +96,18 @@ media_track make_video_track()
         .clock_rate = 90'000,
         .channel_count = 0,
         .codec_config = h264_config,
+    };
+}
+
+media_track make_h265_track()
+{
+    return media_track{
+        .id = video_track_id,
+        .kind = media_kind::video,
+        .codec = codec_id::h265,
+        .clock_rate = 90'000,
+        .channel_count = 0,
+        .codec_config = h265_config,
     };
 }
 
@@ -126,6 +155,34 @@ media_frame make_video_frame(std::int64_t pts_ns, bool key_frame)
         bytes = {
             0x00, 0x00, 0x00, 0x01,
             0x41, 0x9a, 0x22, 0x11,
+        };
+    }
+    return media_frame{
+        .track = video_track_id,
+        .dts_ns = pts_ns,
+        .pts_ns = pts_ns,
+        .key_frame = key_frame,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes)),
+    };
+}
+
+media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame)
+{
+    std::vector<std::uint8_t> bytes;
+    if (key_frame)
+    {
+        bytes = h265_config;
+        const std::vector<std::uint8_t> idr{
+            0x00, 0x00, 0x00, 0x01,
+            0x26, 0x01, 0x9a, 0x20, 0x11, 0x00,
+        };
+        bytes.insert(bytes.end(), idr.begin(), idr.end());
+    }
+    else
+    {
+        bytes = {
+            0x00, 0x00, 0x00, 0x01,
+            0x02, 0x01, 0x9a, 0x20,
         };
     }
     return media_frame{
@@ -454,6 +511,262 @@ void test_rtsp_client_session_timeout()
     require(rtsp_setup_timeout("session-2") == 60, "rtsp setup default timeout");
 }
 
+int ignore_rtsp_media(
+    void*,
+    int,
+    const char*,
+    unsigned short[2],
+    char*,
+    int)
+{
+    return 0;
+}
+
+void test_rtsp_client_rejects_empty_media_selection()
+{
+    rtsp_client_capture capture;
+    rtsp_client_handler_t handler{};
+    handler.send = &capture_rtsp_request;
+    handler.rtpport = &ignore_rtsp_media;
+
+    auto* client = rtsp_client_create(
+        "rtsp://127.0.0.1/live/test",
+        nullptr,
+        nullptr,
+        &handler,
+        &capture);
+    require(client != nullptr, "rtsp empty selection client create");
+
+    constexpr std::string_view sdp =
+        "v=0\r\n"
+        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "s=test\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\n"
+        "a=rtpmap:96 H265/90000\r\n"
+        "a=control:trackID=0\r\n";
+    require(
+        rtsp_client_setup(client, sdp.data(), static_cast<int>(sdp.size())) != 0,
+        "rtsp reject all ignored media");
+    require(capture.request.empty(), "rtsp ignored media sends no setup");
+    rtsp_client_destroy(client);
+}
+
+std::size_t rtsp_content_length(std::string_view response)
+{
+    constexpr std::string_view name = "Content-Length:";
+    const auto offset = response.find(name);
+    if (offset == std::string_view::npos)
+    {
+        return 0;
+    }
+    auto begin = offset + name.size();
+    while (begin < response.size() && response[begin] == ' ')
+    {
+        ++begin;
+    }
+    const auto end = response.find("\r\n", begin);
+    require(end != std::string_view::npos, "rtsp response content length end");
+    std::size_t length = 0;
+    const auto [pointer, error] = std::from_chars(response.data() + begin, response.data() + end, length);
+    require(error == std::errc{} && pointer == response.data() + end, "rtsp response content length");
+    return length;
+}
+
+std::string rtsp_header_value(std::string_view response, std::string_view name)
+{
+    const auto offset = response.find(name);
+    if (offset == std::string_view::npos)
+    {
+        return {};
+    }
+    auto begin = offset + name.size();
+    while (begin < response.size() && response[begin] == ' ')
+    {
+        ++begin;
+    }
+    const auto end = response.find("\r\n", begin);
+    require(end != std::string_view::npos, "rtsp response header end");
+    return std::string(response.substr(begin, end - begin));
+}
+
+class rtsp_output_test_peer final
+{
+public:
+    explicit rtsp_output_test_peer(bool h265 = false)
+        : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_(io_)
+    {
+        stream_ = std::make_shared<media_stream>("live/test");
+        require(stream_->update_track(h265 ? make_h265_track() : make_video_track()), "rtsp output video track");
+        require(stream_->update_track(make_audio_track()), "rtsp output audio track");
+        require(registry_.add(stream_), "rtsp output registry add");
+
+        client_.connect(acceptor_.local_endpoint());
+        auto server_socket = acceptor_.accept();
+        auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
+        session_ = std::make_shared<rtsp_output_session>(
+            std::move(connection), registry_, acceptor_.local_endpoint().port());
+        session_->start();
+        runner_ = std::jthread([this]() { io_.run(); });
+    }
+
+    ~rtsp_output_test_peer()
+    {
+        boost::system::error_code error;
+        client_.close(error);
+        io_.stop();
+    }
+
+    std::string request(std::string_view request)
+    {
+        boost::asio::write(client_, boost::asio::buffer(request));
+        std::string response;
+        boost::asio::read_until(client_, boost::asio::dynamic_buffer(response), "\r\n\r\n");
+        const auto header_end = response.find("\r\n\r\n");
+        require(header_end != std::string::npos, "rtsp response header");
+        const auto total = header_end + 4U + rtsp_content_length(response);
+        if (response.size() < total)
+        {
+            boost::asio::read(
+                client_,
+                boost::asio::dynamic_buffer(response),
+                boost::asio::transfer_exactly(total - response.size()));
+        }
+        return response;
+    }
+
+    [[nodiscard]] std::uint16_t port() const
+    {
+        return acceptor_.local_endpoint().port();
+    }
+
+    [[nodiscard]] std::shared_ptr<media_stream> stream() const
+    {
+        return stream_;
+    }
+
+private:
+    boost::asio::io_context io_;
+    stream_registry registry_;
+    std::shared_ptr<media_stream> stream_;
+    boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ip::tcp::socket client_;
+    std::shared_ptr<rtsp_output_session> session_;
+    std::jthread runner_;
+};
+
+void test_rtsp_output_session_contract()
+{
+    rtsp_output_test_peer peer;
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+
+    const auto describe = peer.request(
+        "DESCRIBE " + base + " RTSP/1.0\r\n"
+        "CSeq: 1\r\n"
+        "Accept: application/sdp\r\n\r\n");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp output describe");
+    require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
+    require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp output audio control");
+
+    const auto wrong_stream = peer.request(
+        "SETUP rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/other/trackID=1 RTSP/1.0\r\n"
+        "CSeq: 2\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    require(wrong_stream.starts_with("RTSP/1.0 404"), "rtsp output setup stream identity");
+
+    const auto video_setup = peer.request(
+        "SETUP " + base + "/trackID=1 RTSP/1.0\r\n"
+        "CSeq: 3\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    require(video_setup.starts_with("RTSP/1.0 200"), "rtsp output video setup");
+    const auto session = rtsp_header_value(video_setup, "Session:");
+    require(!session.empty(), "rtsp output session id");
+
+    const auto duplicate_setup = peer.request(
+        "SETUP " + base + "/trackID=1 RTSP/1.0\r\n"
+        "CSeq: 4\r\n"
+        "Session: " + session + "\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    require(duplicate_setup.starts_with("RTSP/1.0 200"), "rtsp output idempotent setup");
+
+    const auto wrong_session = peer.request(
+        "SETUP " + base + "/trackID=2 RTSP/1.0\r\n"
+        "CSeq: 5\r\n"
+        "Session: wrong\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
+    require(wrong_session.starts_with("RTSP/1.0 454"), "rtsp output setup session identity");
+
+    const auto channel_conflict = peer.request(
+        "SETUP " + base + "/trackID=2 RTSP/1.0\r\n"
+        "CSeq: 6\r\n"
+        "Session: " + session + "\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=1-2\r\n\r\n");
+    require(channel_conflict.starts_with("RTSP/1.0 461"), "rtsp output interleaved channel conflict");
+
+    const auto audio_setup = peer.request(
+        "SETUP " + base + "/trackID=2 RTSP/1.0\r\n"
+        "CSeq: 7\r\n"
+        "Session: " + session + "\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
+    require(audio_setup.starts_with("RTSP/1.0 200"), "rtsp output audio setup");
+
+    const auto wrong_play = peer.request(
+        "PLAY rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/other RTSP/1.0\r\n"
+        "CSeq: 8\r\n"
+        "Session: " + session + "\r\n\r\n");
+    require(wrong_play.starts_with("RTSP/1.0 404"), "rtsp output play stream identity");
+
+    const auto play = peer.request(
+        "PLAY " + base + " RTSP/1.0\r\n"
+        "CSeq: 9\r\n"
+        "Session: " + session + "\r\n\r\n");
+    require(play.starts_with("RTSP/1.0 200"), "rtsp output play");
+
+    const auto late_setup = peer.request(
+        "SETUP " + base + "/trackID=1 RTSP/1.0\r\n"
+        "CSeq: 10\r\n"
+        "Session: " + session + "\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    require(late_setup.starts_with("RTSP/1.0 455"), "rtsp output reject setup after play");
+}
+
+void test_rtsp_output_h265()
+{
+    rtsp_output_test_peer peer(true);
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+    const auto describe = peer.request(
+        "DESCRIBE " + base + " RTSP/1.0\r\n"
+        "CSeq: 1\r\n"
+        "Accept: application/sdp\r\n\r\n");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp h265 describe");
+    require(describe.find("H265/90000") != std::string::npos, "rtsp h265 rtpmap");
+    require(describe.find("sprop-vps=") != std::string::npos, "rtsp h265 vps");
+    require(describe.find("sprop-sps=") != std::string::npos, "rtsp h265 sps");
+    require(describe.find("sprop-pps=") != std::string::npos, "rtsp h265 pps");
+}
+
+void test_rtsp_output_rejects_stale_description()
+{
+    rtsp_output_test_peer peer;
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+    const auto describe = peer.request(
+        "DESCRIBE " + base + " RTSP/1.0\r\n"
+        "CSeq: 1\r\n"
+        "Accept: application/sdp\r\n\r\n");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp stale describe");
+
+    auto updated = make_video_track();
+    updated.codec_config.push_back(0x01);
+    require(peer.stream()->update_track(std::move(updated)), "rtsp stale source config update");
+
+    const auto setup = peer.request(
+        "SETUP " + base + "/trackID=1 RTSP/1.0\r\n"
+        "CSeq: 2\r\n"
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    require(setup.starts_with("RTSP/1.0 455"), "rtsp reject stale described config");
+}
+
 int capture_rtp_timestamp(
     void* param,
     int,
@@ -511,6 +824,14 @@ void test_internal_format_contract()
     require(annex_b.size() >= 8, "annex-b config size");
     require(annex_b[0] == 0 && annex_b[1] == 0 && annex_b[2] == 0 && annex_b[3] == 1,
             "annex-b four-byte start code");
+
+    const auto hvcc = h265_annex_b_to_hvcc(h265_config);
+    require(!hvcc.empty(), "h265 annex-b to hvcc");
+    const auto hevc_annex_b = h265_hvcc_to_annex_b(hvcc);
+    require(!hevc_annex_b.empty(), "h265 hvcc to annex-b");
+    require(hevc_annex_b.size() >= 8U, "h265 annex-b config size");
+    require(hevc_annex_b[0] == 0 && hevc_annex_b[1] == 0 && hevc_annex_b[2] == 0 && hevc_annex_b[3] == 1,
+            "h265 annex-b four-byte start code");
 
     const std::vector<std::uint8_t> raw{0x11, 0x22, 0x33, 0x44};
     const auto adts = make_adts_frame(aac_asc, raw);
@@ -596,6 +917,47 @@ void test_flv_config_cache_lifecycle()
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(updated_adts)),
     });
     require(audio_sequence_headers == 2U, "flv config generation resets cached audio header");
+}
+
+void test_h265_output_paths()
+{
+    std::size_t hevc_sequence_headers = 0;
+    flv_output_muxer flv([&hevc_sequence_headers](int type, std::span<const std::uint8_t> data, std::uint32_t) {
+        if (type == FLV_TYPE_VIDEO && data.size() >= 2U && (data[0] & 0x0fU) == FLV_VIDEO_H265 && data[1] == 0U)
+        {
+            ++hevc_sequence_headers;
+        }
+    });
+    auto hevc_track = make_h265_track();
+    hevc_track.config_version = 1;
+    flv.on_track(hevc_track);
+    require(hevc_sequence_headers == 1U, "flv h265 sequence header");
+    flv.on_frame(make_h265_frame(0, true));
+
+    hls_output hls(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
+    hls.on_track(make_h265_track());
+    hls.on_frame(make_h265_frame(0, true));
+    hls.on_frame(make_h265_frame(1'000'000'000, true));
+    hls.on_end();
+    require(hls.segment_count() >= 1U, "hls h265 segment");
+    const auto segment = hls.segment(0);
+    require(segment.has_value() && !segment->empty() && segment->size() % 188U == 0U, "hls h265 ts");
+
+    std::vector<std::vector<std::uint8_t>> packets;
+    webrtc_output webrtc(
+        webrtc_output_config{
+            .video_codec = codec_id::h265,
+            .video_payload_type = 103,
+            .rtcp_cname = {},
+        },
+        [&packets](std::span<const std::uint8_t> packet) {
+            packets.emplace_back(packet.begin(), packet.end());
+        });
+    webrtc.on_track(make_h265_track());
+    require(webrtc.valid(), "webrtc h265 output valid");
+    webrtc.on_frame(make_h265_frame(0, true));
+    require(!packets.empty() && packets.front().size() >= 12U, "webrtc h265 rtp packet");
+    require((packets.front()[1] & 0x7fU) == 103U, "webrtc h265 payload type");
 }
 
 void test_rtsp_muxer_zero_origin_timeline()
@@ -963,10 +1325,11 @@ std::uint32_t require_rtcp_sender_report(
 void test_webrtc_rtp_packetizer()
 {
     std::vector<std::vector<std::uint8_t>> packets;
-    webrtc_output output(webrtc_output_config{.h264_payload_type = 102, .rtcp_cname = {}}, [&packets](std::span<const std::uint8_t> packet) {
+    webrtc_output output(webrtc_output_config{.video_payload_type = 102, .rtcp_cname = {}}, [&packets](std::span<const std::uint8_t> packet) {
         packets.emplace_back(packet.begin(), packet.end());
     });
     output.on_track(make_video_track());
+    require(output.valid(), "webrtc video output valid");
     output.on_frame(make_video_frame(-40'000'000, false));
     require(packets.empty(), "webrtc waits natural key frame");
     output.on_frame(make_video_frame(0, true));
@@ -995,6 +1358,7 @@ void test_webrtc_opus_channel_count(int channel_count)
             packets.emplace_back(packet.begin(), packet.end());
         });
     output.on_track(make_audio_track());
+    require(output.valid(), "webrtc audio output valid");
 
     std::int64_t pts_ns = 0;
     for (const auto& adts : valid_aac_adts_frames)
@@ -1019,6 +1383,23 @@ void test_webrtc_opus_channel_count(int channel_count)
     }
 }
 
+void test_webrtc_output_initialization_failure()
+{
+    webrtc_output invalid_video(
+        webrtc_output_config{.video_payload_type = 102, .rtcp_cname = {}},
+        [](std::span<const std::uint8_t>) {});
+    auto video = make_video_track();
+    video.codec_config.clear();
+    invalid_video.on_track(video);
+    require(!invalid_video.valid(), "webrtc invalid h264 output rejected");
+
+    webrtc_output invalid_audio(
+        webrtc_output_config{.opus_payload_type = 111, .opus_channel_count = 3, .rtcp_cname = {}},
+        [](std::span<const std::uint8_t>) {});
+    invalid_audio.on_track(make_audio_track());
+    require(!invalid_audio.valid(), "webrtc invalid opus output rejected");
+}
+
 void test_webrtc_rtcp_sender()
 {
     constexpr std::string_view cname = "webrtc-test-cname";
@@ -1026,7 +1407,7 @@ void test_webrtc_rtcp_sender()
     std::vector<std::vector<std::uint8_t>> rtcp_packets;
     webrtc_output output(
         webrtc_output_config{
-            .h264_payload_type = 102,
+            .video_payload_type = 102,
             .opus_payload_type = 111,
             .opus_channel_count = 2,
             .rtcp_cname = std::string(cname),
@@ -1106,10 +1487,20 @@ int main()
     std::cout << "[pass] internal_format_contract\n";
     test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
+    test_h265_output_paths();
+    std::cout << "[pass] h265_output_paths\n";
     test_rtsp_muxer_zero_origin_timeline();
     std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
     test_rtsp_client_session_timeout();
     std::cout << "[pass] rtsp_client_session_timeout\n";
+    test_rtsp_client_rejects_empty_media_selection();
+    std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
+    test_rtsp_output_session_contract();
+    std::cout << "[pass] rtsp_output_session_contract\n";
+    test_rtsp_output_h265();
+    std::cout << "[pass] rtsp_output_h265\n";
+    test_rtsp_output_rejects_stale_description();
+    std::cout << "[pass] rtsp_output_rejects_stale_description\n";
     test_media_stream_fanout_and_reentrancy();
     std::cout << "[pass] media_stream_fanout_and_reentrancy\n";
     test_stream_registry_generation_lifecycle();
@@ -1122,6 +1513,8 @@ int main()
     std::cout << "[pass] webrtc_rtp_packetizer\n";
     test_webrtc_opus_packetizer();
     std::cout << "[pass] webrtc_opus_packetizer\n";
+    test_webrtc_output_initialization_failure();
+    std::cout << "[pass] webrtc_output_initialization_failure\n";
     test_webrtc_rtcp_sender();
     std::cout << "[pass] webrtc_rtcp_sender\n";
     std::cout << "all tests passed\n";

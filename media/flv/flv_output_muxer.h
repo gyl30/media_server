@@ -33,7 +33,7 @@ class flv_output_muxer final
         std::size_t bytes,
         std::uint32_t timestamp);
 
-    void prime_h264_config(const media_track& track);
+    void prime_video_config(const media_track& track);
 
     output_handler handler_;
     flv_muxer_t* muxer_{};

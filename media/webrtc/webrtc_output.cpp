@@ -61,14 +61,37 @@ void webrtc_output::on_track(const media_track& track)
         return;
     }
 
-    if (track.codec == codec_id::h264)
+    bool negotiated = false;
+    bool added = false;
+    if (track.kind == media_kind::video && config_.video_payload_type >= 0 && track.codec == config_.video_codec)
     {
-        static_cast<void>(add_h264_track(track));
+        negotiated = true;
+        if (track.codec == codec_id::h264)
+        {
+            added = add_h264_track(track);
+        }
+        else if (track.codec == codec_id::h265)
+        {
+            added = add_h265_track(track);
+        }
     }
-    else if (track.codec == codec_id::aac)
+    else if (track.kind == media_kind::audio && config_.opus_payload_type >= 0 && track.codec == codec_id::aac)
     {
-        static_cast<void>(add_aac_track(track));
+        negotiated = true;
+        added = add_aac_track(track);
     }
+
+    if (negotiated && !added)
+    {
+        tracks_.clear();
+        rtsp_muxer_destroy(muxer_);
+        muxer_ = nullptr;
+    }
+}
+
+bool webrtc_output::valid() const noexcept
+{
+    return muxer_ != nullptr;
 }
 
 void webrtc_output::on_frame(const media_frame& frame)
@@ -80,9 +103,9 @@ void webrtc_output::on_frame(const media_frame& frame)
     }
 
     auto& state = iterator->second;
-    if (state.codec == codec_id::h264)
+    if (state.codec == codec_id::h264 || state.codec == codec_id::h265)
     {
-        input_h264(state, frame);
+        input_video(state, frame);
     }
     else if (state.codec == codec_id::aac)
     {
@@ -144,17 +167,21 @@ int webrtc_output::on_packet(
 
 bool webrtc_output::add_h264_track(const media_track& track)
 {
-    if (config_.h264_payload_type < 0 || config_.h264_payload_type > 127)
+    if (config_.video_payload_type < 0 || config_.video_payload_type > 127)
     {
         return false;
     }
 
     const auto avcc = h264_annex_b_to_avcc(track.codec_config);
+    if (avcc.empty())
+    {
+        return false;
+    }
     const auto payload_index = rtsp_muxer_add_payload(
         muxer_,
         "RTP/AVP",
         90'000,
-        config_.h264_payload_type,
+        config_.video_payload_type,
         "H264",
         0,
         random_u32(),
@@ -190,7 +217,63 @@ bool webrtc_output::add_h264_track(const media_track& track)
             .waiting_key_frame = true,
             .audio_pts_started = false,
         });
-    spdlog::debug("webrtc h264 output track ready id {} pt {}", track.id, config_.h264_payload_type);
+    spdlog::debug("webrtc h264 output track ready id {} pt {}", track.id, config_.video_payload_type);
+    return true;
+}
+
+bool webrtc_output::add_h265_track(const media_track& track)
+{
+    if (config_.video_payload_type < 0 || config_.video_payload_type > 127)
+    {
+        return false;
+    }
+
+    const auto hvcc = h265_annex_b_to_hvcc(track.codec_config);
+    if (hvcc.empty())
+    {
+        return false;
+    }
+    const auto payload_index = rtsp_muxer_add_payload(
+        muxer_,
+        "RTP/AVP",
+        90'000,
+        config_.video_payload_type,
+        "H265",
+        0,
+        random_u32(),
+        0,
+        hvcc.data(),
+        static_cast<int>(hvcc.size()));
+    if (payload_index < 0)
+    {
+        spdlog::error("webrtc add h265 payload failed");
+        return false;
+    }
+    if (!configure_rtcp(payload_index))
+    {
+        return false;
+    }
+
+    const auto media_id = rtsp_muxer_add_media(
+        muxer_, payload_index, RTP_PAYLOAD_H265, hvcc.data(), static_cast<int>(hvcc.size()));
+    if (media_id < 0)
+    {
+        spdlog::error("webrtc add h265 media failed");
+        return false;
+    }
+
+    tracks_.insert_or_assign(
+        track.id,
+        track_state{
+            .codec = track.codec,
+            .transcoder = {},
+            .audio_pts_ns = 0,
+            .media_id = media_id,
+            .payload_id = payload_index,
+            .waiting_key_frame = true,
+            .audio_pts_started = false,
+        });
+    spdlog::debug("webrtc h265 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
 
@@ -314,7 +397,7 @@ void webrtc_output::emit_rtcp(int payload_id)
     rtcp_handler_(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(bytes)));
 }
 
-void webrtc_output::input_h264(track_state& state, const media_frame& frame)
+void webrtc_output::input_video(track_state& state, const media_frame& frame)
 {
     if (state.waiting_key_frame)
     {
@@ -335,7 +418,7 @@ void webrtc_output::input_h264(track_state& state, const media_frame& frame)
         frame.key_frame ? 1 : 0);
     if (result < 0)
     {
-        spdlog::error("webrtc h264 rtp packetize failed result {}", result);
+        spdlog::error("webrtc video rtp packetize failed codec {} result {}", to_string(state.codec), result);
         return;
     }
     emit_rtcp(state.payload_id);
