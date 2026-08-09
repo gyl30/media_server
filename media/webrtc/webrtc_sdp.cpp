@@ -387,26 +387,9 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
     return result;
 }
 
-const webrtc_media_offer* webrtc_bundle_transport(const webrtc_offer& offer)
-{
-    if (offer.bundle_mids.empty())
-    {
-        return nullptr;
-    }
-
-    const auto iterator = std::find_if(
-        offer.media.begin(), offer.media.end(), [&offer](const webrtc_media_offer& media) { return media.mid == offer.bundle_mids.front(); });
-    if (iterator == offer.media.end() || iterator->port == 0 || !bundle_media_supported(*iterator) || lower_copy(iterator->setup) != "actpass")
-    {
-        return nullptr;
-    }
-    return &*iterator;
-}
-
 std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const std::vector<media_track>& tracks, const webrtc_answer_config& config)
 {
-    if (config.port == 0 || config.ice_ufrag.empty() || config.ice_pwd.empty() || config.fingerprint.empty() ||
-        webrtc_bundle_transport(offer) == nullptr)
+    if (config.port == 0 || config.ice_ufrag.empty() || config.ice_pwd.empty() || config.fingerprint.empty())
     {
         return std::nullopt;
     }
@@ -514,6 +497,23 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     {
         return std::nullopt;
     }
+    const auto transport_mid =
+        std::find_if(offer.bundle_mids.begin(),
+                     offer.bundle_mids.end(),
+                     [&offer, &accepted_mids](const std::string& mid)
+                     {
+                         if (std::find(accepted_mids.begin(), accepted_mids.end(), mid) == accepted_mids.end())
+                         {
+                             return false;
+                         }
+                         const auto media = std::find_if(
+                             offer.media.begin(), offer.media.end(), [&mid](const webrtc_media_offer& value) { return value.mid == mid; });
+                         return media != offer.media.end() && media->port != 0 && lower_copy(media->setup) == "actpass";
+                     });
+    if (transport_mid == offer.bundle_mids.end())
+    {
+        return std::nullopt;
+    }
 
     std::ostringstream answer;
     answer << "v=0\r\n";
@@ -521,10 +521,10 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     answer << "s=media_server\r\n";
     answer << "t=0 0\r\n";
     answer << "a=ice-lite\r\n";
-    answer << "a=group:BUNDLE";
+    answer << "a=group:BUNDLE " << *transport_mid;
     for (const auto& mid : offer.bundle_mids)
     {
-        if (std::find(accepted_mids.begin(), accepted_mids.end(), mid) != accepted_mids.end())
+        if (mid != *transport_mid && std::find(accepted_mids.begin(), accepted_mids.end(), mid) != accepted_mids.end())
         {
             answer << ' ' << mid;
         }
@@ -534,6 +534,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
 
     return webrtc_answer{
         .sdp = answer.str(),
+        .transport_mid = *transport_mid,
         .video_codec = video_codec,
         .video_payload_type = video_payload_type,
         .audio_payload_type = audio_payload_type,
