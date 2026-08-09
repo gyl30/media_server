@@ -80,6 +80,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::string answer_sdp_;
     std::optional<int> video_payload_type_;
     std::optional<int> audio_payload_type_;
+    std::optional<int> audio_channel_count_;
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> send_queue_;
     std::uint16_t local_port_{};
     bool started_{};

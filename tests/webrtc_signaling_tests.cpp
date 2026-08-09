@@ -84,7 +84,7 @@ const std::string webrtc_offer_sdp =
     "a=recvonly\r\n"
     "a=rtcp-mux\r\n"
     "a=rtpmap:111 opus/48000/2\r\n"
-    "a=fmtp:111 minptime=10;useinbandfec=1\r\n"
+    "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n"
     "a=rtpmap:0 PCMU/8000\r\n"
     "a=rtpmap:8 PCMA/8000\r\n";
 
@@ -552,6 +552,7 @@ void test_webrtc_sdp_answer()
     require(answer.has_value(), "make webrtc answer");
     require(answer->video_payload_type == 102, "webrtc negotiated h264 payload");
     require(answer->audio_payload_type == 111, "webrtc negotiated opus payload");
+    require(answer->audio_channel_count == 2, "webrtc negotiated opus stereo");
     require(answer->sdp.find("a=ice-lite\r\n") != std::string::npos, "webrtc ice lite");
     require(answer->sdp.find("a=end-of-candidates\r\n") != std::string::npos, "webrtc complete candidates");
     require(answer->sdp.find("trickle") == std::string::npos, "webrtc no trickle");
@@ -560,7 +561,34 @@ void test_webrtc_sdp_answer()
     require(answer->sdp.find("profile-level-id=42c01f") != std::string::npos, "webrtc source h264 profile");
     require(answer->sdp.find("m=audio 40000 UDP/TLS/RTP/SAVPF 111\r\n") != std::string::npos, "webrtc opus payload selection");
     require(answer->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos, "webrtc opus rtpmap");
+    require(answer->sdp.find("sprop-stereo=1") != std::string::npos, "webrtc opus stereo sender property");
     require(answer->sdp.find("a=sendonly\r\n") != std::string::npos, "webrtc sendonly");
+}
+
+void test_webrtc_opus_mono_default()
+{
+    auto mono_offer_sdp = webrtc_offer_sdp;
+    const std::string stereo_parameter = ";stereo=1";
+    const auto stereo_offset = mono_offer_sdp.find(stereo_parameter);
+    require(stereo_offset != std::string::npos, "webrtc stereo offer parameter");
+    mono_offer_sdp.erase(stereo_offset, stereo_parameter.size());
+
+    const auto offer = parse_webrtc_offer(mono_offer_sdp);
+    require(offer.has_value(), "parse webrtc mono offer");
+
+    const auto answer = make_webrtc_answer(
+        *offer,
+        {make_video_track(), make_audio_track()},
+        webrtc_answer_config{
+            .address = boost::asio::ip::make_address("127.0.0.1"),
+            .port = 40000,
+            .ice_ufrag = "serverufrag",
+            .ice_pwd = "serverpassword1234567890",
+            .fingerprint = "AA:BB:CC:DD",
+        });
+    require(answer.has_value(), "make webrtc mono answer");
+    require(answer->audio_channel_count == 1, "webrtc opus mono default");
+    require(answer->sdp.find("sprop-stereo=0") != std::string::npos, "webrtc opus mono sender property");
 }
 
 void test_whep_session_lifecycle()
@@ -811,12 +839,14 @@ int main()
     using namespace media_server;
     test_webrtc_sdp_answer();
     std::cout << "[pass] webrtc_sdp_answer\n";
+    test_webrtc_opus_mono_default();
+    std::cout << "[pass] webrtc_opus_mono_default\n";
     test_whep_session_lifecycle();
     std::cout << "[pass] whep_session_lifecycle\n";
     test_whep_ice_lite();
     std::cout << "[pass] whep_ice_lite\n";
     test_whep_dtls();
     std::cout << "[pass] whep_dtls\n";
-    std::cout << "all tests passed: 4/4\n";
+    std::cout << "all tests passed: 5/5\n";
     return 0;
 }

@@ -260,11 +260,14 @@ void test_webrtc_rtp_packetizer()
     require(rtp_timestamp(packets.back()) - first_timestamp == 3'600U, "h264 rtp timestamp step");
 }
 
-void test_webrtc_opus_packetizer()
+void test_webrtc_opus_channel_count(int channel_count)
 {
     std::vector<std::vector<std::uint8_t>> packets;
     webrtc_output output(
-        webrtc_output_config{.opus_payload_type = 111},
+        webrtc_output_config{
+            .opus_payload_type = 111,
+            .opus_channel_count = channel_count,
+        },
         [&packets](std::span<const std::uint8_t> packet) {
             packets.emplace_back(packet.begin(), packet.end());
         });
@@ -293,6 +296,12 @@ void test_webrtc_opus_packetizer()
     {
         require(rtp_timestamp(packets[1]) - rtp_timestamp(packets[0]) == 960U, "opus rtp timestamp step");
     }
+}
+
+void test_webrtc_opus_packetizer()
+{
+    test_webrtc_opus_channel_count(1);
+    test_webrtc_opus_channel_count(2);
 }
 
 }    // namespace
