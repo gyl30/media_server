@@ -15,12 +15,7 @@ namespace media_server
 class http_server final
 {
    public:
-    http_server(
-        boost::asio::io_context& io,
-        stream_registry& registry,
-        hls_service& hls,
-        whep_service& whep,
-        std::uint16_t port);
+    http_server(boost::asio::io_context& io, stream_registry& registry, hls_service& hls, whep_service& whep, std::uint16_t port);
 
     [[nodiscard]] boost::system::error_code start();
     void close();

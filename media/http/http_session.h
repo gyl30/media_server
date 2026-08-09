@@ -25,11 +25,7 @@ namespace media_server
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
-    http_session(
-        boost::asio::ip::tcp::socket socket,
-        stream_registry& registry,
-        hls_service& hls,
-        whep_service& whep);
+    http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep);
 
     void start();
 

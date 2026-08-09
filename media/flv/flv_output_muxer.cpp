@@ -63,21 +63,11 @@ void flv_output_muxer::prime_video_config(const media_track& track)
     int result = 0;
     if (track.codec == codec_id::h264)
     {
-        result = flv_muxer_avc(
-            muxer_,
-            track.codec_config.data(),
-            track.codec_config.size(),
-            0,
-            0);
+        result = flv_muxer_avc(muxer_, track.codec_config.data(), track.codec_config.size(), 0, 0);
     }
     else if (track.codec == codec_id::h265)
     {
-        result = flv_muxer_hevc(
-            muxer_,
-            track.codec_config.data(),
-            track.codec_config.size(),
-            0,
-            0);
+        result = flv_muxer_hevc(muxer_, track.codec_config.data(), track.codec_config.size(), 0, 0);
     }
     else
     {
@@ -105,18 +95,15 @@ void flv_output_muxer::on_frame(const media_frame& frame)
     switch (iterator->second.codec)
 
     {
-    case codec_id::h264:
-        result = flv_muxer_avc(
-            muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
-        break;
-    case codec_id::h265:
-        result = flv_muxer_hevc(
-            muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
-        break;
-    case codec_id::aac:
-        result = flv_muxer_aac(
-            muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
-        break;
+        case codec_id::h264:
+            result = flv_muxer_avc(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
+            break;
+        case codec_id::h265:
+            result = flv_muxer_hevc(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
+            break;
+        case codec_id::aac:
+            result = flv_muxer_aac(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
+            break;
     }
 
     if (result != 0)
@@ -126,25 +113,15 @@ void flv_output_muxer::on_frame(const media_frame& frame)
     }
 }
 
-int flv_output_muxer::on_output(
-    void* param,
-    int type,
-    const void* data,
-    std::size_t bytes,
-    std::uint32_t timestamp)
-    {
-
+int flv_output_muxer::on_output(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp)
+{
     auto* self = static_cast<flv_output_muxer*>(param);
     if (!self->handler_ || data == nullptr)
     {
         return 0;
     }
 
-    self->handler_(
-        type,
-        std::span<const std::uint8_t>(
-            static_cast<const std::uint8_t*>(data), bytes),
-        timestamp);
+    self->handler_(type, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), timestamp);
     return 0;
 }
 

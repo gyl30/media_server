@@ -49,9 +49,7 @@ std::optional<std::span<const std::uint8_t>> adts_payload(std::span<const std::u
     }
 
     const std::size_t frame_size =
-        (static_cast<std::size_t>(frame[3] & 0x03U) << 11U) |
-        (static_cast<std::size_t>(frame[4]) << 3U) |
-        (static_cast<std::size_t>(frame[5]) >> 5U);
+        (static_cast<std::size_t>(frame[3] & 0x03U) << 11U) | (static_cast<std::size_t>(frame[4]) << 3U) | (static_cast<std::size_t>(frame[5]) >> 5U);
     if (frame_size != frame.size())
     {
         return std::nullopt;
@@ -62,9 +60,7 @@ std::optional<std::span<const std::uint8_t>> adts_payload(std::span<const std::u
         return std::nullopt;
     }
 
-    const std::size_t header_size = (frame[1] & 0x01U) != 0U
-        ? adts_header_size
-        : adts_crc_header_size;
+    const std::size_t header_size = (frame[1] & 0x01U) != 0U ? adts_header_size : adts_crc_header_size;
     if (frame.size() <= header_size)
     {
         return std::nullopt;
@@ -75,10 +71,7 @@ std::optional<std::span<const std::uint8_t>> adts_payload(std::span<const std::u
 
 }    // namespace
 
-aac_opus_transcoder::~aac_opus_transcoder()
-{
-    cleanup();
-}
+aac_opus_transcoder::~aac_opus_transcoder() { cleanup(); }
 
 bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_config, int output_channel_count)
 {
@@ -97,8 +90,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
         return false;
     }
 
-    if (audio_specific_config.empty() ||
-        audio_specific_config.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    if (audio_specific_config.empty() || audio_specific_config.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
         spdlog::error("webrtc aac audio specific config missing");
         return false;
@@ -112,8 +104,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
         return false;
     }
 
-    decoder_->extradata = static_cast<std::uint8_t*>(
-        av_mallocz(audio_specific_config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
+    decoder_->extradata = static_cast<std::uint8_t*>(av_mallocz(audio_specific_config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
     if (decoder_->extradata == nullptr)
     {
         spdlog::error("webrtc aac decoder extradata allocate failed");
@@ -121,10 +112,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
         return false;
     }
     decoder_->extradata_size = static_cast<int>(audio_specific_config.size());
-    std::memcpy(
-        decoder_->extradata,
-        audio_specific_config.data(),
-        audio_specific_config.size());
+    std::memcpy(decoder_->extradata, audio_specific_config.data(), audio_specific_config.size());
 
     int result = avcodec_open2(decoder_, decoder, nullptr);
     if (result < 0)
@@ -147,13 +135,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     }
 
     const void* sample_formats{};
-    result = avcodec_get_supported_config(
-        nullptr,
-        encoder,
-        AV_CODEC_CONFIG_SAMPLE_FORMAT,
-        0,
-        &sample_formats,
-        nullptr);
+    result = avcodec_get_supported_config(nullptr, encoder, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &sample_formats, nullptr);
     if (result < 0 || sample_formats == nullptr)
     {
         spdlog::error("webrtc opus sample formats query failed {}", ffmpeg_error(result));
@@ -215,23 +197,19 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
         return false;
     }
 
-    spdlog::debug(
-        "webrtc audio transcoder started encoder {} sample_rate {} channels {} frame_samples {} bitrate {}",
-        encoder->name,
-        encoder_->sample_rate,
-        encoder_->ch_layout.nb_channels,
-        encoder_frame_samples_,
-        encoder_->bit_rate);
+    spdlog::debug("webrtc audio transcoder started encoder {} sample_rate {} channels {} frame_samples {} bitrate {}",
+                  encoder->name,
+                  encoder_->sample_rate,
+                  encoder_->ch_layout.nb_channels,
+                  encoder_frame_samples_,
+                  encoder_->bit_rate);
     return true;
 }
 
-bool aac_opus_transcoder::transcode(
-    std::span<const std::uint8_t> adts_frame,
-    std::vector<opus_audio_packet>& packets)
+bool aac_opus_transcoder::transcode(std::span<const std::uint8_t> adts_frame, std::vector<opus_audio_packet>& packets)
 {
-    if (decoder_ == nullptr || encoder_ == nullptr || fifo_ == nullptr || decoded_frame_ == nullptr ||
-        input_packet_ == nullptr || output_packet_ == nullptr || adts_frame.empty() ||
-        adts_frame.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    if (decoder_ == nullptr || encoder_ == nullptr || fifo_ == nullptr || decoded_frame_ == nullptr || input_packet_ == nullptr ||
+        output_packet_ == nullptr || adts_frame.empty() || adts_frame.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
         return false;
     }
@@ -327,7 +305,6 @@ void aac_opus_transcoder::cleanup()
     encoder_frame_samples_ = 0;
 }
 
-
 void aac_opus_transcoder::drain_encoder()
 {
     if (encoder_ == nullptr || output_packet_ == nullptr)
@@ -364,16 +341,15 @@ bool aac_opus_transcoder::configure_resampler(const AVFrame& frame)
     }
 
     const auto input_format = static_cast<AVSampleFormat>(frame.format);
-    const int result = swr_alloc_set_opts2(
-        &resampler_,
-        &encoder_->ch_layout,
-        encoder_->sample_fmt,
-        encoder_->sample_rate,
-        &frame.ch_layout,
-        input_format,
-        frame.sample_rate,
-        0,
-        nullptr);
+    const int result = swr_alloc_set_opts2(&resampler_,
+                                           &encoder_->ch_layout,
+                                           encoder_->sample_fmt,
+                                           encoder_->sample_rate,
+                                           &frame.ch_layout,
+                                           input_format,
+                                           frame.sample_rate,
+                                           0,
+                                           nullptr);
     if (result < 0 || resampler_ == nullptr)
     {
         spdlog::error("webrtc audio resampler allocate failed {}", ffmpeg_error(result));
@@ -388,12 +364,11 @@ bool aac_opus_transcoder::configure_resampler(const AVFrame& frame)
         return false;
     }
 
-    spdlog::debug(
-        "webrtc audio resampler started input_rate {} input_channels {} output_rate {} output_channels {}",
-        frame.sample_rate,
-        frame.ch_layout.nb_channels,
-        encoder_->sample_rate,
-        encoder_->ch_layout.nb_channels);
+    spdlog::debug("webrtc audio resampler started input_rate {} input_channels {} output_rate {} output_channels {}",
+                  frame.sample_rate,
+                  frame.ch_layout.nb_channels,
+                  encoder_->sample_rate,
+                  encoder_->ch_layout.nb_channels);
     return true;
 }
 
@@ -405,11 +380,7 @@ bool aac_opus_transcoder::resample(const AVFrame& frame)
     }
 
     const auto delayed_samples = swr_get_delay(resampler_, frame.sample_rate);
-    const auto output_capacity_value = av_rescale_rnd(
-        delayed_samples + frame.nb_samples,
-        encoder_->sample_rate,
-        frame.sample_rate,
-        AV_ROUND_UP);
+    const auto output_capacity_value = av_rescale_rnd(delayed_samples + frame.nb_samples, encoder_->sample_rate, frame.sample_rate, AV_ROUND_UP);
     if (output_capacity_value <= 0 || output_capacity_value > std::numeric_limits<int>::max())
     {
         return false;
@@ -438,19 +409,13 @@ bool aac_opus_transcoder::resample(const AVFrame& frame)
         return false;
     }
 
-    std::vector<const std::uint8_t*> input_data(
-        static_cast<std::size_t>(frame.ch_layout.nb_channels));
+    std::vector<const std::uint8_t*> input_data(static_cast<std::size_t>(frame.ch_layout.nb_channels));
     for (std::size_t index = 0; index < input_data.size(); ++index)
     {
         input_data[index] = frame.extended_data[index];
     }
 
-    result = swr_convert(
-        resampler_,
-        converted->extended_data,
-        converted->nb_samples,
-        input_data.data(),
-        frame.nb_samples);
+    result = swr_convert(resampler_, converted->extended_data, converted->nb_samples, input_data.data(), frame.nb_samples);
     if (result < 0)
     {
         spdlog::debug("webrtc audio resample failed {}", ffmpeg_error(result));
@@ -460,10 +425,7 @@ bool aac_opus_transcoder::resample(const AVFrame& frame)
 
     if (result > 0)
     {
-        const int written = av_audio_fifo_write(
-            fifo_,
-            reinterpret_cast<void**>(converted->extended_data),
-            result);
+        const int written = av_audio_fifo_write(fifo_, reinterpret_cast<void**>(converted->extended_data), result);
         if (written != result)
         {
             spdlog::error("webrtc audio fifo write failed expected {} actual {}", result, written);
@@ -492,10 +454,7 @@ bool aac_opus_transcoder::encode_available(std::vector<opus_audio_packet>& packe
             return false;
         }
 
-        const int read = av_audio_fifo_read(
-            fifo_,
-            reinterpret_cast<void**>(encoded_frame_->extended_data),
-            encoder_frame_samples_);
+        const int read = av_audio_fifo_read(fifo_, reinterpret_cast<void**>(encoded_frame_->extended_data), encoder_frame_samples_);
         if (read != encoder_frame_samples_)
         {
             spdlog::error("webrtc audio fifo read failed expected {} actual {}", encoder_frame_samples_, read);
@@ -540,24 +499,17 @@ bool aac_opus_transcoder::receive_encoded(std::vector<opus_audio_packet>& packet
             continue;
         }
 
-        const auto sample_count = output_packet_->duration > 0
-            ? output_packet_->duration
-            : static_cast<std::int64_t>(encoder_frame_samples_);
+        const auto sample_count = output_packet_->duration > 0 ? output_packet_->duration : static_cast<std::int64_t>(encoder_frame_samples_);
         if (sample_count <= 0 || sample_count > std::numeric_limits<std::uint32_t>::max())
         {
             return false;
         }
 
         packets.push_back(opus_audio_packet{
-            .payload = std::vector<std::uint8_t>(
-                output_packet_->data,
-                output_packet_->data + output_packet_->size),
+            .payload = std::vector<std::uint8_t>(output_packet_->data, output_packet_->data + output_packet_->size),
             .sample_count = static_cast<std::uint32_t>(sample_count),
         });
-        spdlog::trace(
-            "webrtc opus packet encoded bytes {} samples {}",
-            output_packet_->size,
-            sample_count);
+        spdlog::trace("webrtc opus packet encoded bytes {} samples {}", output_packet_->size, sample_count);
     }
 }
 

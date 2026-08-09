@@ -23,10 +23,7 @@ namespace
 
 struct sdp_deleter
 {
-    void operator()(sdp_t* value) const noexcept
-    {
-        sdp_destroy(value);
-    }
+    void operator()(sdp_t* value) const noexcept { sdp_destroy(value); }
 };
 
 using sdp_ptr = std::unique_ptr<sdp_t, sdp_deleter>;
@@ -34,9 +31,7 @@ using sdp_ptr = std::unique_ptr<sdp_t, sdp_deleter>;
 std::string lower_copy(std::string_view value)
 {
     std::string result(value);
-    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
+    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     return result;
 }
 
@@ -80,15 +75,15 @@ std::string direction(int mode)
 {
     switch (mode)
     {
-    case SDP_A_SENDONLY:
-        return "sendonly";
-    case SDP_A_RECVONLY:
-        return "recvonly";
-    case SDP_A_INACTIVE:
-        return "inactive";
-    case SDP_A_SENDRECV:
-    default:
-        return "sendrecv";
+        case SDP_A_SENDONLY:
+            return "sendonly";
+        case SDP_A_RECVONLY:
+            return "recvonly";
+        case SDP_A_INACTIVE:
+            return "inactive";
+        case SDP_A_SENDRECV:
+        default:
+            return "sendrecv";
     }
 }
 
@@ -152,9 +147,8 @@ void on_fmtp(void* param, const char*, const char* value)
     }
 
     auto* media = static_cast<webrtc_media_offer*>(param);
-    const auto iterator = std::find_if(media->codecs.begin(), media->codecs.end(), [payload_type](const webrtc_codec_offer& codec) {
-        return codec.payload_type == payload_type;
-    });
+    const auto iterator = std::find_if(
+        media->codecs.begin(), media->codecs.end(), [payload_type](const webrtc_codec_offer& codec) { return codec.payload_type == payload_type; });
     if (iterator != media->codecs.end())
     {
         iterator->format_parameters = std::string(text.substr(space + 1));
@@ -188,34 +182,44 @@ bool has_parameter(std::string_view parameters, std::string_view name, std::stri
 
 const media_track* find_track(const std::vector<media_track>& tracks, media_kind kind, codec_id codec)
 {
-    const auto iterator = std::find_if(tracks.begin(), tracks.end(), [kind, codec](const media_track& track) {
-        return track.kind == kind && track.codec == codec;
-    });
+    const auto iterator =
+        std::find_if(tracks.begin(), tracks.end(), [kind, codec](const media_track& track) { return track.kind == kind && track.codec == codec; });
     return iterator == tracks.end() ? nullptr : &*iterator;
 }
 
 const webrtc_codec_offer* find_h264(const webrtc_media_offer& media)
 {
-    const auto iterator = std::find_if(media.codecs.begin(), media.codecs.end(), [](const webrtc_codec_offer& codec) {
-        return lower_copy(codec.encoding_name) == "h264" && codec.clock_rate == 90'000U && has_parameter(codec.format_parameters, "packetization-mode", "1");
-    });
+    const auto iterator = std::find_if(media.codecs.begin(),
+                                       media.codecs.end(),
+                                       [](const webrtc_codec_offer& codec)
+                                       {
+                                           return lower_copy(codec.encoding_name) == "h264" && codec.clock_rate == 90'000U &&
+                                                  has_parameter(codec.format_parameters, "packetization-mode", "1");
+                                       });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
 const webrtc_codec_offer* find_h265(const webrtc_media_offer& media)
 {
-    const auto iterator = std::find_if(media.codecs.begin(), media.codecs.end(), [](const webrtc_codec_offer& codec) {
-        const auto encoding = lower_copy(codec.encoding_name);
-        return (encoding == "h265" || encoding == "hevc") && codec.clock_rate == 90'000U;
-    });
+    const auto iterator = std::find_if(media.codecs.begin(),
+                                       media.codecs.end(),
+                                       [](const webrtc_codec_offer& codec)
+                                       {
+                                           const auto encoding = lower_copy(codec.encoding_name);
+                                           return (encoding == "h265" || encoding == "hevc") && codec.clock_rate == 90'000U;
+                                       });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
 const webrtc_codec_offer* find_opus(const webrtc_media_offer& media)
 {
-    const auto iterator = std::find_if(media.codecs.begin(), media.codecs.end(), [](const webrtc_codec_offer& codec) {
-        return lower_copy(codec.encoding_name) == "opus" && codec.clock_rate == 48'000U && (codec.channel_count == 0 || codec.channel_count == 2);
-    });
+    const auto iterator = std::find_if(media.codecs.begin(),
+                                       media.codecs.end(),
+                                       [](const webrtc_codec_offer& codec)
+                                       {
+                                           return lower_copy(codec.encoding_name) == "opus" && codec.clock_rate == 48'000U &&
+                                                  (codec.channel_count == 0 || codec.channel_count == 2);
+                                       });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
@@ -253,10 +257,8 @@ std::string h264_profile_level_id(const media_track& track)
         }
 
         std::ostringstream stream;
-        stream << std::hex << std::setfill('0') << std::nouppercase
-               << std::setw(2) << static_cast<unsigned int>(data[nalu + 1U])
-               << std::setw(2) << static_cast<unsigned int>(data[nalu + 2U])
-               << std::setw(2) << static_cast<unsigned int>(data[nalu + 3U]);
+        stream << std::hex << std::setfill('0') << std::nouppercase << std::setw(2) << static_cast<unsigned int>(data[nalu + 1U]) << std::setw(2)
+               << static_cast<unsigned int>(data[nalu + 2U]) << std::setw(2) << static_cast<unsigned int>(data[nalu + 3U]);
         return stream.str();
     }
     return {};
@@ -267,10 +269,7 @@ bool bundle_contains(const webrtc_offer& offer, std::string_view mid)
     return std::find(offer.bundle_mids.begin(), offer.bundle_mids.end(), mid) != offer.bundle_mids.end();
 }
 
-bool bundle_media_supported(const webrtc_media_offer& media)
-{
-    return lower_copy(media.protocol) == "udp/tls/rtp/savpf" && media.rtcp_mux;
-}
+bool bundle_media_supported(const webrtc_media_offer& media) { return lower_copy(media.protocol) == "udp/tls/rtp/savpf" && media.rtcp_mux; }
 
 void append_transport(std::ostringstream& answer, const webrtc_answer_config& config)
 {
@@ -354,9 +353,7 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
 
         static_cast<void>(sdp_media_attribute_list(sdp.get(), index, "rtpmap", &on_rtpmap, &media));
         static_cast<void>(sdp_media_attribute_list(sdp.get(), index, "fmtp", &on_fmtp, &media));
-        if (std::any_of(result.media.begin(), result.media.end(), [&media](const webrtc_media_offer& existing) {
-                return existing.mid == media.mid;
-            }))
+        if (std::any_of(result.media.begin(), result.media.end(), [&media](const webrtc_media_offer& existing) { return existing.mid == media.mid; }))
         {
             return std::nullopt;
         }
@@ -366,9 +363,7 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
     for (const auto& mid : result.bundle_mids)
     {
         if (std::count(result.bundle_mids.begin(), result.bundle_mids.end(), mid) != 1 ||
-            std::none_of(result.media.begin(), result.media.end(), [&mid](const webrtc_media_offer& media) {
-                return media.mid == mid;
-            }))
+            std::none_of(result.media.begin(), result.media.end(), [&mid](const webrtc_media_offer& media) { return media.mid == mid; }))
         {
             return std::nullopt;
         }
@@ -384,9 +379,8 @@ const webrtc_media_offer* webrtc_bundle_transport(const webrtc_offer& offer)
         return nullptr;
     }
 
-    const auto iterator = std::find_if(offer.media.begin(), offer.media.end(), [&offer](const webrtc_media_offer& media) {
-        return media.mid == offer.bundle_mids.front();
-    });
+    const auto iterator = std::find_if(
+        offer.media.begin(), offer.media.end(), [&offer](const webrtc_media_offer& media) { return media.mid == offer.bundle_mids.front(); });
     if (iterator == offer.media.end() || !bundle_media_supported(*iterator) || lower_copy(iterator->setup) != "actpass")
     {
         return nullptr;
@@ -394,10 +388,7 @@ const webrtc_media_offer* webrtc_bundle_transport(const webrtc_offer& offer)
     return &*iterator;
 }
 
-std::optional<webrtc_answer> make_webrtc_answer(
-    const webrtc_offer& offer,
-    const std::vector<media_track>& tracks,
-    const webrtc_answer_config& config)
+std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const std::vector<media_track>& tracks, const webrtc_answer_config& config)
 {
     if (config.port == 0 || config.ice_ufrag.empty() || config.ice_pwd.empty() || config.fingerprint.empty() ||
         webrtc_bundle_transport(offer) == nullptr)
@@ -405,9 +396,10 @@ std::optional<webrtc_answer> make_webrtc_answer(
         return std::nullopt;
     }
 
-    const auto video_iterator = std::find_if(tracks.begin(), tracks.end(), [](const media_track& track) {
-        return track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265);
-    });
+    const auto video_iterator = std::find_if(
+        tracks.begin(),
+        tracks.end(),
+        [](const media_track& track) { return track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265); });
     const auto* video_track = video_iterator == tracks.end() ? nullptr : &*video_iterator;
     const auto* audio_track = find_track(tracks, media_kind::audio, codec_id::aac);
     const auto address_type = config.address.is_v6() ? "IP6" : "IP4";
@@ -422,8 +414,7 @@ std::optional<webrtc_answer> make_webrtc_answer(
     {
         const auto media_direction = lower_copy(media.direction);
         const bool can_receive =
-            bundle_contains(offer, media.mid) && bundle_media_supported(media) &&
-            (media_direction == "sendrecv" || media_direction == "recvonly");
+            bundle_contains(offer, media.mid) && bundle_media_supported(media) && (media_direction == "sendrecv" || media_direction == "recvonly");
         const webrtc_codec_offer* codec = nullptr;
         std::string profile_level_id;
 
@@ -468,21 +459,13 @@ std::optional<webrtc_answer> make_webrtc_answer(
         {
             video_codec = video_track->codec;
             video_payload_type = codec->payload_type;
-            spdlog::debug(
-                "webrtc answer video mid {} pt {} codec {}",
-                media.mid,
-                codec->payload_type,
-                to_string(*video_codec));
+            spdlog::debug("webrtc answer video mid {} pt {} codec {}", media.mid, codec->payload_type, to_string(*video_codec));
         }
         else
         {
             audio_payload_type = codec->payload_type;
             audio_channel_count = opus_output_channel_count(*codec, *audio_track);
-            spdlog::debug(
-                "webrtc answer audio mid {} pt {} codec opus channels {}",
-                media.mid,
-                codec->payload_type,
-                *audio_channel_count);
+            spdlog::debug("webrtc answer audio mid {} pt {} codec opus channels {}", media.mid, codec->payload_type, *audio_channel_count);
         }
         media_answer << "m=" << media.type << ' ' << config.port << ' ' << media.protocol << ' ' << codec->payload_type << "\r\n";
         media_answer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";
@@ -497,7 +480,7 @@ std::optional<webrtc_answer> make_webrtc_answer(
             {
                 media_answer << "a=rtpmap:" << codec->payload_type << " H264/90000\r\n";
                 media_answer << "a=fmtp:" << codec->payload_type
-                    << " level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=" << profile_level_id << "\r\n";
+                             << " level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=" << profile_level_id << "\r\n";
             }
             else
             {
@@ -507,9 +490,8 @@ std::optional<webrtc_answer> make_webrtc_answer(
         else
         {
             media_answer << "a=rtpmap:" << codec->payload_type << " opus/48000/2\r\n";
-            media_answer << "a=fmtp:" << codec->payload_type
-                   << " minptime=10;useinbandfec=1;sprop-stereo="
-                   << (*audio_channel_count == 2 ? 1 : 0) << "\r\n";
+            media_answer << "a=fmtp:" << codec->payload_type << " minptime=10;useinbandfec=1;sprop-stereo=" << (*audio_channel_count == 2 ? 1 : 0)
+                         << "\r\n";
         }
     }
 

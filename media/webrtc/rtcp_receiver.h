@@ -40,9 +40,7 @@ class rtcp_receiver final
    public:
     rtcp_receiver();
 
-    [[nodiscard]] bool input(
-        std::span<const std::uint8_t> packet,
-        rtcp_receive_result& result);
+    [[nodiscard]] bool input(std::span<const std::uint8_t> packet, rtcp_receive_result& result);
 
    private:
     struct context_deleter

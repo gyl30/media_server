@@ -40,9 +40,7 @@ std::string make_fingerprint(X509* certificate)
 
 std::shared_ptr<dtls_certificate> dtls_certificate::create()
 {
-    std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)> key_context(
-        EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr),
-        &EVP_PKEY_CTX_free);
+    std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)> key_context(EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr), &EVP_PKEY_CTX_free);
     if (!key_context || EVP_PKEY_keygen_init(key_context.get()) <= 0 || EVP_PKEY_CTX_set_rsa_keygen_bits(key_context.get(), 2048) <= 0)
     {
         return {};
@@ -72,17 +70,8 @@ std::shared_ptr<dtls_certificate> dtls_certificate::create()
 
     X509_NAME* subject = X509_get_subject_name(certificate.get());
     constexpr unsigned char common_name[] = "media_server";
-    if (subject == nullptr ||
-        X509_NAME_add_entry_by_txt(
-            subject,
-            "CN",
-            MBSTRING_ASC,
-            common_name,
-            -1,
-            -1,
-            0) != 1 ||
-        X509_set_issuer_name(certificate.get(), subject) != 1 ||
-        X509_sign(certificate.get(), private_key.get(), EVP_sha256()) <= 0)
+    if (subject == nullptr || X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, common_name, -1, -1, 0) != 1 ||
+        X509_set_issuer_name(certificate.get(), subject) != 1 || X509_sign(certificate.get(), private_key.get(), EVP_sha256()) <= 0)
     {
         return {};
     }
@@ -93,36 +82,18 @@ std::shared_ptr<dtls_certificate> dtls_certificate::create()
         return {};
     }
 
-    return std::shared_ptr<dtls_certificate>(new dtls_certificate(
-        std::move(private_key),
-        std::move(certificate),
-        std::move(fingerprint)));
+    return std::shared_ptr<dtls_certificate>(new dtls_certificate(std::move(private_key), std::move(certificate), std::move(fingerprint)));
 }
 
-EVP_PKEY* dtls_certificate::private_key() const noexcept
-{
-    return private_key_.get();
-}
+EVP_PKEY* dtls_certificate::private_key() const noexcept { return private_key_.get(); }
 
-X509* dtls_certificate::certificate() const noexcept
-{
-    return certificate_.get();
-}
+X509* dtls_certificate::certificate() const noexcept { return certificate_.get(); }
 
-const std::string& dtls_certificate::sha256_fingerprint() const noexcept
-{
-    return fingerprint_;
-}
+const std::string& dtls_certificate::sha256_fingerprint() const noexcept { return fingerprint_; }
 
-void dtls_certificate::pkey_deleter::operator()(EVP_PKEY* value) const noexcept
-{
-    EVP_PKEY_free(value);
-}
+void dtls_certificate::pkey_deleter::operator()(EVP_PKEY* value) const noexcept { EVP_PKEY_free(value); }
 
-void dtls_certificate::x509_deleter::operator()(X509* value) const noexcept
-{
-    X509_free(value);
-}
+void dtls_certificate::x509_deleter::operator()(X509* value) const noexcept { X509_free(value); }
 
 dtls_certificate::dtls_certificate(pkey_ptr private_key, x509_ptr certificate, std::string fingerprint)
     : private_key_(std::move(private_key)), certificate_(std::move(certificate)), fingerprint_(std::move(fingerprint))

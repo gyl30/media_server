@@ -7,11 +7,11 @@
 
 extern "C"
 {
-struct AVAudioFifo;
-struct AVCodecContext;
-struct AVFrame;
-struct AVPacket;
-struct SwrContext;
+    struct AVAudioFifo;
+    struct AVCodecContext;
+    struct AVFrame;
+    struct AVPacket;
+    struct SwrContext;
 }
 
 namespace media_server
@@ -25,16 +25,14 @@ struct opus_audio_packet
 
 class aac_opus_transcoder final
 {
-public:
+   public:
     aac_opus_transcoder() = default;
     ~aac_opus_transcoder();
 
     bool start(std::span<const std::uint8_t> audio_specific_config, int output_channel_count);
-    bool transcode(
-        std::span<const std::uint8_t> adts_frame,
-        std::vector<opus_audio_packet>& packets);
+    bool transcode(std::span<const std::uint8_t> adts_frame, std::vector<opus_audio_packet>& packets);
 
-private:
+   private:
     void cleanup();
     void drain_encoder();
     bool configure_resampler(const AVFrame& frame);

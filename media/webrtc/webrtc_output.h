@@ -41,13 +41,7 @@ class webrtc_output final : public media_sink
     [[nodiscard]] bool valid() const noexcept;
 
    private:
-    static int on_packet(
-        void* param,
-        int pid,
-        const void* data,
-        int bytes,
-        std::uint32_t timestamp,
-        int flags);
+    static int on_packet(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
     struct track_state
     {

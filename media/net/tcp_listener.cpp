@@ -6,10 +6,7 @@
 namespace media_server
 {
 
-tcp_listener::tcp_listener(
-    boost::asio::io_context& io,
-    std::uint16_t port,
-    accept_handler handler)
+tcp_listener::tcp_listener(boost::asio::io_context& io, std::uint16_t port, accept_handler handler)
     : acceptor_(io), port_(port), handler_(std::move(handler))
 {
 }
@@ -66,7 +63,8 @@ void tcp_listener::accept_next()
     }
 
     acceptor_.async_accept(
-        [this](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket) {
+        [this](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
+        {
             if (!error && handler_)
             {
                 handler_(std::move(socket));

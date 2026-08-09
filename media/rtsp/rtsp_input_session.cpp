@@ -39,9 +39,10 @@ bool iequals(const char* value, std::string_view expected)
 
     const std::string_view actual(value);
     return actual.size() == expected.size() &&
-        std::equal(actual.begin(), actual.end(), expected.begin(), [](unsigned char left, unsigned char right) {
-            return std::tolower(left) == std::tolower(right);
-        });
+           std::equal(actual.begin(),
+                      actual.end(),
+                      expected.begin(),
+                      [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
 }
 
 bool supported_media(rtsp_client_t* client, int media)
@@ -49,21 +50,13 @@ bool supported_media(rtsp_client_t* client, int media)
     const auto type = rtsp_client_get_media_type(client, media);
     const auto* encoding = rtsp_client_get_media_encoding(client, media);
     return (type == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H264") || iequals(encoding, "H265") || iequals(encoding, "HEVC"))) ||
-        (type == SDP_M_MEDIA_AUDIO && iequals(encoding, "MPEG4-GENERIC"));
+           (type == SDP_M_MEDIA_AUDIO && iequals(encoding, "MPEG4-GENERIC"));
 }
-}
+}    // namespace
 
-rtsp_input_session::rtsp_input_session(
-    boost::asio::io_context& io,
-    stream_registry& registry,
-    std::string stream_name,
-    std::string url)
-    : io_(io),
-      registry_(registry),
-      stream_name_(std::move(stream_name)),
-      url_(std::move(url)),
-      resolver_(io)
-      {
+rtsp_input_session::rtsp_input_session(boost::asio::io_context& io, stream_registry& registry, std::string stream_name, std::string url)
+    : io_(io), registry_(registry), stream_name_(std::move(stream_name)), url_(std::move(url)), resolver_(io)
+{
 }
 
 rtsp_input_session::~rtsp_input_session()
@@ -109,23 +102,22 @@ bool rtsp_input_session::start()
     static_cast<void>(avpkt2bs_create(&bitstream_));
 
     const auto self = shared_from_this();
-    resolver_.async_resolve(
-        parsed->host,
-        std::to_string(parsed->port),
-        [this, self](const boost::system::error_code& error, boost::asio::ip::tcp::resolver::results_type endpoints) {
-            if (error)
-            {
-                close();
-                return;
-            }
-            auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_);
-            boost::asio::async_connect(
-                *socket,
-                endpoints,
-                [this, self, socket](const boost::system::error_code& connect_error, const boost::asio::ip::tcp::endpoint&) mutable {
-                    on_connect(connect_error, std::move(*socket));
-                });
-        });
+    resolver_.async_resolve(parsed->host,
+                            std::to_string(parsed->port),
+                            [this, self](const boost::system::error_code& error, boost::asio::ip::tcp::resolver::results_type endpoints)
+                            {
+                                if (error)
+                                {
+                                    close();
+                                    return;
+                                }
+                                auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_);
+                                boost::asio::async_connect(*socket,
+                                                           endpoints,
+                                                           [this, self, socket](const boost::system::error_code& connect_error,
+                                                                                const boost::asio::ip::tcp::endpoint&) mutable
+                                                           { on_connect(connect_error, std::move(*socket)); });
+                            });
     return true;
 }
 
@@ -151,12 +143,8 @@ void rtsp_input_session::close()
     spdlog::debug("rtsp input close {}", stream_name_);
 }
 
-int rtsp_input_session::send_callback(
-    void* param,
-    const char*,
-    const void* request,
-    std::size_t bytes)
-    {
+int rtsp_input_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
+{
     auto* self = static_cast<rtsp_input_session*>(param);
     if (!self->connection_)
     {
@@ -166,14 +154,8 @@ int rtsp_input_session::send_callback(
     return static_cast<int>(bytes);
 }
 
-int rtsp_input_session::rtp_port_callback(
-    void* param,
-    int media,
-    const char*,
-    unsigned short port[2],
-    char*,
-    int)
-    {
+int rtsp_input_session::rtp_port_callback(void* param, int media, const char*, unsigned short port[2], char*, int)
+{
     auto* self = static_cast<rtsp_input_session*>(param);
     if (self->client_ == nullptr)
     {
@@ -200,35 +182,21 @@ int rtsp_input_session::setup_callback(void* param, int timeout, std::int64_t du
     return static_cast<rtsp_input_session*>(param)->on_setup(timeout, duration);
 }
 
-int rtsp_input_session::play_callback(
-    void* param, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
-    {
+int rtsp_input_session::play_callback(void* param, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
+{
     return static_cast<rtsp_input_session*>(param)->on_play();
 }
 
-int rtsp_input_session::pause_callback(void*)
-{
-    return 0;
-}
+int rtsp_input_session::pause_callback(void*) { return 0; }
 
-int rtsp_input_session::teardown_callback(void*)
-{
-    return 0;
-}
+int rtsp_input_session::teardown_callback(void*) { return 0; }
 
-void rtsp_input_session::rtp_callback(
-    void* param,
-    std::uint8_t channel,
-    const void* data,
-    std::uint16_t bytes)
-    {
+void rtsp_input_session::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
+{
     static_cast<rtsp_input_session*>(param)->on_rtp(channel, data, bytes);
 }
 
-int rtsp_input_session::packet_callback(void* param, avpacket_t* packet)
-{
-    return static_cast<rtsp_input_session*>(param)->on_packet(packet);
-}
+int rtsp_input_session::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_input_session*>(param)->on_packet(packet); }
 
 std::optional<rtsp_input_session::parsed_url> rtsp_input_session::parse_url(std::string_view url)
 {
@@ -261,10 +229,8 @@ std::optional<rtsp_input_session::parsed_url> rtsp_input_session::parse_url(std:
     return result;
 }
 
-void rtsp_input_session::on_connect(
-    const boost::system::error_code& error,
-    boost::asio::ip::tcp::socket socket)
-    {
+void rtsp_input_session::on_connect(const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
+{
     if (error || closed_)
     {
         close();
@@ -282,11 +248,7 @@ void rtsp_input_session::on_connect(
     handler.onrtp = &rtsp_input_session::rtp_callback;
 
     client_ = rtsp_client_create(
-        url_.c_str(),
-        username_.empty() ? nullptr : username_.c_str(),
-        password_.empty() ? nullptr : password_.c_str(),
-        &handler,
-        this);
+        url_.c_str(), username_.empty() ? nullptr : username_.c_str(), password_.empty() ? nullptr : password_.c_str(), &handler, this);
     if (client_ == nullptr)
     {
         close();
@@ -295,9 +257,7 @@ void rtsp_input_session::on_connect(
 
     connection_ = std::make_shared<tcp_connection>(std::move(socket));
     const auto self = shared_from_this();
-    connection_->start(
-        [self](std::span<const std::uint8_t> data) { self->on_read(data); },
-        [self]() { self->on_connection_close(); });
+    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->on_connection_close(); });
 
     spdlog::info("rtsp input connected stream {}", stream_name_);
     if (rtsp_client_describe(client_) != 0)
@@ -348,9 +308,8 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
         const auto payload = rtsp_client_get_media_payload(client_, media);
         auto*& demuxer = demuxers_[static_cast<std::size_t>(media)];
         demuxer = rtsp_demuxer_create(media, 500, &rtsp_input_session::packet_callback, this);
-        if (demuxer == nullptr ||
-            rtsp_demuxer_add_payload(demuxer, rate, payload, encoding, fmtp) != 0)
-            {
+        if (demuxer == nullptr || rtsp_demuxer_add_payload(demuxer, rate, payload, encoding, fmtp) != 0)
+        {
             return -1;
         }
     }
@@ -365,11 +324,8 @@ int rtsp_input_session::on_play()
     return 0;
 }
 
-void rtsp_input_session::on_rtp(
-    std::uint8_t channel,
-    const void* data,
-    std::uint16_t bytes)
-    {
+void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
+{
     const auto media = static_cast<std::size_t>(channel / 2U);
     if (media >= demuxers_.size() || demuxers_[media] == nullptr || (channel % 2U) != 0U)
     {
@@ -419,7 +375,8 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     if (packet->stream->codecid == AVCODEC_VIDEO_H264 || packet->stream->codecid == AVCODEC_VIDEO_H265)
     {
         id = video_track_id;
-    } else if (packet->stream->codecid == AVCODEC_AUDIO_AAC)
+    }
+    else if (packet->stream->codecid == AVCODEC_AUDIO_AAC)
     {
         id = audio_track_id;
     }
@@ -428,8 +385,7 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
         return 0;
     }
 
-    auto payload = std::make_shared<const std::vector<std::uint8_t>>(
-        bitstream_.ptr, bitstream_.ptr + bytes);
+    auto payload = std::make_shared<const std::vector<std::uint8_t>>(bitstream_.ptr, bitstream_.ptr + bytes);
     media_frame frame{
         .track = id,
         .dts_ns = milliseconds_to_ns(packet->dts),
@@ -449,8 +405,8 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
         std::vector<std::uint8_t> config;
         if (input.extra != nullptr && input.bytes > 0)
         {
-            config = h264_avcc_to_annex_b(std::span<const std::uint8_t>(
-                static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+            config = h264_avcc_to_annex_b(
+                std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         }
         if (config.empty())
         {
@@ -477,8 +433,8 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
         std::vector<std::uint8_t> config;
         if (input.extra != nullptr && input.bytes > 0)
         {
-            config = h265_hvcc_to_annex_b(std::span<const std::uint8_t>(
-                static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+            config = h265_hvcc_to_annex_b(
+                std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         }
         if (config.empty())
         {

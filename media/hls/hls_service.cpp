@@ -5,10 +5,7 @@
 namespace media_server
 {
 
-hls_service::hls_service(stream_registry& registry, hls_config config)
-    : registry_(registry), config_(config)
-{
-}
+hls_service::hls_service(stream_registry& registry, hls_config config) : registry_(registry), config_(config) {}
 
 std::optional<std::string> hls_service::playlist(std::string_view stream_name)
 {
@@ -20,9 +17,7 @@ std::optional<std::string> hls_service::playlist(std::string_view stream_name)
     return output->playlist(".");
 }
 
-std::optional<std::vector<std::uint8_t>> hls_service::segment(
-    std::string_view stream_name,
-    std::uint64_t sequence)
+std::optional<std::vector<std::uint8_t>> hls_service::segment(std::string_view stream_name, std::uint64_t sequence)
 {
     auto output = get_or_create(stream_name);
     if (!output)
@@ -79,19 +74,19 @@ std::shared_ptr<hls_output> hls_service::get_or_create(std::string_view stream_n
     {
         return {};
     }
-    outputs_.emplace(
-        std::string(stream_name),
-        entry{.stream = stream, .output = output});
+    outputs_.emplace(std::string(stream_name), entry{.stream = stream, .output = output});
     return output;
 }
 
 void hls_service::remove_expired_outputs(std::chrono::steady_clock::time_point now)
 {
     const auto retention = ended_retention();
-    std::erase_if(outputs_, [now, retention](const auto& item) {
-        const auto ended_at = item.second.output->ended_at();
-        return ended_at && now - *ended_at >= retention;
-    });
+    std::erase_if(outputs_,
+                  [now, retention](const auto& item)
+                  {
+                      const auto ended_at = item.second.output->ended_at();
+                      return ended_at && now - *ended_at >= retention;
+                  });
 }
 
 std::chrono::steady_clock::duration hls_service::ended_retention() const

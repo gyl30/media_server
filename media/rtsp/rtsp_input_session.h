@@ -29,11 +29,7 @@ namespace media_server
 class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_session>
 {
    public:
-    rtsp_input_session(
-        boost::asio::io_context& io,
-        stream_registry& registry,
-        std::string stream_name,
-        std::string url);
+    rtsp_input_session(boost::asio::io_context& io, stream_registry& registry, std::string stream_name, std::string url);
     ~rtsp_input_session();
 
     bool start();
@@ -50,23 +46,11 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     };
 
     static int send_callback(void* param, const char* uri, const void* request, std::size_t bytes);
-    static int rtp_port_callback(
-        void* param,
-        int media,
-        const char* source,
-        unsigned short port[2],
-        char* ip,
-        int length);
+    static int rtp_port_callback(void* param, int media, const char* source, unsigned short port[2], char* ip, int length);
     static int describe_callback(void* param, const char* sdp, int length);
     static int setup_callback(void* param, int timeout, std::int64_t duration);
     static int play_callback(
-        void* param,
-        int media,
-        const std::uint64_t* begin,
-        const std::uint64_t* end,
-        const double* scale,
-        const rtsp_rtp_info_t* info,
-        int count);
+        void* param, int media, const std::uint64_t* begin, const std::uint64_t* end, const double* scale, const rtsp_rtp_info_t* info, int count);
     static int pause_callback(void* param);
     static int teardown_callback(void* param);
     static void rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);

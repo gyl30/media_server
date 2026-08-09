@@ -53,13 +53,12 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
    public:
     using closed_handler = std::function<void(const whep_session&)>;
 
-    whep_session(
-        boost::asio::io_context& io,
-        std::shared_ptr<media_stream> stream,
-        boost::asio::ip::address advertised_address,
-        std::shared_ptr<dtls_certificate> certificate,
-        closed_handler handler = {},
-        whep_session_timeouts timeouts = {});
+    whep_session(boost::asio::io_context& io,
+                 std::shared_ptr<media_stream> stream,
+                 boost::asio::ip::address advertised_address,
+                 std::shared_ptr<dtls_certificate> certificate,
+                 closed_handler handler = {},
+                 whep_session_timeouts timeouts = {});
 
     [[nodiscard]] whep_session_start_error start(webrtc_offer offer);
     void close();
