@@ -6,9 +6,7 @@ extern "C"
 #include "mpeg4-avc.h"
 }
 
-#include <algorithm>
 #include <array>
-#include <limits>
 
 namespace media_server
 {
@@ -132,20 +130,26 @@ std::int64_t milliseconds_to_ns(std::int64_t value) noexcept
     return value * ns_per_millisecond;
 }
 
-std::uint32_t ns_to_milliseconds(std::int64_t value) noexcept
+std::int64_t ns_to_milliseconds(std::int64_t value) noexcept
+{
+    return value <= 0 ? 0 : value / ns_per_millisecond;
+}
+
+std::uint32_t ns_to_flv_milliseconds(std::int64_t value) noexcept
+{
+    return static_cast<std::uint32_t>(ns_to_milliseconds(value));
+}
+
+std::int64_t ns_to_90khz(std::int64_t value) noexcept
 {
     if (value <= 0)
     {
         return 0;
     }
-    const auto milliseconds = value / ns_per_millisecond;
-    return static_cast<std::uint32_t>(std::min<std::int64_t>(
-        milliseconds, std::numeric_limits<std::uint32_t>::max()));
-}
 
-std::int64_t ns_to_90khz(std::int64_t value) noexcept
-{
-    return value <= 0 ? 0 : (value * 90'000) / ns_per_second;
+    const auto seconds = value / ns_per_second;
+    const auto nanoseconds = value % ns_per_second;
+    return seconds * 90'000 + nanoseconds * 90'000 / ns_per_second;
 }
 
 }    // namespace media_server

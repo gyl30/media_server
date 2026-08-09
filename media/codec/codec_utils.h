@@ -34,7 +34,8 @@ struct aac_config
     std::span<const std::uint8_t> raw_aac);
 
 [[nodiscard]] std::int64_t milliseconds_to_ns(std::int64_t value) noexcept;
-[[nodiscard]] std::uint32_t ns_to_milliseconds(std::int64_t value) noexcept;
+[[nodiscard]] std::int64_t ns_to_milliseconds(std::int64_t value) noexcept;
+[[nodiscard]] std::uint32_t ns_to_flv_milliseconds(std::int64_t value) noexcept;
 [[nodiscard]] std::int64_t ns_to_90khz(std::int64_t value) noexcept;
 
 }    // namespace media_server
