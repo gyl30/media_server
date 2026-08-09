@@ -76,6 +76,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     bool start_media();
     void send_dtls(std::span<const std::uint8_t> packet);
     void send_rtp(std::span<const std::uint8_t> packet);
+    void send_rtcp(std::span<const std::uint8_t> packet);
     void send_udp(std::vector<std::uint8_t> packet);
     void write_udp();
     void schedule_dtls_timeout();

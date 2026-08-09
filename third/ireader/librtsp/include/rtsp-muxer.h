@@ -30,6 +30,7 @@ int rtsp_muxer_add_media(struct rtsp_muxer_t* muxer, int pid, int codec, const v
 /// Get RTP-Info
 /// @return 0-ok, <0-error
 int rtsp_muxer_getinfo(struct rtsp_muxer_t* muxer, int pid, uint16_t* seq, uint32_t* timestamp, const char** sdp, int *size);
+int rtsp_muxer_set_info(struct rtsp_muxer_t* muxer, int pid, const char* cname, const char* name);
 
 /// @param[in] mid media index, create by rtsp_muxer_add_media
 /// @return 0-ok, >0-rtcp message type, <0-error

@@ -448,6 +448,49 @@ std::vector<std::uint8_t> make_rtcp_compound()
     return packet;
 }
 
+std::uint16_t read_network_u16(std::span<const std::uint8_t> data, std::size_t offset)
+{
+    require(offset + 2U <= data.size(), "read network u16 range");
+    return static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(data[offset]) << 8U) |
+        static_cast<std::uint16_t>(data[offset + 1U]));
+}
+
+std::uint32_t read_network_u32(std::span<const std::uint8_t> data, std::size_t offset)
+{
+    require(offset + 4U <= data.size(), "read network u32 range");
+    return (static_cast<std::uint32_t>(data[offset]) << 24U) |
+        (static_cast<std::uint32_t>(data[offset + 1U]) << 16U) |
+        (static_cast<std::uint32_t>(data[offset + 2U]) << 8U) |
+        static_cast<std::uint32_t>(data[offset + 3U]);
+}
+
+void require_server_sender_report(
+    std::span<const std::uint8_t> packet,
+    std::uint32_t expected_ssrc,
+    std::string_view expected_cname)
+{
+    require(packet.size() >= 40U, "server rtcp compound size");
+    require((packet[0] >> 6U) == 2U, "server rtcp sr version");
+    require(packet[1] == 200U, "server rtcp sender report type");
+    require(read_network_u32(packet, 4U) == expected_ssrc, "server rtcp sender ssrc");
+    require(read_network_u32(packet, 20U) > 0U, "server rtcp sender packet count");
+    require(read_network_u32(packet, 24U) > 0U, "server rtcp sender octet count");
+
+    const auto sr_size = (static_cast<std::size_t>(read_network_u16(packet, 2U)) + 1U) * 4U;
+    require(sr_size >= 28U && sr_size + 12U <= packet.size(), "server rtcp sender report size");
+    require(packet[sr_size + 1U] == 202U, "server rtcp sdes type");
+    require(read_network_u32(packet, sr_size + 4U) == expected_ssrc, "server rtcp sdes ssrc");
+    require(packet[sr_size + 8U] == 1U, "server rtcp cname type");
+
+    const auto cname_size = static_cast<std::size_t>(packet[sr_size + 9U]);
+    require(sr_size + 10U + cname_size <= packet.size(), "server rtcp cname range");
+    const auto cname = std::string_view(
+        reinterpret_cast<const char*>(packet.data() + sr_size + 10U),
+        cname_size);
+    require(cname == expected_cname, "server rtcp cname");
+}
+
 void append_stun_attribute(std::vector<std::uint8_t>& packet, std::uint16_t type, std::span<const std::uint8_t> value)
 {
     append_u16(packet, type);
@@ -1134,6 +1177,41 @@ void test_whep_dtls()
     require(clear_rtp->bytes.size() >= 12U, "srtp clear rtp header");
     require((clear_rtp->bytes[0] >> 6U) == 2U, "srtp clear rtp version");
     require((clear_rtp->bytes[1] & 0x7fU) == 102U, "srtp negotiated h264 payload");
+    const auto video_ssrc = read_network_u32(clear_rtp->bytes, 8U);
+
+    auto second_video_frame = make_video_key_frame();
+    second_video_frame.dts_ns = 40'000'000;
+    second_video_frame.pts_ns = 40'000'000;
+    require(stream->publish(second_video_frame), "srtp publish second video");
+
+    std::optional<srtp_packet> clear_server_rtcp;
+    const auto server_rtcp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!clear_server_rtcp && std::chrono::steady_clock::now() < server_rtcp_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(10));
+        io.restart();
+
+        boost::system::error_code receive_error;
+        const auto size = client_socket.receive_from(boost::asio::buffer(rtp_buffer), rtp_sender, 0, receive_error);
+        if (receive_error == boost::asio::error::would_block || receive_error == boost::asio::error::try_again)
+        {
+            continue;
+        }
+        require(!receive_error && rtp_sender == server_endpoint, "srtcp receive server report");
+        const auto packet = std::span<const std::uint8_t>(rtp_buffer.data(), size);
+        if (!srtp_transport::is_rtp_or_rtcp(packet))
+        {
+            continue;
+        }
+        auto clear = peer_srtp.unprotect(packet);
+        if (clear && clear->rtcp)
+        {
+            clear_server_rtcp = std::move(clear);
+        }
+    }
+
+    require(clear_server_rtcp.has_value(), "srtcp decrypt server sender report");
+    require_server_sender_report(clear_server_rtcp->bytes, video_ssrc, session->id());
 
     std::int64_t audio_pts_ns = 0;
     for (std::size_t index = 0; index < valid_aac_adts_frames.size(); ++index)

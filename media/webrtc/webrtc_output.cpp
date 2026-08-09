@@ -10,7 +10,9 @@ extern "C"
 #include "rtsp-muxer.h"
 }
 
+#include <array>
 #include <random>
+#include <string_view>
 #include <utility>
 
 namespace media_server
@@ -21,6 +23,8 @@ namespace
 constexpr std::int64_t nanoseconds_per_second = 1'000'000'000LL;
 constexpr std::int64_t opus_sample_rate = 48'000LL;
 constexpr std::int64_t rtp_timeline_origin_ms = 1;
+constexpr std::size_t rtcp_buffer_size = 4096;
+constexpr std::string_view rtcp_name = "media_server";
 
 std::uint32_t random_u32()
 {
@@ -40,8 +44,11 @@ std::int64_t rtp_milliseconds(std::int64_t nanoseconds)
 
 }    // namespace
 
-webrtc_output::webrtc_output(webrtc_output_config config, rtp_handler handler)
-    : config_(config), handler_(std::move(handler)), muxer_(rtsp_muxer_create(&webrtc_output::on_packet, this))
+webrtc_output::webrtc_output(webrtc_output_config config, packet_handler rtp_handler, packet_handler rtcp_handler)
+    : config_(std::move(config)),
+      rtp_handler_(std::move(rtp_handler)),
+      rtcp_handler_(std::move(rtcp_handler)),
+      muxer_(rtsp_muxer_create(&webrtc_output::on_packet, this))
 {
 }
 
@@ -99,7 +106,7 @@ std::size_t webrtc_output::packet_count() const noexcept
 
 int webrtc_output::on_packet(
     void* param,
-    int,
+    int pid,
     const void* data,
     int bytes,
     std::uint32_t,
@@ -139,9 +146,18 @@ int webrtc_output::on_packet(
             packet.size());
     }
 
-    if (self->handler_)
+    if (self->rtp_handler_)
     {
-        self->handler_(packet);
+        self->rtp_handler_(packet);
+    }
+
+    if (self->active_payloads_.contains(pid))
+    {
+        self->emit_rtcp(pid);
+    }
+    else
+    {
+        self->active_payloads_.insert(pid);
     }
     return 0;
 }
@@ -168,6 +184,10 @@ bool webrtc_output::add_h264_track(const media_track& track)
     if (payload_index < 0)
     {
         spdlog::error("webrtc add h264 payload failed");
+        return false;
+    }
+    if (!configure_rtcp(payload_index))
+    {
         return false;
     }
 
@@ -229,6 +249,10 @@ bool webrtc_output::add_aac_track(const media_track& track)
         spdlog::error("webrtc add opus payload failed");
         return false;
     }
+    if (!configure_rtcp(payload_index))
+    {
+        return false;
+    }
 
     const auto media_id = rtsp_muxer_add_media(muxer_, payload_index, RTP_PAYLOAD_OPUS, nullptr, 0);
     if (media_id < 0)
@@ -249,6 +273,63 @@ bool webrtc_output::add_aac_track(const media_track& track)
         });
     spdlog::debug("webrtc opus output track ready id {} pt {} channels {}", track.id, config_.opus_payload_type, config_.opus_channel_count);
     return true;
+}
+
+bool webrtc_output::configure_rtcp(int payload_id)
+{
+    if (!rtcp_handler_)
+    {
+        return true;
+    }
+    if (config_.rtcp_cname.empty())
+    {
+        spdlog::error("webrtc rtcp cname missing payload {}", payload_id);
+        return false;
+    }
+
+    const auto result = rtsp_muxer_set_info(
+        muxer_,
+        payload_id,
+        config_.rtcp_cname.c_str(),
+        rtcp_name.data());
+    if (result < 0)
+    {
+        spdlog::error("webrtc rtcp sender info failed payload {} result {}", payload_id, result);
+        return false;
+    }
+    return true;
+}
+
+void webrtc_output::emit_rtcp(int payload_id)
+{
+    if (!rtcp_handler_ || muxer_ == nullptr)
+    {
+        return;
+    }
+
+    std::array<std::uint8_t, rtcp_buffer_size> buffer{};
+    const auto bytes = rtsp_muxer_rtcp(
+        muxer_,
+        payload_id,
+        buffer.data(),
+        static_cast<int>(buffer.size()));
+    if (bytes < 0)
+    {
+        spdlog::error("webrtc rtcp report failed payload {} result {}", payload_id, bytes);
+        return;
+    }
+    if (bytes == 0)
+    {
+        return;
+    }
+    if (static_cast<std::size_t>(bytes) > buffer.size())
+    {
+        spdlog::error("webrtc rtcp report too large payload {} bytes {}", payload_id, bytes);
+        return;
+    }
+
+    spdlog::trace("webrtc rtcp report generated payload {} size {}", payload_id, bytes);
+    rtcp_handler_(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(bytes)));
 }
 
 void webrtc_output::input_h264(track_id id, const media_frame& frame)
