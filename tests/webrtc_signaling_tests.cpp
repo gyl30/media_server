@@ -1,5 +1,7 @@
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
+#include "media/hls/hls_service.h"
+#include "media/http/http_session.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/rtcp_receiver.h"
 #include "media/webrtc/srtp_transport.h"
@@ -8,9 +10,14 @@
 #include "media/webrtc/whep_session.h"
 
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/beast/core/flat_buffer.hpp>
+#include <boost/beast/http.hpp>
 #include <boost/crc.hpp>
 
 #include <openssl/evp.h>
@@ -28,6 +35,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -627,6 +635,126 @@ media_frame make_video_key_frame()
             0x04,
         }),
     };
+}
+
+class whep_http_test_peer final
+{
+   public:
+    whep_http_test_peer()
+        : work_(boost::asio::make_work_guard(io_)),
+          hls_(registry_),
+          whep_(io_, registry_, boost::asio::ip::make_address("127.0.0.1")),
+          acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
+    {
+        stream_ = std::make_shared<media_stream>("live/camera");
+        require(stream_->update_track(make_video_track()), "whep http video track");
+        require(stream_->update_track(make_audio_track()), "whep http audio track");
+        require(registry_.add(stream_), "whep http registry add");
+        require(whep_.ready(), "whep http service ready");
+        runner_ = std::jthread([this]() { io_.run(); });
+    }
+
+    ~whep_http_test_peer()
+    {
+        work_.reset();
+        io_.stop();
+        runner_.join();
+        whep_.close();
+    }
+
+    boost::beast::http::response<boost::beast::http::string_body> options(std::string target, std::string_view requested_method)
+    {
+        boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::options, std::move(target), 11};
+        request.set(boost::beast::http::field::host, "127.0.0.1");
+        request.set(boost::beast::http::field::origin, "https://player.example");
+        request.set(boost::beast::http::field::access_control_request_method, requested_method);
+        request.set(boost::beast::http::field::access_control_request_headers, "Content-Type");
+        request.prepare_payload();
+        return send(std::move(request));
+    }
+
+    boost::beast::http::response<boost::beast::http::string_body> post(std::string target)
+    {
+        boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::post, std::move(target), 11};
+        request.set(boost::beast::http::field::host, "127.0.0.1");
+        request.set(boost::beast::http::field::origin, "https://player.example");
+        request.set(boost::beast::http::field::content_type, "application/sdp");
+        request.body() = webrtc_offer_sdp;
+        request.prepare_payload();
+        return send(std::move(request));
+    }
+
+    boost::beast::http::response<boost::beast::http::string_body> remove(std::string target)
+    {
+        boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::delete_, std::move(target), 11};
+        request.set(boost::beast::http::field::host, "127.0.0.1");
+        request.set(boost::beast::http::field::origin, "https://player.example");
+        request.prepare_payload();
+        return send(std::move(request));
+    }
+
+   private:
+    boost::beast::http::response<boost::beast::http::string_body> send(boost::beast::http::request<boost::beast::http::string_body> request)
+    {
+        boost::asio::ip::tcp::socket client(client_io_);
+        client.connect(acceptor_.local_endpoint());
+        auto server_socket = acceptor_.accept();
+        auto session = std::make_shared<http_session>(std::move(server_socket), registry_, hls_, whep_);
+        session->start();
+
+        boost::beast::http::write(client, request);
+        boost::beast::flat_buffer buffer;
+        boost::beast::http::response<boost::beast::http::string_body> response;
+        boost::beast::http::read(client, buffer, response);
+        boost::system::error_code error;
+        client.close(error);
+        return response;
+    }
+
+    boost::asio::io_context io_;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
+    stream_registry registry_;
+    hls_service hls_;
+    whep_service whep_;
+    boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::io_context client_io_;
+    std::shared_ptr<media_stream> stream_;
+    std::jthread runner_;
+};
+
+void require_whep_options(const boost::beast::http::response<boost::beast::http::string_body>& response)
+{
+    require(response.result() == boost::beast::http::status::ok, "whep options status");
+    require(response["Access-Control-Allow-Origin"] == "*", "whep options allow origin");
+    require(response["Access-Control-Allow-Methods"] == "POST, DELETE, OPTIONS", "whep options allow methods");
+    require(response["Access-Control-Allow-Headers"] == "Content-Type", "whep options allow headers");
+    require(response["Accept-Post"] == "application/sdp", "whep options accept post");
+    require(response[boost::beast::http::field::content_length] == "0", "whep options content length");
+    require(response.body().empty(), "whep options empty body");
+}
+
+void test_whep_http_cors()
+{
+    whep_http_test_peer peer;
+    require_whep_options(peer.options("/whep/live/camera", "POST"));
+
+    const auto created = peer.post("/whep/live/camera");
+    require(created.result() == boost::beast::http::status::created, "whep cors create status");
+    require(created["Access-Control-Allow-Origin"] == "*", "whep create allow origin");
+    require(created["Access-Control-Expose-Headers"] == "Location", "whep create expose location");
+    require(created[boost::beast::http::field::content_type] == "application/sdp", "whep create content type");
+    const auto location = std::string(created[boost::beast::http::field::location]);
+    require(location.starts_with("/whep/session/"), "whep create location");
+    require(created.body().starts_with("v=0\r\n"), "whep create answer");
+
+    require_whep_options(peer.options(location, "DELETE"));
+    const auto removed = peer.remove(location);
+    require(removed.result() == boost::beast::http::status::no_content, "whep cors delete status");
+    require(removed["Access-Control-Allow-Origin"] == "*", "whep delete allow origin");
+
+    const auto missing = peer.remove(location);
+    require(missing.result() == boost::beast::http::status::not_found, "whep cors error status");
+    require(missing["Access-Control-Allow-Origin"] == "*", "whep error allow origin");
 }
 
 void test_webrtc_sdp_answer()
@@ -1520,6 +1648,8 @@ int main()
     std::cout << "[pass] whep_session_start_errors\n";
     media_server::test_whep_session_lifecycle();
     std::cout << "[pass] whep_session_lifecycle\n";
+    media_server::test_whep_http_cors();
+    std::cout << "[pass] whep_http_cors\n";
     media_server::test_whep_multi_session_isolation();
     std::cout << "[pass] whep_multi_session_isolation\n";
     media_server::test_whep_establishment_timeout();
