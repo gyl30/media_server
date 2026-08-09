@@ -727,6 +727,51 @@ void test_webrtc_opus_mono_default()
     require(answer->sdp.find("sprop-stereo=0") != std::string::npos, "webrtc opus mono sender property");
 }
 
+void test_whep_session_start_errors()
+{
+    boost::asio::io_context io;
+    auto stream = std::make_shared<media_stream>("live/start-errors");
+    require(stream->update_track(make_video_track()), "start errors video track");
+    require(stream->update_track(make_audio_track()), "start errors audio track");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "start errors parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "start errors certificate");
+
+    const auto make_session = [&](std::shared_ptr<media_stream> source, std::shared_ptr<dtls_certificate> session_certificate) {
+        return std::make_shared<whep_session>(
+            io,
+            std::move(source),
+            boost::asio::ip::make_address("127.0.0.1"),
+            std::move(session_certificate));
+    };
+
+    auto invalid_offer = *offer;
+    require(!invalid_offer.media.empty(), "start errors media");
+    invalid_offer.media.front().ice_ufrag.clear();
+    require(
+        make_session(stream, certificate)->start(std::move(invalid_offer)) == whep_session_start_error::invalid_offer,
+        "start errors invalid offer");
+
+    auto invalid_fingerprint_offer = *offer;
+    invalid_fingerprint_offer.media.front().fingerprint = "invalid";
+    require(
+        make_session(stream, certificate)->start(std::move(invalid_fingerprint_offer)) == whep_session_start_error::invalid_offer,
+        "start errors invalid fingerprint");
+
+    require(
+        make_session(stream, nullptr)->start(*offer) == whep_session_start_error::internal_error,
+        "start errors internal error");
+
+    auto ended_stream = std::make_shared<media_stream>("live/start-errors-ended");
+    require(ended_stream->update_track(make_video_track()), "start errors ended video track");
+    ended_stream->end();
+    require(
+        make_session(ended_stream, certificate)->start(*offer) == whep_session_start_error::stream_not_ready,
+        "start errors stream not ready");
+}
+
 void test_whep_session_lifecycle()
 {
     boost::asio::io_context io;
@@ -738,6 +783,15 @@ void test_whep_session_lifecycle()
 
     whep_service whep(io, registry, boost::asio::ip::make_address("127.0.0.1"));
     require(whep.ready(), "whep certificate ready");
+
+    auto missing_ice_offer = webrtc_offer_sdp;
+    const std::string video_ice_ufrag = "a=ice-ufrag:remotevideo\r\n";
+    const auto video_ice_offset = missing_ice_offer.find(video_ice_ufrag);
+    require(video_ice_offset != std::string::npos, "whep invalid offer ice attribute");
+    missing_ice_offer.erase(video_ice_offset, video_ice_ufrag.size());
+    require(
+        whep.create("live/test", missing_ice_offer).error == whep_create_error::invalid_offer,
+        "whep semantic invalid offer");
 
     const auto first = whep.create("live/test", webrtc_offer_sdp);
     const auto second = whep.create("live/test", webrtc_offer_sdp);
@@ -794,7 +848,10 @@ void test_whep_multi_session_isolation()
         stream,
         boost::asio::ip::make_address("127.0.0.1"),
         certificate);
-    require(first->start(*offer) && second->start(*offer), "multi sessions start");
+    require(
+        first->start(*offer) == whep_session_start_error::none &&
+            second->start(*offer) == whep_session_start_error::none,
+        "multi sessions start");
     require(first->id() != second->id(), "multi unique session ids");
     require(first->local_port() != second->local_port(), "multi unique udp ports");
 
@@ -882,7 +939,7 @@ void test_whep_establishment_timeout()
             .establishment = std::chrono::milliseconds(20),
             .ice_activity = std::chrono::seconds(1),
         });
-    require(session->start(*offer), "establishment timeout session start");
+    require(session->start(*offer) == whep_session_start_error::none, "establishment timeout session start");
     require(session->local_port() != 0, "establishment timeout socket open");
 
     io.run_for(std::chrono::milliseconds(80));
@@ -919,7 +976,7 @@ void test_whep_ice_activity_timeout()
             .establishment = std::chrono::seconds(1),
             .ice_activity = std::chrono::milliseconds(80),
         });
-    require(session->start(*offer), "ice activity timeout session start");
+    require(session->start(*offer) == whep_session_start_error::none, "ice activity timeout session start");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
@@ -984,7 +1041,7 @@ void test_whep_ice_lite()
         stream,
         boost::asio::ip::make_address("127.0.0.1"),
         certificate);
-    require(session->start(*offer), "ice session start");
+    require(session->start(*offer) == whep_session_start_error::none, "ice session start");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
@@ -1098,7 +1155,7 @@ void test_whep_dtls()
         stream,
         boost::asio::ip::make_address("127.0.0.1"),
         server_certificate);
-    require(session->start(*offer), "dtls session start");
+    require(session->start(*offer) == whep_session_start_error::none, "dtls session start");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
@@ -1253,6 +1310,8 @@ int main()
     std::cout << "[pass] webrtc_sdp_answer\n";
     test_webrtc_opus_mono_default();
     std::cout << "[pass] webrtc_opus_mono_default\n";
+    test_whep_session_start_errors();
+    std::cout << "[pass] whep_session_start_errors\n";
     test_whep_session_lifecycle();
     std::cout << "[pass] whep_session_lifecycle\n";
     test_whep_multi_session_isolation();
@@ -1267,6 +1326,6 @@ int main()
     std::cout << "[pass] rtcp_receiver\n";
     test_whep_dtls();
     std::cout << "[pass] whep_dtls\n";
-    std::cout << "all tests passed: 9/9\n";
+    std::cout << "all tests passed: 10/10\n";
     return 0;
 }
