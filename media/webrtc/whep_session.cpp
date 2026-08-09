@@ -196,7 +196,6 @@ bool whep_session::start(webrtc_offer offer)
 
     spdlog::debug("webrtc session {} remote fingerprint {}", id_, media->fingerprint);
 
-    offer_ = std::move(offer);
     answer_sdp_ = answer->sdp;
     video_payload_type_ = answer->video_payload_type;
     audio_payload_type_ = answer->audio_payload_type;
