@@ -96,9 +96,9 @@ int rtmp_session::play_callback(void* param, const char* app, const char* stream
     return static_cast<rtmp_session*>(param)->on_play(app != nullptr ? app : "", stream != nullptr ? stream : "");
 }
 
-int rtmp_session::pause_callback(void*, int, std::uint32_t) { return 0; }
+int rtmp_session::pause_callback(void*, int, std::uint32_t) { return -1; }
 
-int rtmp_session::seek_callback(void*, std::uint32_t) { return 0; }
+int rtmp_session::seek_callback(void*, std::uint32_t) { return -1; }
 
 int rtmp_session::publish_callback(void* param, const char* app, const char* stream, const char*)
 {
