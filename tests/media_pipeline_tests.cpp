@@ -19,6 +19,7 @@ extern "C"
 #include "flv-demuxer.h"
 #include "flv-header.h"
 #include "flv-proto.h"
+#include "mpeg-ts.h"
 #include "rtmp-chunk-header.h"
 #include "rtmp-client.h"
 #include "rtmp-msgtypeid.h"
@@ -58,11 +59,23 @@ const std::vector<std::uint8_t> h264_config{
     0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80,
 };
 
+const std::vector<std::uint8_t> h264_config_updated{
+    0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1f, 0xac, 0xd9, 0x40, 0x50, 0x05, 0xba, 0x6a, 0x02, 0x1a, 0x02, 0x80, 0x00,
+    0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x1e, 0x47, 0x8c, 0x18, 0xcb, 0x00, 0x00, 0x00, 0x01, 0x68, 0xef, 0xbc, 0xb0,
+};
+
 const std::vector<std::uint8_t> h265_config{
     0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03, 0x00,
     0x00, 0x03, 0x00, 0x78, 0x9d, 0xc0, 0x90, 0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80,
     0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x78, 0xa0, 0x03, 0xc0, 0x80, 0x32, 0x16, 0x59, 0xde, 0x49, 0x1b, 0x6b, 0x80, 0x40,
     0x00, 0x00, 0xfa, 0x00, 0x00, 0x17, 0x70, 0x02, 0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xc1, 0x73, 0xd1, 0x89,
+};
+
+const std::vector<std::uint8_t> h265_config_updated{
+    0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0xb0, 0x00, 0x00,
+    0x03, 0x00, 0x00, 0x03, 0x00, 0x5d, 0x15, 0xc0, 0x90, 0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00,
+    0x00, 0x03, 0x00, 0xb0, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x5d, 0xa0, 0x05, 0xa2, 0x00, 0x50, 0x16, 0x20,
+    0x57, 0xb9, 0x16, 0x54, 0x40, 0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xc0, 0x2c, 0xbc, 0x14, 0xc9,
 };
 
 const std::vector<std::uint8_t> aac_asc{0x12, 0x10};
@@ -87,6 +100,74 @@ void require(bool condition, std::string_view message)
     {
         fail(message);
     }
+}
+
+struct demuxed_packet
+{
+    int codec{};
+    std::int64_t pts{};
+    std::int64_t dts{};
+    int flags{};
+    std::vector<std::uint8_t> payload;
+};
+
+struct flv_demux_capture
+{
+    std::vector<demuxed_packet> packets;
+};
+
+int capture_flv_packet(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
+{
+    const auto* begin = static_cast<const std::uint8_t*>(data);
+    static_cast<flv_demux_capture*>(param)->packets.push_back(demuxed_packet{
+        .codec = codec,
+        .pts = pts,
+        .dts = dts,
+        .flags = flags,
+        .payload = std::vector<std::uint8_t>(begin, begin + bytes),
+    });
+    return 0;
+}
+
+struct ts_demux_capture
+{
+    std::vector<int> stream_codecs;
+    std::vector<demuxed_packet> packets;
+};
+
+int capture_ts_packet(void* param, int, int, int codec, int flags, std::int64_t pts, std::int64_t dts, const void* data, std::size_t bytes)
+{
+    const auto* begin = static_cast<const std::uint8_t*>(data);
+    static_cast<ts_demux_capture*>(param)->packets.push_back(demuxed_packet{
+        .codec = codec,
+        .pts = pts,
+        .dts = dts,
+        .flags = flags,
+        .payload = std::vector<std::uint8_t>(begin, begin + bytes),
+    });
+    return 0;
+}
+
+void capture_ts_stream(void* param, int, int codec, const void*, int, int) { static_cast<ts_demux_capture*>(param)->stream_codecs.push_back(codec); }
+
+ts_demux_capture demux_ts_segment(std::span<const std::uint8_t> segment)
+{
+    require(!segment.empty() && segment.size() % 188U == 0U, "mpeg-ts packet alignment");
+    ts_demux_capture capture;
+    auto* demuxer = ts_demuxer_create(&capture_ts_packet, &capture);
+    require(demuxer != nullptr, "mpeg-ts demuxer create");
+    ts_demuxer_notify_t notify{.onstream = &capture_ts_stream};
+    ts_demuxer_set_notify(demuxer, &notify, &capture);
+    for (std::size_t offset = 0; offset < segment.size(); offset += 188U)
+    {
+        require(ts_demuxer_input(demuxer, segment.data() + offset, 188U) == 0, "mpeg-ts demuxer input");
+    }
+    require(ts_demuxer_flush(demuxer) == 0, "mpeg-ts demuxer flush");
+    require(ts_demuxer_destroy(demuxer) == 0, "mpeg-ts demuxer destroy");
+    std::ranges::sort(capture.stream_codecs);
+    const auto unique_end = std::ranges::unique(capture.stream_codecs).begin();
+    capture.stream_codecs.erase(unique_end, capture.stream_codecs.end());
+    return capture;
 }
 
 int validate_flv_aac_config(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t, std::uint32_t, int)
@@ -220,7 +301,6 @@ media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame)
             0x9a,
             0x20,
             0x11,
-            0x00,
         };
         bytes.insert(bytes.end(), idr.begin(), idr.end());
     }
@@ -1092,14 +1172,19 @@ void test_rtmp_aac_asc_adts_contract()
 
 void test_flv_config_cache_lifecycle()
 {
+    flv_demux_capture capture;
+    const auto demuxer =
+        std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+    require(demuxer != nullptr, "flv config demuxer create");
     std::size_t video_sequence_headers = 0;
     std::size_t audio_sequence_headers = 0;
     std::optional<std::int32_t> video_composition_time;
     std::optional<std::uint32_t> video_timestamp;
     flv_output_muxer output(
-        [&video_sequence_headers, &audio_sequence_headers, &video_composition_time, &video_timestamp](
+        [&capture, &demuxer, &video_sequence_headers, &audio_sequence_headers, &video_composition_time, &video_timestamp](
             int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
+            require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv config demuxer input");
             if (data.size() < 2U)
             {
                 return;
@@ -1162,24 +1247,50 @@ void test_flv_config_cache_lifecycle()
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(updated_adts)),
     });
     require(audio_sequence_headers == 2U, "flv config generation resets cached audio header");
+
+    auto updated_video = video;
+    updated_video.codec_config = h264_config_updated;
+    updated_video.config_version = 2;
+    output.on_track(updated_video);
+    const auto avcc_count = std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AVCC; });
+    require(avcc_count == 3, "flv h264 config generations");
+    const auto first_avcc = std::ranges::find_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AVCC; });
+    const auto last_avcc = std::ranges::find_if(
+        capture.packets.rbegin(), capture.packets.rend(), [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AVCC; });
+    require(first_avcc != capture.packets.end() && h264_avcc_to_annex_b(first_avcc->payload) == h264_config, "flv initial h264 config content");
+    require(last_avcc != capture.packets.rend() && h264_avcc_to_annex_b(last_avcc->payload) == h264_config_updated,
+            "flv updated h264 config content");
 }
 
 void test_h265_output_paths()
 {
-    std::size_t hevc_sequence_headers = 0;
-    flv_output_muxer flv(
-        [&hevc_sequence_headers](int type, std::span<const std::uint8_t> data, std::uint32_t)
-        {
-            if (type == FLV_TYPE_VIDEO && data.size() >= 2U && (data[0] & 0x0fU) == FLV_VIDEO_H265 && data[1] == 0U)
-            {
-                ++hevc_sequence_headers;
-            }
-        });
+    flv_demux_capture capture;
+    const auto demuxer =
+        std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+    require(demuxer != nullptr, "flv h265 demuxer create");
+    flv_output_muxer flv([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+                         { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv h265 demuxer input"); });
     auto hevc_track = make_h265_track();
     hevc_track.config_version = 1;
     flv.on_track(hevc_track);
-    require(hevc_sequence_headers == 1U, "flv h265 sequence header");
-    flv.on_frame(make_h265_frame(0, true));
+    const auto hevc_frame = make_h265_frame(40'000'000, true);
+    flv.on_frame(hevc_frame);
+    auto updated_hevc = hevc_track;
+    updated_hevc.codec_config = h265_config_updated;
+    updated_hevc.config_version = 2;
+    flv.on_track(updated_hevc);
+
+    require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_HVCC; }) == 2,
+            "flv h265 config generations");
+    const auto first_hvcc = std::ranges::find_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_HVCC; });
+    const auto last_hvcc = std::ranges::find_if(
+        capture.packets.rbegin(), capture.packets.rend(), [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_HVCC; });
+    require(first_hvcc != capture.packets.end() && h265_hvcc_to_annex_b(first_hvcc->payload) == h265_config, "flv initial h265 config content");
+    require(last_hvcc != capture.packets.rend() && h265_hvcc_to_annex_b(last_hvcc->payload) == h265_config_updated,
+            "flv updated h265 config content");
+    const auto media = std::ranges::find_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_H265; });
+    require(media != capture.packets.end() && media->payload == *hevc_frame.payload, "flv h265 media payload");
+    require(media->pts == 40 && media->dts == 40 && media->flags == 1, "flv h265 media timing and key frame");
 
     hls_output hls(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
     hls.on_track(make_h265_track());
@@ -1188,7 +1299,14 @@ void test_h265_output_paths()
     hls.on_end();
     require(hls.segment_count() >= 1U, "hls h265 segment");
     const auto segment = hls.segment(0);
-    require(segment.has_value() && !segment->empty() && segment->size() % 188U == 0U, "hls h265 ts");
+    require(segment.has_value(), "hls h265 ts");
+    const auto ts_capture = demux_ts_segment(*segment);
+    require(ts_capture.stream_codecs == std::vector<int>{PSI_STREAM_H265}, "hls h265 pmt stream type");
+    require(ts_capture.packets.size() == 1U, "hls h265 packet count");
+    require(ts_capture.packets.front().codec == PSI_STREAM_H265 && (ts_capture.packets.front().flags & MPEG_FLAG_IDR_FRAME) != 0,
+            "hls h265 packet codec and key frame");
+    require(ts_capture.packets.front().pts == 0 && ts_capture.packets.front().dts == 0, "hls h265 packet timestamp");
+    require(ts_capture.packets.front().payload == *make_h265_frame(0, true).payload, "hls h265 packet payload");
 
     std::vector<std::vector<std::uint8_t>> packets;
     webrtc_output webrtc(
@@ -1398,8 +1516,29 @@ void test_hls_output()
     require(output.segment_count() >= 2, "hls segment count");
     const auto first = output.segment(0);
     require(first.has_value() && !first->empty(), "first hls segment");
-    require(first->size() % 188U == 0, "mpeg-ts packet alignment");
-    require((*first)[0] == 0x47, "mpeg-ts sync byte");
+    const auto first_capture = demux_ts_segment(*first);
+    require(first_capture.stream_codecs == std::vector<int>{PSI_STREAM_AAC, PSI_STREAM_H264}, "hls audio video pmt stream types");
+    require(std::ranges::count_if(first_capture.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_H264; }) == 2,
+            "hls h264 packet count");
+    require(std::ranges::count_if(first_capture.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC; }) == 2,
+            "hls aac packet count");
+    const auto video_key =
+        std::ranges::find_if(first_capture.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_H264 && packet.pts == 0; });
+    const auto video_delta = std::ranges::find_if(
+        first_capture.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_H264 && packet.pts == 45'000; });
+    const auto audio_first = std::ranges::find_if(first_capture.packets,
+                                                  [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC && packet.pts == 1'800; });
+    const auto audio_second = std::ranges::find_if(
+        first_capture.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC && packet.pts == 46'800; });
+    require(video_key != first_capture.packets.end() && (video_key->flags & MPEG_FLAG_IDR_FRAME) != 0 &&
+                video_key->payload == *make_video_frame(0, true).payload,
+            "hls h264 key frame payload");
+    require(video_delta != first_capture.packets.end() && video_delta->payload == *make_video_frame(500'000'000, false).payload,
+            "hls h264 delta frame payload");
+    require(audio_first != first_capture.packets.end() && audio_first->payload == *make_audio_frame(20'000'000).payload,
+            "hls first aac frame payload");
+    require(audio_second != first_capture.packets.end() && audio_second->payload == *make_audio_frame(520'000'000).payload,
+            "hls second aac frame payload");
 
     const auto playlist = output.playlist(".");
     require(playlist.find("#EXTM3U") != std::string::npos, "hls playlist header");
@@ -1427,8 +1566,16 @@ void test_hls_output()
     audio_only.on_end();
     require(audio_only.segment_count() == 2U, "hls audio final segment");
     const auto audio_segment = audio_only.segment(0);
-    require(audio_segment.has_value() && !audio_segment->empty(), "hls audio segment data");
-    require(audio_segment->size() % 188U == 0U, "hls audio mpeg-ts alignment");
+    require(audio_segment.has_value(), "hls audio segment data");
+    const auto audio_capture = demux_ts_segment(*audio_segment);
+    require(audio_capture.stream_codecs == std::vector<int>{PSI_STREAM_AAC}, "hls audio pmt stream type");
+    require(audio_capture.packets.size() == 2U, "hls audio packet count");
+    require(audio_capture.packets[0].codec == PSI_STREAM_AAC && audio_capture.packets[0].pts == 0 &&
+                audio_capture.packets[0].payload == *make_audio_frame(0).payload,
+            "hls first audio-only packet");
+    require(audio_capture.packets[1].codec == PSI_STREAM_AAC && audio_capture.packets[1].pts == 45'000 &&
+                audio_capture.packets[1].payload == *make_audio_frame(500'000'000).payload,
+            "hls second audio-only packet");
 
     hls_output signed_timeline(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
     signed_timeline.on_track(make_audio_track());
@@ -1438,13 +1585,20 @@ void test_hls_output()
     signed_timeline.on_end();
 
     std::size_t flv_end_count = 0;
-    const std::vector<media_track> flv_tracks{make_video_track()};
-    http_flv_output flv_output(flv_tracks, [](std::span<const std::uint8_t>) {}, [&flv_end_count]() { ++flv_end_count; });
-    flv_output.on_track(make_video_track());
-    flv_output.on_track(make_video_track(2));
+    std::size_t flv_bytes = 0;
+    media_stream flv_stream("live/http-flv");
+    require(flv_stream.update_track(make_video_track()), "http flv initial track config");
+    const auto flv_output = std::make_shared<http_flv_output>(
+        flv_stream.tracks(), [&flv_bytes](std::span<const std::uint8_t> data) { flv_bytes += data.size(); }, [&flv_end_count]() { ++flv_end_count; });
+    require(flv_stream.add_sink(flv_output), "http flv add sink");
+    const auto first_config_bytes = flv_bytes;
+    auto updated_flv_video = make_video_track();
+    updated_flv_video.codec_config = h264_config_updated;
+    require(flv_stream.update_track(std::move(updated_flv_video)), "http flv update track config");
+    require(flv_bytes > first_config_bytes, "http flv writes updated track config");
     require(flv_end_count == 0U, "http flv existing track config update");
-    flv_output.on_track(make_audio_track());
-    flv_output.on_track(make_audio_track());
+    require(flv_stream.update_track(make_audio_track()), "http flv topology change");
+    flv_output->on_track(make_audio_track());
     require(flv_end_count == 1U, "http flv topology change closes once");
 }
 
