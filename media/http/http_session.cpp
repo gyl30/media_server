@@ -189,6 +189,11 @@ void http_session::handle_flv(const urls::url_view& target)
         send_text_response(http::status::not_found, "text/plain", "stream not found\n");
         return;
     }
+    if (media_stream->tracks().empty())
+    {
+        send_text_response(http::status::service_unavailable, "text/plain", "stream not ready\n");
+        return;
+    }
 
     auto response = std::make_shared<http::response<http::empty_body>>(http::status::ok, request_.version());
     response->set(http::field::server, "media_server");

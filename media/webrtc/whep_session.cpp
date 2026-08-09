@@ -132,6 +132,12 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
         spdlog::debug("webrtc whep start rejected ended stream");
         return whep_session_start_error::stream_not_ready;
     }
+    const auto source_tracks = stream_->tracks();
+    if (source_tracks.empty())
+    {
+        spdlog::debug("webrtc whep start rejected stream without tracks");
+        return whep_session_start_error::stream_not_ready;
+    }
 
     const auto* media = transport_media(offer);
     if (media == nullptr || media->ice_ufrag.empty() || media->ice_pwd.empty() ||
@@ -180,7 +186,6 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     }
 
     local_port_ = endpoint.port();
-    const auto source_tracks = stream_->tracks();
     const auto answer = make_webrtc_answer(
         offer,
         source_tracks,
