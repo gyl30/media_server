@@ -2,6 +2,7 @@
 #define MEDIA_NET_TCP_LISTENER_H
 
 #include <boost/asio.hpp>
+#include <boost/system/error_code.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -19,13 +20,14 @@ class tcp_listener final
         std::uint16_t port,
         accept_handler handler);
 
-    void start();
+    [[nodiscard]] boost::system::error_code start();
     void close();
 
    private:
     void accept_next();
 
     boost::asio::ip::tcp::acceptor acceptor_;
+    std::uint16_t port_{};
     accept_handler handler_;
     bool started_{};
 };

@@ -7,6 +7,7 @@
 #include "media/webrtc/whep_service.h"
 
 #include <boost/asio/io_context.hpp>
+#include <boost/system/error_code.hpp>
 #include <cstdint>
 
 namespace media_server
@@ -21,7 +22,7 @@ class http_server final
         whep_service& whep,
         std::uint16_t port);
 
-    void start();
+    [[nodiscard]] boost::system::error_code start();
     void close();
 
    private:

@@ -10,27 +10,45 @@ tcp_listener::tcp_listener(
     boost::asio::io_context& io,
     std::uint16_t port,
     accept_handler handler)
-    : acceptor_(io), handler_(std::move(handler))
+    : acceptor_(io), port_(port), handler_(std::move(handler))
 {
-
-    boost::asio::ip::tcp::endpoint endpoint{
-        boost::asio::ip::tcp::v4(),
-        port,
-    };
-    acceptor_.open(endpoint.protocol());
-    acceptor_.set_option(boost::asio::socket_base::reuse_address(true));
-    acceptor_.bind(endpoint);
-    acceptor_.listen();
 }
 
-void tcp_listener::start()
+boost::system::error_code tcp_listener::start()
 {
     if (started_)
     {
-        return;
+        return {};
     }
+
+    const boost::asio::ip::tcp::endpoint endpoint{
+        boost::asio::ip::tcp::v4(),
+        port_,
+    };
+    boost::system::error_code error;
+    acceptor_.open(endpoint.protocol(), error);
+    if (!error)
+    {
+        acceptor_.set_option(boost::asio::socket_base::reuse_address(true), error);
+    }
+    if (!error)
+    {
+        acceptor_.bind(endpoint, error);
+    }
+    if (!error)
+    {
+        acceptor_.listen(boost::asio::socket_base::max_listen_connections, error);
+    }
+    if (error)
+    {
+        boost::system::error_code close_error;
+        acceptor_.close(close_error);
+        return error;
+    }
+
     started_ = true;
     accept_next();
+    return {};
 }
 
 void tcp_listener::close()
