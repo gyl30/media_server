@@ -255,19 +255,11 @@ void whep_session::close()
     }
     output_.reset();
     stream_observer_.reset();
-    if (srtp_)
-    {
-        srtp_->close();
-        srtp_.reset();
-    }
+    srtp_.reset();
     dtls_timer_.cancel();
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
-    if (dtls_)
-    {
-        dtls_->close();
-        dtls_.reset();
-    }
+    dtls_.reset();
     answer_sdp_.clear();
     video_payload_type_.reset();
     audio_payload_type_.reset();
@@ -313,7 +305,7 @@ bool whep_session::dtls_connected() const noexcept
 
 bool whep_session::srtp_started() const noexcept
 {
-    return srtp_ != nullptr && srtp_->started();
+    return srtp_ != nullptr;
 }
 
 std::optional<boost::asio::ip::udp::endpoint> whep_session::remote_endpoint() const
@@ -509,7 +501,7 @@ void whep_session::handle_dtls(std::size_t size)
 
 void whep_session::handle_srtp(std::size_t size)
 {
-    if (!srtp_ || !srtp_->started())
+    if (!srtp_)
     {
         return;
     }
@@ -601,7 +593,6 @@ bool whep_session::start_media()
     if (!stream_->add_sink(output_))
     {
         output_.reset();
-        srtp_->close();
         srtp_.reset();
         return false;
     }
@@ -619,7 +610,7 @@ void whep_session::send_dtls(std::span<const std::uint8_t> packet)
 
 void whep_session::send_rtp(std::span<const std::uint8_t> packet)
 {
-    if (!srtp_ || !srtp_->started())
+    if (!srtp_)
     {
         return;
     }
@@ -637,7 +628,7 @@ void whep_session::send_rtp(std::span<const std::uint8_t> packet)
 
 void whep_session::send_rtcp(std::span<const std::uint8_t> packet)
 {
-    if (!srtp_ || !srtp_->started())
+    if (!srtp_)
     {
         return;
     }

@@ -126,7 +126,7 @@ dtls_transport::dtls_transport(
 
 bool dtls_transport::start()
 {
-    if (started_ || !certificate_ || !send_ || !parse_sha256_fingerprint(remote_fingerprint_))
+    if (ssl_ || !certificate_ || !send_ || !parse_sha256_fingerprint(remote_fingerprint_))
     {
         spdlog::debug("webrtc dtls start rejected invalid state or fingerprint");
         return false;
@@ -185,15 +185,12 @@ bool dtls_transport::start()
     SSL_set0_wbio(ssl_.get(), write_bio_);
     SSL_set_accept_state(ssl_.get());
 
-    started_ = true;
     spdlog::debug("webrtc dtls transport started");
     return true;
 }
 
 void dtls_transport::close()
 {
-    started_ = false;
-    connected_ = false;
     srtp_keying_material_.reset();
     ssl_.reset();
     context_.reset();
@@ -203,7 +200,7 @@ void dtls_transport::close()
 
 bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
 {
-    if (!started_ || !ssl_ || read_bio_ == nullptr || packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
+    if (!ssl_ || read_bio_ == nullptr || packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
     {
         return false;
     }
@@ -232,7 +229,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
         spdlog::trace("webrtc dtls handshake pending ssl_error {}", error);
     }
 
-    if (!connected_ && SSL_is_init_finished(ssl_.get()) != 0)
+    if (!connected() && SSL_is_init_finished(ssl_.get()) != 0)
     {
         return finish_handshake();
     }
@@ -241,7 +238,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
 
 bool dtls_transport::handle_timeout()
 {
-    if (!started_ || !ssl_ || connected_)
+    if (!ssl_ || connected())
     {
         return true;
     }
@@ -255,12 +252,12 @@ bool dtls_transport::handle_timeout()
 
 bool dtls_transport::connected() const noexcept
 {
-    return connected_;
+    return srtp_keying_material_.has_value();
 }
 
 std::optional<std::chrono::milliseconds> dtls_transport::timeout() const
 {
-    if (!started_ || !ssl_ || connected_)
+    if (!ssl_ || connected())
     {
         return std::nullopt;
     }
@@ -305,7 +302,6 @@ bool dtls_transport::finish_handshake()
 
     spdlog::debug("webrtc dtls handshake complete srtp profile {}", keying_material->profile);
     srtp_keying_material_ = std::move(keying_material);
-    connected_ = true;
     return true;
 }
 
@@ -335,7 +331,7 @@ bool dtls_transport::verify_peer_fingerprint() const
 
 std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_material() const
 {
-    if (!ssl_ || (!connected_ && SSL_is_init_finished(ssl_.get()) == 0))
+    if (!ssl_ || SSL_is_init_finished(ssl_.get()) == 0)
     {
         return std::nullopt;
     }
