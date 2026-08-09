@@ -274,7 +274,10 @@ bool bundle_contains(const webrtc_offer& offer, std::string_view mid)
     return std::find(offer.bundle_mids.begin(), offer.bundle_mids.end(), mid) != offer.bundle_mids.end();
 }
 
-bool bundle_media_supported(const webrtc_media_offer& media) { return lower_copy(media.protocol) == "udp/tls/rtp/savpf" && media.rtcp_mux; }
+bool bundle_media_supported(const webrtc_media_offer& media)
+{
+    return (media.port != 0 || media.bundle_only) && lower_copy(media.protocol) == "udp/tls/rtp/savpf" && media.rtcp_mux;
+}
 
 void append_transport(std::ostringstream& answer, const webrtc_answer_config& config)
 {
@@ -334,9 +337,15 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
         {
             return std::nullopt;
         }
+        int port = 0;
+        if (sdp_media_port(sdp.get(), index, &port, 1) != 1)
+        {
+            return std::nullopt;
+        }
 
         webrtc_media_offer media{
             .type = type,
+            .port = port,
             .protocol = protocol,
             .mid = mid,
             .direction = direction(sdp_media_mode(sdp.get(), index)),
@@ -345,6 +354,7 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
             .ice_pwd = attribute(sdp.get(), index, "ice-pwd", session_ice_pwd),
             .fingerprint = attribute(sdp.get(), index, "fingerprint", session_fingerprint),
             .rtcp_mux = sdp_media_attribute_find(sdp.get(), index, "rtcp-mux") != nullptr,
+            .bundle_only = sdp_media_attribute_find(sdp.get(), index, "bundle-only") != nullptr,
             .payload_types = {},
             .codecs = {},
         };
@@ -386,7 +396,7 @@ const webrtc_media_offer* webrtc_bundle_transport(const webrtc_offer& offer)
 
     const auto iterator = std::find_if(
         offer.media.begin(), offer.media.end(), [&offer](const webrtc_media_offer& media) { return media.mid == offer.bundle_mids.front(); });
-    if (iterator == offer.media.end() || !bundle_media_supported(*iterator) || lower_copy(iterator->setup) != "actpass")
+    if (iterator == offer.media.end() || iterator->port == 0 || !bundle_media_supported(*iterator) || lower_copy(iterator->setup) != "actpass")
     {
         return nullptr;
     }

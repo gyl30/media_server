@@ -26,6 +26,7 @@ struct webrtc_codec_offer
 struct webrtc_media_offer
 {
     std::string type;
+    int port{};
     std::string protocol;
     std::string mid;
     std::string direction;
@@ -34,6 +35,7 @@ struct webrtc_media_offer
     std::string ice_pwd;
     std::string fingerprint;
     bool rtcp_mux{};
+    bool bundle_only{};
     std::vector<int> payload_types;
     std::vector<webrtc_codec_offer> codecs;
 };
