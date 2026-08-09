@@ -61,9 +61,9 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     >"$work_dir/publisher.log" 2>&1 &
 publish_pid=$!
 
-wait_log "$work_dir/server.log" '[rtmp] publish live/test'
-wait_log "$work_dir/server.log" '[rtmp] input track video h264'
-wait_log "$work_dir/server.log" '[rtmp] input track audio aac'
+wait_log "$work_dir/server.log" 'rtmp publish live/test'
+wait_log "$work_dir/server.log" 'rtmp input track video h264'
+wait_log "$work_dir/server.log" 'rtmp input track audio aac'
 sleep 1
 
 probe_streams "$work_dir/rtsp_from_rtmp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18554/live/test'
@@ -85,9 +85,9 @@ probe_streams "$work_dir/hls_from_rtmp.txt" "$work_dir/hls_segment.ts"
     >"$work_dir/pull_server.log" 2>&1 &
 pull_pid=$!
 
-wait_log "$work_dir/pull_server.log" '[rtsp_input] connected'
-wait_log "$work_dir/pull_server.log" '[rtsp_input] track video h264'
-wait_log "$work_dir/pull_server.log" '[rtsp_input] track audio aac'
+wait_log "$work_dir/pull_server.log" 'rtsp input connected stream relay/test'
+wait_log "$work_dir/pull_server.log" 'rtsp input track video h264'
+wait_log "$work_dir/pull_server.log" 'rtsp input track audio aac'
 sleep 1
 
 probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18555/relay/test'
