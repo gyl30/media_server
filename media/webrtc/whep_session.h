@@ -40,6 +40,14 @@ struct whep_session_timeouts
     std::chrono::milliseconds ice_activity{30'000};
 };
 
+enum class whep_session_start_error
+{
+    none,
+    invalid_offer,
+    stream_not_ready,
+    internal_error,
+};
+
 class whep_session final : public std::enable_shared_from_this<whep_session>
 {
    public:
@@ -53,7 +61,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
         closed_handler handler = {},
         whep_session_timeouts timeouts = {});
 
-    bool start(webrtc_offer offer);
+    [[nodiscard]] whep_session_start_error start(webrtc_offer offer);
     void close();
 
     [[nodiscard]] const std::string& id() const noexcept;

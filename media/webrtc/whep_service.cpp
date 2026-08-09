@@ -94,10 +94,16 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
                 sessions_.erase(iterator);
             }
         });
-    if (!session->start(std::move(*offer)))
+    switch (session->start(std::move(*offer)))
     {
-        spdlog::debug("whep session start failed stream {}", stream_name);
+    case whep_session_start_error::none:
+        break;
+    case whep_session_start_error::invalid_offer:
         return {.error = whep_create_error::invalid_offer, .session_id = {}, .answer_sdp = {}};
+    case whep_session_start_error::stream_not_ready:
+        return {.error = whep_create_error::stream_not_ready, .session_id = {}, .answer_sdp = {}};
+    case whep_session_start_error::internal_error:
+        return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
     }
 
     const auto& session_id = session->id();

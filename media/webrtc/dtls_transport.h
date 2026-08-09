@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace media_server
@@ -44,6 +45,7 @@ class dtls_transport final
     [[nodiscard]] bool connected() const noexcept;
     [[nodiscard]] std::optional<std::chrono::milliseconds> timeout() const;
     [[nodiscard]] const std::optional<dtls_srtp_keying_material>& srtp_keying_material() const noexcept;
+    [[nodiscard]] static bool valid_sha256_fingerprint(std::string_view fingerprint);
     [[nodiscard]] static bool is_dtls_packet(std::span<const std::uint8_t> packet) noexcept;
 
    private:
