@@ -321,6 +321,7 @@ void test_stream_registry_generation_lifecycle()
     require(registry.find("live/generation").get() == first.get(), "registry first generation remains");
 
     first->end();
+    require(!registry.find("live/generation"), "registry ended generation hidden");
     require(registry.add(second), "registry ended generation replace");
     require(registry.find("live/generation").get() == second.get(), "registry replacement generation visible");
     require(!registry.remove("live/generation", first.get()), "registry stale generation remove reject");
