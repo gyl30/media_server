@@ -116,6 +116,10 @@ void on_rtpmap(void* param, const char*, const char* value)
     }
 
     auto* media = static_cast<webrtc_media_offer*>(param);
+    if (std::find(media->payload_types.begin(), media->payload_types.end(), payload_type) == media->payload_types.end())
+    {
+        return;
+    }
     media->codecs.push_back(webrtc_codec_offer{
         .payload_type = payload_type,
         .encoding_name = encoding,
