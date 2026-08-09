@@ -754,6 +754,63 @@ void test_webrtc_h265_sdp_answer()
     require(answer->sdp.find("H264/90000") == std::string::npos, "webrtc h265 answer excludes h264");
 }
 
+void test_webrtc_single_media_per_kind()
+{
+    auto duplicate_sdp = webrtc_offer_sdp;
+    const std::string bundle = "a=group:BUNDLE 0 1\r\n";
+    const auto bundle_offset = duplicate_sdp.find(bundle);
+    require(bundle_offset != std::string::npos, "webrtc duplicate media bundle");
+    duplicate_sdp.replace(bundle_offset, bundle.size(), "a=group:BUNDLE 0 1 2 3\r\n");
+    duplicate_sdp +=
+        "m=video 9 UDP/TLS/RTP/SAVPF 103\r\n"
+        "c=IN IP4 0.0.0.0\r\n"
+        "a=mid:2\r\n"
+        "a=recvonly\r\n"
+        "a=rtcp-mux\r\n"
+        "a=rtpmap:103 H264/90000\r\n"
+        "a=fmtp:103 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n"
+        "m=audio 9 UDP/TLS/RTP/SAVPF 112\r\n"
+        "c=IN IP4 0.0.0.0\r\n"
+        "a=mid:3\r\n"
+        "a=recvonly\r\n"
+        "a=rtcp-mux\r\n"
+        "a=rtpmap:112 opus/48000/2\r\n";
+
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+    };
+    const auto offer = parse_webrtc_offer(duplicate_sdp);
+    require(offer.has_value(), "webrtc parse duplicate media offer");
+    const auto answer = make_webrtc_answer(*offer, {make_video_track(), make_audio_track()}, config);
+    require(answer.has_value(), "webrtc answer duplicate media offer");
+    require(answer->video_payload_type == 102, "webrtc accept one video media");
+    require(answer->audio_payload_type == 111, "webrtc accept one audio media");
+    require(answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF 103\r\n") != std::string::npos,
+            "webrtc reject duplicate video media");
+    require(answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 112\r\n") != std::string::npos,
+            "webrtc reject duplicate audio media");
+
+    auto h265_sdp = duplicate_sdp;
+    std::size_t offset = 0;
+    while ((offset = h265_sdp.find("H264/90000", offset)) != std::string::npos)
+    {
+        h265_sdp.replace(offset, 10U, "H265/90000");
+        offset += 10U;
+    }
+    const auto h265_offer = parse_webrtc_offer(h265_sdp);
+    require(h265_offer.has_value(), "webrtc parse duplicate h265 media offer");
+    const auto h265_answer = make_webrtc_answer(*h265_offer, {make_h265_track(), make_audio_track()}, config);
+    require(h265_answer.has_value(), "webrtc answer duplicate h265 media offer");
+    require(h265_answer->video_codec == codec_id::h265 && h265_answer->video_payload_type == 102,
+            "webrtc accept one h265 media");
+    require(h265_answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF 103\r\n") != std::string::npos,
+            "webrtc reject duplicate h265 media");
+}
+
 void test_webrtc_opus_mono_default()
 {
     auto mono_offer_sdp = webrtc_offer_sdp;
@@ -1456,6 +1513,8 @@ int main()
     std::cout << "[pass] webrtc_sdp_answer\n";
     test_webrtc_h265_sdp_answer();
     std::cout << "[pass] webrtc_h265_sdp_answer\n";
+    test_webrtc_single_media_per_kind();
+    std::cout << "[pass] webrtc_single_media_per_kind\n";
     test_webrtc_opus_mono_default();
     std::cout << "[pass] webrtc_opus_mono_default\n";
     test_webrtc_transport_contract();
