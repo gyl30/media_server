@@ -1,6 +1,7 @@
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/dtls_certificate.h"
+#include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/whep_service.h"
 #include "media/webrtc/whep_session.h"
@@ -510,6 +511,21 @@ media_track make_audio_track()
     };
 }
 
+media_frame make_video_key_frame()
+{
+    return media_frame{
+        .track = video_track_id,
+        .dts_ns = 0,
+        .pts_ns = 0,
+        .duration_ns = 40'000'000,
+        .key_frame = true,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::vector<std::uint8_t>{
+            0x00, 0x00, 0x00, 0x01,
+            0x65, 0x88, 0x84, 0x21, 0xa0, 0x10, 0x08, 0x04,
+        }),
+    };
+}
+
 void test_webrtc_sdp_answer()
 {
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -526,15 +542,17 @@ void test_webrtc_sdp_answer()
             .fingerprint = "AA:BB:CC:DD",
         });
     require(answer.has_value(), "make webrtc answer");
-    require(answer->find("a=ice-lite\r\n") != std::string::npos, "webrtc ice lite");
-    require(answer->find("a=end-of-candidates\r\n") != std::string::npos, "webrtc complete candidates");
-    require(answer->find("trickle") == std::string::npos, "webrtc no trickle");
-    require(answer->find("m=video 40000 UDP/TLS/RTP/SAVPF 102\r\n") != std::string::npos, "webrtc h264 payload selection");
-    require(answer->find("a=rtpmap:102 H264/90000\r\n") != std::string::npos, "webrtc h264 rtpmap");
-    require(answer->find("profile-level-id=42c01f") != std::string::npos, "webrtc source h264 profile");
-    require(answer->find("m=audio 40000 UDP/TLS/RTP/SAVPF 111\r\n") != std::string::npos, "webrtc opus payload selection");
-    require(answer->find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos, "webrtc opus rtpmap");
-    require(answer->find("a=sendonly\r\n") != std::string::npos, "webrtc sendonly");
+    require(answer->video_payload_type == 102, "webrtc negotiated h264 payload");
+    require(answer->audio_payload_type == 111, "webrtc negotiated opus payload");
+    require(answer->sdp.find("a=ice-lite\r\n") != std::string::npos, "webrtc ice lite");
+    require(answer->sdp.find("a=end-of-candidates\r\n") != std::string::npos, "webrtc complete candidates");
+    require(answer->sdp.find("trickle") == std::string::npos, "webrtc no trickle");
+    require(answer->sdp.find("m=video 40000 UDP/TLS/RTP/SAVPF 102\r\n") != std::string::npos, "webrtc h264 payload selection");
+    require(answer->sdp.find("a=rtpmap:102 H264/90000\r\n") != std::string::npos, "webrtc h264 rtpmap");
+    require(answer->sdp.find("profile-level-id=42c01f") != std::string::npos, "webrtc source h264 profile");
+    require(answer->sdp.find("m=audio 40000 UDP/TLS/RTP/SAVPF 111\r\n") != std::string::npos, "webrtc opus payload selection");
+    require(answer->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos, "webrtc opus rtpmap");
+    require(answer->sdp.find("a=sendonly\r\n") != std::string::npos, "webrtc sendonly");
 }
 
 void test_whep_session_lifecycle()
@@ -680,6 +698,47 @@ void test_whep_dtls()
     server_raw.insert(server_raw.end(), server_material->client_write_salt.begin(), server_material->client_write_salt.end());
     server_raw.insert(server_raw.end(), server_material->server_write_salt.begin(), server_material->server_write_salt.end());
     require(server_raw == client_material, "dtls srtp material match");
+    require(session->srtp_started(), "srtp server started");
+
+    dtls_srtp_keying_material peer_material{
+        .profile = server_material->profile,
+        .client_write_key = server_material->server_write_key,
+        .client_write_salt = server_material->server_write_salt,
+        .server_write_key = server_material->client_write_key,
+        .server_write_salt = server_material->client_write_salt,
+    };
+    srtp_transport peer_srtp;
+    require(peer_srtp.start(peer_material), "srtp peer start");
+    require(stream->publish(make_video_key_frame()), "srtp publish video");
+
+    std::array<std::uint8_t, 4096> rtp_buffer{};
+    boost::asio::ip::udp::endpoint rtp_sender;
+    std::optional<srtp_packet> clear_rtp;
+    const auto rtp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!clear_rtp && std::chrono::steady_clock::now() < rtp_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(10));
+        io.restart();
+
+        boost::system::error_code receive_error;
+        const auto size = client_socket.receive_from(boost::asio::buffer(rtp_buffer), rtp_sender, 0, receive_error);
+        if (receive_error == boost::asio::error::would_block || receive_error == boost::asio::error::try_again)
+        {
+            continue;
+        }
+        require(!receive_error && rtp_sender == server_endpoint, "srtp receive packet");
+        const auto packet = std::span<const std::uint8_t>(rtp_buffer.data(), size);
+        if (!srtp_transport::is_rtp_or_rtcp(packet))
+        {
+            continue;
+        }
+        clear_rtp = peer_srtp.unprotect(packet);
+    }
+
+    require(clear_rtp.has_value() && !clear_rtp->rtcp, "srtp decrypt video rtp");
+    require(clear_rtp->bytes.size() >= 12U, "srtp clear rtp header");
+    require((clear_rtp->bytes[0] >> 6U) == 2U, "srtp clear rtp version");
+    require((clear_rtp->bytes[1] & 0x7fU) == 102U, "srtp negotiated h264 payload");
 
     session->close();
     boost::system::error_code error;

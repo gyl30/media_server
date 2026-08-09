@@ -328,7 +328,7 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
     return result;
 }
 
-std::optional<std::string> make_webrtc_answer(
+std::optional<webrtc_answer> make_webrtc_answer(
     const webrtc_offer& offer,
     const std::vector<media_track>& tracks,
     const webrtc_answer_config& config)
@@ -360,6 +360,8 @@ std::optional<std::string> make_webrtc_answer(
     }
 
     bool accepted_any = false;
+    std::optional<int> video_payload_type;
+    std::optional<int> audio_payload_type;
     for (const auto& media : offer.media)
     {
         const auto media_direction = lower_copy(media.direction);
@@ -396,6 +398,14 @@ std::optional<std::string> make_webrtc_answer(
         }
 
         accepted_any = true;
+        if (lower_copy(media.type) == "video")
+        {
+            video_payload_type = codec->payload_type;
+        }
+        else
+        {
+            audio_payload_type = codec->payload_type;
+        }
         answer << "m=" << media.type << ' ' << config.port << ' ' << media.protocol << ' ' << codec->payload_type << "\r\n";
         answer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";
         answer << "a=mid:" << media.mid << "\r\n";
@@ -423,7 +433,7 @@ std::optional<std::string> make_webrtc_answer(
     {
         return std::nullopt;
     }
-    return answer.str();
+    return webrtc_answer{.sdp = answer.str(), .video_payload_type = video_payload_type, .audio_payload_type = audio_payload_type};
 }
 
 }    // namespace media_server

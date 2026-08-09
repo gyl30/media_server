@@ -222,15 +222,18 @@ void test_hls_output()
 void test_webrtc_rtp_packetizer()
 {
     std::vector<std::vector<std::uint8_t>> packets;
-    webrtc_output output([&packets](std::span<const std::uint8_t> packet) {
+    webrtc_output output(webrtc_output_config{.h264_payload_type = 102}, [&packets](std::span<const std::uint8_t> packet) {
         packets.emplace_back(packet.begin(), packet.end());
     });
     output.on_track(make_video_track());
-    output.on_frame(make_video_frame(0, true));
+    output.on_frame(make_video_frame(0, false));
+    require(packets.empty(), "webrtc waits natural key frame");
+    output.on_frame(make_video_frame(40'000'000, true));
 
     require(output.packet_count() > 0, "webrtc h264 rtp packet count");
     require(!packets.empty() && packets.front().size() >= 12, "rtp header size");
     require((packets.front()[0] >> 6U) == 2U, "rtp version 2");
+    require((packets.front()[1] & 0x7fU) == 102U, "rtp negotiated payload type");
 }
 
 }    // namespace

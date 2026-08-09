@@ -149,7 +149,9 @@ bool whep_session::start(webrtc_offer offer)
     }
 
     offer_ = std::move(offer);
-    answer_sdp_ = *answer;
+    answer_sdp_ = answer->sdp;
+    video_payload_type_ = answer->video_payload_type;
+    audio_payload_type_ = answer->audio_payload_type;
     started_ = true;
     receive();
     return true;
@@ -161,14 +163,27 @@ void whep_session::close()
     ice_connected_ = false;
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
-    boost::system::error_code timer_error;
-    dtls_timer_.cancel(timer_error);
+    send_queue_.clear();
+    send_in_progress_ = false;
+    if (output_ && stream_)
+    {
+        stream_->remove_sink(output_.get());
+    }
+    output_.reset();
+    if (srtp_)
+    {
+        srtp_->close();
+        srtp_.reset();
+    }
+    dtls_timer_.cancel();
     if (dtls_)
     {
         dtls_->close();
         dtls_.reset();
     }
     answer_sdp_.clear();
+    video_payload_type_.reset();
+    audio_payload_type_.reset();
     local_port_ = 0;
     boost::system::error_code error;
     socket_.cancel(error);
@@ -198,6 +213,11 @@ bool whep_session::ice_connected() const noexcept
 bool whep_session::dtls_connected() const noexcept
 {
     return dtls_ != nullptr && dtls_->connected();
+}
+
+bool whep_session::srtp_started() const noexcept
+{
+    return srtp_ != nullptr && srtp_->started();
 }
 
 std::optional<boost::asio::ip::udp::endpoint> whep_session::remote_endpoint() const
@@ -248,12 +268,20 @@ void whep_session::handle_packet(std::size_t size)
         return;
     }
 
-    if (dtls_transport::is_dtls_packet(packet) &&
-        ice_connected_ &&
-        remote_endpoint_.has_value() &&
-        receive_endpoint_ == *remote_endpoint_)
+    if (!ice_connected_ || !remote_endpoint_.has_value() || receive_endpoint_ != *remote_endpoint_)
+    {
+        return;
+    }
+
+    if (dtls_transport::is_dtls_packet(packet))
     {
         handle_dtls(size);
+        return;
+    }
+
+    if (srtp_transport::is_rtp_or_rtcp(packet))
+    {
+        handle_srtp(size);
     }
 }
 
@@ -313,29 +341,138 @@ void whep_session::handle_dtls(std::size_t size)
 
     if (!was_connected && dtls_->connected())
     {
-        boost::system::error_code error;
-        dtls_timer_.cancel(error);
+        dtls_timer_.cancel();
         log_line("webrtc", "dtls connected", id_);
+        if (!start_media())
+        {
+            log_line("webrtc", "srtp start failed", id_);
+            close();
+        }
         return;
     }
 
     schedule_dtls_timeout();
 }
 
+
+void whep_session::handle_srtp(std::size_t size)
+{
+    if (!srtp_ || !srtp_->started())
+    {
+        return;
+    }
+
+    const auto packet = srtp_->unprotect(std::span<const std::uint8_t>(receive_buffer_.data(), size));
+    if (!packet)
+    {
+        return;
+    }
+
+    // 第一阶段只完成接收侧 SRTP/SRTCP 解密和校验。
+    // RTCP 反馈不会触发关键帧请求，后续按需要增加统计处理。
+}
+
+bool whep_session::start_media()
+{
+    if (!dtls_ || !dtls_->connected() || !dtls_->srtp_keying_material() || !video_payload_type_)
+    {
+        return false;
+    }
+
+    auto srtp = std::make_unique<srtp_transport>();
+    if (!srtp->start(*dtls_->srtp_keying_material()))
+    {
+        return false;
+    }
+
+    const auto weak = weak_from_this();
+    auto output = std::make_shared<webrtc_output>(
+        webrtc_output_config{.h264_payload_type = *video_payload_type_},
+        [weak](std::span<const std::uint8_t> packet) {
+            if (const auto self = weak.lock())
+            {
+                self->send_rtp(packet);
+            }
+        });
+
+    srtp_ = std::move(srtp);
+    output_ = std::move(output);
+    if (!stream_->add_sink(output_))
+    {
+        output_.reset();
+        srtp_->close();
+        srtp_.reset();
+        return false;
+    }
+
+    log_line("webrtc", "srtp started", id_);
+    return true;
+}
+
 void whep_session::send_dtls(std::span<const std::uint8_t> packet)
+{
+    send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end()));
+}
+
+void whep_session::send_rtp(std::span<const std::uint8_t> packet)
+{
+    if (!srtp_ || !srtp_->started())
+    {
+        return;
+    }
+
+    auto protected_packet = srtp_->protect_rtp(packet);
+    if (!protected_packet)
+    {
+        log_line("webrtc", "srtp protect failed", id_);
+        return;
+    }
+    send_udp(std::move(*protected_packet));
+}
+
+void whep_session::send_udp(std::vector<std::uint8_t> packet)
 {
     if (!started_ || !socket_.is_open() || !remote_endpoint_.has_value() || packet.empty())
     {
         return;
     }
 
-    auto data = std::make_shared<std::vector<std::uint8_t>>(packet.begin(), packet.end());
+    send_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(std::move(packet)));
+    write_udp();
+}
+
+void whep_session::write_udp()
+{
+    if (send_in_progress_ || send_queue_.empty() || !started_ || !socket_.is_open() || !remote_endpoint_.has_value())
+    {
+        return;
+    }
+
+    send_in_progress_ = true;
+    const auto data = send_queue_.front();
     const auto endpoint = *remote_endpoint_;
+    const auto self = shared_from_this();
     socket_.async_send_to(
         boost::asio::buffer(*data),
         endpoint,
-        [data](boost::system::error_code, std::size_t) {
+        [self, data](boost::system::error_code error, std::size_t) {
             static_cast<void>(data);
+            if (!self->started_)
+            {
+                return;
+            }
+
+            self->send_in_progress_ = false;
+            if (!self->send_queue_.empty())
+            {
+                self->send_queue_.pop_front();
+            }
+            if (error)
+            {
+                self->close();
+                return;
+            }
+            self->write_udp();
         });
 }
 

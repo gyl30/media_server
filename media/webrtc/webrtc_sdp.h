@@ -43,6 +43,13 @@ struct webrtc_offer
     std::vector<webrtc_media_offer> media;
 };
 
+struct webrtc_answer
+{
+    std::string sdp;
+    std::optional<int> video_payload_type;
+    std::optional<int> audio_payload_type;
+};
+
 struct webrtc_answer_config
 {
     boost::asio::ip::address address;
@@ -53,7 +60,7 @@ struct webrtc_answer_config
 };
 
 [[nodiscard]] std::optional<webrtc_offer> parse_webrtc_offer(std::string_view sdp);
-[[nodiscard]] std::optional<std::string> make_webrtc_answer(
+[[nodiscard]] std::optional<webrtc_answer> make_webrtc_answer(
     const webrtc_offer& offer,
     const std::vector<media_track>& tracks,
     const webrtc_answer_config& config);
