@@ -812,7 +812,7 @@ void test_whep_session_lifecycle()
 
     stream->end();
     require(!whep.remove(third.session_id), "whep source end releases session");
-    require(registry.remove("live/test", stream.get()), "whep remove ended source");
+    require(registry.remove(stream.get()), "whep remove ended source");
 
     auto replacement = std::make_shared<media_stream>("live/test");
     require(replacement->update_track(make_video_track()), "whep replacement video track");

@@ -224,6 +224,30 @@ private:
     media_stream& stream_;
 };
 
+class generation_replacing_sink final : public media_sink
+{
+public:
+    generation_replacing_sink(stream_registry& registry, std::shared_ptr<media_stream> replacement)
+        : registry_(registry), replacement_(std::move(replacement))
+    {
+    }
+
+    void on_track(const media_track&) override {}
+    void on_frame(const media_frame&) override {}
+    void on_end() override
+    {
+        old_generation_hidden = !registry_.find(replacement_->name());
+        replacement_added = registry_.add(replacement_);
+    }
+
+    bool old_generation_hidden{};
+    bool replacement_added{};
+
+private:
+    stream_registry& registry_;
+    std::shared_ptr<media_stream> replacement_;
+};
+
 void test_internal_format_contract()
 {
     const auto avcc = h264_annex_b_to_avcc(h264_config);
@@ -320,18 +344,20 @@ void test_stream_registry_generation_lifecycle()
     require(!registry.add(second), "registry active generation duplicate reject");
     require(registry.find("live/generation").get() == first.get(), "registry first generation remains");
 
+    auto replacing = std::make_shared<generation_replacing_sink>(registry, second);
+    require(first->add_sink(replacing), "registry generation replacement observer add");
     first->end();
-    require(!registry.find("live/generation"), "registry ended generation hidden");
-    require(registry.add(second), "registry ended generation replace");
+    require(replacing->old_generation_hidden, "registry ended generation hidden during end callback");
+    require(replacing->replacement_added, "registry ended generation replace during end callback");
     require(registry.find("live/generation").get() == second.get(), "registry replacement generation visible");
-    require(!registry.remove("live/generation", first.get()), "registry stale generation remove reject");
+    require(!registry.remove(first.get()), "registry stale generation remove reject");
     require(registry.find("live/generation").get() == second.get(), "registry stale remove preserves replacement");
 
     auto ended = std::make_shared<media_stream>("live/ended");
     ended->end();
     require(!registry.add(ended), "registry ended generation add reject");
 
-    require(registry.remove("live/generation", second.get()), "registry replacement remove");
+    require(registry.remove(second.get()), "registry replacement remove");
     require(!registry.find("live/generation"), "registry replacement removed");
 }
 
@@ -378,7 +404,7 @@ void test_hls_service_lifecycle()
     require(first->publish(make_video_frame(0, true)), "hls first key frame");
     require(first->publish(make_video_frame(1'000'000'000, true)), "hls first segment boundary");
     first->end();
-    require(registry.remove("live/hls", first.get()), "hls first stream remove");
+    require(registry.remove(first.get()), "hls first stream remove");
 
     const auto ended_playlist = hls.playlist("live/hls");
     require(ended_playlist.has_value(), "hls ended playlist retained");
@@ -401,7 +427,7 @@ void test_hls_service_lifecycle()
     require(expiring_stream->update_track(make_video_track()), "hls expiring track");
     require(expiring_hls.segment_count("live/expiring") == 0U, "hls expiring output create");
     expiring_stream->end();
-    require(expiring_registry.remove("live/expiring", expiring_stream.get()), "hls expiring stream remove");
+    require(expiring_registry.remove(expiring_stream.get()), "hls expiring stream remove");
     require(expiring_hls.playlist("live/expiring").has_value(), "hls ended output initially retained");
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     require(!expiring_hls.playlist("live/expiring").has_value(), "hls ended output expires");
