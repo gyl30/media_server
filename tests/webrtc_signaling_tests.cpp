@@ -728,6 +728,40 @@ void test_webrtc_payload_type_membership()
     require(opus_answer.has_value() && !opus_answer->audio_payload_type.has_value(), "webrtc reject unoffered opus payload");
 }
 
+void test_webrtc_payload_type_range()
+{
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+    };
+    auto invalid_sdp = webrtc_offer_sdp;
+    const auto replace = [&invalid_sdp](std::string_view source, std::string_view target)
+    {
+        const auto offset = invalid_sdp.find(source);
+        require(offset != std::string::npos, "webrtc payload range source");
+        invalid_sdp.replace(offset, source.size(), target);
+    };
+    replace("m=video 9 UDP/TLS/RTP/SAVPF 102 127", "m=video 9 UDP/TLS/RTP/SAVPF 128");
+    replace("a=rtpmap:102 H264/90000", "a=rtpmap:128 H264/90000");
+    replace("a=fmtp:102 ", "a=fmtp:128 ");
+    replace("m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8", "m=audio 9 UDP/TLS/RTP/SAVPF 129");
+    replace("a=rtpmap:111 opus/48000/2", "a=rtpmap:129 opus/48000/2");
+    replace("a=fmtp:111 ", "a=fmtp:129 ");
+
+    const auto offer = parse_webrtc_offer(invalid_sdp);
+    require(offer.has_value(), "webrtc parse out of range payload offer");
+    require(!make_webrtc_answer(*offer, {make_video_track()}, config).has_value(), "webrtc reject out of range h264 payload");
+    require(!make_webrtc_answer(*offer, {make_audio_track()}, config).has_value(), "webrtc reject out of range opus payload");
+
+    replace("H264/90000", "H265/90000");
+    const auto h265_offer = parse_webrtc_offer(invalid_sdp);
+    require(h265_offer.has_value(), "webrtc parse out of range h265 payload offer");
+    require(!make_webrtc_answer(*h265_offer, {make_h265_track()}, config).has_value(), "webrtc reject out of range h265 payload");
+}
+
 void test_webrtc_single_media_per_kind()
 {
     auto duplicate_sdp = webrtc_offer_sdp;
@@ -1390,6 +1424,8 @@ int main()
     std::cout << "[pass] webrtc_h265_sdp_answer\n";
     media_server::test_webrtc_payload_type_membership();
     std::cout << "[pass] webrtc_payload_type_membership\n";
+    media_server::test_webrtc_payload_type_range();
+    std::cout << "[pass] webrtc_payload_type_range\n";
     media_server::test_webrtc_single_media_per_kind();
     std::cout << "[pass] webrtc_single_media_per_kind\n";
     media_server::test_webrtc_opus_mono_default();
