@@ -91,13 +91,17 @@ whep_session::whep_session(
     std::shared_ptr<media_stream> stream,
     boost::asio::ip::address advertised_address,
     std::shared_ptr<dtls_certificate> certificate,
-    closed_handler handler)
+    closed_handler handler,
+    whep_session_timeouts timeouts)
     : stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
       closed_handler_(std::move(handler)),
+      timeouts_(timeouts),
       socket_(io),
-      dtls_timer_(io)
+      dtls_timer_(io),
+      establishment_timer_(io),
+      ice_activity_timer_(io)
 {
 }
 
@@ -228,6 +232,7 @@ bool whep_session::start(webrtc_offer offer)
         video_payload_type_.value_or(-1),
         audio_payload_type_.value_or(-1),
         audio_channel_count_.value_or(0));
+    start_establishment_timeout();
     receive();
     return true;
 }
@@ -259,6 +264,8 @@ void whep_session::close()
         srtp_.reset();
     }
     dtls_timer_.cancel();
+    establishment_timer_.cancel();
+    ice_activity_timer_.cancel();
     if (dtls_)
     {
         dtls_->close();
@@ -435,10 +442,15 @@ void whep_session::handle_stun(std::size_t size)
         const bool changed = !remote_endpoint_.has_value() || *remote_endpoint_ != receive_endpoint_;
         remote_endpoint_ = receive_endpoint_;
         ice_connected_ = true;
+        refresh_ice_activity_timeout();
         if (changed)
         {
             spdlog::info("webrtc ice connected session {} remote {} {}", id_, remote_address, remote_port);
         }
+    }
+    else if (ice_connected_ && remote_endpoint_.has_value() && receive_endpoint_ == *remote_endpoint_)
+    {
+        refresh_ice_activity_timeout();
     }
 
     auto data = std::make_shared<std::vector<std::uint8_t>>(response);
@@ -552,6 +564,7 @@ bool whep_session::start_media()
         return false;
     }
 
+    establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
     spdlog::debug("webrtc srtp profile session {} {}", id_, dtls_->srtp_keying_material()->profile);
     return true;
@@ -668,6 +681,46 @@ void whep_session::handle_dtls_timeout()
         return;
     }
     schedule_dtls_timeout();
+}
+
+void whep_session::start_establishment_timeout()
+{
+    if (!started_ || timeouts_.establishment.count() <= 0)
+    {
+        return;
+    }
+
+    establishment_timer_.expires_after(timeouts_.establishment);
+    const auto self = shared_from_this();
+    establishment_timer_.async_wait([self](boost::system::error_code error) {
+        if (error || !self->started_ || self->srtp_started())
+        {
+            return;
+        }
+
+        spdlog::info("webrtc establishment timeout session {}", self->id_);
+        self->close();
+    });
+}
+
+void whep_session::refresh_ice_activity_timeout()
+{
+    if (!started_ || !ice_connected_ || timeouts_.ice_activity.count() <= 0)
+    {
+        return;
+    }
+
+    ice_activity_timer_.expires_after(timeouts_.ice_activity);
+    const auto self = shared_from_this();
+    ice_activity_timer_.async_wait([self](boost::system::error_code error) {
+        if (error || !self->started_ || !self->ice_connected_)
+        {
+            return;
+        }
+
+        spdlog::info("webrtc ice activity timeout session {}", self->id_);
+        self->close();
+    });
 }
 
 }    // namespace media_server
