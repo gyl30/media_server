@@ -1,7 +1,7 @@
 #include "media/rtsp/rtsp_input_session.h"
 
 #include "media/codec/codec_utils.h"
-#include "media/core/log.h"
+#include <spdlog/spdlog.h>
 
 extern "C"
 {
@@ -131,7 +131,7 @@ void rtsp_input_session::close()
         registry_.remove(stream_name_, stream_.get());
         stream_.reset();
     }
-    log_line("rtsp_input", "close", stream_name_);
+    spdlog::debug("rtsp input close {}", stream_name_);
 }
 
 int rtsp_input_session::send_callback(
@@ -270,7 +270,7 @@ void rtsp_input_session::on_connect(
         [self](std::span<const std::uint8_t> data) { self->on_read(data); },
         [self]() { self->on_connection_close(); });
 
-    log_line("rtsp_input", "connected", url_, "stream", stream_name_);
+    spdlog::info("rtsp input connected url {} stream {}", url_, stream_name_);
     if (rtsp_client_describe(client_) != 0)
     {
         close();
@@ -295,7 +295,7 @@ void rtsp_input_session::on_connection_close()
 
 int rtsp_input_session::on_describe(const char* sdp, int length)
 {
-    log_line("rtsp_input", "describe", stream_name_);
+    spdlog::debug("rtsp input describe {}", stream_name_);
     return rtsp_client_setup(client_, sdp, length);
 }
 
@@ -417,7 +417,7 @@ void rtsp_input_session::publish_track_if_needed(const avpacket_t& packet)
         if (stream_->update_track(std::move(track)))
         {
             video_track_published_ = true;
-            log_line("rtsp_input", "track video h264");
+            spdlog::info("rtsp input track video h264");
         }
     }
 
@@ -446,7 +446,7 @@ void rtsp_input_session::publish_track_if_needed(const avpacket_t& packet)
         if (stream_->update_track(std::move(track)))
         {
             audio_track_published_ = true;
-            log_line("rtsp_input", "track audio aac", input.sample_rate, input.channels);
+            spdlog::info("rtsp input track audio aac sample_rate {} channels {}", input.sample_rate, input.channels);
         }
     }
 }

@@ -1,7 +1,5 @@
 #include "media/http/http_session.h"
 
-#include "media/core/log.h"
-
 #include <boost/asio/write.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
 #include <boost/url/parse.hpp>

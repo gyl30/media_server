@@ -2,6 +2,8 @@
 
 #include <srtp2/srtp.h>
 
+#include <spdlog/spdlog.h>
+
 #include <climits>
 #include <cstring>
 #include <mutex>
@@ -106,8 +108,11 @@ bool srtp_transport::start(const dtls_srtp_keying_material& keying_material)
 {
     if (context_ || !initialize_srtp())
     {
+        spdlog::debug("webrtc srtp start rejected or library init failed");
         return false;
     }
+
+    spdlog::debug("webrtc srtp transport start profile {}", keying_material.profile);
 
     auto state = std::make_unique<struct context>();
     state->outbound_key = make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
@@ -115,17 +120,20 @@ bool srtp_transport::start(const dtls_srtp_keying_material& keying_material)
 
     if (!create_session(keying_material.profile, ssrc_any_outbound, state->outbound_key, state->outbound))
     {
+        spdlog::debug("webrtc srtp outbound context create failed profile {}", keying_material.profile);
         return false;
     }
 
     if (!create_session(keying_material.profile, ssrc_any_inbound, state->inbound_key, state->inbound))
     {
+        spdlog::debug("webrtc srtp inbound context create failed profile {}", keying_material.profile);
         srtp_dealloc(state->outbound);
         state->outbound = nullptr;
         return false;
     }
 
     context_ = std::move(state);
+    spdlog::debug("webrtc srtp transport started profile {}", keying_material.profile);
     return true;
 }
 
@@ -168,8 +176,10 @@ std::optional<std::vector<std::uint8_t>> srtp_transport::protect_rtp(std::span<c
     std::vector<std::uint8_t> output(packet.size() + trailer_size);
     std::memcpy(output.data(), packet.data(), packet.size());
     int size = static_cast<int>(packet.size());
-    if (srtp_protect(context_->outbound, output.data(), &size) != srtp_err_status_ok || size < 0)
+    const auto status = srtp_protect(context_->outbound, output.data(), &size);
+    if (status != srtp_err_status_ok || size < 0)
     {
+        spdlog::debug("webrtc srtp protect failed status {}", static_cast<int>(status));
         return std::nullopt;
     }
     output.resize(static_cast<std::size_t>(size));
@@ -192,8 +202,10 @@ std::optional<std::vector<std::uint8_t>> srtp_transport::protect_rtcp(std::span<
     std::vector<std::uint8_t> output(packet.size() + trailer_size);
     std::memcpy(output.data(), packet.data(), packet.size());
     int size = static_cast<int>(packet.size());
-    if (srtp_protect_rtcp(context_->outbound, output.data(), &size) != srtp_err_status_ok || size < 0)
+    const auto status = srtp_protect_rtcp(context_->outbound, output.data(), &size);
+    if (status != srtp_err_status_ok || size < 0)
     {
+        spdlog::debug("webrtc srtcp protect failed status {}", static_cast<int>(status));
         return std::nullopt;
     }
     output.resize(static_cast<std::size_t>(size));
@@ -215,6 +227,7 @@ std::optional<srtp_packet> srtp_transport::unprotect(std::span<const std::uint8_
         : srtp_unprotect(context_->inbound, output.data(), &size);
     if (status != srtp_err_status_ok || size < 0)
     {
+        spdlog::debug("webrtc srtp unprotect failed rtcp {} status {}", packet_is_rtcp, static_cast<int>(status));
         return std::nullopt;
     }
 

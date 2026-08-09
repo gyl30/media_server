@@ -6,6 +6,8 @@ extern "C"
 #include "sdp.h"
 }
 
+#include <spdlog/spdlog.h>
+
 #include <algorithm>
 #include <charconv>
 #include <cctype>
@@ -385,6 +387,7 @@ std::optional<webrtc_answer> make_webrtc_answer(
 
         if (codec == nullptr)
         {
+            spdlog::debug("webrtc answer reject media type {} mid {}", media.type, media.mid);
             answer << "m=" << media.type << " 0 " << media.protocol;
             for (const auto payload_type : media.payload_types)
             {
@@ -401,10 +404,12 @@ std::optional<webrtc_answer> make_webrtc_answer(
         if (lower_copy(media.type) == "video")
         {
             video_payload_type = codec->payload_type;
+            spdlog::debug("webrtc answer video mid {} pt {} profile {}", media.mid, codec->payload_type, profile_level_id);
         }
         else
         {
             audio_payload_type = codec->payload_type;
+            spdlog::debug("webrtc answer audio mid {} pt {} codec opus", media.mid, codec->payload_type);
         }
         answer << "m=" << media.type << ' ' << config.port << ' ' << media.protocol << ' ' << codec->payload_type << "\r\n";
         answer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";

@@ -1,7 +1,7 @@
 #include "media/rtmp/rtmp_session.h"
 
 #include "media/codec/codec_utils.h"
-#include "media/core/log.h"
+#include <spdlog/spdlog.h>
 
 extern "C"
 {
@@ -217,7 +217,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     stream_ = registry_.find(stream_name_);
     if (!stream_)
     {
-        log_line("rtmp", "play stream not found", stream_name_);
+        spdlog::warn("rtmp play stream not found {}", stream_name_);
         return -1;
     }
 
@@ -258,7 +258,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
                 return;
             }
 
-            log_line("rtmp", "play", self->stream_name_);
+            spdlog::info("rtmp play {}", self->stream_name_);
         });
 
     return RTMP_SERVER_ASYNC_START;
@@ -275,7 +275,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     stream_ = std::make_shared<media_stream>(stream_name_);
     if (!registry_.add(stream_))
     {
-        log_line("rtmp", "publish duplicate stream", stream_name_);
+        spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
         stream_.reset();
         return -1;
     }
@@ -289,7 +289,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     }
 
     role_ = role::publisher;
-    log_line("rtmp", "publish", stream_name_);
+    spdlog::info("rtmp publish {}", stream_name_);
     return 0;
 }
 
@@ -325,7 +325,7 @@ int rtmp_session::on_flv_demux(
             .config_version = ++video_config_version_,
         };
         stream_->update_track(std::move(track));
-        log_line("rtmp", "input track video h264");
+        spdlog::info("rtmp input track video h264");
         return 0;
     }
 
@@ -347,7 +347,7 @@ int rtmp_session::on_flv_demux(
             .config_version = ++audio_config_version_,
         };
         stream_->update_track(std::move(track));
-        log_line("rtmp", "input track audio aac", config->sample_rate, config->channel_count);
+        spdlog::info("rtmp input track audio aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
         return 0;
     }
 
@@ -419,7 +419,7 @@ void rtmp_session::on_close()
     }
     stream_.reset();
     output_muxer_.reset();
-    log_line("rtmp", "close", stream_name_);
+    spdlog::debug("rtmp close {}", stream_name_);
 }
 
 void rtmp_session::close()

@@ -2,6 +2,8 @@
 
 #include <boost/crc.hpp>
 
+#include <spdlog/spdlog.h>
+
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -200,14 +202,23 @@ std::optional<stun_binding_request> parse_stun_binding_request(
     std::string_view expected_username,
     std::string_view password)
 {
-    if (!is_stun_message(packet) || read_u16(packet.data()) != stun_binding_request_type)
+    if (!is_stun_message(packet))
     {
+        spdlog::debug("stun reject invalid header size {}", packet.size());
+        return std::nullopt;
+    }
+
+    const auto message_type = read_u16(packet.data());
+    if (message_type != stun_binding_request_type)
+    {
+        spdlog::debug("stun reject message type 0x{:04x}", message_type);
         return std::nullopt;
     }
 
     const auto body_size = static_cast<std::size_t>(read_u16(packet.data() + 2U));
     if (body_size != packet.size() - stun_header_size)
     {
+        spdlog::debug("stun reject length header {} actual {}", body_size, packet.size() - stun_header_size);
         return std::nullopt;
     }
 
@@ -222,8 +233,11 @@ std::optional<stun_binding_request> parse_stun_binding_request(
         const auto type = read_u16(packet.data() + offset);
         const auto length = static_cast<std::size_t>(read_u16(packet.data() + offset + 2U));
         const auto value_offset = offset + 4U;
+        spdlog::trace("stun attribute type 0x{:04x} length {} offset {}", type, length, offset);
+
         if (value_offset + length > packet.size())
         {
+            spdlog::debug("stun reject attribute overflow type 0x{:04x} length {}", type, length);
             return std::nullopt;
         }
 
@@ -232,11 +246,13 @@ std::optional<stun_binding_request> parse_stun_binding_request(
             username = std::string_view(
                 reinterpret_cast<const char*>(packet.data() + value_offset),
                 length);
+            spdlog::trace("stun username {}", *username);
         }
         else if (type == stun_attribute_message_integrity)
         {
             if (length != stun_message_integrity_size || message_integrity_offset.has_value())
             {
+                spdlog::debug("stun reject invalid message integrity attribute length {}", length);
                 return std::nullopt;
             }
             message_integrity_offset = offset;
@@ -245,6 +261,7 @@ std::optional<stun_binding_request> parse_stun_binding_request(
         {
             if (length != 0)
             {
+                spdlog::debug("stun reject invalid use candidate length {}", length);
                 return std::nullopt;
             }
             use_candidate = true;
@@ -253,6 +270,7 @@ std::optional<stun_binding_request> parse_stun_binding_request(
         {
             if (length != 4U || fingerprint_offset.has_value())
             {
+                spdlog::debug("stun reject invalid fingerprint attribute length {}", length);
                 return std::nullopt;
             }
             fingerprint_offset = offset;
@@ -262,16 +280,34 @@ std::optional<stun_binding_request> parse_stun_binding_request(
         offset += (4U - (offset % 4U)) % 4U;
     }
 
-    if (offset != packet.size() || !username.has_value() || *username != expected_username || !message_integrity_offset.has_value())
+    if (offset != packet.size())
     {
+        spdlog::debug("stun reject trailing bytes offset {} size {}", offset, packet.size());
+        return std::nullopt;
+    }
+    if (!username.has_value())
+    {
+        spdlog::debug("stun reject missing username");
+        return std::nullopt;
+    }
+    if (*username != expected_username)
+    {
+        spdlog::debug("stun reject username actual {} expected {}", *username, expected_username);
+        return std::nullopt;
+    }
+    if (!message_integrity_offset.has_value())
+    {
+        spdlog::debug("stun reject missing message integrity");
         return std::nullopt;
     }
     if (!verify_message_integrity(packet, *message_integrity_offset, password))
     {
+        spdlog::debug("stun reject message integrity failed");
         return std::nullopt;
     }
     if (fingerprint_offset.has_value() && !verify_fingerprint(packet, *fingerprint_offset))
     {
+        spdlog::debug("stun reject fingerprint failed");
         return std::nullopt;
     }
 
@@ -280,6 +316,7 @@ std::optional<stun_binding_request> parse_stun_binding_request(
         .use_candidate = use_candidate,
     };
     std::copy_n(packet.data() + 8U, request.transaction_id.size(), request.transaction_id.begin());
+    spdlog::trace("stun binding request accepted use_candidate {}", use_candidate);
     return request;
 }
 
