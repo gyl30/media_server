@@ -9,6 +9,8 @@
 #include <map>
 #include <memory>
 #include <span>
+#include <set>
+#include <string>
 #include <vector>
 
 struct rtsp_muxer_t;
@@ -21,14 +23,15 @@ struct webrtc_output_config
     int h264_payload_type{-1};
     int opus_payload_type{-1};
     int opus_channel_count{1};
+    std::string rtcp_cname;
 };
 
 class webrtc_output final : public media_sink
 {
    public:
-    using rtp_handler = std::function<void(std::span<const std::uint8_t>)>;
+    using packet_handler = std::function<void(std::span<const std::uint8_t>)>;
 
-    webrtc_output(webrtc_output_config config, rtp_handler handler);
+    webrtc_output(webrtc_output_config config, packet_handler rtp_handler, packet_handler rtcp_handler = {});
     ~webrtc_output() override;
 
     void on_track(const media_track& track) override;
@@ -48,6 +51,8 @@ class webrtc_output final : public media_sink
 
     bool add_h264_track(const media_track& track);
     bool add_aac_track(const media_track& track);
+    bool configure_rtcp(int payload_id);
+    void emit_rtcp(int payload_id);
     void input_h264(track_id id, const media_frame& frame);
     void input_aac(track_id id, const media_frame& frame);
 
@@ -62,9 +67,11 @@ class webrtc_output final : public media_sink
     };
 
     webrtc_output_config config_;
-    rtp_handler handler_;
+    packet_handler rtp_handler_;
+    packet_handler rtcp_handler_;
     rtsp_muxer_t* muxer_{};
     std::map<track_id, track_state> tracks_;
+    std::set<int> active_payloads_;
     std::size_t packet_count_{};
 };
 

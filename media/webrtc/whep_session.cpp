@@ -587,11 +587,18 @@ bool whep_session::start_media()
             .h264_payload_type = video_payload_type_.value_or(-1),
             .opus_payload_type = audio_payload_type_.value_or(-1),
             .opus_channel_count = audio_channel_count_.value_or(1),
+            .rtcp_cname = id_,
         },
         [weak](std::span<const std::uint8_t> packet) {
             if (const auto self = weak.lock())
             {
                 self->send_rtp(packet);
+            }
+        },
+        [weak](std::span<const std::uint8_t> packet) {
+            if (const auto self = weak.lock())
+            {
+                self->send_rtcp(packet);
             }
         });
 
@@ -631,6 +638,24 @@ void whep_session::send_rtp(std::span<const std::uint8_t> packet)
         return;
     }
     spdlog::trace("webrtc rtp protected session {} protected_size {}", id_, protected_packet->size());
+    send_udp(std::move(*protected_packet));
+}
+
+void whep_session::send_rtcp(std::span<const std::uint8_t> packet)
+{
+    if (!srtp_ || !srtp_->started())
+    {
+        return;
+    }
+
+    spdlog::trace("webrtc rtcp protect session {} plain_size {}", id_, packet.size());
+    auto protected_packet = srtp_->protect_rtcp(packet);
+    if (!protected_packet)
+    {
+        spdlog::error("webrtc srtcp protect failed session {}", id_);
+        return;
+    }
+    spdlog::trace("webrtc rtcp protected session {} protected_size {}", id_, protected_packet->size());
     send_udp(std::move(*protected_packet));
 }
 

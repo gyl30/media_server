@@ -9,7 +9,9 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -237,10 +239,63 @@ std::uint32_t rtp_timestamp(const std::vector<std::uint8_t>& packet)
         static_cast<std::uint32_t>(packet[7]);
 }
 
+std::uint16_t network_u16(std::span<const std::uint8_t> data, std::size_t offset)
+{
+    require(offset + 2U <= data.size(), "network u16 range");
+    return static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(data[offset]) << 8U) |
+        static_cast<std::uint16_t>(data[offset + 1U]));
+}
+
+std::uint32_t network_u32(std::span<const std::uint8_t> data, std::size_t offset)
+{
+    require(offset + 4U <= data.size(), "network u32 range");
+    return (static_cast<std::uint32_t>(data[offset]) << 24U) |
+        (static_cast<std::uint32_t>(data[offset + 1U]) << 16U) |
+        (static_cast<std::uint32_t>(data[offset + 2U]) << 8U) |
+        static_cast<std::uint32_t>(data[offset + 3U]);
+}
+
+std::uint32_t rtp_ssrc(const std::vector<std::uint8_t>& packet)
+{
+    require(packet.size() >= 12U, "rtp ssrc packet size");
+    return network_u32(packet, 8U);
+}
+
+std::uint32_t require_rtcp_sender_report(
+    const std::vector<std::uint8_t>& packet,
+    std::string_view expected_cname)
+{
+    require(packet.size() >= 40U, "rtcp compound size");
+    require((packet[0] >> 6U) == 2U, "rtcp sr version");
+    require(packet[1] == 200U, "rtcp sender report type");
+
+    const auto sr_size = (static_cast<std::size_t>(network_u16(packet, 2U)) + 1U) * 4U;
+    require(sr_size >= 28U && sr_size + 12U <= packet.size(), "rtcp sender report size");
+    const auto sender_ssrc = network_u32(packet, 4U);
+    require(network_u32(packet, 20U) > 0U, "rtcp sender packet count");
+    require(network_u32(packet, 24U) > 0U, "rtcp sender octet count");
+
+    require((packet[sr_size] >> 6U) == 2U, "rtcp sdes version");
+    require(packet[sr_size + 1U] == 202U, "rtcp sdes type");
+    const auto sdes_size = (static_cast<std::size_t>(network_u16(packet, sr_size + 2U)) + 1U) * 4U;
+    require(sr_size + sdes_size == packet.size(), "rtcp compound boundary");
+    require(network_u32(packet, sr_size + 4U) == sender_ssrc, "rtcp sdes sender ssrc");
+    require(packet[sr_size + 8U] == 1U, "rtcp sdes cname type");
+
+    const auto cname_size = static_cast<std::size_t>(packet[sr_size + 9U]);
+    require(sr_size + 10U + cname_size <= packet.size(), "rtcp cname range");
+    const auto cname = std::string_view(
+        reinterpret_cast<const char*>(packet.data() + sr_size + 10U),
+        cname_size);
+    require(cname == expected_cname, "rtcp sdes cname");
+    return sender_ssrc;
+}
+
 void test_webrtc_rtp_packetizer()
 {
     std::vector<std::vector<std::uint8_t>> packets;
-    webrtc_output output(webrtc_output_config{.h264_payload_type = 102}, [&packets](std::span<const std::uint8_t> packet) {
+    webrtc_output output(webrtc_output_config{.h264_payload_type = 102, .rtcp_cname = {}}, [&packets](std::span<const std::uint8_t> packet) {
         packets.emplace_back(packet.begin(), packet.end());
     });
     output.on_track(make_video_track());
@@ -267,6 +322,7 @@ void test_webrtc_opus_channel_count(int channel_count)
         webrtc_output_config{
             .opus_payload_type = 111,
             .opus_channel_count = channel_count,
+            .rtcp_cname = {},
         },
         [&packets](std::span<const std::uint8_t> packet) {
             packets.emplace_back(packet.begin(), packet.end());
@@ -298,6 +354,75 @@ void test_webrtc_opus_channel_count(int channel_count)
     }
 }
 
+void test_webrtc_rtcp_sender()
+{
+    constexpr std::string_view cname = "webrtc-test-cname";
+    std::vector<std::vector<std::uint8_t>> rtp_packets;
+    std::vector<std::vector<std::uint8_t>> rtcp_packets;
+    webrtc_output output(
+        webrtc_output_config{
+            .h264_payload_type = 102,
+            .opus_payload_type = 111,
+            .opus_channel_count = 2,
+            .rtcp_cname = std::string(cname),
+        },
+        [&rtp_packets](std::span<const std::uint8_t> packet) {
+            rtp_packets.emplace_back(packet.begin(), packet.end());
+        },
+        [&rtcp_packets](std::span<const std::uint8_t> packet) {
+            rtcp_packets.emplace_back(packet.begin(), packet.end());
+        });
+
+    output.on_track(make_video_track());
+    output.on_track(make_audio_track());
+    output.on_frame(make_video_frame(0, true));
+    output.on_frame(make_video_frame(40'000'000, false));
+
+    std::int64_t audio_pts_ns = 0;
+    for (const auto& adts : valid_aac_adts_frames)
+    {
+        output.on_frame(media_frame{
+            .track = audio_track_id,
+            .dts_ns = audio_pts_ns,
+            .pts_ns = audio_pts_ns,
+            .duration_ns = 23'219'954,
+            .key_frame = false,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+        });
+        audio_pts_ns += 23'219'954;
+    }
+
+    std::optional<std::uint32_t> video_ssrc;
+    std::optional<std::uint32_t> audio_ssrc;
+    for (const auto& packet : rtp_packets)
+    {
+        require(packet.size() >= 12U, "rtcp sender rtp header");
+        const auto payload_type = static_cast<std::uint8_t>(packet[1] & 0x7fU);
+        if (payload_type == 102U)
+        {
+            video_ssrc = rtp_ssrc(packet);
+        }
+        else if (payload_type == 111U)
+        {
+            audio_ssrc = rtp_ssrc(packet);
+        }
+    }
+    require(video_ssrc.has_value(), "rtcp sender video ssrc");
+    require(audio_ssrc.has_value(), "rtcp sender audio ssrc");
+    require(*video_ssrc != *audio_ssrc, "rtcp sender independent ssrc");
+
+    bool video_report = false;
+    bool audio_report = false;
+    for (const auto& packet : rtcp_packets)
+    {
+        const auto sender_ssrc = require_rtcp_sender_report(packet, cname);
+        video_report = video_report || sender_ssrc == *video_ssrc;
+        audio_report = audio_report || sender_ssrc == *audio_ssrc;
+    }
+    require(video_report, "rtcp video sender report");
+    require(audio_report, "rtcp audio sender report");
+}
+
 void test_webrtc_opus_packetizer()
 {
     test_webrtc_opus_channel_count(1);
@@ -320,6 +445,8 @@ int main()
     std::cout << "[pass] webrtc_rtp_packetizer\n";
     test_webrtc_opus_packetizer();
     std::cout << "[pass] webrtc_opus_packetizer\n";
-    std::cout << "all tests passed: 5/5\n";
+    test_webrtc_rtcp_sender();
+    std::cout << "[pass] webrtc_rtcp_sender\n";
+    std::cout << "all tests passed: 6/6\n";
     return 0;
 }

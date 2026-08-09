@@ -395,6 +395,18 @@ int rtsp_muxer_getinfo(struct rtsp_muxer_t* muxer, int pid, uint16_t* seq, uint3
     return 0;
 }
 
+int rtsp_muxer_set_info(struct rtsp_muxer_t* muxer, int pid, const char* cname, const char* name)
+{
+    struct rtp_muxer_payload_t* pt;
+    if (pid < 0 || pid >= muxer->payload_count)
+        return -ENOENT;
+    if (!cname || !name)
+        return -EINVAL;
+
+    pt = &muxer->payloads[pid];
+    return rtp_set_info(pt->rtp.rtp, cname, name);
+}
+
 int rtsp_muxer_input(struct rtsp_muxer_t* muxer, int mid, int64_t pts, int64_t dts, const void* data, int bytes, int flags)
 {
     int r;
