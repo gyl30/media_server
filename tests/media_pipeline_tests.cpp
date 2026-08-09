@@ -14,6 +14,7 @@
 
 extern "C"
 {
+#include "flv-demuxer.h"
 #include "flv-proto.h"
 #include "rtsp-client.h"
 #include "rtsp-muxer.h"
@@ -80,6 +81,30 @@ void require(bool condition, std::string_view message)
     {
         fail(message);
     }
+}
+
+int validate_flv_aac_config(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t, std::uint32_t, int)
+{
+    if (codec != FLV_AUDIO_ASC || data == nullptr)
+    {
+        return 0;
+    }
+    const auto config = parse_aac_asc(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes));
+    *static_cast<bool*>(param) = config.has_value();
+    return config.has_value() ? 0 : -1;
+}
+
+bool accepts_flv_aac_config(std::span<const std::uint8_t> asc)
+{
+    bool accepted = false;
+    const auto demuxer =
+        std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&validate_flv_aac_config, &accepted), &flv_demuxer_destroy);
+    require(demuxer != nullptr, "flv aac config demuxer");
+
+    std::vector<std::uint8_t> sequence_header{0xaf, FLV_SEQUENCE_HEADER};
+    sequence_header.insert(sequence_header.end(), asc.begin(), asc.end());
+    const auto result = flv_demuxer_input(demuxer.get(), FLV_TYPE_AUDIO, sequence_header.data(), sequence_header.size(), 0);
+    return result == 0 && accepted;
 }
 
 media_track make_video_track()
@@ -878,6 +903,23 @@ void test_internal_format_contract()
     require(aac->sample_rate == 44'100 && aac->channel_count == 2, "adts aac config");
 }
 
+void test_rtmp_aac_asc_adts_contract()
+{
+    const std::vector<std::uint8_t> aac_ltp_asc{0x22, 0x10};
+    const std::vector<std::uint8_t> he_aac_asc{0x2b, 0x92, 0x08, 0x00};
+    const std::vector<std::uint8_t> reserved_object_type{0x02, 0x10};
+    const std::vector<std::uint8_t> scalable_object_type{0x32, 0x10};
+    const std::vector<std::uint8_t> raw_aac{0x11, 0x22, 0x33, 0x44};
+
+    require(accepts_flv_aac_config(aac_asc), "rtmp aac lc config accepted");
+    require(accepts_flv_aac_config(aac_ltp_asc), "rtmp highest adts aac object type accepted");
+    require(accepts_flv_aac_config(he_aac_asc), "rtmp he-aac core config accepted");
+    require(!accepts_flv_aac_config(reserved_object_type), "rtmp reserved aac object type rejected");
+    require(!accepts_flv_aac_config(scalable_object_type), "rtmp non-adts aac object type rejected");
+    require(make_adts_frame(reserved_object_type, raw_aac).empty(), "invalid aac object type cannot create adts");
+    require(make_adts_frame(scalable_object_type, raw_aac).empty(), "unsupported aac object type cannot create adts");
+}
+
 void test_flv_config_cache_lifecycle()
 {
     std::size_t video_sequence_headers = 0;
@@ -1480,6 +1522,8 @@ int main()
     std::cout << "[pass] rtmp_timestamp_timeline\n";
     media_server::test_internal_format_contract();
     std::cout << "[pass] internal_format_contract\n";
+    media_server::test_rtmp_aac_asc_adts_contract();
+    std::cout << "[pass] rtmp_aac_asc_adts_contract\n";
     media_server::test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     media_server::test_h265_output_paths();

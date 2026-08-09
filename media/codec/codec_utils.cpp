@@ -94,7 +94,8 @@ std::vector<std::uint8_t> h265_annex_b_to_hvcc(std::span<const std::uint8_t> ann
 std::optional<aac_config> parse_aac_asc(std::span<const std::uint8_t> asc)
 {
     mpeg4_aac_t configuration{};
-    if (mpeg4_aac_audio_specific_config_load(asc.data(), asc.size(), &configuration) < 0)
+    if (mpeg4_aac_audio_specific_config_load(asc.data(), asc.size(), &configuration) < 0 || configuration.profile < MPEG4_AAC_MAIN ||
+        configuration.profile > MPEG4_AAC_LTP)
     {
         return std::nullopt;
     }
@@ -134,7 +135,8 @@ std::optional<aac_config> parse_aac_adts(std::span<const std::uint8_t> adts)
 std::vector<std::uint8_t> make_adts_frame(std::span<const std::uint8_t> asc, std::span<const std::uint8_t> raw_aac)
 {
     mpeg4_aac_t configuration{};
-    if (mpeg4_aac_audio_specific_config_load(asc.data(), asc.size(), &configuration) < 0)
+    if (mpeg4_aac_audio_specific_config_load(asc.data(), asc.size(), &configuration) < 0 || configuration.profile < MPEG4_AAC_MAIN ||
+        configuration.profile > MPEG4_AAC_LTP)
     {
         return {};
     }
