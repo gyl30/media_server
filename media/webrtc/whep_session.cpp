@@ -104,19 +104,25 @@ whep_session::whep_session(
 {
 }
 
-bool whep_session::start(webrtc_offer offer)
+whep_session_start_error whep_session::start(webrtc_offer offer)
 {
-    if (started_ || !stream_ || !certificate_ || stream_->ended())
+    if (started_ || !stream_ || !certificate_)
     {
-        spdlog::debug("webrtc whep start rejected invalid state");
-        return false;
+        spdlog::error("webrtc whep start rejected invalid state");
+        return whep_session_start_error::internal_error;
+    }
+    if (stream_->ended())
+    {
+        spdlog::debug("webrtc whep start rejected ended stream");
+        return whep_session_start_error::stream_not_ready;
     }
 
     const auto* media = transport_media(offer);
-    if (media == nullptr || media->ice_ufrag.empty() || media->ice_pwd.empty())
+    if (media == nullptr || media->ice_ufrag.empty() || media->ice_pwd.empty() ||
+        !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
     {
-        spdlog::debug("webrtc whep start rejected missing ice transport attributes");
-        return false;
+        spdlog::debug("webrtc whep start rejected invalid transport attributes");
+        return whep_session_start_error::invalid_offer;
     }
 
     boost::system::error_code error;
@@ -125,7 +131,7 @@ bool whep_session::start(webrtc_offer offer)
     if (error)
     {
         spdlog::error("webrtc udp socket open failed {}", error.message());
-        return false;
+        return whep_session_start_error::internal_error;
     }
 
     const auto bind_address = advertised_address_.is_v6()
@@ -136,7 +142,7 @@ bool whep_session::start(webrtc_offer offer)
     {
         spdlog::error("webrtc udp socket bind failed {}", error.message());
         close();
-        return false;
+        return whep_session_start_error::internal_error;
     }
 
     const auto endpoint = socket_.local_endpoint(error);
@@ -144,7 +150,7 @@ bool whep_session::start(webrtc_offer offer)
     {
         spdlog::error("webrtc udp local endpoint failed {}", error.message());
         close();
-        return false;
+        return whep_session_start_error::internal_error;
     }
 
     id_ = random_hex(16);
@@ -154,7 +160,7 @@ bool whep_session::start(webrtc_offer offer)
     {
         spdlog::error("webrtc session identifiers create failed");
         close();
-        return false;
+        return whep_session_start_error::internal_error;
     }
 
     local_port_ = endpoint.port();
@@ -172,7 +178,7 @@ bool whep_session::start(webrtc_offer offer)
     {
         spdlog::debug("webrtc answer create failed session {}", id_);
         close();
-        return false;
+        return whep_session_start_error::invalid_offer;
     }
 
     remote_ice_ufrag_ = media->ice_ufrag;
@@ -190,7 +196,7 @@ bool whep_session::start(webrtc_offer offer)
     {
         spdlog::error("webrtc dtls transport start failed session {}", id_);
         close();
-        return false;
+        return whep_session_start_error::internal_error;
     }
 
     spdlog::debug("webrtc session {} remote fingerprint {}", id_, media->fingerprint);
@@ -214,7 +220,7 @@ bool whep_session::start(webrtc_offer offer)
     {
         spdlog::debug("webrtc source stream observer attach failed session {}", id_);
         close();
-        return false;
+        return whep_session_start_error::stream_not_ready;
     }
 
     spdlog::info(
@@ -233,7 +239,7 @@ bool whep_session::start(webrtc_offer offer)
         audio_channel_count_.value_or(0));
     start_establishment_timeout();
     receive();
-    return true;
+    return whep_session_start_error::none;
 }
 
 void whep_session::close()

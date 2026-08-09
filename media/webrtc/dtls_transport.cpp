@@ -126,7 +126,7 @@ dtls_transport::dtls_transport(
 
 bool dtls_transport::start()
 {
-    if (ssl_ || !certificate_ || !send_ || !parse_sha256_fingerprint(remote_fingerprint_))
+    if (ssl_ || !certificate_ || !send_ || !valid_sha256_fingerprint(remote_fingerprint_))
     {
         spdlog::debug("webrtc dtls start rejected invalid state or fingerprint");
         return false;
@@ -253,6 +253,11 @@ bool dtls_transport::handle_timeout()
 bool dtls_transport::connected() const noexcept
 {
     return srtp_keying_material_.has_value();
+}
+
+bool dtls_transport::valid_sha256_fingerprint(std::string_view fingerprint)
+{
+    return parse_sha256_fingerprint(fingerprint).has_value();
 }
 
 std::optional<std::chrono::milliseconds> dtls_transport::timeout() const
