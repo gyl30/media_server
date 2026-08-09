@@ -6,6 +6,7 @@
 #include "media/hls/hls_service.h"
 #include "media/net/tcp_connection.h"
 #include "media/net/tcp_listener.h"
+#include "media/rtmp/rtmp_session.h"
 #include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/http/http_flv_output.h"
@@ -14,8 +15,13 @@
 
 extern "C"
 {
+#include "amf0.h"
 #include "flv-demuxer.h"
+#include "flv-header.h"
 #include "flv-proto.h"
+#include "rtmp-chunk-header.h"
+#include "rtmp-client.h"
+#include "rtmp-msgtypeid.h"
 #include "rtsp-client.h"
 #include "rtsp-muxer.h"
 #include "rtsp-payloads.h"
@@ -598,6 +604,170 @@ std::string read_rtsp_headers(boost::asio::ip::tcp::socket& socket)
     std::string request;
     boost::asio::read_until(socket, boost::asio::dynamic_buffer(request), "\r\n\r\n");
     return request;
+}
+
+struct rtmp_status
+{
+    std::string level;
+    std::string code;
+};
+
+rtmp_status parse_rtmp_status(std::span<const std::uint8_t> payload)
+{
+    std::array<char, 16> command{};
+    std::array<char, 16> level{};
+    std::array<char, 64> code{};
+    double transaction{};
+    std::array<amf_object_item_t, 2> information{
+        amf_object_item_t{AMF_STRING, "level", level.data(), level.size()},
+        amf_object_item_t{AMF_STRING, "code", code.data(), code.size()},
+    };
+    std::array<amf_object_item_t, 4> items{
+        amf_object_item_t{AMF_STRING, "command", command.data(), command.size()},
+        amf_object_item_t{AMF_NUMBER, "transaction", &transaction, sizeof(transaction)},
+        amf_object_item_t{AMF_OBJECT, "command_object", nullptr, 0},
+        amf_object_item_t{AMF_OBJECT, "information", information.data(), information.size()},
+    };
+
+    const auto* end = payload.data() + payload.size();
+    require(amf_read_items(payload.data(), end, items.data(), items.size()) == end, "rtmp status amf");
+    require(std::string_view(command.data()) == "onStatus", "rtmp status command");
+    return rtmp_status{.level = level.data(), .code = code.data()};
+}
+
+class rtmp_output_test_peer final
+{
+   public:
+    rtmp_output_test_peer() : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_socket_(io_)
+    {
+        stream_ = std::make_shared<media_stream>("live/camera");
+        require(stream_->update_track(make_video_track()), "rtmp output video track");
+        require(registry_.add(stream_), "rtmp output registry add");
+
+        client_socket_.connect(acceptor_.local_endpoint());
+        auto server_socket = acceptor_.accept();
+        auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
+        session_ = std::make_shared<rtmp_session>(std::move(connection), registry_);
+        session_->start();
+        runner_ = std::jthread([this]() { io_.run(); });
+
+        rtmp_client_handler_t handler{};
+        handler.send = &rtmp_output_test_peer::send_callback;
+        handler.onvideo = &rtmp_output_test_peer::video_callback;
+        handler.onaudio = &rtmp_output_test_peer::media_callback;
+        handler.onscript = &rtmp_output_test_peer::media_callback;
+        const auto tc_url = "rtmp://127.0.0.1:" + std::to_string(acceptor_.local_endpoint().port()) + "/live";
+        client_ = rtmp_client_create("live", "camera", tc_url.c_str(), this, &handler);
+        require(client_ != nullptr, "rtmp output client");
+        require(rtmp_client_start(client_, 2) == 0, "rtmp output client start");
+        receive_until_video_config();
+    }
+
+    ~rtmp_output_test_peer()
+    {
+        rtmp_client_destroy(client_);
+        client_ = nullptr;
+        boost::system::error_code error;
+        client_socket_.close(error);
+        io_.stop();
+        runner_.join();
+        session_->on_end();
+    }
+
+    rtmp_status pause()
+    {
+        require(rtmp_client_pause(client_, 1) == 0, "rtmp pause request");
+        return read_status();
+    }
+
+    rtmp_status seek()
+    {
+        require(rtmp_client_seek(client_, 1'000.0) == 0, "rtmp seek request");
+        return read_status();
+    }
+
+   private:
+    static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
+    {
+        auto* self = static_cast<rtmp_output_test_peer*>(param);
+        boost::system::error_code error;
+        if (header_bytes != 0)
+        {
+            boost::asio::write(self->client_socket_, boost::asio::buffer(header, header_bytes), error);
+        }
+        if (!error && payload_bytes != 0)
+        {
+            boost::asio::write(self->client_socket_, boost::asio::buffer(payload, payload_bytes), error);
+        }
+        return error ? -1 : static_cast<int>(header_bytes + payload_bytes);
+    }
+
+    static int video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
+    {
+        flv_video_tag_header_t video{};
+        require(flv_video_tag_header_read(&video, static_cast<const std::uint8_t*>(data), bytes) > 0, "rtmp output video header");
+        require(video.codecid == FLV_VIDEO_H264 && video.avpacket == FLV_SEQUENCE_HEADER, "rtmp output video config");
+        static_cast<rtmp_output_test_peer*>(param)->received_video_config_ = true;
+        return 0;
+    }
+
+    static int media_callback(void*, const void*, std::size_t, std::uint32_t) { return 0; }
+
+    void receive_until_video_config()
+    {
+        std::array<std::uint8_t, 8 * 1024> data{};
+        while (!received_video_config_)
+        {
+            const auto bytes = client_socket_.read_some(boost::asio::buffer(data));
+            require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp output client input");
+        }
+    }
+
+    rtmp_status read_status()
+    {
+        std::array<std::uint8_t, 3> basic_header{};
+        boost::asio::read(client_socket_, boost::asio::buffer(basic_header.data(), 1));
+        const auto marker = static_cast<std::uint8_t>(basic_header[0] & 0x3fU);
+        const std::size_t basic_bytes = marker == 0 ? 2U : (marker == 1 ? 3U : 1U);
+        if (basic_bytes != 1U)
+        {
+            boost::asio::read(client_socket_, boost::asio::buffer(basic_header.data() + 1, basic_bytes - 1));
+        }
+
+        rtmp_chunk_header_t header{};
+        require(rtmp_chunk_basic_header_read(basic_header.data(), &header.fmt, &header.cid) == static_cast<int>(basic_bytes),
+                "rtmp status basic header");
+        require(header.fmt == RTMP_CHUNK_TYPE_0, "rtmp status message header type");
+        std::array<std::uint8_t, 11> message_header{};
+        boost::asio::read(client_socket_, boost::asio::buffer(message_header));
+        require(rtmp_chunk_message_header_read(message_header.data(), &header) == static_cast<int>(message_header.size()),
+                "rtmp status message header");
+        require(header.timestamp != 0x00ffffffU, "rtmp status extended timestamp");
+        require(header.type == RTMP_TYPE_INVOKE && header.length <= 4'096U, "rtmp status invoke");
+
+        std::vector<std::uint8_t> payload(header.length);
+        boost::asio::read(client_socket_, boost::asio::buffer(payload));
+        return parse_rtmp_status(payload);
+    }
+
+    boost::asio::io_context io_;
+    stream_registry registry_;
+    std::shared_ptr<media_stream> stream_;
+    boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::ip::tcp::socket client_socket_;
+    std::shared_ptr<rtmp_session> session_;
+    rtmp_client_t* client_{};
+    bool received_video_config_{};
+    std::jthread runner_;
+};
+
+void test_rtmp_rejects_live_playback_control()
+{
+    rtmp_output_test_peer peer;
+    const auto pause = peer.pause();
+    const auto seek = peer.seek();
+    require(pause.level == "error" && pause.code == "NetStream.Pause.Failed", "rtmp live pause rejected");
+    require(seek.level == "error" && seek.code == "NetStream.Seek.Failed", "rtmp live seek rejected");
 }
 
 void test_tcp_listener_startup_error()
@@ -1524,6 +1694,8 @@ int main()
     std::cout << "[pass] internal_format_contract\n";
     media_server::test_rtmp_aac_asc_adts_contract();
     std::cout << "[pass] rtmp_aac_asc_adts_contract\n";
+    media_server::test_rtmp_rejects_live_playback_control();
+    std::cout << "[pass] rtmp_rejects_live_playback_control\n";
     media_server::test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     media_server::test_h265_output_paths();
