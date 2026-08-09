@@ -39,7 +39,6 @@ class tcp_connection final : public std::enable_shared_from_this<tcp_connection>
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     read_handler on_read_;
     close_handler on_close_;
-    bool writing_{};
     bool closed_{};
 };
 

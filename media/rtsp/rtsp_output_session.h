@@ -35,10 +35,9 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
    private:
     struct track_state
     {
-        media_track track;
+        std::uint64_t config_version{};
         int payload_index{-1};
         int media_id{-1};
-        int payload_type{};
         std::uint8_t rtp_channel{};
         std::uint8_t rtcp_channel{};
         bool setup{};
