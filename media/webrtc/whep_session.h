@@ -24,7 +24,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 
 namespace media_server
 {
@@ -44,7 +43,7 @@ struct whep_session_timeouts
 class whep_session final : public std::enable_shared_from_this<whep_session>
 {
    public:
-    using closed_handler = std::function<void(std::string_view)>;
+    using closed_handler = std::function<void(const whep_session&)>;
 
     whep_session(
         boost::asio::io_context& io,
@@ -113,8 +112,6 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> send_queue_;
     std::uint16_t local_port_{};
     bool started_{};
-    bool ice_connected_{};
-    bool send_in_progress_{};
 };
 
 }    // namespace media_server
