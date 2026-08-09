@@ -183,10 +183,15 @@ int rtsp_output_session::pause_callback(
 }
 
 int rtsp_output_session::teardown_callback(
-    void* param, rtsp_server_t* server, const char*, const char*)
+    void* param, rtsp_server_t* server, const char*, const char* session)
     {
-    const auto result = rtsp_server_reply_teardown(server, 200);
     auto* self = static_cast<rtsp_output_session*>(param);
+    if (session == nullptr || self->session_id_.empty() || session != self->session_id_)
+    {
+        return rtsp_server_reply_teardown(server, 454);
+    }
+
+    const auto result = rtsp_server_reply_teardown(server, 200);
     const auto keep_alive = self->shared_from_this();
     boost::asio::post(
         self->connection_->socket().get_executor(),
@@ -279,21 +284,37 @@ void rtsp_output_session::close()
 
 int rtsp_output_session::on_describe(std::string_view uri)
 {
-    stream_name_ = stream_name_from_uri(uri);
-    stream_ = registry_.find(stream_name_);
-    if (!stream_)
+    if (!session_id_.empty())
     {
-        return rtsp_server_reply_describe(server_, 404, "");
+        return rtsp_server_reply_describe(server_, 455, "");
     }
 
     if (muxer_ != nullptr)
-
     {
         rtsp_muxer_destroy(muxer_);
         muxer_ = nullptr;
     }
-    muxer_ = rtsp_muxer_create(&rtsp_output_session::muxer_packet_callback, this);
     tracks_.clear();
+    stream_.reset();
+
+    const auto stream_name = stream_name_from_uri(uri);
+    stream_name_ = stream_name;
+    auto stream = registry_.find(stream_name);
+    if (!stream)
+    {
+        return rtsp_server_reply_describe(server_, 404, "");
+    }
+    const auto snapshot = stream->tracks();
+    if (snapshot.empty())
+    {
+        return rtsp_server_reply_describe(server_, 503, "");
+    }
+
+    muxer_ = rtsp_muxer_create(&rtsp_output_session::muxer_packet_callback, this);
+    if (muxer_ == nullptr)
+    {
+        return rtsp_server_reply_describe(server_, 500, "");
+    }
 
     std::ostringstream sdp;
     const auto ip = local_ip(*connection_);
@@ -304,12 +325,15 @@ int rtsp_output_session::on_describe(std::string_view uri)
         << "t=0 0\r\n"
         << "a=control:*\r\n";
 
-    const auto snapshot = stream_->tracks();
     std::string media_sdp;
     if (!configure_tracks(snapshot, media_sdp))
     {
+        rtsp_muxer_destroy(muxer_);
+        muxer_ = nullptr;
+        tracks_.clear();
         return rtsp_server_reply_describe(server_, 415, "");
     }
+    stream_ = std::move(stream);
     sdp << media_sdp;
     spdlog::info("rtsp output describe {}", stream_name_);
     return rtsp_server_reply_describe(server_, 200, sdp.str().c_str());
@@ -332,6 +356,14 @@ int rtsp_output_session::on_setup(
     {
         return rtsp_server_reply_setup(server_, 404, nullptr, nullptr);
     }
+    if (!stream_ || stream_->ended())
+    {
+        return rtsp_server_reply_setup(server_, 503, nullptr, nullptr);
+    }
+    if (!session_id_.empty() && session != session_id_)
+    {
+        return rtsp_server_reply_setup(server_, 454, nullptr, nullptr);
+    }
 
     const rtsp_header_transport_t* selected = nullptr;
     for (std::size_t index = 0; index < count; ++index)
@@ -348,10 +380,14 @@ int rtsp_output_session::on_setup(
     }
 
     if (session_id_.empty())
-
     {
-        session_id_ = session.empty() ? std::to_string(reinterpret_cast<std::uintptr_t>(this)) : std::string(session);
+        if (!session.empty())
+        {
+            return rtsp_server_reply_setup(server_, 454, nullptr, nullptr);
+        }
+        session_id_ = std::to_string(reinterpret_cast<std::uintptr_t>(this));
     }
+
     iterator->second.rtp_channel = static_cast<std::uint8_t>(selected->interleaved1);
     iterator->second.rtcp_channel = static_cast<std::uint8_t>(selected->interleaved2);
     iterator->second.setup = true;
