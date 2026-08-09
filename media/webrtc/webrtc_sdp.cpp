@@ -427,7 +427,7 @@ std::optional<webrtc_answer> make_webrtc_answer(
         const webrtc_codec_offer* codec = nullptr;
         std::string profile_level_id;
 
-        if (can_receive && lower_copy(media.type) == "video" && video_track != nullptr)
+        if (can_receive && lower_copy(media.type) == "video" && video_track != nullptr && !video_payload_type.has_value())
         {
             if (video_track->codec == codec_id::h264)
             {
@@ -443,7 +443,7 @@ std::optional<webrtc_answer> make_webrtc_answer(
                 codec = find_h265(media);
             }
         }
-        else if (can_receive && lower_copy(media.type) == "audio" && audio_track != nullptr)
+        else if (can_receive && lower_copy(media.type) == "audio" && audio_track != nullptr && !audio_payload_type.has_value())
         {
             codec = find_opus(media);
         }
