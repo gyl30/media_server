@@ -78,7 +78,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     int on_setup(int timeout, std::int64_t duration);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
     int on_packet(avpacket_t* packet);
-    void update_track_from_packet(const avpacket_t& packet);
+    [[nodiscard]] bool update_track_from_packet(const avpacket_t& packet);
 
     boost::asio::io_context& io_;
     stream_registry& registry_;
@@ -92,7 +92,6 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     rtsp_client_t* client_{};
     std::array<rtsp_demuxer_t*, 8> demuxers_{};
     avpkt2bs_t bitstream_{};
-    bool bitstream_created_{};
     bool closed_{};
 };
 

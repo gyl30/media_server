@@ -22,7 +22,6 @@ namespace
 
 constexpr std::int64_t nanoseconds_per_second = 1'000'000'000LL;
 constexpr std::int64_t opus_sample_rate = 48'000LL;
-constexpr std::int64_t rtp_timeline_origin_ms = 1;
 constexpr std::size_t rtcp_buffer_size = 4096;
 constexpr std::string_view rtcp_name = "media_server";
 
@@ -35,11 +34,6 @@ std::uint32_t random_u32()
 std::int64_t opus_samples_to_nanoseconds(std::uint32_t sample_count)
 {
     return static_cast<std::int64_t>(sample_count) * nanoseconds_per_second / opus_sample_rate;
-}
-
-std::int64_t rtp_milliseconds(std::int64_t nanoseconds)
-{
-    return ns_to_milliseconds(nanoseconds) + rtp_timeline_origin_ms;
 }
 
 }    // namespace
@@ -334,8 +328,8 @@ void webrtc_output::input_h264(track_state& state, const media_frame& frame)
     const auto result = rtsp_muxer_input(
         muxer_,
         state.media_id,
-        rtp_milliseconds(frame.pts_ns),
-        rtp_milliseconds(frame.dts_ns),
+        ns_to_milliseconds(frame.pts_ns),
+        ns_to_milliseconds(frame.dts_ns),
         frame.payload->data(),
         static_cast<int>(frame.payload->size()),
         frame.key_frame ? 1 : 0);
@@ -369,7 +363,7 @@ void webrtc_output::input_aac(track_state& state, const media_frame& frame)
     bool sent = false;
     for (const auto& packet : packets)
     {
-        const auto pts_ms = rtp_milliseconds(state.audio_pts_ns);
+        const auto pts_ms = ns_to_milliseconds(state.audio_pts_ns);
         const auto result = rtsp_muxer_input(
             muxer_,
             state.media_id,
