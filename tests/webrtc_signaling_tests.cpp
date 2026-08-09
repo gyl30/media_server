@@ -47,6 +47,14 @@ const std::vector<std::uint8_t> h264_config{
 
 const std::vector<std::uint8_t> aac_asc{0x12, 0x10};
 
+const std::vector<std::vector<std::uint8_t>> valid_aac_adts_frames{
+    {0xff, 0xf1, 0x50, 0x80, 0x03, 0xdf, 0xfc, 0xde, 0x02, 0x00, 0x4c, 0x61, 0x76, 0x63, 0x36, 0x31,
+     0x2e, 0x31, 0x39, 0x2e, 0x31, 0x30, 0x31, 0x00, 0x42, 0x20, 0x08, 0xc1, 0x18, 0x38},
+    {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
+    {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
+    {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
+};
+
 const std::string webrtc_offer_sdp =
     "v=0\r\n"
     "o=- 1000 2 IN IP4 127.0.0.1\r\n"
@@ -638,6 +646,18 @@ void test_whep_ice_lite()
 }
 
 
+media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
+{
+    return media_frame{
+        .track = audio_track_id,
+        .dts_ns = pts_ns,
+        .pts_ns = pts_ns,
+        .duration_ns = 23'219'954,
+        .key_frame = false,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.at(index)),
+    };
+}
+
 void test_whep_dtls()
 {
     boost::asio::io_context io;
@@ -739,6 +759,43 @@ void test_whep_dtls()
     require(clear_rtp->bytes.size() >= 12U, "srtp clear rtp header");
     require((clear_rtp->bytes[0] >> 6U) == 2U, "srtp clear rtp version");
     require((clear_rtp->bytes[1] & 0x7fU) == 102U, "srtp negotiated h264 payload");
+
+    std::int64_t audio_pts_ns = 0;
+    for (std::size_t index = 0; index < valid_aac_adts_frames.size(); ++index)
+    {
+        require(stream->publish(make_audio_frame(index, audio_pts_ns)), "srtp publish audio");
+        audio_pts_ns += 23'219'954;
+    }
+
+    std::optional<srtp_packet> clear_audio_rtp;
+    const auto audio_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!clear_audio_rtp && std::chrono::steady_clock::now() < audio_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(10));
+        io.restart();
+
+        boost::system::error_code receive_error;
+        const auto size = client_socket.receive_from(boost::asio::buffer(rtp_buffer), rtp_sender, 0, receive_error);
+        if (receive_error == boost::asio::error::would_block || receive_error == boost::asio::error::try_again)
+        {
+            continue;
+        }
+        require(!receive_error && rtp_sender == server_endpoint, "srtp receive audio packet");
+        const auto packet = std::span<const std::uint8_t>(rtp_buffer.data(), size);
+        if (!srtp_transport::is_rtp_or_rtcp(packet))
+        {
+            continue;
+        }
+        auto clear = peer_srtp.unprotect(packet);
+        if (clear && !clear->rtcp && clear->bytes.size() >= 12U && (clear->bytes[1] & 0x7fU) == 111U)
+        {
+            clear_audio_rtp = std::move(clear);
+        }
+    }
+
+    require(clear_audio_rtp.has_value(), "srtp decrypt opus rtp");
+    require((clear_audio_rtp->bytes[0] >> 6U) == 2U, "srtp clear opus rtp version");
+    require((clear_audio_rtp->bytes[1] & 0x7fU) == 111U, "srtp negotiated opus payload");
 
     session->close();
     boost::system::error_code error;

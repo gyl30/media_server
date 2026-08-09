@@ -30,6 +30,14 @@ const std::vector<std::uint8_t> h264_config{
 
 const std::vector<std::uint8_t> aac_asc{0x12, 0x10};
 
+const std::vector<std::vector<std::uint8_t>> valid_aac_adts_frames{
+    {0xff, 0xf1, 0x50, 0x80, 0x03, 0xdf, 0xfc, 0xde, 0x02, 0x00, 0x4c, 0x61, 0x76, 0x63, 0x36, 0x31,
+     0x2e, 0x31, 0x39, 0x2e, 0x31, 0x30, 0x31, 0x00, 0x42, 0x20, 0x08, 0xc1, 0x18, 0x38},
+    {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
+    {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
+    {0xff, 0xf1, 0x50, 0x80, 0x01, 0xbf, 0xfc, 0x21, 0x10, 0x04, 0x60, 0x8c, 0x1c},
+};
+
 [[noreturn]] void fail(std::string_view message)
 {
     std::cerr << "[fail] " << message << '\n';
@@ -219,6 +227,16 @@ void test_hls_output()
     require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls endlist");
 }
 
+
+std::uint32_t rtp_timestamp(const std::vector<std::uint8_t>& packet)
+{
+    require(packet.size() >= 12U, "rtp timestamp packet size");
+    return (static_cast<std::uint32_t>(packet[4]) << 24U) |
+        (static_cast<std::uint32_t>(packet[5]) << 16U) |
+        (static_cast<std::uint32_t>(packet[6]) << 8U) |
+        static_cast<std::uint32_t>(packet[7]);
+}
+
 void test_webrtc_rtp_packetizer()
 {
     std::vector<std::vector<std::uint8_t>> packets;
@@ -226,14 +244,55 @@ void test_webrtc_rtp_packetizer()
         packets.emplace_back(packet.begin(), packet.end());
     });
     output.on_track(make_video_track());
-    output.on_frame(make_video_frame(0, false));
+    output.on_frame(make_video_frame(-40'000'000, false));
     require(packets.empty(), "webrtc waits natural key frame");
-    output.on_frame(make_video_frame(40'000'000, true));
+    output.on_frame(make_video_frame(0, true));
 
     require(output.packet_count() > 0, "webrtc h264 rtp packet count");
     require(!packets.empty() && packets.front().size() >= 12, "rtp header size");
     require((packets.front()[0] >> 6U) == 2U, "rtp version 2");
     require((packets.front()[1] & 0x7fU) == 102U, "rtp negotiated payload type");
+
+    const auto first_timestamp = rtp_timestamp(packets.front());
+    const auto first_frame_packet_count = packets.size();
+    output.on_frame(make_video_frame(40'000'000, false));
+    require(packets.size() > first_frame_packet_count, "webrtc second h264 frame packetized");
+    require(rtp_timestamp(packets.back()) - first_timestamp == 3'600U, "h264 rtp timestamp step");
+}
+
+void test_webrtc_opus_packetizer()
+{
+    std::vector<std::vector<std::uint8_t>> packets;
+    webrtc_output output(
+        webrtc_output_config{.opus_payload_type = 111},
+        [&packets](std::span<const std::uint8_t> packet) {
+            packets.emplace_back(packet.begin(), packet.end());
+        });
+    output.on_track(make_audio_track());
+
+    std::int64_t pts_ns = 0;
+    for (const auto& adts : valid_aac_adts_frames)
+    {
+        output.on_frame(media_frame{
+            .track = audio_track_id,
+            .dts_ns = pts_ns,
+            .pts_ns = pts_ns,
+            .duration_ns = 23'219'954,
+            .key_frame = false,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+        });
+        pts_ns += 23'219'954;
+    }
+
+    require(output.packet_count() > 0, "webrtc opus rtp packet count");
+    require(!packets.empty() && packets.front().size() >= 12, "opus rtp header size");
+    require((packets.front()[0] >> 6U) == 2U, "opus rtp version 2");
+    require((packets.front()[1] & 0x7fU) == 111U, "opus negotiated payload type");
+
+    if (packets.size() >= 2U)
+    {
+        require(rtp_timestamp(packets[1]) - rtp_timestamp(packets[0]) == 960U, "opus rtp timestamp step");
+    }
 }
 
 }    // namespace
@@ -250,6 +309,8 @@ int main()
     std::cout << "[pass] hls_output\n";
     test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
-    std::cout << "all tests passed: 4/4\n";
+    test_webrtc_opus_packetizer();
+    std::cout << "[pass] webrtc_opus_packetizer\n";
+    std::cout << "all tests passed: 5/5\n";
     return 0;
 }
