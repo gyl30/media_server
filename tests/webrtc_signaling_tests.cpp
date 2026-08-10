@@ -344,6 +344,18 @@ void require(bool condition, std::string_view message)
     }
 }
 
+std::string make_h265_offer(std::string offer)
+{
+    constexpr std::string_view h264_rtpmap = "a=rtpmap:102 H264/90000\r\n";
+    constexpr std::string_view h264_fmtp = "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
+    const auto rtpmap_offset = offer.find(h264_rtpmap);
+    const auto fmtp_offset = offer.find(h264_fmtp);
+    require(rtpmap_offset != std::string::npos && fmtp_offset != std::string::npos, "webrtc h265 offer source");
+    offer.erase(fmtp_offset, h264_fmtp.size());
+    offer.replace(rtpmap_offset, h264_rtpmap.size(), "a=rtpmap:102 H265/90000\r\n");
+    return offer;
+}
+
 constexpr std::uint32_t stun_magic_cookie = 0x2112a442U;
 
 void append_u16(std::vector<std::uint8_t>& output, std::uint16_t value)
@@ -613,27 +625,24 @@ media_track make_audio_track()
     };
 }
 
-media_frame make_video_key_frame()
+media_frame make_video_key_frame(codec_id codec)
 {
+    require(codec == codec_id::h264 || codec == codec_id::h265, "video key frame codec");
+    std::vector<std::uint8_t> payload;
+    if (codec == codec_id::h265)
+    {
+        payload = {0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0x9a, 0x20, 0x11};
+    }
+    else
+    {
+        payload = {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x21, 0xa0, 0x10, 0x08, 0x04};
+    }
     return media_frame{
         .track = video_track_id,
         .dts_ns = 0,
         .pts_ns = 0,
         .key_frame = true,
-        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::vector<std::uint8_t>{
-            0x00,
-            0x00,
-            0x00,
-            0x01,
-            0x65,
-            0x88,
-            0x84,
-            0x21,
-            0xa0,
-            0x10,
-            0x08,
-            0x04,
-        }),
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(payload)),
     };
 }
 
@@ -790,16 +799,7 @@ void test_webrtc_sdp_answer()
 
 void test_webrtc_h265_sdp_answer()
 {
-    auto h265_offer_sdp = webrtc_offer_sdp;
-    const std::string h264_rtpmap = "a=rtpmap:102 H264/90000\r\n";
-    const std::string h264_fmtp = "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
-    const auto rtpmap_offset = h265_offer_sdp.find(h264_rtpmap);
-    const auto fmtp_offset = h265_offer_sdp.find(h264_fmtp);
-    require(rtpmap_offset != std::string::npos && fmtp_offset != std::string::npos, "webrtc h265 offer source");
-    h265_offer_sdp.replace(rtpmap_offset, h264_rtpmap.size(), "a=rtpmap:102 H265/90000\r\n");
-    const auto updated_fmtp_offset = h265_offer_sdp.find(h264_fmtp);
-    h265_offer_sdp.erase(updated_fmtp_offset, h264_fmtp.size());
-
+    const auto h265_offer_sdp = make_h265_offer(webrtc_offer_sdp);
     const auto offer = parse_webrtc_offer(h265_offer_sdp);
     require(offer.has_value(), "parse webrtc h265 offer");
     const auto answer = make_webrtc_answer(*offer,
@@ -1470,18 +1470,24 @@ media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
     };
 }
 
-void test_whep_dtls()
+void test_whep_dtls(codec_id video_codec)
 {
+    require(video_codec == codec_id::h264 || video_codec == codec_id::h265, "dtls video codec");
+    const bool h265 = video_codec == codec_id::h265;
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/dtls");
-    require(stream->update_track(make_video_track()), "dtls video track");
+    require(stream->update_track(h265 ? make_h265_track() : make_video_track()), "dtls video track");
     require(stream->update_track(make_audio_track()), "dtls audio track");
 
     auto server_certificate = dtls_certificate::create();
     auto client_certificate = dtls_certificate::create();
     require(server_certificate != nullptr && client_certificate != nullptr, "dtls certificates");
 
-    const auto offer_sdp = offer_with_fingerprint(client_certificate->sha256_fingerprint());
+    auto offer_sdp = offer_with_fingerprint(client_certificate->sha256_fingerprint());
+    if (h265)
+    {
+        offer_sdp = make_h265_offer(std::move(offer_sdp));
+    }
     const auto offer = parse_webrtc_offer(offer_sdp);
     require(offer.has_value(), "dtls parse offer");
 
@@ -1511,7 +1517,7 @@ void test_whep_dtls()
     require(peer_material.has_value(), "dtls client srtp material");
     srtp_transport peer_srtp;
     require(peer_srtp.start(*peer_material), "srtp peer start");
-    require(stream->publish(make_video_key_frame()), "srtp publish video");
+    require(stream->publish(make_video_key_frame(video_codec)), "srtp publish video");
 
     std::array<std::uint8_t, 4096> rtp_buffer{};
     boost::asio::ip::udp::endpoint rtp_sender;
@@ -1538,9 +1544,11 @@ void test_whep_dtls()
     }
 
     require(clear_rtp.has_value() && !clear_rtp->rtcp, "srtp decrypt video rtp");
-    require(clear_rtp->bytes.size() >= 12U, "srtp clear rtp header");
+    require(clear_rtp->bytes.size() >= 14U, "srtp clear rtp header");
     require((clear_rtp->bytes[0] >> 6U) == 2U, "srtp clear rtp version");
-    require((clear_rtp->bytes[1] & 0x7fU) == 102U, "srtp negotiated h264 payload");
+    require((clear_rtp->bytes[1] & 0x7fU) == 102U, "srtp negotiated video payload");
+    const auto nal_type = h265 ? ((clear_rtp->bytes[12] >> 1U) & 0x3fU) : (clear_rtp->bytes[12] & 0x1fU);
+    require(nal_type == (h265 ? 19U : 5U), "srtp negotiated video codec");
     const auto video_ssrc = read_network_u32(clear_rtp->bytes, 8U);
 
     std::optional<srtp_packet> clear_server_rtcp;
@@ -1662,8 +1670,10 @@ int main()
     std::cout << "[pass] whep_selected_bundle_transport\n";
     media_server::test_rtcp_receiver();
     std::cout << "[pass] rtcp_receiver\n";
-    media_server::test_whep_dtls();
-    std::cout << "[pass] whep_dtls\n";
+    media_server::test_whep_dtls(media_server::codec_id::h264);
+    std::cout << "[pass] whep_dtls_h264\n";
+    media_server::test_whep_dtls(media_server::codec_id::h265);
+    std::cout << "[pass] whep_dtls_h265\n";
     std::cout << "all tests passed\n";
     return 0;
 }
