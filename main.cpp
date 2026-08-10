@@ -175,7 +175,7 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    std::vector<std::shared_ptr<media_server::rtsp_input_session>> pulls;
+    std::vector<std::weak_ptr<media_server::rtsp_input_session>> pulls;
     for (const auto& [name, url] : parsed->rtsp_pulls)
     {
         auto pull = std::make_shared<media_server::rtsp_input_session>(io, registry, name, url);
@@ -202,13 +202,16 @@ int main(int argc, char** argv)
         {
             for (const auto& pull : pulls)
             {
-                pull->close();
+                if (const auto session = pull.lock())
+                {
+                    session->shutdown();
+                }
             }
+            pulls.clear();
             http.close();
             whep.close();
             rtsp.close();
             rtmp.close();
-            io.stop();
         });
 
     io.run();

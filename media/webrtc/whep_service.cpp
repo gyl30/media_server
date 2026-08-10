@@ -62,19 +62,7 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
         }
     }
 
-    auto session = std::make_shared<whep_session>(io_,
-                                                  stream,
-                                                  advertised_address_,
-                                                  certificate_,
-                                                  [this](const whep_session& closed_session)
-                                                  {
-                                                      const auto iterator = sessions_.find(closed_session.id());
-                                                      if (iterator != sessions_.end() && iterator->second.get() == &closed_session)
-                                                      {
-                                                          spdlog::info("whep session released {}", closed_session.id());
-                                                          sessions_.erase(iterator);
-                                                      }
-                                                  });
+    auto session = std::make_shared<whep_session>(io_, stream, advertised_address_, certificate_);
     switch (session->start(std::move(*offer)))
     {
         case whep_session_start_error::none:
@@ -87,12 +75,13 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
             return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
     }
 
+    std::erase_if(sessions_, [](const auto& entry) { return entry.second.expired(); });
     const auto& session_id = session->id();
     const bool inserted = sessions_.emplace(session_id, session).second;
     if (!inserted)
     {
         spdlog::error("whep session id collision {}", session_id);
-        session->close();
+        session->shutdown();
         return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
     }
 
@@ -112,9 +101,14 @@ bool whep_service::remove(std::string_view session_id)
         spdlog::debug("whep session remove not found {}", session_id);
         return false;
     }
-    auto session = iterator->second;
+    auto session = iterator->second.lock();
     sessions_.erase(iterator);
-    session->close();
+    if (!session)
+    {
+        spdlog::debug("whep session remove expired {}", session_id);
+        return false;
+    }
+    session->shutdown();
     spdlog::info("whep session removed {}", session_id);
     return true;
 }
@@ -123,10 +117,13 @@ void whep_service::close()
 {
     auto sessions = std::move(sessions_);
     sessions_.clear();
-    for (const auto& [id, session] : sessions)
+    for (const auto& [id, weak_session] : sessions)
     {
         static_cast<void>(id);
-        session->close();
+        if (const auto session = weak_session.lock())
+        {
+            session->shutdown();
+        }
     }
 }
 

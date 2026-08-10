@@ -19,7 +19,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -51,17 +50,14 @@ enum class whep_session_start_error
 class whep_session final : public std::enable_shared_from_this<whep_session>
 {
    public:
-    using closed_handler = std::function<void(const whep_session&)>;
-
     whep_session(boost::asio::io_context& io,
                  std::shared_ptr<media_stream> stream,
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
-                 closed_handler handler = {},
                  whep_session_timeouts timeouts = {});
 
     [[nodiscard]] whep_session_start_error start(webrtc_offer offer);
-    void close();
+    void shutdown();
 
     [[nodiscard]] const std::string& id() const noexcept;
     [[nodiscard]] const std::string& answer_sdp() const noexcept;
@@ -72,6 +68,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     [[nodiscard]] const whep_rtcp_stats& rtcp_stats() const noexcept;
 
    private:
+    void safe_shutdown();
     void receive();
     void handle_packet(std::size_t size);
     void handle_stun(std::size_t size);
@@ -91,7 +88,6 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
-    closed_handler closed_handler_;
     whep_session_timeouts timeouts_;
     std::shared_ptr<media_sink> stream_observer_;
     std::unique_ptr<dtls_transport> dtls_;
@@ -118,6 +114,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> send_queue_;
     std::uint16_t local_port_{};
     bool started_{};
+    bool closed_{};
 };
 
 }    // namespace media_server

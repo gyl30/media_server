@@ -24,6 +24,7 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
     ~rtsp_output_session() override;
 
     void start();
+    void shutdown();
 
     void on_track(const media_track& track) override;
     void on_frame(const media_frame& frame) override;
@@ -54,8 +55,7 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
     void on_read(std::span<const std::uint8_t> data);
-    void on_close();
-    void close();
+    void safe_shutdown();
     int on_describe(std::string_view uri);
     int on_setup(std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_play(std::string_view uri, std::string_view session, const std::int64_t* npt);
