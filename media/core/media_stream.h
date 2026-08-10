@@ -35,6 +35,7 @@ class media_stream final
     std::string name_;
     std::map<track_id, media_track> tracks_;
     std::vector<std::weak_ptr<media_sink>> sinks_;
+    std::vector<media_frame> gop_cache_;
     bool ended_{};
 };
 

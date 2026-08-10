@@ -392,15 +392,23 @@ int rtsp_output_session::on_play(std::string_view uri, std::string_view session,
         return rtsp_server_reply_play(server_, 455, nullptr, nullptr, nullptr);
     }
 
-    if (!playing_)
+    if (playing_)
     {
-        if (!stream_->add_sink(shared_from_this()))
-        {
-            return rtsp_server_reply_play(server_, 503, nullptr, nullptr, nullptr);
-        }
-        playing_ = true;
+        return rtsp_server_reply_play(server_, 200, npt, nullptr, nullptr);
     }
-    return rtsp_server_reply_play(server_, 200, npt, nullptr, nullptr);
+
+    const auto result = rtsp_server_reply_play(server_, 200, npt, nullptr, nullptr);
+    if (result != 0)
+    {
+        return result;
+    }
+    if (!stream_->add_sink(shared_from_this()))
+    {
+        shutdown();
+        return result;
+    }
+    playing_ = true;
+    return result;
 }
 
 int rtsp_output_session::on_muxer_packet(int pid, const void* data, int bytes)
