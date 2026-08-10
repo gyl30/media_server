@@ -70,16 +70,12 @@ rtsp_output_session::~rtsp_output_session()
 void rtsp_output_session::start()
 {
     rtsp_handler_t handler{};
-    handler.close = &rtsp_output_session::close_callback;
     handler.send = &rtsp_output_session::send_callback;
     handler.ondescribe = &rtsp_output_session::describe_callback;
     handler.onsetup = &rtsp_output_session::setup_callback;
     handler.onplay = &rtsp_output_session::play_callback;
-    handler.onpause = &rtsp_output_session::pause_callback;
     handler.onteardown = &rtsp_output_session::teardown_callback;
-    handler.onoptions = &rtsp_output_session::options_callback;
     handler.ongetparameter = &rtsp_output_session::get_parameter_callback;
-    handler.onsetparameter = &rtsp_output_session::set_parameter_callback;
 
     const auto ip = local_ip(*connection_);
     server_ = rtsp_server_create(ip.c_str(), server_port_, &handler, this, this);
@@ -130,8 +126,6 @@ void rtsp_output_session::on_frame(const media_frame& frame)
 
 void rtsp_output_session::on_end() { shutdown(); }
 
-int rtsp_output_session::close_callback(void*) { return 0; }
-
 int rtsp_output_session::send_callback(void* param, const void* data, std::size_t bytes)
 {
     auto* self = static_cast<rtsp_output_session*>(param);
@@ -155,11 +149,6 @@ int rtsp_output_session::play_callback(void* param, rtsp_server_t*, const char* 
     return static_cast<rtsp_output_session*>(param)->on_play(uri != nullptr ? uri : "", session != nullptr ? session : "", npt);
 }
 
-int rtsp_output_session::pause_callback(void*, rtsp_server_t* server, const char*, const char*, const std::int64_t*)
-{
-    return rtsp_server_reply_pause(server, 460);
-}
-
 int rtsp_output_session::teardown_callback(void* param, rtsp_server_t* server, const char*, const char* session)
 {
     auto* self = static_cast<rtsp_output_session*>(param);
@@ -173,16 +162,9 @@ int rtsp_output_session::teardown_callback(void* param, rtsp_server_t* server, c
     return result;
 }
 
-int rtsp_output_session::options_callback(void*, rtsp_server_t* server, const char*) { return rtsp_server_reply_options(server, 200); }
-
 int rtsp_output_session::get_parameter_callback(void*, rtsp_server_t* server, const char*, const char*, const void*, int)
 {
     return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);
-}
-
-int rtsp_output_session::set_parameter_callback(void*, rtsp_server_t* server, const char*, const char*, const void*, int)
-{
-    return rtsp_server_reply_set_parameter(server, 200);
 }
 
 int rtsp_output_session::muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
