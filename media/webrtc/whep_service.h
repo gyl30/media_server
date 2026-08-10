@@ -5,11 +5,12 @@
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/whep_session.h"
 
-#include <boost/asio/io_context.hpp>
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/ip/address.hpp>
 
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -35,20 +36,21 @@ struct whep_create_result
 class whep_service final
 {
    public:
-    whep_service(boost::asio::io_context& io, stream_registry& registry, boost::asio::ip::address advertised_address);
+    whep_service(stream_registry& registry, boost::asio::ip::address advertised_address);
     ~whep_service();
 
     [[nodiscard]] bool ready() const noexcept;
-    [[nodiscard]] whep_create_result create(std::string_view stream_name, std::string_view offer_sdp);
+    [[nodiscard]] whep_create_result create(boost::asio::any_io_executor executor, std::string_view stream_name, std::string_view offer_sdp);
     [[nodiscard]] bool remove(std::string_view session_id);
     void close();
 
    private:
-    boost::asio::io_context& io_;
     stream_registry& registry_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
+    std::mutex sessions_mutex_;
     std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions_;
+    bool closed_{};
 };
 
 }    // namespace media_server

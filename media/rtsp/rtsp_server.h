@@ -8,6 +8,7 @@
 #include <boost/system/error_code.hpp>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace media_server
@@ -17,7 +18,7 @@ class rtsp_output_session;
 class rtsp_server final
 {
    public:
-    rtsp_server(boost::asio::io_context& io, stream_registry& registry, std::uint16_t port);
+    rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port);
 
     [[nodiscard]] boost::system::error_code start();
     void close();
@@ -26,7 +27,9 @@ class rtsp_server final
     stream_registry& registry_;
     std::uint16_t port_{};
     tcp_listener listener_;
+    std::mutex sessions_mutex_;
     std::vector<std::weak_ptr<rtsp_output_session>> sessions_;
+    bool closed_{};
 };
 
 }    // namespace media_server

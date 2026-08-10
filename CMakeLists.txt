@@ -17,10 +17,136 @@ find_package(OpenSSL REQUIRED)
 find_package(spdlog REQUIRED)
 
 include(CTest)
+include(CheckCXXCompilerFlag)
+include(CheckLinkerFlag)
 include(cmake/boost.cmake)
 include(cmake/ffmpeg.cmake)
 include(cmake/ireader.cmake)
 include(cmake/srtp.cmake)
+
+option(MEDIA_SERVER_HARDENING "Enable production compiler and linker hardening" ON)
+set(MEDIA_SERVER_SANITIZER "none" CACHE STRING "Sanitizer: none, address, thread")
+set_property(CACHE MEDIA_SERVER_SANITIZER PROPERTY STRINGS none address thread)
+
+set(media_server_sanitizers none address thread)
+if(NOT MEDIA_SERVER_SANITIZER IN_LIST media_server_sanitizers)
+    message(FATAL_ERROR "MEDIA_SERVER_SANITIZER must be none, address, or thread")
+endif()
+
+add_library(media_server_build_options INTERFACE)
+add_library(media_server_link_options INTERFACE)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(media_server_build_options INTERFACE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wconversion
+        -Wsign-conversion
+        -Wshadow
+        -Wformat=2
+        -Wimplicit-fallthrough
+        -Werror=format-security
+        -Werror
+    )
+
+    function(media_server_add_compile_option_if_supported option)
+        string(MAKE_C_IDENTIFIER "MEDIA_SERVER_CXX_${option}" variable)
+        check_cxx_compiler_flag("${option}" ${variable})
+        if(${variable})
+            target_compile_options(media_server_build_options INTERFACE "${option}")
+        endif()
+    endfunction()
+
+    function(media_server_add_link_option_if_supported option)
+        string(MAKE_C_IDENTIFIER "MEDIA_SERVER_LINK_${option}" variable)
+        check_linker_flag(CXX "${option}" ${variable})
+        if(${variable})
+            target_link_options(media_server_link_options INTERFACE "${option}")
+        endif()
+    endfunction()
+
+    function(media_server_add_optimized_compile_option_if_supported option)
+        string(MAKE_C_IDENTIFIER "MEDIA_SERVER_CXX_OPTIMIZED_${option}" variable)
+        check_cxx_compiler_flag("${option}" ${variable})
+        if(${variable})
+            target_compile_options(media_server_build_options INTERFACE
+                "$<${media_server_optimized_config}:${option}>")
+        endif()
+    endfunction()
+
+    set(media_server_optimized_config
+        "$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>")
+
+    if(MEDIA_SERVER_SANITIZER STREQUAL "address")
+        target_compile_options(media_server_build_options INTERFACE
+            -U_FORTIFY_SOURCE
+            -O1
+            -g
+            -fsanitize=address,undefined
+            -fno-sanitize-recover=all
+            -fno-omit-frame-pointer
+            -fno-optimize-sibling-calls
+            -fno-common
+        )
+        target_link_options(media_server_link_options INTERFACE
+            -fsanitize=address,undefined
+        )
+    elseif(MEDIA_SERVER_SANITIZER STREQUAL "thread")
+        target_compile_options(media_server_build_options INTERFACE
+            -U_FORTIFY_SOURCE
+            -O2
+            -g
+            -fsanitize=thread
+        )
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            target_compile_options(media_server_build_options INTERFACE
+                -Wno-tsan
+            )
+        endif()
+        target_link_options(media_server_link_options INTERFACE
+            -fsanitize=thread
+        )
+    elseif(MEDIA_SERVER_HARDENING)
+        target_compile_definitions(media_server_build_options INTERFACE
+            _GLIBCXX_ASSERTIONS
+        )
+
+        target_compile_options(media_server_build_options INTERFACE
+            "$<${media_server_optimized_config}:-U_FORTIFY_SOURCE>"
+            "$<${media_server_optimized_config}:-D_FORTIFY_SOURCE=3>"
+        )
+
+        media_server_add_compile_option_if_supported(-fstack-protector-strong)
+        media_server_add_compile_option_if_supported(-fstack-clash-protection)
+        media_server_add_optimized_compile_option_if_supported(-fno-delete-null-pointer-checks)
+        media_server_add_optimized_compile_option_if_supported(-fno-strict-overflow)
+        media_server_add_optimized_compile_option_if_supported(-fno-strict-aliasing)
+        media_server_add_optimized_compile_option_if_supported(-ftrivial-auto-var-init=zero)
+        media_server_add_compile_option_if_supported(-fPIE)
+
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            media_server_add_compile_option_if_supported(-Wtrampolines)
+            media_server_add_compile_option_if_supported(-Wbidi-chars=any)
+            media_server_add_optimized_compile_option_if_supported(-fzero-init-padding-bits=all)
+        endif()
+
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+            media_server_add_compile_option_if_supported(-fcf-protection=full)
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+            media_server_add_compile_option_if_supported(-mbranch-protection=standard)
+        endif()
+
+        if(UNIX AND NOT APPLE)
+            media_server_add_link_option_if_supported(-pie)
+            media_server_add_link_option_if_supported(-Wl,-z,noexecstack)
+            media_server_add_link_option_if_supported(-Wl,-z,relro)
+            media_server_add_link_option_if_supported(-Wl,-z,now)
+        endif()
+    endif()
+elseif(NOT MEDIA_SERVER_SANITIZER STREQUAL "none")
+    message(FATAL_ERROR "MEDIA_SERVER_SANITIZER requires GCC or Clang")
+endif()
 
 add_library(media_core STATIC
     media/core/log.cpp
@@ -28,6 +154,7 @@ add_library(media_core STATIC
     media/core/stream_registry.cpp
     media/codec/aac_opus_transcoder.cpp
     media/codec/codec_utils.cpp
+    media/net/io_context_pool.cpp
     media/net/tcp_connection.cpp
     media/net/tcp_listener.cpp
     media/flv/flv_output_muxer.cpp
@@ -61,6 +188,7 @@ target_include_directories(media_core SYSTEM PUBLIC
 )
 
 target_link_libraries(media_core PUBLIC
+    media_server_build_options
     ireader_media
     Threads::Threads
     OpenSSL::SSL
@@ -71,53 +199,21 @@ target_link_libraries(media_core PUBLIC
     ${MEDIA_SERVER_BOOST_LIBS}
 )
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(media_core PRIVATE
-        -Wall
-        -Wextra
-        -Wpedantic
-        -Wconversion
-        -Wsign-conversion
-        -Wshadow
-        -Werror
-    )
-endif()
-
 add_executable(media_server main.cpp)
-target_link_libraries(media_server PRIVATE media_core)
+target_link_libraries(media_server PRIVATE media_core media_server_link_options)
 
 if(BUILD_TESTING)
     add_test(NAME media_server_help COMMAND media_server --help)
     add_test(NAME media_server_invalid_config COMMAND media_server --invalid)
     set_tests_properties(media_server_invalid_config PROPERTIES WILL_FAIL TRUE)
+    add_test(NAME media_server_invalid_threads COMMAND media_server --threads 0)
+    set_tests_properties(media_server_invalid_threads PROPERTIES WILL_FAIL TRUE)
 
     add_executable(media_pipeline_tests tests/media_pipeline_tests.cpp)
-    target_link_libraries(media_pipeline_tests PRIVATE media_core)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(media_pipeline_tests PRIVATE
-            -Wall
-            -Wextra
-            -Wpedantic
-            -Wconversion
-            -Wsign-conversion
-            -Wshadow
-            -Werror
-        )
-    endif()
+    target_link_libraries(media_pipeline_tests PRIVATE media_core media_server_link_options)
     add_test(NAME media_pipeline_tests COMMAND media_pipeline_tests)
 
     add_executable(webrtc_signaling_tests tests/webrtc_signaling_tests.cpp)
-    target_link_libraries(webrtc_signaling_tests PRIVATE media_core)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(webrtc_signaling_tests PRIVATE
-            -Wall
-            -Wextra
-            -Wpedantic
-            -Wconversion
-            -Wsign-conversion
-            -Wshadow
-            -Werror
-        )
-    endif()
+    target_link_libraries(webrtc_signaling_tests PRIVATE media_core media_server_link_options)
     add_test(NAME webrtc_signaling_tests COMMAND webrtc_signaling_tests)
 endif()

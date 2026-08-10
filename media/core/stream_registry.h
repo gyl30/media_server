@@ -5,6 +5,7 @@
 
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -19,6 +20,7 @@ class stream_registry final
     [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view name) const;
 
    private:
+    mutable std::mutex mutex_;
     std::map<std::string, std::shared_ptr<media_stream>, std::less<>> streams_;
 };
 

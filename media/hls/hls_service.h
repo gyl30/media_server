@@ -7,6 +7,7 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -36,6 +37,7 @@ class hls_service final
     [[nodiscard]] std::chrono::steady_clock::duration ended_retention() const;
 
     stream_registry& registry_;
+    std::mutex mutex_;
     hls_config config_;
     std::map<std::string, entry, std::less<>> outputs_;
 };
