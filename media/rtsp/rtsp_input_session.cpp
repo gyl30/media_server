@@ -106,7 +106,7 @@ bool rtsp_input_session::start()
     username_ = parsed->username;
     password_ = parsed->password;
 
-    stream_ = std::make_shared<media_stream>(stream_name_);
+    stream_ = std::make_shared<media_stream>(stream_name_, io_.get_executor());
     if (!registry_.add(stream_))
     {
         stream_.reset();
@@ -137,11 +137,10 @@ bool rtsp_input_session::start()
 
 void rtsp_input_session::shutdown()
 {
-    if (closed_)
+    if (closed_.exchange(true))
     {
         return;
     }
-    closed_ = true;
     const auto self = shared_from_this();
     boost::asio::post(io_, [self]() { self->safe_shutdown(); });
 }

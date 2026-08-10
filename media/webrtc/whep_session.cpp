@@ -85,7 +85,7 @@ class whep_stream_observer final : public media_sink
 
 }    // namespace
 
-whep_session::whep_session(boost::asio::io_context& io,
+whep_session::whep_session(boost::asio::any_io_executor executor,
                            std::shared_ptr<media_stream> stream,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
@@ -94,10 +94,10 @@ whep_session::whep_session(boost::asio::io_context& io,
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
       timeouts_(timeouts),
-      socket_(io),
-      dtls_timer_(io),
-      establishment_timer_(io),
-      ice_activity_timer_(io)
+      socket_(executor),
+      dtls_timer_(executor),
+      establishment_timer_(executor),
+      ice_activity_timer_(executor)
 {
 }
 
@@ -224,12 +224,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
                                                                       self->shutdown();
                                                                   }
                                                               });
-    if (!stream_->add_sink(stream_observer_))
-    {
-        spdlog::debug("webrtc source stream observer attach failed session {}", id_);
-        shutdown();
-        return whep_session_start_error::stream_not_ready;
-    }
+    stream_->add_sink(stream_observer_, socket_.get_executor());
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
     spdlog::debug("webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {}",
@@ -246,14 +241,17 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
 
 void whep_session::shutdown()
 {
-    if (closed_)
+    if (closed_.exchange(true))
     {
         return;
     }
-    closed_ = true;
-    started_ = false;
     const auto self = shared_from_this();
-    boost::asio::post(socket_.get_executor(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(socket_.get_executor(),
+                      [self]()
+                      {
+                          self->started_ = false;
+                          self->safe_shutdown();
+                      });
 }
 
 void whep_session::safe_shutdown()
@@ -552,18 +550,14 @@ bool whep_session::start_media()
             }
         });
 
-    srtp_ = std::move(srtp);
-    output_ = std::move(output);
-    if (!output_->valid() || !stream_->add_sink(output_) || !output_->valid())
+    if (!output->valid())
     {
-        if (output_)
-        {
-            stream_->remove_sink(*output_);
-        }
-        output_.reset();
-        srtp_.reset();
         return false;
     }
+
+    srtp_ = std::move(srtp);
+    output_ = std::move(output);
+    stream_->add_sink(output_, socket_.get_executor());
 
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);

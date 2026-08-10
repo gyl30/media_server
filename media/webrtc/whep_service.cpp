@@ -7,8 +7,8 @@
 namespace media_server
 {
 
-whep_service::whep_service(boost::asio::io_context& io, stream_registry& registry, boost::asio::ip::address advertised_address)
-    : io_(io), registry_(registry), advertised_address_(std::move(advertised_address)), certificate_(dtls_certificate::create())
+whep_service::whep_service(stream_registry& registry, boost::asio::ip::address advertised_address)
+    : registry_(registry), advertised_address_(std::move(advertised_address)), certificate_(dtls_certificate::create())
 {
 }
 
@@ -16,9 +16,17 @@ whep_service::~whep_service() { close(); }
 
 bool whep_service::ready() const noexcept { return certificate_ != nullptr; }
 
-whep_create_result whep_service::create(std::string_view stream_name, std::string_view offer_sdp)
+whep_create_result whep_service::create(boost::asio::any_io_executor executor, std::string_view stream_name, std::string_view offer_sdp)
 {
     spdlog::debug("whep create stream {} offer_bytes {}", stream_name, offer_sdp.size());
+
+    {
+        std::scoped_lock lock(sessions_mutex_);
+        if (closed_)
+        {
+            return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
+        }
+    }
 
     auto stream = registry_.find(stream_name);
     if (!stream)
@@ -62,7 +70,7 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
         }
     }
 
-    auto session = std::make_shared<whep_session>(io_, stream, advertised_address_, certificate_);
+    auto session = std::make_shared<whep_session>(std::move(executor), stream, advertised_address_, certificate_);
     switch (session->start(std::move(*offer)))
     {
         case whep_session_start_error::none:
@@ -75,9 +83,23 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
             return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
     }
 
-    std::erase_if(sessions_, [](const auto& entry) { return entry.second.expired(); });
     const auto& session_id = session->id();
-    const bool inserted = sessions_.emplace(session_id, session).second;
+    bool inserted = false;
+    bool closed = false;
+    {
+        std::scoped_lock lock(sessions_mutex_);
+        closed = closed_;
+        if (!closed)
+        {
+            std::erase_if(sessions_, [](const auto& entry) { return entry.second.expired(); });
+            inserted = sessions_.emplace(session_id, session).second;
+        }
+    }
+    if (closed)
+    {
+        session->shutdown();
+        return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
+    }
     if (!inserted)
     {
         spdlog::error("whep session id collision {}", session_id);
@@ -95,14 +117,18 @@ whep_create_result whep_service::create(std::string_view stream_name, std::strin
 
 bool whep_service::remove(std::string_view session_id)
 {
-    const auto iterator = sessions_.find(session_id);
-    if (iterator == sessions_.end())
+    std::shared_ptr<whep_session> session;
     {
-        spdlog::debug("whep session remove not found {}", session_id);
-        return false;
+        std::scoped_lock lock(sessions_mutex_);
+        const auto iterator = sessions_.find(session_id);
+        if (iterator == sessions_.end())
+        {
+            spdlog::debug("whep session remove not found {}", session_id);
+            return false;
+        }
+        session = iterator->second.lock();
+        sessions_.erase(iterator);
     }
-    auto session = iterator->second.lock();
-    sessions_.erase(iterator);
     if (!session)
     {
         spdlog::debug("whep session remove expired {}", session_id);
@@ -115,8 +141,17 @@ bool whep_service::remove(std::string_view session_id)
 
 void whep_service::close()
 {
-    auto sessions = std::move(sessions_);
-    sessions_.clear();
+    std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions;
+    {
+        std::scoped_lock lock(sessions_mutex_);
+        if (closed_)
+        {
+            return;
+        }
+        closed_ = true;
+        sessions = std::move(sessions_);
+        sessions_.clear();
+    }
     for (const auto& [id, weak_session] : sessions)
     {
         static_cast<void>(id);

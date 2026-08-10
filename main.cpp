@@ -2,6 +2,7 @@
 #include "media/core/stream_registry.h"
 #include "media/hls/hls_service.h"
 #include "media/http/http_server.h"
+#include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_server.h"
@@ -11,12 +12,14 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace
@@ -28,6 +31,7 @@ struct options
     std::uint16_t rtsp_port{8554};
     std::uint16_t http_port{8080};
     std::string webrtc_address{"127.0.0.1"};
+    std::size_t threads{std::max(1U, std::thread::hardware_concurrency())};
     std::vector<std::pair<std::string, std::string>> rtsp_pulls;
     bool help{};
 };
@@ -94,6 +98,17 @@ std::optional<options> parse_options(int argc, char** argv)
             result.webrtc_address = *value;
             continue;
         }
+        if (const auto value = read_value("--threads"))
+        {
+            std::size_t threads{};
+            const auto [pointer, error] = std::from_chars(value->data(), value->data() + value->size(), threads);
+            if (error != std::errc{} || pointer != value->data() + value->size() || threads == 0)
+            {
+                return std::nullopt;
+            }
+            result.threads = threads;
+            continue;
+        }
         if (const auto value = read_value("--rtsp-pull"))
         {
             const auto equal = value->find('=');
@@ -117,6 +132,7 @@ void print_usage()
               << "  --rtsp-port <port>\n"
               << "  --http-port <port>\n"
               << "  --webrtc-address <ip>\n"
+              << "  --threads <count>\n"
               << "  --rtsp-pull <stream_name=rtsp_url>\n";
 }
 
@@ -146,18 +162,19 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    boost::asio::io_context io;
+    media_server::io_context_pool workers(parsed->threads);
+    auto& control_io = workers.context(0);
     media_server::stream_registry registry;
     media_server::hls_service hls(registry);
-    media_server::whep_service whep(io, registry, webrtc_address);
+    media_server::whep_service whep(registry, webrtc_address);
     if (!whep.ready())
     {
         spdlog::error("dtls certificate create failed");
         return 2;
     }
-    media_server::rtmp_server rtmp(io, registry, parsed->rtmp_port);
-    media_server::rtsp_server rtsp(io, registry, parsed->rtsp_port);
-    media_server::http_server http(io, registry, hls, whep, parsed->http_port);
+    media_server::rtmp_server rtmp(workers, registry, parsed->rtmp_port);
+    media_server::rtsp_server rtsp(workers, registry, parsed->rtsp_port);
+    media_server::http_server http(workers, registry, hls, whep, parsed->http_port);
 
     if (const auto error = rtmp.start())
     {
@@ -178,7 +195,7 @@ int main(int argc, char** argv)
     std::vector<std::weak_ptr<media_server::rtsp_input_session>> pulls;
     for (const auto& [name, url] : parsed->rtsp_pulls)
     {
-        auto pull = std::make_shared<media_server::rtsp_input_session>(io, registry, name, url);
+        auto pull = std::make_shared<media_server::rtsp_input_session>(workers.next(), registry, name, url);
         if (!pull->start())
         {
             spdlog::error("rtsp pull start failed stream {}", name);
@@ -196,7 +213,7 @@ int main(int argc, char** argv)
     spdlog::info("hls path hls/app/stream/index.m3u8");
     spdlog::info("whep path whep/app/stream");
 
-    boost::asio::signal_set signals(io, SIGINT, SIGTERM);
+    boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
     signals.async_wait(
         [&](const boost::system::error_code&, int)
         {
@@ -212,8 +229,10 @@ int main(int argc, char** argv)
             whep.close();
             rtsp.close();
             rtmp.close();
+            workers.release_work();
         });
 
-    io.run();
+    spdlog::info("worker threads {}", workers.size());
+    workers.run();
     return 0;
 }

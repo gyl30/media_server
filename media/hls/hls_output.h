@@ -9,6 +9,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -41,8 +42,8 @@ class hls_output final : public media_sink
 
     [[nodiscard]] std::string playlist(std::string_view base_path) const;
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> segment(std::uint64_t sequence) const;
-    [[nodiscard]] std::size_t segment_count() const noexcept;
-    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ended_at() const noexcept;
+    [[nodiscard]] std::size_t segment_count() const;
+    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ended_at() const;
 
    private:
     static void* ts_alloc(void* param, std::size_t bytes);
@@ -53,6 +54,7 @@ class hls_output final : public media_sink
     void finish_segment(std::int64_t end_pts_ns);
     [[nodiscard]] int add_track_to_muxer(const media_track& track);
 
+    mutable std::mutex mutex_;
     double target_duration_seconds_{};
     std::size_t window_size_{};
     std::map<track_id, media_track> tracks_;

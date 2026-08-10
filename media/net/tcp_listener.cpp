@@ -1,13 +1,16 @@
 #include "media/net/tcp_listener.h"
 
+#include <boost/asio/bind_executor.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/system/error_code.hpp>
+
 #include <utility>
 
 namespace media_server
 {
 
-tcp_listener::tcp_listener(boost::asio::io_context& io, std::uint16_t port, accept_handler handler)
-    : acceptor_(io), port_(port), handler_(std::move(handler))
+tcp_listener::tcp_listener(io_context_pool& workers, std::uint16_t port, accept_handler handler)
+    : acceptor_(workers.context(0)), workers_(workers), port_(port), handler_(std::move(handler))
 {
 }
 
@@ -62,18 +65,25 @@ void tcp_listener::accept_next()
         return;
     }
 
+    auto& worker = workers_.next();
     acceptor_.async_accept(
-        [this](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
-        {
-            if (!error && handler_)
+        worker,
+        boost::asio::bind_executor(
+            acceptor_.get_executor(),
+            [this](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
             {
-                handler_(std::move(socket));
-            }
-            if (started_)
-            {
-                accept_next();
-            }
-        });
+                if (!error && handler_)
+                {
+                    auto handler = handler_;
+                    boost::asio::dispatch(socket.get_executor(), [handler = std::move(handler), socket = std::move(socket)]() mutable {
+                        handler(std::move(socket));
+                    });
+                }
+                if (started_)
+                {
+                    accept_next();
+                }
+            }));
 }
 
 }    // namespace media_server

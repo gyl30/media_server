@@ -9,12 +9,13 @@
 #include "media/webrtc/webrtc_output.h"
 #include "media/webrtc/webrtc_sdp.h"
 
-#include <boost/asio/io_context.hpp>
+#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -50,7 +51,7 @@ enum class whep_session_start_error
 class whep_session final : public std::enable_shared_from_this<whep_session>
 {
    public:
-    whep_session(boost::asio::io_context& io,
+    whep_session(boost::asio::any_io_executor executor,
                  std::shared_ptr<media_stream> stream,
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
@@ -114,7 +115,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> send_queue_;
     std::uint16_t local_port_{};
     bool started_{};
-    bool closed_{};
+    std::atomic_bool closed_{};
 };
 
 }    // namespace media_server

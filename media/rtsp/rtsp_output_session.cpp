@@ -205,11 +205,10 @@ void rtsp_output_session::on_read(std::span<const std::uint8_t> data)
 
 void rtsp_output_session::shutdown()
 {
-    if (closed_)
+    if (closed_.exchange(true))
     {
         return;
     }
-    closed_ = true;
     const auto self = shared_from_this();
     boost::asio::post(connection_->socket().get_executor(), [self]() { self->safe_shutdown(); });
 }
@@ -402,11 +401,7 @@ int rtsp_output_session::on_play(std::string_view uri, std::string_view session,
     {
         return result;
     }
-    if (!stream_->add_sink(shared_from_this()))
-    {
-        shutdown();
-        return result;
-    }
+    stream_->add_sink(shared_from_this(), connection_->socket().get_executor());
     playing_ = true;
     return result;
 }

@@ -10,6 +10,11 @@ bool stream_registry::add(const std::shared_ptr<media_stream>& stream)
         return false;
     }
 
+    std::scoped_lock lock(mutex_);
+    if (stream->ended())
+    {
+        return false;
+    }
     const auto iterator = streams_.find(stream->name());
     if (iterator == streams_.end())
     {
@@ -27,6 +32,7 @@ bool stream_registry::add(const std::shared_ptr<media_stream>& stream)
 
 void stream_registry::remove(const media_stream& expected)
 {
+    std::scoped_lock lock(mutex_);
     const auto iterator = streams_.find(expected.name());
     if (iterator != streams_.end() && iterator->second.get() == &expected)
     {
@@ -36,6 +42,7 @@ void stream_registry::remove(const media_stream& expected)
 
 std::shared_ptr<media_stream> stream_registry::find(std::string_view name) const
 {
+    std::scoped_lock lock(mutex_);
     const auto iterator = streams_.find(name);
     if (iterator == streams_.end() || iterator->second->ended())
     {
