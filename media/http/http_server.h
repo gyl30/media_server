@@ -9,9 +9,13 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace media_server
 {
+class http_session;
+
 class http_server final
 {
    public:
@@ -25,6 +29,7 @@ class http_server final
     hls_service& hls_;
     whep_service& whep_;
     tcp_listener listener_;
+    std::vector<std::weak_ptr<http_session>> sessions_;
 };
 }    // namespace media_server
 

@@ -7,9 +7,12 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace media_server
 {
+class rtmp_session;
 
 class rtmp_server final
 {
@@ -22,6 +25,7 @@ class rtmp_server final
    private:
     stream_registry& registry_;
     tcp_listener listener_;
+    std::vector<std::weak_ptr<rtmp_session>> sessions_;
 };
 
 }    // namespace media_server

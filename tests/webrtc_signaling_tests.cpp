@@ -581,6 +581,12 @@ std::vector<std::uint8_t> exchange_stun(boost::asio::io_context& io,
     return {buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(received)};
 }
 
+void drain_io(boost::asio::io_context& io)
+{
+    io.poll();
+    io.restart();
+}
+
 void require_stun_success(std::span<const std::uint8_t> response, const std::array<std::uint8_t, 12>& transaction_id)
 {
     require(response.size() >= 20U, "stun response size");
@@ -665,10 +671,13 @@ class whep_http_test_peer final
 
     ~whep_http_test_peer()
     {
-        work_.reset();
-        io_.stop();
+        boost::asio::post(io_,
+                          [this]()
+                          {
+                              whep_.close();
+                              work_.reset();
+                          });
         runner_.join();
-        whep_.close();
     }
 
     boost::beast::http::response<boost::beast::http::string_body> options(std::string target, std::string_view requested_method)
@@ -1157,13 +1166,16 @@ void test_whep_session_lifecycle()
     require(sdp_attribute(first.answer_sdp, "ice-pwd") != sdp_attribute(second.answer_sdp, "ice-pwd"), "whep unique ice password");
 
     require(whep.remove(first.session_id), "whep remove first session");
+    drain_io(io);
     require(!whep.remove(first.session_id), "whep remove first once");
     require(whep.remove(second.session_id), "whep remove second session");
+    drain_io(io);
 
     const auto third = whep.create("live/test", webrtc_offer_sdp);
     require(third.error == whep_create_error::none, "whep recreate viewer");
 
     stream->end();
+    drain_io(io);
     require(!whep.remove(third.session_id), "whep source end releases session");
     registry.remove(*stream);
 
@@ -1179,11 +1191,95 @@ void test_whep_session_lifecycle()
     auto updated_video = make_video_track();
     updated_video.codec_config.push_back(0x01);
     require(replacement->update_track(std::move(updated_video)), "whep source config update");
+    drain_io(io);
     require(!whep.remove(replacement_session.session_id), "whep source config change releases session");
 
     const auto updated_session = whep.create("live/test", webrtc_offer_sdp);
     require(updated_session.error == whep_create_error::none, "whep create after config change");
     require(whep.remove(updated_session.session_id), "whep remove updated session");
+    drain_io(io);
+}
+
+void test_whep_negotiated_track_lifecycle()
+{
+    boost::asio::io_context io;
+    auto stream = std::make_shared<media_stream>("live/negotiated-tracks");
+    require(stream->update_track(make_h265_track()), "negotiated tracks h265");
+    require(stream->update_track(make_audio_track()), "negotiated tracks audio");
+
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "negotiated tracks certificate");
+
+    auto video_only_sdp = make_h265_offer(webrtc_offer_sdp);
+    const std::string bundle = "a=group:BUNDLE 0 1\r\n";
+    const auto video_bundle_offset = video_only_sdp.find(bundle);
+    require(video_bundle_offset != std::string::npos, "negotiated tracks video bundle");
+    video_only_sdp.replace(video_bundle_offset, bundle.size(), "a=group:BUNDLE 0\r\n");
+    const auto video_only_offer = parse_webrtc_offer(video_only_sdp);
+    require(video_only_offer.has_value(), "negotiated tracks video offer");
+
+    auto video_session = std::make_shared<whep_session>(io, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+    require(video_session->start(*video_only_offer) == whep_session_start_error::none, "negotiated tracks video session");
+    require(video_session->answer_sdp().find("a=group:BUNDLE 0\r\n") != std::string::npos, "negotiated tracks video answer");
+
+    auto updated_audio = make_audio_track();
+    updated_audio.clock_rate = 48'000;
+    updated_audio.codec_config = {0x11, 0x90};
+    require(stream->update_track(std::move(updated_audio)), "negotiated tracks unselected audio update");
+    drain_io(io);
+    require(video_session->local_port() != 0, "unselected audio keeps video session");
+
+    auto updated_video = make_h265_track();
+    updated_video.codec_config.push_back(0x01);
+    require(stream->update_track(std::move(updated_video)), "negotiated tracks selected video update");
+    drain_io(io);
+    require(video_session->local_port() == 0, "selected video closes video session");
+
+    auto audio_only_sdp = webrtc_offer_sdp;
+    const auto audio_bundle_offset = audio_only_sdp.find(bundle);
+    require(audio_bundle_offset != std::string::npos, "negotiated tracks audio bundle");
+    audio_only_sdp.replace(audio_bundle_offset, bundle.size(), "a=group:BUNDLE 1\r\n");
+    const auto audio_only_offer = parse_webrtc_offer(audio_only_sdp);
+    require(audio_only_offer.has_value(), "negotiated tracks audio offer");
+
+    auto audio_session = std::make_shared<whep_session>(io, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+    require(audio_session->start(*audio_only_offer) == whep_session_start_error::none, "negotiated tracks audio session");
+    require(audio_session->answer_sdp().find("a=group:BUNDLE 1\r\n") != std::string::npos, "negotiated tracks audio answer");
+
+    auto ignored_video = make_h265_track();
+    ignored_video.codec_config.push_back(0x02);
+    require(stream->update_track(std::move(ignored_video)), "negotiated tracks unselected video update");
+    drain_io(io);
+    require(audio_session->local_port() != 0, "unselected video keeps audio session");
+
+    auto selected_audio = make_audio_track();
+    selected_audio.clock_rate = 32'000;
+    selected_audio.codec_config = {0x12, 0x90};
+    require(stream->update_track(std::move(selected_audio)), "negotiated tracks selected audio update");
+    drain_io(io);
+    require(audio_session->local_port() == 0, "selected audio closes audio session");
+}
+
+void test_whep_self_owned_lifecycle()
+{
+    boost::asio::io_context io;
+    auto stream = std::make_shared<media_stream>("live/self-owned");
+    require(stream->update_track(make_video_track()), "self owned video track");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "self owned parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "self owned certificate");
+
+    auto session = std::make_shared<whep_session>(io, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+    require(session->start(*offer) == whep_session_start_error::none, "self owned session start");
+    const std::weak_ptr<whep_session> weak_session = session;
+    session.reset();
+    require(!weak_session.expired(), "self owned session kept by async receive");
+
+    stream->end();
+    drain_io(io);
+    require(weak_session.expired(), "self owned session released after safe shutdown");
 }
 
 void test_whep_multi_session_isolation()
@@ -1224,7 +1320,8 @@ void test_whep_multi_session_isolation()
         exchange_stun(io, second_client, second_endpoint, make_stun_request(second_ufrag + ":remotevideo", second_pwd, second_id, true)), second_id);
     require(first->ice_connected() && second->ice_connected(), "multi ice connected");
 
-    first->close();
+    first->shutdown();
+    drain_io(io);
     require(first->local_port() == 0 && !first->ice_connected(), "multi first closed");
     require(second->local_port() != 0 && second->ice_connected(), "multi second remains connected");
 
@@ -1235,6 +1332,7 @@ void test_whep_multi_session_isolation()
     require(second->ice_connected(), "multi second survives first close");
 
     stream->end();
+    drain_io(io);
     require(second->local_port() == 0, "multi source end closes second");
     require(!second->ice_connected(), "multi source end clears ice");
 
@@ -1255,13 +1353,11 @@ void test_whep_establishment_timeout()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "establishment timeout certificate");
 
-    std::size_t close_count = 0;
     auto session = std::make_shared<whep_session>(
         io,
         stream,
         boost::asio::ip::make_address("127.0.0.1"),
         certificate,
-        [&close_count](const whep_session&) { ++close_count; },
         whep_session_timeouts{
             .establishment = std::chrono::milliseconds(20),
             .ice_activity = std::chrono::seconds(1),
@@ -1274,10 +1370,10 @@ void test_whep_establishment_timeout()
 
     require(session->local_port() == 0, "establishment timeout closes socket");
     require(!session->ice_connected(), "establishment timeout clears ice");
-    require(close_count == 1, "establishment timeout closes once");
 
-    session->close();
-    require(close_count == 1, "establishment timeout repeated close ignored");
+    session->shutdown();
+    drain_io(io);
+    require(session->local_port() == 0, "establishment timeout repeated shutdown ignored");
 }
 
 void test_whep_ice_activity_timeout()
@@ -1292,13 +1388,11 @@ void test_whep_ice_activity_timeout()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "ice activity timeout certificate");
 
-    std::size_t close_count = 0;
     auto session = std::make_shared<whep_session>(
         io,
         stream,
         boost::asio::ip::make_address("127.0.0.1"),
         certificate,
-        [&close_count](const whep_session&) { ++close_count; },
         whep_session_timeouts{
             .establishment = std::chrono::seconds(1),
             .ice_activity = std::chrono::milliseconds(80),
@@ -1331,7 +1425,6 @@ void test_whep_ice_activity_timeout()
     io.restart();
     require(session->local_port() == 0, "ice activity timeout closes inactive session");
     require(!session->ice_connected(), "ice activity timeout clears ice");
-    require(close_count == 1, "ice activity timeout closes once");
 
     boost::system::error_code error;
     client.close(error);
@@ -1370,7 +1463,8 @@ void test_whep_ice_lite()
     require_stun_success(nominate_response, nominate_id);
     require(session->ice_connected(), "ice nominated");
 
-    session->close();
+    session->shutdown();
+    drain_io(io);
     boost::system::error_code error;
     client.close(error);
 }
@@ -1398,7 +1492,8 @@ void test_whep_selected_bundle_transport()
         require_stun_success(
             exchange_stun(io, client, endpoint, make_stun_request(local_ufrag + ":" + std::string(remote_ufrag), local_pwd, transaction_id, true)),
             transaction_id);
-        session->close();
+        session->shutdown();
+        drain_io(io);
     };
 
     check(make_audio_track(), webrtc_offer_sdp, "remoteaudio", 6);
@@ -1626,7 +1721,8 @@ void test_whep_dtls(codec_id video_codec)
     require(session->rtcp_stats().receiver_reports == 2U, "srtcp receiver report dispatch");
     require(session->rtcp_stats().plis == 1U, "srtcp pli dispatch");
 
-    session->close();
+    session->shutdown();
+    drain_io(io);
     boost::system::error_code error;
     client_socket.close(error);
 }
@@ -1656,6 +1752,10 @@ int main()
     std::cout << "[pass] whep_session_start_errors\n";
     media_server::test_whep_session_lifecycle();
     std::cout << "[pass] whep_session_lifecycle\n";
+    media_server::test_whep_negotiated_track_lifecycle();
+    std::cout << "[pass] whep_negotiated_track_lifecycle\n";
+    media_server::test_whep_self_owned_lifecycle();
+    std::cout << "[pass] whep_self_owned_lifecycle\n";
     media_server::test_whep_http_cors();
     std::cout << "[pass] whep_http_cors\n";
     media_server::test_whep_multi_session_isolation();

@@ -48,7 +48,7 @@ class whep_service final
     stream_registry& registry_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
-    std::map<std::string, std::shared_ptr<whep_session>, std::less<>> sessions_;
+    std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions_;
 };
 
 }    // namespace media_server

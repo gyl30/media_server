@@ -28,6 +28,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep);
 
     void start();
+    void shutdown();
 
    private:
     struct flv_chunk;
@@ -54,7 +55,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void write_flv_chunk();
     void finish_flv();
     void detach_flv();
-    void close();
+    void safe_shutdown();
 
     [[nodiscard]] static std::vector<std::string> path_segments(const boost::urls::url_view& target);
     [[nodiscard]] static std::string join_segments(const std::vector<std::string>& segments, std::size_t begin, std::size_t end);
@@ -70,7 +71,6 @@ class http_session final : public std::enable_shared_from_this<http_session>
     std::string hls_wait_stream_name_;
     std::shared_ptr<media_stream> media_stream_;
     std::shared_ptr<http_flv_output> flv_output_;
-    std::shared_ptr<http_session> keep_alive_;
     std::deque<std::shared_ptr<flv_chunk>> flv_chunks_;
     bool flv_finishing_ = false;
     bool closed_ = false;

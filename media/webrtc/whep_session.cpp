@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <boost/asio/post.hpp>
 #include <boost/asio/buffer.hpp>
 
 #include <openssl/rand.h>
@@ -42,18 +43,24 @@ class whep_stream_observer final : public media_sink
    public:
     using close_handler = std::function<void()>;
 
-    whep_stream_observer(std::span<const media_track> tracks, close_handler handler) : handler_(std::move(handler))
+    whep_stream_observer(std::span<const media_track> tracks, std::optional<codec_id> video_codec, bool audio, close_handler handler)
+        : handler_(std::move(handler))
     {
         for (const auto& track : tracks)
         {
-            config_versions_.emplace(track.id, track.config_version);
+            const bool negotiated_video = video_codec && track.kind == media_kind::video && track.codec == *video_codec;
+            const bool negotiated_audio = audio && track.kind == media_kind::audio && track.codec == codec_id::aac;
+            if (negotiated_video || negotiated_audio)
+            {
+                config_versions_.emplace(track.id, track.config_version);
+            }
         }
     }
 
     void on_track(const media_track& track) override
     {
         const auto iterator = config_versions_.find(track.id);
-        if (iterator == config_versions_.end() || iterator->second != track.config_version)
+        if (iterator != config_versions_.end() && iterator->second != track.config_version)
         {
             close();
         }
@@ -82,12 +89,10 @@ whep_session::whep_session(boost::asio::io_context& io,
                            std::shared_ptr<media_stream> stream,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
-                           closed_handler handler,
                            whep_session_timeouts timeouts)
     : stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
-      closed_handler_(std::move(handler)),
       timeouts_(timeouts),
       socket_(io),
       dtls_timer_(io),
@@ -98,7 +103,7 @@ whep_session::whep_session(boost::asio::io_context& io,
 
 whep_session_start_error whep_session::start(webrtc_offer offer)
 {
-    if (started_ || !stream_ || !certificate_)
+    if (closed_ || started_ || !stream_ || !certificate_)
     {
         spdlog::error("webrtc whep start rejected invalid state");
         return whep_session_start_error::internal_error;
@@ -130,7 +135,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     if (error)
     {
         spdlog::error("webrtc udp socket bind failed {}", error.message());
-        close();
+        shutdown();
         return whep_session_start_error::internal_error;
     }
 
@@ -138,7 +143,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     if (error || endpoint.port() == 0)
     {
         spdlog::error("webrtc udp local endpoint failed {}", error.message());
-        close();
+        shutdown();
         return whep_session_start_error::internal_error;
     }
 
@@ -148,7 +153,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     if (id_.empty() || ice_ufrag_.empty() || ice_pwd_.empty())
     {
         spdlog::error("webrtc session identifiers create failed");
-        close();
+        shutdown();
         return whep_session_start_error::internal_error;
     }
 
@@ -165,7 +170,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     if (!answer)
     {
         spdlog::debug("webrtc answer create failed session {}", id_);
-        close();
+        shutdown();
         return whep_session_start_error::invalid_offer;
     }
     const auto media = std::find_if(
@@ -174,7 +179,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
         !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
     {
         spdlog::debug("webrtc whep start rejected invalid transport attributes");
-        close();
+        shutdown();
         return whep_session_start_error::invalid_offer;
     }
 
@@ -192,7 +197,7 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     if (!dtls_->start())
     {
         spdlog::error("webrtc dtls transport start failed session {}", id_);
-        close();
+        shutdown();
         return whep_session_start_error::internal_error;
     }
 
@@ -207,20 +212,22 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     started_ = true;
 
     const auto session_weak = weak_from_this();
-    // WHEP SDP 固定，源轨道集合或配置变化时结束旧会话，由新会话重新协商。
+    // WHEP SDP 固定，只观察本次 answer 实际协商的源轨道。
     stream_observer_ = std::make_shared<whep_stream_observer>(source_tracks,
+                                                              video_codec_,
+                                                              audio_payload_type_.has_value(),
                                                               [session_weak]()
                                                               {
                                                                   if (const auto self = session_weak.lock())
                                                                   {
-                                                                      spdlog::info("webrtc source stream ended or changed session {}", self->id_);
-                                                                      self->close();
+                                                                      spdlog::info("webrtc source stream ended or negotiated track changed session {}", self->id_);
+                                                                      self->shutdown();
                                                                   }
                                                               });
     if (!stream_->add_sink(stream_observer_))
     {
         spdlog::debug("webrtc source stream observer attach failed session {}", id_);
-        close();
+        shutdown();
         return whep_session_start_error::stream_not_ready;
     }
 
@@ -237,12 +244,20 @@ whep_session_start_error whep_session::start(webrtc_offer offer)
     return whep_session_start_error::none;
 }
 
-void whep_session::close()
+void whep_session::shutdown()
 {
-    const bool was_started = started_;
-    auto handler = std::move(closed_handler_);
-    closed_handler_ = {};
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
     started_ = false;
+    const auto self = shared_from_this();
+    boost::asio::post(socket_.get_executor(), [self]() { self->safe_shutdown(); });
+}
+
+void whep_session::safe_shutdown()
+{
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
     send_queue_.clear();
@@ -256,6 +271,8 @@ void whep_session::close()
     }
     output_.reset();
     stream_observer_.reset();
+    stream_.reset();
+    certificate_.reset();
     srtp_.reset();
     dtls_timer_.cancel();
     establishment_timer_.cancel();
@@ -270,14 +287,7 @@ void whep_session::close()
     boost::system::error_code error;
     socket_.close(error);
 
-    if (was_started)
-    {
-        spdlog::info("webrtc whep session closed {}", id_);
-        if (handler)
-        {
-            handler(*this);
-        }
-    }
+    spdlog::info("webrtc whep session shutdown {}", id_);
 }
 
 const std::string& whep_session::id() const noexcept { return id_; }
@@ -434,7 +444,7 @@ void whep_session::handle_dtls(std::size_t size)
     if (!dtls_->handle_datagram(std::span<const std::uint8_t>(receive_buffer_.data(), size)))
     {
         spdlog::error("webrtc dtls failed session {}", id_);
-        close();
+        shutdown();
         return;
     }
 
@@ -445,7 +455,7 @@ void whep_session::handle_dtls(std::size_t size)
         if (!start_media())
         {
             spdlog::error("webrtc srtp start failed session {}", id_);
-            close();
+            shutdown();
         }
         return;
     }
@@ -642,7 +652,7 @@ void whep_session::write_udp()
                               if (error)
                               {
                                   spdlog::debug("webrtc udp send failed session {} error {}", self->id_, error.message());
-                                  self->close();
+                                  self->shutdown();
                                   return;
                               }
                               spdlog::trace("webrtc udp sent session {} bytes {}", self->id_, data->size());
@@ -687,7 +697,7 @@ void whep_session::handle_dtls_timeout()
     if (!dtls_->handle_timeout())
     {
         spdlog::error("webrtc dtls timeout failed session {}", id_);
-        close();
+        shutdown();
         return;
     }
     schedule_dtls_timeout();
@@ -711,7 +721,7 @@ void whep_session::start_establishment_timeout()
             }
 
             spdlog::info("webrtc establishment timeout session {}", self->id_);
-            self->close();
+            self->shutdown();
         });
 }
 
@@ -733,7 +743,7 @@ void whep_session::refresh_ice_activity_timeout()
             }
 
             spdlog::info("webrtc ice activity timeout session {}", self->id_);
-            self->close();
+            self->shutdown();
         });
 }
 
