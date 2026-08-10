@@ -24,6 +24,7 @@ extern "C"
 #include "rtmp-client.h"
 #include "rtmp-msgtypeid.h"
 #include "rtp-packet.h"
+#include "rtp-payload.h"
 #include "rtsp-client.h"
 #include "rtsp-demuxer.h"
 #include "rtsp-muxer.h"
@@ -546,6 +547,28 @@ class generation_replacing_sink final : public media_sink
 struct rtp_timeline_capture
 {
     std::vector<std::uint32_t> timestamps;
+};
+
+struct h265_rtp_capture
+{
+    std::vector<std::uint8_t> access_unit;
+};
+
+int capture_h265_nalu(void* param, const void* packet, int bytes, std::uint32_t, int)
+{
+    require(packet != nullptr && bytes > 0, "rtsp h265 depacketized nalu");
+    auto& access_unit = static_cast<h265_rtp_capture*>(param)->access_unit;
+    constexpr std::array<std::uint8_t, 4> start_code{0x00, 0x00, 0x00, 0x01};
+    access_unit.insert(access_unit.end(), start_code.begin(), start_code.end());
+    const auto* begin = static_cast<const std::uint8_t*>(packet);
+    access_unit.insert(access_unit.end(), begin, begin + bytes);
+    return 0;
+}
+
+struct rtsp_interleaved_packet
+{
+    std::uint8_t channel{};
+    std::vector<std::uint8_t> payload;
 };
 
 struct rtsp_aac_capture
@@ -1144,6 +1167,39 @@ class rtsp_output_test_peer final
 
     [[nodiscard]] std::shared_ptr<media_stream> stream() const { return stream_; }
 
+    std::optional<rtsp_interleaved_packet> read_interleaved(std::chrono::steady_clock::duration timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        const auto wait_for_bytes = [this, deadline](std::size_t size)
+        {
+            boost::system::error_code error;
+            auto available = client_.available(error);
+            while (!error && available < size && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                available = client_.available(error);
+            }
+            return !error && available >= size;
+        };
+        if (!wait_for_bytes(4U))
+        {
+            return std::nullopt;
+        }
+
+        std::array<std::uint8_t, 4> header{};
+        boost::asio::read(client_, boost::asio::buffer(header));
+        require(header[0] == 0x24, "rtsp interleaved marker");
+        const auto size = (static_cast<std::size_t>(header[2]) << 8U) | static_cast<std::size_t>(header[3]);
+        require(size > 0U, "rtsp interleaved payload size");
+        if (!wait_for_bytes(size))
+        {
+            return std::nullopt;
+        }
+        std::vector<std::uint8_t> payload(size);
+        boost::asio::read(client_, boost::asio::buffer(payload));
+        return rtsp_interleaved_packet{.channel = header[1], .payload = std::move(payload)};
+    }
+
    private:
     boost::asio::io_context io_;
     stream_registry registry_;
@@ -1252,6 +1308,53 @@ void test_rtsp_output_h265()
     require(describe.find("sprop-vps=") != std::string::npos, "rtsp h265 vps");
     require(describe.find("sprop-sps=") != std::string::npos, "rtsp h265 sps");
     require(describe.find("sprop-pps=") != std::string::npos, "rtsp h265 pps");
+
+    const auto setup = peer.request("SETUP " + base +
+                                    "/trackID=1 RTSP/1.0\r\n"
+                                    "CSeq: 2\r\n"
+                                    "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    require(setup.starts_with("RTSP/1.0 200"), "rtsp h265 setup");
+    const auto session = rtsp_header_value(setup, "Session:");
+    require(!session.empty(), "rtsp h265 session");
+
+    const auto play = peer.request("PLAY " + base +
+                                   " RTSP/1.0\r\n"
+                                   "CSeq: 3\r\n"
+                                   "Session: " +
+                                   session + "\r\n\r\n");
+    require(play.starts_with("RTSP/1.0 200"), "rtsp h265 play");
+
+    h265_rtp_capture capture;
+    rtp_payload_t handler{
+        .alloc = nullptr,
+        .free = nullptr,
+        .packet = &capture_h265_nalu,
+    };
+    const auto decoder = std::unique_ptr<void, decltype(&rtp_payload_decode_destroy)>(rtp_payload_decode_create(96, "H265", &handler, &capture),
+                                                                                      &rtp_payload_decode_destroy);
+    require(decoder != nullptr, "rtsp h265 depacketizer create");
+
+    const auto frame = make_h265_frame(0, true);
+    require(peer.stream()->publish(frame), "rtsp h265 publish frame");
+    bool marker = false;
+    while (!marker)
+    {
+        const auto interleaved = peer.read_interleaved(std::chrono::seconds(1));
+        require(interleaved.has_value(), "rtsp h265 interleaved packet");
+        if (interleaved->channel == 1U)
+        {
+            continue;
+        }
+        require(interleaved->channel == 0U, "rtsp h265 rtp channel");
+        rtp_packet_t packet{};
+        require(rtp_packet_deserialize(&packet, interleaved->payload.data(), static_cast<int>(interleaved->payload.size())) == 0,
+                "rtsp h265 rtp packet");
+        require(packet.rtp.pt == 96U, "rtsp h265 rtp payload type");
+        require(rtp_payload_decode_input(decoder.get(), interleaved->payload.data(), static_cast<int>(interleaved->payload.size())) >= 0,
+                "rtsp h265 depacketize");
+        marker = packet.rtp.m != 0;
+    }
+    require(capture.access_unit == *frame.payload, "rtsp h265 access unit");
 }
 
 void test_rtsp_output_rejects_stale_description()
