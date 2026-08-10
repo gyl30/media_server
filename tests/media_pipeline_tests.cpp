@@ -40,6 +40,7 @@ extern "C"
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -349,12 +350,17 @@ class counting_sink final : public media_sink
 {
    public:
     void on_track(const media_track&) override { ++tracks; }
-    void on_frame(const media_frame&) override { ++frames; }
+    void on_frame(const media_frame& frame) override
+    {
+        ++frames;
+        received_frames.emplace_back(frame.track, frame.pts_ns);
+    }
     void on_end() override { ++ends; }
 
     std::size_t tracks{};
     std::size_t frames{};
     std::size_t ends{};
+    std::vector<std::pair<track_id, std::int64_t>> received_frames;
 };
 
 class self_removing_sink final : public media_sink
@@ -1218,15 +1224,16 @@ class rtsp_output_test_peer final
     std::string request(std::string_view request)
     {
         boost::asio::write(client_, boost::asio::buffer(request));
-        std::string response;
-        boost::asio::read_until(client_, boost::asio::dynamic_buffer(response), "\r\n\r\n");
-        const auto header_end = response.find("\r\n\r\n");
+        boost::asio::read_until(client_, boost::asio::dynamic_buffer(read_buffer_), "\r\n\r\n");
+        const auto header_end = read_buffer_.find("\r\n\r\n");
         require(header_end != std::string::npos, "rtsp response header");
-        const auto total = header_end + 4U + rtsp_content_length(response);
-        if (response.size() < total)
+        const auto total = header_end + 4U + rtsp_content_length(read_buffer_);
+        if (read_buffer_.size() < total)
         {
-            boost::asio::read(client_, boost::asio::dynamic_buffer(response), boost::asio::transfer_exactly(total - response.size()));
+            boost::asio::read(client_, boost::asio::dynamic_buffer(read_buffer_), boost::asio::transfer_exactly(total - read_buffer_.size()));
         }
+        auto response = read_buffer_.substr(0, total);
+        read_buffer_.erase(0, total);
         return response;
     }
 
@@ -1242,31 +1249,48 @@ class rtsp_output_test_peer final
         const auto wait_for_bytes = [this, deadline](std::size_t size)
         {
             boost::system::error_code error;
-            auto available = client_.available(error);
-            while (!error && available < size && std::chrono::steady_clock::now() < deadline)
+            while (read_buffer_.size() < size && std::chrono::steady_clock::now() < deadline)
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                available = client_.available(error);
+                const auto available = client_.available(error);
+                if (error)
+                {
+                    return false;
+                }
+                if (available == 0U)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    continue;
+                }
+                const auto old_size = read_buffer_.size();
+                read_buffer_.resize(old_size + available);
+                const auto bytes = client_.read_some(boost::asio::buffer(read_buffer_.data() + old_size, available), error);
+                if (error)
+                {
+                    read_buffer_.resize(old_size);
+                    return false;
+                }
+                read_buffer_.resize(old_size + bytes);
             }
-            return !error && available >= size;
+            return read_buffer_.size() >= size;
         };
         if (!wait_for_bytes(4U))
         {
             return std::nullopt;
         }
 
-        std::array<std::uint8_t, 4> header{};
-        boost::asio::read(client_, boost::asio::buffer(header));
+        const auto* header = reinterpret_cast<const std::uint8_t*>(read_buffer_.data());
         require(header[0] == 0x24, "rtsp interleaved marker");
         const auto size = (static_cast<std::size_t>(header[2]) << 8U) | static_cast<std::size_t>(header[3]);
         require(size > 0U, "rtsp interleaved payload size");
-        if (!wait_for_bytes(size))
+        if (!wait_for_bytes(4U + size))
         {
             return std::nullopt;
         }
+        const auto channel = static_cast<std::uint8_t>(read_buffer_[1]);
         std::vector<std::uint8_t> payload(size);
-        boost::asio::read(client_, boost::asio::buffer(payload));
-        return rtsp_interleaved_packet{.channel = header[1], .payload = std::move(payload)};
+        std::memcpy(payload.data(), read_buffer_.data() + 4, size);
+        read_buffer_.erase(0, 4U + size);
+        return rtsp_interleaved_packet{.channel = channel, .payload = std::move(payload)};
     }
 
    private:
@@ -1276,6 +1300,7 @@ class rtsp_output_test_peer final
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_;
     std::weak_ptr<rtsp_output_session> session_;
+    std::string read_buffer_;
     std::jthread runner_;
 };
 
@@ -1403,6 +1428,9 @@ void test_rtsp_output_h265()
     const auto session = rtsp_header_value(setup, "Session:");
     require(!session.empty(), "rtsp h265 session");
 
+    const auto frame = make_h265_frame(0, true);
+    require(peer.stream()->publish(frame), "rtsp h265 cache frame before play");
+
     const auto play = peer.request("PLAY " + base +
                                    " RTSP/1.0\r\n"
                                    "CSeq: 3\r\n"
@@ -1420,8 +1448,6 @@ void test_rtsp_output_h265()
                                                                                       &rtp_payload_decode_destroy);
     require(decoder != nullptr, "rtsp h265 depacketizer create");
 
-    const auto frame = make_h265_frame(0, true);
-    require(peer.stream()->publish(frame), "rtsp h265 publish frame");
     bool marker = false;
     while (!marker)
     {
@@ -1440,7 +1466,7 @@ void test_rtsp_output_h265()
                 "rtsp h265 depacketize");
         marker = packet.rtp.m != 0;
     }
-    require(capture.access_unit == *frame.payload, "rtsp h265 access unit");
+    require(capture.access_unit == *frame.payload, "rtsp h265 cached access unit");
 }
 
 void test_rtsp_output_setup_track_lifecycle()
@@ -1955,6 +1981,73 @@ void test_media_stream_fanout_and_reentrancy()
             "replay stale track skipped");
 }
 
+void test_media_stream_gop_cache()
+{
+    media_stream stream("live/gop");
+    require(stream.update_track(make_video_track()), "gop video track");
+    require(stream.update_track(make_audio_track()), "gop audio track");
+
+    require(stream.publish(make_audio_frame(-20'000'000)), "gop pre-key audio");
+    require(stream.publish(make_video_frame(0, true)), "gop key frame");
+    require(stream.publish(make_audio_frame(20'000'000)), "gop cached audio");
+    require(stream.publish(make_video_frame(40'000'000, false)), "gop cached video");
+
+    auto first = std::make_shared<counting_sink>();
+    require(stream.add_sink(first), "gop first sink");
+    require(first->tracks == 2, "gop replays track configuration first");
+    require(first->received_frames ==
+                std::vector<std::pair<track_id, std::int64_t>>{
+                    {video_track_id, 0},
+                    {audio_track_id, 20'000'000},
+                    {video_track_id, 40'000'000},
+                },
+            "gop replays frames from latest key frame");
+
+    require(stream.publish(make_video_frame(1'000'000'000, true)), "gop next key frame");
+    require(stream.publish(make_audio_frame(1'020'000'000)), "gop next audio");
+    require(stream.publish(make_video_frame(1'040'000'000, false)), "gop next video");
+
+    auto second = std::make_shared<counting_sink>();
+    require(stream.add_sink(second), "gop second sink");
+    require(second->received_frames ==
+                std::vector<std::pair<track_id, std::int64_t>>{
+                    {video_track_id, 1'000'000'000},
+                    {audio_track_id, 1'020'000'000},
+                    {video_track_id, 1'040'000'000},
+                },
+            "gop keeps only latest gop");
+
+    auto removing = std::make_shared<self_removing_sink>(stream);
+    require(!stream.add_sink(removing), "gop replay respects sink removal");
+    require(removing->frames == 1, "gop replay stops after sink removal");
+
+    require(stream.update_track(make_audio_track(2)), "gop audio config change");
+    auto after_config = std::make_shared<counting_sink>();
+    require(stream.add_sink(after_config), "gop config sink");
+    require(after_config->frames == 0, "gop cache cleared on track config change");
+
+    media_stream overflow_stream("live/gop-overflow");
+    require(overflow_stream.update_track(make_video_track()), "gop overflow track");
+    require(overflow_stream.publish(make_video_frame(0, true)), "gop overflow key frame");
+    for (std::int64_t index = 1; index <= 2500; ++index)
+    {
+        require(overflow_stream.publish(make_video_frame(index, false)), "gop overflow delta frame");
+    }
+    auto overflow_sink = std::make_shared<counting_sink>();
+    require(overflow_stream.add_sink(overflow_sink), "gop overflow sink");
+    require(overflow_sink->frames == 0, "gop overflow drops incomplete cache");
+
+    media_stream h265_stream("live/gop-h265");
+    require(h265_stream.update_track(make_h265_track()), "gop h265 track");
+    require(h265_stream.publish(make_h265_frame(0, true)), "gop h265 key frame");
+    require(h265_stream.publish(make_h265_frame(40'000'000, false)), "gop h265 delta frame");
+    auto h265_sink = std::make_shared<counting_sink>();
+    require(h265_stream.add_sink(h265_sink), "gop h265 sink");
+    require(h265_sink->received_frames ==
+                std::vector<std::pair<track_id, std::int64_t>>{{video_track_id, 0}, {video_track_id, 40'000'000}},
+            "gop h265 replay");
+}
+
 void test_stream_registry_generation_lifecycle()
 {
     stream_registry registry;
@@ -2369,6 +2462,8 @@ int main()
     std::cout << "[pass] rtsp_output_rejects_stale_description\n";
     media_server::test_media_stream_fanout_and_reentrancy();
     std::cout << "[pass] media_stream_fanout_and_reentrancy\n";
+    media_server::test_media_stream_gop_cache();
+    std::cout << "[pass] media_stream_gop_cache\n";
     media_server::test_stream_registry_generation_lifecycle();
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_output();
