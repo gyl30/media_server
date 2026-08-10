@@ -12,6 +12,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/url/url_view.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -51,6 +52,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void send_whep_empty_response(boost::beast::http::status status);
     void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
     void start_flv(std::shared_ptr<media_stream> stream);
+    void read_flv_client();
     void enqueue_flv(std::span<const std::uint8_t> data);
     void write_flv_chunk();
     void finish_flv();
@@ -72,6 +74,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     std::shared_ptr<media_stream> media_stream_;
     std::shared_ptr<http_flv_output> flv_output_;
     std::deque<std::shared_ptr<flv_chunk>> flv_chunks_;
+    std::array<std::uint8_t, 1> flv_read_buffer_{};
     bool flv_finishing_ = false;
     bool closed_ = false;
 };
