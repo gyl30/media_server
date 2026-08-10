@@ -478,11 +478,23 @@ void http_session::start_flv(std::shared_ptr<media_stream> media_stream)
 {
     media_stream_ = std::move(media_stream);
     const auto tracks = media_stream_->tracks();
-    const auto self = shared_from_this();
+    const auto weak = weak_from_this();
     flv_output_ = std::make_shared<http_flv_output>(
         tracks,
-        [self](std::span<const std::uint8_t> data) { self->enqueue_flv(data); },
-        [self]() { self->finish_flv(); });
+        [weak](std::span<const std::uint8_t> data)
+        {
+            if (const auto self = weak.lock())
+            {
+                self->enqueue_flv(data);
+            }
+        },
+        [weak]()
+        {
+            if (const auto self = weak.lock())
+            {
+                self->finish_flv();
+            }
+        });
 
     media_stream_->add_sink(flv_output_, stream_.get_executor());
     read_flv_client();
