@@ -33,6 +33,7 @@ hls_output::~hls_output()
 
 void hls_output::on_track(const media_track& track)
 {
+    std::scoped_lock lock(mutex_);
     tracks_.insert_or_assign(track.id, track);
     if (track.kind == media_kind::video)
     {
@@ -54,22 +55,23 @@ void hls_output::on_track(const media_track& track)
 
 void hls_output::on_frame(const media_frame& frame)
 {
+    std::scoped_lock lock(mutex_);
     if (ended_at_.has_value() || muxer_ == nullptr || !frame.payload)
     {
         return;
     }
 
     const auto track_iterator = tracks_.find(frame.track);
-    const auto stream_iterator = stream_ids_.find(frame.track);
-    if (track_iterator == tracks_.end() || stream_iterator == stream_ids_.end())
+    if (track_iterator == tracks_.end())
     {
         return;
     }
+    const auto kind = track_iterator->second.kind;
 
     if (waiting_for_key_frame_)
 
     {
-        if (track_iterator->second.kind != media_kind::video || !frame.key_frame)
+        if (kind != media_kind::video || !frame.key_frame)
         {
             return;
         }
@@ -84,12 +86,17 @@ void hls_output::on_frame(const media_frame& frame)
 
     const auto elapsed_ns = frame.pts_ns - *segment_start_pts_ns_;
     const auto target_ns = static_cast<std::int64_t>(target_duration_seconds_ * 1'000'000'000.0);
-    const bool segment_boundary =
-        has_video_ ? track_iterator->second.kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns : elapsed_ns >= target_ns;
+    const bool segment_boundary = has_video_ ? kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns : elapsed_ns >= target_ns;
     if (segment_boundary && !current_segment_.empty())
     {
         finish_segment(frame.pts_ns);
         segment_start_pts_ns_ = frame.pts_ns;
+    }
+
+    const auto stream_iterator = stream_ids_.find(frame.track);
+    if (stream_iterator == stream_ids_.end())
+    {
+        return;
     }
 
     const auto flags = frame.key_frame ? 1 : 0;
@@ -106,6 +113,7 @@ void hls_output::on_frame(const media_frame& frame)
 
 void hls_output::on_end()
 {
+    std::scoped_lock lock(mutex_);
     if (ended_at_.has_value())
     {
         return;
@@ -119,6 +127,7 @@ void hls_output::on_end()
 
 std::string hls_output::playlist(std::string_view base_path) const
 {
+    std::scoped_lock lock(mutex_);
     std::ostringstream output;
     output << "#EXTM3U\n";
     output << "#EXT-X-VERSION:3\n";
@@ -148,6 +157,7 @@ std::string hls_output::playlist(std::string_view base_path) const
 
 std::optional<std::vector<std::uint8_t>> hls_output::segment(std::uint64_t sequence) const
 {
+    std::scoped_lock lock(mutex_);
     const auto iterator = std::find_if(segments_.begin(), segments_.end(), [sequence](const hls_segment& item) { return item.sequence == sequence; });
     if (iterator == segments_.end())
     {
@@ -156,9 +166,17 @@ std::optional<std::vector<std::uint8_t>> hls_output::segment(std::uint64_t seque
     return iterator->data;
 }
 
-std::size_t hls_output::segment_count() const noexcept { return segments_.size(); }
+std::size_t hls_output::segment_count() const
+{
+    std::scoped_lock lock(mutex_);
+    return segments_.size();
+}
 
-std::optional<std::chrono::steady_clock::time_point> hls_output::ended_at() const noexcept { return ended_at_; }
+std::optional<std::chrono::steady_clock::time_point> hls_output::ended_at() const
+{
+    std::scoped_lock lock(mutex_);
+    return ended_at_;
+}
 
 void* hls_output::ts_alloc(void*, std::size_t bytes) { return std::malloc(bytes); }
 

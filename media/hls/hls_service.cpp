@@ -39,6 +39,7 @@ std::optional<std::size_t> hls_service::segment_count(std::string_view stream_na
 
 std::shared_ptr<hls_output> hls_service::get_or_create(std::string_view stream_name)
 {
+    std::scoped_lock lock(mutex_);
     const auto now = std::chrono::steady_clock::now();
     remove_expired_outputs(now);
 
@@ -70,10 +71,7 @@ std::shared_ptr<hls_output> hls_service::get_or_create(std::string_view stream_n
     }
 
     auto output = std::make_shared<hls_output>(config_);
-    if (!stream->add_sink(output))
-    {
-        return {};
-    }
+    stream->add_sink(output);
     outputs_.emplace(std::string(stream_name), entry{.stream = stream, .output = output});
     return output;
 }

@@ -5,6 +5,7 @@
 #include "media/hls/hls_output.h"
 #include "media/hls/hls_service.h"
 #include "media/net/tcp_connection.h"
+#include "media/net/io_context_pool.h"
 #include "media/net/tcp_listener.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtsp/rtsp_input_session.h"
@@ -35,6 +36,7 @@ extern "C"
 }
 
 #include <algorithm>
+#include <atomic>
 #include <boost/asio/read.hpp>
 #include <boost/asio/read_until.hpp>
 #include <boost/asio/write.hpp>
@@ -47,6 +49,7 @@ extern "C"
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -364,6 +367,80 @@ class counting_sink final : public media_sink
     std::size_t frames{};
     std::size_t ends{};
     std::vector<std::pair<track_id, std::int64_t>> received_frames;
+};
+
+class worker_sink final : public media_sink
+{
+   public:
+    explicit worker_sink(std::atomic_int& ended_count, io_context_pool& workers) : ended_count_(ended_count), workers_(workers) {}
+
+    void on_track(const media_track&) override
+    {
+        std::scoped_lock lock(mutex_);
+        thread_ = std::this_thread::get_id();
+        ++tracks_;
+    }
+
+    void on_frame(const media_frame& frame) override
+    {
+        std::scoped_lock lock(mutex_);
+        thread_ = std::this_thread::get_id();
+        frames_.push_back(frame.pts_ns);
+        payloads_.push_back(frame.payload.get());
+    }
+
+    void on_end() override
+    {
+        {
+            std::scoped_lock lock(mutex_);
+            thread_ = std::this_thread::get_id();
+            ++ends_;
+        }
+        if (ended_count_.fetch_add(1) + 1 == 3)
+        {
+            workers_.release_work();
+        }
+    }
+
+    [[nodiscard]] std::thread::id thread() const
+    {
+        std::scoped_lock lock(mutex_);
+        return thread_;
+    }
+
+    [[nodiscard]] std::size_t tracks() const
+    {
+        std::scoped_lock lock(mutex_);
+        return tracks_;
+    }
+
+    [[nodiscard]] std::size_t ends() const
+    {
+        std::scoped_lock lock(mutex_);
+        return ends_;
+    }
+
+    [[nodiscard]] std::vector<std::int64_t> frames() const
+    {
+        std::scoped_lock lock(mutex_);
+        return frames_;
+    }
+
+    [[nodiscard]] std::vector<const void*> payloads() const
+    {
+        std::scoped_lock lock(mutex_);
+        return payloads_;
+    }
+
+   private:
+    std::atomic_int& ended_count_;
+    io_context_pool& workers_;
+    mutable std::mutex mutex_;
+    std::thread::id thread_;
+    std::size_t tracks_{};
+    std::size_t ends_{};
+    std::vector<std::int64_t> frames_;
+    std::vector<const void*> payloads_;
 };
 
 class self_removing_sink final : public media_sink
@@ -1165,8 +1242,63 @@ void test_tcp_listener_startup_error()
     boost::asio::io_context io;
     boost::asio::ip::tcp::acceptor occupied(io, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
 
-    tcp_listener listener(io, occupied.local_endpoint().port(), [](boost::asio::ip::tcp::socket) {});
+    io_context_pool workers(1);
+    tcp_listener listener(workers, occupied.local_endpoint().port(), [](boost::asio::ip::tcp::socket) {});
     require(static_cast<bool>(listener.start()), "tcp listener reports bind failure");
+}
+
+
+void test_tcp_listener_worker_affinity()
+{
+    io_context_pool workers(2);
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    const auto port = probe.local_endpoint().port();
+    probe.close();
+
+    std::mutex mutex;
+    std::vector<std::thread::id> threads;
+    std::weak_ptr<tcp_listener> weak_listener;
+    auto listener = std::make_shared<tcp_listener>(
+        workers,
+        port,
+        [&](boost::asio::ip::tcp::socket socket)
+        {
+            bool complete = false;
+            {
+                std::scoped_lock lock(mutex);
+                threads.push_back(std::this_thread::get_id());
+                complete = threads.size() == 2U;
+            }
+            boost::system::error_code error;
+            socket.close(error);
+            if (complete)
+            {
+                boost::asio::post(workers.context(0),
+                                  [&]()
+                                  {
+                                      if (const auto current = weak_listener.lock())
+                                      {
+                                          current->close();
+                                      }
+                                      workers.release_work();
+                                  });
+            }
+        });
+    weak_listener = listener;
+    require(!listener->start(), "tcp listener worker start");
+
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::socket first(client_io);
+    boost::asio::ip::tcp::socket second(client_io);
+    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
+    first.connect(endpoint);
+    second.connect(endpoint);
+
+    workers.run();
+
+    std::scoped_lock lock(mutex);
+    require(threads.size() == 2U, "tcp listener accepted clients");
+    require(threads[0] != threads[1], "tcp listener assigns different workers");
 }
 
 void test_http_flv_client_disconnect()
@@ -1174,7 +1306,7 @@ void test_http_flv_client_disconnect()
     boost::asio::io_context io;
     stream_registry registry;
     hls_service hls(registry);
-    whep_service whep(io, registry, boost::asio::ip::make_address("127.0.0.1"));
+    whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
 
     auto stream = std::make_shared<media_stream>("live/http-flv-disconnect");
     require(stream->update_track(make_video_track()), "http flv disconnect track");
@@ -1426,7 +1558,7 @@ class rtsp_output_test_peer final
    public:
     explicit rtsp_output_test_peer(bool h265 = false) : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_(io_)
     {
-        stream_ = std::make_shared<media_stream>("live/test");
+        stream_ = std::make_shared<media_stream>("live/test", io_.get_executor());
         require(stream_->update_track(h265 ? make_h265_track() : make_video_track()), "rtsp output video track");
         require(stream_->update_track(make_audio_track()), "rtsp output audio track");
         require(registry_.add(stream_), "rtsp output registry add");
@@ -1465,7 +1597,32 @@ class rtsp_output_test_peer final
 
     [[nodiscard]] std::uint16_t port() const { return acceptor_.local_endpoint().port(); }
 
-    [[nodiscard]] std::shared_ptr<media_stream> stream() const { return stream_; }
+    bool update_track(media_track track)
+    {
+        auto promise = std::make_shared<std::promise<bool>>();
+        auto future = promise->get_future();
+        boost::asio::post(io_,
+                          [stream = stream_, track = std::move(track), promise]() mutable
+                          {
+                              promise->set_value(stream->update_track(std::move(track)));
+                          });
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp output track update");
+        return future.get();
+    }
+
+    void publish(media_frame frame)
+    {
+        auto promise = std::make_shared<std::promise<void>>();
+        auto future = promise->get_future();
+        boost::asio::post(io_,
+                          [stream = stream_, frame = std::move(frame), promise]() mutable
+                          {
+                              stream->publish(std::move(frame));
+                              promise->set_value();
+                          });
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp output publish");
+        future.get();
+    }
 
     [[nodiscard]] bool session_alive() const { return !session_.expired(); }
 
@@ -1655,7 +1812,7 @@ void test_rtsp_output_h265()
     require(!session.empty(), "rtsp h265 session");
 
     const auto frame = make_h265_frame(0, true);
-    require(peer.stream()->publish(frame), "rtsp h265 cache frame before play");
+    peer.publish(frame);
 
     const auto play = peer.request("PLAY " + base +
                                    " RTSP/1.0\r\n"
@@ -1723,13 +1880,13 @@ void test_rtsp_output_setup_track_lifecycle()
         auto audio = make_audio_track();
         audio.clock_rate = 48'000;
         audio.codec_config = {0x11, 0x90};
-        require(peer.stream()->update_track(std::move(audio)), "rtsp unsetup audio config update");
+        require(peer.update_track(std::move(audio)), "rtsp unsetup audio config update");
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         require(peer.session_alive(), "rtsp unsetup audio change keeps video session");
 
         auto video = make_h265_track();
         video.codec_config = h265_config_updated;
-        require(peer.stream()->update_track(std::move(video)), "rtsp setup h265 config update");
+        require(peer.update_track(std::move(video)), "rtsp setup h265 config update");
         for (int attempt = 0; attempt < 100 && peer.session_alive(); ++attempt)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -1762,14 +1919,14 @@ void test_rtsp_output_setup_track_lifecycle()
 
         auto video = make_video_track();
         video.codec_config = h264_config_updated;
-        require(peer.stream()->update_track(std::move(video)), "rtsp unsetup video config update");
+        require(peer.update_track(std::move(video)), "rtsp unsetup video config update");
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         require(peer.session_alive(), "rtsp unsetup video change keeps audio session");
 
         auto audio = make_audio_track();
         audio.clock_rate = 48'000;
         audio.codec_config = {0x11, 0x90};
-        require(peer.stream()->update_track(std::move(audio)), "rtsp setup audio config update");
+        require(peer.update_track(std::move(audio)), "rtsp setup audio config update");
         for (int attempt = 0; attempt < 100 && peer.session_alive(); ++attempt)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -1790,7 +1947,7 @@ void test_rtsp_output_rejects_stale_description()
 
     auto updated = make_video_track();
     updated.codec_config.push_back(0x01);
-    require(peer.stream()->update_track(std::move(updated)), "rtsp stale source config update");
+    require(peer.update_track(std::move(updated)), "rtsp stale source config update");
 
     const auto setup = peer.request("SETUP " + base +
                                     "/trackID=1 RTSP/1.0\r\n"
@@ -2091,16 +2248,16 @@ void test_media_stream_fanout_and_reentrancy()
     auto removing = std::make_shared<self_removing_sink>(stream);
     auto second = std::make_shared<counting_sink>();
 
-    require(stream.add_sink(first), "add first sink");
-    require(stream.add_sink(removing), "add removing sink");
-    require(stream.add_sink(second), "add second sink");
+    stream.add_sink(first);
+    stream.add_sink(removing);
+    stream.add_sink(second);
     require(first->tracks == 1 && second->tracks == 1, "late sink track snapshot");
 
-    require(stream.publish(make_video_frame(0, true)), "publish first frame");
+    stream.publish(make_video_frame(0, true));
     require(removing->frames == 1, "self-removing sink receives first frame");
     require(first->frames == 1 && second->frames == 1, "other sinks survive reentrant remove");
 
-    require(stream.publish(make_video_frame(40'000'000, false)), "publish second frame");
+    stream.publish(make_video_frame(40'000'000, false));
     require(removing->frames == 1, "removed sink not called again");
     require(first->frames == 2 && second->frames == 2, "remaining sinks continue");
 
@@ -2111,16 +2268,16 @@ void test_media_stream_fanout_and_reentrancy()
     require(track_remove_stream.update_track(make_video_track()), "track remove video");
     require(track_remove_stream.update_track(make_audio_track()), "track remove audio");
     auto track_removing = std::make_shared<track_removing_sink>(track_remove_stream);
-    require(!track_remove_stream.add_sink(track_removing), "track callback removes pending sink");
+    track_remove_stream.add_sink(track_removing);
     require(track_removing->tracks == 1, "removed sink stops track replay");
-    require(track_remove_stream.publish(make_video_frame(0, true)), "track remove publish");
+    track_remove_stream.publish(make_video_frame(0, true));
     require(track_removing->frames == 0, "track removed sink receives no frame");
 
     media_stream track_end_stream("live/track-end");
     require(track_end_stream.update_track(make_video_track()), "track end video");
     require(track_end_stream.update_track(make_audio_track()), "track end audio");
     auto track_ending = std::make_shared<track_ending_sink>(track_end_stream);
-    require(!track_end_stream.add_sink(track_ending), "track callback ends stream");
+    track_end_stream.add_sink(track_ending);
     require(track_end_stream.ended(), "track callback stream ended");
     require(track_ending->tracks == 1, "ended stream stops track replay");
     require(track_ending->ends == 1, "new sink receives end during track replay");
@@ -2128,8 +2285,8 @@ void test_media_stream_fanout_and_reentrancy()
     media_stream update_remove_stream("live/update-remove");
     auto update_removed = std::make_shared<counting_sink>();
     auto update_removing = std::make_shared<track_other_removing_sink>(update_remove_stream, *update_removed);
-    require(update_remove_stream.add_sink(update_removing), "add update removing sink");
-    require(update_remove_stream.add_sink(update_removed), "add update removed sink");
+    update_remove_stream.add_sink(update_removing);
+    update_remove_stream.add_sink(update_removed);
     require(update_remove_stream.update_track(make_video_track()), "update removes later sink");
     require(update_removing->tracks == 1, "update removing sink receives track");
     require(update_removed->tracks == 0, "update removed sink skips current track");
@@ -2138,17 +2295,17 @@ void test_media_stream_fanout_and_reentrancy()
     require(publish_remove_stream.update_track(make_video_track()), "publish remove video");
     auto publish_removed = std::make_shared<counting_sink>();
     auto publish_removing = std::make_shared<frame_other_removing_sink>(publish_remove_stream, *publish_removed);
-    require(publish_remove_stream.add_sink(publish_removing), "add publish removing sink");
-    require(publish_remove_stream.add_sink(publish_removed), "add publish removed sink");
-    require(publish_remove_stream.publish(make_video_frame(0, true)), "publish removes later sink");
+    publish_remove_stream.add_sink(publish_removing);
+    publish_remove_stream.add_sink(publish_removed);
+    publish_remove_stream.publish(make_video_frame(0, true));
     require(publish_removing->frames == 1, "publish removing sink receives frame");
     require(publish_removed->frames == 0, "publish removed sink skips current frame");
 
     media_stream update_end_stream("live/update-end");
     auto update_ending = std::make_shared<track_ending_sink>(update_end_stream);
     auto update_after = std::make_shared<counting_sink>();
-    require(update_end_stream.add_sink(update_ending), "add update ending sink");
-    require(update_end_stream.add_sink(update_after), "add update trailing sink");
+    update_end_stream.add_sink(update_ending);
+    update_end_stream.add_sink(update_after);
     require(update_end_stream.update_track(make_video_track()), "update callback ends stream");
     require(update_end_stream.ended(), "update callback stream ended");
     require(update_ending->tracks == 1 && update_ending->ends == 1, "update ending sink lifecycle");
@@ -2158,9 +2315,9 @@ void test_media_stream_fanout_and_reentrancy()
     require(publish_end_stream.update_track(make_video_track()), "publish end video");
     auto frame_ending = std::make_shared<frame_ending_sink>(publish_end_stream);
     auto frame_after = std::make_shared<counting_sink>();
-    require(publish_end_stream.add_sink(frame_ending), "add frame ending sink");
-    require(publish_end_stream.add_sink(frame_after), "add frame trailing sink");
-    require(publish_end_stream.publish(make_video_frame(0, true)), "frame callback ends stream");
+    publish_end_stream.add_sink(frame_ending);
+    publish_end_stream.add_sink(frame_after);
+    publish_end_stream.publish(make_video_frame(0, true));
     require(publish_end_stream.ended(), "frame callback stream ended");
     require(frame_ending->frames == 1 && frame_ending->ends == 1, "frame ending sink lifecycle");
     require(frame_after->frames == 0 && frame_after->ends == 1, "publish stops callbacks after end");
@@ -2171,7 +2328,7 @@ void test_media_stream_fanout_and_reentrancy()
     require(version_stream.update_track(std::move(first_version)), "version first track");
     require(version_stream.tracks().front().config_version == 1, "stream owns initial config version");
     auto version_observer = std::make_shared<track_version_sink>();
-    require(version_stream.add_sink(version_observer), "version observer add");
+    version_stream.add_sink(version_observer);
     require(!version_stream.update_track(make_video_track()), "identical config ignored");
     require(version_observer->versions == std::vector<std::pair<track_id, std::uint64_t>>{{video_track_id, 1}}, "identical config not fanned out");
     auto changed_kind = make_video_track(2);
@@ -2190,8 +2347,8 @@ void test_media_stream_fanout_and_reentrancy()
     require(update_reentrant_stream.update_track(make_video_track()), "reentrant first track");
     auto update_reentrant = std::make_shared<track_updating_sink>(update_reentrant_stream, video_track_id, 2, make_video_track(3));
     auto update_observer = std::make_shared<track_version_sink>();
-    require(update_reentrant_stream.add_sink(update_reentrant), "reentrant updater add");
-    require(update_reentrant_stream.add_sink(update_observer), "reentrant observer add");
+    update_reentrant_stream.add_sink(update_reentrant);
+    update_reentrant_stream.add_sink(update_observer);
     require(update_reentrant_stream.update_track(make_video_track(2)), "reentrant outer update");
     require(update_reentrant->update_succeeded, "reentrant nested update");
     require(update_observer->versions == std::vector<std::pair<track_id, std::uint64_t>>{{video_track_id, 1}, {video_track_id, 3}},
@@ -2201,7 +2358,7 @@ void test_media_stream_fanout_and_reentrancy()
     require(replay_reentrant_stream.update_track(make_video_track()), "replay video track");
     require(replay_reentrant_stream.update_track(make_audio_track()), "replay audio track");
     auto replay_reentrant = std::make_shared<track_updating_sink>(replay_reentrant_stream, video_track_id, 1, make_audio_track(2));
-    require(replay_reentrant_stream.add_sink(replay_reentrant), "replay reentrant sink add");
+    replay_reentrant_stream.add_sink(replay_reentrant);
     require(replay_reentrant->update_succeeded, "replay nested update");
     require(replay_reentrant->versions == std::vector<std::pair<track_id, std::uint64_t>>{{video_track_id, 1}, {audio_track_id, 2}},
             "replay stale track skipped");
@@ -2213,13 +2370,13 @@ void test_media_stream_gop_cache()
     require(stream.update_track(make_video_track()), "gop video track");
     require(stream.update_track(make_audio_track()), "gop audio track");
 
-    require(stream.publish(make_audio_frame(-20'000'000)), "gop pre-key audio");
-    require(stream.publish(make_video_frame(0, true)), "gop key frame");
-    require(stream.publish(make_audio_frame(20'000'000)), "gop cached audio");
-    require(stream.publish(make_video_frame(40'000'000, false)), "gop cached video");
+    stream.publish(make_audio_frame(-20'000'000));
+    stream.publish(make_video_frame(0, true));
+    stream.publish(make_audio_frame(20'000'000));
+    stream.publish(make_video_frame(40'000'000, false));
 
     auto first = std::make_shared<counting_sink>();
-    require(stream.add_sink(first), "gop first sink");
+    stream.add_sink(first);
     require(first->tracks == 2, "gop replays track configuration first");
     require(first->received_frames ==
                 std::vector<std::pair<track_id, std::int64_t>>{
@@ -2229,12 +2386,12 @@ void test_media_stream_gop_cache()
                 },
             "gop replays frames from latest key frame");
 
-    require(stream.publish(make_video_frame(1'000'000'000, true)), "gop next key frame");
-    require(stream.publish(make_audio_frame(1'020'000'000)), "gop next audio");
-    require(stream.publish(make_video_frame(1'040'000'000, false)), "gop next video");
+    stream.publish(make_video_frame(1'000'000'000, true));
+    stream.publish(make_audio_frame(1'020'000'000));
+    stream.publish(make_video_frame(1'040'000'000, false));
 
     auto second = std::make_shared<counting_sink>();
-    require(stream.add_sink(second), "gop second sink");
+    stream.add_sink(second);
     require(second->received_frames ==
                 std::vector<std::pair<track_id, std::int64_t>>{
                     {video_track_id, 1'000'000'000},
@@ -2244,34 +2401,102 @@ void test_media_stream_gop_cache()
             "gop keeps only latest gop");
 
     auto removing = std::make_shared<self_removing_sink>(stream);
-    require(!stream.add_sink(removing), "gop replay respects sink removal");
+    stream.add_sink(removing);
     require(removing->frames == 1, "gop replay stops after sink removal");
 
     require(stream.update_track(make_audio_track(2)), "gop audio config change");
     auto after_config = std::make_shared<counting_sink>();
-    require(stream.add_sink(after_config), "gop config sink");
+    stream.add_sink(after_config);
     require(after_config->frames == 0, "gop cache cleared on track config change");
 
     media_stream overflow_stream("live/gop-overflow");
     require(overflow_stream.update_track(make_video_track()), "gop overflow track");
-    require(overflow_stream.publish(make_video_frame(0, true)), "gop overflow key frame");
+    overflow_stream.publish(make_video_frame(0, true));
     for (std::int64_t index = 1; index <= 2500; ++index)
     {
-        require(overflow_stream.publish(make_video_frame(index, false)), "gop overflow delta frame");
+        overflow_stream.publish(make_video_frame(index, false));
     }
     auto overflow_sink = std::make_shared<counting_sink>();
-    require(overflow_stream.add_sink(overflow_sink), "gop overflow sink");
+    overflow_stream.add_sink(overflow_sink);
     require(overflow_sink->frames == 0, "gop overflow drops incomplete cache");
 
     media_stream h265_stream("live/gop-h265");
     require(h265_stream.update_track(make_h265_track()), "gop h265 track");
-    require(h265_stream.publish(make_h265_frame(0, true)), "gop h265 key frame");
-    require(h265_stream.publish(make_h265_frame(40'000'000, false)), "gop h265 delta frame");
+    h265_stream.publish(make_h265_frame(0, true));
+    h265_stream.publish(make_h265_frame(40'000'000, false));
     auto h265_sink = std::make_shared<counting_sink>();
-    require(h265_stream.add_sink(h265_sink), "gop h265 sink");
+    h265_stream.add_sink(h265_sink);
     require(h265_sink->received_frames ==
                 std::vector<std::pair<track_id, std::int64_t>>{{video_track_id, 0}, {video_track_id, 40'000'000}},
             "gop h265 replay");
+}
+
+void test_media_stream_worker_fanout()
+{
+    io_context_pool workers(2);
+    auto stream = std::make_shared<media_stream>("live/threaded", workers.context(0).get_executor());
+
+    std::atomic_int ended_count{};
+    auto first = std::make_shared<worker_sink>(ended_count, workers);
+    auto second = std::make_shared<worker_sink>(ended_count, workers);
+    auto third = std::make_shared<worker_sink>(ended_count, workers);
+
+    boost::asio::post(workers.context(0),
+                      [&, stream]()
+                      {
+                          require(stream->update_track(make_video_track()), "threaded stream track");
+                          stream->add_sink(first, workers.context(0).get_executor());
+                          stream->add_sink(second, workers.context(0).get_executor());
+                          stream->add_sink(third, workers.context(1).get_executor());
+
+                          auto first_frame = make_video_frame(0, true);
+                          const auto first_payload = first_frame.payload.get();
+                          stream->publish(std::move(first_frame));
+                          auto second_frame = make_video_frame(40'000'000, false);
+                          const auto second_payload = second_frame.payload.get();
+                          stream->publish(std::move(second_frame));
+                          stream->end();
+
+                          require(first_payload != nullptr && second_payload != nullptr, "threaded payload identity source");
+                      });
+    workers.run();
+
+    require(first->tracks() == 1 && second->tracks() == 1 && third->tracks() == 1, "threaded track replay");
+    require(first->frames() == std::vector<std::int64_t>{0, 40'000'000}, "threaded first frame order");
+    require(second->frames() == std::vector<std::int64_t>{0, 40'000'000}, "threaded second frame order");
+    require(third->frames() == std::vector<std::int64_t>{0, 40'000'000}, "threaded third frame order");
+    require(first->ends() == 1 && second->ends() == 1 && third->ends() == 1, "threaded stream end");
+    require(first->thread() == second->thread(), "same worker sinks share thread");
+    require(first->thread() != third->thread(), "different worker sinks use different threads");
+
+    const auto first_payloads = first->payloads();
+    const auto second_payloads = second->payloads();
+    const auto third_payloads = third->payloads();
+    require(first_payloads.size() == 2U && second_payloads == first_payloads && third_payloads == first_payloads,
+            "threaded fanout shares frame payload");
+}
+
+void test_media_stream_worker_removal()
+{
+    io_context_pool workers(2);
+    auto stream = std::make_shared<media_stream>("live/threaded-removal", workers.context(0).get_executor());
+
+    auto removed = std::make_shared<counting_sink>();
+    auto removing = std::make_shared<frame_other_removing_sink>(*stream, *removed);
+    boost::asio::post(workers.context(0),
+                      [&, stream]()
+                      {
+                          require(stream->update_track(make_video_track()), "threaded removal track");
+                          const auto executor = workers.context(1).get_executor();
+                          stream->add_sink(removing, executor);
+                          stream->add_sink(removed, executor);
+                          stream->publish(make_video_frame(0, true));
+                          boost::asio::post(workers.context(1), [&workers]() { workers.release_work(); });
+                      });
+    workers.run();
+
+    require(removing->frames == 1, "threaded removing sink receives frame");
+    require(removed->frames == 0, "threaded removal suppresses pending callback");
 }
 
 void test_stream_registry_generation_lifecycle()
@@ -2285,7 +2510,7 @@ void test_stream_registry_generation_lifecycle()
     require(registry.find("live/generation").get() == first.get(), "registry first generation remains");
 
     auto replacing = std::make_shared<generation_replacing_sink>(registry, second);
-    require(first->add_sink(replacing), "registry generation replacement observer add");
+    first->add_sink(replacing);
     first->end();
     require(replacing->old_generation_hidden, "registry ended generation hidden during end callback");
     require(replacing->replacement_added, "registry ended generation replace during end callback");
@@ -2396,7 +2621,7 @@ void test_hls_output()
     require(flv_stream.update_track(make_video_track()), "http flv initial track config");
     const auto flv_output = std::make_shared<http_flv_output>(
         flv_stream.tracks(), [&flv_bytes](std::span<const std::uint8_t> data) { flv_bytes += data.size(); }, [&flv_end_count]() { ++flv_end_count; });
-    require(flv_stream.add_sink(flv_output), "http flv add sink");
+    flv_stream.add_sink(flv_output);
     const auto first_config_bytes = flv_bytes;
     auto updated_flv_video = make_video_track();
     updated_flv_video.codec_config = h264_config_updated;
@@ -2418,8 +2643,8 @@ void test_hls_service_lifecycle()
     require(first->update_track(make_video_track()), "hls first track");
     require(hls.segment_count("live/hls") == 0U, "hls first output create");
 
-    require(first->publish(make_video_frame(0, true)), "hls first key frame");
-    require(first->publish(make_video_frame(1'000'000'000, true)), "hls first segment boundary");
+    first->publish(make_video_frame(0, true));
+    first->publish(make_video_frame(1'000'000'000, true));
     first->end();
     registry.remove(*first);
 
@@ -2672,6 +2897,8 @@ int main()
     std::cout << "[pass] rtsp_client_session_timeout\n";
     media_server::test_tcp_listener_startup_error();
     std::cout << "[pass] tcp_listener_startup_error\n";
+    media_server::test_tcp_listener_worker_affinity();
+    std::cout << "[pass] tcp_listener_worker_affinity\n";
     media_server::test_http_flv_client_disconnect();
     std::cout << "[pass] http_flv_client_disconnect\n";
     media_server::test_rtsp_pull_url_contract();
@@ -2694,6 +2921,10 @@ int main()
     std::cout << "[pass] media_stream_fanout_and_reentrancy\n";
     media_server::test_media_stream_gop_cache();
     std::cout << "[pass] media_stream_gop_cache\n";
+    media_server::test_media_stream_worker_fanout();
+    std::cout << "[pass] media_stream_worker_fanout\n";
+    media_server::test_media_stream_worker_removal();
+    std::cout << "[pass] media_stream_worker_removal\n";
     media_server::test_stream_registry_generation_lifecycle();
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_output();

@@ -195,12 +195,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
                               return;
                           }
 
-                          if (!self->stream_->add_sink(self))
-                          {
-                              self->shutdown();
-                              return;
-                          }
-
+                          self->stream_->add_sink(self, self->connection_->socket().get_executor());
                           spdlog::info("rtmp play {}", self->stream_name_);
                       });
 
@@ -215,7 +210,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     }
 
     stream_name_ = make_stream_name(app, stream);
-    stream_ = std::make_shared<media_stream>(stream_name_);
+    stream_ = std::make_shared<media_stream>(stream_name_, connection_->socket().get_executor());
     if (!registry_.add(stream_))
     {
         spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
@@ -343,11 +338,10 @@ void rtmp_session::on_read(std::span<const std::uint8_t> data)
 
 void rtmp_session::shutdown()
 {
-    if (closed_)
+    if (closed_.exchange(true))
     {
         return;
     }
-    closed_ = true;
     const auto self = shared_from_this();
     boost::asio::post(connection_->socket().get_executor(), [self]() { self->safe_shutdown(); });
 }

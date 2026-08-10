@@ -136,7 +136,7 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
     }
 
     const auto stream_name = join_segments(segments, 1, segments.size());
-    auto result = whep_.create(stream_name, request_.body());
+    auto result = whep_.create(stream_.get_executor(), stream_name, request_.body());
     switch (result.error)
     {
         case whep_create_error::none:
@@ -484,11 +484,7 @@ void http_session::start_flv(std::shared_ptr<media_stream> media_stream)
         [self](std::span<const std::uint8_t> data) { self->enqueue_flv(data); },
         [self]() { self->finish_flv(); });
 
-    if (!media_stream_->add_sink(flv_output_))
-    {
-        finish_flv();
-        return;
-    }
+    media_stream_->add_sink(flv_output_, stream_.get_executor());
     read_flv_client();
 }
 
@@ -604,11 +600,10 @@ void http_session::detach_flv()
 
 void http_session::shutdown()
 {
-    if (closed_)
+    if (closed_.exchange(true))
     {
         return;
     }
-    closed_ = true;
     const auto self = shared_from_this();
     boost::asio::post(stream_.get_executor(), [self]() { self->safe_shutdown(); });
 }

@@ -10,6 +10,7 @@
 #include <boost/system/error_code.hpp>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace media_server
@@ -19,7 +20,7 @@ class http_session;
 class http_server final
 {
    public:
-    http_server(boost::asio::io_context& io, stream_registry& registry, hls_service& hls, whep_service& whep, std::uint16_t port);
+    http_server(io_context_pool& workers, stream_registry& registry, hls_service& hls, whep_service& whep, std::uint16_t port);
 
     [[nodiscard]] boost::system::error_code start();
     void close();
@@ -29,7 +30,9 @@ class http_server final
     hls_service& hls_;
     whep_service& whep_;
     tcp_listener listener_;
+    std::mutex sessions_mutex_;
     std::vector<std::weak_ptr<http_session>> sessions_;
+    bool closed_{};
 };
 }    // namespace media_server
 
