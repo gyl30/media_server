@@ -57,12 +57,12 @@ void rtmp_session::start()
     server_ = rtmp_server_create(this, &handler);
     if (server_ == nullptr)
     {
-        close();
+        shutdown();
         return;
     }
 
     const auto self = shared_from_this();
-    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->on_close(); });
+    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->shutdown(); });
 }
 
 void rtmp_session::on_track(const media_track& track)
@@ -81,7 +81,7 @@ void rtmp_session::on_frame(const media_frame& frame)
     }
 }
 
-void rtmp_session::on_end() { close(); }
+void rtmp_session::on_end() { shutdown(); }
 
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
 {
@@ -191,13 +191,13 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
                           if (rtmp_server_start(self->server_, 0, nullptr) != 0)
                           {
-                              self->close();
+                              self->shutdown();
                               return;
                           }
 
                           if (!self->stream_->add_sink(self))
                           {
-                              self->close();
+                              self->shutdown();
                               return;
                           }
 
@@ -350,20 +350,26 @@ void rtmp_session::on_read(std::span<const std::uint8_t> data)
     }
     if (rtmp_server_input(server_, data.data(), data.size()) != 0)
     {
-        close();
+        shutdown();
     }
 }
 
-void rtmp_session::on_close()
+void rtmp_session::shutdown()
 {
     if (closed_)
     {
         return;
     }
     closed_ = true;
+    const auto self = shared_from_this();
+    boost::asio::post(connection_->socket().get_executor(), [self]() { self->safe_shutdown(); });
+}
+
+void rtmp_session::safe_shutdown()
+{
+    connection_->close();
 
     if (role_ == role::player && stream_)
-
     {
         stream_->remove_sink(*this);
     }
@@ -374,16 +380,18 @@ void rtmp_session::on_close()
     }
     stream_.reset();
     output_muxer_.reset();
-    spdlog::debug("rtmp close {}", stream_name_);
-}
 
-void rtmp_session::close()
-{
-    if (closed_)
+    if (demuxer_ != nullptr)
     {
-        return;
+        flv_demuxer_destroy(demuxer_);
+        demuxer_ = nullptr;
     }
-    connection_->close();
+    if (server_ != nullptr)
+    {
+        rtmp_server_destroy(server_);
+        server_ = nullptr;
+    }
+    spdlog::debug("rtmp shutdown {}", stream_name_);
 }
 
 std::string rtmp_session::make_stream_name(std::string_view app, std::string_view stream)

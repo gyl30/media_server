@@ -24,6 +24,7 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     ~rtmp_session() override;
 
     void start();
+    void shutdown();
 
     void on_track(const media_track& track) override;
     void on_frame(const media_frame& frame) override;
@@ -52,8 +53,7 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     int on_publish(std::string app, std::string stream);
     int on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     void on_read(std::span<const std::uint8_t> data);
-    void on_close();
-    void close();
+    void safe_shutdown();
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     std::shared_ptr<tcp_connection> connection_;

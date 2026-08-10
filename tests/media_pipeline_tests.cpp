@@ -827,9 +827,7 @@ class rtmp_output_test_peer final
         client_ = nullptr;
         boost::system::error_code error;
         client_socket_.close(error);
-        io_.stop();
         runner_.join();
-        session_->on_end();
     }
 
     rtmp_status pause()
@@ -952,7 +950,9 @@ void test_rtsp_pull_url_contract()
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/test";
     const auto credential_url = "rtsp://us%65r:p%40ss@127.0.0.1:" + std::to_string(port) + "/live/test";
     auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/auth", credential_url);
+    const std::weak_ptr<rtsp_input_session> weak_pull = pull;
     require(pull->start(), "rtsp auth pull start");
+    pull.reset();
 
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -992,6 +992,7 @@ void test_rtsp_pull_url_contract()
     runner.join();
 
     require(!registry.find("relay/auth"), "rtsp auth failed pull removes stream");
+    require(weak_pull.expired(), "rtsp pull releases itself after shutdown");
 }
 
 void test_rtsp_input_selects_single_audio_and_video()
@@ -1145,7 +1146,7 @@ class rtsp_output_test_peer final
     {
         boost::system::error_code error;
         client_.close(error);
-        io_.stop();
+        runner_.join();
     }
 
     std::string request(std::string_view request)

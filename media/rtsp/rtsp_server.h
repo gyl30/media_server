@@ -7,9 +7,12 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace media_server
 {
+class rtsp_output_session;
 
 class rtsp_server final
 {
@@ -23,6 +26,7 @@ class rtsp_server final
     stream_registry& registry_;
     std::uint16_t port_{};
     tcp_listener listener_;
+    std::vector<std::weak_ptr<rtsp_output_session>> sessions_;
 };
 
 }    // namespace media_server

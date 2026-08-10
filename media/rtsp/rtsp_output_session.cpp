@@ -15,6 +15,7 @@ extern "C"
 
 #include <algorithm>
 #include <array>
+#include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
 
 #include <charconv>
@@ -84,12 +85,12 @@ void rtsp_output_session::start()
     server_ = rtsp_server_create(ip.c_str(), server_port_, &handler, this, this);
     if (server_ == nullptr)
     {
-        close();
+        shutdown();
         return;
     }
 
     const auto self = shared_from_this();
-    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->on_close(); });
+    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->shutdown(); });
 }
 
 void rtsp_output_session::on_track(const media_track& track)
@@ -98,7 +99,7 @@ void rtsp_output_session::on_track(const media_track& track)
     if (iterator == tracks_.end() || iterator->second.config_version != track.config_version)
     {
         // RTSP SDP 已经发给客户端，轨道集合或配置改变时直接结束旧会话。
-        close();
+        shutdown();
     }
 }
 
@@ -128,7 +129,7 @@ void rtsp_output_session::on_frame(const media_frame& frame)
     }
 }
 
-void rtsp_output_session::on_end() { close(); }
+void rtsp_output_session::on_end() { shutdown(); }
 
 int rtsp_output_session::close_callback(void*) { return 0; }
 
@@ -169,8 +170,7 @@ int rtsp_output_session::teardown_callback(void* param, rtsp_server_t* server, c
     }
 
     const auto result = rtsp_server_reply_teardown(server, 200);
-    const auto keep_alive = self->shared_from_this();
-    boost::asio::post(self->connection_->socket().get_executor(), [keep_alive]() { keep_alive->close(); });
+    self->shutdown();
     return result;
 }
 
@@ -205,7 +205,7 @@ void rtsp_output_session::on_read(std::span<const std::uint8_t> data)
         const auto result = rtsp_server_input(server_, remaining.data(), &bytes);
         if (result != 0 && result != 1)
         {
-            close();
+            shutdown();
             return;
         }
         if (result == 1 || bytes == 0)
@@ -215,35 +215,45 @@ void rtsp_output_session::on_read(std::span<const std::uint8_t> data)
         const auto consumed = remaining.size() - bytes;
         if (consumed == 0)
         {
-            close();
+            shutdown();
             return;
         }
         remaining = remaining.subspan(consumed);
     }
 }
 
-void rtsp_output_session::on_close()
+void rtsp_output_session::shutdown()
 {
     if (closed_)
     {
         return;
     }
     closed_ = true;
+    const auto self = shared_from_this();
+    boost::asio::post(connection_->socket().get_executor(), [self]() { self->safe_shutdown(); });
+}
+
+void rtsp_output_session::safe_shutdown()
+{
+    connection_->close();
     if (stream_)
     {
         // remove_sink 对未挂接会话是 no-op，也覆盖 add_sink 重放配置时同步关闭的重入路径。
         stream_->remove_sink(*this);
     }
     stream_.reset();
-    spdlog::debug("rtsp output close {}", stream_name_);
-}
 
-void rtsp_output_session::close()
-{
-    if (!closed_)
+    if (muxer_ != nullptr)
     {
-        connection_->close();
+        rtsp_muxer_destroy(muxer_);
+        muxer_ = nullptr;
     }
+    if (server_ != nullptr)
+    {
+        rtsp_server_destroy(server_);
+        server_ = nullptr;
+    }
+    spdlog::debug("rtsp output shutdown {}", stream_name_);
 }
 
 int rtsp_output_session::on_describe(std::string_view uri)

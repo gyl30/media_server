@@ -1,5 +1,6 @@
 #include "media/http/http_session.h"
 
+#include <boost/asio/post.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
 #include <boost/url/parse.hpp>
@@ -48,7 +49,7 @@ void http_session::on_request(boost::system::error_code error, std::size_t bytes
     static_cast<void>(bytes);
     if (error)
     {
-        close();
+        shutdown();
         return;
     }
     handle_request();
@@ -216,7 +217,7 @@ void http_session::handle_flv(const boost::urls::url_view& target)
             static_cast<void>(bytes);
             if (error)
             {
-                self->close();
+                self->shutdown();
                 return;
             }
             self->start_flv(std::move(media_stream));
@@ -356,7 +357,7 @@ void http_session::send_text_response(boost::beast::http::status status, std::st
                                         static_cast<void>(response);
                                         static_cast<void>(error);
                                         static_cast<void>(bytes);
-                                        self->close();
+                                        self->shutdown();
                                     });
 }
 
@@ -378,7 +379,7 @@ void http_session::send_whep_error_response(boost::beast::http::status status, s
                                         static_cast<void>(response);
                                         static_cast<void>(error);
                                         static_cast<void>(bytes);
-                                        self->close();
+                                        self->shutdown();
                                     });
 }
 
@@ -402,7 +403,7 @@ void http_session::send_whep_options_response()
                                         static_cast<void>(response);
                                         static_cast<void>(error);
                                         static_cast<void>(bytes);
-                                        self->close();
+                                        self->shutdown();
                                     });
 }
 
@@ -428,7 +429,7 @@ void http_session::send_whep_response(std::string session_id, std::string answer
                                         static_cast<void>(response);
                                         static_cast<void>(error);
                                         static_cast<void>(bytes);
-                                        self->close();
+                                        self->shutdown();
                                     });
 }
 
@@ -448,7 +449,7 @@ void http_session::send_whep_empty_response(boost::beast::http::status status)
                                         static_cast<void>(response);
                                         static_cast<void>(error);
                                         static_cast<void>(bytes);
-                                        self->close();
+                                        self->shutdown();
                                     });
 }
 
@@ -469,32 +470,19 @@ void http_session::send_binary_response(boost::beast::http::status status, std::
                                         static_cast<void>(response);
                                         static_cast<void>(error);
                                         static_cast<void>(bytes);
-                                        self->close();
+                                        self->shutdown();
                                     });
 }
 
 void http_session::start_flv(std::shared_ptr<media_stream> media_stream)
 {
-    keep_alive_ = shared_from_this();
     media_stream_ = std::move(media_stream);
     const auto tracks = media_stream_->tracks();
-    const std::weak_ptr<http_session> weak_self = shared_from_this();
+    const auto self = shared_from_this();
     flv_output_ = std::make_shared<http_flv_output>(
         tracks,
-        [weak_self](std::span<const std::uint8_t> data)
-        {
-            if (const auto self = weak_self.lock())
-            {
-                self->enqueue_flv(data);
-            }
-        },
-        [weak_self]()
-        {
-            if (const auto self = weak_self.lock())
-            {
-                self->finish_flv();
-            }
-        });
+        [self](std::span<const std::uint8_t> data) { self->enqueue_flv(data); },
+        [self]() { self->finish_flv(); });
 
     if (!media_stream_->add_sink(flv_output_))
     {
@@ -546,7 +534,7 @@ void http_session::write_flv_chunk()
                                  }
                                  if (error)
                                  {
-                                     self->close();
+                                     self->shutdown();
                                      return;
                                  }
                                  self->flv_chunks_.pop_front();
@@ -576,7 +564,7 @@ void http_session::finish_flv()
                                  static_cast<void>(last);
                                  static_cast<void>(error);
                                  static_cast<void>(bytes);
-                                 self->close();
+                                 self->shutdown();
                              });
 }
 
@@ -591,19 +579,24 @@ void http_session::detach_flv()
     flv_chunks_.clear();
 }
 
-void http_session::close()
+void http_session::shutdown()
 {
     if (closed_)
     {
         return;
     }
     closed_ = true;
+    const auto self = shared_from_this();
+    boost::asio::post(stream_.get_executor(), [self]() { self->safe_shutdown(); });
+}
+
+void http_session::safe_shutdown()
+{
     detach_flv();
     boost::system::error_code error;
     hls_wait_timer_.cancel();
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);
-    keep_alive_.reset();
 }
 
 std::vector<std::string> http_session::path_segments(const boost::urls::url_view& target)

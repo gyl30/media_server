@@ -12,6 +12,7 @@ extern "C"
 #include "sdp.h"
 }
 
+#include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/url/url.hpp>
 
@@ -80,7 +81,6 @@ rtsp_input_session::~rtsp_input_session()
         if (demuxer != nullptr)
         {
             rtsp_demuxer_destroy(demuxer);
-            demuxer = nullptr;
         }
     }
     if (client_ != nullptr)
@@ -122,7 +122,7 @@ bool rtsp_input_session::start()
                             {
                                 if (error)
                                 {
-                                    close();
+                                    shutdown();
                                     return;
                                 }
                                 auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_);
@@ -135,18 +135,25 @@ bool rtsp_input_session::start()
     return true;
 }
 
-void rtsp_input_session::close()
+void rtsp_input_session::shutdown()
 {
     if (closed_)
     {
         return;
     }
     closed_ = true;
+    const auto self = shared_from_this();
+    boost::asio::post(io_, [self]() { self->safe_shutdown(); });
+}
+
+void rtsp_input_session::safe_shutdown()
+{
     keepalive_deadline_.reset();
     resolver_.cancel();
     if (connection_)
     {
         connection_->close();
+        connection_.reset();
     }
     if (stream_)
     {
@@ -154,7 +161,21 @@ void rtsp_input_session::close()
         registry_.remove(*stream_);
         stream_.reset();
     }
-    spdlog::debug("rtsp input close {}", stream_name_);
+    for (auto*& demuxer : demuxers_)
+    {
+        if (demuxer != nullptr)
+        {
+            rtsp_demuxer_destroy(demuxer);
+            demuxer = nullptr;
+        }
+    }
+    if (client_ != nullptr)
+    {
+        rtsp_client_destroy(client_);
+        client_ = nullptr;
+    }
+    avpkt2bs_destroy(&bitstream_);
+    spdlog::debug("rtsp input shutdown {}", stream_name_);
 }
 
 int rtsp_input_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
@@ -247,7 +268,7 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
 {
     if (error || closed_)
     {
-        close();
+        shutdown();
         return;
     }
 
@@ -265,7 +286,7 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
         url_.c_str(), username_.empty() ? nullptr : username_.c_str(), password_.empty() ? nullptr : password_.c_str(), &handler, this);
     if (client_ == nullptr)
     {
-        close();
+        shutdown();
         return;
     }
 
@@ -276,7 +297,7 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
     spdlog::info("rtsp input connected stream {}", stream_name_);
     if (rtsp_client_describe(client_) != 0)
     {
-        close();
+        shutdown();
     }
 }
 
@@ -284,7 +305,7 @@ void rtsp_input_session::on_read(std::span<const std::uint8_t> data)
 {
     if (client_ != nullptr && rtsp_client_input(client_, data.data(), data.size()) != 0)
     {
-        close();
+        shutdown();
     }
 }
 
@@ -292,7 +313,7 @@ void rtsp_input_session::on_connection_close()
 {
     if (!closed_)
     {
-        close();
+        shutdown();
     }
 }
 
@@ -356,7 +377,7 @@ void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uin
     keepalive_deadline_ = now + keepalive_interval_;
     if (rtsp_client_options(client_, nullptr) != 0)
     {
-        close();
+        shutdown();
     }
 }
 
