@@ -487,7 +487,30 @@ void http_session::start_flv(std::shared_ptr<media_stream> media_stream)
     if (!media_stream_->add_sink(flv_output_))
     {
         finish_flv();
+        return;
     }
+    read_flv_client();
+}
+
+void http_session::read_flv_client()
+{
+    if (closed_)
+    {
+        return;
+    }
+
+    const auto self = shared_from_this();
+    stream_.async_read_some(boost::asio::buffer(flv_read_buffer_),
+                            [self](boost::system::error_code error, std::size_t bytes)
+                            {
+                                static_cast<void>(bytes);
+                                if (error)
+                                {
+                                    self->shutdown();
+                                    return;
+                                }
+                                self->read_flv_client();
+                            });
 }
 
 void http_session::enqueue_flv(std::span<const std::uint8_t> data)
