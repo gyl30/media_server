@@ -1202,8 +1202,9 @@ class rtsp_output_test_peer final
         client_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
-        session_ = std::make_shared<rtsp_output_session>(std::move(connection), registry_, acceptor_.local_endpoint().port());
-        session_->start();
+        auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, acceptor_.local_endpoint().port());
+        session_ = session;
+        session->start();
         runner_ = std::jthread([this]() { io_.run(); });
     }
 
@@ -1232,6 +1233,8 @@ class rtsp_output_test_peer final
     [[nodiscard]] std::uint16_t port() const { return acceptor_.local_endpoint().port(); }
 
     [[nodiscard]] std::shared_ptr<media_stream> stream() const { return stream_; }
+
+    [[nodiscard]] bool session_alive() const { return !session_.expired(); }
 
     std::optional<rtsp_interleaved_packet> read_interleaved(std::chrono::steady_clock::duration timeout)
     {
@@ -1272,7 +1275,7 @@ class rtsp_output_test_peer final
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_;
-    std::shared_ptr<rtsp_output_session> session_;
+    std::weak_ptr<rtsp_output_session> session_;
     std::jthread runner_;
 };
 
@@ -1421,6 +1424,89 @@ void test_rtsp_output_h265()
         marker = packet.rtp.m != 0;
     }
     require(capture.access_unit == *frame.payload, "rtsp h265 access unit");
+}
+
+void test_rtsp_output_setup_track_lifecycle()
+{
+    {
+        rtsp_output_test_peer peer(true);
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+        const auto describe = peer.request("DESCRIBE " + base +
+                                           " RTSP/1.0\r\n"
+                                           "CSeq: 1\r\n"
+                                           "Accept: application/sdp\r\n\r\n");
+        require(describe.starts_with("RTSP/1.0 200"), "rtsp video only describe");
+
+        const auto setup = peer.request("SETUP " + base +
+                                        "/trackID=1 RTSP/1.0\r\n"
+                                        "CSeq: 2\r\n"
+                                        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+        require(setup.starts_with("RTSP/1.0 200"), "rtsp video only setup");
+        const auto session = rtsp_header_value(setup, "Session:");
+        require(!session.empty(), "rtsp video only session");
+        const auto play = peer.request("PLAY " + base +
+                                       " RTSP/1.0\r\n"
+                                       "CSeq: 3\r\n"
+                                       "Session: " +
+                                       session + "\r\n\r\n");
+        require(play.starts_with("RTSP/1.0 200"), "rtsp video only play");
+
+        auto audio = make_audio_track();
+        audio.clock_rate = 48'000;
+        audio.codec_config = {0x11, 0x90};
+        require(peer.stream()->update_track(std::move(audio)), "rtsp unsetup audio config update");
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        require(peer.session_alive(), "rtsp unsetup audio change keeps video session");
+
+        auto video = make_h265_track();
+        video.codec_config = h265_config_updated;
+        require(peer.stream()->update_track(std::move(video)), "rtsp setup h265 config update");
+        for (int attempt = 0; attempt < 100 && peer.session_alive(); ++attempt)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(!peer.session_alive(), "rtsp setup video change closes video session");
+    }
+
+    {
+        rtsp_output_test_peer peer;
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+        const auto describe = peer.request("DESCRIBE " + base +
+                                           " RTSP/1.0\r\n"
+                                           "CSeq: 1\r\n"
+                                           "Accept: application/sdp\r\n\r\n");
+        require(describe.starts_with("RTSP/1.0 200"), "rtsp audio only describe");
+
+        const auto setup = peer.request("SETUP " + base +
+                                        "/trackID=2 RTSP/1.0\r\n"
+                                        "CSeq: 2\r\n"
+                                        "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
+        require(setup.starts_with("RTSP/1.0 200"), "rtsp audio only setup");
+        const auto session = rtsp_header_value(setup, "Session:");
+        require(!session.empty(), "rtsp audio only session");
+        const auto play = peer.request("PLAY " + base +
+                                       " RTSP/1.0\r\n"
+                                       "CSeq: 3\r\n"
+                                       "Session: " +
+                                       session + "\r\n\r\n");
+        require(play.starts_with("RTSP/1.0 200"), "rtsp audio only play");
+
+        auto video = make_video_track();
+        video.codec_config = h264_config_updated;
+        require(peer.stream()->update_track(std::move(video)), "rtsp unsetup video config update");
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        require(peer.session_alive(), "rtsp unsetup video change keeps audio session");
+
+        auto audio = make_audio_track();
+        audio.clock_rate = 48'000;
+        audio.codec_config = {0x11, 0x90};
+        require(peer.stream()->update_track(std::move(audio)), "rtsp setup audio config update");
+        for (int attempt = 0; attempt < 100 && peer.session_alive(); ++attempt)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(!peer.session_alive(), "rtsp setup audio change closes audio session");
+    }
 }
 
 void test_rtsp_output_rejects_stale_description()
@@ -2260,6 +2346,8 @@ int main()
     std::cout << "[pass] rtsp_output_session_contract\n";
     media_server::test_rtsp_output_h265();
     std::cout << "[pass] rtsp_output_h265\n";
+    media_server::test_rtsp_output_setup_track_lifecycle();
+    std::cout << "[pass] rtsp_output_setup_track_lifecycle\n";
     media_server::test_rtsp_output_rejects_stale_description();
     std::cout << "[pass] rtsp_output_rejects_stale_description\n";
     media_server::test_media_stream_fanout_and_reentrancy();
