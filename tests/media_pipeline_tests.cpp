@@ -1284,9 +1284,26 @@ void test_rtsp_output_session_contract()
     rtsp_output_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
 
+    const auto options = peer.request("OPTIONS * RTSP/1.0\r\n"
+                                      "CSeq: 1\r\n\r\n");
+    require(options.starts_with("RTSP/1.0 200"), "rtsp output options");
+    require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,GET_PARAMETER",
+            "rtsp output advertised methods");
+
+    const auto pause = peer.request("PAUSE " + base +
+                                    " RTSP/1.0\r\n"
+                                    "CSeq: 2\r\n\r\n");
+    require(pause.starts_with("RTSP/1.0 501"), "rtsp output pause unsupported");
+
+    const auto set_parameter = peer.request("SET_PARAMETER " + base +
+                                            " RTSP/1.0\r\n"
+                                            "CSeq: 3\r\n"
+                                            "Content-Length: 0\r\n\r\n");
+    require(set_parameter.starts_with("RTSP/1.0 501"), "rtsp output set parameter unsupported");
+
     const auto describe = peer.request("DESCRIBE " + base +
                                        " RTSP/1.0\r\n"
-                                       "CSeq: 1\r\n"
+                                       "CSeq: 4\r\n"
                                        "Accept: application/sdp\r\n\r\n");
     require(describe.starts_with("RTSP/1.0 200"), "rtsp output describe");
     require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
@@ -1294,13 +1311,13 @@ void test_rtsp_output_session_contract()
 
     const auto wrong_stream = peer.request("SETUP rtsp://127.0.0.1:" + std::to_string(peer.port()) +
                                            "/live/other/trackID=1 RTSP/1.0\r\n"
-                                           "CSeq: 2\r\n"
+                                           "CSeq: 5\r\n"
                                            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
     require(wrong_stream.starts_with("RTSP/1.0 404"), "rtsp output setup stream identity");
 
     const auto video_setup = peer.request("SETUP " + base +
                                           "/trackID=1 RTSP/1.0\r\n"
-                                          "CSeq: 3\r\n"
+                                          "CSeq: 6\r\n"
                                           "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
     require(video_setup.starts_with("RTSP/1.0 200"), "rtsp output video setup");
     const auto session = rtsp_header_value(video_setup, "Session:");
@@ -1308,7 +1325,7 @@ void test_rtsp_output_session_contract()
 
     const auto duplicate_setup = peer.request("SETUP " + base +
                                               "/trackID=1 RTSP/1.0\r\n"
-                                              "CSeq: 4\r\n"
+                                              "CSeq: 7\r\n"
                                               "Session: " +
                                               session +
                                               "\r\n"
@@ -1317,14 +1334,14 @@ void test_rtsp_output_session_contract()
 
     const auto wrong_session = peer.request("SETUP " + base +
                                             "/trackID=2 RTSP/1.0\r\n"
-                                            "CSeq: 5\r\n"
+                                            "CSeq: 8\r\n"
                                             "Session: wrong\r\n"
                                             "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
     require(wrong_session.starts_with("RTSP/1.0 454"), "rtsp output setup session identity");
 
     const auto channel_conflict = peer.request("SETUP " + base +
                                                "/trackID=2 RTSP/1.0\r\n"
-                                               "CSeq: 6\r\n"
+                                               "CSeq: 9\r\n"
                                                "Session: " +
                                                session +
                                                "\r\n"
@@ -1333,7 +1350,7 @@ void test_rtsp_output_session_contract()
 
     const auto audio_setup = peer.request("SETUP " + base +
                                           "/trackID=2 RTSP/1.0\r\n"
-                                          "CSeq: 7\r\n"
+                                          "CSeq: 10\r\n"
                                           "Session: " +
                                           session +
                                           "\r\n"
@@ -1342,21 +1359,21 @@ void test_rtsp_output_session_contract()
 
     const auto wrong_play = peer.request("PLAY rtsp://127.0.0.1:" + std::to_string(peer.port()) +
                                          "/live/other RTSP/1.0\r\n"
-                                         "CSeq: 8\r\n"
+                                         "CSeq: 11\r\n"
                                          "Session: " +
                                          session + "\r\n\r\n");
     require(wrong_play.starts_with("RTSP/1.0 404"), "rtsp output play stream identity");
 
     const auto play = peer.request("PLAY " + base +
                                    " RTSP/1.0\r\n"
-                                   "CSeq: 9\r\n"
+                                   "CSeq: 12\r\n"
                                    "Session: " +
                                    session + "\r\n\r\n");
     require(play.starts_with("RTSP/1.0 200"), "rtsp output play");
 
     const auto late_setup = peer.request("SETUP " + base +
                                          "/trackID=1 RTSP/1.0\r\n"
-                                         "CSeq: 10\r\n"
+                                         "CSeq: 13\r\n"
                                          "Session: " +
                                          session +
                                          "\r\n"
