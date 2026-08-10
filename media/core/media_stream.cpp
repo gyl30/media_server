@@ -5,6 +5,10 @@
 
 namespace media_server
 {
+namespace
+{
+constexpr std::size_t max_gop_cache_frames = 2500;
+}
 
 media_stream::media_stream(std::string name) : name_(std::move(name)) {}
 
@@ -59,7 +63,17 @@ bool media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
             return false;
         }
     }
-    return true;
+
+    const auto gop_snapshot = gop_cache_;
+    for (const auto& frame : gop_snapshot)
+    {
+        if (ended_ || !has_sink(*sink))
+        {
+            return false;
+        }
+        sink->on_frame(frame);
+    }
+    return !ended_ && has_sink(*sink);
 }
 
 void media_stream::remove_sink(const media_sink& sink)
@@ -100,6 +114,7 @@ bool media_stream::update_track(media_track track)
 
     const auto id = track.id;
     const auto config_version = track.config_version;
+    gop_cache_.clear();
     tracks_.insert_or_assign(id, std::move(track));
     for (const auto& sink : sink_snapshot())
     {
@@ -124,9 +139,32 @@ bool media_stream::update_track(media_track track)
 
 bool media_stream::publish(media_frame frame)
 {
-    if (ended_ || !frame.payload || frame.payload->empty() || !tracks_.contains(frame.track))
+    if (ended_ || !frame.payload || frame.payload->empty())
     {
         return false;
+    }
+
+    const auto track = tracks_.find(frame.track);
+    if (track == tracks_.end())
+    {
+        return false;
+    }
+
+    if (track->second.kind == media_kind::video && frame.key_frame)
+    {
+        gop_cache_.clear();
+        gop_cache_.push_back(frame);
+    }
+    else if (!gop_cache_.empty())
+    {
+        if (gop_cache_.size() >= max_gop_cache_frames)
+        {
+            gop_cache_.clear();
+        }
+        else
+        {
+            gop_cache_.push_back(frame);
+        }
     }
 
     for (const auto& sink : sink_snapshot())
@@ -152,6 +190,7 @@ void media_stream::end()
     }
 
     ended_ = true;
+    gop_cache_.clear();
     const auto sinks = sink_snapshot();
     sinks_.clear();
     for (const auto& sink : sinks)
