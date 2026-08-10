@@ -10,8 +10,10 @@
 #include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/http/http_flv_output.h"
+#include "media/http/http_session.h"
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/webrtc/webrtc_output.h"
+#include "media/webrtc/whep_service.h"
 
 extern "C"
 {
@@ -933,6 +935,69 @@ void test_tcp_listener_startup_error()
 
     tcp_listener listener(io, occupied.local_endpoint().port(), [](boost::asio::ip::tcp::socket) {});
     require(static_cast<bool>(listener.start()), "tcp listener reports bind failure");
+}
+
+void test_http_flv_client_disconnect()
+{
+    boost::asio::io_context io;
+    stream_registry registry;
+    hls_service hls(registry);
+    whep_service whep(io, registry, boost::asio::ip::make_address("127.0.0.1"));
+
+    auto stream = std::make_shared<media_stream>("live/http-flv-disconnect");
+    require(stream->update_track(make_video_track()), "http flv disconnect track");
+    require(registry.add(stream), "http flv disconnect stream");
+
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::socket client(io);
+    client.connect(acceptor.local_endpoint());
+    auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep);
+    const std::weak_ptr<http_session> weak_session = session;
+    session->start();
+    session.reset();
+
+    std::jthread runner([&io]() { io.run(); });
+    const std::string request =
+        "GET /live/http-flv-disconnect.flv HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n\r\n";
+    boost::asio::write(client, boost::asio::buffer(request));
+
+    boost::asio::streambuf response;
+    boost::asio::read_until(client, response, "\r\n\r\n");
+    std::istream input(&response);
+    std::string status;
+    std::getline(input, status);
+    require(status.starts_with("HTTP/1.1 200"), "http flv disconnect response");
+    response.consume(response.size());
+
+    boost::system::error_code error;
+    auto quiet_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+    std::array<std::uint8_t, 4096> buffer{};
+    while (std::chrono::steady_clock::now() < quiet_deadline)
+    {
+        const auto available = client.available(error);
+        require(!error, "http flv disconnect drain");
+        if (available == 0U)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+        const auto bytes = client.read_some(boost::asio::buffer(buffer.data(), std::min(buffer.size(), available)), error);
+        require(!error && bytes > 0U, "http flv disconnect initial output");
+        quiet_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
+    }
+
+    client.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
+    client.close(error);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!weak_session.expired() && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(weak_session.expired(), "http flv disconnect releases session");
+    runner.join();
 }
 
 void test_rtsp_pull_url_contract()
@@ -2181,6 +2246,8 @@ int main()
     std::cout << "[pass] rtsp_client_session_timeout\n";
     media_server::test_tcp_listener_startup_error();
     std::cout << "[pass] tcp_listener_startup_error\n";
+    media_server::test_http_flv_client_disconnect();
+    std::cout << "[pass] http_flv_client_disconnect\n";
     media_server::test_rtsp_pull_url_contract();
     std::cout << "[pass] rtsp_pull_url_contract\n";
     media_server::test_rtsp_input_selects_single_audio_and_video();
