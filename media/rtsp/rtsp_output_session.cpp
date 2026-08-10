@@ -96,9 +96,8 @@ void rtsp_output_session::start()
 void rtsp_output_session::on_track(const media_track& track)
 {
     const auto iterator = tracks_.find(track.id);
-    if (iterator == tracks_.end() || iterator->second.config_version != track.config_version)
+    if (iterator != tracks_.end() && iterator->second.setup && iterator->second.config_version != track.config_version)
     {
-        // RTSP SDP 已经发给客户端，轨道集合或配置改变时直接结束旧会话。
         shutdown();
     }
 }
