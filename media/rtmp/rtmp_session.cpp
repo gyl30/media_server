@@ -244,10 +244,19 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
         return -1;
     }
 
-    if (codec == FLV_VIDEO_AVCC)
-
+    if (codec == FLV_VIDEO_AVCC || codec == FLV_VIDEO_HVCC)
     {
-        auto config = h264_avcc_to_annex_b(data);
+        const auto video_codec = codec == FLV_VIDEO_AVCC ? codec_id::h264 : codec_id::h265;
+        for (const auto& track : stream_->tracks())
+        {
+            if (track.id == video_track_id && track.codec != video_codec)
+            {
+                spdlog::warn("rtmp input video codec change {} {}", to_string(track.codec), to_string(video_codec));
+                return -1;
+            }
+        }
+
+        auto config = codec == FLV_VIDEO_AVCC ? h264_avcc_to_annex_b(data) : h265_hvcc_to_annex_b(data);
         if (config.empty())
         {
             return -1;
@@ -255,36 +264,14 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
         media_track track{
             .id = video_track_id,
             .kind = media_kind::video,
-            .codec = codec_id::h264,
+            .codec = video_codec,
             .clock_rate = 90'000,
             .channel_count = 0,
             .codec_config = std::move(config),
         };
         if (stream_->update_track(std::move(track)))
         {
-            spdlog::info("rtmp input track video h264");
-        }
-        return 0;
-    }
-
-    if (codec == FLV_VIDEO_HVCC)
-    {
-        auto config = h265_hvcc_to_annex_b(data);
-        if (config.empty())
-        {
-            return -1;
-        }
-        media_track track{
-            .id = video_track_id,
-            .kind = media_kind::video,
-            .codec = codec_id::h265,
-            .clock_rate = 90'000,
-            .channel_count = 0,
-            .codec_config = std::move(config),
-        };
-        if (stream_->update_track(std::move(track)))
-        {
-            spdlog::info("rtmp input track video h265");
+            spdlog::info("rtmp input track video {}", to_string(video_codec));
         }
         return 0;
     }
