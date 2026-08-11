@@ -1230,10 +1230,15 @@ class rtmp_input_test_peer final
 class rtmp_output_test_peer final
 {
    public:
-    rtmp_output_test_peer() : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_socket_(io_)
+    explicit rtmp_output_test_peer(media_track video_track = make_video_track(), bool with_audio = false)
+        : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_socket_(io_), expected_video_codec_(video_track.codec)
     {
         stream_ = std::make_shared<media_stream>("live/camera");
-        require(stream_->update_track(make_video_track()), "rtmp output video track");
+        require(stream_->update_track(std::move(video_track)), "rtmp output video track");
+        if (with_audio)
+        {
+            require(stream_->update_track(make_audio_track()), "rtmp output audio track");
+        }
         require(registry_.add(stream_), "rtmp output registry add");
 
         client_socket_.connect(acceptor_.local_endpoint());
@@ -1246,7 +1251,7 @@ class rtmp_output_test_peer final
         rtmp_client_handler_t handler{};
         handler.send = &rtmp_output_test_peer::send_callback;
         handler.onvideo = &rtmp_output_test_peer::video_callback;
-        handler.onaudio = &rtmp_output_test_peer::media_callback;
+        handler.onaudio = &rtmp_output_test_peer::audio_callback;
         handler.onscript = &rtmp_output_test_peer::media_callback;
         const auto tc_url = "rtmp://127.0.0.1:" + std::to_string(acceptor_.local_endpoint().port()) + "/live";
         client_ = rtmp_client_create("live", "camera", tc_url.c_str(), this, &handler);
@@ -1276,6 +1281,78 @@ class rtmp_output_test_peer final
         return read_status();
     }
 
+    void publish(media_frame frame)
+    {
+        boost::asio::post(io_, [stream = stream_, frame = std::move(frame)]() mutable { stream->publish(std::move(frame)); });
+    }
+
+    void receive_media(std::size_t count)
+    {
+        std::array<std::uint8_t, 8 * 1024> data{};
+        while (media_order_.size() < count)
+        {
+            const auto bytes = client_socket_.read_some(boost::asio::buffer(data));
+            require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp output media input");
+        }
+    }
+
+    [[nodiscard]] const std::vector<char>& media_order() const noexcept { return media_order_; }
+    [[nodiscard]] std::size_t audio_config_count() const noexcept { return audio_config_count_; }
+
+    void add_audio_track()
+    {
+        std::promise<bool> promise;
+        auto future = promise.get_future();
+        boost::asio::post(io_,
+                          [stream = stream_, &promise]() mutable { promise.set_value(stream->update_track(make_audio_track())); });
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp runtime add audio track");
+    }
+
+    void update_video_track(media_track track)
+    {
+        const auto expected = video_config_count_ + 1;
+        std::promise<bool> promise;
+        auto future = promise.get_future();
+        boost::asio::post(io_,
+                          [stream = stream_, track = std::move(track), &promise]() mutable
+                          { promise.set_value(stream->update_track(std::move(track))); });
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp output config reset");
+        receive_until_video_config(expected);
+    }
+
+    void end_stream()
+    {
+        const std::weak_ptr<rtmp_session> weak = session_;
+        boost::asio::post(io_, [stream = stream_]() { stream->end(); });
+        session_.reset();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(weak.expired(), "rtmp stream end releases session");
+    }
+
+    void disconnect_and_wait(bool with_media_write)
+    {
+        if (with_media_write)
+        {
+            publish(make_large_video_frame(0));
+        }
+        client_socket_.set_option(boost::asio::socket_base::linger(true, 0));
+        boost::system::error_code error;
+        client_socket_.close(error);
+
+        const std::weak_ptr<rtmp_session> weak = session_;
+        session_.reset();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(weak.expired(), with_media_write ? "rtmp write error releases session" : "rtmp read error releases session");
+    }
+
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
     {
@@ -1296,8 +1373,34 @@ class rtmp_output_test_peer final
     {
         flv_video_tag_header_t video{};
         require(flv_video_tag_header_read(&video, static_cast<const std::uint8_t*>(data), bytes) > 0, "rtmp output video header");
-        require(video.codecid == FLV_VIDEO_H264 && video.avpacket == FLV_SEQUENCE_HEADER, "rtmp output video config");
-        static_cast<rtmp_output_test_peer*>(param)->received_video_config_ = true;
+        auto* self = static_cast<rtmp_output_test_peer*>(param);
+        const auto expected = self->expected_video_codec_ == codec_id::h264 ? FLV_VIDEO_H264 : FLV_VIDEO_H265;
+        require(video.codecid == expected, "rtmp output video codec");
+        if (video.avpacket == FLV_SEQUENCE_HEADER)
+        {
+            ++self->video_config_count_;
+        }
+        else
+        {
+            self->media_order_.push_back('v');
+        }
+        return 0;
+    }
+
+    static int audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
+    {
+        if (data != nullptr && bytes >= 2U)
+        {
+            auto* self = static_cast<rtmp_output_test_peer*>(param);
+            if (static_cast<const std::uint8_t*>(data)[1] == FLV_SEQUENCE_HEADER)
+            {
+                ++self->audio_config_count_;
+            }
+            else
+            {
+                self->media_order_.push_back('a');
+            }
+        }
         return 0;
     }
 
@@ -1305,8 +1408,13 @@ class rtmp_output_test_peer final
 
     void receive_until_video_config()
     {
+        receive_until_video_config(1);
+    }
+
+    void receive_until_video_config(std::size_t count)
+    {
         std::array<std::uint8_t, 8 * 1024> data{};
-        while (!received_video_config_)
+        while (video_config_count_ < count)
         {
             const auto bytes = client_socket_.read_some(boost::asio::buffer(data));
             require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp output client input");
@@ -1347,7 +1455,10 @@ class rtmp_output_test_peer final
     boost::asio::ip::tcp::socket client_socket_;
     std::shared_ptr<rtmp_session> session_;
     rtmp_client_t* client_{};
-    bool received_video_config_{};
+    codec_id expected_video_codec_{};
+    std::size_t video_config_count_{};
+    std::size_t audio_config_count_{};
+    std::vector<char> media_order_;
     std::jthread runner_;
 };
 
@@ -1418,6 +1529,69 @@ void test_rtmp_rejects_live_playback_control()
     require(seek.level == "error" && seek.code == "NetStream.Seek.Failed", "rtmp live seek rejected");
 }
 
+void test_rtmp_output_pull_codecs_and_order()
+{
+    {
+        rtmp_output_test_peer peer;
+        peer.publish(make_video_frame(0, true));
+        peer.receive_media(1);
+        require(peer.media_order() == std::vector<char>{'v'}, "rtmp h264 pull media");
+    }
+
+    {
+        rtmp_output_test_peer peer(make_h265_track());
+        peer.publish(make_h265_frame(0, true));
+        peer.receive_media(1);
+        require(peer.media_order() == std::vector<char>{'v'}, "rtmp h265 pull media");
+    }
+
+    {
+        rtmp_output_test_peer peer(make_video_track(), true);
+        peer.publish(make_video_frame(0, true));
+        peer.publish(make_audio_frame(20'000'000));
+        peer.publish(make_video_frame(40'000'000, false));
+        peer.publish(make_audio_frame(60'000'000));
+        peer.receive_media(4);
+        require(peer.media_order() == std::vector<char>({'v', 'a', 'v', 'a'}), "rtmp audio video pull order");
+    }
+}
+
+void test_rtmp_output_config_reset_and_end()
+{
+    rtmp_output_test_peer peer;
+    auto updated = make_video_track();
+    updated.codec_config = h264_config_updated;
+    peer.update_video_track(std::move(updated));
+    peer.publish(make_video_frame(0, true));
+    peer.receive_media(1);
+    peer.end_stream();
+}
+
+void test_rtmp_output_runtime_add_audio()
+{
+    rtmp_output_test_peer peer;
+    peer.publish(make_video_frame(0, true));
+    peer.receive_media(1);
+    peer.add_audio_track();
+    peer.publish(make_video_frame(40'000'000, true));
+    peer.publish(make_audio_frame(60'000'000));
+    peer.receive_media(3);
+    require(peer.audio_config_count() == 1, "rtmp runtime audio sequence header");
+    require(peer.media_order() == std::vector<char>({'v', 'v', 'a'}), "rtmp runtime add audio keeps media flowing");
+}
+
+void test_rtmp_tcp_error_lifecycle()
+{
+    {
+        rtmp_output_test_peer peer;
+        peer.disconnect_and_wait(false);
+    }
+    {
+        rtmp_output_test_peer peer;
+        peer.disconnect_and_wait(true);
+    }
+}
+
 void test_tcp_listener_startup_error()
 {
     boost::asio::io_context io;
@@ -1437,9 +1611,11 @@ void test_tcp_connection_shutdown_lifecycle()
     client.connect(acceptor.local_endpoint());
     auto server = acceptor.accept();
 
-    int shutdown_count = 0;
+    int io_callback_count = 0;
     auto connection = std::make_shared<tcp_connection>(std::move(server));
-    connection->startup({}, [&shutdown_count]() { ++shutdown_count; });
+    connection->startup(
+        [&io_callback_count](boost::system::error_code, std::span<const std::uint8_t>) { ++io_callback_count; },
+        [&io_callback_count](boost::system::error_code, std::size_t) { ++io_callback_count; });
     const std::weak_ptr<tcp_connection> weak_connection = connection;
 
     connection->shutdown();
@@ -1449,9 +1625,71 @@ void test_tcp_connection_shutdown_lifecycle()
 
     io.run();
 
-    require(shutdown_count == 1, "tcp connection shutdown callback once");
+    require(io_callback_count == 0, "tcp shutdown suppresses cancellation callbacks");
     require(weak_connection.expired(), "tcp connection released after owner worker cleanup");
 
+    boost::system::error_code error;
+    client.close(error);
+}
+
+void test_tcp_connection_io_error_propagation()
+{
+    {
+        boost::asio::io_context io;
+        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+        boost::asio::ip::tcp::socket client(io);
+        client.connect(acceptor.local_endpoint());
+        auto connection = std::make_shared<tcp_connection>(acceptor.accept());
+        boost::system::error_code read_error;
+        connection->startup(
+            [&read_error](boost::system::error_code error, std::span<const std::uint8_t>) { read_error = error; }, {});
+        client.close();
+        io.run();
+        require(static_cast<bool>(read_error), "tcp connection reports read error");
+        connection->shutdown();
+        io.restart();
+        io.run();
+    }
+
+    {
+        boost::asio::io_context io;
+        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+        boost::asio::ip::tcp::socket client(io);
+        client.connect(acceptor.local_endpoint());
+        auto connection = std::make_shared<tcp_connection>(acceptor.accept());
+        boost::system::error_code write_error;
+        connection->startup({}, [&write_error](boost::system::error_code error, std::size_t) { write_error = error; });
+
+        client.set_option(boost::asio::socket_base::linger(true, 0));
+        client.close();
+        std::vector<std::uint8_t> data(8 * 1024 * 1024, 0x5a);
+        connection->write(data);
+        io.run();
+        require(static_cast<bool>(write_error), "tcp connection reports write error");
+        connection->shutdown();
+        io.restart();
+        io.run();
+    }
+}
+
+void test_tcp_connection_shutdown_discards_pending_writes()
+{
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::socket client(io);
+    client.connect(acceptor.local_endpoint());
+    auto connection = std::make_shared<tcp_connection>(acceptor.accept());
+    connection->startup({}, {});
+    const std::weak_ptr<tcp_connection> weak_connection = connection;
+
+    std::vector<std::uint8_t> data(8 * 1024 * 1024, 0x5a);
+    connection->write(data);
+    connection->write(data);
+    connection->shutdown();
+    connection.reset();
+    io.run();
+
+    require(weak_connection.expired(), "tcp shutdown releases connection without draining writes");
     boost::system::error_code error;
     client.close(error);
 }
@@ -3692,6 +3930,14 @@ int main()
     std::cout << "[pass] rtmp_input_rejects_video_codec_change\n";
     media_server::test_rtmp_rejects_live_playback_control();
     std::cout << "[pass] rtmp_rejects_live_playback_control\n";
+    media_server::test_rtmp_output_pull_codecs_and_order();
+    std::cout << "[pass] rtmp_output_pull_codecs_and_order\n";
+    media_server::test_rtmp_output_config_reset_and_end();
+    std::cout << "[pass] rtmp_output_config_reset_and_end\n";
+    media_server::test_rtmp_output_runtime_add_audio();
+    std::cout << "[pass] rtmp_output_runtime_add_audio\n";
+    media_server::test_rtmp_tcp_error_lifecycle();
+    std::cout << "[pass] rtmp_tcp_error_lifecycle\n";
     media_server::test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     media_server::test_h265_output_paths();
@@ -3704,6 +3950,10 @@ int main()
     std::cout << "[pass] rtsp_client_session_timeout\n";
     media_server::test_tcp_connection_shutdown_lifecycle();
     std::cout << "[pass] tcp_connection_shutdown_lifecycle\n";
+    media_server::test_tcp_connection_io_error_propagation();
+    std::cout << "[pass] tcp_connection_io_error_propagation\n";
+    media_server::test_tcp_connection_shutdown_discards_pending_writes();
+    std::cout << "[pass] tcp_connection_shutdown_discards_pending_writes\n";
     media_server::test_tcp_listener_startup_error();
     std::cout << "[pass] tcp_listener_startup_error\n";
     media_server::test_tcp_listener_worker_affinity();

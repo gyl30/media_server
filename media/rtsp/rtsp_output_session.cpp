@@ -86,7 +86,23 @@ void rtsp_output_session::startup()
     }
 
     const auto self = shared_from_this();
-    connection_->startup([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->shutdown(); });
+    connection_->startup(
+        [self](boost::system::error_code error, std::span<const std::uint8_t> data)
+        {
+            if (error)
+            {
+                self->shutdown();
+                return;
+            }
+            self->on_read(data);
+        },
+        [self](boost::system::error_code error, std::size_t)
+        {
+            if (error)
+            {
+                self->shutdown();
+            }
+        });
 }
 
 void rtsp_output_session::on_track(const media_track& track)
