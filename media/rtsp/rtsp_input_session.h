@@ -74,6 +74,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     std::string username_;
     std::string password_;
     boost::asio::ip::tcp::resolver resolver_;
+    boost::asio::ip::tcp::socket connect_socket_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<media_stream> stream_;
     rtsp_client_t* client_{};

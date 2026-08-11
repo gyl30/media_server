@@ -70,7 +70,7 @@ bool should_setup_media(rtsp_client_t* client, int media)
 }    // namespace
 
 rtsp_input_session::rtsp_input_session(boost::asio::io_context& io, stream_registry& registry, std::string stream_name, std::string url)
-    : io_(io), registry_(registry), stream_name_(std::move(stream_name)), url_(std::move(url)), resolver_(io)
+    : io_(io), registry_(registry), stream_name_(std::move(stream_name)), url_(std::move(url)), resolver_(io), connect_socket_(io)
 {
 }
 
@@ -125,12 +125,11 @@ bool rtsp_input_session::startup()
                                     shutdown();
                                     return;
                                 }
-                                auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_);
-                                boost::asio::async_connect(*socket,
+                                boost::asio::async_connect(connect_socket_,
                                                            endpoints,
-                                                           [this, self, socket](const boost::system::error_code& connect_error,
-                                                                                const boost::asio::ip::tcp::endpoint&) mutable
-                                                           { on_connect(connect_error, std::move(*socket)); });
+                                                           [this, self](const boost::system::error_code& connect_error,
+                                                                        const boost::asio::ip::tcp::endpoint&)
+                                                           { on_connect(connect_error, std::move(connect_socket_)); });
                             });
     return true;
 }
@@ -150,6 +149,8 @@ void rtsp_input_session::safe_shutdown()
     closed_ = true;
     keepalive_deadline_.reset();
     resolver_.cancel();
+    boost::system::error_code error;
+    connect_socket_.close(error);
     if (connection_)
     {
         connection_->shutdown();
