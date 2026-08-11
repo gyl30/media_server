@@ -29,7 +29,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
    public:
     http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep);
 
-    void start();
+    void startup();
     void shutdown();
 
    private:
@@ -52,7 +52,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void send_whep_response(std::string session_id, std::string answer_sdp);
     void send_whep_empty_response(boost::beast::http::status status);
     void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
-    void start_flv(std::shared_ptr<media_stream> stream);
+    void startup_flv(std::shared_ptr<media_stream> stream);
     void read_flv_client();
     void enqueue_flv(std::span<const std::uint8_t> data);
     void write_flv_chunk();

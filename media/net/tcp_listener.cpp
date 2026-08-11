@@ -14,7 +14,7 @@ tcp_listener::tcp_listener(io_context_pool& workers, std::uint16_t port, accept_
 {
 }
 
-boost::system::error_code tcp_listener::start()
+boost::system::error_code tcp_listener::startup()
 {
     if (started_)
     {
@@ -51,7 +51,7 @@ boost::system::error_code tcp_listener::start()
     return {};
 }
 
-void tcp_listener::close()
+void tcp_listener::shutdown()
 {
     started_ = false;
     boost::system::error_code error;

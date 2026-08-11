@@ -31,7 +31,7 @@ http_session::http_session(boost::asio::ip::tcp::socket socket, stream_registry&
 {
 }
 
-void http_session::start()
+void http_session::startup()
 {
     stream_.expires_after(std::chrono::seconds(30));
     read_request();
@@ -220,7 +220,7 @@ void http_session::handle_flv(const boost::urls::url_view& target)
                 self->shutdown();
                 return;
             }
-            self->start_flv(std::move(media_stream));
+            self->startup_flv(std::move(media_stream));
         });
 }
 
@@ -474,7 +474,7 @@ void http_session::send_binary_response(boost::beast::http::status status, std::
                                     });
 }
 
-void http_session::start_flv(std::shared_ptr<media_stream> media_stream)
+void http_session::startup_flv(std::shared_ptr<media_stream> media_stream)
 {
     media_stream_ = std::move(media_stream);
     const auto tracks = media_stream_->tracks();

@@ -29,11 +29,11 @@ class aac_opus_transcoder final
     aac_opus_transcoder() = default;
     ~aac_opus_transcoder();
 
-    bool start(std::span<const std::uint8_t> audio_specific_config, int output_channel_count);
+    bool startup(std::span<const std::uint8_t> audio_specific_config, int output_channel_count);
     bool transcode(std::span<const std::uint8_t> adts_frame, std::vector<opus_audio_packet>& packets);
 
    private:
-    void cleanup();
+    void shutdown();
     void drain_encoder();
     bool configure_resampler(const AVFrame& frame);
     bool resample(const AVFrame& frame);

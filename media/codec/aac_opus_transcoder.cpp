@@ -71,11 +71,11 @@ std::optional<std::span<const std::uint8_t>> adts_payload(std::span<const std::u
 
 }    // namespace
 
-aac_opus_transcoder::~aac_opus_transcoder() { cleanup(); }
+aac_opus_transcoder::~aac_opus_transcoder() { shutdown(); }
 
-bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_config, int output_channel_count)
+bool aac_opus_transcoder::startup(std::span<const std::uint8_t> audio_specific_config, int output_channel_count)
 {
-    cleanup();
+    shutdown();
 
     if (output_channel_count != 1 && output_channel_count != 2)
     {
@@ -100,7 +100,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (decoder_ == nullptr)
     {
         spdlog::error("webrtc aac decoder context allocate failed");
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -108,7 +108,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (decoder_->extradata == nullptr)
     {
         spdlog::error("webrtc aac decoder extradata allocate failed");
-        cleanup();
+        shutdown();
         return false;
     }
     decoder_->extradata_size = static_cast<int>(audio_specific_config.size());
@@ -118,7 +118,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (result < 0)
     {
         spdlog::error("webrtc aac decoder open failed {}", ffmpeg_error(result));
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -130,7 +130,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (encoder == nullptr)
     {
         spdlog::error("webrtc opus encoder not found");
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -139,7 +139,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (result < 0 || sample_formats == nullptr)
     {
         spdlog::error("webrtc opus sample formats query failed {}", ffmpeg_error(result));
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -147,7 +147,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (encoder_ == nullptr)
     {
         spdlog::error("webrtc opus encoder context allocate failed");
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -162,7 +162,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (result < 0)
     {
         spdlog::error("webrtc opus encoder open failed {}", ffmpeg_error(result));
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -175,7 +175,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (fifo_ == nullptr || decoded_frame_ == nullptr || encoded_frame_ == nullptr || input_packet_ == nullptr || output_packet_ == nullptr)
     {
         spdlog::error("webrtc audio transcoder buffer allocate failed");
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -185,7 +185,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (av_channel_layout_copy(&encoded_frame_->ch_layout, &encoder_->ch_layout) < 0)
     {
         spdlog::error("webrtc opus frame channel layout copy failed");
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -193,7 +193,7 @@ bool aac_opus_transcoder::start(std::span<const std::uint8_t> audio_specific_con
     if (result < 0)
     {
         spdlog::error("webrtc opus frame buffer allocate failed {}", ffmpeg_error(result));
-        cleanup();
+        shutdown();
         return false;
     }
 
@@ -264,7 +264,7 @@ bool aac_opus_transcoder::transcode(std::span<const std::uint8_t> adts_frame, st
     return encode_available(packets);
 }
 
-void aac_opus_transcoder::cleanup()
+void aac_opus_transcoder::shutdown()
 {
     drain_encoder();
 

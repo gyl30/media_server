@@ -20,8 +20,8 @@ class rtsp_server final
    public:
     rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port);
 
-    [[nodiscard]] boost::system::error_code start();
-    void close();
+    [[nodiscard]] boost::system::error_code startup();
+    void shutdown();
 
    private:
     stream_registry& registry_;

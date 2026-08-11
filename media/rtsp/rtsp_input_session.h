@@ -33,7 +33,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     rtsp_input_session(boost::asio::io_context& io, stream_registry& registry, std::string stream_name, std::string url);
     ~rtsp_input_session();
 
-    bool start();
+    bool startup();
     void shutdown();
 
    private:
@@ -60,7 +60,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     [[nodiscard]] static std::optional<parsed_url> parse_url(std::string_view url);
     void on_connect(const boost::system::error_code& error, boost::asio::ip::tcp::socket socket);
     void on_read(std::span<const std::uint8_t> data);
-    void on_connection_close();
+    void on_connection_shutdown();
     void safe_shutdown();
     int on_describe(const char* sdp, int length);
     int on_setup(int timeout, std::int64_t duration);

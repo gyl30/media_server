@@ -4,6 +4,7 @@
 #include <boost/asio.hpp>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -18,28 +19,28 @@ class tcp_connection final : public std::enable_shared_from_this<tcp_connection>
 {
    public:
     using read_handler = std::function<void(std::span<const std::uint8_t>)>;
-    using close_handler = std::function<void()>;
+    using shutdown_handler = std::function<void()>;
 
     explicit tcp_connection(boost::asio::ip::tcp::socket socket);
 
-    void start(read_handler on_read, close_handler on_close = {});
+    void startup(read_handler on_read, shutdown_handler on_shutdown = {});
     void write(std::span<const std::uint8_t> data);
     void write(const void* data, std::size_t bytes);
-    void close();
+    void shutdown();
 
     [[nodiscard]] boost::asio::ip::tcp::socket& socket() noexcept;
 
    private:
     void read_next();
     void write_next();
-    void finish_close();
+    void safe_shutdown();
 
     boost::asio::ip::tcp::socket socket_;
     std::array<std::uint8_t, 64 * 1024> read_buffer_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     read_handler on_read_;
-    close_handler on_close_;
-    bool closed_{};
+    shutdown_handler on_shutdown_;
+    std::atomic_bool closed_{};
 };
 
 }    // namespace media_server
