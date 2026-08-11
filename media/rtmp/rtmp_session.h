@@ -1,7 +1,7 @@
 #ifndef MEDIA_RTMP_RTMP_SESSION_H
 #define MEDIA_RTMP_RTMP_SESSION_H
 
-#include "media/core/media_sink.h"
+#include "media/core/media_reader.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_connection.h"
 #include "media/rtmp/rtmp_timestamp.h"
@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 struct flv_demuxer_t;
 struct rtmp_server_t;
@@ -17,7 +18,7 @@ struct rtmp_server_t;
 namespace media_server
 {
 
-class rtmp_session final : public media_sink, public std::enable_shared_from_this<rtmp_session>
+class rtmp_session final : public media_reader, public std::enable_shared_from_this<rtmp_session>
 {
    public:
     rtmp_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry);
@@ -26,9 +27,10 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     void startup();
     void shutdown();
 
-    void on_track(const media_track& track) override;
-    void on_frame(const media_frame& frame) override;
-    void on_end() override;
+    void on_track(media_reader_generation generation, const media_track& track) override;
+    void on_ready(media_reader_generation generation) override;
+    void on_read(media_reader_generation generation, media_frame frame) override;
+    void on_end(media_reader_generation generation) override;
 
    private:
     enum class role
@@ -52,7 +54,8 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
     int on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
-    void on_read(std::span<const std::uint8_t> data);
+    void on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data);
+    void on_tcp_write(boost::system::error_code error, std::size_t bytes);
     void safe_shutdown();
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
@@ -61,11 +64,14 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     rtmp_server_t* server_{};
     flv_demuxer_t* demuxer_{};
     std::unique_ptr<flv_output_muxer> output_muxer_;
+    media_reader_handle reader_;
+    std::vector<media_track> pending_tracks_;
     rtmp_timestamp_state video_timestamp_;
     rtmp_timestamp_state audio_timestamp_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     role role_{role::none};
+    media_reader_generation generation_{};
     bool closed_{};
 };
 

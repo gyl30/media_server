@@ -11,10 +11,10 @@ namespace media_server
 
 tcp_connection::tcp_connection(boost::asio::ip::tcp::socket socket) : socket_(std::move(socket)) {}
 
-void tcp_connection::startup(read_handler on_read, shutdown_handler on_shutdown)
+void tcp_connection::startup(read_handler on_read, write_handler on_write)
 {
     on_read_ = std::move(on_read);
-    on_shutdown_ = std::move(on_shutdown);
+    on_write_ = std::move(on_write);
     read_next();
 }
 
@@ -64,14 +64,21 @@ void tcp_connection::read_next()
     socket_.async_read_some(boost::asio::buffer(read_buffer_),
                             [this, self](const boost::system::error_code& error, std::size_t bytes)
                             {
+                                if (closed_)
+                                {
+                                    return;
+                                }
                                 if (error)
                                 {
-                                    shutdown();
+                                    if (on_read_)
+                                    {
+                                        on_read_(error, {});
+                                    }
                                     return;
                                 }
                                 if (bytes != 0 && on_read_)
                                 {
-                                    on_read_(std::span{read_buffer_.data(), bytes});
+                                    on_read_(error, std::span{read_buffer_.data(), bytes});
                                 }
                                 read_next();
                             });
@@ -88,7 +95,7 @@ void tcp_connection::write_next()
     const auto buffer = write_queue_.front();
     boost::asio::async_write(socket_,
                              boost::asio::buffer(*buffer),
-                             [this, self, buffer](const boost::system::error_code& error, std::size_t)
+                             [this, self, buffer](const boost::system::error_code& error, std::size_t bytes)
                              {
                                  if (closed_)
                                  {
@@ -96,10 +103,17 @@ void tcp_connection::write_next()
                                  }
                                  if (error)
                                  {
-                                     shutdown();
+                                     if (on_write_)
+                                     {
+                                         on_write_(error, bytes);
+                                     }
                                      return;
                                  }
                                  write_queue_.pop_front();
+                                 if (on_write_)
+                                 {
+                                     on_write_(error, bytes);
+                                 }
                                  write_next();
                              });
 }
@@ -117,11 +131,7 @@ void tcp_connection::safe_shutdown()
     socket_.close(error);
     write_queue_.clear();
     on_read_ = {};
-    if (on_shutdown_)
-    {
-        on_shutdown_();
-        on_shutdown_ = {};
-    }
+    on_write_ = {};
 }
 
 }    // namespace media_server

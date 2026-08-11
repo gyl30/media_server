@@ -17,12 +17,12 @@ namespace media_server
 class tcp_connection final : public std::enable_shared_from_this<tcp_connection>
 {
    public:
-    using read_handler = std::function<void(std::span<const std::uint8_t>)>;
-    using shutdown_handler = std::function<void()>;
+    using read_handler = std::function<void(boost::system::error_code, std::span<const std::uint8_t>)>;
+    using write_handler = std::function<void(boost::system::error_code, std::size_t)>;
 
     explicit tcp_connection(boost::asio::ip::tcp::socket socket);
 
-    void startup(read_handler on_read, shutdown_handler on_shutdown = {});
+    void startup(read_handler on_read, write_handler on_write);
     void write(std::span<const std::uint8_t> data);
     void write(const void* data, std::size_t bytes);
     void shutdown();
@@ -38,7 +38,7 @@ class tcp_connection final : public std::enable_shared_from_this<tcp_connection>
     std::array<std::uint8_t, 64 * 1024> read_buffer_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     read_handler on_read_;
-    shutdown_handler on_shutdown_;
+    write_handler on_write_;
     bool closed_{};
 };
 

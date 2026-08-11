@@ -62,26 +62,51 @@ void rtmp_session::startup()
     }
 
     const auto self = shared_from_this();
-    connection_->startup([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->shutdown(); });
+    connection_->startup(
+        [self](boost::system::error_code error, std::span<const std::uint8_t> data) { self->on_tcp_read(error, data); },
+        [self](boost::system::error_code error, std::size_t bytes) { self->on_tcp_write(error, bytes); });
 }
 
-void rtmp_session::on_track(const media_track& track)
+void rtmp_session::on_track(media_reader_generation generation, const media_track& track)
 {
-    if (output_muxer_)
+    if (generation_ != generation)
+    {
+        generation_ = generation;
+        pending_tracks_.clear();
+    }
+    pending_tracks_.push_back(track);
+}
+
+void rtmp_session::on_ready(media_reader_generation generation)
+{
+    if (closed_ || role_ != role::player || generation_ != generation || !output_muxer_)
+    {
+        return;
+    }
+
+    for (const auto& track : pending_tracks_)
     {
         output_muxer_->on_track(track);
     }
+    pending_tracks_.clear();
+    reader_handle().async_read(generation);
 }
 
-void rtmp_session::on_frame(const media_frame& frame)
+void rtmp_session::on_read(media_reader_generation generation, media_frame frame)
 {
-    if (output_muxer_)
+    if (closed_ || role_ != role::player || generation_ != generation || !output_muxer_)
     {
-        output_muxer_->on_frame(frame);
+        return;
     }
+    output_muxer_->on_frame(frame);
+    reader_handle().async_read(generation);
 }
 
-void rtmp_session::on_end() { shutdown(); }
+void rtmp_session::on_end(media_reader_generation generation)
+{
+    static_cast<void>(generation);
+    shutdown();
+}
 
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
 {
@@ -195,7 +220,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
                               return;
                           }
 
-                          self->stream_->add_sink(self, self->connection_->socket().get_executor());
+                          self->reader_ = self->stream_->add_reader(self, self->connection_->socket().get_executor());
                           spdlog::info("rtmp play {}", self->stream_name_);
                       });
 
@@ -324,13 +349,27 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
     return 0;
 }
 
-void rtmp_session::on_read(std::span<const std::uint8_t> data)
+void rtmp_session::on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data)
 {
+    if (error)
+    {
+        shutdown();
+        return;
+    }
     if (server_ == nullptr || closed_)
     {
         return;
     }
     if (rtmp_server_input(server_, data.data(), data.size()) != 0)
+    {
+        shutdown();
+    }
+}
+
+void rtmp_session::on_tcp_write(boost::system::error_code error, std::size_t bytes)
+{
+    static_cast<void>(bytes);
+    if (error)
     {
         shutdown();
     }
@@ -349,12 +388,9 @@ void rtmp_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    reader_.remove();
+    reader_ = {};
     connection_->shutdown();
-
-    if (role_ == role::player && stream_)
-    {
-        stream_->remove_sink(*this);
-    }
     if (role_ == role::publisher && stream_)
     {
         stream_->end();

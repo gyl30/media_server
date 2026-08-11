@@ -293,7 +293,23 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
 
     connection_ = std::make_shared<tcp_connection>(std::move(socket));
     const auto self = shared_from_this();
-    connection_->startup([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->on_connection_shutdown(); });
+    connection_->startup(
+        [self](boost::system::error_code read_error, std::span<const std::uint8_t> data)
+        {
+            if (read_error)
+            {
+                self->shutdown();
+                return;
+            }
+            self->on_read(data);
+        },
+        [self](boost::system::error_code write_error, std::size_t)
+        {
+            if (write_error)
+            {
+                self->shutdown();
+            }
+        });
 
     spdlog::info("rtsp input connected stream {}", stream_name_);
     if (rtsp_client_describe(client_) != 0)
@@ -305,14 +321,6 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
 void rtsp_input_session::on_read(std::span<const std::uint8_t> data)
 {
     if (client_ != nullptr && rtsp_client_input(client_, data.data(), data.size()) != 0)
-    {
-        shutdown();
-    }
-}
-
-void rtsp_input_session::on_connection_shutdown()
-{
-    if (!closed_)
     {
         shutdown();
     }
