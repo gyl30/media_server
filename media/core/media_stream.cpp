@@ -8,9 +8,81 @@
 
 namespace media_server
 {
+struct media_reader_state
+{
+    std::weak_ptr<media_reader> reader;
+    boost::asio::any_io_executor executor;
+    std::atomic_bool active{true};
+    std::atomic_bool read_outstanding{};
+    std::atomic<media_reader_generation> generation{1};
+    std::atomic<media_reader_generation> ready_generation{};
+    std::uint64_t cursor{};
+    bool cursor_initialized{};
+    bool pending_read{};
+    bool registered{};
+};
+
 namespace
 {
 constexpr std::size_t max_gop_cache_frames = 2500;
+
+void release_read_outstanding(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation)
+{
+    if (state->generation.load(std::memory_order_acquire) == generation)
+    {
+        state->read_outstanding.store(false, std::memory_order_release);
+    }
+}
+}
+
+media_reader_handle::media_reader_handle(std::weak_ptr<media_stream> stream, std::shared_ptr<media_reader_state> state)
+    : stream_(std::move(stream)), state_(std::move(state))
+{
+}
+
+void media_reader_handle::async_read(media_reader_generation generation) const
+{
+    if (!state_ || !state_->active.load(std::memory_order_acquire) ||
+        state_->generation.load(std::memory_order_acquire) != generation ||
+        state_->ready_generation.load(std::memory_order_acquire) != generation)
+    {
+        return;
+    }
+
+    bool expected = false;
+    if (!state_->read_outstanding.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    if (!state_->active.load(std::memory_order_acquire) ||
+        state_->generation.load(std::memory_order_acquire) != generation ||
+        state_->ready_generation.load(std::memory_order_acquire) != generation)
+    {
+        state_->read_outstanding.store(false, std::memory_order_release);
+        return;
+    }
+    if (const auto stream = stream_.lock())
+    {
+        stream->request_read(state_, generation);
+        return;
+    }
+    state_->read_outstanding.store(false, std::memory_order_release);
+}
+
+void media_reader_handle::remove() const
+{
+    if (!state_ || !state_->active.exchange(false, std::memory_order_acq_rel))
+    {
+        return;
+    }
+
+    state_->ready_generation.store(0, std::memory_order_release);
+    state_->generation.fetch_add(1, std::memory_order_acq_rel);
+    state_->read_outstanding.store(false, std::memory_order_release);
+    if (const auto stream = stream_.lock())
+    {
+        stream->remove_reader(state_);
+    }
 }
 
 media_stream::media_stream(std::string name, boost::asio::any_io_executor owner_executor)
@@ -86,6 +158,31 @@ void media_stream::remove_sink(const media_sink& sink)
     boost::asio::dispatch(owner_executor_, [self, sink_address]() { self->remove_sink_on_owner(sink_address); });
 }
 
+media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::any_io_executor executor)
+{
+    const auto self = weak_from_this().lock();
+    if (!reader || !executor || !self)
+    {
+        return {};
+    }
+
+    auto state = std::make_shared<media_reader_state>();
+    state->reader = reader;
+    state->executor = std::move(executor);
+
+    media_reader_handle handle(self, state);
+    reader->handle_ = handle;
+
+    if (!owner_executor_)
+    {
+        add_reader_on_owner(state);
+        return handle;
+    }
+
+    boost::asio::dispatch(owner_executor_, [self, state]() { self->add_reader_on_owner(state); });
+    return handle;
+}
+
 bool media_stream::update_track(media_track track)
 {
     if (ended() || track.id == 0 || track.codec_config.empty())
@@ -116,6 +213,8 @@ bool media_stream::update_track(media_track track)
     gop_cache_.clear();
     tracks_.insert_or_assign(id, std::move(track));
     publish_track_snapshot();
+    reset_reader_history();
+    reset_readers();
     dispatch_track(tracks_.at(id));
     return true;
 }
@@ -150,6 +249,9 @@ void media_stream::publish(media_frame frame)
         }
     }
 
+    const auto sequence = next_reader_sequence_++;
+    append_reader_history(sequence, frame, track->second.kind);
+    dispatch_pending_readers(sequence, frame);
     dispatch_frame(frame);
 }
 
@@ -161,6 +263,8 @@ void media_stream::end()
     }
 
     gop_cache_.clear();
+    reset_reader_history();
+    end_readers();
     remove_inactive_sinks();
 
     struct end_group
@@ -525,6 +629,341 @@ void media_stream::dispatch_frame(const media_frame& frame)
             }
         }
     }
+}
+
+void media_stream::request_read(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation)
+{
+    if (!state || !state->active.load(std::memory_order_acquire) ||
+        state->generation.load(std::memory_order_acquire) != generation ||
+        state->ready_generation.load(std::memory_order_acquire) != generation)
+    {
+        if (state)
+        {
+            release_read_outstanding(state, generation);
+        }
+        return;
+    }
+    if (!owner_executor_)
+    {
+        request_read_on_owner(state, generation);
+        return;
+    }
+
+    const auto self = weak_from_this().lock();
+    if (!self)
+    {
+        release_read_outstanding(state, generation);
+        return;
+    }
+    boost::asio::dispatch(owner_executor_, [self, state, generation]() { self->request_read_on_owner(state, generation); });
+}
+
+void media_stream::remove_reader(const std::shared_ptr<media_reader_state>& state)
+{
+    if (!state)
+    {
+        return;
+    }
+    if (!owner_executor_)
+    {
+        remove_reader_on_owner(state);
+        return;
+    }
+
+    const auto self = weak_from_this().lock();
+    if (!self)
+    {
+        return;
+    }
+    boost::asio::dispatch(owner_executor_, [self, state]() { self->remove_reader_on_owner(state); });
+}
+
+void media_stream::add_reader_on_owner(const std::shared_ptr<media_reader_state>& state)
+{
+    if (!state->active.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    if (ended())
+    {
+        dispatch_reader_end(state, state->generation.load(std::memory_order_acquire));
+        return;
+    }
+    if (state->reader.expired())
+    {
+        state->active.store(false, std::memory_order_release);
+        return;
+    }
+
+    remove_inactive_readers();
+    state->registered = true;
+    readers_.push_back(state);
+    dispatch_reader_reset(state, tracks(), state->generation.load(std::memory_order_acquire));
+}
+
+void media_stream::request_read_on_owner(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation)
+{
+    if (ended() || !state->registered || state->pending_read || !state->active.load(std::memory_order_acquire) ||
+        state->generation.load(std::memory_order_acquire) != generation ||
+        state->ready_generation.load(std::memory_order_acquire) != generation)
+    {
+        release_read_outstanding(state, generation);
+        return;
+    }
+
+    state->pending_read = true;
+    complete_reader_from_history(state, generation);
+}
+
+void media_stream::remove_reader_on_owner(const std::shared_ptr<media_reader_state>& state)
+{
+    state->registered = false;
+    state->pending_read = false;
+    state->read_outstanding.store(false, std::memory_order_release);
+    std::erase(readers_, state);
+}
+
+void media_stream::remove_inactive_readers()
+{
+    std::erase_if(readers_,
+                  [](const std::shared_ptr<media_reader_state>& state)
+                  {
+                      if (state->active.load(std::memory_order_acquire) && !state->reader.expired())
+                      {
+                          return false;
+                      }
+                      state->registered = false;
+                      state->pending_read = false;
+                      state->read_outstanding.store(false, std::memory_order_release);
+                      return true;
+                  });
+}
+
+void media_stream::reset_reader_history()
+{
+    reader_history_.clear();
+    current_gop_start_sequence_.reset();
+    current_gop_frames_ = 0;
+}
+
+void media_stream::reset_readers()
+{
+    remove_inactive_readers();
+    const auto snapshot = tracks();
+    for (const auto& state : readers_)
+    {
+        state->ready_generation.store(0, std::memory_order_release);
+        const auto generation = state->generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+        state->read_outstanding.store(false, std::memory_order_release);
+        state->cursor_initialized = false;
+        state->pending_read = false;
+        dispatch_reader_reset(state, snapshot, generation);
+    }
+}
+
+void media_stream::end_readers()
+{
+    remove_inactive_readers();
+    auto readers = std::move(readers_);
+    readers_.clear();
+    for (const auto& state : readers)
+    {
+        state->ready_generation.store(0, std::memory_order_release);
+        const auto generation = state->generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+        state->read_outstanding.store(false, std::memory_order_release);
+        state->registered = false;
+        state->cursor_initialized = false;
+        state->pending_read = false;
+        dispatch_reader_end(state, generation);
+    }
+}
+
+void media_stream::append_reader_history(std::uint64_t sequence, const media_frame& frame, media_kind kind)
+{
+    if (!has_video_track())
+    {
+        return;
+    }
+
+    if (kind == media_kind::video && frame.key_frame)
+    {
+        if (current_gop_start_sequence_)
+        {
+            const auto previous_start = *current_gop_start_sequence_;
+            std::erase_if(reader_history_, [previous_start](const media_history_entry& entry) { return entry.sequence < previous_start; });
+        }
+        else
+        {
+            reader_history_.clear();
+        }
+        current_gop_start_sequence_ = sequence;
+        current_gop_frames_ = 0;
+    }
+
+    if (!current_gop_start_sequence_)
+    {
+        return;
+    }
+    if (current_gop_frames_ >= max_gop_cache_frames)
+    {
+        reset_reader_history();
+        return;
+    }
+
+    reader_history_.push_back(media_history_entry{.sequence = sequence, .frame = frame});
+    ++current_gop_frames_;
+}
+
+void media_stream::dispatch_pending_readers(std::uint64_t sequence, const media_frame& frame)
+{
+    remove_inactive_readers();
+    const bool video_stream = has_video_track();
+    for (const auto& state : readers_)
+    {
+        if (!state->pending_read || !state->active.load(std::memory_order_acquire))
+        {
+            continue;
+        }
+        const auto generation = state->generation.load(std::memory_order_acquire);
+        if (state->ready_generation.load(std::memory_order_acquire) != generation)
+        {
+            continue;
+        }
+
+        if (!video_stream || (state->cursor_initialized && state->cursor == sequence))
+        {
+            deliver_reader_frame(state, generation, sequence, frame);
+            continue;
+        }
+        complete_reader_from_history(state, generation);
+    }
+}
+
+void media_stream::complete_reader_from_history(const std::shared_ptr<media_reader_state>& state,
+                                                media_reader_generation generation)
+{
+    if (!state->pending_read || reader_history_.empty() || !current_gop_start_sequence_)
+    {
+        return;
+    }
+
+    const auto first_sequence = reader_history_.front().sequence;
+    if (!state->cursor_initialized || state->cursor < first_sequence)
+    {
+        state->cursor = *current_gop_start_sequence_;
+        state->cursor_initialized = true;
+    }
+    if (state->cursor < first_sequence || state->cursor > reader_history_.back().sequence)
+    {
+        return;
+    }
+
+    const auto index = static_cast<std::size_t>(state->cursor - first_sequence);
+    if (index >= reader_history_.size() || reader_history_[index].sequence != state->cursor)
+    {
+        return;
+    }
+
+    const auto entry = reader_history_[index];
+    deliver_reader_frame(state, generation, entry.sequence, entry.frame);
+}
+
+void media_stream::deliver_reader_frame(const std::shared_ptr<media_reader_state>& state,
+                                        media_reader_generation generation,
+                                        std::uint64_t sequence,
+                                        media_frame frame)
+{
+    if (!state->pending_read || !state->active.load(std::memory_order_acquire) ||
+        state->generation.load(std::memory_order_acquire) != generation ||
+        state->ready_generation.load(std::memory_order_acquire) != generation)
+    {
+        return;
+    }
+
+    state->pending_read = false;
+    state->cursor = sequence + 1;
+    state->cursor_initialized = true;
+    boost::asio::post(state->executor,
+                      [state, generation, frame = std::move(frame)]() mutable
+                      {
+                          if (!state->active.load(std::memory_order_acquire) ||
+                              state->generation.load(std::memory_order_acquire) != generation ||
+                              state->ready_generation.load(std::memory_order_acquire) != generation)
+                          {
+                              release_read_outstanding(state, generation);
+                              return;
+                          }
+                          if (const auto reader = state->reader.lock())
+                          {
+                              state->read_outstanding.store(false, std::memory_order_release);
+                              reader->on_read(generation, std::move(frame));
+                              return;
+                          }
+                          release_read_outstanding(state, generation);
+                      });
+}
+
+void media_stream::dispatch_reader_reset(const std::shared_ptr<media_reader_state>& state,
+                                         std::vector<media_track> tracks,
+                                         media_reader_generation generation)
+{
+    boost::asio::post(state->executor,
+                      [state, tracks = std::move(tracks), generation]()
+                      {
+                          if (!state->active.load(std::memory_order_acquire) ||
+                              state->generation.load(std::memory_order_acquire) != generation)
+                          {
+                              return;
+                          }
+                          const auto reader = state->reader.lock();
+                          if (!reader)
+                          {
+                              return;
+                          }
+                          for (const auto& track : tracks)
+                          {
+                              if (!state->active.load(std::memory_order_acquire) ||
+                                  state->generation.load(std::memory_order_acquire) != generation)
+                              {
+                                  return;
+                              }
+                              reader->on_track(generation, track);
+                          }
+                          if (!state->active.load(std::memory_order_acquire) ||
+                              state->generation.load(std::memory_order_acquire) != generation)
+                          {
+                              return;
+                          }
+                          state->ready_generation.store(generation, std::memory_order_release);
+                          if (!state->active.load(std::memory_order_acquire) ||
+                              state->generation.load(std::memory_order_acquire) != generation)
+                          {
+                              return;
+                          }
+                          reader->on_ready(generation);
+                      });
+}
+
+void media_stream::dispatch_reader_end(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation)
+{
+    boost::asio::post(state->executor,
+                      [state, generation]()
+                      {
+                          if (!state->active.load(std::memory_order_acquire) ||
+                              state->generation.load(std::memory_order_acquire) != generation)
+                          {
+                              return;
+                          }
+                          if (const auto reader = state->reader.lock())
+                          {
+                              reader->on_end(generation);
+                          }
+                      });
+}
+
+bool media_stream::has_video_track() const
+{
+    return std::ranges::any_of(tracks_, [](const auto& value) { return value.second.kind == media_kind::video; });
 }
 
 }    // namespace media_server
