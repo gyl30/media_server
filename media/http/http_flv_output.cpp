@@ -1,11 +1,10 @@
 #include "media/http/http_flv_output.h"
 
-#include <algorithm>
 #include <utility>
 
 namespace media_server
 {
-http_flv_output::http_flv_output(std::span<const media_track> tracks, write_handler on_write, end_handler on_end)
+http_flv_output::http_flv_output(write_handler on_write, end_handler on_end)
     : on_write_(std::move(on_write)),
       on_end_(std::move(on_end)),
       muxer_(
@@ -18,16 +17,6 @@ http_flv_output::http_flv_output(std::span<const media_track> tracks, write_hand
               }
           })
 {
-    bool has_audio = false;
-    bool has_video = false;
-    for (const auto& track : tracks)
-    {
-        has_audio = has_audio || track.kind == media_kind::audio;
-        has_video = has_video || track.kind == media_kind::video;
-        track_ids_.push_back(track.id);
-    }
-
-    writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_output::writer_callback, this);
 }
 
 http_flv_output::~http_flv_output()
@@ -38,29 +27,97 @@ http_flv_output::~http_flv_output()
     }
 }
 
-void http_flv_output::on_track(const media_track& track)
+void http_flv_output::on_track(media_reader_generation generation, const media_track& track)
 {
     if (ended_)
     {
         return;
     }
-    if (std::find(track_ids_.begin(), track_ids_.end(), track.id) == track_ids_.end())
+    if (generation_ != generation)
     {
-        on_end();
+        generation_ = generation;
+        pending_tracks_.clear();
+    }
+    pending_tracks_.push_back(track);
+}
+
+void http_flv_output::on_ready(media_reader_generation generation)
+{
+    if (ended_ || generation_ != generation)
+    {
         return;
     }
-    muxer_.on_track(track);
-}
 
-void http_flv_output::on_frame(const media_frame& frame)
-{
-    if (!ended_)
+    std::vector<track_id> track_ids;
+    bool has_audio = false;
+    bool has_video = false;
+    track_ids.reserve(pending_tracks_.size());
+    for (const auto& track : pending_tracks_)
     {
-        muxer_.on_frame(frame);
+        track_ids.push_back(track.id);
+        has_audio = has_audio || track.kind == media_kind::audio;
+        has_video = has_video || track.kind == media_kind::video;
+    }
+
+    if (writer_ != nullptr && track_ids != track_ids_)
+    {
+        finish();
+        return;
+    }
+
+    output_buffer_.clear();
+    if (writer_ == nullptr)
+    {
+        track_ids_ = std::move(track_ids);
+        writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_output::writer_callback, this);
+    }
+    for (const auto& track : pending_tracks_)
+    {
+        muxer_.on_track(track);
+    }
+    pending_tracks_.clear();
+
+    if (on_write_)
+    {
+        on_write_(generation, std::move(output_buffer_), true);
     }
 }
 
-void http_flv_output::on_end()
+void http_flv_output::on_read(media_reader_generation generation, media_frame frame)
+{
+    if (ended_ || generation_ != generation)
+    {
+        return;
+    }
+
+    output_buffer_.clear();
+    muxer_.on_frame(frame);
+    if (output_buffer_.empty())
+    {
+        reader_handle().async_read(generation);
+        return;
+    }
+    if (on_write_)
+    {
+        on_write_(generation, std::move(output_buffer_), false);
+    }
+}
+
+void http_flv_output::on_end(media_reader_generation generation)
+{
+    static_cast<void>(generation);
+    finish();
+}
+
+void http_flv_output::write_complete(media_reader_generation generation)
+{
+    if (!ended_ && generation_ == generation)
+    {
+        reader_handle().async_read(generation);
+    }
+}
+
+void http_flv_output::finish()
 {
     if (ended_)
     {
@@ -90,8 +147,7 @@ int http_flv_output::writer_callback(void* param, const flv_vec_t* vectors, int 
         }
     }
 
-    std::vector<std::uint8_t> data;
-    data.reserve(bytes);
+    self->output_buffer_.reserve(self->output_buffer_.size() + bytes);
     for (int index = 0; index < count; ++index)
     {
         if (vectors[index].ptr == nullptr || vectors[index].len <= 0)
@@ -99,12 +155,7 @@ int http_flv_output::writer_callback(void* param, const flv_vec_t* vectors, int 
             continue;
         }
         const auto* begin = static_cast<const std::uint8_t*>(vectors[index].ptr);
-        data.insert(data.end(), begin, begin + vectors[index].len);
-    }
-
-    if (!data.empty())
-    {
-        self->on_write_(data);
+        self->output_buffer_.insert(self->output_buffer_.end(), begin, begin + vectors[index].len);
     }
     return 0;
 }

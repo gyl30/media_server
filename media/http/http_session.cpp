@@ -12,20 +12,6 @@
 namespace media_server
 {
 
-struct http_session::flv_chunk
-{
-    using chunk_type = decltype(boost::beast::http::make_chunk(boost::asio::buffer(std::declval<const std::vector<std::uint8_t>&>())));
-
-    explicit flv_chunk(std::span<const std::uint8_t> value)
-        : data(value.begin(), value.end()),
-          chunk(boost::beast::http::make_chunk(boost::asio::buffer(static_cast<const std::vector<std::uint8_t>&>(data))))
-    {
-    }
-
-    std::vector<std::uint8_t> data;
-    chunk_type chunk;
-};
-
 http_session::http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep)
     : stream_(std::move(socket)), registry_(registry), hls_(hls), whep_(whep), hls_wait_timer_(stream_.get_executor())
 {
@@ -476,27 +462,24 @@ void http_session::send_binary_response(boost::beast::http::status status, std::
 
 void http_session::startup_flv(std::shared_ptr<media_stream> media_stream)
 {
-    media_stream_ = std::move(media_stream);
-    const auto tracks = media_stream_->tracks();
     const auto weak = weak_from_this();
     flv_output_ = std::make_shared<http_flv_output>(
-        tracks,
-        [weak](std::span<const std::uint8_t> data)
+        [weak](media_reader_generation generation, std::vector<std::uint8_t> data, bool bootstrap)
         {
             if (const auto self = weak.lock())
             {
-                self->enqueue_flv(data);
+                self->enqueue_flv(generation, std::move(data), bootstrap);
             }
         },
         [weak]()
         {
             if (const auto self = weak.lock())
             {
-                self->finish_flv();
+                self->shutdown();
             }
         });
 
-    media_stream_->add_sink(flv_output_, stream_.get_executor());
+    flv_reader_ = media_stream->add_reader(flv_output_, stream_.get_executor());
     read_flv_client();
 }
 
@@ -521,93 +504,89 @@ void http_session::read_flv_client()
                             });
 }
 
-void http_session::enqueue_flv(std::span<const std::uint8_t> data)
-{
-    if (closed_ || flv_finishing_ || data.empty())
-    {
-        return;
-    }
-
-    const bool start_write = flv_chunks_.empty();
-    flv_chunks_.push_back(std::make_shared<flv_chunk>(data));
-    if (start_write)
-    {
-        write_flv_chunk();
-    }
-}
-
-void http_session::write_flv_chunk()
+void http_session::enqueue_flv(media_reader_generation generation, std::vector<std::uint8_t> data, bool bootstrap)
 {
     if (closed_)
     {
         return;
     }
-    if (flv_chunks_.empty())
+
+    if (flv_write_in_progress_)
     {
-        if (flv_finishing_)
+        if (!bootstrap)
         {
-            finish_flv();
+            shutdown();
+            return;
+        }
+        pending_flv_generation_ = generation;
+        pending_flv_bootstrap_ = std::move(data);
+        pending_flv_bootstrap_ready_ = true;
+        return;
+    }
+
+    if (data.empty())
+    {
+        flv_output_->write_complete(generation);
+        return;
+    }
+    write_flv(generation, std::move(data));
+}
+
+void http_session::write_flv(media_reader_generation generation, std::vector<std::uint8_t> data)
+{
+    flv_write_in_progress_ = true;
+    const auto buffer = std::make_shared<std::vector<std::uint8_t>>(std::move(data));
+    const auto chunk = std::make_shared<decltype(boost::beast::http::make_chunk(boost::asio::buffer(*buffer)))>(
+        boost::beast::http::make_chunk(boost::asio::buffer(*buffer)));
+    const auto self = shared_from_this();
+    boost::asio::async_write(stream_,
+                             *chunk,
+                             [self, buffer, chunk, generation](boost::system::error_code error, std::size_t bytes)
+                             {
+                                 static_cast<void>(buffer);
+                                 static_cast<void>(bytes);
+                                 self->on_flv_write(generation, error);
+                             });
+}
+
+void http_session::on_flv_write(media_reader_generation generation, boost::system::error_code error)
+{
+    if (closed_)
+    {
+        return;
+    }
+    flv_write_in_progress_ = false;
+    if (error)
+    {
+        shutdown();
+        return;
+    }
+    if (pending_flv_bootstrap_ready_)
+    {
+        const auto pending_generation = pending_flv_generation_;
+        auto pending = std::move(pending_flv_bootstrap_);
+        pending_flv_bootstrap_ready_ = false;
+        if (pending.empty())
+        {
+            flv_output_->write_complete(pending_generation);
+        }
+        else
+        {
+            write_flv(pending_generation, std::move(pending));
         }
         return;
     }
-
-    const auto chunk = flv_chunks_.front();
-    const auto self = shared_from_this();
-    boost::asio::async_write(stream_,
-                             chunk->chunk,
-                             [self, chunk](boost::system::error_code error, std::size_t bytes)
-                             {
-                                 static_cast<void>(chunk);
-                                 static_cast<void>(bytes);
-                                 if (self->closed_)
-                                 {
-                                     return;
-                                 }
-                                 if (error)
-                                 {
-                                     self->shutdown();
-                                     return;
-                                 }
-                                 self->flv_chunks_.pop_front();
-                                 self->write_flv_chunk();
-                             });
-}
-
-void http_session::finish_flv()
-{
-    if (closed_)
-    {
-        return;
-    }
-    if (!flv_chunks_.empty())
-    {
-        flv_finishing_ = true;
-        return;
-    }
-
-    flv_finishing_ = true;
-    auto last = std::make_shared<decltype(boost::beast::http::make_chunk_last())>(boost::beast::http::make_chunk_last());
-    const auto self = shared_from_this();
-    boost::asio::async_write(stream_,
-                             *last,
-                             [self, last](boost::system::error_code error, std::size_t bytes)
-                             {
-                                 static_cast<void>(last);
-                                 static_cast<void>(error);
-                                 static_cast<void>(bytes);
-                                 self->shutdown();
-                             });
+    flv_output_->write_complete(generation);
 }
 
 void http_session::detach_flv()
 {
-    if (media_stream_ && flv_output_)
-    {
-        media_stream_->remove_sink(*flv_output_);
-    }
+    flv_reader_.remove();
+    flv_reader_ = {};
     flv_output_.reset();
-    media_stream_.reset();
-    flv_chunks_.clear();
+    pending_flv_bootstrap_.clear();
+    pending_flv_bootstrap_ready_ = false;
+    flv_write_in_progress_ = false;
 }
 
 void http_session::shutdown()
