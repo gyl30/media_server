@@ -24,7 +24,7 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
     rtsp_output_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry, std::uint16_t server_port);
     ~rtsp_output_session() override;
 
-    void start();
+    void startup();
     void shutdown();
 
     void on_track(const media_track& track) override;

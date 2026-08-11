@@ -176,17 +176,17 @@ int main(int argc, char** argv)
     media_server::rtsp_server rtsp(workers, registry, parsed->rtsp_port);
     media_server::http_server http(workers, registry, hls, whep, parsed->http_port);
 
-    if (const auto error = rtmp.start())
+    if (const auto error = rtmp.startup())
     {
         spdlog::error("rtmp listen failed port {} error {}", parsed->rtmp_port, error.message());
         return 2;
     }
-    if (const auto error = rtsp.start())
+    if (const auto error = rtsp.startup())
     {
         spdlog::error("rtsp listen failed port {} error {}", parsed->rtsp_port, error.message());
         return 2;
     }
-    if (const auto error = http.start())
+    if (const auto error = http.startup())
     {
         spdlog::error("http listen failed port {} error {}", parsed->http_port, error.message());
         return 2;
@@ -196,9 +196,9 @@ int main(int argc, char** argv)
     for (const auto& [name, url] : parsed->rtsp_pulls)
     {
         auto pull = std::make_shared<media_server::rtsp_input_session>(workers.next(), registry, name, url);
-        if (!pull->start())
+        if (!pull->startup())
         {
-            spdlog::error("rtsp pull start failed stream {}", name);
+            spdlog::error("rtsp pull startup failed stream {}", name);
             return 2;
         }
         pulls.push_back(std::move(pull));
@@ -225,10 +225,10 @@ int main(int argc, char** argv)
                 }
             }
             pulls.clear();
-            http.close();
-            whep.close();
-            rtsp.close();
-            rtmp.close();
+            http.shutdown();
+            whep.shutdown();
+            rtsp.shutdown();
+            rtmp.shutdown();
             workers.release_work();
         });
 

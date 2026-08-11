@@ -24,7 +24,7 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     rtmp_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry);
     ~rtmp_session() override;
 
-    void start();
+    void startup();
     void shutdown();
 
     void on_track(const media_track& track) override;
