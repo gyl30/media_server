@@ -612,16 +612,17 @@ void http_session::detach_flv()
 
 void http_session::shutdown()
 {
-    if (closed_.exchange(true))
-    {
-        return;
-    }
     const auto self = shared_from_this();
     boost::asio::post(stream_.get_executor(), [self]() { self->safe_shutdown(); });
 }
 
 void http_session::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
     detach_flv();
     boost::system::error_code error;
     hls_wait_timer_.cancel();

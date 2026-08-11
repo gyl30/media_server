@@ -241,21 +241,18 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
 void whep_session::shutdown()
 {
-    if (closed_.exchange(true))
-    {
-        return;
-    }
     const auto self = shared_from_this();
-    boost::asio::post(socket_.get_executor(),
-                      [self]()
-                      {
-                          self->started_ = false;
-                          self->safe_shutdown();
-                      });
+    boost::asio::post(socket_.get_executor(), [self]() { self->safe_shutdown(); });
 }
 
 void whep_session::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
+    started_ = false;
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
     send_queue_.clear();

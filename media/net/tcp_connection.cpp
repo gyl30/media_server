@@ -47,10 +47,6 @@ void tcp_connection::write(const void* data, std::size_t bytes)
 
 void tcp_connection::shutdown()
 {
-    if (closed_.exchange(true))
-    {
-        return;
-    }
     const auto self = shared_from_this();
     boost::asio::post(socket_.get_executor(), [self]() { self->safe_shutdown(); });
 }
@@ -110,6 +106,12 @@ void tcp_connection::write_next()
 
 void tcp_connection::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
+
     boost::system::error_code error;
     socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     socket_.close(error);

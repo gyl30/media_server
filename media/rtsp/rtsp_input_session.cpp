@@ -137,16 +137,17 @@ bool rtsp_input_session::startup()
 
 void rtsp_input_session::shutdown()
 {
-    if (closed_.exchange(true))
-    {
-        return;
-    }
     const auto self = shared_from_this();
     boost::asio::post(io_, [self]() { self->safe_shutdown(); });
 }
 
 void rtsp_input_session::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
     keepalive_deadline_.reset();
     resolver_.cancel();
     if (connection_)

@@ -5,7 +5,6 @@
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_connection.h"
 
-#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -73,7 +72,7 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
     std::string stream_name_;
     std::string session_id_;
     bool playing_{};
-    std::atomic_bool closed_{};
+    bool closed_{};
 };
 
 }    // namespace media_server

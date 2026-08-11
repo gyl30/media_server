@@ -205,16 +205,17 @@ void rtsp_output_session::on_read(std::span<const std::uint8_t> data)
 
 void rtsp_output_session::shutdown()
 {
-    if (closed_.exchange(true))
-    {
-        return;
-    }
     const auto self = shared_from_this();
     boost::asio::post(connection_->socket().get_executor(), [self]() { self->safe_shutdown(); });
 }
 
 void rtsp_output_session::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
     connection_->shutdown();
     if (stream_)
     {
