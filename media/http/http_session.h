@@ -15,9 +15,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <deque>
 #include <memory>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -32,8 +30,6 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void shutdown();
 
    private:
-    struct flv_chunk;
-
     void read_request();
     void on_request(boost::system::error_code error, std::size_t bytes);
     void handle_request();
@@ -53,9 +49,9 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
     void startup_flv(std::shared_ptr<media_stream> stream);
     void read_flv_client();
-    void enqueue_flv(std::span<const std::uint8_t> data);
-    void write_flv_chunk();
-    void finish_flv();
+    void enqueue_flv(media_reader_generation generation, std::vector<std::uint8_t> data, bool bootstrap);
+    void write_flv(media_reader_generation generation, std::vector<std::uint8_t> data);
+    void on_flv_write(media_reader_generation generation, boost::system::error_code error);
     void detach_flv();
     void safe_shutdown();
 
@@ -71,11 +67,13 @@ class http_session final : public std::enable_shared_from_this<http_session>
     boost::asio::steady_timer hls_wait_timer_;
     std::chrono::steady_clock::time_point hls_wait_deadline_{};
     std::string hls_wait_stream_name_;
-    std::shared_ptr<media_stream> media_stream_;
     std::shared_ptr<http_flv_output> flv_output_;
-    std::deque<std::shared_ptr<flv_chunk>> flv_chunks_;
+    media_reader_handle flv_reader_;
+    std::vector<std::uint8_t> pending_flv_bootstrap_;
     std::array<std::uint8_t, 1> flv_read_buffer_{};
-    bool flv_finishing_ = false;
+    media_reader_generation pending_flv_generation_{};
+    bool pending_flv_bootstrap_ready_{};
+    bool flv_write_in_progress_{};
     bool closed_{};
 };
 }    // namespace media_server
