@@ -7,7 +7,6 @@
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/flv/flv_output_muxer.h"
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -67,7 +66,7 @@ class rtmp_session final : public media_sink, public std::enable_shared_from_thi
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     role role_{role::none};
-    std::atomic_bool closed_{};
+    bool closed_{};
 };
 
 }    // namespace media_server

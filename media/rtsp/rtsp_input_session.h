@@ -7,7 +7,6 @@
 #include <boost/asio.hpp>
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -82,7 +81,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     avpkt2bs_t bitstream_{};
     std::chrono::seconds keepalive_interval_{30};
     std::optional<std::chrono::steady_clock::time_point> keepalive_deadline_;
-    std::atomic_bool closed_{};
+    bool closed_{};
 };
 
 }    // namespace media_server

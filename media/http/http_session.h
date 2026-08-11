@@ -13,7 +13,6 @@
 #include <boost/url/url_view.hpp>
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -77,7 +76,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     std::deque<std::shared_ptr<flv_chunk>> flv_chunks_;
     std::array<std::uint8_t, 1> flv_read_buffer_{};
     bool flv_finishing_ = false;
-    std::atomic_bool closed_{};
+    bool closed_{};
 };
 }    // namespace media_server
 

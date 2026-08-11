@@ -4,7 +4,6 @@
 #include <boost/asio.hpp>
 
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -40,7 +39,7 @@ class tcp_connection final : public std::enable_shared_from_this<tcp_connection>
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     read_handler on_read_;
     shutdown_handler on_shutdown_;
-    std::atomic_bool closed_{};
+    bool closed_{};
 };
 
 }    // namespace media_server
