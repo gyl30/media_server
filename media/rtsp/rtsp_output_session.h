@@ -1,7 +1,7 @@
 #ifndef MEDIA_RTSP_RTSP_OUTPUT_SESSION_H
 #define MEDIA_RTSP_RTSP_OUTPUT_SESSION_H
 
-#include "media/core/media_sink.h"
+#include "media/core/media_reader.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_connection.h"
 
@@ -17,7 +17,7 @@ struct rtsp_header_transport_t;
 namespace media_server
 {
 
-class rtsp_output_session final : public media_sink, public std::enable_shared_from_this<rtsp_output_session>
+class rtsp_output_session final : public media_reader, public std::enable_shared_from_this<rtsp_output_session>
 {
    public:
     rtsp_output_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry, std::uint16_t server_port);
@@ -26,9 +26,10 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
     void startup();
     void shutdown();
 
-    void on_track(const media_track& track) override;
-    void on_frame(const media_frame& frame) override;
-    void on_end() override;
+    void on_track(media_reader_generation generation, const media_track& track) override;
+    void on_ready(media_reader_generation generation) override;
+    void on_read(media_reader_generation generation, media_frame frame) override;
+    void on_end(media_reader_generation generation) override;
 
    private:
     struct track_state
@@ -50,7 +51,7 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
     static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
-    void on_read(std::span<const std::uint8_t> data);
+    void on_tcp_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
     int on_describe(std::string_view uri);
     int on_setup(std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
@@ -68,7 +69,10 @@ class rtsp_output_session final : public media_sink, public std::enable_shared_f
     rtsp_server_t* server_{};
     rtsp_muxer_t* muxer_{};
     std::shared_ptr<media_stream> stream_;
+    media_reader_handle reader_;
     std::map<track_id, track_state> tracks_;
+    std::map<track_id, std::uint64_t> generation_tracks_;
+    media_reader_generation generation_{};
     std::string stream_name_;
     std::string session_id_;
     bool playing_{};

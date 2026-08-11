@@ -2395,6 +2395,20 @@ class rtsp_output_test_peer final
         future.get();
     }
 
+    void end()
+    {
+        auto promise = std::make_shared<std::promise<void>>();
+        auto future = promise->get_future();
+        boost::asio::post(io_,
+                          [stream = stream_, promise]()
+                          {
+                              stream->end();
+                              promise->set_value();
+                          });
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp output stream end");
+        future.get();
+    }
+
     [[nodiscard]] bool session_alive() const { return !session_.expired(); }
 
     std::optional<rtsp_interleaved_packet> read_interleaved(std::chrono::steady_clock::duration timeout)
@@ -2558,6 +2572,144 @@ void test_rtsp_output_session_contract()
                                          "\r\n"
                                          "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
     require(late_setup.starts_with("RTSP/1.0 455"), "rtsp output reject setup after play");
+
+    const auto teardown = peer.request("TEARDOWN " + base +
+                                       " RTSP/1.0\r\n"
+                                       "CSeq: 14\r\n"
+                                       "Session: " +
+                                       session + "\r\n\r\n");
+    require(teardown.starts_with("RTSP/1.0 200"), "rtsp output teardown");
+    for (int attempt = 0; attempt < 100 && peer.session_alive(); ++attempt)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(!peer.session_alive(), "rtsp output teardown releases session");
+}
+
+void test_rtsp_output_pull_media()
+{
+    rtsp_output_test_peer peer;
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+    const auto describe = peer.request("DESCRIBE " + base +
+                                       " RTSP/1.0\r\n"
+                                       "CSeq: 1\r\n"
+                                       "Accept: application/sdp\r\n\r\n");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp pull describe");
+
+    const auto video_setup = peer.request("SETUP " + base +
+                                          "/trackID=1 RTSP/1.0\r\n"
+                                          "CSeq: 2\r\n"
+                                          "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    const auto session = rtsp_header_value(video_setup, "Session:");
+    require(video_setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp pull video setup");
+
+    peer.publish(make_audio_frame(0));
+    require(!peer.read_interleaved(std::chrono::milliseconds(50)).has_value(), "rtsp does not pull before play");
+
+    const auto play = peer.request("PLAY " + base +
+                                   " RTSP/1.0\r\n"
+                                   "CSeq: 3\r\n"
+                                   "Session: " +
+                                   session + "\r\n\r\n");
+    require(play.starts_with("RTSP/1.0 200"), "rtsp pull play");
+
+    peer.publish(make_audio_frame(20'000'000));
+    require(!peer.read_interleaved(std::chrono::milliseconds(50)).has_value(), "rtsp skips unsetup audio");
+
+    auto frame = make_video_frame(40'000'000, true);
+    auto payload = std::make_shared<std::vector<std::uint8_t>>(4'000U, 0x55);
+    (*payload)[0] = 0;
+    (*payload)[1] = 0;
+    (*payload)[2] = 0;
+    (*payload)[3] = 1;
+    (*payload)[4] = 0x65;
+    frame.payload = std::move(payload);
+    peer.publish(std::move(frame));
+
+    std::size_t rtp_packets = 0;
+    bool marker = false;
+    while (!marker)
+    {
+        const auto packet = peer.read_interleaved(std::chrono::seconds(1));
+        require(packet.has_value(), "rtsp pull interleaved packet");
+        if (packet->channel == 1U)
+        {
+            continue;
+        }
+        require(packet->channel == 0U, "rtsp pull setup video channel");
+        rtp_packet_t decoded{};
+        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0,
+                "rtsp pull rtp packet");
+        ++rtp_packets;
+        marker = decoded.rtp.m != 0;
+    }
+    require(rtp_packets > 1U, "rtsp one frame produces multiple rtp packets");
+
+    peer.end();
+    for (int attempt = 0; attempt < 100 && peer.session_alive(); ++attempt)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(!peer.session_alive(), "rtsp stream end releases session");
+}
+
+void test_rtsp_output_audio_video_order()
+{
+    rtsp_output_test_peer peer;
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+    require(peer.request("DESCRIBE " + base +
+                         " RTSP/1.0\r\n"
+                         "CSeq: 1\r\n"
+                         "Accept: application/sdp\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp av describe");
+    const auto video_setup = peer.request("SETUP " + base +
+                                          "/trackID=1 RTSP/1.0\r\n"
+                                          "CSeq: 2\r\n"
+                                          "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    const auto session = rtsp_header_value(video_setup, "Session:");
+    require(video_setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp av video setup");
+    require(peer.request("SETUP " + base +
+                         "/trackID=2 RTSP/1.0\r\n"
+                         "CSeq: 3\r\n"
+                         "Session: " +
+                         session +
+                         "\r\n"
+                         "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp av audio setup");
+    require(peer.request("PLAY " + base +
+                         " RTSP/1.0\r\n"
+                         "CSeq: 4\r\n"
+                         "Session: " +
+                         session + "\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp av play");
+
+    peer.publish(make_video_frame(0, true));
+    peer.publish(make_audio_frame(20'000'000));
+    peer.publish(make_video_frame(40'000'000, false));
+    peer.publish(make_audio_frame(60'000'000));
+
+    std::vector<std::uint8_t> frame_channels;
+    while (frame_channels.size() < 4U)
+    {
+        const auto packet = peer.read_interleaved(std::chrono::seconds(1));
+        require(packet.has_value(), "rtsp av interleaved packet");
+        if (packet->channel == 1U || packet->channel == 3U)
+        {
+            continue;
+        }
+        require(packet->channel == 0U || packet->channel == 2U, "rtsp av rtp channel");
+        rtp_packet_t decoded{};
+        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0,
+                "rtsp av rtp packet");
+        if (decoded.rtp.m != 0)
+        {
+            frame_channels.push_back(packet->channel);
+        }
+    }
+    require(frame_channels == std::vector<std::uint8_t>{0U, 2U, 0U, 2U}, "rtsp preserves audio video frame order");
 }
 
 void test_rtsp_output_h265()
@@ -2704,6 +2856,71 @@ void test_rtsp_output_setup_track_lifecycle()
         }
         require(!peer.session_alive(), "rtsp setup audio change closes audio session");
     }
+}
+
+void test_rtsp_output_unsetup_audio_update_keeps_video_continuity()
+{
+    rtsp_output_test_peer peer;
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+    require(peer.request("DESCRIBE " + base +
+                         " RTSP/1.0\r\n"
+                         "CSeq: 1\r\n"
+                         "Accept: application/sdp\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp continuity describe");
+    const auto setup = peer.request("SETUP " + base +
+                                    "/trackID=1 RTSP/1.0\r\n"
+                                    "CSeq: 2\r\n"
+                                    "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    const auto session = rtsp_header_value(setup, "Session:");
+    require(setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp continuity video setup");
+    require(peer.request("PLAY " + base +
+                         " RTSP/1.0\r\n"
+                         "CSeq: 3\r\n"
+                         "Session: " +
+                         session + "\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp continuity play");
+
+    peer.publish(make_video_frame(0, true));
+    peer.publish(make_video_frame(40'000'000, false));
+    std::size_t frames = 0;
+    while (frames < 2U)
+    {
+        const auto packet = peer.read_interleaved(std::chrono::seconds(1));
+        require(packet.has_value(), "rtsp continuity initial video packet");
+        if (packet->channel != 0U)
+        {
+            continue;
+        }
+        rtp_packet_t decoded{};
+        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0,
+                "rtsp continuity initial rtp packet");
+        frames += decoded.rtp.m != 0 ? 1U : 0U;
+    }
+
+    auto audio = make_audio_track();
+    audio.clock_rate = 48'000;
+    audio.codec_config = {0x11, 0x90};
+    require(peer.update_track(std::move(audio)), "rtsp continuity unsetup audio update");
+    require(peer.session_alive(), "rtsp continuity session stays alive");
+
+    peer.publish(make_video_frame(80'000'000, false));
+    peer.publish(make_video_frame(120'000'000, false));
+    while (frames < 4U)
+    {
+        const auto packet = peer.read_interleaved(std::chrono::milliseconds(200));
+        require(packet.has_value(), "rtsp continuity delta after unsetup audio update");
+        if (packet->channel != 0U)
+        {
+            continue;
+        }
+        rtp_packet_t decoded{};
+        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0,
+                "rtsp continuity updated rtp packet");
+        frames += decoded.rtp.m != 0 ? 1U : 0U;
+    }
+    require(peer.session_alive(), "rtsp continuity session remains alive");
 }
 
 void test_rtsp_output_rejects_stale_description()
@@ -3560,6 +3777,153 @@ void test_media_stream_pull_reader_generation_order()
     require(removed_reader->frames().empty() && removed_reader->ends() == 0, "remove suppresses already posted callbacks");
 }
 
+void test_media_stream_reader_track_interest()
+{
+    boost::asio::io_context owner(1);
+    boost::asio::io_context reader_worker(1);
+    const auto drain = [](boost::asio::io_context& io)
+    {
+        io.restart();
+        while (io.poll() != 0)
+        {
+        }
+    };
+    const auto drain_all = [&]()
+    {
+        for (int iteration = 0; iteration < 8; ++iteration)
+        {
+            drain(owner);
+            drain(reader_worker);
+        }
+    };
+
+    auto stream = std::make_shared<media_stream>("live/pull-interest", owner.get_executor());
+    auto video_reader = std::make_shared<pull_test_reader>(true);
+    auto full_reader = std::make_shared<pull_test_reader>(true);
+    auto late_reader = std::make_shared<pull_test_reader>(true);
+    boost::asio::post(owner,
+                      [stream, video_reader, full_reader, &reader_worker]()
+                      {
+                          require(stream->update_track(make_video_track()), "pull interest video track");
+                          require(stream->update_track(make_audio_track()), "pull interest audio track");
+                          static_cast<void>(
+                              stream->add_reader(video_reader, reader_worker.get_executor(), std::vector<track_id>{video_track_id}));
+                          static_cast<void>(stream->add_reader(full_reader, reader_worker.get_executor()));
+                      });
+    drain_all();
+
+    boost::asio::post(owner,
+                      [stream]()
+                      {
+                          stream->publish(make_video_frame(0, true));
+                          stream->publish(make_audio_frame(20'000'000));
+                          stream->publish(make_video_frame(40'000'000, false));
+                      });
+    drain_all();
+
+    boost::asio::post(owner,
+                      [stream, late_reader, &reader_worker]()
+                      {
+                          require(stream->update_track(make_audio_track(2)), "pull interest audio config update");
+                          stream->publish(make_video_frame(80'000'000, false));
+                          stream->publish(make_audio_frame(100'000'000));
+                          stream->publish(make_video_frame(120'000'000, false));
+                          static_cast<void>(stream->add_reader(late_reader, reader_worker.get_executor()));
+                      });
+    drain_all();
+
+    require(video_reader->ready_generations() == std::vector<media_reader_generation>{1},
+            "irrelevant track update keeps subset reader generation");
+    require(video_reader->track_versions() ==
+                std::vector<std::pair<media_reader_generation, std::uint64_t>>{{1, 1}},
+            "subset reader receives only interested track config");
+    require(video_reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{
+                    {1, 0}, {1, 40'000'000}, {1, 80'000'000}, {1, 120'000'000}},
+            "irrelevant track update preserves subset reader cursor");
+
+    require(full_reader->ready_generations() == std::vector<media_reader_generation>{1, 2},
+            "full reader resets for audio config update");
+    require(full_reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{
+                    {1, 0}, {1, 20'000'000}, {1, 40'000'000}, {2, 80'000'000}, {2, 100'000'000}, {2, 120'000'000}},
+            "full reader resumes after relevant audio config boundary");
+    require(late_reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{
+                    {1, 0}, {1, 40'000'000}, {1, 80'000'000}, {1, 100'000'000}, {1, 120'000'000}},
+            "new full reader skips history from obsolete track config");
+}
+
+void test_media_stream_video_keyframe_barrier_is_sticky()
+{
+    boost::asio::io_context owner(1);
+    boost::asio::io_context reader_worker(1);
+    const auto drain = [](boost::asio::io_context& io)
+    {
+        io.restart();
+        while (io.poll() != 0)
+        {
+        }
+    };
+    const auto drain_all = [&]()
+    {
+        for (int iteration = 0; iteration < 8; ++iteration)
+        {
+            drain(owner);
+            drain(reader_worker);
+        }
+    };
+
+    auto stream = std::make_shared<media_stream>("live/pull-sticky-keyframe", owner.get_executor());
+    auto reader = std::make_shared<pull_test_reader>(true);
+    boost::asio::post(owner,
+                      [stream, reader, &reader_worker]()
+                      {
+                          require(stream->update_track(make_video_track()), "sticky barrier initial video track");
+                          require(stream->update_track(make_audio_track()), "sticky barrier initial audio track");
+                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                      });
+    drain_all();
+
+    boost::asio::post(owner,
+                      [stream]()
+                      {
+                          stream->publish(make_video_frame(0, true));
+                          stream->publish(make_audio_frame(20'000'000));
+                          stream->publish(make_video_frame(40'000'000, false));
+                      });
+    drain_all();
+    const std::vector<std::pair<media_reader_generation, std::int64_t>> initial_frames{
+        {1, 0}, {1, 20'000'000}, {1, 40'000'000}};
+    require(reader->frames() == initial_frames, "sticky barrier initial media");
+
+    boost::asio::post(owner,
+                      [stream]()
+                      {
+                          require(stream->update_track(make_video_track(2)), "sticky barrier video config update");
+                          require(stream->update_track(make_video_track(3)), "sticky barrier repeated video config update");
+                          require(stream->update_track(make_audio_track(2)), "sticky barrier audio config update");
+                          stream->publish(make_audio_frame(60'000'000));
+                          stream->publish(make_video_frame(80'000'000, false));
+                          stream->publish(make_video_frame(120'000'000, false));
+                      });
+    drain_all();
+    require(reader->frames() == initial_frames, "audio reset cannot release pending video keyframe barrier");
+
+    boost::asio::post(owner,
+                      [stream]()
+                      {
+                          stream->publish(make_video_frame(1'000'000'000, true));
+                          stream->publish(make_audio_frame(1'020'000'000));
+                          stream->publish(make_video_frame(1'040'000'000, false));
+                      });
+    drain_all();
+    require(reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{
+                    {1, 0}, {1, 20'000'000}, {1, 40'000'000}, {4, 1'000'000'000}, {4, 1'020'000'000}, {4, 1'040'000'000}},
+            "current video keyframe releases sticky barrier");
+}
+
 void test_stream_registry_generation_lifecycle()
 {
     stream_registry registry;
@@ -3984,10 +4348,16 @@ int main()
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
     media_server::test_rtsp_output_session_contract();
     std::cout << "[pass] rtsp_output_session_contract\n";
+    media_server::test_rtsp_output_pull_media();
+    std::cout << "[pass] rtsp_output_pull_media\n";
+    media_server::test_rtsp_output_audio_video_order();
+    std::cout << "[pass] rtsp_output_audio_video_order\n";
     media_server::test_rtsp_output_h265();
     std::cout << "[pass] rtsp_output_h265\n";
     media_server::test_rtsp_output_setup_track_lifecycle();
     std::cout << "[pass] rtsp_output_setup_track_lifecycle\n";
+    media_server::test_rtsp_output_unsetup_audio_update_keeps_video_continuity();
+    std::cout << "[pass] rtsp_output_unsetup_audio_update_keeps_video_continuity\n";
     media_server::test_rtsp_output_rejects_stale_description();
     std::cout << "[pass] rtsp_output_rejects_stale_description\n";
     media_server::test_media_stream_fanout_and_reentrancy();
@@ -4008,6 +4378,10 @@ int main()
     std::cout << "[pass] media_stream_add_reader_after_end\n";
     media_server::test_media_stream_pull_reader_generation_order();
     std::cout << "[pass] media_stream_pull_reader_generation_order\n";
+    media_server::test_media_stream_reader_track_interest();
+    std::cout << "[pass] media_stream_reader_track_interest\n";
+    media_server::test_media_stream_video_keyframe_barrier_is_sticky();
+    std::cout << "[pass] media_stream_video_keyframe_barrier_is_sticky\n";
     media_server::test_stream_registry_generation_lifecycle();
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_output();

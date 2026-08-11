@@ -12,6 +12,7 @@ struct media_reader_state
 {
     std::weak_ptr<media_reader> reader;
     boost::asio::any_io_executor executor;
+    std::vector<track_id> track_ids;
     std::atomic_bool active{true};
     std::atomic_bool read_outstanding{};
     std::atomic<media_reader_generation> generation{1};
@@ -20,6 +21,7 @@ struct media_reader_state
     bool cursor_initialized{};
     bool pending_read{};
     bool registered{};
+    bool waiting_for_key_frame{};
 };
 
 namespace
@@ -32,6 +34,21 @@ void release_read_outstanding(const std::shared_ptr<media_reader_state>& state, 
     {
         state->read_outstanding.store(false, std::memory_order_release);
     }
+}
+
+bool reader_interested(const media_reader_state& state, track_id id)
+{
+    return state.track_ids.empty() || std::ranges::find(state.track_ids, id) != state.track_ids.end();
+}
+
+std::vector<media_track> reader_tracks(const media_reader_state& state, std::vector<media_track> tracks)
+{
+    if (state.track_ids.empty())
+    {
+        return tracks;
+    }
+    std::erase_if(tracks, [&state](const media_track& track) { return !reader_interested(state, track.id); });
+    return tracks;
 }
 }
 
@@ -158,7 +175,9 @@ void media_stream::remove_sink(const media_sink& sink)
     boost::asio::dispatch(owner_executor_, [self, sink_address]() { self->remove_sink_on_owner(sink_address); });
 }
 
-media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::any_io_executor executor)
+media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader,
+                                             boost::asio::any_io_executor executor,
+                                             std::vector<track_id> track_ids)
 {
     const auto self = weak_from_this().lock();
     if (!reader || !executor || !self)
@@ -169,6 +188,7 @@ media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>
     auto state = std::make_shared<media_reader_state>();
     state->reader = reader;
     state->executor = std::move(executor);
+    state->track_ids = std::move(track_ids);
 
     media_reader_handle handle(self, state);
     reader->handle_ = handle;
@@ -213,8 +233,12 @@ bool media_stream::update_track(media_track track)
     gop_cache_.clear();
     tracks_.insert_or_assign(id, std::move(track));
     publish_track_snapshot();
-    reset_reader_history();
-    reset_readers();
+    if (tracks_.at(id).kind == media_kind::video)
+    {
+        current_gop_start_sequence_.reset();
+        current_gop_frames_ = 0;
+    }
+    reset_readers(id, tracks_.at(id).kind);
     dispatch_track(tracks_.at(id));
     return true;
 }
@@ -250,7 +274,7 @@ void media_stream::publish(media_frame frame)
     }
 
     const auto sequence = next_reader_sequence_++;
-    append_reader_history(sequence, frame, track->second.kind);
+    append_reader_history(sequence, frame, track->second);
     dispatch_pending_readers(sequence, frame);
     dispatch_frame(frame);
 }
@@ -698,7 +722,7 @@ void media_stream::add_reader_on_owner(const std::shared_ptr<media_reader_state>
     remove_inactive_readers();
     state->registered = true;
     readers_.push_back(state);
-    dispatch_reader_reset(state, tracks(), state->generation.load(std::memory_order_acquire));
+    dispatch_reader_reset(state, reader_tracks(*state, tracks()), state->generation.load(std::memory_order_acquire));
 }
 
 void media_stream::request_read_on_owner(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation)
@@ -746,18 +770,24 @@ void media_stream::reset_reader_history()
     current_gop_frames_ = 0;
 }
 
-void media_stream::reset_readers()
+void media_stream::reset_readers(track_id changed_track, media_kind kind)
 {
     remove_inactive_readers();
     const auto snapshot = tracks();
     for (const auto& state : readers_)
     {
+        if (!reader_interested(*state, changed_track))
+        {
+            continue;
+        }
         state->ready_generation.store(0, std::memory_order_release);
         const auto generation = state->generation.fetch_add(1, std::memory_order_acq_rel) + 1;
         state->read_outstanding.store(false, std::memory_order_release);
-        state->cursor_initialized = false;
+        state->cursor = next_reader_sequence_;
+        state->cursor_initialized = true;
         state->pending_read = false;
-        dispatch_reader_reset(state, snapshot, generation);
+        state->waiting_for_key_frame = state->waiting_for_key_frame || kind == media_kind::video;
+        dispatch_reader_reset(state, reader_tracks(*state, snapshot), generation);
     }
 }
 
@@ -774,33 +804,30 @@ void media_stream::end_readers()
         state->registered = false;
         state->cursor_initialized = false;
         state->pending_read = false;
+        state->waiting_for_key_frame = false;
         dispatch_reader_end(state, generation);
     }
 }
 
-void media_stream::append_reader_history(std::uint64_t sequence, const media_frame& frame, media_kind kind)
+void media_stream::append_reader_history(std::uint64_t sequence, const media_frame& frame, const media_track& track)
 {
     if (!has_video_track())
     {
         return;
     }
 
-    if (kind == media_kind::video && frame.key_frame)
+    if (track.kind == media_kind::video && frame.key_frame)
     {
         if (current_gop_start_sequence_)
         {
             const auto previous_start = *current_gop_start_sequence_;
             std::erase_if(reader_history_, [previous_start](const media_history_entry& entry) { return entry.sequence < previous_start; });
         }
-        else
-        {
-            reader_history_.clear();
-        }
         current_gop_start_sequence_ = sequence;
         current_gop_frames_ = 0;
     }
 
-    if (!current_gop_start_sequence_)
+    if (!current_gop_start_sequence_ && reader_history_.empty())
     {
         return;
     }
@@ -810,7 +837,7 @@ void media_stream::append_reader_history(std::uint64_t sequence, const media_fra
         return;
     }
 
-    reader_history_.push_back(media_history_entry{.sequence = sequence, .frame = frame});
+    reader_history_.push_back(media_history_entry{.sequence = sequence, .config_version = track.config_version, .frame = frame});
     ++current_gop_frames_;
 }
 
@@ -830,6 +857,27 @@ void media_stream::dispatch_pending_readers(std::uint64_t sequence, const media_
             continue;
         }
 
+        if (!reader_interested(*state, frame.track))
+        {
+            if (state->cursor_initialized && state->cursor == sequence)
+            {
+                state->cursor = sequence + 1;
+            }
+            complete_reader_from_history(state, generation);
+            continue;
+        }
+
+        if (state->waiting_for_key_frame)
+        {
+            const auto track = tracks_.find(frame.track);
+            if (frame.key_frame && track != tracks_.end() && track->second.kind == media_kind::video)
+            {
+                state->waiting_for_key_frame = false;
+                deliver_reader_frame(state, generation, sequence, frame);
+            }
+            continue;
+        }
+
         if (!video_stream || (state->cursor_initialized && state->cursor == sequence))
         {
             deliver_reader_frame(state, generation, sequence, frame);
@@ -842,7 +890,7 @@ void media_stream::dispatch_pending_readers(std::uint64_t sequence, const media_
 void media_stream::complete_reader_from_history(const std::shared_ptr<media_reader_state>& state,
                                                 media_reader_generation generation)
 {
-    if (!state->pending_read || reader_history_.empty() || !current_gop_start_sequence_)
+    if (!state->pending_read || reader_history_.empty())
     {
         return;
     }
@@ -850,6 +898,10 @@ void media_stream::complete_reader_from_history(const std::shared_ptr<media_read
     const auto first_sequence = reader_history_.front().sequence;
     if (!state->cursor_initialized || state->cursor < first_sequence)
     {
+        if (!current_gop_start_sequence_)
+        {
+            return;
+        }
         state->cursor = *current_gop_start_sequence_;
         state->cursor_initialized = true;
     }
@@ -858,13 +910,25 @@ void media_stream::complete_reader_from_history(const std::shared_ptr<media_read
         return;
     }
 
-    const auto index = static_cast<std::size_t>(state->cursor - first_sequence);
-    if (index >= reader_history_.size() || reader_history_[index].sequence != state->cursor)
+    auto iterator = std::ranges::find_if(reader_history_,
+                                         [this, &state](const media_history_entry& entry)
+                                         {
+                                             const auto track = tracks_.find(entry.frame.track);
+                                             return entry.sequence >= state->cursor && reader_interested(*state, entry.frame.track) &&
+                                                    track != tracks_.end() && track->second.config_version == entry.config_version &&
+                                                    (!state->waiting_for_key_frame ||
+                                                     (track->second.kind == media_kind::video && entry.frame.key_frame));
+                                         });
+    if (iterator == reader_history_.end())
     {
         return;
     }
 
-    const auto entry = reader_history_[index];
+    if (state->waiting_for_key_frame)
+    {
+        state->waiting_for_key_frame = false;
+    }
+    const auto entry = *iterator;
     deliver_reader_frame(state, generation, entry.sequence, entry.frame);
 }
 

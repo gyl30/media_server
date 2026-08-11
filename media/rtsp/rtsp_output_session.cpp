@@ -94,7 +94,7 @@ void rtsp_output_session::startup()
                 self->shutdown();
                 return;
             }
-            self->on_read(data);
+            self->on_tcp_read(data);
         },
         [self](boost::system::error_code error, std::size_t)
         {
@@ -105,42 +105,70 @@ void rtsp_output_session::startup()
         });
 }
 
-void rtsp_output_session::on_track(const media_track& track)
+void rtsp_output_session::on_track(media_reader_generation generation, const media_track& track)
 {
-    const auto iterator = tracks_.find(track.id);
-    if (iterator != tracks_.end() && iterator->second.setup && iterator->second.config_version != track.config_version)
+    if (generation_ != generation)
     {
-        shutdown();
+        generation_ = generation;
+        generation_tracks_.clear();
     }
+    generation_tracks_.emplace(track.id, track.config_version);
 }
 
-void rtsp_output_session::on_frame(const media_frame& frame)
+void rtsp_output_session::on_ready(media_reader_generation generation)
 {
+    if (closed_ || !playing_ || generation_ != generation || muxer_ == nullptr)
+    {
+        return;
+    }
+
+    for (const auto& [id, state] : tracks_)
+    {
+        if (!state.setup)
+        {
+            continue;
+        }
+        const auto iterator = generation_tracks_.find(id);
+        if (iterator == generation_tracks_.end() || iterator->second != state.config_version)
+        {
+            shutdown();
+            return;
+        }
+    }
+    reader_handle().async_read(generation);
+}
+
+void rtsp_output_session::on_read(media_reader_generation generation, media_frame frame)
+{
+    if (closed_ || !playing_ || generation_ != generation || muxer_ == nullptr)
+    {
+        return;
+    }
+
     const auto iterator = tracks_.find(frame.track);
-    if (iterator == tracks_.end() || !frame.payload || muxer_ == nullptr)
+    if (iterator != tracks_.end() && frame.payload && iterator->second.setup && iterator->second.media_id >= 0)
     {
-        return;
-    }
-    const auto& state = iterator->second;
-    if (!state.setup || state.media_id < 0)
-    {
-        return;
+        const auto& state = iterator->second;
+        const auto result = rtsp_muxer_input(muxer_,
+                                             state.media_id,
+                                             ns_to_milliseconds(frame.pts_ns),
+                                             ns_to_milliseconds(frame.dts_ns),
+                                             frame.payload->data(),
+                                             static_cast<int>(frame.payload->size()),
+                                             frame.key_frame ? 1 : 0);
+        if (result < 0)
+        {
+            spdlog::error("rtsp output mux failed result {}", result);
+        }
     }
 
-    const auto result = rtsp_muxer_input(muxer_,
-                                         state.media_id,
-                                         ns_to_milliseconds(frame.pts_ns),
-                                         ns_to_milliseconds(frame.dts_ns),
-                                         frame.payload->data(),
-                                         static_cast<int>(frame.payload->size()),
-                                         frame.key_frame ? 1 : 0);
-    if (result < 0)
+    if (!closed_ && generation_ == generation)
     {
-        spdlog::error("rtsp output mux failed result {}", result);
+        reader_handle().async_read(generation);
     }
 }
 
-void rtsp_output_session::on_end() { shutdown(); }
+void rtsp_output_session::on_end(media_reader_generation) { shutdown(); }
 
 int rtsp_output_session::send_callback(void* param, const void* data, std::size_t bytes)
 {
@@ -188,7 +216,7 @@ int rtsp_output_session::muxer_packet_callback(void* param, int pid, const void*
     return static_cast<rtsp_output_session*>(param)->on_muxer_packet(pid, data, bytes);
 }
 
-void rtsp_output_session::on_read(std::span<const std::uint8_t> data)
+void rtsp_output_session::on_tcp_read(std::span<const std::uint8_t> data)
 {
     if (server_ == nullptr || closed_)
     {
@@ -232,12 +260,9 @@ void rtsp_output_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    reader_.remove();
+    reader_ = {};
     connection_->shutdown();
-    if (stream_)
-    {
-        // remove_sink 对未挂接会话是 no-op，也覆盖 add_sink 重放配置时同步关闭的重入路径。
-        stream_->remove_sink(*this);
-    }
     stream_.reset();
 
     if (muxer_ != nullptr)
@@ -418,8 +443,16 @@ int rtsp_output_session::on_play(std::string_view uri, std::string_view session,
     {
         return result;
     }
-    stream_->add_sink(shared_from_this(), connection_->socket().get_executor());
     playing_ = true;
+    std::vector<track_id> setup_tracks;
+    for (const auto& [id, state] : tracks_)
+    {
+        if (state.setup)
+        {
+            setup_tracks.push_back(id);
+        }
+    }
+    reader_ = stream_->add_reader(shared_from_this(), connection_->socket().get_executor(), std::move(setup_tracks));
     return result;
 }
 
