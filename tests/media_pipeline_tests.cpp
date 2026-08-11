@@ -42,6 +42,7 @@ extern "C"
 #include <boost/asio/write.hpp>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -441,6 +442,144 @@ class worker_sink final : public media_sink
     std::size_t ends_{};
     std::vector<std::int64_t> frames_;
     std::vector<const void*> payloads_;
+};
+
+class pull_test_reader final : public media_reader
+{
+   public:
+    explicit pull_test_reader(bool continuous, bool read_on_ready = true)
+        : continuous_(continuous), read_on_ready_(read_on_ready)
+    {
+    }
+
+    void on_track(media_reader_generation generation, const media_track& track) override
+    {
+        {
+            std::scoped_lock lock(mutex_);
+            thread_ = std::this_thread::get_id();
+            track_versions_.emplace_back(generation, track.config_version);
+        }
+        condition_.notify_all();
+    }
+
+    void on_ready(media_reader_generation generation) override
+    {
+        {
+            std::scoped_lock lock(mutex_);
+            thread_ = std::this_thread::get_id();
+            generation_ = generation;
+            ready_generations_.push_back(generation);
+        }
+        if (read_on_ready_)
+        {
+            reader_handle().async_read(generation);
+        }
+        condition_.notify_all();
+    }
+
+    void on_read(media_reader_generation generation, media_frame frame) override
+    {
+        {
+            std::scoped_lock lock(mutex_);
+            thread_ = std::this_thread::get_id();
+            frames_.emplace_back(generation, frame.pts_ns);
+        }
+        if (continuous_)
+        {
+            reader_handle().async_read(generation);
+        }
+        condition_.notify_all();
+    }
+
+    void on_end(media_reader_generation generation) override
+    {
+        {
+            std::scoped_lock lock(mutex_);
+            thread_ = std::this_thread::get_id();
+            end_generation_ = generation;
+            ++ends_;
+        }
+        condition_.notify_all();
+    }
+
+    void request()
+    {
+        media_reader_generation generation;
+        {
+            std::scoped_lock lock(mutex_);
+            generation = generation_;
+        }
+        reader_handle().async_read(generation);
+    }
+
+    void remove() { reader_handle().remove(); }
+
+    [[nodiscard]] bool wait_for_ready(std::size_t count)
+    {
+        std::unique_lock lock(mutex_);
+        return condition_.wait_for(lock, std::chrono::seconds(5), [this, count]() { return ready_generations_.size() >= count; });
+    }
+
+    [[nodiscard]] bool wait_for_frames(std::size_t count)
+    {
+        std::unique_lock lock(mutex_);
+        return condition_.wait_for(lock, std::chrono::seconds(5), [this, count]() { return frames_.size() >= count; });
+    }
+
+    [[nodiscard]] bool wait_for_ends(std::size_t count)
+    {
+        std::unique_lock lock(mutex_);
+        return condition_.wait_for(lock, std::chrono::seconds(5), [this, count]() { return ends_ >= count; });
+    }
+
+    [[nodiscard]] std::vector<std::pair<media_reader_generation, std::int64_t>> frames() const
+    {
+        std::scoped_lock lock(mutex_);
+        return frames_;
+    }
+
+    [[nodiscard]] std::vector<std::pair<media_reader_generation, std::uint64_t>> track_versions() const
+    {
+        std::scoped_lock lock(mutex_);
+        return track_versions_;
+    }
+
+    [[nodiscard]] std::vector<media_reader_generation> ready_generations() const
+    {
+        std::scoped_lock lock(mutex_);
+        return ready_generations_;
+    }
+
+    [[nodiscard]] std::size_t ends() const
+    {
+        std::scoped_lock lock(mutex_);
+        return ends_;
+    }
+
+    [[nodiscard]] media_reader_generation end_generation() const
+    {
+        std::scoped_lock lock(mutex_);
+        return end_generation_;
+    }
+
+    [[nodiscard]] std::thread::id thread() const
+    {
+        std::scoped_lock lock(mutex_);
+        return thread_;
+    }
+
+   private:
+    bool continuous_{};
+    bool read_on_ready_{};
+    mutable std::mutex mutex_;
+    std::condition_variable condition_;
+    std::thread::id thread_;
+    media_reader_generation generation_{};
+    media_reader_generation end_generation_{};
+    std::size_t ends_{};
+    std::vector<std::pair<media_reader_generation, std::uint64_t>> track_versions_;
+    std::vector<media_reader_generation> ready_generations_;
+    std::vector<std::pair<media_reader_generation, std::int64_t>> frames_;
 };
 
 class self_removing_sink final : public media_sink
@@ -2526,6 +2665,296 @@ void test_media_stream_worker_removal()
     require(removed->frames == 0, "threaded removal suppresses pending callback");
 }
 
+void test_media_stream_pull_reader_overrun()
+{
+    io_context_pool workers(2);
+    auto stream = std::make_shared<media_stream>("live/pull-overrun", workers.context(0).get_executor());
+    auto fast = std::make_shared<pull_test_reader>(true);
+    auto stalled = std::make_shared<pull_test_reader>(false);
+    std::thread::id owner_thread;
+
+    boost::asio::post(workers.context(0),
+                      [&, stream]()
+                      {
+                          owner_thread = std::this_thread::get_id();
+                          require(stream->update_track(make_video_track()), "pull overrun track");
+                          static_cast<void>(stream->add_reader(fast, workers.context(1).get_executor()));
+                          static_cast<void>(stream->add_reader(stalled, workers.context(1).get_executor()));
+                      });
+
+    std::thread runner([&workers]() { workers.run(); });
+    require(fast->wait_for_ready(1) && stalled->wait_for_ready(1), "pull readers ready");
+
+    boost::asio::post(workers.context(0), [stream]() { stream->publish(make_video_frame(0, true)); });
+    require(fast->wait_for_frames(1) && stalled->wait_for_frames(1), "pull readers receive first key frame");
+
+    const std::array<std::pair<std::int64_t, bool>, 4> frames{
+        std::pair{40'000'000LL, false},
+        std::pair{1'000'000'000LL, true},
+        std::pair{1'040'000'000LL, false},
+        std::pair{2'000'000'000LL, true},
+    };
+    for (std::size_t index = 0; index < frames.size(); ++index)
+    {
+        const auto [pts, key_frame] = frames[index];
+        boost::asio::post(workers.context(0), [stream, pts, key_frame]() { stream->publish(make_video_frame(pts, key_frame)); });
+        require(fast->wait_for_frames(index + 2), "fast pull reader keeps pace");
+    }
+
+    stalled->request();
+    require(stalled->wait_for_frames(2), "stalled pull reader resynchronizes");
+
+    boost::asio::post(workers.context(0), [stream]() { stream->end(); });
+    require(fast->wait_for_ends(1) && stalled->wait_for_ends(1), "pull readers receive end");
+    workers.release_work();
+    runner.join();
+
+    require(fast->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{
+                    {1, 0},
+                    {1, 40'000'000},
+                    {1, 1'000'000'000},
+                    {1, 1'040'000'000},
+                    {1, 2'000'000'000},
+                },
+            "fast pull reader receives every frame");
+    require(stalled->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{{1, 0}, {1, 2'000'000'000}},
+            "stalled pull reader resumes at latest key frame");
+    require(fast->thread() == stalled->thread() && fast->thread() != owner_thread, "pull reader callbacks stay on reader worker");
+}
+
+void test_media_stream_pull_reader_duplicate_read()
+{
+    boost::asio::io_context owner(1);
+    boost::asio::io_context reader_worker(1);
+    const auto drain = [](boost::asio::io_context& io)
+    {
+        io.restart();
+        while (io.poll() != 0)
+        {
+        }
+    };
+
+    auto stream = std::make_shared<media_stream>("live/pull-duplicate", owner.get_executor());
+    auto reader = std::make_shared<pull_test_reader>(false, false);
+    boost::asio::post(owner,
+                      [stream, reader, &reader_worker]()
+                      {
+                          require(stream->update_track(make_video_track()), "pull duplicate track");
+                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                      });
+    drain(owner);
+    drain(reader_worker);
+
+    reader->request();
+    reader->request();
+    reader->request();
+    drain(owner);
+    boost::asio::post(owner,
+                      [stream]()
+                      {
+                          stream->publish(make_video_frame(0, true));
+                          stream->publish(make_video_frame(40'000'000, false));
+                          stream->publish(make_video_frame(80'000'000, false));
+                      });
+    drain(owner);
+
+    reader->request();
+    reader->request();
+    reader->request();
+    drain(owner);
+    require(reader->frames().empty(), "posted pull callback waits for reader executor");
+    drain(reader_worker);
+    require(reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{{1, 0}},
+            "duplicate pull requests produce one callback");
+
+    reader->request();
+    drain(owner);
+    drain(reader_worker);
+    require(reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{{1, 0}, {1, 40'000'000}},
+            "next pull starts after callback begins");
+}
+
+void test_media_stream_pull_reader_previous_gop_continuity()
+{
+    boost::asio::io_context owner(1);
+    boost::asio::io_context reader_worker(1);
+    const auto drain = [](boost::asio::io_context& io)
+    {
+        io.restart();
+        while (io.poll() != 0)
+        {
+        }
+    };
+
+    auto stream = std::make_shared<media_stream>("live/pull-continuity", owner.get_executor());
+    auto continuity_reader = std::make_shared<pull_test_reader>(false, false);
+    auto overrun_reader = std::make_shared<pull_test_reader>(false, false);
+    boost::asio::post(owner,
+                      [stream, continuity_reader, overrun_reader, &reader_worker]()
+                      {
+                          require(stream->update_track(make_video_track()), "pull continuity track");
+                          static_cast<void>(stream->add_reader(continuity_reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(overrun_reader, reader_worker.get_executor()));
+                      });
+    drain(owner);
+    drain(reader_worker);
+
+    boost::asio::post(owner,
+                      [stream]()
+                      {
+                          stream->publish(make_video_frame(0, true));
+                          stream->publish(make_video_frame(40'000'000, false));
+                          stream->publish(make_video_frame(80'000'000, false));
+                      });
+    drain(owner);
+    continuity_reader->request();
+    overrun_reader->request();
+    drain(owner);
+    drain(reader_worker);
+
+    boost::asio::post(owner,
+                      [stream]()
+                      {
+                          stream->publish(make_video_frame(1'000'000'000, true));
+                          stream->publish(make_video_frame(1'040'000'000, false));
+                      });
+    drain(owner);
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        continuity_reader->request();
+        drain(owner);
+        drain(reader_worker);
+    }
+    require(continuity_reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{
+                    {1, 0},
+                    {1, 40'000'000},
+                    {1, 80'000'000},
+                    {1, 1'000'000'000},
+                    {1, 1'040'000'000},
+                },
+            "reader continues through previous gop");
+
+    boost::asio::post(owner, [stream]() { stream->publish(make_video_frame(2'000'000'000, true)); });
+    drain(owner);
+    overrun_reader->request();
+    drain(owner);
+    drain(reader_worker);
+    require(overrun_reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{{1, 0}, {1, 2'000'000'000}},
+            "overrun reader resumes at current gop key frame");
+}
+
+void test_media_stream_add_reader_after_end()
+{
+    boost::asio::io_context owner(1);
+    boost::asio::io_context reader_worker(1);
+    const auto drain = [](boost::asio::io_context& io)
+    {
+        io.restart();
+        while (io.poll() != 0)
+        {
+        }
+    };
+
+    auto stream = std::make_shared<media_stream>("live/pull-ended", owner.get_executor());
+    auto reader = std::make_shared<pull_test_reader>(false, false);
+    boost::asio::post(owner,
+                      [stream, reader, &reader_worker]()
+                      {
+                          stream->end();
+                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                      });
+    drain(owner);
+    drain(reader_worker);
+
+    require(reader->track_versions().empty(), "ended stream reader receives no tracks");
+    require(reader->ready_generations().empty(), "ended stream reader is never ready");
+    require(reader->frames().empty(), "ended stream reader receives no frames");
+    require(reader->ends() == 1, "ended stream reader receives one terminal event");
+}
+
+void test_media_stream_pull_reader_generation_order()
+{
+    boost::asio::io_context owner(1);
+    boost::asio::io_context reader_worker(1);
+    const auto drain = [](boost::asio::io_context& io)
+    {
+        io.restart();
+        while (io.poll() != 0)
+        {
+        }
+    };
+
+    auto stream = std::make_shared<media_stream>("live/pull-generation", owner.get_executor());
+    auto reader = std::make_shared<pull_test_reader>(true);
+    boost::asio::post(owner,
+                      [stream, reader, &reader_worker]()
+                      {
+                          require(stream->update_track(make_video_track()), "pull generation initial track");
+                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                      });
+    drain(owner);
+    drain(reader_worker);
+    drain(owner);
+
+    boost::asio::post(owner, [stream]() { stream->publish(make_video_frame(0, true)); });
+    drain(owner);
+    boost::asio::post(owner, [stream]() { require(stream->update_track(make_video_track(2)), "pull generation track reset"); });
+    drain(owner);
+    drain(reader_worker);
+
+    require(reader->frames().empty(), "track reset suppresses old posted frame");
+    require(reader->track_versions() ==
+                std::vector<std::pair<media_reader_generation, std::uint64_t>>{{1, 1}, {2, 2}},
+            "track reset starts a new ordered generation");
+    require(reader->ready_generations() == std::vector<media_reader_generation>{1, 2}, "track reset publishes ready per generation");
+
+    drain(owner);
+    boost::asio::post(owner, [stream]() { stream->publish(make_video_frame(1'000'000'000, true)); });
+    drain(owner);
+    drain(reader_worker);
+    require(reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{{2, 1'000'000'000}},
+            "new generation receives its key frame");
+
+    drain(owner);
+    boost::asio::post(owner,
+                      [stream]()
+                      {
+                          stream->publish(make_video_frame(1'040'000'000, false));
+                          stream->end();
+                      });
+    drain(owner);
+    drain(reader_worker);
+    require(reader->frames() ==
+                std::vector<std::pair<media_reader_generation, std::int64_t>>{{2, 1'000'000'000}},
+            "end suppresses old posted frame");
+    require(reader->ends() == 1 && reader->end_generation() == 3, "end is terminal generation event");
+
+    auto remove_stream = std::make_shared<media_stream>("live/pull-remove", owner.get_executor());
+    auto removed_reader = std::make_shared<pull_test_reader>(true);
+    boost::asio::post(owner,
+                      [remove_stream, removed_reader, &reader_worker]()
+                      {
+                          require(remove_stream->update_track(make_video_track()), "pull remove track");
+                          static_cast<void>(remove_stream->add_reader(removed_reader, reader_worker.get_executor()));
+                      });
+    drain(owner);
+    drain(reader_worker);
+    drain(owner);
+    boost::asio::post(owner, [remove_stream]() { remove_stream->publish(make_video_frame(0, true)); });
+    drain(owner);
+    removed_reader->remove();
+    drain(reader_worker);
+    drain(owner);
+    require(removed_reader->frames().empty() && removed_reader->ends() == 0, "remove suppresses already posted callbacks");
+}
+
 void test_stream_registry_generation_lifecycle()
 {
     stream_registry registry;
@@ -2954,6 +3383,16 @@ int main()
     std::cout << "[pass] media_stream_worker_fanout\n";
     media_server::test_media_stream_worker_removal();
     std::cout << "[pass] media_stream_worker_removal\n";
+    media_server::test_media_stream_pull_reader_overrun();
+    std::cout << "[pass] media_stream_pull_reader_overrun\n";
+    media_server::test_media_stream_pull_reader_duplicate_read();
+    std::cout << "[pass] media_stream_pull_reader_duplicate_read\n";
+    media_server::test_media_stream_pull_reader_previous_gop_continuity();
+    std::cout << "[pass] media_stream_pull_reader_previous_gop_continuity\n";
+    media_server::test_media_stream_add_reader_after_end();
+    std::cout << "[pass] media_stream_add_reader_after_end\n";
+    media_server::test_media_stream_pull_reader_generation_order();
+    std::cout << "[pass] media_stream_pull_reader_generation_order\n";
     media_server::test_stream_registry_generation_lifecycle();
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_output();
