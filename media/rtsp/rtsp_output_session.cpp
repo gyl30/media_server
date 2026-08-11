@@ -67,7 +67,7 @@ rtsp_output_session::~rtsp_output_session()
     }
 }
 
-void rtsp_output_session::start()
+void rtsp_output_session::startup()
 {
     rtsp_handler_t handler{};
     handler.send = &rtsp_output_session::send_callback;
@@ -86,7 +86,7 @@ void rtsp_output_session::start()
     }
 
     const auto self = shared_from_this();
-    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->shutdown(); });
+    connection_->startup([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->shutdown(); });
 }
 
 void rtsp_output_session::on_track(const media_track& track)
@@ -215,7 +215,7 @@ void rtsp_output_session::shutdown()
 
 void rtsp_output_session::safe_shutdown()
 {
-    connection_->close();
+    connection_->shutdown();
     if (stream_)
     {
         // remove_sink 对未挂接会话是 no-op，也覆盖 add_sink 重放配置时同步关闭的重入路径。

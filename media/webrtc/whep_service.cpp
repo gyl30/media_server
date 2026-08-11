@@ -12,7 +12,7 @@ whep_service::whep_service(stream_registry& registry, boost::asio::ip::address a
 {
 }
 
-whep_service::~whep_service() { close(); }
+whep_service::~whep_service() { shutdown(); }
 
 bool whep_service::ready() const noexcept { return certificate_ != nullptr; }
 
@@ -71,15 +71,15 @@ whep_create_result whep_service::create(boost::asio::any_io_executor executor, s
     }
 
     auto session = std::make_shared<whep_session>(std::move(executor), stream, advertised_address_, certificate_);
-    switch (session->start(std::move(*offer)))
+    switch (session->startup(std::move(*offer)))
     {
-        case whep_session_start_error::none:
+        case whep_session_startup_error::none:
             break;
-        case whep_session_start_error::invalid_offer:
+        case whep_session_startup_error::invalid_offer:
             return {.error = whep_create_error::invalid_offer, .session_id = {}, .answer_sdp = {}};
-        case whep_session_start_error::stream_not_ready:
+        case whep_session_startup_error::stream_not_ready:
             return {.error = whep_create_error::stream_not_ready, .session_id = {}, .answer_sdp = {}};
-        case whep_session_start_error::internal_error:
+        case whep_session_startup_error::internal_error:
             return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
     }
 
@@ -139,7 +139,7 @@ bool whep_service::remove(std::string_view session_id)
     return true;
 }
 
-void whep_service::close()
+void whep_service::shutdown()
 {
     std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions;
     {

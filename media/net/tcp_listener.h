@@ -19,8 +19,8 @@ class tcp_listener final
 
     tcp_listener(io_context_pool& workers, std::uint16_t port, accept_handler handler);
 
-    [[nodiscard]] boost::system::error_code start();
-    void close();
+    [[nodiscard]] boost::system::error_code startup();
+    void shutdown();
 
    private:
     void accept_next();

@@ -907,7 +907,7 @@ class rtmp_input_test_peer final
         auto server_socket = acceptor_.accept();
         auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
         auto session = std::make_shared<rtmp_session>(std::move(connection), registry_);
-        session->start();
+        session->startup();
         runner_ = std::jthread([this]() { io_.run(); });
 
         const auto separator = stream_name_.find('/');
@@ -1059,7 +1059,7 @@ class rtmp_output_test_peer final
         auto server_socket = acceptor_.accept();
         auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
         session_ = std::make_shared<rtmp_session>(std::move(connection), registry_);
-        session_->start();
+        session_->startup();
         runner_ = std::jthread([this]() { io_.run(); });
 
         rtmp_client_handler_t handler{};
@@ -1244,9 +1244,35 @@ void test_tcp_listener_startup_error()
 
     io_context_pool workers(1);
     tcp_listener listener(workers, occupied.local_endpoint().port(), [](boost::asio::ip::tcp::socket) {});
-    require(static_cast<bool>(listener.start()), "tcp listener reports bind failure");
+    require(static_cast<bool>(listener.startup()), "tcp listener reports bind failure");
 }
 
+
+void test_tcp_connection_shutdown_lifecycle()
+{
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::socket client(io);
+    client.connect(acceptor.local_endpoint());
+    auto server = acceptor.accept();
+
+    int shutdown_count = 0;
+    auto connection = std::make_shared<tcp_connection>(std::move(server));
+    connection->startup({}, [&shutdown_count]() { ++shutdown_count; });
+    const std::weak_ptr<tcp_connection> weak_connection = connection;
+
+    connection->shutdown();
+    connection.reset();
+    require(!weak_connection.expired(), "tcp connection shutdown keeps self until owner worker cleanup");
+
+    io.run();
+
+    require(shutdown_count == 1, "tcp connection shutdown callback once");
+    require(weak_connection.expired(), "tcp connection released after owner worker cleanup");
+
+    boost::system::error_code error;
+    client.close(error);
+}
 
 void test_tcp_listener_worker_affinity()
 {
@@ -1278,14 +1304,14 @@ void test_tcp_listener_worker_affinity()
                                   {
                                       if (const auto current = weak_listener.lock())
                                       {
-                                          current->close();
+                                          current->shutdown();
                                       }
                                       workers.release_work();
                                   });
             }
         });
     weak_listener = listener;
-    require(!listener->start(), "tcp listener worker start");
+    require(!listener->startup(), "tcp listener worker startup");
 
     boost::asio::io_context client_io;
     boost::asio::ip::tcp::socket first(client_io);
@@ -1317,7 +1343,7 @@ void test_http_flv_client_disconnect()
     client.connect(acceptor.local_endpoint());
     auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep);
     const std::weak_ptr<http_session> weak_session = session;
-    session->start();
+    session->startup();
     session.reset();
 
     std::jthread runner([&io]() { io.run(); });
@@ -1372,7 +1398,7 @@ void test_rtsp_pull_url_contract()
     boost::asio::io_context client_io;
     stream_registry registry;
     auto invalid = std::make_shared<rtsp_input_session>(client_io, registry, "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
-    require(!invalid->start(), "rtsp invalid port rejected");
+    require(!invalid->startup(), "rtsp invalid port rejected");
     require(!registry.find("relay/invalid"), "rtsp invalid url leaves registry unchanged");
 
     const auto port = acceptor.local_endpoint().port();
@@ -1380,7 +1406,7 @@ void test_rtsp_pull_url_contract()
     const auto credential_url = "rtsp://us%65r:p%40ss@127.0.0.1:" + std::to_string(port) + "/live/test";
     auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/auth", credential_url);
     const std::weak_ptr<rtsp_input_session> weak_pull = pull;
-    require(pull->start(), "rtsp auth pull start");
+    require(pull->startup(), "rtsp auth pull startup");
     pull.reset();
 
     std::jthread runner([&client_io]() { client_io.run(); });
@@ -1432,7 +1458,7 @@ void test_rtsp_input_selects_single_audio_and_video()
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/multi";
     auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/single-av", request_url);
-    require(pull->start(), "rtsp single audio video pull start");
+    require(pull->startup(), "rtsp single audio video pull startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
     acceptor.accept(socket);
@@ -1503,7 +1529,7 @@ void test_rtsp_input_media_driven_keepalive()
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/keepalive";
     auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/keepalive", request_url);
-    require(pull->start(), "rtsp keepalive pull start");
+    require(pull->startup(), "rtsp keepalive pull startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
     acceptor.accept(socket);
@@ -1568,7 +1594,7 @@ class rtsp_output_test_peer final
         auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
         auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, acceptor_.local_endpoint().port());
         session_ = session;
-        session->start();
+        session->startup();
         runner_ = std::jthread([this]() { io_.run(); });
     }
 
@@ -2895,6 +2921,8 @@ int main()
     std::cout << "[pass] rtsp_aac_adts_round_trip\n";
     media_server::test_rtsp_client_session_timeout();
     std::cout << "[pass] rtsp_client_session_timeout\n";
+    media_server::test_tcp_connection_shutdown_lifecycle();
+    std::cout << "[pass] tcp_connection_shutdown_lifecycle\n";
     media_server::test_tcp_listener_startup_error();
     std::cout << "[pass] tcp_listener_startup_error\n";
     media_server::test_tcp_listener_worker_affinity();

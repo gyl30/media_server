@@ -114,11 +114,11 @@ dtls_transport::dtls_transport(std::shared_ptr<dtls_certificate> certificate, st
 {
 }
 
-bool dtls_transport::start()
+bool dtls_transport::startup()
 {
     if (ssl_ || !certificate_ || !send_ || !valid_sha256_fingerprint(remote_fingerprint_))
     {
-        spdlog::debug("webrtc dtls start rejected invalid state or fingerprint");
+        spdlog::debug("webrtc dtls startup rejected invalid state or fingerprint");
         return false;
     }
 
@@ -133,7 +133,7 @@ bool dtls_transport::start()
         SSL_CTX_use_PrivateKey(context_.get(), certificate_->private_key()) != 1 || SSL_CTX_check_private_key(context_.get()) != 1)
     {
         spdlog::debug("webrtc dtls context configure failed");
-        close();
+        shutdown();
         return false;
     }
 
@@ -144,7 +144,7 @@ bool dtls_transport::start()
     ssl_.reset(SSL_new(context_.get()));
     if (!ssl_)
     {
-        close();
+        shutdown();
         return false;
     }
 
@@ -165,7 +165,7 @@ bool dtls_transport::start()
             BIO_free(write_bio_);
             write_bio_ = nullptr;
         }
-        close();
+        shutdown();
         return false;
     }
 
@@ -179,7 +179,7 @@ bool dtls_transport::start()
     return true;
 }
 
-void dtls_transport::close()
+void dtls_transport::shutdown()
 {
     srtp_keying_material_.reset();
     ssl_.reset();

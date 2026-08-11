@@ -41,7 +41,7 @@ rtmp_session::~rtmp_session()
     }
 }
 
-void rtmp_session::start()
+void rtmp_session::startup()
 {
     rtmp_server_handler_t handler{};
     handler.send = &rtmp_session::send_callback;
@@ -62,7 +62,7 @@ void rtmp_session::start()
     }
 
     const auto self = shared_from_this();
-    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->shutdown(); });
+    connection_->startup([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->shutdown(); });
 }
 
 void rtmp_session::on_track(const media_track& track)
@@ -348,7 +348,7 @@ void rtmp_session::shutdown()
 
 void rtmp_session::safe_shutdown()
 {
-    connection_->close();
+    connection_->shutdown();
 
     if (role_ == role::player && stream_)
     {

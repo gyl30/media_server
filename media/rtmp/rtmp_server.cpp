@@ -29,16 +29,16 @@ rtmp_server::rtmp_server(io_context_pool& workers, stream_registry& registry, st
                         std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
                         sessions_.emplace_back(session);
                     }
-                    session->start();
+                    session->startup();
                 })
 {
 }
 
-boost::system::error_code rtmp_server::start() { return listener_.start(); }
+boost::system::error_code rtmp_server::startup() { return listener_.startup(); }
 
-void rtmp_server::close()
+void rtmp_server::shutdown()
 {
-    listener_.close();
+    listener_.shutdown();
     std::vector<std::weak_ptr<rtmp_session>> sessions;
     {
         std::scoped_lock lock(sessions_mutex_);

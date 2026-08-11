@@ -22,8 +22,8 @@ class http_server final
    public:
     http_server(io_context_pool& workers, stream_registry& registry, hls_service& hls, whep_service& whep, std::uint16_t port);
 
-    [[nodiscard]] boost::system::error_code start();
-    void close();
+    [[nodiscard]] boost::system::error_code startup();
+    void shutdown();
 
    private:
     stream_registry& registry_;

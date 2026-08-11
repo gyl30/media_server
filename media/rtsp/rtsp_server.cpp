@@ -30,16 +30,16 @@ rtsp_server::rtsp_server(io_context_pool& workers, stream_registry& registry, st
                         std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
                         sessions_.emplace_back(session);
                     }
-                    session->start();
+                    session->startup();
                 })
 {
 }
 
-boost::system::error_code rtsp_server::start() { return listener_.start(); }
+boost::system::error_code rtsp_server::startup() { return listener_.startup(); }
 
-void rtsp_server::close()
+void rtsp_server::shutdown()
 {
-    listener_.close();
+    listener_.shutdown();
     std::vector<std::weak_ptr<rtsp_output_session>> sessions;
     {
         std::scoped_lock lock(sessions_mutex_);

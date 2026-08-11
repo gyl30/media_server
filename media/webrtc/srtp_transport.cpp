@@ -91,17 +91,17 @@ struct srtp_transport::context
 
 srtp_transport::srtp_transport() = default;
 
-srtp_transport::~srtp_transport() { close(); }
+srtp_transport::~srtp_transport() { shutdown(); }
 
-bool srtp_transport::start(const dtls_srtp_keying_material& keying_material)
+bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
 {
     if (context_ || !initialize_srtp())
     {
-        spdlog::debug("webrtc srtp start rejected or library init failed");
+        spdlog::debug("webrtc srtp startup rejected or library init failed");
         return false;
     }
 
-    spdlog::debug("webrtc srtp transport start profile {}", keying_material.profile);
+    spdlog::debug("webrtc srtp transport startup profile {}", keying_material.profile);
 
     auto state = std::make_unique<struct context>();
     state->outbound_key = make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
@@ -126,7 +126,7 @@ bool srtp_transport::start(const dtls_srtp_keying_material& keying_material)
     return true;
 }
 
-void srtp_transport::close()
+void srtp_transport::shutdown()
 {
     if (!context_)
     {

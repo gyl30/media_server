@@ -1,5 +1,6 @@
 #include "media/net/tcp_connection.h"
 
+#include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
 
 #include <cstring>
@@ -10,10 +11,10 @@ namespace media_server
 
 tcp_connection::tcp_connection(boost::asio::ip::tcp::socket socket) : socket_(std::move(socket)) {}
 
-void tcp_connection::start(read_handler on_read, close_handler on_close)
+void tcp_connection::startup(read_handler on_read, shutdown_handler on_shutdown)
 {
     on_read_ = std::move(on_read);
-    on_close_ = std::move(on_close);
+    on_shutdown_ = std::move(on_shutdown);
     read_next();
 }
 
@@ -44,17 +45,14 @@ void tcp_connection::write(const void* data, std::size_t bytes)
     });
 }
 
-void tcp_connection::close()
+void tcp_connection::shutdown()
 {
-    if (closed_)
+    if (closed_.exchange(true))
     {
         return;
     }
-    closed_ = true;
-    boost::system::error_code error;
-    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
-    socket_.close(error);
-    finish_close();
+    const auto self = shared_from_this();
+    boost::asio::post(socket_.get_executor(), [self]() { self->safe_shutdown(); });
 }
 
 boost::asio::ip::tcp::socket& tcp_connection::socket() noexcept { return socket_; }
@@ -72,7 +70,7 @@ void tcp_connection::read_next()
                             {
                                 if (error)
                                 {
-                                    close();
+                                    shutdown();
                                     return;
                                 }
                                 if (bytes != 0 && on_read_)
@@ -102,7 +100,7 @@ void tcp_connection::write_next()
                                  }
                                  if (error)
                                  {
-                                     close();
+                                     shutdown();
                                      return;
                                  }
                                  write_queue_.pop_front();
@@ -110,14 +108,17 @@ void tcp_connection::write_next()
                              });
 }
 
-void tcp_connection::finish_close()
+void tcp_connection::safe_shutdown()
 {
+    boost::system::error_code error;
+    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
+    socket_.close(error);
     write_queue_.clear();
     on_read_ = {};
-    if (on_close_)
+    if (on_shutdown_)
     {
-        auto handler = std::move(on_close_);
-        handler();
+        on_shutdown_();
+        on_shutdown_ = {};
     }
 }
 

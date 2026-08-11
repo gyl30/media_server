@@ -28,16 +28,16 @@ http_server::http_server(io_context_pool& workers, stream_registry& registry, hl
                         std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
                         sessions_.emplace_back(session);
                     }
-                    session->start();
+                    session->startup();
                 })
 {
 }
 
-boost::system::error_code http_server::start() { return listener_.start(); }
+boost::system::error_code http_server::startup() { return listener_.startup(); }
 
-void http_server::close()
+void http_server::shutdown()
 {
-    listener_.close();
+    listener_.shutdown();
     std::vector<std::weak_ptr<http_session>> sessions;
     {
         std::scoped_lock lock(sessions_mutex_);

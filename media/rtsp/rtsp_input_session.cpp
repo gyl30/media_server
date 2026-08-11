@@ -90,7 +90,7 @@ rtsp_input_session::~rtsp_input_session()
     avpkt2bs_destroy(&bitstream_);
 }
 
-bool rtsp_input_session::start()
+bool rtsp_input_session::startup()
 {
     if (closed_ || stream_)
     {
@@ -151,7 +151,7 @@ void rtsp_input_session::safe_shutdown()
     resolver_.cancel();
     if (connection_)
     {
-        connection_->close();
+        connection_->shutdown();
         connection_.reset();
     }
     if (stream_)
@@ -291,7 +291,7 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
 
     connection_ = std::make_shared<tcp_connection>(std::move(socket));
     const auto self = shared_from_this();
-    connection_->start([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->on_connection_close(); });
+    connection_->startup([self](std::span<const std::uint8_t> data) { self->on_read(data); }, [self]() { self->on_connection_shutdown(); });
 
     spdlog::info("rtsp input connected stream {}", stream_name_);
     if (rtsp_client_describe(client_) != 0)
@@ -308,7 +308,7 @@ void rtsp_input_session::on_read(std::span<const std::uint8_t> data)
     }
 }
 
-void rtsp_input_session::on_connection_close()
+void rtsp_input_session::on_connection_shutdown()
 {
     if (!closed_)
     {

@@ -40,7 +40,7 @@ struct whep_session_timeouts
     std::chrono::milliseconds ice_activity{30'000};
 };
 
-enum class whep_session_start_error
+enum class whep_session_startup_error
 {
     none,
     invalid_offer,
@@ -57,7 +57,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
                  std::shared_ptr<dtls_certificate> certificate,
                  whep_session_timeouts timeouts = {});
 
-    [[nodiscard]] whep_session_start_error start(webrtc_offer offer);
+    [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
     void shutdown();
 
     [[nodiscard]] const std::string& id() const noexcept;
@@ -75,7 +75,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     void handle_stun(std::size_t size);
     void handle_dtls(std::size_t size);
     void handle_srtp(std::size_t size);
-    bool start_media();
+    bool startup_media();
     void send_dtls(std::span<const std::uint8_t> packet);
     void send_rtp(std::span<const std::uint8_t> packet);
     void send_rtcp(std::span<const std::uint8_t> packet);
@@ -83,7 +83,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     void write_udp();
     void schedule_dtls_timeout();
     void handle_dtls_timeout();
-    void start_establishment_timeout();
+    void startup_establishment_timeout();
     void refresh_ice_activity_timeout();
 
     std::shared_ptr<media_stream> stream_;

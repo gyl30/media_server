@@ -35,7 +35,7 @@ class dtls_transport final
 
     dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_callback send);
 
-    bool start();
+    bool startup();
     bool handle_datagram(std::span<const std::uint8_t> packet);
     bool handle_timeout();
 
@@ -59,7 +59,7 @@ class dtls_transport final
     using ssl_context_ptr = std::unique_ptr<SSL_CTX, ssl_context_deleter>;
     using ssl_ptr = std::unique_ptr<SSL, ssl_deleter>;
 
-    void close();
+    void shutdown();
     bool finish_handshake();
     bool verify_peer_fingerprint() const;
     std::optional<dtls_srtp_keying_material> export_srtp_keying_material() const;
