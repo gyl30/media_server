@@ -1262,6 +1262,7 @@ void test_tcp_connection_shutdown_lifecycle()
     const std::weak_ptr<tcp_connection> weak_connection = connection;
 
     connection->shutdown();
+    connection->shutdown();
     connection.reset();
     require(!weak_connection.expired(), "tcp connection shutdown keeps self until owner worker cleanup");
 

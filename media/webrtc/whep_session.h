@@ -15,7 +15,6 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -115,7 +114,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> send_queue_;
     std::uint16_t local_port_{};
     bool started_{};
-    std::atomic_bool closed_{};
+    bool closed_{};
 };
 
 }    // namespace media_server
