@@ -26,10 +26,9 @@ class rtsp_output_session final : public media_reader, public std::enable_shared
     void startup();
     void shutdown();
 
-    void on_track(media_reader_generation generation, const media_track& track) override;
-    void on_ready(media_reader_generation generation) override;
-    void on_read(media_reader_generation generation, media_frame frame) override;
-    void on_end(media_reader_generation generation) override;
+    void on_tracks(media_track_snapshot_ptr tracks) override;
+    void on_read(media_read_batch batch) override;
+    void on_end() override;
 
    private:
     struct track_state
@@ -53,6 +52,7 @@ class rtsp_output_session final : public media_reader, public std::enable_shared
 
     void on_tcp_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
+    bool apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_describe(std::string_view uri);
     int on_setup(std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_play(std::string_view uri, std::string_view session, const std::int64_t* npt);
@@ -71,8 +71,8 @@ class rtsp_output_session final : public media_reader, public std::enable_shared
     std::shared_ptr<media_stream> stream_;
     media_reader_handle reader_;
     std::map<track_id, track_state> tracks_;
-    std::map<track_id, std::uint64_t> generation_tracks_;
-    media_reader_generation generation_{};
+    media_reader_cursor reader_cursor_;
+    std::uint64_t track_revision_{};
     std::string stream_name_;
     std::string session_id_;
     bool playing_{};

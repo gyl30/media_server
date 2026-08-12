@@ -164,18 +164,16 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     rtcp_stats_ = {};
     started_ = true;
 
-    std::vector<track_id> track_ids;
     for (const auto& track : source_tracks)
     {
         const bool negotiated_video = video_codec_ && track.kind == media_kind::video && track.codec == *video_codec_;
         const bool negotiated_audio = audio_payload_type_ && track.kind == media_kind::audio && track.codec == codec_id::aac;
         if (negotiated_video || negotiated_audio)
         {
-            track_ids.push_back(track.id);
             track_versions_.emplace(track.id, track.config_version);
         }
     }
-    reader_ = stream_->add_reader(shared_from_this(), executor_, std::move(track_ids));
+    reader_ = stream_->add_reader(shared_from_this(), executor_);
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
     spdlog::debug("webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {}",
@@ -210,6 +208,9 @@ void whep_session::safe_shutdown()
     output_.reset();
     pending_tracks_.clear();
     track_versions_.clear();
+    reader_cursor_.reset();
+    track_revision_ = 0;
+    tracks_ready_ = false;
     stream_.reset();
     certificate_.reset();
     srtp_.reset();
@@ -246,67 +247,87 @@ bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
 
 const whep_rtcp_stats& whep_session::rtcp_stats() const noexcept { return rtcp_stats_; }
 
-void whep_session::on_track(media_reader_generation generation, const media_track& track)
+void whep_session::on_tracks(media_track_snapshot_ptr tracks)
 {
-    if (generation_ != generation)
+    if (closed_ || !started_)
     {
-        generation_ = generation;
-        ready_generation_ = 0;
-        pending_tracks_.clear();
+        return;
     }
-    pending_tracks_.push_back(track);
+    if (!apply_tracks(tracks))
+    {
+        spdlog::info("webrtc negotiated track changed session {}", id_);
+        shutdown();
+        return;
+    }
+    if (output_ && !start_media_read())
+    {
+        shutdown();
+    }
 }
 
-void whep_session::on_ready(media_reader_generation generation)
+void whep_session::on_read(media_read_batch batch)
 {
-    if (closed_ || !started_ || generation_ != generation)
+    if (closed_ || !started_ || !output_)
     {
         return;
     }
 
-    for (const auto& track : pending_tracks_)
-    {
-        const auto expected = track_versions_.find(track.id);
-        if (expected == track_versions_.end() || expected->second != track.config_version)
-        {
-            spdlog::info("webrtc negotiated track changed session {}", id_);
-            shutdown();
-            return;
-        }
-    }
-    if (pending_tracks_.size() != track_versions_.size())
+    reader_cursor_ = batch.next_cursor;
+    if (!apply_tracks(batch.tracks))
     {
         spdlog::info("webrtc negotiated track changed session {}", id_);
         shutdown();
         return;
     }
 
-    ready_generation_ = generation;
-    if (output_ && !start_media_read(generation))
+    for (auto& entry : batch.entries)
     {
-        shutdown();
+        const auto expected = track_versions_.find(entry.frame.track);
+        if (expected == track_versions_.end() || expected->second != entry.config_version)
+        {
+            continue;
+        }
+        output_->on_frame(entry.frame);
+    }
+
+    if (!closed_)
+    {
+        reader_handle().async_read(reader_cursor_);
     }
 }
 
-void whep_session::on_read(media_reader_generation generation, media_frame frame)
+void whep_session::on_end()
 {
-    if (closed_ || !started_ || generation_ != generation || ready_generation_ != generation || !output_)
-    {
-        return;
-    }
-
-    output_->on_frame(frame);
-    if (!closed_ && generation_ == generation && ready_generation_ == generation)
-    {
-        reader_handle().async_read(generation);
-    }
-}
-
-void whep_session::on_end(media_reader_generation generation)
-{
-    static_cast<void>(generation);
     spdlog::info("webrtc source stream ended session {}", id_);
     shutdown();
+}
+
+bool whep_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+{
+    if (!tracks || tracks->revision <= track_revision_)
+    {
+        return true;
+    }
+
+    std::vector<media_track> negotiated_tracks;
+    negotiated_tracks.reserve(track_versions_.size());
+    for (const auto& [id, version] : track_versions_)
+    {
+        const auto track = std::ranges::find_if(tracks->tracks, [id](const media_track& current) { return current.id == id; });
+        if (track == tracks->tracks.end() || track->config_version != version)
+        {
+            return false;
+        }
+        negotiated_tracks.push_back(*track);
+    }
+
+    if (!tracks_ready_)
+    {
+        pending_tracks_ = std::move(negotiated_tracks);
+        tracks_ready_ = true;
+    }
+    track_revision_ = tracks->revision;
+    return true;
 }
 
 void whep_session::on_udp_read(boost::system::error_code error,
@@ -558,7 +579,7 @@ bool whep_session::startup_media()
 
     srtp_ = std::move(srtp);
     output_ = std::move(output);
-    if (ready_generation_ != 0 && !start_media_read(ready_generation_))
+    if (tracks_ready_ && !start_media_read())
     {
         return false;
     }
@@ -569,9 +590,9 @@ bool whep_session::startup_media()
     return true;
 }
 
-bool whep_session::start_media_read(media_reader_generation generation)
+bool whep_session::start_media_read()
 {
-    if (!output_ || generation_ != generation || ready_generation_ != generation)
+    if (!output_ || !tracks_ready_)
     {
         return false;
     }
@@ -585,7 +606,7 @@ bool whep_session::start_media_read(media_reader_generation generation)
         return false;
     }
     pending_tracks_.clear();
-    reader_handle().async_read(generation);
+    reader_handle().async_read(reader_cursor_);
     return true;
 }
 
