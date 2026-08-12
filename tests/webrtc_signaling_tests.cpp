@@ -661,7 +661,7 @@ class whep_http_test_peer final
           whep_(registry_, boost::asio::ip::make_address("127.0.0.1")),
           acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
     {
-        stream_ = std::make_shared<media_stream>("live/camera");
+        stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
         require(stream_->update_track(make_video_track()), "whep http video track");
         require(stream_->update_track(make_audio_track()), "whep http audio track");
         require(registry_.add(stream_), "whep http registry add");
@@ -1097,7 +1097,7 @@ void test_webrtc_transport_contract()
 void test_whep_session_startup_errors()
 {
     boost::asio::io_context io;
-    auto stream = std::make_shared<media_stream>("live/startup-errors");
+    auto stream = std::make_shared<media_stream>("live/startup-errors", io.get_executor());
     require(stream->update_track(make_video_track()), "startup errors video track");
     require(stream->update_track(make_audio_track()), "startup errors audio track");
 
@@ -1122,12 +1122,12 @@ void test_whep_session_startup_errors()
 
     require(make_session(stream, nullptr)->startup(*offer) == whep_session_startup_error::internal_error, "startup errors internal error");
 
-    auto ended_stream = std::make_shared<media_stream>("live/startup-errors-ended");
+    auto ended_stream = std::make_shared<media_stream>("live/startup-errors-ended", io.get_executor());
     require(ended_stream->update_track(make_video_track()), "startup errors ended video track");
     ended_stream->end();
     require(make_session(ended_stream, certificate)->startup(*offer) == whep_session_startup_error::stream_not_ready, "startup errors stream not ready");
 
-    auto empty_stream = std::make_shared<media_stream>("live/startup-errors-empty");
+    auto empty_stream = std::make_shared<media_stream>("live/startup-errors-empty", io.get_executor());
     require(make_session(empty_stream, certificate)->startup(*offer) == whep_session_startup_error::stream_not_ready,
             "startup errors stream without tracks");
 }
@@ -1136,7 +1136,7 @@ void test_whep_session_lifecycle()
 {
     boost::asio::io_context io;
     stream_registry registry;
-    auto stream = std::make_shared<media_stream>("live/test");
+    auto stream = std::make_shared<media_stream>("live/test", io.get_executor());
     require(stream->update_track(make_video_track()), "whep video track");
     require(stream->update_track(make_audio_track()), "whep audio track");
     require(registry.add(stream), "whep registry add");
@@ -1144,7 +1144,7 @@ void test_whep_session_lifecycle()
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
     require(whep.ready(), "whep certificate ready");
 
-    auto empty_stream = std::make_shared<media_stream>("live/empty");
+    auto empty_stream = std::make_shared<media_stream>("live/empty", io.get_executor());
     require(registry.add(empty_stream), "whep empty stream add");
     require(whep.create(io.get_executor(), "live/empty", webrtc_offer_sdp).error == whep_create_error::stream_not_ready, "whep empty stream not ready");
 
@@ -1179,7 +1179,7 @@ void test_whep_session_lifecycle()
     require(!whep.remove(third.session_id), "whep source end releases session");
     registry.remove(*stream);
 
-    auto replacement = std::make_shared<media_stream>("live/test");
+    auto replacement = std::make_shared<media_stream>("live/test", io.get_executor());
     require(replacement->update_track(make_video_track()), "whep replacement video track");
     require(replacement->update_track(make_audio_track()), "whep replacement audio track");
     require(registry.add(replacement), "whep replacement registry add");
@@ -1203,7 +1203,7 @@ void test_whep_session_lifecycle()
 void test_whep_negotiated_track_lifecycle()
 {
     boost::asio::io_context io;
-    auto stream = std::make_shared<media_stream>("live/negotiated-tracks");
+    auto stream = std::make_shared<media_stream>("live/negotiated-tracks", io.get_executor());
     require(stream->update_track(make_h265_track()), "negotiated tracks h265");
     require(stream->update_track(make_audio_track()), "negotiated tracks audio");
 
@@ -1263,7 +1263,7 @@ void test_whep_negotiated_track_lifecycle()
 void test_whep_self_owned_lifecycle()
 {
     boost::asio::io_context io;
-    auto stream = std::make_shared<media_stream>("live/self-owned");
+    auto stream = std::make_shared<media_stream>("live/self-owned", io.get_executor());
     require(stream->update_track(make_video_track()), "self owned video track");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -1285,7 +1285,7 @@ void test_whep_self_owned_lifecycle()
 void test_whep_multi_session_isolation()
 {
     boost::asio::io_context io;
-    auto stream = std::make_shared<media_stream>("live/multi");
+    auto stream = std::make_shared<media_stream>("live/multi", io.get_executor());
     require(stream->update_track(make_video_track()), "multi video track");
     require(stream->update_track(make_audio_track()), "multi audio track");
 
@@ -1344,7 +1344,7 @@ void test_whep_multi_session_isolation()
 void test_whep_establishment_timeout()
 {
     boost::asio::io_context io;
-    auto stream = std::make_shared<media_stream>("live/establishment-timeout");
+    auto stream = std::make_shared<media_stream>("live/establishment-timeout", io.get_executor());
     require(stream->update_track(make_video_track()), "establishment timeout video track");
     require(stream->update_track(make_audio_track()), "establishment timeout audio track");
 
@@ -1379,7 +1379,7 @@ void test_whep_establishment_timeout()
 void test_whep_ice_activity_timeout()
 {
     boost::asio::io_context io;
-    auto stream = std::make_shared<media_stream>("live/ice-activity-timeout");
+    auto stream = std::make_shared<media_stream>("live/ice-activity-timeout", io.get_executor());
     require(stream->update_track(make_video_track()), "ice activity timeout video track");
     require(stream->update_track(make_audio_track()), "ice activity timeout audio track");
 
@@ -1433,7 +1433,7 @@ void test_whep_ice_activity_timeout()
 void test_whep_ice_lite()
 {
     boost::asio::io_context io;
-    auto stream = std::make_shared<media_stream>("live/ice");
+    auto stream = std::make_shared<media_stream>("live/ice", io.get_executor());
     require(stream->update_track(make_video_track()), "ice video track");
     require(stream->update_track(make_audio_track()), "ice audio track");
 
@@ -1476,7 +1476,7 @@ void test_whep_selected_bundle_transport()
     require(certificate != nullptr, "selected transport certificate");
     const auto check = [&io, &certificate](media_track track, const std::string& sdp, std::string_view remote_ufrag, std::uint8_t id)
     {
-        auto stream = std::make_shared<media_stream>("live/selected-transport");
+        auto stream = std::make_shared<media_stream>("live/selected-transport", io.get_executor());
         require(stream->update_track(std::move(track)), "selected transport track");
         const auto offer = parse_webrtc_offer(sdp);
         require(offer.has_value(), "selected transport offer");
@@ -1570,7 +1570,7 @@ void test_whep_dtls(codec_id video_codec)
     require(video_codec == codec_id::h264 || video_codec == codec_id::h265, "dtls video codec");
     const bool h265 = video_codec == codec_id::h265;
     boost::asio::io_context io;
-    auto stream = std::make_shared<media_stream>("live/dtls");
+    auto stream = std::make_shared<media_stream>("live/dtls", io.get_executor());
     require(stream->update_track(h265 ? make_h265_track() : make_video_track()), "dtls video track");
     require(stream->update_track(make_audio_track()), "dtls audio track");
 
