@@ -26,7 +26,7 @@ struct media_reader_state
 
 namespace
 {
-constexpr std::size_t max_gop_cache_frames = 2500;
+constexpr std::size_t max_gop_frames = 2500;
 
 void release_read_outstanding(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation)
 {
@@ -199,7 +199,7 @@ bool media_stream::update_track(media_track track)
     }
 
     const auto id = track.id;
-    gop_cache_.clear();
+    sink_replay_barrier_sequence_ = next_reader_sequence_;
     tracks_.insert_or_assign(id, std::move(track));
     publish_track_snapshot();
     if (tracks_.at(id).kind == media_kind::video)
@@ -225,25 +225,8 @@ void media_stream::publish(media_frame frame)
         return;
     }
 
-    if (track->second.kind == media_kind::video && frame.key_frame)
-    {
-        gop_cache_.clear();
-        gop_cache_.push_back(frame);
-    }
-    else if (!gop_cache_.empty())
-    {
-        if (gop_cache_.size() >= max_gop_cache_frames)
-        {
-            gop_cache_.clear();
-        }
-        else
-        {
-            gop_cache_.push_back(frame);
-        }
-    }
-
     const auto sequence = next_reader_sequence_++;
-    append_reader_history(sequence, frame, track->second);
+    append_history(sequence, frame, track->second);
     dispatch_pending_readers(sequence, frame);
     dispatch_frame(frame);
 }
@@ -255,8 +238,7 @@ void media_stream::end()
         return;
     }
 
-    gop_cache_.clear();
-    reset_reader_history();
+    reset_history();
     end_readers();
     remove_inactive_sinks();
 
@@ -292,9 +274,20 @@ void media_stream::add_sink_on_owner(std::shared_ptr<media_sink> sink)
         return;
     }
 
-    sinks_.push_back(sink);
+    std::vector<media_frame> frames;
+    if (current_gop_start_sequence_ && *current_gop_start_sequence_ >= sink_replay_barrier_sequence_)
+    {
+        for (const auto& entry : history_)
+        {
+            if (entry.sequence >= *current_gop_start_sequence_)
+            {
+                frames.push_back(entry.frame);
+            }
+        }
+    }
 
-    replay_sink(sink, tracks(), gop_cache_);
+    sinks_.push_back(sink);
+    replay_sink(sink, tracks(), std::move(frames));
 }
 
 void media_stream::remove_sink_on_owner(const media_sink* sink)
@@ -503,9 +496,9 @@ void media_stream::remove_inactive_readers()
                   });
 }
 
-void media_stream::reset_reader_history()
+void media_stream::reset_history()
 {
-    reader_history_.clear();
+    history_.clear();
     current_gop_start_sequence_.reset();
     current_gop_frames_ = 0;
 }
@@ -549,7 +542,7 @@ void media_stream::end_readers()
     }
 }
 
-void media_stream::append_reader_history(std::uint64_t sequence, const media_frame& frame, const media_track& track)
+void media_stream::append_history(std::uint64_t sequence, const media_frame& frame, const media_track& track)
 {
     if (!has_video_track())
     {
@@ -561,23 +554,23 @@ void media_stream::append_reader_history(std::uint64_t sequence, const media_fra
         if (current_gop_start_sequence_)
         {
             const auto previous_start = *current_gop_start_sequence_;
-            std::erase_if(reader_history_, [previous_start](const media_history_entry& entry) { return entry.sequence < previous_start; });
+            std::erase_if(history_, [previous_start](const media_history_entry& entry) { return entry.sequence < previous_start; });
         }
         current_gop_start_sequence_ = sequence;
         current_gop_frames_ = 0;
     }
 
-    if (!current_gop_start_sequence_ && reader_history_.empty())
+    if (!current_gop_start_sequence_ && history_.empty())
     {
         return;
     }
-    if (current_gop_frames_ >= max_gop_cache_frames)
+    if (current_gop_frames_ >= max_gop_frames)
     {
-        reset_reader_history();
+        reset_history();
         return;
     }
 
-    reader_history_.push_back(media_history_entry{.sequence = sequence, .config_version = track.config_version, .frame = frame});
+    history_.push_back(media_history_entry{.sequence = sequence, .config_version = track.config_version, .frame = frame});
     ++current_gop_frames_;
 }
 
@@ -630,12 +623,12 @@ void media_stream::dispatch_pending_readers(std::uint64_t sequence, const media_
 void media_stream::complete_reader_from_history(const std::shared_ptr<media_reader_state>& state,
                                                 media_reader_generation generation)
 {
-    if (!state->pending_read || reader_history_.empty())
+    if (!state->pending_read || history_.empty())
     {
         return;
     }
 
-    const auto first_sequence = reader_history_.front().sequence;
+    const auto first_sequence = history_.front().sequence;
     if (!state->cursor_initialized || state->cursor < first_sequence)
     {
         if (!current_gop_start_sequence_)
@@ -645,12 +638,12 @@ void media_stream::complete_reader_from_history(const std::shared_ptr<media_read
         state->cursor = *current_gop_start_sequence_;
         state->cursor_initialized = true;
     }
-    if (state->cursor < first_sequence || state->cursor > reader_history_.back().sequence)
+    if (state->cursor < first_sequence || state->cursor > history_.back().sequence)
     {
         return;
     }
 
-    auto iterator = std::ranges::find_if(reader_history_,
+    auto iterator = std::ranges::find_if(history_,
                                          [this, &state](const media_history_entry& entry)
                                          {
                                              const auto track = tracks_.find(entry.frame.track);
@@ -659,7 +652,7 @@ void media_stream::complete_reader_from_history(const std::shared_ptr<media_read
                                                     (!state->waiting_for_key_frame ||
                                                      (track->second.kind == media_kind::video && entry.frame.key_frame));
                                          });
-    if (iterator == reader_history_.end())
+    if (iterator == history_.end())
     {
         return;
     }

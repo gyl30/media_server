@@ -65,10 +65,10 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     void request_read_on_owner(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation);
     void remove_reader_on_owner(const std::shared_ptr<media_reader_state>& state);
     void remove_inactive_readers();
-    void reset_reader_history();
+    void reset_history();
     void reset_readers(track_id changed_track, media_kind kind);
     void end_readers();
-    void append_reader_history(std::uint64_t sequence, const media_frame& frame, const media_track& track);
+    void append_history(std::uint64_t sequence, const media_frame& frame, const media_track& track);
     void dispatch_pending_readers(std::uint64_t sequence, const media_frame& frame);
     void complete_reader_from_history(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation);
     void deliver_reader_frame(const std::shared_ptr<media_reader_state>& state,
@@ -85,12 +85,12 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     boost::asio::any_io_executor owner_executor_;
     std::map<track_id, media_track> tracks_;
     std::vector<std::weak_ptr<media_sink>> sinks_;
-    std::vector<media_frame> gop_cache_;
     std::vector<std::shared_ptr<media_reader_state>> readers_;
-    std::deque<media_history_entry> reader_history_;
+    std::deque<media_history_entry> history_;
     std::optional<std::uint64_t> current_gop_start_sequence_;
     std::size_t current_gop_frames_{};
     std::uint64_t next_reader_sequence_{};
+    std::uint64_t sink_replay_barrier_sequence_{};
     std::atomic<std::shared_ptr<const std::vector<media_track>>> track_snapshot_;
     std::atomic_bool ended_{};
 };
