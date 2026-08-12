@@ -3564,7 +3564,7 @@ void test_media_stream_fanout_and_reentrancy()
     io.run();
 }
 
-void test_media_stream_gop_cache()
+void test_media_stream_sink_gop_replay()
 {
     boost::asio::io_context io;
     boost::asio::post(io,
@@ -3611,7 +3611,25 @@ void test_media_stream_gop_cache()
     require(stream->update_track(make_audio_track(2)), "gop audio config change");
     auto after_config = std::make_shared<counting_sink>();
     stream->add_sink(after_config);
-    require(after_config->frames == 0, "gop cache cleared on track config change");
+    require(after_config->frames == 0, "sink replay blocked after track config change");
+
+    stream->publish(make_video_frame(1'080'000'000, false));
+    auto before_next_key_frame = std::make_shared<counting_sink>();
+    stream->add_sink(before_next_key_frame);
+    require(before_next_key_frame->frames == 0, "sink replay stays blocked before next key frame");
+
+    stream->publish(make_video_frame(2'000'000'000, true));
+    stream->publish(make_audio_frame(2'020'000'000));
+    stream->publish(make_video_frame(2'040'000'000, false));
+    auto after_next_key_frame = std::make_shared<counting_sink>();
+    stream->add_sink(after_next_key_frame);
+    require(after_next_key_frame->received_frames ==
+                std::vector<std::pair<track_id, std::int64_t>>{
+                    {video_track_id, 2'000'000'000},
+                    {audio_track_id, 2'020'000'000},
+                    {video_track_id, 2'040'000'000},
+                },
+            "sink replay resumes from next key frame after track config change");
 
     auto overflow_stream = std::make_shared<media_stream>("live/gop-overflow", io.get_executor());
     require(overflow_stream->update_track(make_video_track()), "gop overflow track");
@@ -4615,8 +4633,8 @@ int main()
     std::cout << "[pass] rtsp_output_rejects_stale_description\n";
     media_server::test_media_stream_fanout_and_reentrancy();
     std::cout << "[pass] media_stream_fanout_and_reentrancy\n";
-    media_server::test_media_stream_gop_cache();
-    std::cout << "[pass] media_stream_gop_cache\n";
+    media_server::test_media_stream_sink_gop_replay();
+    std::cout << "[pass] media_stream_sink_gop_replay\n";
     media_server::test_media_stream_sink_owner_affinity();
     std::cout << "[pass] media_stream_sink_owner_affinity\n";
     media_server::test_media_stream_cross_worker_sink_removal();
