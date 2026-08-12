@@ -49,9 +49,9 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
     void startup_flv(std::shared_ptr<media_stream> stream);
     void read_flv_client();
-    void enqueue_flv(media_reader_generation generation, std::vector<std::uint8_t> data, bool bootstrap);
-    void write_flv(media_reader_generation generation, std::vector<std::uint8_t> data);
-    void on_flv_write(media_reader_generation generation, boost::system::error_code error);
+    void enqueue_flv(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
+    void write_flv(std::uint64_t generation, std::vector<std::uint8_t> data);
+    void on_flv_write(std::uint64_t generation, boost::system::error_code error);
     void detach_flv();
     void safe_shutdown();
 
@@ -71,7 +71,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     media_reader_handle flv_reader_;
     std::vector<std::uint8_t> pending_flv_bootstrap_;
     std::array<std::uint8_t, 1> flv_read_buffer_{};
-    media_reader_generation pending_flv_generation_{};
+    std::uint64_t pending_flv_generation_{};
     bool pending_flv_bootstrap_ready_{};
     bool flv_write_in_progress_{};
     bool closed_{};

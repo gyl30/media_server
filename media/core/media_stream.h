@@ -28,10 +28,8 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
 
     void add_sink(const std::shared_ptr<media_sink>& sink);
     void remove_sink(const media_sink& sink);
-    // track_ids 为空表示动态消费全部轨道；非空集合在 reader 生命周期内保持固定。
     [[nodiscard]] media_reader_handle add_reader(const std::shared_ptr<media_reader>& reader,
-                                                 boost::asio::any_io_executor executor,
-                                                 std::vector<track_id> track_ids = {});
+                                                 boost::asio::any_io_executor executor);
     // 仅在新增轨道或实际配置变化时返回 true；只由 stream owner worker 调用。
     bool update_track(media_track track);
     // 只由 stream owner worker 调用。
@@ -59,26 +57,21 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
                      std::vector<media_frame> frames);
     void dispatch_track(const media_track& track);
     void dispatch_frame(const media_frame& frame);
-    void request_read(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation);
+    void request_read(const std::shared_ptr<media_reader_state>& state, media_reader_cursor cursor);
     void remove_reader(const std::shared_ptr<media_reader_state>& state);
     void add_reader_on_owner(const std::shared_ptr<media_reader_state>& state);
-    void request_read_on_owner(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation);
+    void request_read_on_owner(const std::shared_ptr<media_reader_state>& state, media_reader_cursor cursor);
     void remove_reader_on_owner(const std::shared_ptr<media_reader_state>& state);
     void remove_inactive_readers();
     void reset_history();
-    void reset_readers(track_id changed_track, media_kind kind);
+    void dispatch_reader_tracks(const media_track_snapshot_ptr& tracks);
     void end_readers();
     void append_history(std::uint64_t sequence, const media_frame& frame, const media_track& track);
-    void dispatch_pending_readers(std::uint64_t sequence, const media_frame& frame);
-    void complete_reader_from_history(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation);
-    void deliver_reader_frame(const std::shared_ptr<media_reader_state>& state,
-                              media_reader_generation generation,
-                              std::uint64_t sequence,
-                              media_frame frame);
-    void dispatch_reader_reset(const std::shared_ptr<media_reader_state>& state,
-                               std::vector<media_track> tracks,
-                               media_reader_generation generation);
-    void dispatch_reader_end(const std::shared_ptr<media_reader_state>& state, media_reader_generation generation);
+    void dispatch_pending_readers();
+    void complete_reader_from_history(const std::shared_ptr<media_reader_state>& state);
+    void deliver_reader_batch(const std::shared_ptr<media_reader_state>& state, media_read_batch batch);
+    void dispatch_reader_tracks(const std::shared_ptr<media_reader_state>& state, media_track_snapshot_ptr tracks);
+    void dispatch_reader_end(const std::shared_ptr<media_reader_state>& state);
     [[nodiscard]] bool has_video_track() const;
 
     std::string name_;
@@ -89,9 +82,10 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     std::deque<media_history_entry> history_;
     std::optional<std::uint64_t> current_gop_start_sequence_;
     std::size_t current_gop_frames_{};
-    std::uint64_t next_reader_sequence_{};
+    std::uint64_t next_history_sequence_{};
     std::uint64_t sink_replay_barrier_sequence_{};
-    std::atomic<std::shared_ptr<const std::vector<media_track>>> track_snapshot_;
+    std::uint64_t track_revision_{};
+    std::atomic<media_track_snapshot_ptr> track_snapshot_;
     std::atomic_bool ended_{};
 };
 

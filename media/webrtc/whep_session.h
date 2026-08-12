@@ -68,10 +68,9 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     [[nodiscard]] bool srtp_started() const noexcept;
     [[nodiscard]] const whep_rtcp_stats& rtcp_stats() const noexcept;
 
-    void on_track(media_reader_generation generation, const media_track& track) override;
-    void on_ready(media_reader_generation generation) override;
-    void on_read(media_reader_generation generation, media_frame frame) override;
-    void on_end(media_reader_generation generation) override;
+    void on_tracks(media_track_snapshot_ptr tracks) override;
+    void on_read(media_read_batch batch) override;
+    void on_end() override;
 
    private:
     void safe_shutdown();
@@ -86,7 +85,8 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void handle_dtls(std::span<const std::uint8_t> packet);
     void handle_srtp(std::span<const std::uint8_t> packet);
     bool startup_media();
-    bool start_media_read(media_reader_generation generation);
+    bool apply_tracks(const media_track_snapshot_ptr& tracks);
+    bool start_media_read();
     void send_dtls(std::span<const std::uint8_t> packet);
     void send_rtp(std::span<const std::uint8_t> packet);
     void send_rtcp(std::span<const std::uint8_t> packet);
@@ -124,8 +124,9 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::optional<int> audio_payload_type_;
     std::optional<int> audio_channel_count_;
     std::uint16_t local_port_{};
-    media_reader_generation generation_{};
-    media_reader_generation ready_generation_{};
+    media_reader_cursor reader_cursor_;
+    std::uint64_t track_revision_{};
+    bool tracks_ready_{};
     bool started_{};
     bool closed_{};
 };

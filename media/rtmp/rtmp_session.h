@@ -8,6 +8,7 @@
 #include "media/flv/flv_output_muxer.h"
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,10 +28,9 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
     void startup();
     void shutdown();
 
-    void on_track(media_reader_generation generation, const media_track& track) override;
-    void on_ready(media_reader_generation generation) override;
-    void on_read(media_reader_generation generation, media_frame frame) override;
-    void on_end(media_reader_generation generation) override;
+    void on_tracks(media_track_snapshot_ptr tracks) override;
+    void on_read(media_read_batch batch) override;
+    void on_end() override;
 
    private:
     enum class role
@@ -57,6 +57,7 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
     void on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data);
     void on_tcp_write(boost::system::error_code error, std::size_t bytes);
     void safe_shutdown();
+    void apply_tracks(const media_track_snapshot_ptr& tracks);
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     std::shared_ptr<tcp_connection> connection_;
@@ -65,13 +66,15 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
     flv_demuxer_t* demuxer_{};
     std::unique_ptr<flv_output_muxer> output_muxer_;
     media_reader_handle reader_;
-    std::vector<media_track> pending_tracks_;
+    std::map<track_id, media_track> reader_tracks_;
     rtmp_timestamp_state video_timestamp_;
     rtmp_timestamp_state audio_timestamp_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     role role_{role::none};
-    media_reader_generation generation_{};
+    media_reader_cursor reader_cursor_;
+    std::uint64_t track_revision_{};
+    bool waiting_for_key_frame_{};
     bool closed_{};
 };
 

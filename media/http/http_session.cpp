@@ -464,7 +464,7 @@ void http_session::startup_flv(std::shared_ptr<media_stream> media_stream)
 {
     const auto weak = weak_from_this();
     flv_output_ = std::make_shared<http_flv_output>(
-        [weak](media_reader_generation generation, std::vector<std::uint8_t> data, bool bootstrap)
+        [weak](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         {
             if (const auto self = weak.lock())
             {
@@ -504,7 +504,7 @@ void http_session::read_flv_client()
                             });
 }
 
-void http_session::enqueue_flv(media_reader_generation generation, std::vector<std::uint8_t> data, bool bootstrap)
+void http_session::enqueue_flv(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
 {
     if (closed_)
     {
@@ -532,7 +532,7 @@ void http_session::enqueue_flv(media_reader_generation generation, std::vector<s
     write_flv(generation, std::move(data));
 }
 
-void http_session::write_flv(media_reader_generation generation, std::vector<std::uint8_t> data)
+void http_session::write_flv(std::uint64_t generation, std::vector<std::uint8_t> data)
 {
     flv_write_in_progress_ = true;
     const auto buffer = std::make_shared<std::vector<std::uint8_t>>(std::move(data));
@@ -549,7 +549,7 @@ void http_session::write_flv(media_reader_generation generation, std::vector<std
                              });
 }
 
-void http_session::on_flv_write(media_reader_generation generation, boost::system::error_code error)
+void http_session::on_flv_write(std::uint64_t generation, boost::system::error_code error)
 {
     if (closed_)
     {
