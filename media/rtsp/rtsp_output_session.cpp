@@ -105,21 +105,71 @@ void rtsp_output_session::startup()
         });
 }
 
-void rtsp_output_session::on_track(media_reader_generation generation, const media_track& track)
+void rtsp_output_session::on_tracks(media_track_snapshot_ptr tracks)
 {
-    if (generation_ != generation)
-    {
-        generation_ = generation;
-        generation_tracks_.clear();
-    }
-    generation_tracks_.emplace(track.id, track.config_version);
-}
-
-void rtsp_output_session::on_ready(media_reader_generation generation)
-{
-    if (closed_ || !playing_ || generation_ != generation || muxer_ == nullptr)
+    if (closed_ || !playing_ || muxer_ == nullptr)
     {
         return;
+    }
+
+    if (!apply_tracks(tracks))
+    {
+        shutdown();
+        return;
+    }
+    reader_handle().async_read(reader_cursor_);
+}
+
+void rtsp_output_session::on_read(media_read_batch batch)
+{
+    if (closed_ || !playing_ || muxer_ == nullptr)
+    {
+        return;
+    }
+
+    reader_cursor_ = batch.next_cursor;
+    if (!apply_tracks(batch.tracks))
+    {
+        shutdown();
+        return;
+    }
+
+    for (auto& entry : batch.entries)
+    {
+        const auto iterator = tracks_.find(entry.frame.track);
+        if (iterator == tracks_.end() || !entry.frame.payload || !iterator->second.setup || iterator->second.media_id < 0 ||
+            iterator->second.config_version != entry.config_version)
+        {
+            continue;
+        }
+
+        const auto& state = iterator->second;
+        const auto result = rtsp_muxer_input(muxer_,
+                                             state.media_id,
+                                             ns_to_milliseconds(entry.frame.pts_ns),
+                                             ns_to_milliseconds(entry.frame.dts_ns),
+                                             entry.frame.payload->data(),
+                                             static_cast<int>(entry.frame.payload->size()),
+                                             entry.frame.key_frame ? 1 : 0);
+        if (result < 0)
+        {
+            spdlog::error("rtsp output mux failed result {}", result);
+        }
+    }
+
+    if (!closed_)
+    {
+        reader_handle().async_read(reader_cursor_);
+    }
+}
+
+void rtsp_output_session::on_end() { shutdown(); }
+
+bool rtsp_output_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+{
+    if (!tracks || tracks->revision <= track_revision_)
+    {
+        return true;
     }
 
     for (const auto& [id, state] : tracks_)
@@ -128,47 +178,16 @@ void rtsp_output_session::on_ready(media_reader_generation generation)
         {
             continue;
         }
-        const auto iterator = generation_tracks_.find(id);
-        if (iterator == generation_tracks_.end() || iterator->second != state.config_version)
+        const auto current = std::ranges::find_if(tracks->tracks, [id](const media_track& track) { return track.id == id; });
+        if (current == tracks->tracks.end() || current->config_version != state.config_version)
         {
-            shutdown();
-            return;
-        }
-    }
-    reader_handle().async_read(generation);
-}
-
-void rtsp_output_session::on_read(media_reader_generation generation, media_frame frame)
-{
-    if (closed_ || !playing_ || generation_ != generation || muxer_ == nullptr)
-    {
-        return;
-    }
-
-    const auto iterator = tracks_.find(frame.track);
-    if (iterator != tracks_.end() && frame.payload && iterator->second.setup && iterator->second.media_id >= 0)
-    {
-        const auto& state = iterator->second;
-        const auto result = rtsp_muxer_input(muxer_,
-                                             state.media_id,
-                                             ns_to_milliseconds(frame.pts_ns),
-                                             ns_to_milliseconds(frame.dts_ns),
-                                             frame.payload->data(),
-                                             static_cast<int>(frame.payload->size()),
-                                             frame.key_frame ? 1 : 0);
-        if (result < 0)
-        {
-            spdlog::error("rtsp output mux failed result {}", result);
+            return false;
         }
     }
 
-    if (!closed_ && generation_ == generation)
-    {
-        reader_handle().async_read(generation);
-    }
+    track_revision_ = tracks->revision;
+    return true;
 }
-
-void rtsp_output_session::on_end(media_reader_generation) { shutdown(); }
 
 int rtsp_output_session::send_callback(void* param, const void* data, std::size_t bytes)
 {
@@ -262,6 +281,8 @@ void rtsp_output_session::safe_shutdown()
     closed_ = true;
     reader_.remove();
     reader_ = {};
+    reader_cursor_.reset();
+    track_revision_ = 0;
     connection_->shutdown();
     stream_.reset();
 
@@ -444,15 +465,7 @@ int rtsp_output_session::on_play(std::string_view uri, std::string_view session,
         return result;
     }
     playing_ = true;
-    std::vector<track_id> setup_tracks;
-    for (const auto& [id, state] : tracks_)
-    {
-        if (state.setup)
-        {
-            setup_tracks.push_back(id);
-        }
-    }
-    reader_ = stream_->add_reader(shared_from_this(), connection_->socket().get_executor(), std::move(setup_tracks));
+    reader_ = stream_->add_reader(shared_from_this(), connection_->socket().get_executor());
     return result;
 }
 

@@ -5,6 +5,7 @@
 #include "media/flv/flv_output_muxer.h"
 
 #include <functional>
+#include <map>
 #include <span>
 #include <vector>
 
@@ -18,30 +19,37 @@ namespace media_server
 class http_flv_output final : public media_reader
 {
    public:
-    using write_handler = std::function<void(media_reader_generation, std::vector<std::uint8_t>, bool)>;
+    using write_handler = std::function<void(std::uint64_t, std::vector<std::uint8_t>, bool)>;
     using end_handler = std::function<void()>;
 
     http_flv_output(write_handler on_write, end_handler on_end);
     ~http_flv_output() override;
 
-    void on_track(media_reader_generation generation, const media_track& track) override;
-    void on_ready(media_reader_generation generation) override;
-    void on_read(media_reader_generation generation, media_frame frame) override;
-    void on_end(media_reader_generation generation) override;
-    void write_complete(media_reader_generation generation);
+    void on_tracks(media_track_snapshot_ptr tracks) override;
+    void on_read(media_read_batch batch) override;
+    void on_end() override;
+    void write_complete(std::uint64_t generation);
 
    private:
     static int writer_callback(void* param, const flv_vec_t* vectors, int count);
+    bool apply_tracks(const media_track_snapshot_ptr& tracks);
+    void process_batch();
     void finish();
 
     write_handler on_write_;
     end_handler on_end_;
     std::vector<track_id> track_ids_;
-    std::vector<media_track> pending_tracks_;
+    std::map<track_id, media_track> reader_tracks_;
+    media_read_batch batch_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
     flv_output_muxer muxer_;
-    media_reader_generation generation_{};
+    std::uint64_t generation_{};
+    media_reader_cursor reader_cursor_;
+    std::uint64_t track_revision_{};
+    std::size_t batch_index_{};
+    bool batch_active_{};
+    bool waiting_for_key_frame_{};
     bool ended_{};
 };
 }    // namespace media_server

@@ -67,45 +67,87 @@ void rtmp_session::startup()
         [self](boost::system::error_code error, std::size_t bytes) { self->on_tcp_write(error, bytes); });
 }
 
-void rtmp_session::on_track(media_reader_generation generation, const media_track& track)
+void rtmp_session::on_tracks(media_track_snapshot_ptr tracks)
 {
-    if (generation_ != generation)
-    {
-        generation_ = generation;
-        pending_tracks_.clear();
-    }
-    pending_tracks_.push_back(track);
-}
-
-void rtmp_session::on_ready(media_reader_generation generation)
-{
-    if (closed_ || role_ != role::player || generation_ != generation || !output_muxer_)
+    if (closed_ || role_ != role::player || !output_muxer_)
     {
         return;
     }
 
-    for (const auto& track : pending_tracks_)
+    apply_tracks(tracks);
+    if (!closed_)
     {
+        reader_handle().async_read(reader_cursor_);
+    }
+}
+
+void rtmp_session::on_read(media_read_batch batch)
+{
+    if (closed_ || role_ != role::player || !output_muxer_)
+    {
+        return;
+    }
+
+    reader_cursor_ = batch.next_cursor;
+    apply_tracks(batch.tracks);
+    if (closed_)
+    {
+        return;
+    }
+
+    for (auto& entry : batch.entries)
+    {
+        const auto track = reader_tracks_.find(entry.frame.track);
+        if (track == reader_tracks_.end() || track->second.config_version != entry.config_version)
+        {
+            continue;
+        }
+
+        if (waiting_for_key_frame_)
+        {
+            if (track->second.kind != media_kind::video || !entry.frame.key_frame)
+            {
+                continue;
+            }
+            waiting_for_key_frame_ = false;
+        }
+        output_muxer_->on_frame(entry.frame);
+    }
+
+    reader_handle().async_read(reader_cursor_);
+}
+
+void rtmp_session::on_end() { shutdown(); }
+
+void rtmp_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+{
+    if (!tracks || tracks->revision <= track_revision_)
+    {
+        return;
+    }
+
+    bool video_changed = false;
+    if (track_revision_ != 0)
+    {
+        for (const auto& track : tracks->tracks)
+        {
+            const auto current = reader_tracks_.find(track.id);
+            if (current != reader_tracks_.end() && track.kind == media_kind::video &&
+                current->second.config_version != track.config_version)
+            {
+                video_changed = true;
+            }
+        }
+    }
+
+    reader_tracks_.clear();
+    for (const auto& track : tracks->tracks)
+    {
+        reader_tracks_.emplace(track.id, track);
         output_muxer_->on_track(track);
     }
-    pending_tracks_.clear();
-    reader_handle().async_read(generation);
-}
-
-void rtmp_session::on_read(media_reader_generation generation, media_frame frame)
-{
-    if (closed_ || role_ != role::player || generation_ != generation || !output_muxer_)
-    {
-        return;
-    }
-    output_muxer_->on_frame(frame);
-    reader_handle().async_read(generation);
-}
-
-void rtmp_session::on_end(media_reader_generation generation)
-{
-    static_cast<void>(generation);
-    shutdown();
+    track_revision_ = tracks->revision;
+    waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
 }
 
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
@@ -390,6 +432,10 @@ void rtmp_session::safe_shutdown()
     closed_ = true;
     reader_.remove();
     reader_ = {};
+    reader_cursor_.reset();
+    reader_tracks_.clear();
+    track_revision_ = 0;
+    waiting_for_key_frame_ = false;
     connection_->shutdown();
     if (role_ == role::publisher && stream_)
     {

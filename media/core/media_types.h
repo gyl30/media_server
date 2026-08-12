@@ -36,7 +36,7 @@ struct media_track
     // H.264 为 Annex-B SPS/PPS；H.265 为 Annex-B VPS/SPS/PPS；AAC 为 AudioSpecificConfig。
     std::vector<std::uint8_t> codec_config;
 
-    // 由 media_stream 维护，同一 stream generation 内实际配置变化时递增。
+    // 由 media_stream 维护，同一 track 实际配置变化时递增。
     std::uint64_t config_version{};
 };
 

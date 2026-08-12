@@ -27,94 +27,142 @@ http_flv_output::~http_flv_output()
     }
 }
 
-void http_flv_output::on_track(media_reader_generation generation, const media_track& track)
+void http_flv_output::on_tracks(media_track_snapshot_ptr tracks)
 {
     if (ended_)
     {
         return;
     }
-    if (generation_ != generation)
-    {
-        generation_ = generation;
-        pending_tracks_.clear();
-    }
-    pending_tracks_.push_back(track);
+    static_cast<void>(apply_tracks(tracks));
 }
 
-void http_flv_output::on_ready(media_reader_generation generation)
+void http_flv_output::on_read(media_read_batch batch)
+{
+    if (ended_)
+    {
+        return;
+    }
+
+    reader_cursor_ = batch.next_cursor;
+    batch_ = std::move(batch);
+    batch_index_ = 0;
+    batch_active_ = true;
+    if (apply_tracks(batch_.tracks))
+    {
+        return;
+    }
+    process_batch();
+}
+
+void http_flv_output::on_end() { finish(); }
+
+void http_flv_output::write_complete(std::uint64_t generation)
 {
     if (ended_ || generation_ != generation)
     {
         return;
+    }
+    process_batch();
+}
+
+bool http_flv_output::apply_tracks(const media_track_snapshot_ptr& tracks)
+{
+    if (!tracks || tracks->revision <= track_revision_)
+    {
+        return false;
     }
 
     std::vector<track_id> track_ids;
     bool has_audio = false;
     bool has_video = false;
-    track_ids.reserve(pending_tracks_.size());
-    for (const auto& track : pending_tracks_)
+    bool video_changed = false;
+    track_ids.reserve(tracks->tracks.size());
+    for (const auto& track : tracks->tracks)
     {
         track_ids.push_back(track.id);
         has_audio = has_audio || track.kind == media_kind::audio;
         has_video = has_video || track.kind == media_kind::video;
+        const auto current = reader_tracks_.find(track.id);
+        video_changed = video_changed ||
+                        (current != reader_tracks_.end() && track.kind == media_kind::video &&
+                         current->second.config_version != track.config_version);
     }
 
     if (writer_ != nullptr && track_ids != track_ids_)
     {
         finish();
-        return;
+        return true;
     }
 
+    track_ids_ = std::move(track_ids);
+    reader_tracks_.clear();
     output_buffer_.clear();
     if (writer_ == nullptr)
     {
-        track_ids_ = std::move(track_ids);
         writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_output::writer_callback, this);
     }
-    for (const auto& track : pending_tracks_)
+    for (const auto& track : tracks->tracks)
     {
+        reader_tracks_.emplace(track.id, track);
         muxer_.on_track(track);
     }
-    pending_tracks_.clear();
 
+    track_revision_ = tracks->revision;
+    waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
+    ++generation_;
     if (on_write_)
     {
-        on_write_(generation, std::move(output_buffer_), true);
+        on_write_(generation_, std::move(output_buffer_), true);
     }
+    return true;
 }
 
-void http_flv_output::on_read(media_reader_generation generation, media_frame frame)
+void http_flv_output::process_batch()
 {
-    if (ended_ || generation_ != generation)
+    if (ended_)
     {
         return;
     }
-
-    output_buffer_.clear();
-    muxer_.on_frame(frame);
-    if (output_buffer_.empty())
+    if (!batch_active_)
     {
-        reader_handle().async_read(generation);
+        reader_handle().async_read(reader_cursor_);
         return;
     }
-    if (on_write_)
-    {
-        on_write_(generation, std::move(output_buffer_), false);
-    }
-}
 
-void http_flv_output::on_end(media_reader_generation generation)
-{
-    static_cast<void>(generation);
-    finish();
-}
-
-void http_flv_output::write_complete(media_reader_generation generation)
-{
-    if (!ended_ && generation_ == generation)
+    while (batch_index_ < batch_.entries.size())
     {
-        reader_handle().async_read(generation);
+        auto& entry = batch_.entries[batch_index_++];
+        const auto track = reader_tracks_.find(entry.frame.track);
+        if (track == reader_tracks_.end() || track->second.config_version != entry.config_version)
+        {
+            continue;
+        }
+        if (waiting_for_key_frame_)
+        {
+            if (track->second.kind != media_kind::video || !entry.frame.key_frame)
+            {
+                continue;
+            }
+            waiting_for_key_frame_ = false;
+        }
+
+        output_buffer_.clear();
+        muxer_.on_frame(entry.frame);
+        if (output_buffer_.empty())
+        {
+            continue;
+        }
+        if (on_write_)
+        {
+            on_write_(generation_, std::move(output_buffer_), false);
+        }
+        return;
     }
+
+    batch_ = {};
+    batch_index_ = 0;
+    batch_active_ = false;
+    reader_handle().async_read(reader_cursor_);
 }
 
 void http_flv_output::finish()
