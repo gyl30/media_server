@@ -61,11 +61,6 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         spdlog::error("webrtc whep startup rejected invalid state");
         return whep_session_startup_error::internal_error;
     }
-    if (stream_->ended())
-    {
-        spdlog::debug("webrtc whep startup rejected ended stream");
-        return whep_session_startup_error::stream_not_ready;
-    }
     const auto source_tracks = stream_->tracks();
     if (source_tracks.empty())
     {

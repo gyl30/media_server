@@ -1122,11 +1122,6 @@ void test_whep_session_startup_errors()
 
     require(make_session(stream, nullptr)->startup(*offer) == whep_session_startup_error::internal_error, "startup errors internal error");
 
-    auto ended_stream = std::make_shared<media_stream>("live/startup-errors-ended", io.get_executor());
-    require(ended_stream->update_track(make_video_track()), "startup errors ended video track");
-    ended_stream->end();
-    require(make_session(ended_stream, certificate)->startup(*offer) == whep_session_startup_error::stream_not_ready, "startup errors stream not ready");
-
     auto empty_stream = std::make_shared<media_stream>("live/startup-errors-empty", io.get_executor());
     require(make_session(empty_stream, certificate)->startup(*offer) == whep_session_startup_error::stream_not_ready,
             "startup errors stream without tracks");
@@ -1174,10 +1169,10 @@ void test_whep_session_lifecycle()
     const auto third = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
     require(third.error == whep_create_error::none, "whep recreate viewer");
 
+    registry.remove(*stream);
     stream->end();
     drain_io(io);
     require(!whep.remove(third.session_id), "whep source end releases session");
-    registry.remove(*stream);
 
     auto replacement = std::make_shared<media_stream>("live/test", io.get_executor());
     require(replacement->update_track(make_video_track()), "whep replacement video track");

@@ -278,17 +278,17 @@ int rtmp_session::on_publish(std::string app, std::string stream)
 
     stream_name_ = make_stream_name(app, stream);
     stream_ = std::make_shared<media_stream>(stream_name_, connection_->socket().get_executor());
-    if (!registry_.add(stream_))
-    {
-        spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
-        stream_.reset();
-        return -1;
-    }
-
     demuxer_ = flv_demuxer_create(&rtmp_session::demux_callback, this);
     if (demuxer_ == nullptr)
     {
-        registry_.remove(*stream_);
+        stream_.reset();
+        return -1;
+    }
+    if (!registry_.add(stream_))
+    {
+        spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
+        flv_demuxer_destroy(demuxer_);
+        demuxer_ = nullptr;
         stream_.reset();
         return -1;
     }
@@ -439,8 +439,8 @@ void rtmp_session::safe_shutdown()
     connection_->shutdown();
     if (role_ == role::publisher && stream_)
     {
-        stream_->end();
         registry_.remove(*stream_);
+        stream_->end();
     }
     stream_.reset();
     output_muxer_.reset();
