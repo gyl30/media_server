@@ -157,6 +157,7 @@ add_library(media_core STATIC
     media/net/io_context_pool.cpp
     media/net/tcp_connection.cpp
     media/net/tcp_listener.cpp
+    media/net/udp_socket.cpp
     media/flv/flv_output_muxer.cpp
     media/hls/hls_output.cpp
     media/hls/hls_service.cpp
