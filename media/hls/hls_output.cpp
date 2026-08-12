@@ -44,10 +44,7 @@ void hls_output::on_track(const media_track& track)
     {
         finish_segment(last_pts_ns_);
     }
-    else
-    {
-        recreate_muxer();
-    }
+    recreate_muxer();
 
     segment_start_pts_ns_.reset();
     waiting_for_key_frame_ = has_video_;
@@ -90,6 +87,7 @@ void hls_output::on_frame(const media_frame& frame)
     if (segment_boundary && !current_segment_.empty())
     {
         finish_segment(frame.pts_ns);
+        recreate_muxer();
         segment_start_pts_ns_ = frame.pts_ns;
     }
 
@@ -121,6 +119,12 @@ void hls_output::on_end()
     if (!current_segment_.empty())
     {
         finish_segment(last_pts_ns_);
+    }
+    if (muxer_ != nullptr)
+    {
+        mpeg_ts_destroy(muxer_);
+        muxer_ = nullptr;
+        stream_ids_.clear();
     }
     ended_at_ = std::chrono::steady_clock::now();
 }
@@ -246,7 +250,6 @@ void hls_output::finish_segment(std::int64_t end_pts_ns)
         segments_.pop_front();
     }
 
-    recreate_muxer();
 }
 
 int hls_output::add_track_to_muxer(const media_track& track)
