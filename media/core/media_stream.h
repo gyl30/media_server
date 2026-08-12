@@ -27,7 +27,6 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     [[nodiscard]] std::vector<media_track> tracks() const;
 
     void add_sink(const std::shared_ptr<media_sink>& sink);
-    void remove_sink(const media_sink& sink);
     [[nodiscard]] media_reader_handle add_reader(const std::shared_ptr<media_reader>& reader,
                                                  boost::asio::any_io_executor executor);
     // 仅在新增轨道或实际配置变化时返回 true；只由 stream owner worker 调用。
@@ -48,15 +47,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     friend class media_reader_handle;
 
     void add_sink_on_owner(std::shared_ptr<media_sink> sink);
-    void remove_sink_on_owner(const media_sink* sink);
-    void remove_inactive_sinks();
     void publish_track_snapshot();
-    [[nodiscard]] bool has_sink(const media_sink& sink) const;
-    void replay_sink(const std::shared_ptr<media_sink>& sink,
-                     std::vector<media_track> tracks,
-                     std::vector<media_frame> frames);
-    void dispatch_track(const media_track& track);
-    void dispatch_frame(const media_frame& frame);
     void request_read(const std::shared_ptr<media_reader_state>& state, media_reader_cursor cursor);
     void remove_reader(const std::shared_ptr<media_reader_state>& state);
     void add_reader_on_owner(const std::shared_ptr<media_reader_state>& state);
@@ -77,7 +68,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     std::string name_;
     boost::asio::any_io_executor owner_executor_;
     std::map<track_id, media_track> tracks_;
-    std::vector<std::weak_ptr<media_sink>> sinks_;
+    std::shared_ptr<media_sink> sink_;
     std::vector<std::shared_ptr<media_reader_state>> readers_;
     std::deque<media_history_entry> history_;
     std::optional<std::uint64_t> current_gop_start_sequence_;

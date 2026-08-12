@@ -101,26 +101,7 @@ void media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
     {
         return;
     }
-    const std::weak_ptr<media_sink> weak_sink = sink;
-    boost::asio::dispatch(owner_executor_,
-                          [self, weak_sink]()
-                      {
-                          if (auto current = weak_sink.lock())
-                          {
-                              self->add_sink_on_owner(std::move(current));
-                          }
-                      });
-}
-
-void media_stream::remove_sink(const media_sink& sink)
-{
-    const auto self = weak_from_this().lock();
-    if (!self)
-    {
-        return;
-    }
-    const auto* sink_address = &sink;
-    boost::asio::dispatch(owner_executor_, [self, sink_address]() { self->remove_sink_on_owner(sink_address); });
+    boost::asio::dispatch(owner_executor_, [self, sink]() { self->add_sink_on_owner(sink); });
 }
 
 media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader,
@@ -179,7 +160,10 @@ bool media_stream::update_track(media_track track)
         current_gop_frames_ = 0;
     }
     dispatch_reader_tracks(track_snapshot_.load(std::memory_order_acquire));
-    dispatch_track(tracks_.at(id));
+    if (sink_)
+    {
+        sink_->on_track(tracks_.at(id));
+    }
     return true;
 }
 
@@ -199,7 +183,10 @@ void media_stream::publish(media_frame frame)
     const auto sequence = next_history_sequence_++;
     append_history(sequence, frame, track->second);
     dispatch_pending_readers();
-    dispatch_frame(frame);
+    if (sink_)
+    {
+        sink_->on_frame(frame);
+    }
 }
 
 void media_stream::end()
@@ -211,21 +198,9 @@ void media_stream::end()
 
     reset_history();
     end_readers();
-    remove_inactive_sinks();
 
-    std::vector<std::shared_ptr<media_sink>> sinks;
-    sinks.reserve(sinks_.size());
-    for (const auto& weak_sink : sinks_)
-    {
-        if (auto sink = weak_sink.lock())
-        {
-            sinks.push_back(std::move(sink));
-        }
-    }
-
-    sinks_.clear();
-
-    for (const auto& sink : sinks)
+    auto sink = std::move(sink_);
+    if (sink)
     {
         sink->on_end();
     }
@@ -239,8 +214,7 @@ void media_stream::add_sink_on_owner(std::shared_ptr<media_sink> sink)
         return;
     }
 
-    remove_inactive_sinks();
-    if (has_sink(*sink))
+    if (sink_)
     {
         return;
     }
@@ -257,27 +231,16 @@ void media_stream::add_sink_on_owner(std::shared_ptr<media_sink> sink)
         }
     }
 
-    sinks_.push_back(sink);
-    replay_sink(sink, tracks(), std::move(frames));
-}
-
-void media_stream::remove_sink_on_owner(const media_sink* sink)
-{
-    if (sink != nullptr)
+    sink_ = std::move(sink);
+    for (const auto& [id, track] : tracks_)
     {
-        std::erase_if(sinks_,
-                      [sink](const std::weak_ptr<media_sink>& weak_sink)
-                      {
-                          const auto current = weak_sink.lock();
-                          return !current || current.get() == sink;
-                      });
+        static_cast<void>(id);
+        sink_->on_track(track);
     }
-    remove_inactive_sinks();
-}
-
-void media_stream::remove_inactive_sinks()
-{
-    std::erase_if(sinks_, [](const std::weak_ptr<media_sink>& sink) { return sink.expired(); });
+    for (const auto& frame : frames)
+    {
+        sink_->on_frame(frame);
+    }
 }
 
 void media_stream::publish_track_snapshot()
@@ -291,85 +254,6 @@ void media_stream::publish_track_snapshot()
         snapshot->tracks.push_back(track);
     }
     track_snapshot_.store(std::move(snapshot), std::memory_order_release);
-}
-
-bool media_stream::has_sink(const media_sink& sink) const
-{
-    for (const auto& weak_sink : sinks_)
-    {
-        const auto current = weak_sink.lock();
-        if (current && current.get() == &sink)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-void media_stream::replay_sink(const std::shared_ptr<media_sink>& sink,
-                               std::vector<media_track> tracks,
-                               std::vector<media_frame> frames)
-{
-    for (const auto& track : tracks)
-    {
-        if (ended() || !has_sink(*sink))
-        {
-            return;
-        }
-        const auto current = tracks_.find(track.id);
-        if (current == tracks_.end() || current->second.config_version != track.config_version)
-        {
-            continue;
-        }
-        sink->on_track(current->second);
-    }
-    for (const auto& frame : frames)
-    {
-        if (ended() || !has_sink(*sink))
-        {
-            return;
-        }
-        sink->on_frame(frame);
-    }
-}
-
-void media_stream::dispatch_track(const media_track& track)
-{
-    const auto id = track.id;
-    const auto config_version = track.config_version;
-    const auto snapshot = sinks_;
-    for (const auto& weak_sink : snapshot)
-    {
-        const auto current = tracks_.find(id);
-        if (current == tracks_.end() || current->second.config_version != config_version)
-        {
-            return;
-        }
-        if (const auto sink = weak_sink.lock(); sink && has_sink(*sink))
-        {
-            sink->on_track(current->second);
-            if (ended())
-            {
-                return;
-            }
-        }
-    }
-}
-
-void media_stream::dispatch_frame(const media_frame& frame)
-{
-    const auto snapshot = sinks_;
-    for (const auto& weak_sink : snapshot)
-    {
-        if (const auto sink = weak_sink.lock(); sink && has_sink(*sink))
-        {
-            sink->on_frame(frame);
-            if (ended())
-            {
-                return;
-            }
-        }
-    }
 }
 
 void media_stream::request_read(const std::shared_ptr<media_reader_state>& state, media_reader_cursor cursor)
