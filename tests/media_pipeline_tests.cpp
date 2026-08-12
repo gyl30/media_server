@@ -7,6 +7,7 @@
 #include "media/net/tcp_connection.h"
 #include "media/net/io_context_pool.h"
 #include "media/net/tcp_listener.h"
+#include "media/net/udp_socket.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_output_session.h"
@@ -1692,6 +1693,208 @@ void test_tcp_connection_shutdown_discards_pending_writes()
     require(weak_connection.expired(), "tcp shutdown releases connection without draining writes");
     boost::system::error_code error;
     client.close(error);
+}
+
+void test_udp_socket_receive_and_send()
+{
+    boost::asio::io_context io;
+    auto socket = std::make_shared<udp_socket>(io.get_executor());
+    boost::asio::ip::udp::socket peer(io, {boost::asio::ip::address_v4::loopback(), 0});
+    std::vector<std::uint8_t> received;
+    boost::asio::ip::udp::endpoint source;
+    boost::system::error_code read_error;
+    boost::system::error_code write_error;
+    const std::vector<std::uint8_t> inbound{1, 2, 3, 4};
+    const std::vector<std::uint8_t> outbound{5, 6, 7, 8};
+
+    require(socket->startup(
+                boost::asio::ip::address_v4::any(),
+                [&](boost::system::error_code error,
+                    std::span<const std::uint8_t> packet,
+                    const boost::asio::ip::udp::endpoint& endpoint)
+                {
+                    read_error = error;
+                    received.assign(packet.begin(), packet.end());
+                    source = endpoint;
+                },
+                [&](boost::system::error_code error, std::size_t, const boost::asio::ip::udp::endpoint&) { write_error = error; }),
+            "udp socket startup");
+
+    std::array<std::uint8_t, 32> peer_buffer{};
+    boost::asio::ip::udp::endpoint sender;
+    std::vector<std::uint8_t> peer_received;
+    peer.async_receive_from(boost::asio::buffer(peer_buffer),
+                            sender,
+                            [&](boost::system::error_code error, std::size_t bytes)
+                            {
+                                require(!error, "udp socket peer receive");
+                                peer_received.assign(peer_buffer.begin(), peer_buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
+                            });
+
+    peer.send_to(boost::asio::buffer(inbound), {boost::asio::ip::address_v4::loopback(), socket->local_port()});
+    socket->send(outbound, {boost::asio::ip::address_v4::loopback(), peer.local_endpoint().port()});
+    io.run_for(std::chrono::seconds(1));
+
+    require(!read_error && received == inbound, "udp socket receive payload");
+    require(source.address() == boost::asio::ip::address_v4::loopback() && source.port() == peer.local_endpoint().port(),
+            "udp socket receive endpoint");
+    require(!write_error && peer_received == outbound, "udp socket send payload");
+
+    socket->shutdown();
+    io.restart();
+    io.run();
+}
+
+void test_udp_socket_multi_endpoint_queue()
+{
+    boost::asio::io_context io;
+    auto socket = std::make_shared<udp_socket>(io.get_executor());
+    require(socket->startup(boost::asio::ip::address_v4::any(), {}, {}), "udp multi endpoint startup");
+
+    boost::asio::ip::udp::socket first(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket second(io, {boost::asio::ip::address_v4::loopback(), 0});
+    std::array<std::uint8_t, 16> first_buffer{};
+    std::array<std::uint8_t, 16> second_buffer{};
+    boost::asio::ip::udp::endpoint first_sender;
+    boost::asio::ip::udp::endpoint second_sender;
+    std::vector<std::uint8_t> first_received;
+    std::vector<std::uint8_t> second_received;
+
+    std::function<void()> receive_first;
+    receive_first = [&]()
+    {
+        first.async_receive_from(boost::asio::buffer(first_buffer),
+                                 first_sender,
+                                 [&](boost::system::error_code error, std::size_t bytes)
+                                 {
+                                     require(!error, "udp first endpoint receive");
+                                     first_received.insert(first_received.end(), first_buffer.begin(), first_buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
+                                     if (first_received.size() < 2)
+                                     {
+                                         receive_first();
+                                     }
+                                 });
+    };
+    receive_first();
+    second.async_receive_from(boost::asio::buffer(second_buffer),
+                              second_sender,
+                              [&](boost::system::error_code error, std::size_t bytes)
+                              {
+                                  require(!error, "udp second endpoint receive");
+                                  second_received.assign(second_buffer.begin(), second_buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
+                              });
+
+    const boost::asio::ip::udp::endpoint first_endpoint{boost::asio::ip::address_v4::loopback(), first.local_endpoint().port()};
+    const boost::asio::ip::udp::endpoint second_endpoint{boost::asio::ip::address_v4::loopback(), second.local_endpoint().port()};
+    socket->send({0xa1}, first_endpoint);
+    socket->send({0xb1}, second_endpoint);
+    socket->send({0xa2}, first_endpoint);
+    io.run_for(std::chrono::seconds(1));
+
+    require(first_received == std::vector<std::uint8_t>({0xa1, 0xa2}), "udp queued endpoint remains fixed first");
+    require(second_received == std::vector<std::uint8_t>({0xb1}), "udp queued endpoint remains fixed second");
+
+    socket->shutdown();
+    io.restart();
+    io.run();
+}
+
+void test_udp_socket_write_callback_reentrant_send()
+{
+    boost::asio::io_context io;
+    auto socket = std::make_shared<udp_socket>(io.get_executor());
+    boost::asio::ip::udp::socket receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
+    const boost::asio::ip::udp::endpoint receiver_endpoint{boost::asio::ip::address_v4::loopback(), receiver.local_endpoint().port()};
+    std::array<std::uint8_t, 16> buffer{};
+    boost::asio::ip::udp::endpoint sender;
+    std::vector<std::uint8_t> received;
+    int write_count = 0;
+
+    std::function<void()> receive_next;
+    receive_next = [&]()
+    {
+        receiver.async_receive_from(boost::asio::buffer(buffer),
+                                    sender,
+                                    [&](boost::system::error_code error, std::size_t bytes)
+                                    {
+                                        if (error)
+                                        {
+                                            return;
+                                        }
+                                        received.insert(received.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
+                                        if (received.size() < 3)
+                                        {
+                                            receive_next();
+                                        }
+                                    });
+    };
+    receive_next();
+
+    require(socket->startup(boost::asio::ip::address_v4::any(), {},
+                            [&](boost::system::error_code error, std::size_t, const boost::asio::ip::udp::endpoint&)
+                            {
+                                require(!error, "udp reentrant write result");
+                                ++write_count;
+                                if (write_count == 1)
+                                {
+                                    socket->send({0xb1}, receiver_endpoint);
+                                }
+                            }),
+            "udp reentrant startup");
+    socket->send({0xa1}, receiver_endpoint);
+    io.run_for(std::chrono::seconds(1));
+
+    require(write_count == 2, "udp reentrant send completes once per datagram");
+    require(received == std::vector<std::uint8_t>({0xa1, 0xb1}), "udp reentrant send has no duplicate datagram");
+
+    boost::system::error_code error;
+    receiver.cancel(error);
+    socket->shutdown();
+    io.restart();
+    io.run();
+}
+
+void test_udp_socket_error_and_shutdown_lifecycle()
+{
+    {
+        boost::asio::io_context io;
+        auto socket = std::make_shared<udp_socket>(io.get_executor());
+        boost::system::error_code write_error;
+        require(socket->startup(boost::asio::ip::address_v4::any(), {},
+                                [&](boost::system::error_code error, std::size_t, const boost::asio::ip::udp::endpoint&)
+                                {
+                                    write_error = error;
+                                    socket->shutdown();
+                                }),
+                "udp error startup");
+        socket->send({0x01}, {boost::asio::ip::address_v6::loopback(), 9});
+        io.run();
+        require(static_cast<bool>(write_error), "udp socket reports write error");
+    }
+
+    {
+        boost::asio::io_context io;
+        auto socket = std::make_shared<udp_socket>(io.get_executor());
+        int read_callback_count = 0;
+        int write_callback_count = 0;
+        require(socket->startup(
+                    boost::asio::ip::address_v4::any(),
+                    [&](boost::system::error_code, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+                    { ++read_callback_count; },
+                    [&](boost::system::error_code, std::size_t, const boost::asio::ip::udp::endpoint&) { ++write_callback_count; }),
+                "udp shutdown startup");
+        const std::weak_ptr<udp_socket> weak_socket = socket;
+        socket->send(std::vector<std::uint8_t>(1200, 0x5a), {boost::asio::ip::address_v4::loopback(), 9});
+        socket->send(std::vector<std::uint8_t>(1200, 0x5b), {boost::asio::ip::address_v4::loopback(), 9});
+        socket->shutdown();
+        socket->shutdown();
+        socket.reset();
+        require(!weak_socket.expired(), "udp shutdown keeps self until owner cleanup");
+        io.run();
+        require(read_callback_count == 0, "udp shutdown suppresses receive cancellation callback");
+        require(write_callback_count <= 1, "udp shutdown discards queued datagram without draining");
+        require(weak_socket.expired(), "udp shutdown releases pending operations");
+    }
 }
 
 void test_tcp_listener_worker_affinity()
@@ -4318,6 +4521,14 @@ int main()
     std::cout << "[pass] tcp_connection_io_error_propagation\n";
     media_server::test_tcp_connection_shutdown_discards_pending_writes();
     std::cout << "[pass] tcp_connection_shutdown_discards_pending_writes\n";
+    media_server::test_udp_socket_receive_and_send();
+    std::cout << "[pass] udp_socket_receive_and_send\n";
+    media_server::test_udp_socket_multi_endpoint_queue();
+    std::cout << "[pass] udp_socket_multi_endpoint_queue\n";
+    media_server::test_udp_socket_write_callback_reentrant_send();
+    std::cout << "[pass] udp_socket_write_callback_reentrant_send\n";
+    media_server::test_udp_socket_error_and_shutdown_lifecycle();
+    std::cout << "[pass] udp_socket_error_and_shutdown_lifecycle\n";
     media_server::test_tcp_listener_startup_error();
     std::cout << "[pass] tcp_listener_startup_error\n";
     media_server::test_tcp_listener_worker_affinity();
