@@ -9,7 +9,6 @@
 #include <openssl/rand.h>
 
 #include <algorithm>
-#include <map>
 #include <utility>
 #include <vector>
 
@@ -36,51 +35,6 @@ std::string random_hex(std::size_t byte_count)
     }
     return result;
 }
-
-class whep_stream_observer final : public media_sink
-{
-   public:
-    using shutdown_handler = std::function<void()>;
-
-    whep_stream_observer(std::span<const media_track> tracks, std::optional<codec_id> video_codec, bool audio, shutdown_handler handler)
-        : handler_(std::move(handler))
-    {
-        for (const auto& track : tracks)
-        {
-            const bool negotiated_video = video_codec && track.kind == media_kind::video && track.codec == *video_codec;
-            const bool negotiated_audio = audio && track.kind == media_kind::audio && track.codec == codec_id::aac;
-            if (negotiated_video || negotiated_audio)
-            {
-                config_versions_.emplace(track.id, track.config_version);
-            }
-        }
-    }
-
-    void on_track(const media_track& track) override
-    {
-        const auto iterator = config_versions_.find(track.id);
-        if (iterator != config_versions_.end() && iterator->second != track.config_version)
-        {
-            request_shutdown();
-        }
-    }
-
-    void on_frame(const media_frame&) override {}
-
-    void on_end() override { request_shutdown(); }
-
-   private:
-    void request_shutdown()
-    {
-        if (handler_)
-        {
-            handler_();
-        }
-    }
-
-    std::map<track_id, std::uint64_t> config_versions_;
-    shutdown_handler handler_;
-};
 
 }    // namespace
 
@@ -210,20 +164,18 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     rtcp_stats_ = {};
     started_ = true;
 
-    const auto session_weak = weak_from_this();
-    // WHEP SDP 固定，只观察本次 answer 实际协商的源轨道。
-    stream_observer_ = std::make_shared<whep_stream_observer>(source_tracks,
-                                                              video_codec_,
-                                                              audio_payload_type_.has_value(),
-                                                              [session_weak]()
-                                                              {
-                                                                  if (const auto self = session_weak.lock())
-                                                                  {
-                                                                      spdlog::info("webrtc source stream ended or negotiated track changed session {}", self->id_);
-                                                                      self->shutdown();
-                                                                  }
-                                                              });
-    stream_->add_sink(stream_observer_, executor_);
+    std::vector<track_id> track_ids;
+    for (const auto& track : source_tracks)
+    {
+        const bool negotiated_video = video_codec_ && track.kind == media_kind::video && track.codec == *video_codec_;
+        const bool negotiated_audio = audio_payload_type_ && track.kind == media_kind::audio && track.codec == codec_id::aac;
+        if (negotiated_video || negotiated_audio)
+        {
+            track_ids.push_back(track.id);
+            track_versions_.emplace(track.id, track.config_version);
+        }
+    }
+    reader_ = stream_->add_reader(shared_from_this(), executor_, std::move(track_ids));
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
     spdlog::debug("webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {}",
@@ -253,16 +205,11 @@ void whep_session::safe_shutdown()
     started_ = false;
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
-    if (output_ && stream_)
-    {
-        stream_->remove_sink(*output_);
-    }
-    if (stream_observer_ && stream_)
-    {
-        stream_->remove_sink(*stream_observer_);
-    }
+    reader_.remove();
+    reader_ = {};
     output_.reset();
-    stream_observer_.reset();
+    pending_tracks_.clear();
+    track_versions_.clear();
     stream_.reset();
     certificate_.reset();
     srtp_.reset();
@@ -298,6 +245,69 @@ bool whep_session::dtls_connected() const noexcept { return dtls_ != nullptr && 
 bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
 
 const whep_rtcp_stats& whep_session::rtcp_stats() const noexcept { return rtcp_stats_; }
+
+void whep_session::on_track(media_reader_generation generation, const media_track& track)
+{
+    if (generation_ != generation)
+    {
+        generation_ = generation;
+        ready_generation_ = 0;
+        pending_tracks_.clear();
+    }
+    pending_tracks_.push_back(track);
+}
+
+void whep_session::on_ready(media_reader_generation generation)
+{
+    if (closed_ || !started_ || generation_ != generation)
+    {
+        return;
+    }
+
+    for (const auto& track : pending_tracks_)
+    {
+        const auto expected = track_versions_.find(track.id);
+        if (expected == track_versions_.end() || expected->second != track.config_version)
+        {
+            spdlog::info("webrtc negotiated track changed session {}", id_);
+            shutdown();
+            return;
+        }
+    }
+    if (pending_tracks_.size() != track_versions_.size())
+    {
+        spdlog::info("webrtc negotiated track changed session {}", id_);
+        shutdown();
+        return;
+    }
+
+    ready_generation_ = generation;
+    if (output_ && !start_media_read(generation))
+    {
+        shutdown();
+    }
+}
+
+void whep_session::on_read(media_reader_generation generation, media_frame frame)
+{
+    if (closed_ || !started_ || generation_ != generation || ready_generation_ != generation || !output_)
+    {
+        return;
+    }
+
+    output_->on_frame(frame);
+    if (!closed_ && generation_ == generation && ready_generation_ == generation)
+    {
+        reader_handle().async_read(generation);
+    }
+}
+
+void whep_session::on_end(media_reader_generation generation)
+{
+    static_cast<void>(generation);
+    spdlog::info("webrtc source stream ended session {}", id_);
+    shutdown();
+}
 
 void whep_session::on_udp_read(boost::system::error_code error,
                                std::span<const std::uint8_t> packet,
@@ -548,11 +558,34 @@ bool whep_session::startup_media()
 
     srtp_ = std::move(srtp);
     output_ = std::move(output);
-    stream_->add_sink(output_, executor_);
+    if (ready_generation_ != 0 && !start_media_read(ready_generation_))
+    {
+        return false;
+    }
 
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
     spdlog::debug("webrtc srtp profile session {} {}", id_, dtls_->srtp_keying_material()->profile);
+    return true;
+}
+
+bool whep_session::start_media_read(media_reader_generation generation)
+{
+    if (!output_ || generation_ != generation || ready_generation_ != generation)
+    {
+        return false;
+    }
+
+    for (const auto& track : pending_tracks_)
+    {
+        output_->on_track(track);
+    }
+    if (!output_->valid())
+    {
+        return false;
+    }
+    pending_tracks_.clear();
+    reader_handle().async_read(generation);
     return true;
 }
 
