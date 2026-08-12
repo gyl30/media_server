@@ -117,18 +117,12 @@ std::vector<media_track> media_stream::tracks() const
     return snapshot ? *snapshot : std::vector<media_track>{};
 }
 
-void media_stream::add_sink(const std::shared_ptr<media_sink>& sink, boost::asio::any_io_executor executor)
+void media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
 {
     if (!sink)
     {
         return;
     }
-    if (!owner_executor_)
-    {
-        add_sink_on_owner(sink, std::move(executor));
-        return;
-    }
-
     const auto self = weak_from_this().lock();
     if (!self)
     {
@@ -136,36 +130,17 @@ void media_stream::add_sink(const std::shared_ptr<media_sink>& sink, boost::asio
     }
     const std::weak_ptr<media_sink> weak_sink = sink;
     boost::asio::dispatch(owner_executor_,
-                          [self, weak_sink, executor = std::move(executor)]() mutable
+                          [self, weak_sink]()
                       {
                           if (auto current = weak_sink.lock())
                           {
-                              self->add_sink_on_owner(std::move(current), std::move(executor));
+                              self->add_sink_on_owner(std::move(current));
                           }
                       });
 }
 
 void media_stream::remove_sink(const media_sink& sink)
 {
-    const auto snapshot = sink_snapshot_.load(std::memory_order_acquire);
-    if (snapshot)
-    {
-        for (const auto& state : *snapshot)
-        {
-            const auto current = state->sink.lock();
-            if (current && current.get() == &sink)
-            {
-                state->active.store(false, std::memory_order_release);
-            }
-        }
-    }
-
-    if (!owner_executor_)
-    {
-        remove_sink_on_owner(&sink);
-        return;
-    }
-
     const auto self = weak_from_this().lock();
     if (!self)
     {
@@ -192,12 +167,6 @@ media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>
 
     media_reader_handle handle(self, state);
     reader->handle_ = handle;
-
-    if (!owner_executor_)
-    {
-        add_reader_on_owner(state);
-        return handle;
-    }
 
     boost::asio::dispatch(owner_executor_, [self, state]() { self->add_reader_on_owner(state); });
     return handle;
@@ -291,71 +260,29 @@ void media_stream::end()
     end_readers();
     remove_inactive_sinks();
 
-    struct end_group
+    std::vector<std::shared_ptr<media_sink>> sinks;
+    sinks.reserve(sinks_.size());
+    for (const auto& weak_sink : sinks_)
     {
-        boost::asio::any_io_executor executor;
-        std::vector<std::shared_ptr<media_sink>> sinks;
-    };
-
-    std::vector<end_group> groups;
-    groups.reserve(sink_groups_.size());
-    for (const auto& group : sink_groups_)
-    {
-        end_group current{.executor = group.executor, .sinks = {}};
-        current.sinks.reserve(group.sinks->size());
-        for (const auto& state : *group.sinks)
+        if (auto sink = weak_sink.lock())
         {
-            if (!state->active.load(std::memory_order_acquire))
-            {
-                continue;
-            }
-            if (auto sink = state->sink.lock())
-            {
-                current.sinks.push_back(std::move(sink));
-            }
-        }
-        if (!current.sinks.empty())
-        {
-            groups.push_back(std::move(current));
+            sinks.push_back(std::move(sink));
         }
     }
 
-    sink_groups_.clear();
-    publish_sink_snapshot();
+    sinks_.clear();
 
-    for (auto& group : groups)
+    for (const auto& sink : sinks)
     {
-        if (local_executor(group.executor))
-        {
-            for (const auto& sink : group.sinks)
-            {
-                sink->on_end();
-            }
-            continue;
-        }
-        boost::asio::post(group.executor,
-                          [sinks = std::move(group.sinks)]()
-                          {
-                              for (const auto& sink : sinks)
-                              {
-                                  sink->on_end();
-                              }
-                          });
+        sink->on_end();
     }
 }
 
-void media_stream::add_sink_on_owner(std::shared_ptr<media_sink> sink, boost::asio::any_io_executor executor)
+void media_stream::add_sink_on_owner(std::shared_ptr<media_sink> sink)
 {
     if (ended())
     {
-        if (local_executor(executor))
-        {
-            sink->on_end();
-        }
-        else
-        {
-            boost::asio::post(executor, [sink = std::move(sink)]() { sink->on_end(); });
-        }
+        sink->on_end();
         return;
     }
 
@@ -365,92 +292,28 @@ void media_stream::add_sink_on_owner(std::shared_ptr<media_sink> sink, boost::as
         return;
     }
 
-    auto state = std::make_shared<sink_state>();
-    state->sink = sink;
-    state->executor = executor;
+    sinks_.push_back(sink);
 
-    auto group = std::find_if(sink_groups_.begin(), sink_groups_.end(), [&executor](const sink_group& value) { return value.executor == executor; });
-    if (group == sink_groups_.end())
-    {
-        sink_groups_.push_back(sink_group{
-            .executor = executor,
-            .sinks = std::make_shared<const std::vector<std::shared_ptr<sink_state>>>(),
-        });
-        group = std::prev(sink_groups_.end());
-    }
-
-    auto sinks = std::make_shared<std::vector<std::shared_ptr<sink_state>>>(*group->sinks);
-    sinks->push_back(state);
-    group->sinks = std::move(sinks);
-    publish_sink_snapshot();
-
-    replay_sink(state, tracks(), gop_cache_);
+    replay_sink(sink, tracks(), gop_cache_);
 }
 
 void media_stream::remove_sink_on_owner(const media_sink* sink)
 {
     if (sink != nullptr)
     {
-        for (const auto& group : sink_groups_)
-        {
-            for (const auto& state : *group.sinks)
-            {
-                const auto current = state->sink.lock();
-                if (current && current.get() == sink)
-                {
-                    state->active.store(false, std::memory_order_release);
-                }
-            }
-        }
+        std::erase_if(sinks_,
+                      [sink](const std::weak_ptr<media_sink>& weak_sink)
+                      {
+                          const auto current = weak_sink.lock();
+                          return !current || current.get() == sink;
+                      });
     }
     remove_inactive_sinks();
 }
 
 void media_stream::remove_inactive_sinks()
 {
-    bool changed = false;
-    for (auto& group : sink_groups_)
-    {
-        auto sinks = std::make_shared<std::vector<std::shared_ptr<sink_state>>>(*group.sinks);
-        const auto old_size = sinks->size();
-        std::erase_if(*sinks,
-                      [](const std::shared_ptr<sink_state>& state)
-                      {
-                          if (!state->active.load(std::memory_order_acquire))
-                          {
-                              return true;
-                          }
-                          if (state->sink.expired())
-                          {
-                              state->active.store(false, std::memory_order_release);
-                              return true;
-                          }
-                          return false;
-                      });
-        if (sinks->size() != old_size)
-        {
-            group.sinks = std::move(sinks);
-            changed = true;
-        }
-    }
-
-    const auto old_size = sink_groups_.size();
-    std::erase_if(sink_groups_, [](const sink_group& group) { return group.sinks->empty(); });
-    changed = changed || sink_groups_.size() != old_size;
-    if (changed)
-    {
-        publish_sink_snapshot();
-    }
-}
-
-void media_stream::publish_sink_snapshot()
-{
-    std::vector<std::shared_ptr<sink_state>> states;
-    for (const auto& group : sink_groups_)
-    {
-        states.insert(states.end(), group.sinks->begin(), group.sinks->end());
-    }
-    sink_snapshot_.store(std::make_shared<const std::vector<std::shared_ptr<sink_state>>>(std::move(states)), std::memory_order_release);
+    std::erase_if(sinks_, [](const std::weak_ptr<media_sink>& sink) { return sink.expired(); });
 }
 
 void media_stream::publish_track_snapshot()
@@ -467,136 +330,57 @@ void media_stream::publish_track_snapshot()
 
 bool media_stream::has_sink(const media_sink& sink) const
 {
-    for (const auto& group : sink_groups_)
+    for (const auto& weak_sink : sinks_)
     {
-        for (const auto& state : *group.sinks)
+        const auto current = weak_sink.lock();
+        if (current && current.get() == &sink)
         {
-            if (!state->active.load(std::memory_order_acquire))
-            {
-                continue;
-            }
-            const auto current = state->sink.lock();
-            if (current && current.get() == &sink)
-            {
-                return true;
-            }
+            return true;
         }
     }
     return false;
 }
 
-bool media_stream::local_executor(const boost::asio::any_io_executor& executor) const
-{
-    return !owner_executor_ || !executor || executor == owner_executor_;
-}
-
-void media_stream::replay_sink(const std::shared_ptr<sink_state>& state,
+void media_stream::replay_sink(const std::shared_ptr<media_sink>& sink,
                                std::vector<media_track> tracks,
                                std::vector<media_frame> frames)
 {
-    if (local_executor(state->executor))
+    for (const auto& track : tracks)
     {
-        const auto sink = state->sink.lock();
-        if (!sink)
+        if (ended() || !has_sink(*sink))
         {
             return;
         }
-        for (const auto& track : tracks)
+        const auto current = tracks_.find(track.id);
+        if (current == tracks_.end() || current->second.config_version != track.config_version)
         {
-            if (ended() || !state->active.load(std::memory_order_acquire))
-            {
-                return;
-            }
-            const auto current = tracks_.find(track.id);
-            if (current == tracks_.end() || current->second.config_version != track.config_version)
-            {
-                continue;
-            }
-            sink->on_track(current->second);
+            continue;
         }
-        for (const auto& frame : frames)
-        {
-            if (ended() || !state->active.load(std::memory_order_acquire))
-            {
-                return;
-            }
-            sink->on_frame(frame);
-        }
-        return;
+        sink->on_track(current->second);
     }
-
-    boost::asio::post(state->executor,
-                      [state, tracks = std::move(tracks), frames = std::move(frames)]()
-                      {
-                          const auto sink = state->sink.lock();
-                          if (!sink)
-                          {
-                              return;
-                          }
-                          for (const auto& track : tracks)
-                          {
-                              if (!state->active.load(std::memory_order_acquire))
-                              {
-                                  return;
-                              }
-                              sink->on_track(track);
-                          }
-                          for (const auto& frame : frames)
-                          {
-                              if (!state->active.load(std::memory_order_acquire))
-                              {
-                                  return;
-                              }
-                              sink->on_frame(frame);
-                          }
-                      });
+    for (const auto& frame : frames)
+    {
+        if (ended() || !has_sink(*sink))
+        {
+            return;
+        }
+        sink->on_frame(frame);
+    }
 }
 
 void media_stream::dispatch_track(const media_track& track)
 {
-    for (const auto& group : sink_groups_)
-    {
-        if (local_executor(group.executor))
-        {
-            continue;
-        }
-        const auto sinks = group.sinks;
-        boost::asio::post(group.executor,
-                          [sinks, track]()
-                          {
-                              for (const auto& state : *sinks)
-                              {
-                                  if (!state->active.load(std::memory_order_acquire))
-                                  {
-                                      continue;
-                                  }
-                                  if (const auto sink = state->sink.lock())
-                                  {
-                                      sink->on_track(track);
-                                  }
-                              }
-                          });
-    }
-
     const auto id = track.id;
     const auto config_version = track.config_version;
-    const auto snapshot = sink_snapshot_.load(std::memory_order_acquire);
-    if (!snapshot)
+    const auto snapshot = sinks_;
+    for (const auto& weak_sink : snapshot)
     {
-        return;
-    }
-    for (const auto& state : *snapshot)
-    {
-        if (!local_executor(state->executor) || !state->active.load(std::memory_order_acquire))
-        {
-            continue;
-        }
         const auto current = tracks_.find(id);
         if (current == tracks_.end() || current->second.config_version != config_version)
         {
             return;
         }
-        if (const auto sink = state->sink.lock())
+        if (const auto sink = weak_sink.lock(); sink && has_sink(*sink))
         {
             sink->on_track(current->second);
             if (ended())
@@ -609,42 +393,10 @@ void media_stream::dispatch_track(const media_track& track)
 
 void media_stream::dispatch_frame(const media_frame& frame)
 {
-    for (const auto& group : sink_groups_)
+    const auto snapshot = sinks_;
+    for (const auto& weak_sink : snapshot)
     {
-        if (local_executor(group.executor))
-        {
-            continue;
-        }
-        const auto sinks = group.sinks;
-        boost::asio::post(group.executor,
-                          [sinks, frame]()
-                          {
-                              for (const auto& state : *sinks)
-                              {
-                                  if (!state->active.load(std::memory_order_acquire))
-                                  {
-                                      continue;
-                                  }
-                                  if (const auto sink = state->sink.lock())
-                                  {
-                                      sink->on_frame(frame);
-                                  }
-                              }
-                          });
-    }
-
-    const auto snapshot = sink_snapshot_.load(std::memory_order_acquire);
-    if (!snapshot)
-    {
-        return;
-    }
-    for (const auto& state : *snapshot)
-    {
-        if (!local_executor(state->executor) || !state->active.load(std::memory_order_acquire))
-        {
-            continue;
-        }
-        if (const auto sink = state->sink.lock())
+        if (const auto sink = weak_sink.lock(); sink && has_sink(*sink))
         {
             sink->on_frame(frame);
             if (ended())
@@ -667,12 +419,6 @@ void media_stream::request_read(const std::shared_ptr<media_reader_state>& state
         }
         return;
     }
-    if (!owner_executor_)
-    {
-        request_read_on_owner(state, generation);
-        return;
-    }
-
     const auto self = weak_from_this().lock();
     if (!self)
     {
@@ -688,12 +434,6 @@ void media_stream::remove_reader(const std::shared_ptr<media_reader_state>& stat
     {
         return;
     }
-    if (!owner_executor_)
-    {
-        remove_reader_on_owner(state);
-        return;
-    }
-
     const auto self = weak_from_this().lock();
     if (!self)
     {
