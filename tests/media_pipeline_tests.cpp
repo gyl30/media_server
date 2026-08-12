@@ -2505,8 +2505,9 @@ class rtsp_output_test_peer final
         auto promise = std::make_shared<std::promise<void>>();
         auto future = promise->get_future();
         boost::asio::post(io_,
-                          [stream = stream_, promise]()
+                          [this, stream = stream_, promise]()
                           {
+                              registry_.remove(*stream);
                               stream->end();
                               promise->set_value();
                           });
@@ -3809,6 +3810,7 @@ void test_media_stream_pull_reader_previous_gop_continuity()
 void test_media_stream_add_reader_after_end()
 {
     boost::asio::io_context owner(1);
+    boost::asio::io_context consumer_worker(1);
     boost::asio::io_context reader_worker(1);
     const auto drain = [](boost::asio::io_context& io)
     {
@@ -3820,19 +3822,21 @@ void test_media_stream_add_reader_after_end()
 
     auto stream = std::make_shared<media_stream>("live/pull-ended", owner.get_executor());
     auto reader = std::make_shared<pull_test_reader>(false, false);
-    boost::asio::post(owner,
+    boost::asio::post(owner, [stream]() { stream->end(); });
+    boost::asio::post(consumer_worker,
                       [stream, reader, &reader_worker]()
                       {
-                          stream->end();
                           static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
                       });
+
+    drain(consumer_worker);
     drain(owner);
     drain(reader_worker);
 
     require(reader->track_versions().empty(), "ended stream reader receives no tracks");
     require(reader->ready_generations().empty(), "ended stream reader is never ready");
     require(reader->frames().empty(), "ended stream reader receives no frames");
-    require(reader->ends() == 1, "ended stream reader receives one terminal event");
+    require(reader->ends() == 1, "queued late reader receives one terminal event");
 }
 
 void test_media_stream_pull_reader_track_snapshot_order()
@@ -4071,17 +4075,16 @@ void test_stream_registry_generation_lifecycle()
     require(!registry.add(second), "registry active generation duplicate reject");
     require(registry.find("live/generation").get() == first.get(), "registry first generation remains");
 
+    registry.remove(*first);
+    require(!registry.find("live/generation"), "registry remove hides old generation");
+    require(registry.add(second), "registry replacement generation add");
+    require(registry.find("live/generation").get() == second.get(), "registry replacement generation visible");
+
     boost::asio::post(io, [first]() { first->end(); });
     io.run();
-    require(!registry.find("live/generation"), "registry ended generation hidden before remove");
-    require(registry.add(second), "registry ended generation replace before remove");
-    require(registry.find("live/generation").get() == second.get(), "registry replacement generation visible");
+    require(registry.find("live/generation").get() == second.get(), "old generation end preserves replacement");
     registry.remove(*first);
     require(registry.find("live/generation").get() == second.get(), "registry stale remove preserves replacement");
-
-    auto ended = std::make_shared<media_stream>("live/ended", io.get_executor());
-    ended->end();
-    require(!registry.add(ended), "registry ended generation add reject");
 
     registry.remove(*second);
     require(!registry.find("live/generation"), "registry replacement removed");
@@ -4199,10 +4202,16 @@ void test_hls_service_lifecycle()
                           require(hls.segment_count("live/hls") == 0U, "hls first output create");
                           first->publish(make_video_frame(0, true));
                           first->publish(make_video_frame(1'000'000'000, true));
-                          first->end();
                       });
     io.run();
+
     registry.remove(*first);
+    const auto detached_playlist = hls.playlist("live/hls");
+    require(detached_playlist.has_value(), "hls output survives registry removal before source end");
+
+    io.restart();
+    boost::asio::post(io, [first]() { first->end(); });
+    io.run();
 
     const auto ended_playlist = hls.playlist("live/hls");
     require(ended_playlist.has_value(), "hls ended playlist retained");
@@ -4223,6 +4232,37 @@ void test_hls_service_lifecycle()
     io.run();
 
     io.restart();
+    auto overlap_first = std::make_shared<media_stream>("live/hls-overlap", io.get_executor());
+    require(registry.add(overlap_first), "hls overlap first stream add");
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          require(overlap_first->update_track(make_video_track()), "hls overlap first track");
+                          require(hls.segment_count("live/hls-overlap") == 0U, "hls overlap first output create");
+                          overlap_first->publish(make_video_frame(0, true));
+                          overlap_first->publish(make_video_frame(1'000'000'000, true));
+                      });
+    io.run();
+
+    registry.remove(*overlap_first);
+    auto overlap_second = std::make_shared<media_stream>("live/hls-overlap", io.get_executor());
+    require(registry.add(overlap_second), "hls overlap replacement stream add");
+    io.restart();
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          require(overlap_second->update_track(make_video_track()), "hls overlap replacement track");
+                          require(hls.segment_count("live/hls-overlap") == 0U, "hls overlap replacement output create");
+                          overlap_first->end();
+                      });
+    io.run();
+
+    const auto overlap_playlist = hls.playlist("live/hls-overlap");
+    require(overlap_playlist.has_value(), "hls overlap replacement playlist available");
+    require(overlap_playlist->find("#EXT-X-ENDLIST") == std::string::npos, "hls old generation end does not end replacement");
+    require(!hls.segment("live/hls-overlap", 0).has_value(), "hls overlap replacement does not expose old segment");
+
+    io.restart();
     auto late = std::make_shared<media_stream>("live/hls-late", io.get_executor());
     require(registry.add(late), "hls late stream add");
     boost::asio::post(io,
@@ -4234,10 +4274,10 @@ void test_hls_service_lifecycle()
                           require(hls.segment_count("live/hls-late") == 0U, "hls late output replays current gop");
                           late->publish(make_video_frame(1'000'000'000, true));
                           require(hls.segment_count("live/hls-late") == 1U, "hls late replay participates in first segment");
+                          registry.remove(*late);
                           late->end();
                       });
     io.run();
-    registry.remove(*late);
     const auto late_playlist = hls.playlist("live/hls-late");
     require(late_playlist.has_value() && late_playlist->find("#EXT-X-ENDLIST") != std::string::npos, "hls late output finalizes");
 
@@ -4251,10 +4291,10 @@ void test_hls_service_lifecycle()
                       {
                           require(expiring_stream->update_track(make_video_track()), "hls expiring track");
                           require(expiring_hls.segment_count("live/expiring") == 0U, "hls expiring output create");
+                          expiring_registry.remove(*expiring_stream);
                           expiring_stream->end();
                       });
     io.run();
-    expiring_registry.remove(*expiring_stream);
     require(expiring_hls.playlist("live/expiring").has_value(), "hls ended output initially retained");
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     require(!expiring_hls.playlist("live/expiring").has_value(), "hls ended output expires");

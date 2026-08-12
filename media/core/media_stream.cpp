@@ -82,8 +82,6 @@ media_stream::media_stream(std::string name, boost::asio::any_io_executor owner_
 
 const std::string& media_stream::name() const noexcept { return name_; }
 
-bool media_stream::ended() const noexcept { return ended_.load(std::memory_order_acquire); }
-
 std::vector<media_track> media_stream::tracks() const
 {
     const auto snapshot = track_snapshot_.load(std::memory_order_acquire);
@@ -126,7 +124,7 @@ media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>
 
 bool media_stream::update_track(media_track track)
 {
-    if (ended() || track.id == 0 || track.codec_config.empty())
+    if (ended_ || track.id == 0 || track.codec_config.empty())
     {
         return false;
     }
@@ -169,7 +167,7 @@ bool media_stream::update_track(media_track track)
 
 void media_stream::publish(media_frame frame)
 {
-    if (ended() || !frame.payload || frame.payload->empty())
+    if (ended_ || !frame.payload || frame.payload->empty())
     {
         return;
     }
@@ -191,10 +189,11 @@ void media_stream::publish(media_frame frame)
 
 void media_stream::end()
 {
-    if (ended_.exchange(true, std::memory_order_acq_rel))
+    if (ended_)
     {
         return;
     }
+    ended_ = true;
 
     reset_history();
     end_readers();
@@ -208,7 +207,7 @@ void media_stream::end()
 
 void media_stream::add_sink_on_owner(std::shared_ptr<media_sink> sink)
 {
-    if (ended())
+    if (ended_)
     {
         sink->on_end();
         return;
@@ -295,7 +294,7 @@ void media_stream::add_reader_on_owner(const std::shared_ptr<media_reader_state>
     {
         return;
     }
-    if (ended())
+    if (ended_)
     {
         state->terminal.store(true, std::memory_order_release);
         dispatch_reader_end(state);
@@ -315,7 +314,7 @@ void media_stream::add_reader_on_owner(const std::shared_ptr<media_reader_state>
 
 void media_stream::request_read_on_owner(const std::shared_ptr<media_reader_state>& state, media_reader_cursor cursor)
 {
-    if (ended() || !state->registered || state->pending_read || !state->active.load(std::memory_order_acquire) ||
+    if (ended_ || !state->registered || state->pending_read || !state->active.load(std::memory_order_acquire) ||
         state->terminal.load(std::memory_order_acquire))
     {
         release_read_outstanding(state);

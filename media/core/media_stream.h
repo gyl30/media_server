@@ -23,7 +23,6 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     media_stream(std::string name, boost::asio::any_io_executor owner_executor);
 
     [[nodiscard]] const std::string& name() const noexcept;
-    [[nodiscard]] bool ended() const noexcept;
     [[nodiscard]] std::vector<media_track> tracks() const;
 
     void add_sink(const std::shared_ptr<media_sink>& sink);
@@ -77,7 +76,8 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     std::uint64_t sink_replay_barrier_sequence_{};
     std::uint64_t track_revision_{};
     std::atomic<media_track_snapshot_ptr> track_snapshot_;
-    std::atomic_bool ended_{};
+    // 仅用于 owner worker 内阻止 end 后到达的 reader/sink 请求，不参与 registry 可发现性。
+    bool ended_{};
 };
 
 }    // namespace media_server

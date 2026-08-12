@@ -158,8 +158,8 @@ void rtsp_input_session::safe_shutdown()
     }
     if (stream_)
     {
-        stream_->end();
         registry_.remove(*stream_);
+        stream_->end();
         stream_.reset();
     }
     for (auto*& demuxer : demuxers_)

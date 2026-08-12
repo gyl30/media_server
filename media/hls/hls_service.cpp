@@ -53,7 +53,7 @@ std::shared_ptr<hls_output> hls_service::get_or_create(std::string_view stream_n
         }
 
         const auto ended_at = existing->second.output->ended_at();
-        if (!ended_at || now - *ended_at >= ended_retention())
+        if (ended_at && now - *ended_at >= ended_retention())
         {
             outputs_.erase(existing);
             return {};
