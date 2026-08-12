@@ -2,6 +2,7 @@
 #define MEDIA_WEBRTC_WHEP_SESSION_H
 
 #include "media/core/media_stream.h"
+#include "media/net/udp_socket.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/dtls_transport.h"
 #include "media/webrtc/rtcp_receiver.h"
@@ -11,14 +12,11 @@
 
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <optional>
 #include <span>
@@ -69,17 +67,21 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
 
    private:
     void safe_shutdown();
-    void receive();
-    void handle_packet(std::size_t size);
-    void handle_stun(std::size_t size);
-    void handle_dtls(std::size_t size);
-    void handle_srtp(std::size_t size);
+    void on_udp_read(boost::system::error_code error,
+                     std::span<const std::uint8_t> packet,
+                     const boost::asio::ip::udp::endpoint& endpoint);
+    void on_udp_write(boost::system::error_code error,
+                      std::size_t bytes,
+                      const boost::asio::ip::udp::endpoint& endpoint);
+    void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
+    void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
+    void handle_dtls(std::span<const std::uint8_t> packet);
+    void handle_srtp(std::span<const std::uint8_t> packet);
     bool startup_media();
     void send_dtls(std::span<const std::uint8_t> packet);
     void send_rtp(std::span<const std::uint8_t> packet);
     void send_rtcp(std::span<const std::uint8_t> packet);
     void send_udp(std::vector<std::uint8_t> packet);
-    void write_udp();
     void schedule_dtls_timeout();
     void handle_dtls_timeout();
     void startup_establishment_timeout();
@@ -95,12 +97,11 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     rtcp_receiver rtcp_receiver_;
     whep_rtcp_stats rtcp_stats_;
     std::shared_ptr<webrtc_output> output_;
-    boost::asio::ip::udp::socket socket_;
+    boost::asio::any_io_executor executor_;
+    std::shared_ptr<udp_socket> udp_socket_;
     boost::asio::steady_timer dtls_timer_;
     boost::asio::steady_timer establishment_timer_;
     boost::asio::steady_timer ice_activity_timer_;
-    std::array<std::uint8_t, 2048> receive_buffer_{};
-    boost::asio::ip::udp::endpoint receive_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_endpoint_;
     std::string id_;
     std::string ice_ufrag_;
@@ -111,7 +112,6 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::optional<int> video_payload_type_;
     std::optional<int> audio_payload_type_;
     std::optional<int> audio_channel_count_;
-    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> send_queue_;
     std::uint16_t local_port_{};
     bool started_{};
     bool closed_{};
