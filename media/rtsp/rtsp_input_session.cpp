@@ -120,6 +120,10 @@ bool rtsp_input_session::startup()
                             std::to_string(parsed->port),
                             [this, self](const boost::system::error_code& error, boost::asio::ip::tcp::resolver::results_type endpoints)
                             {
+                                if (closed_)
+                                {
+                                    return;
+                                }
                                 if (error)
                                 {
                                     shutdown();
@@ -147,6 +151,12 @@ void rtsp_input_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    if (stream_)
+    {
+        registry_.remove(*stream_);
+        stream_->end();
+        stream_.reset();
+    }
     keepalive_deadline_.reset();
     resolver_.cancel();
     boost::system::error_code error;
@@ -155,12 +165,6 @@ void rtsp_input_session::safe_shutdown()
     {
         connection_->shutdown();
         connection_.reset();
-    }
-    if (stream_)
-    {
-        registry_.remove(*stream_);
-        stream_->end();
-        stream_.reset();
     }
     for (auto*& demuxer : demuxers_)
     {
@@ -267,7 +271,11 @@ std::optional<rtsp_input_session::parsed_url> rtsp_input_session::parse_url(std:
 
 void rtsp_input_session::on_connect(const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
 {
-    if (error || closed_)
+    if (closed_)
+    {
+        return;
+    }
+    if (error)
     {
         shutdown();
         return;

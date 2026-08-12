@@ -430,6 +430,11 @@ void rtmp_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    if (role_ == role::publisher && stream_)
+    {
+        registry_.remove(*stream_);
+        stream_->end();
+    }
     reader_.remove();
     reader_ = {};
     reader_cursor_.reset();
@@ -437,11 +442,6 @@ void rtmp_session::safe_shutdown()
     track_revision_ = 0;
     waiting_for_key_frame_ = false;
     connection_->shutdown();
-    if (role_ == role::publisher && stream_)
-    {
-        registry_.remove(*stream_);
-        stream_->end();
-    }
     stream_.reset();
     output_muxer_.reset();
 
