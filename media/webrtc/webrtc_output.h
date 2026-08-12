@@ -2,7 +2,7 @@
 #define MEDIA_WEBRTC_OUTPUT_H
 
 #include "media/codec/aac_opus_transcoder.h"
-#include "media/core/media_sink.h"
+#include "media/core/media_types.h"
 
 #include <cstdint>
 #include <functional>
@@ -26,17 +26,16 @@ struct webrtc_output_config
     std::string rtcp_cname;
 };
 
-class webrtc_output final : public media_sink
+class webrtc_output final
 {
    public:
     using packet_handler = std::function<void(std::span<const std::uint8_t>)>;
 
     webrtc_output(webrtc_output_config config, packet_handler rtp_handler, packet_handler rtcp_handler = {});
-    ~webrtc_output() override;
+    ~webrtc_output();
 
-    void on_track(const media_track& track) override;
-    void on_frame(const media_frame& frame) override;
-    void on_end() override;
+    void on_track(const media_track& track);
+    void on_frame(const media_frame& frame);
 
     [[nodiscard]] bool valid() const noexcept;
 

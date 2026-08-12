@@ -110,8 +110,6 @@ void webrtc_output::on_frame(const media_frame& frame)
     }
 }
 
-void webrtc_output::on_end() {}
-
 int webrtc_output::on_packet(void* param, int, const void* data, int bytes, std::uint32_t, int)
 {
     auto* self = static_cast<webrtc_output*>(param);
