@@ -1,6 +1,7 @@
 #ifndef MEDIA_WEBRTC_WHEP_SESSION_H
 #define MEDIA_WEBRTC_WHEP_SESSION_H
 
+#include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
 #include "media/net/udp_socket.h"
 #include "media/webrtc/dtls_certificate.h"
@@ -17,10 +18,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace media_server
 {
@@ -45,7 +48,7 @@ enum class whep_session_startup_error
     internal_error,
 };
 
-class whep_session final : public std::enable_shared_from_this<whep_session>
+class whep_session final : public media_reader, public std::enable_shared_from_this<whep_session>
 {
    public:
     whep_session(boost::asio::any_io_executor executor,
@@ -65,6 +68,11 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     [[nodiscard]] bool srtp_started() const noexcept;
     [[nodiscard]] const whep_rtcp_stats& rtcp_stats() const noexcept;
 
+    void on_track(media_reader_generation generation, const media_track& track) override;
+    void on_ready(media_reader_generation generation) override;
+    void on_read(media_reader_generation generation, media_frame frame) override;
+    void on_end(media_reader_generation generation) override;
+
    private:
     void safe_shutdown();
     void on_udp_read(boost::system::error_code error,
@@ -78,6 +86,7 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     void handle_dtls(std::span<const std::uint8_t> packet);
     void handle_srtp(std::span<const std::uint8_t> packet);
     bool startup_media();
+    bool start_media_read(media_reader_generation generation);
     void send_dtls(std::span<const std::uint8_t> packet);
     void send_rtp(std::span<const std::uint8_t> packet);
     void send_rtcp(std::span<const std::uint8_t> packet);
@@ -91,7 +100,9 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
     whep_session_timeouts timeouts_;
-    std::shared_ptr<media_sink> stream_observer_;
+    media_reader_handle reader_;
+    std::map<track_id, std::uint64_t> track_versions_;
+    std::vector<media_track> pending_tracks_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     rtcp_receiver rtcp_receiver_;
@@ -113,6 +124,8 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     std::optional<int> audio_payload_type_;
     std::optional<int> audio_channel_count_;
     std::uint16_t local_port_{};
+    media_reader_generation generation_{};
+    media_reader_generation ready_generation_{};
     bool started_{};
     bool closed_{};
 };
