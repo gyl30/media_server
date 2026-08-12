@@ -33,6 +33,10 @@ void http_session::read_request()
 void http_session::on_request(boost::system::error_code error, std::size_t bytes)
 {
     static_cast<void>(bytes);
+    if (closed_)
+    {
+        return;
+    }
     if (error)
     {
         shutdown();
@@ -462,6 +466,11 @@ void http_session::send_binary_response(boost::beast::http::status status, std::
 
 void http_session::startup_flv(std::shared_ptr<media_stream> media_stream)
 {
+    if (closed_)
+    {
+        return;
+    }
+
     const auto weak = weak_from_this();
     flv_output_ = std::make_shared<http_flv_output>(
         [weak](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
