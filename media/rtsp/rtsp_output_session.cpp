@@ -377,11 +377,12 @@ int rtsp_output_session::on_setup(std::string_view uri, std::string_view session
     {
         return rtsp_server_reply_setup(server_, 404, nullptr, nullptr);
     }
-    if (!stream_ || stream_->ended())
+    const auto current_stream = registry_.find(stream_name_);
+    if (!stream_ || !current_stream)
     {
         return rtsp_server_reply_setup(server_, 503, nullptr, nullptr);
     }
-    if (!description_current())
+    if (current_stream.get() != stream_.get() || !description_current())
     {
         return rtsp_server_reply_setup(server_, 455, nullptr, nullptr);
     }
@@ -445,11 +446,12 @@ int rtsp_output_session::on_play(std::string_view uri, std::string_view session,
     {
         return rtsp_server_reply_play(server_, 454, nullptr, nullptr, nullptr);
     }
-    if (!stream_ || stream_->ended())
+    const auto current_stream = registry_.find(stream_name_);
+    if (!stream_ || !current_stream)
     {
         return rtsp_server_reply_play(server_, 503, nullptr, nullptr, nullptr);
     }
-    if (!description_current())
+    if (current_stream.get() != stream_.get() || !description_current())
     {
         return rtsp_server_reply_play(server_, 455, nullptr, nullptr, nullptr);
     }
@@ -597,7 +599,7 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
 
 bool rtsp_output_session::description_current() const
 {
-    if (!stream_ || stream_->ended())
+    if (!stream_)
     {
         return false;
     }
