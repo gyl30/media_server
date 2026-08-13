@@ -4219,6 +4219,19 @@ void test_hls_output()
     require(signed_timeline.segment_count() == 1U, "hls signed pts reaches target duration");
     signed_timeline.on_end();
 
+    hls_output reordered_video(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
+    reordered_video.on_track(make_video_track());
+    reordered_video.on_frame(make_video_frame(0, true));
+    auto future = make_video_frame(80'000'000, false);
+    future.dts_ns = 40'000'000;
+    reordered_video.on_frame(std::move(future));
+    auto reordered = make_video_frame(40'000'000, false);
+    reordered.dts_ns = 80'000'000;
+    reordered_video.on_frame(std::move(reordered));
+    reordered_video.on_end();
+    const auto reordered_playlist = reordered_video.playlist("/hls/reordered");
+    require(reordered_playlist.find("#EXTINF:0.080,") != std::string::npos, "hls final segment duration uses maximum presentation timestamp");
+
 }
 
 void test_hls_service_lifecycle()

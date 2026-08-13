@@ -64,7 +64,7 @@ class hls_output final : public media_sink
     void* muxer_{};
     std::uint64_t next_sequence_{};
     std::optional<std::int64_t> segment_start_pts_ns_;
-    std::int64_t last_pts_ns_{};
+    std::int64_t segment_max_pts_ns_{};
     std::optional<std::chrono::steady_clock::time_point> ended_at_;
     bool has_video_{};
     bool waiting_for_key_frame_{};

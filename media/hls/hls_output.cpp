@@ -42,11 +42,12 @@ void hls_output::on_track(const media_track& track)
 
     if (!current_segment_.empty())
     {
-        finish_segment(last_pts_ns_);
+        finish_segment(segment_max_pts_ns_);
     }
     recreate_muxer();
 
     segment_start_pts_ns_.reset();
+    segment_max_pts_ns_ = 0;
     waiting_for_key_frame_ = has_video_;
 }
 
@@ -79,6 +80,7 @@ void hls_output::on_frame(const media_frame& frame)
 
     {
         segment_start_pts_ns_ = frame.pts_ns;
+        segment_max_pts_ns_ = frame.pts_ns;
     }
 
     const auto elapsed_ns = frame.pts_ns - *segment_start_pts_ns_;
@@ -89,6 +91,7 @@ void hls_output::on_frame(const media_frame& frame)
         finish_segment(frame.pts_ns);
         recreate_muxer();
         segment_start_pts_ns_ = frame.pts_ns;
+        segment_max_pts_ns_ = frame.pts_ns;
     }
 
     const auto stream_iterator = stream_ids_.find(frame.track);
@@ -106,7 +109,7 @@ void hls_output::on_frame(const media_frame& frame)
     {
         spdlog::error("hls ts write failed track {} result {}", frame.track, result);
     }
-    last_pts_ns_ = frame.pts_ns;
+    segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
 }
 
 void hls_output::on_end()
@@ -118,7 +121,7 @@ void hls_output::on_end()
     }
     if (!current_segment_.empty())
     {
-        finish_segment(last_pts_ns_);
+        finish_segment(segment_max_pts_ns_);
     }
     if (muxer_ != nullptr)
     {
