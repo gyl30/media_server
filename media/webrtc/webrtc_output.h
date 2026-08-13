@@ -25,6 +25,10 @@ struct webrtc_output_config
     int opus_channel_count{1};
     int opus_bitrate{-1};
     int opus_max_playback_rate{48'000};
+    std::string video_mid{};
+    std::string audio_mid{};
+    int video_mid_extension_id{-1};
+    int audio_mid_extension_id{-1};
     std::string rtcp_cname;
 };
 

@@ -155,6 +155,10 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     video_codec_ = answer->video_codec;
     video_payload_type_ = answer->video_payload_type;
     audio_payload_type_ = answer->audio_payload_type;
+    video_mid_ = answer->video_mid;
+    audio_mid_ = answer->audio_mid;
+    video_mid_extension_id_ = answer->video_mid_extension_id;
+    audio_mid_extension_id_ = answer->audio_mid_extension_id;
     audio_channel_count_ = answer->audio_channel_count;
     audio_bitrate_ = answer->audio_bitrate;
     audio_max_playback_rate_ = answer->audio_max_playback_rate;
@@ -221,6 +225,10 @@ void whep_session::safe_shutdown()
     video_codec_.reset();
     video_payload_type_.reset();
     audio_payload_type_.reset();
+    video_mid_.reset();
+    audio_mid_.reset();
+    video_mid_extension_id_.reset();
+    audio_mid_extension_id_.reset();
     audio_channel_count_.reset();
     audio_bitrate_.reset();
     audio_max_playback_rate_.reset();
@@ -551,6 +559,10 @@ bool whep_session::startup_media()
             .opus_channel_count = audio_channel_count_.value_or(1),
             .opus_bitrate = audio_bitrate_.value_or(64'000 * audio_channel_count_.value_or(1)),
             .opus_max_playback_rate = audio_max_playback_rate_.value_or(48'000),
+            .video_mid = video_mid_.value_or(""),
+            .audio_mid = audio_mid_.value_or(""),
+            .video_mid_extension_id = video_mid_extension_id_.value_or(-1),
+            .audio_mid_extension_id = audio_mid_extension_id_.value_or(-1),
             .rtcp_cname = id_,
         },
         [weak](std::span<const std::uint8_t> packet)
