@@ -15,7 +15,7 @@ namespace media_server
 {
 class rtmp_session;
 
-class rtmp_server final
+class rtmp_server final : public std::enable_shared_from_this<rtmp_server>
 {
    public:
     rtmp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port);
@@ -24,8 +24,10 @@ class rtmp_server final
     void shutdown();
 
    private:
+    void on_accept(boost::asio::ip::tcp::socket socket);
+
     stream_registry& registry_;
-    tcp_listener listener_;
+    std::shared_ptr<tcp_listener> listener_;
     std::mutex sessions_mutex_;
     std::vector<std::weak_ptr<rtmp_session>> sessions_;
     bool closed_{};

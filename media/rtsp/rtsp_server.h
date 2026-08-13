@@ -15,7 +15,7 @@ namespace media_server
 {
 class rtsp_output_session;
 
-class rtsp_server final
+class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
 {
    public:
     rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port);
@@ -24,9 +24,11 @@ class rtsp_server final
     void shutdown();
 
    private:
+    void on_accept(boost::asio::ip::tcp::socket socket);
+
     stream_registry& registry_;
     std::uint16_t port_{};
-    tcp_listener listener_;
+    std::shared_ptr<tcp_listener> listener_;
     std::mutex sessions_mutex_;
     std::vector<std::weak_ptr<rtsp_output_session>> sessions_;
     bool closed_{};

@@ -10,43 +10,37 @@ namespace media_server
 {
 
 rtsp_server::rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port)
-    : registry_(registry),
-      port_(port),
-      listener_(workers,
-                port,
-                [this](boost::asio::ip::tcp::socket socket)
-                {
-                    std::shared_ptr<rtsp_output_session> session;
-                    {
-                        std::scoped_lock lock(sessions_mutex_);
-                        if (closed_)
-                        {
-                            boost::system::error_code error;
-                            socket.close(error);
-                            return;
-                        }
-                        auto connection = std::make_shared<tcp_connection>(std::move(socket));
-                        session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, port_);
-                        std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
-                        sessions_.emplace_back(session);
-                    }
-                    session->startup();
-                })
+    : registry_(registry), port_(port), listener_(std::make_shared<tcp_listener>(workers, port))
 {
 }
 
-boost::system::error_code rtsp_server::startup() { return listener_.startup(); }
+boost::system::error_code rtsp_server::startup()
+{
+    const std::weak_ptr<rtsp_server> weak = shared_from_this();
+    return listener_->startup(
+        [weak](boost::asio::ip::tcp::socket socket)
+        {
+            if (const auto self = weak.lock())
+            {
+                self->on_accept(std::move(socket));
+            }
+        });
+}
 
 void rtsp_server::shutdown()
 {
-    listener_.shutdown();
     std::vector<std::weak_ptr<rtsp_output_session>> sessions;
     {
         std::scoped_lock lock(sessions_mutex_);
+        if (closed_)
+        {
+            return;
+        }
         closed_ = true;
         sessions = std::move(sessions_);
         sessions_.clear();
     }
+    listener_->shutdown();
     for (const auto& weak_session : sessions)
     {
         if (const auto session = weak_session.lock())
@@ -54,6 +48,22 @@ void rtsp_server::shutdown()
             session->shutdown();
         }
     }
+}
+
+void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
+{
+    std::scoped_lock lock(sessions_mutex_);
+    if (closed_)
+    {
+        boost::system::error_code error;
+        socket.close(error);
+        return;
+    }
+    auto connection = std::make_shared<tcp_connection>(std::move(socket));
+    auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, port_);
+    std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
+    sessions_.emplace_back(session);
+    session->startup();
 }
 
 }    // namespace media_server

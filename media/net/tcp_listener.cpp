@@ -2,6 +2,7 @@
 
 #include <boost/asio/bind_executor.hpp>
 #include <boost/asio/dispatch.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
 
 #include <utility>
@@ -9,12 +10,12 @@
 namespace media_server
 {
 
-tcp_listener::tcp_listener(io_context_pool& workers, std::uint16_t port, accept_handler handler)
-    : acceptor_(workers.context(0)), workers_(workers), port_(port), handler_(std::move(handler))
+tcp_listener::tcp_listener(io_context_pool& workers, std::uint16_t port)
+    : acceptor_(workers.context(0)), workers_(workers), port_(port)
 {
 }
 
-boost::system::error_code tcp_listener::startup()
+boost::system::error_code tcp_listener::startup(accept_handler handler)
 {
     if (started_)
     {
@@ -47,13 +48,25 @@ boost::system::error_code tcp_listener::startup()
     }
 
     started_ = true;
+    handler_ = std::move(handler);
     accept_next();
     return {};
 }
 
 void tcp_listener::shutdown()
 {
+    const auto self = shared_from_this();
+    boost::asio::post(acceptor_.get_executor(), [self]() { self->safe_shutdown(); });
+}
+
+void tcp_listener::safe_shutdown()
+{
+    if (!started_)
+    {
+        return;
+    }
     started_ = false;
+    handler_ = {};
     boost::system::error_code error;
     acceptor_.close(error);
 }
@@ -66,22 +79,23 @@ void tcp_listener::accept_next()
     }
 
     auto& worker = workers_.next();
+    const auto self = shared_from_this();
     acceptor_.async_accept(
         worker,
         boost::asio::bind_executor(
             acceptor_.get_executor(),
-            [this](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
+            [self](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
             {
-                if (!error && handler_)
+                if (!error && self->handler_)
                 {
-                    auto handler = handler_;
+                    auto handler = self->handler_;
                     boost::asio::dispatch(socket.get_executor(), [handler = std::move(handler), socket = std::move(socket)]() mutable {
                         handler(std::move(socket));
                     });
                 }
-                if (started_)
+                if (self->started_)
                 {
-                    accept_next();
+                    self->accept_next();
                 }
             }));
 }
