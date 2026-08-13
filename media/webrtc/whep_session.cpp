@@ -156,6 +156,8 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     video_payload_type_ = answer->video_payload_type;
     audio_payload_type_ = answer->audio_payload_type;
     audio_channel_count_ = answer->audio_channel_count;
+    audio_bitrate_ = answer->audio_bitrate;
+    audio_max_playback_rate_ = answer->audio_max_playback_rate;
     rtcp_stats_ = {};
     started_ = true;
 
@@ -171,13 +173,15 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     reader_ = stream_->add_reader(shared_from_this(), executor_);
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
-    spdlog::debug("webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {}",
+    spdlog::debug("webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
                   id_,
                   ice_ufrag_,
                   remote_ice_ufrag_,
                   video_payload_type_.value_or(-1),
                   audio_payload_type_.value_or(-1),
-                  audio_channel_count_.value_or(0));
+                  audio_channel_count_.value_or(0),
+                  audio_bitrate_.value_or(0),
+                  audio_max_playback_rate_.value_or(0));
     startup_establishment_timeout();
     return whep_session_startup_error::none;
 }
@@ -218,6 +222,8 @@ void whep_session::safe_shutdown()
     video_payload_type_.reset();
     audio_payload_type_.reset();
     audio_channel_count_.reset();
+    audio_bitrate_.reset();
+    audio_max_playback_rate_.reset();
     local_port_ = 0;
     if (udp_socket_)
     {
@@ -543,6 +549,8 @@ bool whep_session::startup_media()
             .video_payload_type = video_payload_type_.value_or(-1),
             .opus_payload_type = audio_payload_type_.value_or(-1),
             .opus_channel_count = audio_channel_count_.value_or(1),
+            .opus_bitrate = audio_bitrate_.value_or(64'000 * audio_channel_count_.value_or(1)),
+            .opus_max_playback_rate = audio_max_playback_rate_.value_or(48'000),
             .rtcp_cname = id_,
         },
         [weak](std::span<const std::uint8_t> packet)
