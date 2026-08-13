@@ -3,11 +3,17 @@
 #include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
 
+#include <chrono>
 #include <cstring>
 #include <utility>
 
 namespace media_server
 {
+
+namespace
+{
+constexpr auto slow_write_timeout = std::chrono::seconds(15);
+}
 
 tcp_connection::tcp_connection(boost::asio::ip::tcp::socket socket) : socket_(std::move(socket)) {}
 
@@ -93,9 +99,10 @@ void tcp_connection::write_next()
 
     const auto self = shared_from_this();
     const auto buffer = write_queue_.front();
+    const auto started_at = std::chrono::steady_clock::now();
     boost::asio::async_write(socket_,
                              boost::asio::buffer(*buffer),
-                             [this, self, buffer](const boost::system::error_code& error, std::size_t bytes)
+                             [this, self, buffer, started_at](const boost::system::error_code& error, std::size_t bytes)
                              {
                                  if (closed_)
                                  {
@@ -110,6 +117,14 @@ void tcp_connection::write_next()
                                      return;
                                  }
                                  write_queue_.pop_front();
+                                 if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
+                                 {
+                                     if (on_write_)
+                                     {
+                                         on_write_(boost::asio::error::make_error_code(boost::asio::error::timed_out), bytes);
+                                     }
+                                     return;
+                                 }
                                  if (on_write_)
                                  {
                                      on_write_(error, bytes);
