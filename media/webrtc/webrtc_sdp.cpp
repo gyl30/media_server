@@ -366,8 +366,7 @@ const webrtc_codec_offer* find_opus(const webrtc_media_offer& media)
                                        media.codecs.end(),
                                        [](const webrtc_codec_offer& codec)
                                        {
-                                           return lower_copy(codec.encoding_name) == "opus" && codec.clock_rate == 48'000U &&
-                                                  (codec.channel_count == 0 || codec.channel_count == 2);
+                                           return lower_copy(codec.encoding_name) == "opus" && codec.clock_rate == 48'000U && codec.channel_count == 2;
                                        });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
@@ -552,6 +551,8 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     std::optional<int> video_payload_type;
     std::optional<int> audio_payload_type;
     std::optional<int> audio_channel_count;
+    std::optional<int> audio_bitrate;
+    std::optional<int> audio_max_playback_rate;
     for (const auto& media : offer.media)
     {
         const auto media_direction = lower_copy(media.direction);
@@ -611,7 +612,21 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         {
             audio_payload_type = codec->payload_type;
             audio_channel_count = opus_output_channel_count(*codec, *audio_track);
-            spdlog::debug("webrtc answer audio mid {} pt {} codec opus channels {}", media.mid, codec->payload_type, *audio_channel_count);
+            audio_bitrate = 64'000 * *audio_channel_count;
+            const auto offered_bitrate = decimal_parameter(codec->format_parameters, "maxaveragebitrate", -1, 510'000);
+            if (offered_bitrate && *offered_bitrate >= 0)
+            {
+                audio_bitrate = std::min(*audio_bitrate, std::max(*offered_bitrate, 6'000));
+            }
+            const auto offered_max_playback_rate = decimal_parameter(codec->format_parameters, "maxplaybackrate", 48'000, 48'000);
+            audio_max_playback_rate =
+                offered_max_playback_rate && *offered_max_playback_rate >= 8'000 ? *offered_max_playback_rate : 48'000;
+            spdlog::debug("webrtc answer audio mid {} pt {} codec opus channels {} bitrate {} max_playback_rate {}",
+                          media.mid,
+                          codec->payload_type,
+                          *audio_channel_count,
+                          *audio_bitrate,
+                          *audio_max_playback_rate);
         }
         media_answer << "m=" << media.type << ' ' << config.port << ' ' << media.protocol << ' ' << codec->payload_type << "\r\n";
         media_answer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";
@@ -694,6 +709,8 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         .video_payload_type = video_payload_type,
         .audio_payload_type = audio_payload_type,
         .audio_channel_count = audio_channel_count,
+        .audio_bitrate = audio_bitrate,
+        .audio_max_playback_rate = audio_max_playback_rate,
     };
 }
 

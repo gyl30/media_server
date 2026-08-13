@@ -246,7 +246,8 @@ bool webrtc_output::add_aac_track(const media_track& track)
     }
 
     auto transcoder = std::make_unique<aac_opus_transcoder>();
-    if (!transcoder->startup(track.codec_config, config_.opus_channel_count))
+    const auto bitrate = config_.opus_bitrate > 0 ? config_.opus_bitrate : 64'000 * config_.opus_channel_count;
+    if (!transcoder->startup(track.codec_config, config_.opus_channel_count, bitrate, config_.opus_max_playback_rate))
     {
         spdlog::error("webrtc aac opus transcoder startup failed track {}", track.id);
         return false;

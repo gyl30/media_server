@@ -54,6 +54,8 @@ struct webrtc_answer
     std::optional<int> video_payload_type;
     std::optional<int> audio_payload_type;
     std::optional<int> audio_channel_count;
+    std::optional<int> audio_bitrate;
+    std::optional<int> audio_max_playback_rate;
 };
 
 struct webrtc_answer_config
