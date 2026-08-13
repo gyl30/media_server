@@ -21,11 +21,11 @@ class udp_socket final : public std::enable_shared_from_this<udp_socket>
    public:
     using read_handler =
         std::function<void(boost::system::error_code, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)>;
-    using write_handler = std::function<void(boost::system::error_code, std::size_t, const boost::asio::ip::udp::endpoint&)>;
+    using write_error_handler = std::function<void(boost::system::error_code, const boost::asio::ip::udp::endpoint&)>;
 
     explicit udp_socket(boost::asio::any_io_executor executor);
 
-    [[nodiscard]] bool startup(boost::asio::ip::address bind_address, read_handler on_read, write_handler on_write);
+    [[nodiscard]] bool startup(boost::asio::ip::address bind_address, read_handler on_read, write_error_handler on_write_error);
     void send(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint);
     void shutdown();
 
@@ -47,7 +47,7 @@ class udp_socket final : public std::enable_shared_from_this<udp_socket>
     boost::asio::ip::udp::endpoint receive_endpoint_;
     std::deque<pending_datagram> send_queue_;
     read_handler on_read_;
-    write_handler on_write_;
+    write_error_handler on_write_error_;
     std::uint16_t local_port_{};
     bool closed_{};
 };
