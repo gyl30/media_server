@@ -247,12 +247,12 @@ void rtsp_output_session::on_tcp_read(std::span<const std::uint8_t> data)
     {
         auto bytes = remaining.size();
         const auto result = rtsp_server_input(server_, remaining.data(), &bytes);
-        if (result != 0 && result != 1)
+        if (result < 0)
         {
             shutdown();
             return;
         }
-        if (result == 1 || bytes == 0)
+        if (result > 0 || bytes == 0)
         {
             return;
         }
