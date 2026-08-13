@@ -77,9 +77,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void on_udp_read(boost::system::error_code error,
                      std::span<const std::uint8_t> packet,
                      const boost::asio::ip::udp::endpoint& endpoint);
-    void on_udp_write(boost::system::error_code error,
-                      std::size_t bytes,
-                      const boost::asio::ip::udp::endpoint& endpoint);
+    void on_udp_write_error(boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_dtls(std::span<const std::uint8_t> packet);
