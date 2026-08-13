@@ -8,21 +8,23 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 namespace media_server
 {
 
-class tcp_listener final
+class tcp_listener final : public std::enable_shared_from_this<tcp_listener>
 {
    public:
     using accept_handler = std::function<void(boost::asio::ip::tcp::socket)>;
 
-    tcp_listener(io_context_pool& workers, std::uint16_t port, accept_handler handler);
+    tcp_listener(io_context_pool& workers, std::uint16_t port);
 
-    [[nodiscard]] boost::system::error_code startup();
+    [[nodiscard]] boost::system::error_code startup(accept_handler handler);
     void shutdown();
 
    private:
+    void safe_shutdown();
     void accept_next();
 
     boost::asio::ip::tcp::acceptor acceptor_;

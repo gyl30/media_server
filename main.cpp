@@ -172,21 +172,21 @@ int main(int argc, char** argv)
         spdlog::error("dtls certificate create failed");
         return 2;
     }
-    media_server::rtmp_server rtmp(workers, registry, parsed->rtmp_port);
-    media_server::rtsp_server rtsp(workers, registry, parsed->rtsp_port);
-    media_server::http_server http(workers, registry, hls, whep, parsed->http_port);
+    auto rtmp = std::make_shared<media_server::rtmp_server>(workers, registry, parsed->rtmp_port);
+    auto rtsp = std::make_shared<media_server::rtsp_server>(workers, registry, parsed->rtsp_port);
+    auto http = std::make_shared<media_server::http_server>(workers, registry, hls, whep, parsed->http_port);
 
-    if (const auto error = rtmp.startup())
+    if (const auto error = rtmp->startup())
     {
         spdlog::error("rtmp listen failed port {} error {}", parsed->rtmp_port, error.message());
         return 2;
     }
-    if (const auto error = rtsp.startup())
+    if (const auto error = rtsp->startup())
     {
         spdlog::error("rtsp listen failed port {} error {}", parsed->rtsp_port, error.message());
         return 2;
     }
-    if (const auto error = http.startup())
+    if (const auto error = http->startup())
     {
         spdlog::error("http listen failed port {} error {}", parsed->http_port, error.message());
         return 2;
@@ -225,10 +225,13 @@ int main(int argc, char** argv)
                 }
             }
             pulls.clear();
-            http.shutdown();
+            http->shutdown();
+            http.reset();
             whep.shutdown();
-            rtsp.shutdown();
-            rtmp.shutdown();
+            rtsp->shutdown();
+            rtsp.reset();
+            rtmp->shutdown();
+            rtmp.reset();
             workers.release_work();
         });
 
