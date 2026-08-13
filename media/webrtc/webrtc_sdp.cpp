@@ -17,6 +17,7 @@ extern "C"
 #include <limits>
 #include <memory>
 #include <sstream>
+#include <utility>
 
 namespace media_server
 {
@@ -24,6 +25,7 @@ namespace
 {
 
 constexpr std::string_view mid_extension_uri = "urn:ietf:params:rtp-hdrext:sdes:mid";
+constexpr std::size_t max_mid_size = 16;
 
 struct sdp_deleter
 {
@@ -339,6 +341,11 @@ const media_track* find_track(const std::vector<media_track>& tracks, media_kind
     return iterator == tracks.end() ? nullptr : &*iterator;
 }
 
+bool rtcp_mux_payload_type_allowed(int payload_type)
+{
+    return payload_type >= 0 && payload_type <= 127 && (payload_type < 64 || payload_type > 95);
+}
+
 const webrtc_codec_offer* find_h264(const webrtc_media_offer& media, const h264_profile_level& source)
 {
     const auto iterator = std::find_if(
@@ -346,7 +353,7 @@ const webrtc_codec_offer* find_h264(const webrtc_media_offer& media, const h264_
         media.codecs.end(),
         [&source](const webrtc_codec_offer& codec)
         {
-            if (lower_copy(codec.encoding_name) != "h264" || codec.clock_rate != 90'000U ||
+            if (!rtcp_mux_payload_type_allowed(codec.payload_type) || lower_copy(codec.encoding_name) != "h264" || codec.clock_rate != 90'000U ||
                 !has_parameter(codec.format_parameters, "packetization-mode", "1"))
             {
                 return false;
@@ -366,7 +373,7 @@ const webrtc_codec_offer* find_h265(const webrtc_media_offer& media, const h265_
         [&source](const webrtc_codec_offer& codec)
         {
             const auto encoding = lower_copy(codec.encoding_name);
-            if ((encoding != "h265" && encoding != "hevc") || codec.clock_rate != 90'000U)
+            if (!rtcp_mux_payload_type_allowed(codec.payload_type) || (encoding != "h265" && encoding != "hevc") || codec.clock_rate != 90'000U)
             {
                 return false;
             }
@@ -389,7 +396,8 @@ const webrtc_codec_offer* find_opus(const webrtc_media_offer& media)
                                        media.codecs.end(),
                                        [](const webrtc_codec_offer& codec)
                                        {
-                                           return lower_copy(codec.encoding_name) == "opus" && codec.clock_rate == 48'000U && codec.channel_count == 2;
+                                           return rtcp_mux_payload_type_allowed(codec.payload_type) && lower_copy(codec.encoding_name) == "opus" &&
+                                               codec.clock_rate == 48'000U && codec.channel_count == 2;
                                        });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
@@ -443,7 +451,7 @@ bool bundle_contains(const webrtc_offer& offer, std::string_view mid)
 bool bundle_media_supported(const webrtc_media_offer& media)
 {
     return (media.port != 0 || media.bundle_only) && lower_copy(media.protocol) == "udp/tls/rtp/savpf" && media.rtcp_mux &&
-        media.mid_extension_id.has_value() && !media.mid.empty() && media.mid.size() <= 255U;
+        media.mid_extension_id.has_value() && !media.mid.empty();
 }
 
 void append_transport(std::ostringstream& answer, const webrtc_answer_config& config)
@@ -500,7 +508,7 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
         const char* type = sdp_media_type(sdp.get(), index);
         const char* protocol = sdp_media_proto(sdp.get(), index);
         const char* mid = sdp_media_attribute_find(sdp.get(), index, "mid");
-        if (type == nullptr || protocol == nullptr || mid == nullptr || *mid == '\0')
+        if (type == nullptr || protocol == nullptr || mid == nullptr || *mid == '\0' || std::char_traits<char>::length(mid) > max_mid_size)
         {
             return std::nullopt;
         }
@@ -558,7 +566,7 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
 
 std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const std::vector<media_track>& tracks, const webrtc_answer_config& config)
 {
-    if (config.port == 0 || config.ice_ufrag.empty() || config.ice_pwd.empty() || config.fingerprint.empty())
+    if (config.port == 0 || config.stream_id.empty() || config.ice_ufrag.empty() || config.ice_pwd.empty() || config.fingerprint.empty())
     {
         return std::nullopt;
     }
@@ -571,7 +579,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     const auto* audio_track = find_track(tracks, media_kind::audio, codec_id::aac);
     const auto address_type = config.address.is_v6() ? "IP6" : "IP4";
 
-    std::ostringstream media_answer;
+    std::vector<std::pair<std::string, std::string>> media_answers;
     std::vector<std::string> accepted_mids;
     std::optional<codec_id> video_codec;
     std::optional<int> video_payload_type;
@@ -586,6 +594,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     std::optional<int> audio_max_playback_rate;
     for (const auto& media : offer.media)
     {
+        std::ostringstream media_answer;
         const auto media_direction = lower_copy(media.direction);
         const bool can_receive = bundle_contains(offer, media.mid) && bundle_media_supported(media) &&
             (!bundle_mid_extension_id || *bundle_mid_extension_id == *media.mid_extension_id) &&
@@ -636,6 +645,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
             media_answer << "c=IN " << address_type << ' ' << (config.address.is_v6() ? "::" : "0.0.0.0") << "\r\n";
             media_answer << "a=mid:" << media.mid << "\r\n";
             media_answer << "a=inactive\r\n";
+            media_answers.emplace_back(media.mid, media_answer.str());
             continue;
         }
 
@@ -677,8 +687,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         media_answer << "a=mid:" << media.mid << "\r\n";
         media_answer << "a=extmap:" << *media.mid_extension_id << ' ' << mid_extension_uri << "\r\n";
         media_answer << "a=sendonly\r\n";
-        media_answer << "a=rtcp-mux\r\n";
-        append_transport(media_answer, config);
+        media_answer << "a=msid:" << config.stream_id << "\r\n";
 
         if (lower_copy(media.type) == "video")
         {
@@ -706,6 +715,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
             media_answer << "a=fmtp:" << codec->payload_type << " minptime=10;useinbandfec=1;sprop-stereo=" << (*audio_channel_count == 2 ? 1 : 0)
                          << "\r\n";
         }
+        media_answers.emplace_back(media.mid, media_answer.str());
     }
 
     if (accepted_mids.empty())
@@ -745,7 +755,15 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         }
     }
     answer << "\r\n";
-    answer << media_answer.str();
+    for (const auto& [mid, media] : media_answers)
+    {
+        answer << media;
+        if (mid == *transport_mid)
+        {
+            answer << "a=rtcp-mux\r\n";
+            append_transport(answer, config);
+        }
+    }
 
     return webrtc_answer{
         .sdp = answer.str(),
