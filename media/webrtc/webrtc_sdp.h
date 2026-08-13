@@ -67,6 +67,7 @@ struct webrtc_answer_config
 {
     boost::asio::ip::address address;
     std::uint16_t port{};
+    std::string stream_id;
     std::string ice_ufrag;
     std::string ice_pwd;
     std::string fingerprint;

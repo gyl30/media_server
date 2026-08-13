@@ -825,6 +825,7 @@ void test_webrtc_sdp_answer()
                                            webrtc_answer_config{
                                                .address = boost::asio::ip::make_address("127.0.0.1"),
                                                .port = 40000,
+                                               .stream_id = "serverstream",
                                                .ice_ufrag = "serverufrag",
                                                .ice_pwd = "serverpassword1234567890",
                                                .fingerprint = "AA:BB:CC:DD",
@@ -849,6 +850,32 @@ void test_webrtc_sdp_answer()
     require(answer->sdp.find("sprop-stereo=1") != std::string::npos, "webrtc opus stereo sender property");
     require(answer->sdp.find("a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n") != std::string::npos, "webrtc mid extension");
     require(answer->sdp.find("a=sendonly\r\n") != std::string::npos, "webrtc sendonly");
+
+    const std::string_view answer_sdp = answer->sdp;
+    const auto video_offset = answer_sdp.find("m=video ");
+    const auto audio_offset = answer_sdp.find("m=audio ");
+    require(video_offset != std::string_view::npos && audio_offset != std::string_view::npos && video_offset < audio_offset,
+            "webrtc bundle media order");
+    const auto video_section = answer_sdp.substr(video_offset, audio_offset - video_offset);
+    const auto audio_section = answer_sdp.substr(audio_offset);
+    require(video_section.find("a=msid:serverstream\r\n") != std::string_view::npos &&
+                audio_section.find("a=msid:serverstream\r\n") != std::string_view::npos,
+            "webrtc single media stream id");
+    require(video_section.find("a=rtcp-mux\r\n") != std::string_view::npos &&
+                video_section.find("a=ice-ufrag:serverufrag\r\n") != std::string_view::npos &&
+                video_section.find("a=fingerprint:sha-256 AA:BB:CC:DD\r\n") != std::string_view::npos &&
+                video_section.find("a=setup:passive\r\n") != std::string_view::npos &&
+                video_section.find("a=candidate:1 1 UDP 2130706431 127.0.0.1 40000 typ host\r\n") != std::string_view::npos &&
+                video_section.find("a=end-of-candidates\r\n") != std::string_view::npos,
+            "webrtc bundle tagged transport attributes");
+    require(audio_section.find("a=rtcp-mux\r\n") == std::string_view::npos &&
+                audio_section.find("a=ice-ufrag:") == std::string_view::npos &&
+                audio_section.find("a=ice-pwd:") == std::string_view::npos &&
+                audio_section.find("a=fingerprint:") == std::string_view::npos &&
+                audio_section.find("a=setup:") == std::string_view::npos &&
+                audio_section.find("a=candidate:") == std::string_view::npos &&
+                audio_section.find("a=end-of-candidates\r\n") == std::string_view::npos,
+            "webrtc bundle secondary media omits transport attributes");
 }
 
 void test_webrtc_h265_sdp_answer()
@@ -861,6 +888,7 @@ void test_webrtc_h265_sdp_answer()
                                            webrtc_answer_config{
                                                .address = boost::asio::ip::make_address("127.0.0.1"),
                                                .port = 40000,
+                                               .stream_id = "serverstream",
                                                .ice_ufrag = "serverufrag",
                                                .ice_pwd = "serverpassword1234567890",
                                                .fingerprint = "AA:BB:CC:DD",
@@ -879,6 +907,7 @@ void test_webrtc_video_codec_parameters()
     const auto config = webrtc_answer_config{
         .address = boost::asio::ip::make_address("127.0.0.1"),
         .port = 40000,
+        .stream_id = "serverstream",
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
@@ -941,6 +970,7 @@ void test_webrtc_payload_type_membership()
     const auto config = webrtc_answer_config{
         .address = boost::asio::ip::make_address("127.0.0.1"),
         .port = 40000,
+        .stream_id = "serverstream",
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
@@ -979,6 +1009,7 @@ void test_webrtc_payload_type_range()
     const auto config = webrtc_answer_config{
         .address = boost::asio::ip::make_address("127.0.0.1"),
         .port = 40000,
+        .stream_id = "serverstream",
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
@@ -1006,6 +1037,40 @@ void test_webrtc_payload_type_range()
     const auto h265_offer = parse_webrtc_offer(invalid_sdp);
     require(h265_offer.has_value(), "webrtc parse out of range h265 payload offer");
     require(!make_webrtc_answer(*h265_offer, {make_h265_track()}, config).has_value(), "webrtc reject out of range h265 payload");
+
+    auto reserved_h264_sdp = webrtc_offer_sdp;
+    const auto replace_reserved_h264 = [&reserved_h264_sdp](std::string_view source, std::string_view target)
+    {
+        const auto offset = reserved_h264_sdp.find(source);
+        require(offset != std::string::npos, "webrtc rtcp mux h264 payload source");
+        reserved_h264_sdp.replace(offset, source.size(), target);
+    };
+    replace_reserved_h264("m=video 9 UDP/TLS/RTP/SAVPF 102 127", "m=video 9 UDP/TLS/RTP/SAVPF 72 127");
+    replace_reserved_h264("a=rtpmap:102 H264/90000", "a=rtpmap:72 H264/90000");
+    replace_reserved_h264("a=fmtp:102 ", "a=fmtp:72 ");
+    const auto reserved_h264_offer = parse_webrtc_offer(reserved_h264_sdp);
+    require(reserved_h264_offer.has_value(), "webrtc parse rtcp mux reserved h264 payload");
+    require(!make_webrtc_answer(*reserved_h264_offer, {make_video_track()}, config).has_value(), "webrtc reject rtcp mux reserved h264 payload");
+
+    auto reserved_h265_sdp = reserved_h264_sdp;
+    reserved_h265_sdp.replace(reserved_h265_sdp.find("H264/90000"), 10U, "H265/90000");
+    const auto reserved_h265_offer = parse_webrtc_offer(reserved_h265_sdp);
+    require(reserved_h265_offer.has_value(), "webrtc parse rtcp mux reserved h265 payload");
+    require(!make_webrtc_answer(*reserved_h265_offer, {make_h265_track()}, config).has_value(), "webrtc reject rtcp mux reserved h265 payload");
+
+    auto reserved_opus_sdp = webrtc_offer_sdp;
+    const auto replace_reserved_opus = [&reserved_opus_sdp](std::string_view source, std::string_view target)
+    {
+        const auto offset = reserved_opus_sdp.find(source);
+        require(offset != std::string::npos, "webrtc rtcp mux opus payload source");
+        reserved_opus_sdp.replace(offset, source.size(), target);
+    };
+    replace_reserved_opus("m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8", "m=audio 9 UDP/TLS/RTP/SAVPF 95 0 8");
+    replace_reserved_opus("a=rtpmap:111 opus/48000/2", "a=rtpmap:95 opus/48000/2");
+    replace_reserved_opus("a=fmtp:111 ", "a=fmtp:95 ");
+    const auto reserved_opus_offer = parse_webrtc_offer(reserved_opus_sdp);
+    require(reserved_opus_offer.has_value(), "webrtc parse rtcp mux reserved opus payload");
+    require(!make_webrtc_answer(*reserved_opus_offer, {make_audio_track()}, config).has_value(), "webrtc reject rtcp mux reserved opus payload");
 }
 
 void test_webrtc_disabled_media()
@@ -1013,6 +1078,7 @@ void test_webrtc_disabled_media()
     const auto config = webrtc_answer_config{
         .address = boost::asio::ip::make_address("127.0.0.1"),
         .port = 40000,
+        .stream_id = "serverstream",
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
@@ -1069,6 +1135,7 @@ void test_webrtc_single_media_per_kind()
     const auto config = webrtc_answer_config{
         .address = boost::asio::ip::make_address("127.0.0.1"),
         .port = 40000,
+        .stream_id = "serverstream",
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
@@ -1114,6 +1181,7 @@ void test_webrtc_opus_mono_default()
                                            webrtc_answer_config{
                                                .address = boost::asio::ip::make_address("127.0.0.1"),
                                                .port = 40000,
+                                               .stream_id = "serverstream",
                                                .ice_ufrag = "serverufrag",
                                                .ice_pwd = "serverpassword1234567890",
                                                .fingerprint = "AA:BB:CC:DD",
@@ -1128,6 +1196,7 @@ void test_webrtc_opus_receive_limits()
     const auto config = webrtc_answer_config{
         .address = boost::asio::ip::make_address("127.0.0.1"),
         .port = 40000,
+        .stream_id = "serverstream",
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
@@ -1174,6 +1243,7 @@ void test_webrtc_transport_contract()
     const auto config = webrtc_answer_config{
         .address = boost::asio::ip::make_address("127.0.0.1"),
         .port = 40000,
+        .stream_id = "serverstream",
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
@@ -1222,6 +1292,28 @@ void test_webrtc_transport_contract()
     require(passive_offer.has_value(), "webrtc parse passive setup offer");
     const auto passive_answer = make_webrtc_answer(*passive_offer, tracks, config);
     require(passive_answer.has_value() && passive_answer->transport_mid == "1", "webrtc select next actpass transport");
+
+    auto audio_tag_sdp = webrtc_offer_sdp;
+    const auto audio_tag_bundle_offset = audio_tag_sdp.find(bundle);
+    require(audio_tag_bundle_offset != std::string::npos, "webrtc audio tagged bundle source");
+    audio_tag_sdp.replace(audio_tag_bundle_offset, bundle.size(), "a=group:BUNDLE 1 0\r\n");
+    const auto audio_tag_offer = parse_webrtc_offer(audio_tag_sdp);
+    require(audio_tag_offer.has_value(), "webrtc parse audio tagged bundle offer");
+    const auto audio_tag_answer = make_webrtc_answer(*audio_tag_offer, tracks, config);
+    require(audio_tag_answer.has_value() && audio_tag_answer->transport_mid == "1", "webrtc select audio tagged transport");
+    const std::string_view audio_tag_answer_sdp = audio_tag_answer->sdp;
+    const auto audio_tag_video_offset = audio_tag_answer_sdp.find("m=video ");
+    const auto audio_tag_audio_offset = audio_tag_answer_sdp.find("m=audio ");
+    require(audio_tag_video_offset != std::string_view::npos && audio_tag_audio_offset != std::string_view::npos &&
+                audio_tag_video_offset < audio_tag_audio_offset,
+            "webrtc audio tagged media order");
+    const auto untagged_video_section = audio_tag_answer_sdp.substr(audio_tag_video_offset, audio_tag_audio_offset - audio_tag_video_offset);
+    const auto tagged_audio_section = audio_tag_answer_sdp.substr(audio_tag_audio_offset);
+    require(untagged_video_section.find("a=ice-ufrag:") == std::string_view::npos &&
+                untagged_video_section.find("a=rtcp-mux\r\n") == std::string_view::npos &&
+                tagged_audio_section.find("a=ice-ufrag:serverufrag\r\n") != std::string_view::npos &&
+                tagged_audio_section.find("a=rtcp-mux\r\n") != std::string_view::npos,
+            "webrtc transport follows answer bundle tag");
 
     auto video_only_bundle_sdp = webrtc_offer_sdp;
     const auto bundle_offset = video_only_bundle_sdp.find(bundle);
@@ -1287,6 +1379,13 @@ void test_webrtc_transport_contract()
     require(reused_payload_type_answer.has_value() && reused_payload_type_answer->video_payload_type == 102 &&
                 !reused_payload_type_answer->audio_payload_type.has_value(),
             "webrtc reject conflicting bundled payload type reuse");
+
+    auto long_mid_sdp = webrtc_offer_sdp;
+    const std::string video_mid = "a=mid:0\r\n";
+    const auto video_mid_offset = long_mid_sdp.find(video_mid);
+    require(video_mid_offset != std::string::npos, "webrtc mid length offer");
+    long_mid_sdp.replace(video_mid_offset, video_mid.size(), "a=mid:0123456789abcdef0\r\n");
+    require(!parse_webrtc_offer(long_mid_sdp).has_value(), "webrtc reject mid longer than 16 characters");
 
     auto unknown_bundle_mid_sdp = webrtc_offer_sdp;
     const auto unknown_bundle_offset = unknown_bundle_mid_sdp.find(bundle);
