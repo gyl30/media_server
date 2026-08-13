@@ -42,18 +42,14 @@ void flv_output_muxer::on_track(const media_track& track)
     {
         // flv_muxer 会缓存 AVC/AAC sequence-header 状态，配置代际变化时统一重置。
         static_cast<void>(flv_muxer_reset(muxer_));
-        for (const auto& [id, current] : tracks_)
-        {
-            static_cast<void>(id);
-            prime_video_config(current);
-        }
+        video_config_pending_ = true;
         return;
     }
 
-    prime_video_config(track);
+    prime_video_config(track, 0);
 }
 
-void flv_output_muxer::prime_video_config(const media_track& track)
+void flv_output_muxer::prime_video_config(const media_track& track, std::uint32_t timestamp)
 {
     if (track.codec_config.empty())
     {
@@ -63,11 +59,11 @@ void flv_output_muxer::prime_video_config(const media_track& track)
     int result = 0;
     if (track.codec == codec_id::h264)
     {
-        result = flv_muxer_avc(muxer_, track.codec_config.data(), track.codec_config.size(), 0, 0);
+        result = flv_muxer_avc(muxer_, track.codec_config.data(), track.codec_config.size(), timestamp, timestamp);
     }
     else if (track.codec == codec_id::h265)
     {
-        result = flv_muxer_hevc(muxer_, track.codec_config.data(), track.codec_config.size(), 0, 0);
+        result = flv_muxer_hevc(muxer_, track.codec_config.data(), track.codec_config.size(), timestamp, timestamp);
     }
     else
     {
@@ -90,6 +86,16 @@ void flv_output_muxer::on_frame(const media_frame& frame)
 
     const auto pts = ns_to_flv_milliseconds(frame.pts_ns);
     const auto dts = ns_to_flv_milliseconds(frame.dts_ns);
+    if (video_config_pending_)
+    {
+        for (const auto& [id, current] : tracks_)
+        {
+            static_cast<void>(id);
+            prime_video_config(current, dts);
+        }
+        video_config_pending_ = false;
+    }
+
     int result = -1;
 
     switch (iterator->second.codec)
