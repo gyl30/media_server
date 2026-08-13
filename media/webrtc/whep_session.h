@@ -123,6 +123,10 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::optional<int> audio_channel_count_;
     std::optional<int> audio_bitrate_;
     std::optional<int> audio_max_playback_rate_;
+    std::optional<std::string> video_mid_;
+    std::optional<std::string> audio_mid_;
+    std::optional<int> video_mid_extension_id_;
+    std::optional<int> audio_mid_extension_id_;
     std::uint16_t local_port_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
