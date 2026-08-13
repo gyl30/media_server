@@ -6,10 +6,13 @@
 
 extern "C"
 {
+#include "rtp-ext.h"
+#include "rtp-packet.h"
 #include "rtp-profile.h"
 #include "rtsp-muxer.h"
 }
 
+#include <algorithm>
 #include <array>
 #include <random>
 #include <string_view>
@@ -110,7 +113,7 @@ void webrtc_output::on_frame(const media_frame& frame)
     }
 }
 
-int webrtc_output::on_packet(void* param, int, const void* data, int bytes, std::uint32_t, int)
+int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
 {
     auto* self = static_cast<webrtc_output*>(param);
     if (bytes <= 0 || data == nullptr)
@@ -118,22 +121,62 @@ int webrtc_output::on_packet(void* param, int, const void* data, int bytes, std:
         return 0;
     }
 
-    const auto packet = std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes));
-    if (packet.size() >= 12U)
+    const auto state = std::find_if(self->tracks_.begin(), self->tracks_.end(), [pid](const auto& entry) { return entry.second.payload_id == pid; });
+    if (state == self->tracks_.end())
     {
-        const auto sequence = static_cast<std::uint16_t>((static_cast<std::uint16_t>(packet[2]) << 8U) | static_cast<std::uint16_t>(packet[3]));
-        const auto timestamp = (static_cast<std::uint32_t>(packet[4]) << 24U) | (static_cast<std::uint32_t>(packet[5]) << 16U) |
-                               (static_cast<std::uint32_t>(packet[6]) << 8U) | static_cast<std::uint32_t>(packet[7]);
-        const auto ssrc = (static_cast<std::uint32_t>(packet[8]) << 24U) | (static_cast<std::uint32_t>(packet[9]) << 16U) |
-                          (static_cast<std::uint32_t>(packet[10]) << 8U) | static_cast<std::uint32_t>(packet[11]);
-        spdlog::trace("webrtc rtp packet pt {} seq {} timestamp {} ssrc {} marker {} size {}",
-                      packet[1] & 0x7fU,
-                      sequence,
-                      timestamp,
-                      ssrc,
-                      (packet[1] & 0x80U) != 0,
-                      packet.size());
+        return -1;
     }
+
+    rtp_packet_t parsed{};
+    if (rtp_packet_deserialize(&parsed, data, bytes) != 0)
+    {
+        return -1;
+    }
+
+    const bool video = state->second.codec == codec_id::h264 || state->second.codec == codec_id::h265;
+    const auto& mid = video ? self->config_.video_mid : self->config_.audio_mid;
+    const auto extension_id = video ? self->config_.video_mid_extension_id : self->config_.audio_mid_extension_id;
+    std::vector<std::uint8_t> extension;
+    std::uint16_t extension_profile = RTP_HDREXT_PROFILE_TWO_BYTE;
+    const bool two_byte_extension = extension_id > 14 || self->config_.video_mid.size() > 16U || self->config_.audio_mid.size() > 16U;
+    if (!two_byte_extension)
+    {
+        extension_profile = RTP_HDREXT_PROFILE_ONE_BYTE;
+        extension.push_back(static_cast<std::uint8_t>((extension_id << 4) | (static_cast<int>(mid.size()) - 1)));
+    }
+    else
+    {
+        extension.push_back(static_cast<std::uint8_t>(extension_id));
+        extension.push_back(static_cast<std::uint8_t>(mid.size()));
+    }
+    extension.insert(extension.end(), mid.begin(), mid.end());
+    while ((extension.size() % 4U) != 0U)
+    {
+        extension.push_back(0);
+    }
+
+    parsed.rtp.x = 1;
+    parsed.extension = extension.data();
+    parsed.extlen = static_cast<std::uint16_t>(extension.size());
+    parsed.extprofile = extension_profile;
+
+    std::vector<std::uint8_t> packet(static_cast<std::size_t>(bytes) + 4U + extension.size());
+    const auto packet_bytes = rtp_packet_serialize(&parsed, packet.data(), static_cast<int>(packet.size()));
+    if (packet_bytes <= 0)
+    {
+        return -1;
+    }
+    packet.resize(static_cast<std::size_t>(packet_bytes));
+
+    const auto sequence = parsed.rtp.seq;
+    spdlog::trace("webrtc rtp packet pt {} seq {} timestamp {} ssrc {} marker {} mid {} size {}",
+                  static_cast<unsigned>(parsed.rtp.pt),
+                  sequence,
+                  parsed.rtp.timestamp,
+                  parsed.rtp.ssrc,
+                  parsed.rtp.m != 0,
+                  mid,
+                  packet.size());
 
     if (self->rtp_handler_)
     {
@@ -144,7 +187,8 @@ int webrtc_output::on_packet(void* param, int, const void* data, int bytes, std:
 
 bool webrtc_output::add_h264_track(const media_track& track)
 {
-    if (config_.video_payload_type < 0 || config_.video_payload_type > 127)
+    if (config_.video_payload_type < 0 || config_.video_payload_type > 127 || config_.video_mid.empty() || config_.video_mid.size() > 255U ||
+        config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
     {
         return false;
     }
@@ -189,7 +233,8 @@ bool webrtc_output::add_h264_track(const media_track& track)
 
 bool webrtc_output::add_h265_track(const media_track& track)
 {
-    if (config_.video_payload_type < 0 || config_.video_payload_type > 127)
+    if (config_.video_payload_type < 0 || config_.video_payload_type > 127 || config_.video_mid.empty() || config_.video_mid.size() > 255U ||
+        config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
     {
         return false;
     }
@@ -234,7 +279,8 @@ bool webrtc_output::add_h265_track(const media_track& track)
 
 bool webrtc_output::add_aac_track(const media_track& track)
 {
-    if (config_.opus_payload_type < 0 || config_.opus_payload_type > 127)
+    if (config_.opus_payload_type < 0 || config_.opus_payload_type > 127 || config_.audio_mid.empty() || config_.audio_mid.size() > 255U ||
+        config_.audio_mid_extension_id <= 0 || config_.audio_mid_extension_id > 255)
     {
         return false;
     }

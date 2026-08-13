@@ -36,6 +36,7 @@ struct webrtc_media_offer
     std::string fingerprint;
     bool rtcp_mux{};
     bool bundle_only{};
+    std::optional<int> mid_extension_id;
     std::vector<int> payload_types;
     std::vector<webrtc_codec_offer> codecs;
 };
@@ -53,6 +54,10 @@ struct webrtc_answer
     std::optional<codec_id> video_codec;
     std::optional<int> video_payload_type;
     std::optional<int> audio_payload_type;
+    std::optional<std::string> video_mid;
+    std::optional<std::string> audio_mid;
+    std::optional<int> video_mid_extension_id;
+    std::optional<int> audio_mid_extension_id;
     std::optional<int> audio_channel_count;
     std::optional<int> audio_bitrate;
     std::optional<int> audio_max_playback_rate;

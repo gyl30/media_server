@@ -30,6 +30,7 @@ extern "C"
 #include "rtmp-client.h"
 #include "rtmp-internal.h"
 #include "rtmp-msgtypeid.h"
+#include "rtp-ext.h"
 #include "rtp-packet.h"
 #include "rtp-payload.h"
 #include "rtsp-client.h"
@@ -3300,6 +3301,8 @@ void test_h265_output_paths()
         webrtc_output_config{
             .video_codec = codec_id::h265,
             .video_payload_type = 103,
+            .video_mid = "0",
+            .video_mid_extension_id = 4,
             .rtcp_cname = {},
         },
         [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
@@ -4367,6 +4370,38 @@ std::uint32_t rtp_ssrc(const std::vector<std::uint8_t>& packet)
     return network_u32(packet, 8U);
 }
 
+std::span<const std::uint8_t> require_rtp_mid(const std::vector<std::uint8_t>& packet, std::string_view expected_mid, int expected_id)
+{
+    rtp_packet_t parsed{};
+    require(rtp_packet_deserialize(&parsed, packet.data(), static_cast<int>(packet.size())) == 0, "rtp mid deserialize");
+    require(parsed.rtp.x == 1 && parsed.extension != nullptr && parsed.extlen > 0, "rtp mid extension present");
+
+    const auto extension =
+        std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(parsed.extension), static_cast<std::size_t>(parsed.extlen));
+    std::size_t offset = 0;
+    std::size_t length = 0;
+    int extension_id = 0;
+    if (parsed.extprofile == RTP_HDREXT_PROFILE_ONE_BYTE)
+    {
+        require(!extension.empty(), "rtp mid one byte header");
+        extension_id = extension[0] >> 4U;
+        length = (extension[0] & 0x0fU) + 1U;
+        offset = 1;
+    }
+    else
+    {
+        require((parsed.extprofile & RTP_HDREXT_PROFILE_TWO_BYTE_FILTER) == RTP_HDREXT_PROFILE_TWO_BYTE && extension.size() >= 2U,
+                "rtp mid two byte header");
+        extension_id = extension[0];
+        length = extension[1];
+        offset = 2;
+    }
+    require(extension_id == expected_id && offset + length <= extension.size(), "rtp mid id and length");
+    const auto mid = std::string_view(reinterpret_cast<const char*>(extension.data() + offset), length);
+    require(mid == expected_mid, "rtp mid value");
+    return std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(parsed.payload), static_cast<std::size_t>(parsed.payloadlen));
+}
+
 std::uint32_t require_rtcp_sender_report(const std::vector<std::uint8_t>& packet, std::string_view expected_cname)
 {
     require(packet.size() >= 40U, "rtcp compound size");
@@ -4396,7 +4431,8 @@ std::uint32_t require_rtcp_sender_report(const std::vector<std::uint8_t>& packet
 void test_webrtc_rtp_packetizer()
 {
     std::vector<std::vector<std::uint8_t>> packets;
-    webrtc_output output(webrtc_output_config{.video_payload_type = 102, .rtcp_cname = {}},
+    webrtc_output output(
+        webrtc_output_config{.video_payload_type = 102, .video_mid = "video", .video_mid_extension_id = 20, .rtcp_cname = {}},
                          [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
     output.on_track(make_video_track());
     require(output.valid(), "webrtc video output valid");
@@ -4407,6 +4443,7 @@ void test_webrtc_rtp_packetizer()
     require(!packets.empty() && packets.front().size() >= 12, "rtp header size");
     require((packets.front()[0] >> 6U) == 2U, "rtp version 2");
     require((packets.front()[1] & 0x7fU) == 102U, "rtp negotiated payload type");
+    require(!require_rtp_mid(packets.front(), "video", 20).empty(), "rtp video mid payload");
 
     const auto first_timestamp = rtp_timestamp(packets.front());
     const auto first_frame_packet_count = packets.size();
@@ -4424,6 +4461,8 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
             .opus_channel_count = channel_count,
             .opus_bitrate = bitrate,
             .opus_max_playback_rate = max_playback_rate,
+            .audio_mid = "1",
+            .audio_mid_extension_id = 4,
             .rtcp_cname = {},
         },
         [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
@@ -4446,6 +4485,7 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
     require(!packets.empty() && packets.front().size() >= 12, "opus rtp header size");
     require((packets.front()[0] >> 6U) == 2U, "opus rtp version 2");
     require((packets.front()[1] & 0x7fU) == 111U, "opus negotiated payload type");
+    require(!require_rtp_mid(packets.front(), "1", 4).empty(), "rtp audio mid payload");
 
     if (packets.size() >= 2U)
     {
@@ -4455,13 +4495,15 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
 
 void test_webrtc_output_initialization_failure()
 {
-    webrtc_output invalid_video(webrtc_output_config{.video_payload_type = 102, .rtcp_cname = {}}, [](std::span<const std::uint8_t>) {});
+    webrtc_output invalid_video(
+        webrtc_output_config{.video_payload_type = 102, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}}, [](std::span<const std::uint8_t>) {});
     auto video = make_video_track();
     video.codec_config.clear();
     invalid_video.on_track(video);
     require(!invalid_video.valid(), "webrtc invalid h264 output rejected");
 
-    webrtc_output invalid_audio(webrtc_output_config{.opus_payload_type = 111, .opus_channel_count = 3, .rtcp_cname = {}},
+    webrtc_output invalid_audio(
+        webrtc_output_config{.opus_payload_type = 111, .opus_channel_count = 3, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
                                 [](std::span<const std::uint8_t>) {});
     invalid_audio.on_track(make_audio_track());
     require(!invalid_audio.valid(), "webrtc invalid opus output rejected");
@@ -4477,6 +4519,10 @@ void test_webrtc_rtcp_sender()
             .video_payload_type = 102,
             .opus_payload_type = 111,
             .opus_channel_count = 2,
+            .video_mid = "0",
+            .audio_mid = "1",
+            .video_mid_extension_id = 4,
+            .audio_mid_extension_id = 4,
             .rtcp_cname = std::string(cname),
         },
         [&rtp_packets](std::span<const std::uint8_t> packet) { rtp_packets.emplace_back(packet.begin(), packet.end()); },

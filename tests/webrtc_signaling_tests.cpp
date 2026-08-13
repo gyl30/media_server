@@ -9,6 +9,12 @@
 #include "media/webrtc/whep_service.h"
 #include "media/webrtc/whep_session.h"
 
+extern "C"
+{
+#include "rtp-ext.h"
+#include "rtp-packet.h"
+}
+
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
@@ -82,6 +88,7 @@ const std::string webrtc_offer_sdp =
     "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\n"
     "a=setup:actpass\r\n"
     "a=mid:0\r\n"
+    "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
     "a=recvonly\r\n"
     "a=rtcp-mux\r\n"
     "a=rtpmap:102 H264/90000\r\n"
@@ -95,6 +102,7 @@ const std::string webrtc_offer_sdp =
     "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\n"
     "a=setup:actpass\r\n"
     "a=mid:1\r\n"
+    "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
     "a=recvonly\r\n"
     "a=rtcp-mux\r\n"
     "a=rtpmap:111 opus/48000/2\r\n"
@@ -455,6 +463,38 @@ std::uint32_t read_network_u32(std::span<const std::uint8_t> data, std::size_t o
            (static_cast<std::uint32_t>(data[offset + 2U]) << 8U) | static_cast<std::uint32_t>(data[offset + 3U]);
 }
 
+std::span<const std::uint8_t> require_rtp_mid(std::span<const std::uint8_t> packet, std::string_view expected_mid, int expected_id)
+{
+    rtp_packet_t parsed{};
+    require(rtp_packet_deserialize(&parsed, packet.data(), static_cast<int>(packet.size())) == 0, "srtp mid deserialize");
+    require(parsed.rtp.x == 1 && parsed.extension != nullptr && parsed.extlen > 0, "srtp mid extension present");
+
+    const auto extension =
+        std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(parsed.extension), static_cast<std::size_t>(parsed.extlen));
+    std::size_t offset = 0;
+    std::size_t length = 0;
+    int extension_id = 0;
+    if (parsed.extprofile == RTP_HDREXT_PROFILE_ONE_BYTE)
+    {
+        require(!extension.empty(), "srtp mid one byte header");
+        extension_id = extension[0] >> 4U;
+        length = (extension[0] & 0x0fU) + 1U;
+        offset = 1;
+    }
+    else
+    {
+        require((parsed.extprofile & RTP_HDREXT_PROFILE_TWO_BYTE_FILTER) == RTP_HDREXT_PROFILE_TWO_BYTE && extension.size() >= 2U,
+                "srtp mid two byte header");
+        extension_id = extension[0];
+        length = extension[1];
+        offset = 2;
+    }
+    require(extension_id == expected_id && offset + length <= extension.size(), "srtp mid id and length");
+    const auto mid = std::string_view(reinterpret_cast<const char*>(extension.data() + offset), length);
+    require(mid == expected_mid, "srtp mid value");
+    return std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(parsed.payload), static_cast<std::size_t>(parsed.payloadlen));
+}
+
 void require_server_sender_report(std::span<const std::uint8_t> packet, std::uint32_t expected_ssrc, std::string_view expected_cname)
 {
     require(packet.size() >= 40U, "server rtcp compound size");
@@ -796,6 +836,8 @@ void test_webrtc_sdp_answer()
     require(answer->audio_channel_count == 2, "webrtc negotiated opus stereo");
     require(answer->audio_bitrate == 128'000, "webrtc negotiated opus default bitrate");
     require(answer->audio_max_playback_rate == 48'000, "webrtc negotiated opus default playback rate");
+    require(answer->video_mid == "0" && answer->audio_mid == "1", "webrtc negotiated media mids");
+    require(answer->video_mid_extension_id == 4 && answer->audio_mid_extension_id == 4, "webrtc negotiated mid extension ids");
     require(answer->sdp.find("a=ice-lite\r\n") != std::string::npos, "webrtc ice lite");
     require(answer->sdp.find("a=end-of-candidates\r\n") != std::string::npos, "webrtc complete candidates");
     require(answer->sdp.find("trickle") == std::string::npos, "webrtc no trickle");
@@ -805,6 +847,7 @@ void test_webrtc_sdp_answer()
     require(answer->sdp.find("m=audio 40000 UDP/TLS/RTP/SAVPF 111\r\n") != std::string::npos, "webrtc opus payload selection");
     require(answer->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos, "webrtc opus rtpmap");
     require(answer->sdp.find("sprop-stereo=1") != std::string::npos, "webrtc opus stereo sender property");
+    require(answer->sdp.find("a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n") != std::string::npos, "webrtc mid extension");
     require(answer->sdp.find("a=sendonly\r\n") != std::string::npos, "webrtc sendonly");
 }
 
@@ -1199,6 +1242,51 @@ void test_webrtc_transport_contract()
     require(audio_only_answer.has_value(), "webrtc answer audio only source");
     require(audio_only_answer->sdp.find("a=group:BUNDLE 1\r\n") != std::string::npos, "webrtc answer selects accepted bundle tag");
     require(audio_only_answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF") != std::string::npos, "webrtc reject unavailable bundled video");
+
+    auto missing_mid_extension_sdp = webrtc_offer_sdp;
+    const std::string mid_extension = "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n";
+    const auto missing_mid_extension_offset = missing_mid_extension_sdp.find(mid_extension);
+    require(missing_mid_extension_offset != std::string::npos, "webrtc mid extension offer");
+    missing_mid_extension_sdp.erase(missing_mid_extension_offset, mid_extension.size());
+    const auto missing_mid_extension = parse_webrtc_offer(missing_mid_extension_sdp);
+    require(missing_mid_extension.has_value(), "webrtc parse missing video mid extension");
+    const auto missing_mid_extension_answer = make_webrtc_answer(*missing_mid_extension, tracks, config);
+    require(missing_mid_extension_answer.has_value() && !missing_mid_extension_answer->video_payload_type.has_value() &&
+                missing_mid_extension_answer->audio_payload_type == 111,
+            "webrtc reject bundled media without mid extension");
+
+    auto mismatched_mid_extension_sdp = webrtc_offer_sdp;
+    const auto first_mid_extension_offset = mismatched_mid_extension_sdp.find(mid_extension);
+    const auto second_mid_extension_offset =
+        mismatched_mid_extension_sdp.find(mid_extension, first_mid_extension_offset == std::string::npos ? 0 : first_mid_extension_offset + mid_extension.size());
+    require(first_mid_extension_offset != std::string::npos && second_mid_extension_offset != std::string::npos, "webrtc bundled mid extension ids");
+    mismatched_mid_extension_sdp.replace(second_mid_extension_offset, mid_extension.size(),
+                                         "a=extmap:5 urn:ietf:params:rtp-hdrext:sdes:mid\r\n");
+    const auto mismatched_mid_extension = parse_webrtc_offer(mismatched_mid_extension_sdp);
+    require(mismatched_mid_extension.has_value(), "webrtc parse mismatched mid extension ids");
+    const auto mismatched_mid_extension_answer = make_webrtc_answer(*mismatched_mid_extension, tracks, config);
+    require(mismatched_mid_extension_answer.has_value() && mismatched_mid_extension_answer->video_payload_type == 102 &&
+                !mismatched_mid_extension_answer->audio_payload_type.has_value(),
+            "webrtc reject bundled media with different mid extension id");
+
+    auto reused_payload_type_sdp = webrtc_offer_sdp;
+    const auto audio_media_offset = reused_payload_type_sdp.find("m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8\r\n");
+    require(audio_media_offset != std::string::npos, "webrtc bundled payload type source");
+    reused_payload_type_sdp.replace(audio_media_offset, std::string_view("m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8\r\n").size(),
+                                    "m=audio 9 UDP/TLS/RTP/SAVPF 102 0 8\r\n");
+    const auto opus_rtpmap_offset = reused_payload_type_sdp.find("a=rtpmap:111 opus/48000/2\r\n", audio_media_offset);
+    const auto opus_fmtp_offset = reused_payload_type_sdp.find("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n", audio_media_offset);
+    require(opus_rtpmap_offset != std::string::npos && opus_fmtp_offset != std::string::npos, "webrtc bundled opus payload source");
+    reused_payload_type_sdp.replace(opus_rtpmap_offset, std::string_view("a=rtpmap:111 opus/48000/2\r\n").size(),
+                                    "a=rtpmap:102 opus/48000/2\r\n");
+    reused_payload_type_sdp.replace(opus_fmtp_offset, std::string_view("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n").size(),
+                                    "a=fmtp:102 minptime=10;useinbandfec=1;stereo=1\r\n");
+    const auto reused_payload_type = parse_webrtc_offer(reused_payload_type_sdp);
+    require(reused_payload_type.has_value(), "webrtc parse bundled reused payload type");
+    const auto reused_payload_type_answer = make_webrtc_answer(*reused_payload_type, tracks, config);
+    require(reused_payload_type_answer.has_value() && reused_payload_type_answer->video_payload_type == 102 &&
+                !reused_payload_type_answer->audio_payload_type.has_value(),
+            "webrtc reject conflicting bundled payload type reuse");
 
     auto unknown_bundle_mid_sdp = webrtc_offer_sdp;
     const auto unknown_bundle_offset = unknown_bundle_mid_sdp.find(bundle);
@@ -1747,7 +1835,9 @@ void test_whep_dtls(codec_id video_codec)
     require(clear_rtp->bytes.size() >= 14U, "srtp clear rtp header");
     require((clear_rtp->bytes[0] >> 6U) == 2U, "srtp clear rtp version");
     require((clear_rtp->bytes[1] & 0x7fU) == 102U, "srtp negotiated video payload");
-    const auto nal_type = h265 ? ((clear_rtp->bytes[12] >> 1U) & 0x3fU) : (clear_rtp->bytes[12] & 0x1fU);
+    const auto video_payload = require_rtp_mid(clear_rtp->bytes, "0", 4);
+    require(!video_payload.empty(), "srtp video payload");
+    const auto nal_type = h265 ? ((video_payload[0] >> 1U) & 0x3fU) : (video_payload[0] & 0x1fU);
     require(nal_type == (h265 ? 19U : 5U), "srtp negotiated video codec");
     const auto video_ssrc = read_network_u32(clear_rtp->bytes, 8U);
 
@@ -1816,6 +1906,7 @@ void test_whep_dtls(codec_id video_codec)
     require(clear_audio_rtp.has_value(), "srtp decrypt opus rtp");
     require((clear_audio_rtp->bytes[0] >> 6U) == 2U, "srtp clear opus rtp version");
     require((clear_audio_rtp->bytes[1] & 0x7fU) == 111U, "srtp negotiated opus payload");
+    require(!require_rtp_mid(clear_audio_rtp->bytes, "1", 4).empty(), "srtp opus mid payload");
 
     const auto clear_rtcp = make_rtcp_compound();
     const auto protected_rtcp = peer_srtp.protect_rtcp(clear_rtcp);
