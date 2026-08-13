@@ -64,7 +64,7 @@ void rtmp_session::startup()
     const auto self = shared_from_this();
     connection_->startup(
         [self](boost::system::error_code error, std::span<const std::uint8_t> data) { self->on_tcp_read(error, data); },
-        [self]() { self->shutdown(); });
+        [self](boost::system::error_code error, std::size_t write_size) { self->on_tcp_write(error, write_size); });
 }
 
 void rtmp_session::on_tracks(media_track_snapshot_ptr tracks)
@@ -402,6 +402,15 @@ void rtmp_session::on_tcp_read(boost::system::error_code error, std::span<const 
         return;
     }
     if (rtmp_server_input(server_, data.data(), data.size()) != 0)
+    {
+        shutdown();
+    }
+}
+
+void rtmp_session::on_tcp_write(boost::system::error_code error, std::size_t write_size)
+{
+    static_cast<void>(write_size);
+    if (error)
     {
         shutdown();
     }

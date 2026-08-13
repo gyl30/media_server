@@ -1522,7 +1522,7 @@ void test_tcp_connection_shutdown_lifecycle()
     auto connection = std::make_shared<tcp_connection>(std::move(server));
     connection->startup(
         [&io_callback_count](boost::system::error_code, std::span<const std::uint8_t>) { ++io_callback_count; },
-        [&io_callback_count]() { ++io_callback_count; });
+        [&io_callback_count](boost::system::error_code, std::size_t) { ++io_callback_count; });
     const std::weak_ptr<tcp_connection> weak_connection = connection;
 
     connection->shutdown();
@@ -1564,15 +1564,15 @@ void test_tcp_connection_io_error_propagation()
         boost::asio::ip::tcp::socket client(io);
         client.connect(acceptor.local_endpoint());
         auto connection = std::make_shared<tcp_connection>(acceptor.accept());
-        bool write_error = false;
-        connection->startup({}, [&write_error]() { write_error = true; });
+        boost::system::error_code write_error;
+        connection->startup({}, [&write_error](boost::system::error_code error, std::size_t) { write_error = error; });
 
         client.set_option(boost::asio::socket_base::linger(true, 0));
         client.close();
         std::vector<std::uint8_t> data(8 * 1024 * 1024, 0x5a);
         connection->write(data);
         io.run();
-        require(write_error, "tcp connection reports write error");
+        require(static_cast<bool>(write_error), "tcp connection reports write error");
         connection->shutdown();
         io.restart();
         io.run();

@@ -96,7 +96,13 @@ void rtsp_output_session::startup()
             }
             self->on_tcp_read(data);
         },
-        [self]() { self->shutdown(); });
+        [self](boost::system::error_code error, std::size_t)
+        {
+            if (error)
+            {
+                self->shutdown();
+            }
+        });
 }
 
 void rtsp_output_session::on_tracks(media_track_snapshot_ptr tracks)
