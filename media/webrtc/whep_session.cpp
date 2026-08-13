@@ -112,6 +112,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
                                            webrtc_answer_config{
                                                .address = advertised_address_,
                                                .port = local_port_,
+                                               .stream_id = id_,
                                                .ice_ufrag = ice_ufrag_,
                                                .ice_pwd = ice_pwd_,
                                                .fingerprint = certificate_->sha256_fingerprint(),
