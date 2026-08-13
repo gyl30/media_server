@@ -351,7 +351,7 @@ std::string make_h265_offer(std::string offer)
     const auto rtpmap_offset = offer.find(h264_rtpmap);
     const auto fmtp_offset = offer.find(h264_fmtp);
     require(rtpmap_offset != std::string::npos && fmtp_offset != std::string::npos, "webrtc h265 offer source");
-    offer.erase(fmtp_offset, h264_fmtp.size());
+    offer.replace(fmtp_offset, h264_fmtp.size(), "a=fmtp:102 profile-space=0;profile-id=1;tier-flag=0;level-id=120\r\n");
     offer.replace(rtpmap_offset, h264_rtpmap.size(), "a=rtpmap:102 H265/90000\r\n");
     return offer;
 }
@@ -824,7 +824,71 @@ void test_webrtc_h265_sdp_answer()
     require(answer->video_codec == codec_id::h265, "webrtc negotiated h265 codec");
     require(answer->video_payload_type == 102, "webrtc negotiated h265 payload");
     require(answer->sdp.find("a=rtpmap:102 H265/90000\r\n") != std::string::npos, "webrtc h265 rtpmap");
+    require(answer->sdp.find("a=fmtp:102 profile-space=0;profile-id=1;tier-flag=0;level-id=120\r\n") != std::string::npos,
+            "webrtc h265 source profile tier level");
     require(answer->sdp.find("H264/90000") == std::string::npos, "webrtc h265 answer excludes h264");
+}
+
+void test_webrtc_video_codec_parameters()
+{
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+    };
+
+    constexpr std::string_view h264_profile_level = "profile-level-id=42e01f";
+    auto wrong_h264_profile_sdp = webrtc_offer_sdp;
+    const auto h264_profile_offset = wrong_h264_profile_sdp.find(h264_profile_level);
+    require(h264_profile_offset != std::string::npos, "webrtc h264 profile source");
+    wrong_h264_profile_sdp.replace(h264_profile_offset, h264_profile_level.size(), "profile-level-id=64001f");
+    const auto wrong_h264_profile = parse_webrtc_offer(wrong_h264_profile_sdp);
+    require(wrong_h264_profile.has_value(), "webrtc parse incompatible h264 profile");
+    const auto wrong_h264_profile_answer = make_webrtc_answer(*wrong_h264_profile, {make_video_track(), make_audio_track()}, config);
+    require(wrong_h264_profile_answer.has_value() && !wrong_h264_profile_answer->video_payload_type.has_value(),
+            "webrtc reject incompatible h264 profile");
+
+    auto lower_h264_level_sdp = webrtc_offer_sdp;
+    const auto h264_level_offset = lower_h264_level_sdp.find(h264_profile_level);
+    require(h264_level_offset != std::string::npos, "webrtc h264 level source");
+    lower_h264_level_sdp.replace(h264_level_offset, h264_profile_level.size(), "profile-level-id=42e01e");
+    const auto lower_h264_level = parse_webrtc_offer(lower_h264_level_sdp);
+    require(lower_h264_level.has_value(), "webrtc parse lower h264 level");
+    const auto lower_h264_level_answer = make_webrtc_answer(*lower_h264_level, {make_video_track(), make_audio_track()}, config);
+    require(lower_h264_level_answer.has_value() && !lower_h264_level_answer->video_payload_type.has_value(),
+            "webrtc reject h264 source above offered level");
+
+    auto wrong_h265_profile_sdp = make_h265_offer(webrtc_offer_sdp);
+    const auto h265_profile_offset = wrong_h265_profile_sdp.find("profile-id=1");
+    require(h265_profile_offset != std::string::npos, "webrtc h265 profile source");
+    wrong_h265_profile_sdp.replace(h265_profile_offset, 12U, "profile-id=2");
+    const auto wrong_h265_profile = parse_webrtc_offer(wrong_h265_profile_sdp);
+    require(wrong_h265_profile.has_value(), "webrtc parse incompatible h265 profile");
+    const auto wrong_h265_profile_answer = make_webrtc_answer(*wrong_h265_profile, {make_h265_track(), make_audio_track()}, config);
+    require(wrong_h265_profile_answer.has_value() && !wrong_h265_profile_answer->video_payload_type.has_value(),
+            "webrtc reject incompatible h265 profile");
+
+    auto lower_h265_level_sdp = make_h265_offer(webrtc_offer_sdp);
+    const auto h265_level_offset = lower_h265_level_sdp.find("level-id=120");
+    require(h265_level_offset != std::string::npos, "webrtc h265 level source");
+    lower_h265_level_sdp.replace(h265_level_offset, 12U, "level-id=93");
+    const auto lower_h265_level = parse_webrtc_offer(lower_h265_level_sdp);
+    require(lower_h265_level.has_value(), "webrtc parse lower h265 level");
+    const auto lower_h265_level_answer = make_webrtc_answer(*lower_h265_level, {make_h265_track(), make_audio_track()}, config);
+    require(lower_h265_level_answer.has_value() && !lower_h265_level_answer->video_payload_type.has_value(),
+            "webrtc reject h265 source above offered level");
+
+    auto wrong_h265_tx_mode_sdp = make_h265_offer(webrtc_offer_sdp);
+    const auto h265_tx_mode_offset = wrong_h265_tx_mode_sdp.find("level-id=120");
+    require(h265_tx_mode_offset != std::string::npos, "webrtc h265 tx mode source");
+    wrong_h265_tx_mode_sdp.insert(h265_tx_mode_offset + 12U, ";tx-mode=MRST");
+    const auto wrong_h265_tx_mode = parse_webrtc_offer(wrong_h265_tx_mode_sdp);
+    require(wrong_h265_tx_mode.has_value(), "webrtc parse incompatible h265 tx mode");
+    const auto wrong_h265_tx_mode_answer = make_webrtc_answer(*wrong_h265_tx_mode, {make_h265_track(), make_audio_track()}, config);
+    require(wrong_h265_tx_mode_answer.has_value() && !wrong_h265_tx_mode_answer->video_payload_type.has_value(),
+            "webrtc reject unsupported h265 tx mode");
 }
 
 void test_webrtc_payload_type_membership()
@@ -973,13 +1037,14 @@ void test_webrtc_single_media_per_kind()
     require(answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF 103\r\n") != std::string::npos, "webrtc reject duplicate video media");
     require(answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 112\r\n") != std::string::npos, "webrtc reject duplicate audio media");
 
-    auto h265_sdp = duplicate_sdp;
-    std::size_t offset = 0;
-    while ((offset = h265_sdp.find("H264/90000", offset)) != std::string::npos)
-    {
-        h265_sdp.replace(offset, 10U, "H265/90000");
-        offset += 10U;
-    }
+    auto h265_sdp = make_h265_offer(duplicate_sdp);
+    constexpr std::string_view h264_rtpmap_103 = "a=rtpmap:103 H264/90000\r\n";
+    constexpr std::string_view h264_fmtp_103 = "a=fmtp:103 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
+    const auto h264_rtpmap_103_offset = h265_sdp.find(h264_rtpmap_103);
+    const auto h264_fmtp_103_offset = h265_sdp.find(h264_fmtp_103);
+    require(h264_rtpmap_103_offset != std::string::npos && h264_fmtp_103_offset != std::string::npos, "webrtc duplicate h265 source");
+    h265_sdp.replace(h264_rtpmap_103_offset, h264_rtpmap_103.size(), "a=rtpmap:103 H265/90000\r\n");
+    h265_sdp.replace(h264_fmtp_103_offset, h264_fmtp_103.size(), "a=fmtp:103 profile-space=0;profile-id=1;tier-flag=0;level-id=120\r\n");
     const auto h265_offer = parse_webrtc_offer(h265_sdp);
     require(h265_offer.has_value(), "webrtc parse duplicate h265 media offer");
     const auto h265_answer = make_webrtc_answer(*h265_offer, {make_h265_track(), make_audio_track()}, config);
@@ -1498,10 +1563,7 @@ void test_whep_selected_bundle_transport()
     require(bundle_offset != std::string::npos, "selected transport bundle source");
     video_tag_sdp.replace(bundle_offset, bundle_group.size(), "a=group:BUNDLE 1 0");
     check(make_video_track(), video_tag_sdp, "remotevideo", 7);
-    constexpr std::string_view h264_encoding = "H264/90000";
-    const auto encoding_offset = video_tag_sdp.find(h264_encoding);
-    require(encoding_offset != std::string::npos, "selected transport h265 source");
-    video_tag_sdp.replace(encoding_offset, h264_encoding.size(), "H265/90000");
+    video_tag_sdp = make_h265_offer(std::move(video_tag_sdp));
     check(make_h265_track(), video_tag_sdp, "remotevideo", 8);
 }
 
@@ -1731,6 +1793,8 @@ int main()
     std::cout << "[pass] webrtc_sdp_answer\n";
     media_server::test_webrtc_h265_sdp_answer();
     std::cout << "[pass] webrtc_h265_sdp_answer\n";
+    media_server::test_webrtc_video_codec_parameters();
+    std::cout << "[pass] webrtc_video_codec_parameters\n";
     media_server::test_webrtc_payload_type_membership();
     std::cout << "[pass] webrtc_payload_type_membership\n";
     media_server::test_webrtc_payload_type_range();
