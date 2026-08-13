@@ -25,7 +25,6 @@ namespace
 {
 
 constexpr int opus_sample_rate = 48'000;
-constexpr std::int64_t opus_bitrate_per_channel = 64'000;
 constexpr int default_opus_frame_samples = 960;
 
 std::string ffmpeg_error(int error)
@@ -73,13 +72,18 @@ std::optional<std::span<const std::uint8_t>> adts_payload(std::span<const std::u
 
 aac_opus_transcoder::~aac_opus_transcoder() { shutdown(); }
 
-bool aac_opus_transcoder::startup(std::span<const std::uint8_t> audio_specific_config, int output_channel_count)
+bool aac_opus_transcoder::startup(
+    std::span<const std::uint8_t> audio_specific_config, int output_channel_count, int output_bitrate, int max_playback_rate)
 {
     shutdown();
 
-    if (output_channel_count != 1 && output_channel_count != 2)
+    if ((output_channel_count != 1 && output_channel_count != 2) || output_bitrate < 6'000 || output_bitrate > 510'000 ||
+        max_playback_rate < 8'000 || max_playback_rate > 48'000)
     {
-        spdlog::error("webrtc opus invalid output channel count {}", output_channel_count);
+        spdlog::error("webrtc opus invalid output config channels {} bitrate {} max_playback_rate {}",
+                      output_channel_count,
+                      output_bitrate,
+                      max_playback_rate);
         return false;
     }
 
@@ -154,7 +158,27 @@ bool aac_opus_transcoder::startup(std::span<const std::uint8_t> audio_specific_c
     av_channel_layout_default(&encoder_->ch_layout, output_channel_count);
     encoder_->sample_rate = opus_sample_rate;
     encoder_->sample_fmt = static_cast<const AVSampleFormat*>(sample_formats)[0];
-    encoder_->bit_rate = opus_bitrate_per_channel * output_channel_count;
+    encoder_->bit_rate = output_bitrate;
+    if (max_playback_rate <= 8'000)
+    {
+        encoder_->cutoff = 4'000;
+    }
+    else if (max_playback_rate <= 12'000)
+    {
+        encoder_->cutoff = 6'000;
+    }
+    else if (max_playback_rate <= 16'000)
+    {
+        encoder_->cutoff = 8'000;
+    }
+    else if (max_playback_rate <= 24'000)
+    {
+        encoder_->cutoff = 12'000;
+    }
+    else
+    {
+        encoder_->cutoff = 20'000;
+    }
     encoder_->time_base = AVRational{1, opus_sample_rate};
     encoder_->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
 
@@ -197,12 +221,13 @@ bool aac_opus_transcoder::startup(std::span<const std::uint8_t> audio_specific_c
         return false;
     }
 
-    spdlog::debug("webrtc audio transcoder started encoder {} sample_rate {} channels {} frame_samples {} bitrate {}",
+    spdlog::debug("webrtc audio transcoder started encoder {} sample_rate {} channels {} frame_samples {} bitrate {} max_playback_rate {}",
                   encoder->name,
                   encoder_->sample_rate,
                   encoder_->ch_layout.nb_channels,
                   encoder_frame_samples_,
-                  encoder_->bit_rate);
+                  encoder_->bit_rate,
+                  max_playback_rate);
     return true;
 }
 
