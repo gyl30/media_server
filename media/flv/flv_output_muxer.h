@@ -27,11 +27,12 @@ class flv_output_muxer final
    private:
     static int on_output(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp);
 
-    void prime_video_config(const media_track& track);
+    void prime_video_config(const media_track& track, std::uint32_t timestamp);
 
     output_handler handler_;
     flv_muxer_t* muxer_{};
     std::map<track_id, media_track> tracks_;
+    bool video_config_pending_{};
 };
 
 }    // namespace media_server

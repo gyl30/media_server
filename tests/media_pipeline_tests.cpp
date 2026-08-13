@@ -288,12 +288,12 @@ media_track make_audio_track(std::uint8_t config_marker)
     return track;
 }
 
-media_frame make_video_frame(std::int64_t pts_ns, bool key_frame)
+media_frame make_video_frame(std::int64_t pts_ns, bool key_frame, std::span<const std::uint8_t> codec_config)
 {
     std::vector<std::uint8_t> bytes;
     if (key_frame)
     {
-        bytes = h264_config;
+        bytes.assign(codec_config.begin(), codec_config.end());
         const std::vector<std::uint8_t> idr{
             0x00,
             0x00,
@@ -329,6 +329,11 @@ media_frame make_video_frame(std::int64_t pts_ns, bool key_frame)
     };
 }
 
+media_frame make_video_frame(std::int64_t pts_ns, bool key_frame)
+{
+    return make_video_frame(pts_ns, key_frame, h264_config);
+}
+
 media_frame make_large_video_frame(std::int64_t pts_ns)
 {
     auto frame = make_video_frame(pts_ns, true);
@@ -342,12 +347,12 @@ media_frame make_large_video_frame(std::int64_t pts_ns)
     return frame;
 }
 
-media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame)
+media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame, std::span<const std::uint8_t> codec_config)
 {
     std::vector<std::uint8_t> bytes;
     if (key_frame)
     {
-        bytes = h265_config;
+        bytes.assign(codec_config.begin(), codec_config.end());
         const std::vector<std::uint8_t> idr{
             0x00,
             0x00,
@@ -381,6 +386,11 @@ media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame)
         .key_frame = key_frame,
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes)),
     };
+}
+
+media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame)
+{
+    return make_h265_frame(pts_ns, key_frame, h265_config);
 }
 
 media_frame make_audio_frame(std::int64_t pts_ns)
@@ -1194,6 +1204,7 @@ class rtmp_output_test_peer final
     }
 
     [[nodiscard]] const std::vector<char>& media_order() const noexcept { return media_order_; }
+    [[nodiscard]] std::size_t video_config_count() const noexcept { return video_config_count_; }
     [[nodiscard]] std::size_t audio_config_count() const noexcept { return audio_config_count_; }
 
     void add_audio_track()
@@ -1207,14 +1218,12 @@ class rtmp_output_test_peer final
 
     void update_video_track(media_track track)
     {
-        const auto expected = video_config_count_ + 1;
         std::promise<bool> promise;
         auto future = promise.get_future();
         boost::asio::post(io_,
                           [stream = stream_, track = std::move(track), &promise]() mutable
                           { promise.set_value(stream->update_track(std::move(track))); });
         require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp output config reset");
-        receive_until_video_config(expected);
     }
 
     void end_stream()
@@ -1459,8 +1468,9 @@ void test_rtmp_output_config_reset_and_end()
     auto updated = make_video_track();
     updated.codec_config = h264_config_updated;
     peer.update_video_track(std::move(updated));
-    peer.publish(make_video_frame(0, true));
+    peer.publish(make_video_frame(0, true, h264_config_updated));
     peer.receive_media(1);
+    require(peer.video_config_count() == 2U, "rtmp config reset emits video sequence header with next media frame");
     peer.end_stream();
 }
 
@@ -3182,10 +3192,11 @@ void test_flv_config_cache_lifecycle()
     require(demuxer != nullptr, "flv config demuxer create");
     std::size_t video_sequence_headers = 0;
     std::size_t audio_sequence_headers = 0;
+    std::vector<std::uint32_t> video_sequence_header_timestamps;
     std::optional<std::int32_t> video_composition_time;
     std::optional<std::uint32_t> video_timestamp;
     flv_output_muxer output(
-        [&capture, &demuxer, &video_sequence_headers, &audio_sequence_headers, &video_composition_time, &video_timestamp](
+        [&capture, &demuxer, &video_sequence_headers, &audio_sequence_headers, &video_sequence_header_timestamps, &video_composition_time, &video_timestamp](
             int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
             require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv config demuxer input");
@@ -3209,6 +3220,7 @@ void test_flv_config_cache_lifecycle()
             if (type == FLV_TYPE_VIDEO)
             {
                 ++video_sequence_headers;
+                video_sequence_header_timestamps.push_back(timestamp);
             }
             else if (type == FLV_TYPE_AUDIO)
             {
@@ -3219,7 +3231,8 @@ void test_flv_config_cache_lifecycle()
     auto video = make_video_track();
     video.config_version = 1;
     output.on_track(video);
-    require(video_sequence_headers == 1U, "flv initial video sequence header");
+    require(video_sequence_headers == 1U && video_sequence_header_timestamps == std::vector<std::uint32_t>{0U},
+            "flv initial video sequence header timestamp");
     auto reordered_video = make_video_frame(-40'000'000, true);
     reordered_video.dts_ns = 0;
     output.on_frame(reordered_video);
@@ -3238,7 +3251,7 @@ void test_flv_config_cache_lifecycle()
     updated_audio.codec_config = updated_asc;
     updated_audio.config_version = 2;
     output.on_track(updated_audio);
-    require(video_sequence_headers == 2U, "flv config generation resets cached video header");
+    require(video_sequence_headers == 1U, "flv config reset defers video sequence header");
 
     const std::vector<std::uint8_t> raw{0x21, 0x10, 0x56, 0xe5, 0x00, 0x11, 0x22, 0x33};
     auto updated_adts = make_adts_frame(updated_asc, raw);
@@ -3251,11 +3264,17 @@ void test_flv_config_cache_lifecycle()
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(updated_adts)),
     });
     require(audio_sequence_headers == 2U, "flv config generation resets cached audio header");
+    require(video_sequence_headers == 2U && video_sequence_header_timestamps.back() == 1'000U,
+            "flv audio config reset reprimes video header at next media dts");
 
     auto updated_video = video;
     updated_video.codec_config = h264_config_updated;
     updated_video.config_version = 2;
     output.on_track(updated_video);
+    require(video_sequence_headers == 2U, "flv video config reset defers sequence header");
+    output.on_frame(make_video_frame(2'000'000'000, true, h264_config_updated));
+    require(video_sequence_headers == 3U && video_sequence_header_timestamps.back() == 2'000U,
+            "flv video config reset reprimes header at next media dts");
     const auto avcc_count = std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AVCC; });
     require(avcc_count == 3, "flv h264 config generations");
     const auto first_avcc = std::ranges::find_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AVCC; });
@@ -3272,17 +3291,29 @@ void test_h265_output_paths()
     const auto demuxer =
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
     require(demuxer != nullptr, "flv h265 demuxer create");
-    flv_output_muxer flv([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
-                         { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv h265 demuxer input"); });
+    std::vector<std::uint32_t> hevc_sequence_header_timestamps;
+    flv_output_muxer flv([&demuxer, &hevc_sequence_header_timestamps](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+                         {
+                             require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv h265 demuxer input");
+                             if (type == FLV_TYPE_VIDEO && data.size() >= 2U && (data[0] & 0x0fU) == FLV_VIDEO_H265 && data[1] == 0U)
+                             {
+                                 hevc_sequence_header_timestamps.push_back(timestamp);
+                             }
+                         });
     auto hevc_track = make_h265_track();
     hevc_track.config_version = 1;
     flv.on_track(hevc_track);
+    require(hevc_sequence_header_timestamps == std::vector<std::uint32_t>{0U}, "flv initial h265 sequence header timestamp");
     const auto hevc_frame = make_h265_frame(40'000'000, true);
     flv.on_frame(hevc_frame);
     auto updated_hevc = hevc_track;
     updated_hevc.codec_config = h265_config_updated;
     updated_hevc.config_version = 2;
     flv.on_track(updated_hevc);
+    require(hevc_sequence_header_timestamps.size() == 1U, "flv h265 config reset defers sequence header");
+    flv.on_frame(make_h265_frame(1'000'000'000, true, h265_config_updated));
+    require(hevc_sequence_header_timestamps == std::vector<std::uint32_t>{0U, 1'000U},
+            "flv h265 config reset reprimes header at next media dts");
 
     require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_HVCC; }) == 2,
             "flv h265 config generations");
