@@ -55,6 +55,7 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
     int on_publish(std::string app, std::string stream);
     int on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     void on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data);
+    void on_tcp_write(boost::system::error_code error, std::size_t write_size);
     void safe_shutdown();
     void apply_tracks(const media_track_snapshot_ptr& tracks);
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
