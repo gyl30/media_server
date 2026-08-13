@@ -17,7 +17,7 @@ namespace media_server
 {
 class http_session;
 
-class http_server final
+class http_server final : public std::enable_shared_from_this<http_server>
 {
    public:
     http_server(io_context_pool& workers, stream_registry& registry, hls_service& hls, whep_service& whep, std::uint16_t port);
@@ -26,10 +26,12 @@ class http_server final
     void shutdown();
 
    private:
+    void on_accept(boost::asio::ip::tcp::socket socket);
+
     stream_registry& registry_;
     hls_service& hls_;
     whep_service& whep_;
-    tcp_listener listener_;
+    std::shared_ptr<tcp_listener> listener_;
     std::mutex sessions_mutex_;
     std::vector<std::weak_ptr<http_session>> sessions_;
     bool closed_{};
