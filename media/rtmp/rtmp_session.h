@@ -67,8 +67,7 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
     std::unique_ptr<flv_output_muxer> output_muxer_;
     media_reader_handle reader_;
     std::map<track_id, media_track> reader_tracks_;
-    rtmp_timestamp_state video_timestamp_;
-    rtmp_timestamp_state audio_timestamp_;
+    rtmp_timestamp_state timestamp_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     role role_{role::none};

@@ -375,8 +375,7 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
         return 0;
     }
 
-    auto& timestamp_state = id == video_track_id ? video_timestamp_ : audio_timestamp_;
-    const auto dts_ms = unwrap_rtmp_timestamp(dts, timestamp_state);
+    const auto dts_ms = unwrap_rtmp_timestamp(dts, timestamp_);
     const auto pts_ms = dts_ms + rtmp_timestamp_delta(pts, dts);
 
     auto payload = std::make_shared<const std::vector<std::uint8_t>>(data.begin(), data.end());
