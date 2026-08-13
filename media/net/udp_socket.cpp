@@ -10,7 +10,7 @@ namespace media_server
 
 udp_socket::udp_socket(boost::asio::any_io_executor executor) : socket_(std::move(executor)) {}
 
-bool udp_socket::startup(boost::asio::ip::address bind_address, read_handler on_read, write_handler on_write)
+bool udp_socket::startup(boost::asio::ip::address bind_address, read_handler on_read, write_error_handler on_write_error)
 {
     if (closed_ || socket_.is_open())
     {
@@ -39,7 +39,7 @@ bool udp_socket::startup(boost::asio::ip::address bind_address, read_handler on_
     }
 
     on_read_ = std::move(on_read);
-    on_write_ = std::move(on_write);
+    on_write_error_ = std::move(on_write_error);
     local_port_ = endpoint.port();
     receive_next();
     return true;
@@ -114,7 +114,7 @@ void udp_socket::write_next()
     const auto self = shared_from_this();
     socket_.async_send_to(boost::asio::buffer(*datagram.packet),
                           datagram.endpoint,
-                          [this, self, datagram](boost::system::error_code error, std::size_t bytes)
+                          [this, self, datagram](boost::system::error_code error, std::size_t)
                           {
                               if (closed_)
                               {
@@ -122,9 +122,9 @@ void udp_socket::write_next()
                               }
                               send_queue_.pop_front();
                               write_next();
-                              if (on_write_)
+                              if (error && on_write_error_)
                               {
-                                  on_write_(error, bytes, datagram.endpoint);
+                                  on_write_error_(error, datagram.endpoint);
                               }
                           });
 }
@@ -138,7 +138,7 @@ void udp_socket::safe_shutdown()
     closed_ = true;
 
     on_read_ = {};
-    on_write_ = {};
+    on_write_error_ = {};
     send_queue_.clear();
     local_port_ = 0;
     boost::system::error_code error;

@@ -311,13 +311,7 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
             }
             self->on_read(data);
         },
-        [self](boost::system::error_code write_error, std::size_t)
-        {
-            if (write_error)
-            {
-                self->shutdown();
-            }
-        });
+        [self]() { self->shutdown(); });
 
     spdlog::info("rtsp input connected stream {}", stream_name_);
     if (rtsp_client_describe(client_) != 0)

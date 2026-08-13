@@ -83,11 +83,11 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
                     self->on_udp_read(error, packet, endpoint);
                 }
             },
-            [weak](boost::system::error_code error, std::size_t bytes, const boost::asio::ip::udp::endpoint& endpoint)
+            [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint)
             {
                 if (const auto self = weak.lock())
                 {
-                    self->on_udp_write(error, bytes, endpoint);
+                    self->on_udp_write_error(error, endpoint);
                 }
             }))
     {
@@ -342,28 +342,21 @@ void whep_session::on_udp_read(boost::system::error_code error,
     handle_packet(packet, endpoint);
 }
 
-void whep_session::on_udp_write(boost::system::error_code error,
-                                std::size_t bytes,
-                                const boost::asio::ip::udp::endpoint& endpoint)
+void whep_session::on_udp_write_error(boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint)
 {
     if (!started_)
     {
         return;
     }
-    if (error)
+    spdlog::debug("webrtc udp send failed session {} remote {} {} error {}",
+                  id_,
+                  endpoint.address().to_string(),
+                  endpoint.port(),
+                  error.message());
+    if (remote_endpoint_.has_value() && endpoint == *remote_endpoint_)
     {
-        spdlog::debug("webrtc udp send failed session {} remote {} {} error {}",
-                      id_,
-                      endpoint.address().to_string(),
-                      endpoint.port(),
-                      error.message());
-        if (remote_endpoint_.has_value() && endpoint == *remote_endpoint_)
-        {
-            shutdown();
-        }
-        return;
+        shutdown();
     }
-    spdlog::trace("webrtc udp sent session {} remote {} {} bytes {}", id_, endpoint.address().to_string(), endpoint.port(), bytes);
 }
 
 void whep_session::handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
