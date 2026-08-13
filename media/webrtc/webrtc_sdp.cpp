@@ -2,6 +2,7 @@
 
 extern "C"
 {
+#include "mpeg4-hevc.h"
 #include "sdp-a-rtpmap.h"
 #include "sdp.h"
 }
@@ -34,6 +35,30 @@ std::string lower_copy(std::string_view value)
     std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     return result;
 }
+
+enum class h264_profile
+{
+    constrained_baseline,
+    baseline,
+    main,
+    constrained_high,
+    high,
+    predictive_high_444,
+};
+
+struct h264_profile_level
+{
+    h264_profile profile;
+    int level_rank{};
+};
+
+struct h265_profile_tier_level
+{
+    int profile_space{};
+    int profile{};
+    int tier{};
+    int level{};
+};
 
 std::vector<std::string_view> split_words(std::string_view value)
 {
@@ -160,7 +185,7 @@ void on_fmtp(void* param, const char*, const char* value)
     }
 }
 
-bool has_parameter(std::string_view parameters, std::string_view name, std::string_view value)
+std::optional<std::string_view> parameter_value(std::string_view parameters, std::string_view name)
 {
     std::size_t begin = 0;
     while (begin < parameters.size())
@@ -176,13 +201,112 @@ bool has_parameter(std::string_view parameters, std::string_view name, std::stri
             item.remove_prefix(1);
         }
         const auto equal = item.find('=');
-        if (equal != std::string_view::npos && lower_copy(item.substr(0, equal)) == lower_copy(name) && item.substr(equal + 1) == value)
+        if (equal != std::string_view::npos && lower_copy(item.substr(0, equal)) == lower_copy(name))
         {
-            return true;
+            return item.substr(equal + 1);
         }
         begin = end + 1;
     }
-    return false;
+    return std::nullopt;
+}
+
+bool has_parameter(std::string_view parameters, std::string_view name, std::string_view value)
+{
+    return parameter_value(parameters, name) == value;
+}
+
+std::optional<int> decimal_parameter(std::string_view parameters, std::string_view name, int default_value, int maximum)
+{
+    const auto text = parameter_value(parameters, name);
+    if (!text)
+    {
+        return default_value;
+    }
+
+    int value = 0;
+    const auto [pointer, error] = std::from_chars(text->data(), text->data() + text->size(), value);
+    if (error != std::errc{} || pointer != text->data() + text->size() || value < 0 || value > maximum)
+    {
+        return std::nullopt;
+    }
+    return value;
+}
+
+std::optional<h264_profile_level> parse_h264_profile_level(std::string_view text)
+{
+    if (text.size() != 6U)
+    {
+        return std::nullopt;
+    }
+
+    std::uint32_t value = 0;
+    const auto [pointer, error] = std::from_chars(text.data(), text.data() + text.size(), value, 16);
+    if (error != std::errc{} || pointer != text.data() + text.size() || value == 0)
+    {
+        return std::nullopt;
+    }
+
+    const auto profile_idc = static_cast<std::uint8_t>(value >> 16U);
+    const auto profile_iop = static_cast<std::uint8_t>(value >> 8U);
+    const auto level_idc = static_cast<std::uint8_t>(value);
+
+    // RFC 6184 允许不同 profile_idc/profile-iop 组合表示同一子配置，不能直接比较六位字符串。
+    struct profile_pattern
+    {
+        std::uint8_t id;
+        std::uint8_t mask;
+        std::uint8_t value;
+        h264_profile profile;
+    };
+    constexpr profile_pattern patterns[]{
+        {0x42U, 0x4fU, 0x40U, h264_profile::constrained_baseline},
+        {0x4dU, 0x8fU, 0x80U, h264_profile::constrained_baseline},
+        {0x58U, 0xcfU, 0xc0U, h264_profile::constrained_baseline},
+        {0x42U, 0x4fU, 0x00U, h264_profile::baseline},
+        {0x58U, 0xcfU, 0x80U, h264_profile::baseline},
+        {0x4dU, 0xafU, 0x00U, h264_profile::main},
+        {0x64U, 0xffU, 0x0cU, h264_profile::constrained_high},
+        {0x64U, 0xffU, 0x00U, h264_profile::high},
+        {0xf4U, 0xffU, 0x00U, h264_profile::predictive_high_444},
+    };
+    const auto pattern = std::find_if(std::begin(patterns),
+                                      std::end(patterns),
+                                      [profile_idc, profile_iop](const profile_pattern& candidate)
+                                      { return candidate.id == profile_idc && (profile_iop & candidate.mask) == candidate.value; });
+    if (pattern == std::end(patterns))
+    {
+        return std::nullopt;
+    }
+
+    const bool level_1b = level_idc == 11U && (profile_idc == 0x42U || profile_idc == 0x4dU || profile_idc == 0x58U) &&
+        (profile_iop & 0x10U) != 0U;
+    const bool valid_level = level_1b || level_idc == 10U || level_idc == 11U || level_idc == 12U || level_idc == 13U ||
+        level_idc == 20U || level_idc == 21U || level_idc == 22U || level_idc == 30U || level_idc == 31U || level_idc == 32U ||
+        level_idc == 40U || level_idc == 41U || level_idc == 42U || level_idc == 50U || level_idc == 51U || level_idc == 52U;
+    if (!valid_level)
+    {
+        return std::nullopt;
+    }
+
+    const int level_rank = level_1b ? 11 : (level_idc >= 11U ? static_cast<int>(level_idc) + 1 : static_cast<int>(level_idc));
+    return h264_profile_level{.profile = pattern->profile, .level_rank = level_rank};
+}
+
+std::optional<h265_profile_tier_level> source_h265_profile_tier_level(const media_track& track)
+{
+    mpeg4_hevc_t configuration{};
+    if (track.codec_config.empty() || mpeg4_hevc_from_nalu(track.codec_config.data(), track.codec_config.size(), &configuration) < 0 ||
+        configuration.numOfArrays < 3)
+    {
+        return std::nullopt;
+    }
+
+    return h265_profile_tier_level{
+        .profile_space = configuration.general_profile_space,
+        .profile = configuration.general_profile_idc,
+        .tier = configuration.general_tier_flag,
+        .level = configuration.general_level_idc,
+    };
 }
 
 const media_track* find_track(const std::vector<media_track>& tracks, media_kind kind, codec_id codec)
@@ -192,27 +316,47 @@ const media_track* find_track(const std::vector<media_track>& tracks, media_kind
     return iterator == tracks.end() ? nullptr : &*iterator;
 }
 
-const webrtc_codec_offer* find_h264(const webrtc_media_offer& media)
+const webrtc_codec_offer* find_h264(const webrtc_media_offer& media, const h264_profile_level& source)
 {
-    const auto iterator = std::find_if(media.codecs.begin(),
-                                       media.codecs.end(),
-                                       [](const webrtc_codec_offer& codec)
-                                       {
-                                           return lower_copy(codec.encoding_name) == "h264" && codec.clock_rate == 90'000U &&
-                                                  has_parameter(codec.format_parameters, "packetization-mode", "1");
-                                       });
+    const auto iterator = std::find_if(
+        media.codecs.begin(),
+        media.codecs.end(),
+        [&source](const webrtc_codec_offer& codec)
+        {
+            if (lower_copy(codec.encoding_name) != "h264" || codec.clock_rate != 90'000U ||
+                !has_parameter(codec.format_parameters, "packetization-mode", "1"))
+            {
+                return false;
+            }
+            const auto profile_level_id = parameter_value(codec.format_parameters, "profile-level-id");
+            const auto offered = parse_h264_profile_level(profile_level_id.value_or("42000a"));
+            return offered && offered->profile == source.profile && source.level_rank <= offered->level_rank;
+        });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
-const webrtc_codec_offer* find_h265(const webrtc_media_offer& media)
+const webrtc_codec_offer* find_h265(const webrtc_media_offer& media, const h265_profile_tier_level& source)
 {
-    const auto iterator = std::find_if(media.codecs.begin(),
-                                       media.codecs.end(),
-                                       [](const webrtc_codec_offer& codec)
-                                       {
-                                           const auto encoding = lower_copy(codec.encoding_name);
-                                           return (encoding == "h265" || encoding == "hevc") && codec.clock_rate == 90'000U;
-                                       });
+    const auto iterator = std::find_if(
+        media.codecs.begin(),
+        media.codecs.end(),
+        [&source](const webrtc_codec_offer& codec)
+        {
+            const auto encoding = lower_copy(codec.encoding_name);
+            if ((encoding != "h265" && encoding != "hevc") || codec.clock_rate != 90'000U)
+            {
+                return false;
+            }
+
+            // RFC 7798 对省略的 profile-space/profile-id/tier-flag/level-id 分别推导 0/1/0/93，tx-mode 推导 SRST。
+            const auto profile_space = decimal_parameter(codec.format_parameters, "profile-space", 0, 3);
+            const auto profile = decimal_parameter(codec.format_parameters, "profile-id", 1, 31);
+            const auto tier = decimal_parameter(codec.format_parameters, "tier-flag", 0, 1);
+            const auto level = decimal_parameter(codec.format_parameters, "level-id", 93, 255);
+            const auto tx_mode = parameter_value(codec.format_parameters, "tx-mode");
+            return profile_space && profile && tier && level && *profile_space == source.profile_space && *profile == source.profile &&
+                *tier == source.tier && source.level <= *level && (!tx_mode || lower_copy(*tx_mode) == "srst");
+        });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
@@ -420,16 +564,20 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         {
             if (video_track->codec == codec_id::h264)
             {
-                codec = find_h264(media);
                 profile_level_id = h264_profile_level_id(*video_track);
-                if (profile_level_id.empty())
+                const auto source = parse_h264_profile_level(profile_level_id);
+                if (source)
                 {
-                    codec = nullptr;
+                    codec = find_h264(media, *source);
                 }
             }
             else if (video_track->codec == codec_id::h265)
             {
-                codec = find_h265(media);
+                const auto source = source_h265_profile_tier_level(*video_track);
+                if (source)
+                {
+                    codec = find_h265(media, *source);
+                }
             }
         }
         else if (can_receive && lower_copy(media.type) == "audio" && audio_track != nullptr && !audio_payload_type.has_value())
@@ -482,7 +630,14 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
             }
             else
             {
+                const auto source = source_h265_profile_tier_level(*video_track);
+                if (!source)
+                {
+                    return std::nullopt;
+                }
                 media_answer << "a=rtpmap:" << codec->payload_type << " H265/90000\r\n";
+                media_answer << "a=fmtp:" << codec->payload_type << " profile-space=" << source->profile_space << ";profile-id=" << source->profile
+                             << ";tier-flag=" << source->tier << ";level-id=" << source->level << "\r\n";
             }
         }
         else
