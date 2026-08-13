@@ -3120,6 +3120,17 @@ void test_rtmp_timestamp_timeline()
 
     require(rtmp_timestamp_delta(960U, 1'000U) == -40, "rtmp signed negative composition offset");
     require(rtmp_timestamp_delta(1'040U, 1'000U) == 40, "rtmp signed positive composition offset");
+
+    rtmp_timestamp_state mixed_state;
+    require(unwrap_rtmp_timestamp(near_wrap, mixed_state) == static_cast<std::int64_t>(near_wrap),
+            "rtmp mixed timeline video before wrap");
+    require(unwrap_rtmp_timestamp(5U, mixed_state) == static_cast<std::int64_t>(near_wrap) + 15,
+            "rtmp mixed timeline audio after wrap");
+    require(unwrap_rtmp_timestamp(std::numeric_limits<std::uint32_t>::max() - 4U, mixed_state) ==
+                static_cast<std::int64_t>(near_wrap) + 5,
+            "rtmp mixed timeline keeps cross track dts regression");
+    require(unwrap_rtmp_timestamp(25U, mixed_state) == static_cast<std::int64_t>(near_wrap) + 35,
+            "rtmp mixed timeline continues after cross track wrap");
 }
 
 void test_internal_format_contract()
