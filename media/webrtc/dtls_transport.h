@@ -22,8 +22,6 @@ namespace media_server
 struct dtls_srtp_keying_material
 {
     std::string profile;
-    std::vector<std::uint8_t> client_write_key;
-    std::vector<std::uint8_t> client_write_salt;
     std::vector<std::uint8_t> server_write_key;
     std::vector<std::uint8_t> server_write_salt;
 };

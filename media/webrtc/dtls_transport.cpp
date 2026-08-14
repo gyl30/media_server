@@ -346,18 +346,12 @@ std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_mate
 
     dtls_srtp_keying_material result{
         .profile = profile,
-        .client_write_key = {},
-        .client_write_salt = {},
         .server_write_key = {},
         .server_write_salt = {},
     };
-    const auto* current = raw.data();
-    result.client_write_key.assign(current, current + sizes->key_size);
-    current += sizes->key_size;
+    const auto* current = raw.data() + sizes->key_size;
     result.server_write_key.assign(current, current + sizes->key_size);
-    current += sizes->key_size;
-    result.client_write_salt.assign(current, current + sizes->salt_size);
-    current += sizes->salt_size;
+    current += sizes->key_size + sizes->salt_size;
     result.server_write_salt.assign(current, current + sizes->salt_size);
     return result;
 }
