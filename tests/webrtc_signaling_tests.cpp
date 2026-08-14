@@ -1835,7 +1835,7 @@ media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
     };
 }
 
-void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
+void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_shutdown)
 {
     require(video_codec == codec_id::h264 || video_codec == codec_id::h265, "dtls video codec");
     const bool h265 = video_codec == codec_id::h265;
@@ -2053,9 +2053,42 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
 
     require(srtp_dealloc(peer_receiver) == srtp_err_status_ok, "srtp peer receiver destroy");
 
-    require(SSL_shutdown(client->ssl.get()) >= 0 && BIO_ctrl_pending(client->write_bio) > 0, "dtls client close notify");
-    require(send_dtls_client_output(*client, client_socket, server_endpoint), "dtls client close notify send");
-    drain_io(io);
+    if (server_shutdown)
+    {
+        session->shutdown();
+        bool close_notify_received = false;
+        const auto close_notify_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!close_notify_received && std::chrono::steady_clock::now() < close_notify_deadline)
+        {
+            io.run_for(std::chrono::milliseconds(10));
+            io.restart();
+
+            boost::system::error_code receive_error;
+            const auto size = client_socket.receive_from(boost::asio::buffer(rtp_buffer), rtp_sender, 0, receive_error);
+            if (receive_error == boost::asio::error::would_block || receive_error == boost::asio::error::try_again)
+            {
+                continue;
+            }
+            require(!receive_error && rtp_sender == server_endpoint, "dtls server close notify receive");
+            const auto packet = std::span<const std::uint8_t>(rtp_buffer.data(), size);
+            if (!dtls_transport::is_dtls_packet(packet))
+            {
+                continue;
+            }
+            require(BIO_write(client->read_bio, packet.data(), static_cast<int>(packet.size())) == static_cast<int>(packet.size()),
+                    "dtls server close notify input");
+            std::array<std::uint8_t, 1> discarded{};
+            const auto result = SSL_read(client->ssl.get(), discarded.data(), static_cast<int>(discarded.size()));
+            close_notify_received = result <= 0 && SSL_get_error(client->ssl.get(), result) == SSL_ERROR_ZERO_RETURN;
+        }
+        require(close_notify_received, "dtls server close notify");
+    }
+    else
+    {
+        require(SSL_shutdown(client->ssl.get()) >= 0 && BIO_ctrl_pending(client->write_bio) > 0, "dtls client close notify");
+        require(send_dtls_client_output(*client, client_socket, server_endpoint), "dtls client close notify send");
+        drain_io(io);
+    }
     require(session->local_port() == 0U, "dtls close notify shutdown");
 
     boost::system::error_code error;
@@ -2109,11 +2142,11 @@ int main()
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();
     std::cout << "[pass] whep_selected_bundle_transport\n";
-    media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AEAD_AES_128_GCM");
+    media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AEAD_AES_128_GCM", true);
     std::cout << "[pass] whep_dtls_h264_gcm128\n";
-    media_server::test_whep_dtls(media_server::codec_id::h265, "SRTP_AEAD_AES_256_GCM");
+    media_server::test_whep_dtls(media_server::codec_id::h265, "SRTP_AEAD_AES_256_GCM", false);
     std::cout << "[pass] whep_dtls_h265_gcm256\n";
-    media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AES128_CM_SHA1_80");
+    media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AES128_CM_SHA1_80", false);
     std::cout << "[pass] whep_dtls_h264_sha1_80\n";
     std::cout << "all tests passed\n";
     return 0;

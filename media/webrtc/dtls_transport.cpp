@@ -135,7 +135,7 @@ bool dtls_transport::startup()
         SSL_CTX_use_PrivateKey(context_.get(), certificate_->private_key()) != 1 || SSL_CTX_check_private_key(context_.get()) != 1)
     {
         spdlog::debug("webrtc dtls context configure failed");
-        shutdown();
+        reset();
         return false;
     }
 
@@ -146,7 +146,7 @@ bool dtls_transport::startup()
     ssl_.reset(SSL_new(context_.get()));
     if (!ssl_)
     {
-        shutdown();
+        reset();
         return false;
     }
 
@@ -167,7 +167,7 @@ bool dtls_transport::startup()
             BIO_free(write_bio_);
             write_bio_ = nullptr;
         }
-        shutdown();
+        reset();
         return false;
     }
 
@@ -182,6 +182,19 @@ bool dtls_transport::startup()
 }
 
 void dtls_transport::shutdown()
+{
+    if (ssl_ && connected() && (SSL_get_shutdown(ssl_.get()) & SSL_SENT_SHUTDOWN) == 0)
+    {
+        const auto result = SSL_shutdown(ssl_.get());
+        if (result >= 0 && !pump_outgoing())
+        {
+            spdlog::debug("webrtc dtls shutdown output failed");
+        }
+    }
+    reset();
+}
+
+void dtls_transport::reset()
 {
     srtp_keying_material_.reset();
     ssl_.reset();
@@ -201,6 +214,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
     const auto written = BIO_write(read_bio_, packet.data(), static_cast<int>(packet.size()));
     if (written != static_cast<int>(packet.size()))
     {
+        reset();
         return false;
     }
 
@@ -208,23 +222,31 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
     const auto result = SSL_read(ssl_.get(), discarded.data(), static_cast<int>(discarded.size()));
     if (!pump_outgoing())
     {
+        reset();
         return false;
     }
 
     if (result <= 0)
     {
         const auto error = SSL_get_error(ssl_.get(), result);
+        if (error == SSL_ERROR_ZERO_RETURN)
+        {
+            spdlog::debug("webrtc dtls peer shutdown");
+            return false;
+        }
         if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
         {
             spdlog::debug("webrtc dtls read failed ssl_error {}", error);
+            reset();
             return false;
         }
         spdlog::trace("webrtc dtls read pending ssl_error {}", error);
     }
 
-    if (!connected() && SSL_is_init_finished(ssl_.get()) != 0)
+    if (!connected() && SSL_is_init_finished(ssl_.get()) != 0 && !finish_handshake())
     {
-        return finish_handshake();
+        reset();
+        return false;
     }
     return true;
 }
@@ -236,11 +258,12 @@ bool dtls_transport::handle_timeout()
         return true;
     }
 
-    if (DTLSv1_handle_timeout(ssl_.get()) < 0)
+    if (DTLSv1_handle_timeout(ssl_.get()) < 0 || !pump_outgoing())
     {
+        reset();
         return false;
     }
-    return pump_outgoing();
+    return true;
 }
 
 bool dtls_transport::connected() const noexcept { return srtp_keying_material_.has_value(); }
