@@ -1,6 +1,6 @@
 #include "media/webrtc/dtls_certificate.h"
 
-#include <openssl/rsa.h>
+#include <openssl/ec.h>
 
 #include <array>
 #include <cstdio>
@@ -40,8 +40,10 @@ std::string make_fingerprint(X509* certificate)
 
 std::shared_ptr<dtls_certificate> dtls_certificate::create()
 {
-    std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)> key_context(EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr), &EVP_PKEY_CTX_free);
-    if (!key_context || EVP_PKEY_keygen_init(key_context.get()) <= 0 || EVP_PKEY_CTX_set_rsa_keygen_bits(key_context.get(), 2048) <= 0)
+    std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)> key_context(EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr), &EVP_PKEY_CTX_free);
+    if (!key_context || EVP_PKEY_keygen_init(key_context.get()) <= 0 ||
+        EVP_PKEY_CTX_set_ec_paramgen_curve_nid(key_context.get(), NID_X9_62_prime256v1) <= 0 ||
+        EVP_PKEY_CTX_set_ec_param_enc(key_context.get(), OPENSSL_EC_NAMED_CURVE) <= 0)
     {
         return {};
     }

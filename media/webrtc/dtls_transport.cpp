@@ -125,9 +125,7 @@ bool dtls_transport::startup()
     context_.reset(SSL_CTX_new(DTLS_method()));
     if (!context_ || SSL_CTX_set_min_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
         SSL_CTX_set_max_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
-        SSL_CTX_set_cipher_list(
-            context_.get(), "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384") !=
-            1 ||
+        SSL_CTX_set_cipher_list(context_.get(), "ECDHE-ECDSA-AES128-GCM-SHA256") != 1 ||
         SSL_CTX_set_tlsext_use_srtp(context_.get(), "SRTP_AEAD_AES_128_GCM:SRTP_AES128_CM_SHA1_80") != 0 ||
         SSL_CTX_use_certificate(context_.get(), certificate_->certificate()) != 1 ||
         SSL_CTX_use_PrivateKey(context_.get(), certificate_->private_key()) != 1 || SSL_CTX_check_private_key(context_.get()) != 1)
