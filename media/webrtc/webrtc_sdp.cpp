@@ -585,7 +585,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     const auto* audio_track = find_track(tracks, media_kind::audio, codec_id::aac);
     const auto address_type = config.address.is_v6() ? "IP6" : "IP4";
 
-    std::vector<std::pair<std::optional<int>, std::string>> media_answers;
+    std::vector<std::pair<std::string, std::string>> media_answers;
     std::vector<std::string> accepted_mids;
     std::optional<codec_id> video_codec;
     std::optional<int> video_payload_type;
@@ -642,10 +642,16 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         if (codec == nullptr)
         {
             spdlog::debug("webrtc answer reject media type {} mid {}", media.type, media.mid);
+            media_answer << "m=" << media.type << " 0 " << media.protocol;
+            for (const auto payload_type : media.payload_types)
+            {
+                media_answer << ' ' << payload_type;
+            }
+            media_answer << "\r\n";
             media_answer << "c=IN " << address_type << ' ' << (config.address.is_v6() ? "::" : "0.0.0.0") << "\r\n";
             media_answer << "a=mid:" << media.mid << "\r\n";
             media_answer << "a=inactive\r\n";
-            media_answers.emplace_back(std::nullopt, media_answer.str());
+            media_answers.emplace_back(media.mid, media_answer.str());
             continue;
         }
 
@@ -682,6 +688,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
                           *audio_bitrate,
                           *audio_max_playback_rate);
         }
+        media_answer << "m=" << media.type << ' ' << config.port << ' ' << media.protocol << ' ' << codec->payload_type << "\r\n";
         media_answer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";
         media_answer << "a=mid:" << media.mid << "\r\n";
         media_answer << "a=extmap:" << *media.mid_extension_id << ' ' << mid_extension_uri << "\r\n";
@@ -714,7 +721,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
             media_answer << "a=fmtp:" << codec->payload_type << " minptime=10;useinbandfec=1;sprop-stereo=" << (*audio_channel_count == 2 ? 1 : 0)
                          << "\r\n";
         }
-        media_answers.emplace_back(codec->payload_type, media_answer.str());
+        media_answers.emplace_back(media.mid, media_answer.str());
     }
 
     if (accepted_mids.empty())
@@ -754,30 +761,10 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         }
     }
     answer << "\r\n";
-    for (std::size_t index = 0; index < media_answers.size(); ++index)
+    for (const auto& [mid, media] : media_answers)
     {
-        const auto& offered_media = offer.media[index];
-        const auto& [payload_type, media] = media_answers[index];
-        answer << "m=" << offered_media.type << ' ';
-        if (payload_type)
-        {
-            answer << (offered_media.mid == *transport_mid ? config.port : 0) << ' ' << offered_media.protocol << ' ' << *payload_type << "\r\n";
-        }
-        else
-        {
-            answer << "0 " << offered_media.protocol;
-            for (const auto offered_payload_type : offered_media.payload_types)
-            {
-                answer << ' ' << offered_payload_type;
-            }
-            answer << "\r\n";
-        }
         answer << media;
-        if (payload_type && offered_media.mid != *transport_mid)
-        {
-            answer << "a=bundle-only\r\n";
-        }
-        if (offered_media.mid == *transport_mid)
+        if (mid == *transport_mid)
         {
             answer << "a=rtcp-mux\r\n";
             append_transport(answer, config);
