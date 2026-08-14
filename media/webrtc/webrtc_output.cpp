@@ -26,6 +26,7 @@ namespace
 constexpr std::int64_t nanoseconds_per_second = 1'000'000'000LL;
 constexpr std::int64_t opus_sample_rate = 48'000LL;
 constexpr std::size_t rtcp_buffer_size = 4096;
+constexpr std::size_t max_mid_size = 16;
 constexpr std::string_view rtcp_name = "media_server";
 
 std::uint32_t random_u32()
@@ -138,7 +139,7 @@ int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, 
     const auto extension_id = video ? self->config_.video_mid_extension_id : self->config_.audio_mid_extension_id;
     std::vector<std::uint8_t> extension;
     std::uint16_t extension_profile = RTP_HDREXT_PROFILE_TWO_BYTE;
-    const bool two_byte_extension = extension_id > 14 || self->config_.video_mid.size() > 16U || self->config_.audio_mid.size() > 16U;
+    const bool two_byte_extension = extension_id > 14;
     if (!two_byte_extension)
     {
         extension_profile = RTP_HDREXT_PROFILE_ONE_BYTE;
@@ -187,7 +188,7 @@ int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, 
 
 bool webrtc_output::add_h264_track(const media_track& track)
 {
-    if (config_.video_payload_type < 0 || config_.video_payload_type > 127 || config_.video_mid.empty() || config_.video_mid.size() > 255U ||
+    if (config_.video_payload_type < 0 || config_.video_payload_type > 127 || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
         config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
     {
         return false;
@@ -233,7 +234,7 @@ bool webrtc_output::add_h264_track(const media_track& track)
 
 bool webrtc_output::add_h265_track(const media_track& track)
 {
-    if (config_.video_payload_type < 0 || config_.video_payload_type > 127 || config_.video_mid.empty() || config_.video_mid.size() > 255U ||
+    if (config_.video_payload_type < 0 || config_.video_payload_type > 127 || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
         config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
     {
         return false;
@@ -279,7 +280,7 @@ bool webrtc_output::add_h265_track(const media_track& track)
 
 bool webrtc_output::add_aac_track(const media_track& track)
 {
-    if (config_.opus_payload_type < 0 || config_.opus_payload_type > 127 || config_.audio_mid.empty() || config_.audio_mid.size() > 255U ||
+    if (config_.opus_payload_type < 0 || config_.opus_payload_type > 127 || config_.audio_mid.empty() || config_.audio_mid.size() > max_mid_size ||
         config_.audio_mid_extension_id <= 0 || config_.audio_mid_extension_id > 255)
     {
         return false;
