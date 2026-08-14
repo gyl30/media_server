@@ -11,6 +11,12 @@
 
 namespace media_server
 {
+namespace
+{
+
+constexpr int whep_retry_after_seconds = 1;
+
+}    // namespace
 
 http_session::http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep)
     : stream_(std::move(socket)), registry_(registry), hls_(hls), whep_(whep), hls_wait_timer_(stream_.get_executor())
@@ -133,10 +139,10 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
             send_whep_response(std::move(result.session_id), std::move(result.answer_sdp));
             return;
         case whep_create_error::stream_not_found:
-            send_whep_error_response(boost::beast::http::status::not_found, "stream not found\n");
+            send_whep_error_response(boost::beast::http::status::conflict, "stream not found\n", whep_retry_after_seconds);
             return;
         case whep_create_error::stream_not_ready:
-            send_whep_error_response(boost::beast::http::status::service_unavailable, "stream not ready\n");
+            send_whep_error_response(boost::beast::http::status::conflict, "stream not ready\n", whep_retry_after_seconds);
             return;
         case whep_create_error::invalid_offer:
             send_whep_error_response(boost::beast::http::status::bad_request, "invalid or unsupported sdp offer\n");
@@ -351,12 +357,16 @@ void http_session::send_text_response(boost::beast::http::status status, std::st
                                     });
 }
 
-void http_session::send_whep_error_response(boost::beast::http::status status, std::string body)
+void http_session::send_whep_error_response(boost::beast::http::status status, std::string body, int retry_after_seconds)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
     response->set(boost::beast::http::field::content_type, "text/plain");
     response->set(boost::beast::http::field::access_control_allow_origin, "*");
+    if (retry_after_seconds > 0)
+    {
+        response->set(boost::beast::http::field::retry_after, std::to_string(retry_after_seconds));
+    }
     response->keep_alive(false);
     response->body() = std::move(body);
     response->prepare_payload();
