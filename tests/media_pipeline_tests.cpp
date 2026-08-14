@@ -1022,6 +1022,23 @@ class rtmp_input_test_peer final
         runner_.join();
     }
 
+    void push_metadata(bool audio, codec_id video_codec = codec_id::h264)
+    {
+        std::array<std::uint8_t, 256> data{};
+        auto* current = AMFWriteString(data.data(), data.data() + data.size(), "onMetaData", 10);
+        current = AMFWriteECMAArarry(current, data.data() + data.size());
+        const auto codec = video_codec == codec_id::h264 ? FLV_VIDEO_H264 : FLV_VIDEO_H265;
+        current = AMFWriteNamedDouble(current, data.data() + data.size(), "videocodecid", 12, codec);
+        if (audio)
+        {
+            current = AMFWriteNamedDouble(current, data.data() + data.size(), "audiocodecid", 12, FLV_AUDIO_AAC >> 4);
+        }
+        current = AMFWriteObjectEnd(current, data.data() + data.size());
+        require(current != nullptr, "rtmp input metadata encode");
+        require(rtmp_client_push_script(client_, data.data(), static_cast<std::size_t>(current - data.data()), 0) == 0,
+                "rtmp input push metadata");
+    }
+
     void push_video_config(media_track track)
     {
         const auto packet = make_rtmp_video_sequence_header(std::move(track));
@@ -1049,6 +1066,20 @@ class rtmp_input_test_peer final
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         fail("rtmp input track update");
+    }
+
+    std::size_t track_count()
+    {
+        std::promise<std::size_t> promise;
+        auto future = promise.get_future();
+        boost::asio::post(io_,
+                          [this, &promise]()
+                          {
+                              const auto stream = registry_.find(stream_name_);
+                              promise.set_value(stream ? stream->tracks().size() : 0U);
+                          });
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtmp input track count query");
+        return future.get();
     }
 
     void wait_stream_removed()
@@ -1142,11 +1173,13 @@ class rtmp_output_test_peer final
         : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_socket_(io_), expected_video_codec_(video_track.codec)
     {
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
-        require(stream_->update_track(std::move(video_track)), "rtmp output video track");
+        std::vector<media_track> tracks;
+        tracks.push_back(std::move(video_track));
         if (with_audio)
         {
-            require(stream_->update_track(make_audio_track()), "rtmp output audio track");
+            tracks.push_back(make_audio_track());
         }
+        require(stream_->set_tracks(std::move(tracks)), "rtmp output tracks");
         require(registry_.add(stream_), "rtmp output registry add");
 
         client_socket_.connect(acceptor_.local_endpoint());
@@ -1207,15 +1240,6 @@ class rtmp_output_test_peer final
     [[nodiscard]] const std::vector<char>& media_order() const noexcept { return media_order_; }
     [[nodiscard]] std::size_t video_config_count() const noexcept { return video_config_count_; }
     [[nodiscard]] std::size_t audio_config_count() const noexcept { return audio_config_count_; }
-
-    void add_audio_track()
-    {
-        std::promise<bool> promise;
-        auto future = promise.get_future();
-        boost::asio::post(io_,
-                          [stream = stream_, &promise]() mutable { promise.set_value(stream->update_track(make_audio_track())); });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp runtime add audio track");
-    }
 
     void update_video_track(media_track track)
     {
@@ -1369,11 +1393,59 @@ class rtmp_output_test_peer final
     std::jthread runner_;
 };
 
+void test_rtmp_input_initial_topology()
+{
+    {
+        rtmp_input_test_peer peer("live/metadata-first");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        require(peer.track_count() == 0U, "rtmp metadata first keeps partial topology hidden");
+        peer.push_audio_config(aac_asc);
+        peer.wait_track(make_video_track(), 1);
+        peer.wait_track(make_audio_track(), 1);
+        require(peer.track_count() == 2U, "rtmp metadata first publishes complete topology");
+    }
+
+    {
+        rtmp_input_test_peer peer("live/config-first");
+        peer.push_video_config(make_video_track());
+        peer.push_audio_config(aac_asc);
+        require(peer.track_count() == 0U, "rtmp config first waits for metadata");
+        peer.push_metadata(true);
+        peer.wait_track(make_video_track(), 1);
+        peer.wait_track(make_audio_track(), 1);
+        require(peer.track_count() == 2U, "rtmp config first publishes complete topology");
+    }
+
+    {
+        rtmp_input_test_peer peer("live/h265-av");
+        peer.push_metadata(true, codec_id::h265);
+        peer.push_video_config(make_h265_track());
+        require(peer.track_count() == 0U, "rtmp h265 keeps partial topology hidden");
+        peer.push_audio_config(aac_asc);
+        peer.wait_track(make_h265_track(), 1);
+        peer.wait_track(make_audio_track(), 1);
+        require(peer.track_count() == 2U, "rtmp h265 publishes complete topology");
+    }
+
+    {
+        rtmp_input_test_peer peer("live/video-only-fixed");
+        const auto video = make_video_track();
+        peer.push_metadata(false);
+        peer.push_video_config(video);
+        peer.wait_track(video, 1);
+        require(peer.track_count() == 1U, "rtmp video only publishes fixed topology");
+        peer.push_audio_config(aac_asc);
+        peer.wait_stream_removed();
+    }
+}
+
 void test_rtmp_input_codec_configuration_updates()
 {
     {
         rtmp_input_test_peer peer("live/h264-config");
         const auto initial = make_video_track();
+        peer.push_metadata(false);
         peer.push_video_config(initial);
         peer.wait_track(initial, 1);
         auto updated = make_video_track();
@@ -1385,6 +1457,7 @@ void test_rtmp_input_codec_configuration_updates()
     {
         rtmp_input_test_peer peer("live/h265-config");
         const auto initial = make_h265_track();
+        peer.push_metadata(false, codec_id::h265);
         peer.push_video_config(initial);
         peer.wait_track(initial, 1);
         auto updated = make_h265_track();
@@ -1395,8 +1468,12 @@ void test_rtmp_input_codec_configuration_updates()
 
     {
         rtmp_input_test_peer peer("live/aac-config");
+        const auto video = make_video_track();
         const auto initial = make_audio_track();
+        peer.push_metadata(true);
+        peer.push_video_config(video);
         peer.push_audio_config(initial.codec_config);
+        peer.wait_track(video, 1);
         peer.wait_track(initial, 1);
         auto updated = make_audio_track();
         updated.clock_rate = 48'000;
@@ -1409,8 +1486,18 @@ void test_rtmp_input_codec_configuration_updates()
 void test_rtmp_input_rejects_video_codec_change()
 {
     {
+        rtmp_input_test_peer peer("live/pending-switch");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        require(peer.track_count() == 0U, "rtmp pending codec switch keeps partial topology hidden");
+        peer.push_video_config(make_h265_track());
+        peer.wait_stream_removed();
+    }
+
+    {
         rtmp_input_test_peer peer("live/h264-switch");
         const auto h264 = make_video_track();
+        peer.push_metadata(false);
         peer.push_video_config(h264);
         peer.wait_track(h264, 1);
         peer.push_video_config(make_h265_track());
@@ -1420,6 +1507,7 @@ void test_rtmp_input_rejects_video_codec_change()
     {
         rtmp_input_test_peer peer("live/h265-switch");
         const auto h265 = make_h265_track();
+        peer.push_metadata(false, codec_id::h265);
         peer.push_video_config(h265);
         peer.wait_track(h265, 1);
         peer.push_video_config(make_video_track());
@@ -1473,19 +1561,6 @@ void test_rtmp_output_config_reset_and_end()
     peer.receive_media(1);
     require(peer.video_config_count() == 2U, "rtmp config reset emits video sequence header with next media frame");
     peer.end_stream();
-}
-
-void test_rtmp_output_runtime_add_audio()
-{
-    rtmp_output_test_peer peer;
-    peer.publish(make_video_frame(0, true));
-    peer.receive_media(1);
-    peer.add_audio_track();
-    peer.publish(make_video_frame(40'000'000, true));
-    peer.publish(make_audio_frame(60'000'000));
-    peer.receive_media(3);
-    require(peer.audio_config_count() == 1, "rtmp runtime audio sequence header");
-    require(peer.media_order() == std::vector<char>({'v', 'v', 'a'}), "rtmp runtime add audio keeps media flowing");
 }
 
 void test_rtmp_tcp_error_lifecycle()
@@ -1888,7 +1963,7 @@ void test_http_flv_client_disconnect()
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
 
     auto stream = std::make_shared<media_stream>("live/http-flv-disconnect", io.get_executor());
-    require(stream->update_track(make_video_track()), "http flv disconnect track");
+    require(stream->set_tracks({make_video_track()}), "http flv disconnect track");
     require(registry.add(stream), "http flv disconnect stream");
 
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
@@ -1922,7 +1997,7 @@ void test_http_flv_stream_end_during_write()
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
 
     auto stream = std::make_shared<media_stream>("live/http-flv-end-write", io.get_executor());
-    require(stream->update_track(make_video_track()), "http flv end write track");
+    require(stream->set_tracks({make_video_track()}), "http flv end write track");
     require(registry.add(stream), "http flv end write stream");
 
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
@@ -1955,7 +2030,7 @@ void test_http_flv_pending_bootstrap_end()
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
 
     auto stream = std::make_shared<media_stream>("live/http-flv-pending-end", io.get_executor());
-    require(stream->update_track(make_video_track()), "http flv pending end track");
+    require(stream->set_tracks({make_video_track()}), "http flv pending end track");
     require(registry.add(stream), "http flv pending end stream");
 
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
@@ -2000,7 +2075,7 @@ void test_http_flv_batch_consumption_and_overrun()
     };
 
     auto stream = std::make_shared<media_stream>("live/http-flv-pull", reader_worker.get_executor());
-    require(stream->update_track(make_video_track()), "http flv pull video track");
+    require(stream->set_tracks({make_video_track()}), "http flv pull video track");
     http_flv_capture capture;
     auto output = std::make_shared<http_flv_output>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -2065,7 +2140,7 @@ void test_http_flv_h265_pull()
     };
 
     auto stream = std::make_shared<media_stream>("live/http-flv-h265", reader_worker.get_executor());
-    require(stream->update_track(make_h265_track()), "http flv h265 track");
+    require(stream->set_tracks({make_h265_track()}), "http flv h265 track");
     http_flv_capture capture;
     auto output = std::make_shared<http_flv_output>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -2099,7 +2174,7 @@ void test_http_flv_fast_and_slow_readers()
     };
 
     auto stream = std::make_shared<media_stream>("live/http-flv-fast-slow", reader_worker.get_executor());
-    require(stream->update_track(make_video_track()), "http flv fast slow track");
+    require(stream->set_tracks({make_video_track()}), "http flv fast slow track");
     http_flv_capture fast_capture;
     http_flv_capture slow_capture;
     auto fast = std::make_shared<http_flv_output>(
@@ -2159,8 +2234,7 @@ void test_http_flv_audio_video_order()
     };
 
     auto stream = std::make_shared<media_stream>("live/http-flv-av", reader_worker.get_executor());
-    require(stream->update_track(make_video_track()), "http flv av video track");
-    require(stream->update_track(make_audio_track()), "http flv av audio track");
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "http flv av tracks");
     http_flv_capture capture;
     auto output = std::make_shared<http_flv_output>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -2195,7 +2269,7 @@ void test_http_flv_audio_video_order()
             "http flv preserves audio video frame order");
 }
 
-void test_http_flv_track_reset()
+void test_http_flv_config_reset()
 {
     boost::asio::io_context reader_worker(1);
     const auto drain = [&reader_worker]()
@@ -2207,7 +2281,7 @@ void test_http_flv_track_reset()
     };
 
     auto stream = std::make_shared<media_stream>("live/http-flv-reset", reader_worker.get_executor());
-    require(stream->update_track(make_video_track()), "http flv reset initial track");
+    require(stream->set_tracks({make_video_track()}), "http flv reset initial track");
     http_flv_capture capture;
     auto output = std::make_shared<http_flv_output>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -2224,9 +2298,6 @@ void test_http_flv_track_reset()
             "http flv reset emits new generation bootstrap");
     require(capture.ends == 0U, "http flv same topology reset stays open");
 
-    require(stream->update_track(make_audio_track()), "http flv reset topology change");
-    drain();
-    require(capture.ends == 1U, "http flv topology change closes once");
 }
 
 void test_rtsp_pull_url_contract()
@@ -2360,6 +2431,127 @@ void test_rtsp_input_selects_single_audio_and_video()
     require(!registry.find("relay/single-av"), "rtsp single audio video pull closes");
 }
 
+void test_rtsp_input_waits_for_complete_topology()
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/topology";
+    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/topology", request_url);
+    require(pull->startup(), "rtsp topology pull startup");
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto describe = read_rtsp_headers(socket);
+    constexpr std::string_view sdp =
+        "v=0\r\n"
+        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "s=test\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\n"
+        "a=rtpmap:96 H264/90000\r\n"
+        "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+        "a=control:video\r\n"
+        "m=audio 0 RTP/AVP 97\r\n"
+        "a=rtpmap:97 MPEG4-GENERIC/44100/2\r\n"
+        "a=fmtp:97 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1210\r\n"
+        "a=control:audio\r\n";
+    const auto describe_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(describe, "CSeq:") + "\r\nContent-Base: " + request_url +
+                                   "/\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" +
+                                   std::string(sdp);
+    boost::asio::write(socket, boost::asio::buffer(describe_response));
+
+    const auto video_setup = read_rtsp_headers(socket);
+    const auto video_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(video_setup, "CSeq:") +
+                                "\r\nSession: topology;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(video_response));
+
+    const auto audio_setup = read_rtsp_headers(socket);
+    const auto audio_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(audio_setup, "CSeq:") +
+                                "\r\nSession: topology;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(audio_response));
+
+    const auto play = read_rtsp_headers(socket);
+    const auto play_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: topology;timeout=60\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(play_response));
+
+    const auto send_interleaved = [&socket](std::uint8_t channel, std::span<const std::uint8_t> packet)
+    {
+        std::array<std::uint8_t, 4> header{0x24, channel, static_cast<std::uint8_t>(packet.size() >> 8U), static_cast<std::uint8_t>(packet.size())};
+        boost::asio::write(socket, boost::asio::buffer(header));
+        boost::asio::write(socket, boost::asio::buffer(packet));
+    };
+
+    const auto collect_rtp = +[](void* param, int, const void* packet, int bytes, std::uint32_t, int)
+    {
+        auto& packets = *static_cast<std::vector<std::vector<std::uint8_t>>*>(param);
+        const auto* begin = static_cast<const std::uint8_t*>(packet);
+        packets.emplace_back(begin, begin + bytes);
+        return 0;
+    };
+
+    std::vector<std::vector<std::uint8_t>> video_packets;
+    auto* video_muxer = rtsp_muxer_create(collect_rtp, &video_packets);
+    require(video_muxer != nullptr, "rtsp topology video muxer");
+    const auto video_payload = rtsp_muxer_add_payload(
+        video_muxer, "RTP/AVP", 90'000, 96, "H264", 0, 0x12345678U, 0, h264_config.data(), static_cast<int>(h264_config.size()));
+    require(video_payload >= 0, "rtsp topology video payload");
+    const auto video_media = rtsp_muxer_add_media(
+        video_muxer, video_payload, RTP_PAYLOAD_H264, h264_config.data(), static_cast<int>(h264_config.size()));
+    require(video_media >= 0, "rtsp topology video media");
+    const auto first_video = make_video_frame(0, true);
+    const auto second_video = make_video_frame(40'000'000, true);
+    require(rtsp_muxer_input(video_muxer, video_media, 0, 0, first_video.payload->data(), static_cast<int>(first_video.payload->size()), 1) == 0,
+            "rtsp topology first video frame");
+    require(rtsp_muxer_input(video_muxer, video_media, 40, 40, second_video.payload->data(), static_cast<int>(second_video.payload->size()), 1) == 0,
+            "rtsp topology second video frame");
+    require(rtsp_muxer_destroy(video_muxer) == 0 && !video_packets.empty(), "rtsp topology video packets");
+    for (const auto& packet : video_packets)
+    {
+        send_interleaved(0, packet);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto stream = registry.find("relay/topology");
+    require(stream != nullptr && stream->tracks().empty(), "rtsp hides video-only partial topology");
+
+    std::vector<std::vector<std::uint8_t>> audio_packets;
+    auto* audio_muxer = rtsp_muxer_create(collect_rtp, &audio_packets);
+    require(audio_muxer != nullptr, "rtsp topology audio muxer");
+    const auto audio_payload = rtsp_muxer_add_payload(
+        audio_muxer, "RTP/AVP", 44'100, 97, "MPEG4-GENERIC", 0, 0x87654321U, 0, aac_asc.data(), static_cast<int>(aac_asc.size()));
+    require(audio_payload >= 0, "rtsp topology audio payload");
+    const auto audio_media = rtsp_muxer_add_media(
+        audio_muxer, audio_payload, RTP_PAYLOAD_MP4A, aac_asc.data(), static_cast<int>(aac_asc.size()));
+    require(audio_media >= 0, "rtsp topology audio media");
+    const auto audio = make_audio_frame(20'000'000);
+    require(rtsp_muxer_input(audio_muxer, audio_media, 20, 20, audio.payload->data(), static_cast<int>(audio.payload->size()), 0) == 0,
+            "rtsp topology audio frame");
+    require(rtsp_muxer_destroy(audio_muxer) == 0 && !audio_packets.empty(), "rtsp topology audio packets");
+    for (const auto& packet : audio_packets)
+    {
+        send_interleaved(2, packet);
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (stream->tracks().size() != 2U && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const auto tracks = stream->tracks();
+    require(tracks.size() == 2U && tracks[0].kind == media_kind::video && tracks[1].kind == media_kind::audio,
+            "rtsp publishes complete audio video topology");
+
+    pull->shutdown();
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+}
+
 void test_rtsp_input_media_driven_keepalive()
 {
     boost::asio::io_context server_io;
@@ -2424,8 +2616,7 @@ class rtsp_output_test_peer final
     explicit rtsp_output_test_peer(bool h265 = false) : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_(io_)
     {
         stream_ = std::make_shared<media_stream>("live/test", io_.get_executor());
-        require(stream_->update_track(h265 ? make_h265_track() : make_video_track()), "rtsp output video track");
-        require(stream_->update_track(make_audio_track()), "rtsp output audio track");
+        require(stream_->set_tracks({h265 ? make_h265_track() : make_video_track(), make_audio_track()}), "rtsp output tracks");
         require(registry_.add(stream_), "rtsp output registry add");
 
         client_.connect(acceptor_.local_endpoint());
@@ -3373,7 +3564,8 @@ void test_media_stream_sink_lifecycle()
                           auto stream = std::make_shared<media_stream>("live/test", io.get_executor());
                           auto first_track = make_video_track();
                           first_track.config_version = 99;
-                          require(stream->update_track(std::move(first_track)), "sink lifecycle video track");
+                          require(stream->set_tracks({std::move(first_track)}), "sink lifecycle video track");
+                          require(!stream->set_tracks({make_video_track(), make_audio_track()}), "initial topology can only be published once");
                           require(stream->tracks().front().config_version == 1, "stream owns initial config version");
 
                           auto sink = std::make_shared<counting_sink>();
@@ -3385,7 +3577,7 @@ void test_media_stream_sink_lifecycle()
                           require(duplicate->tracks == 0, "stream keeps one source-owner sink");
 
                           auto owned_stream = std::make_shared<media_stream>("live/owned-sink", io.get_executor());
-                          require(owned_stream->update_track(make_video_track()), "owned sink track");
+                          require(owned_stream->set_tracks({make_video_track()}), "owned sink track");
                           std::weak_ptr<media_sink> owned_sink;
                           {
                               auto current = std::make_shared<counting_sink>();
@@ -3400,6 +3592,7 @@ void test_media_stream_sink_lifecycle()
                           stream->publish(make_video_frame(40'000'000, false));
                           require(sink->frames == 2, "sink receives live frames");
 
+                          require(!stream->update_track(make_audio_track()), "runtime track addition rejected");
                           require(!stream->update_track(make_video_track()), "identical config ignored");
                           auto changed_kind = make_video_track(2);
                           changed_kind.kind = media_kind::audio;
@@ -3435,8 +3628,7 @@ void test_media_stream_sink_gop_replay()
                       [&]()
                       {
                           auto stream = std::make_shared<media_stream>("live/gop", io.get_executor());
-                          require(stream->update_track(make_video_track()), "gop video track");
-                          require(stream->update_track(make_audio_track()), "gop audio track");
+                          require(stream->set_tracks({make_video_track(), make_audio_track()}), "gop tracks");
                           stream->publish(make_audio_frame(-20'000'000));
                           stream->publish(make_video_frame(0, true));
                           stream->publish(make_audio_frame(20'000'000));
@@ -3450,12 +3642,11 @@ void test_media_stream_sink_gop_replay()
                                           {video_track_id, 0},
                                           {audio_track_id, 20'000'000},
                                           {video_track_id, 40'000'000},
-                                      },
+                                  },
                                   "gop replays frames from current key frame");
 
                           auto latest_stream = std::make_shared<media_stream>("live/gop-latest", io.get_executor());
-                          require(latest_stream->update_track(make_video_track()), "latest gop video track");
-                          require(latest_stream->update_track(make_audio_track()), "latest gop audio track");
+                          require(latest_stream->set_tracks({make_video_track(), make_audio_track()}), "latest gop tracks");
                           latest_stream->publish(make_video_frame(0, true));
                           latest_stream->publish(make_video_frame(40'000'000, false));
                           latest_stream->publish(make_video_frame(1'000'000'000, true));
@@ -3472,8 +3663,7 @@ void test_media_stream_sink_gop_replay()
                                   "late sink receives only current gop");
 
                           auto blocked_stream = std::make_shared<media_stream>("live/gop-blocked", io.get_executor());
-                          require(blocked_stream->update_track(make_video_track()), "blocked gop video track");
-                          require(blocked_stream->update_track(make_audio_track()), "blocked gop audio track");
+                          require(blocked_stream->set_tracks({make_video_track(), make_audio_track()}), "blocked gop tracks");
                           blocked_stream->publish(make_video_frame(0, true));
                           blocked_stream->publish(make_audio_frame(20'000'000));
                           blocked_stream->publish(make_video_frame(40'000'000, false));
@@ -3483,8 +3673,7 @@ void test_media_stream_sink_gop_replay()
                           require(blocked_sink->frames == 0, "sink replay blocked after track config change");
 
                           auto resumed_stream = std::make_shared<media_stream>("live/gop-resumed", io.get_executor());
-                          require(resumed_stream->update_track(make_video_track()), "resumed gop video track");
-                          require(resumed_stream->update_track(make_audio_track()), "resumed gop audio track");
+                          require(resumed_stream->set_tracks({make_video_track(), make_audio_track()}), "resumed gop tracks");
                           resumed_stream->publish(make_video_frame(0, true));
                           resumed_stream->publish(make_video_frame(40'000'000, false));
                           require(resumed_stream->update_track(make_audio_track(2)), "resumed gop audio config update");
@@ -3503,7 +3692,7 @@ void test_media_stream_sink_gop_replay()
                                   "sink replay resumes from next key frame after track config change");
 
                           auto overflow_stream = std::make_shared<media_stream>("live/gop-overflow", io.get_executor());
-                          require(overflow_stream->update_track(make_video_track()), "gop overflow track");
+                          require(overflow_stream->set_tracks({make_video_track()}), "gop overflow track");
                           overflow_stream->publish(make_video_frame(0, true));
                           for (std::int64_t index = 1; index <= 2500; ++index)
                           {
@@ -3514,7 +3703,7 @@ void test_media_stream_sink_gop_replay()
                           require(overflow_sink->frames == 0, "gop overflow drops incomplete cache");
 
                           auto h265_stream = std::make_shared<media_stream>("live/gop-h265", io.get_executor());
-                          require(h265_stream->update_track(make_h265_track()), "gop h265 track");
+                          require(h265_stream->set_tracks({make_h265_track()}), "gop h265 track");
                           h265_stream->publish(make_h265_frame(0, true));
                           h265_stream->publish(make_h265_frame(40'000'000, false));
                           auto h265_sink = std::make_shared<counting_sink>();
@@ -3539,7 +3728,7 @@ void test_media_stream_sink_owner_affinity()
     boost::asio::post(workers.context(0),
                       [&, stream]()
                       {
-                          require(stream->update_track(make_video_track()), "threaded stream track");
+                          require(stream->set_tracks({make_video_track()}), "threaded stream track");
                           stream->add_sink(sink);
 
                           auto first_frame = make_video_frame(0, true);
@@ -3574,7 +3763,7 @@ void test_media_stream_pull_reader_overrun()
                       [&, stream]()
                       {
                           owner_thread = std::this_thread::get_id();
-                          require(stream->update_track(make_video_track()), "pull overrun track");
+                          require(stream->set_tracks({make_video_track()}), "pull overrun track");
                           static_cast<void>(stream->add_reader(fast, workers.context(1).get_executor()));
                           static_cast<void>(stream->add_reader(stalled, workers.context(1).get_executor()));
                       });
@@ -3638,7 +3827,7 @@ void test_media_stream_pull_reader_duplicate_read()
     boost::asio::post(owner,
                       [stream, reader, &reader_worker]()
                       {
-                          require(stream->update_track(make_video_track()), "pull duplicate track");
+                          require(stream->set_tracks({make_video_track()}), "pull duplicate track");
                           static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
                       });
     drain(owner);
@@ -3694,8 +3883,7 @@ void test_media_stream_pull_reader_batch_limit_and_worker_filtering()
     boost::asio::post(owner,
                       [stream, reader, &reader_worker]()
                       {
-                          require(stream->update_track(make_video_track()), "pull batch video track");
-                          require(stream->update_track(make_audio_track()), "pull batch audio track");
+                          require(stream->set_tracks({make_video_track(), make_audio_track()}), "pull batch tracks");
                           static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
                           for (std::size_t index = 0; index < 300; ++index)
                           {
@@ -3749,7 +3937,7 @@ void test_media_stream_pull_reader_initial_cursor_starts_current_gop()
     boost::asio::post(owner,
                       [stream, reader, &reader_worker]()
                       {
-                          require(stream->update_track(make_video_track()), "pull initial cursor track");
+                          require(stream->set_tracks({make_video_track()}), "pull initial cursor track");
                           stream->publish(make_video_frame(0, true));
                           stream->publish(make_video_frame(40'000'000, false));
                           stream->publish(make_video_frame(1'000'000'000, true));
@@ -3784,7 +3972,7 @@ void test_media_stream_pull_reader_previous_gop_continuity()
     boost::asio::post(owner,
                       [stream, continuity_reader, overrun_reader, &reader_worker]()
                       {
-                          require(stream->update_track(make_video_track()), "pull continuity track");
+                          require(stream->set_tracks({make_video_track()}), "pull continuity track");
                           static_cast<void>(stream->add_reader(continuity_reader, reader_worker.get_executor()));
                           static_cast<void>(stream->add_reader(overrun_reader, reader_worker.get_executor()));
                           stream->publish(make_video_frame(0, true));
@@ -3887,7 +4075,7 @@ void test_media_stream_pull_reader_track_snapshot_order()
     boost::asio::post(owner,
                       [stream, reader, &reader_worker]()
                       {
-                          require(stream->update_track(make_video_track()), "pull generation initial track");
+                          require(stream->set_tracks({make_video_track()}), "pull generation initial track");
                           static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
                       });
     drain(owner);
@@ -3935,7 +4123,7 @@ void test_media_stream_pull_reader_track_snapshot_order()
     boost::asio::post(owner,
                       [remove_stream, removed_reader, &reader_worker]()
                       {
-                          require(remove_stream->update_track(make_video_track()), "pull remove track");
+                          require(remove_stream->set_tracks({make_video_track()}), "pull remove track");
                           static_cast<void>(remove_stream->add_reader(removed_reader, reader_worker.get_executor()));
                       });
     drain(owner);
@@ -3976,8 +4164,7 @@ void test_media_stream_reader_track_interest()
     boost::asio::post(owner,
                       [stream, video_reader, full_reader, &reader_worker]()
                       {
-                          require(stream->update_track(make_video_track()), "pull interest video track");
-                          require(stream->update_track(make_audio_track()), "pull interest audio track");
+                          require(stream->set_tracks({make_video_track(), make_audio_track()}), "pull interest tracks");
                           static_cast<void>(stream->add_reader(video_reader, reader_worker.get_executor()));
                           static_cast<void>(stream->add_reader(full_reader, reader_worker.get_executor()));
                       });
@@ -4050,8 +4237,7 @@ void test_media_stream_video_keyframe_barrier_is_sticky()
     boost::asio::post(owner,
                       [stream, reader, &reader_worker]()
                       {
-                          require(stream->update_track(make_video_track()), "sticky barrier initial video track");
-                          require(stream->update_track(make_audio_track()), "sticky barrier initial audio track");
+                          require(stream->set_tracks({make_video_track(), make_audio_track()}), "sticky barrier initial tracks");
                           static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
                       });
     drain_all();
@@ -4188,31 +4374,10 @@ void test_hls_output()
     reconfigured.on_end();
     require(reconfigured.segment_count() == 2U, "hls config change starts new segment");
 
-    hls_output audio_only(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
-    audio_only.on_track(make_audio_track());
-    audio_only.on_frame(make_audio_frame(0));
-    audio_only.on_frame(make_audio_frame(500'000'000));
-    require(audio_only.segment_count() == 0U, "hls audio waits target duration");
-    audio_only.on_frame(make_audio_frame(1'000'000'000));
-    require(audio_only.segment_count() == 1U, "hls audio target duration segment");
-    audio_only.on_end();
-    require(audio_only.segment_count() == 2U, "hls audio final segment");
-    const auto audio_segment = audio_only.segment(0);
-    require(audio_segment.has_value(), "hls audio segment data");
-    const auto audio_capture = demux_ts_segment(*audio_segment);
-    require(audio_capture.stream_codecs == std::vector<int>{PSI_STREAM_AAC}, "hls audio pmt stream type");
-    require(audio_capture.packets.size() == 2U, "hls audio packet count");
-    require(audio_capture.packets[0].codec == PSI_STREAM_AAC && audio_capture.packets[0].pts == 0 &&
-                audio_capture.packets[0].payload == *make_audio_frame(0).payload,
-            "hls first audio-only packet");
-    require(audio_capture.packets[1].codec == PSI_STREAM_AAC && audio_capture.packets[1].pts == 45'000 &&
-                audio_capture.packets[1].payload == *make_audio_frame(500'000'000).payload,
-            "hls second audio-only packet");
-
     hls_output signed_timeline(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
-    signed_timeline.on_track(make_audio_track());
-    signed_timeline.on_frame(make_audio_frame(-500'000'000));
-    signed_timeline.on_frame(make_audio_frame(500'000'000));
+    signed_timeline.on_track(make_video_track());
+    signed_timeline.on_frame(make_video_frame(-500'000'000, true));
+    signed_timeline.on_frame(make_video_frame(500'000'000, true));
     require(signed_timeline.segment_count() == 1U, "hls signed pts reaches target duration");
     signed_timeline.on_end();
 
@@ -4242,7 +4407,7 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(first->update_track(make_video_track()), "hls first track");
+                          require(first->set_tracks({make_video_track()}), "hls first track");
                           require(hls.segment_count("live/hls") == 0U, "hls first output create");
                           first->publish(make_video_frame(0, true));
                           first->publish(make_video_frame(1'000'000'000, true));
@@ -4269,7 +4434,7 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(second->update_track(make_video_track()), "hls replacement track");
+                          require(second->set_tracks({make_video_track()}), "hls replacement track");
                           require(hls.segment_count("live/hls") == 0U, "hls replacement output reset");
                           require(!hls.segment("live/hls", 0).has_value(), "hls replacement drops old segment");
                       });
@@ -4281,7 +4446,7 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(overlap_first->update_track(make_video_track()), "hls overlap first track");
+                          require(overlap_first->set_tracks({make_video_track()}), "hls overlap first track");
                           require(hls.segment_count("live/hls-overlap") == 0U, "hls overlap first output create");
                           overlap_first->publish(make_video_frame(0, true));
                           overlap_first->publish(make_video_frame(1'000'000'000, true));
@@ -4295,7 +4460,7 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(overlap_second->update_track(make_video_track()), "hls overlap replacement track");
+                          require(overlap_second->set_tracks({make_video_track()}), "hls overlap replacement track");
                           require(hls.segment_count("live/hls-overlap") == 0U, "hls overlap replacement output create");
                           overlap_first->end();
                       });
@@ -4312,7 +4477,7 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(late->update_track(make_video_track()), "hls late track");
+                          require(late->set_tracks({make_video_track()}), "hls late track");
                           late->publish(make_video_frame(0, true));
                           late->publish(make_video_frame(500'000'000, false));
                           require(hls.segment_count("live/hls-late") == 0U, "hls late output replays current gop");
@@ -4333,7 +4498,7 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(expiring_stream->update_track(make_video_track()), "hls expiring track");
+                          require(expiring_stream->set_tracks({make_video_track()}), "hls expiring track");
                           require(expiring_hls.segment_count("live/expiring") == 0U, "hls expiring output create");
                           expiring_registry.remove(*expiring_stream);
                           expiring_stream->end();
@@ -4659,6 +4824,8 @@ int main()
     std::cout << "[pass] internal_format_contract\n";
     media_server::test_rtmp_aac_asc_adts_contract();
     std::cout << "[pass] rtmp_aac_asc_adts_contract\n";
+    media_server::test_rtmp_input_initial_topology();
+    std::cout << "[pass] rtmp_input_initial_topology\n";
     media_server::test_rtmp_input_codec_configuration_updates();
     std::cout << "[pass] rtmp_input_codec_configuration_updates\n";
     media_server::test_rtmp_input_rejects_video_codec_change();
@@ -4669,8 +4836,6 @@ int main()
     std::cout << "[pass] rtmp_output_pull_codecs_and_order\n";
     media_server::test_rtmp_output_config_reset_and_end();
     std::cout << "[pass] rtmp_output_config_reset_and_end\n";
-    media_server::test_rtmp_output_runtime_add_audio();
-    std::cout << "[pass] rtmp_output_runtime_add_audio\n";
     media_server::test_rtmp_tcp_error_lifecycle();
     std::cout << "[pass] rtmp_tcp_error_lifecycle\n";
     media_server::test_flv_config_cache_lifecycle();
@@ -4717,12 +4882,14 @@ int main()
     std::cout << "[pass] http_flv_fast_and_slow_readers\n";
     media_server::test_http_flv_audio_video_order();
     std::cout << "[pass] http_flv_audio_video_order\n";
-    media_server::test_http_flv_track_reset();
-    std::cout << "[pass] http_flv_track_reset\n";
+    media_server::test_http_flv_config_reset();
+    std::cout << "[pass] http_flv_config_reset\n";
     media_server::test_rtsp_pull_url_contract();
     std::cout << "[pass] rtsp_pull_url_contract\n";
     media_server::test_rtsp_input_selects_single_audio_and_video();
     std::cout << "[pass] rtsp_input_selects_single_audio_and_video\n";
+    media_server::test_rtsp_input_waits_for_complete_topology();
+    std::cout << "[pass] rtsp_input_waits_for_complete_topology\n";
     media_server::test_rtsp_input_media_driven_keepalive();
     std::cout << "[pass] rtsp_input_media_driven_keepalive\n";
     media_server::test_rtsp_client_rejects_empty_media_selection();

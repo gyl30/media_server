@@ -352,8 +352,9 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
     }
 
     for (int media = 0; media < media_count; ++media)
-
     {
+        expected_audio_ = expected_audio_ || rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO;
+
         const auto* encoding = rtsp_client_get_media_encoding(client_, media);
         const auto* fmtp = rtsp_client_get_media_fmtp(client_, media);
         const auto rate = rtsp_client_get_media_rate(client_, media);
@@ -365,7 +366,6 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
             return -1;
         }
     }
-
     keepalive_deadline_ = std::chrono::steady_clock::now() + keepalive_interval_;
     std::uint64_t npt{};
     return rtsp_client_play(client_, &npt, nullptr);
@@ -447,6 +447,8 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
 bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
+    std::optional<media_track> track;
+
     if (input.codecid == AVCODEC_VIDEO_H264)
     {
         std::vector<std::uint8_t> config;
@@ -455,27 +457,19 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
             config = h264_avcc_to_annex_b(
                 std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         }
-        if (config.empty())
+        if (!config.empty())
         {
-            return false;
+            track = media_track{
+                .id = video_track_id,
+                .kind = media_kind::video,
+                .codec = codec_id::h264,
+                .clock_rate = 90'000,
+                .channel_count = 0,
+                .codec_config = std::move(config),
+            };
         }
-        media_track track{
-            .id = video_track_id,
-            .kind = media_kind::video,
-            .codec = codec_id::h264,
-            .clock_rate = 90'000,
-            .channel_count = 0,
-            .codec_config = std::move(config),
-        };
-        const bool changed = stream_->update_track(std::move(track));
-        if (changed)
-        {
-            spdlog::info("rtsp input track video h264");
-        }
-        return changed;
     }
-
-    if (input.codecid == AVCODEC_VIDEO_H265)
+    else if (input.codecid == AVCODEC_VIDEO_H265)
     {
         std::vector<std::uint8_t> config;
         if (input.extra != nullptr && input.bytes > 0)
@@ -483,28 +477,19 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
             config = h265_hvcc_to_annex_b(
                 std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         }
-        if (config.empty())
+        if (!config.empty())
         {
-            return false;
+            track = media_track{
+                .id = video_track_id,
+                .kind = media_kind::video,
+                .codec = codec_id::h265,
+                .clock_rate = 90'000,
+                .channel_count = 0,
+                .codec_config = std::move(config),
+            };
         }
-        media_track track{
-            .id = video_track_id,
-            .kind = media_kind::video,
-            .codec = codec_id::h265,
-            .clock_rate = 90'000,
-            .channel_count = 0,
-            .codec_config = std::move(config),
-        };
-        const bool changed = stream_->update_track(std::move(track));
-        if (changed)
-        {
-            spdlog::info("rtsp input track video h265");
-        }
-        return changed;
     }
-
-    if (input.codecid == AVCODEC_AUDIO_AAC)
-
+    else if (input.codecid == AVCODEC_AUDIO_AAC)
     {
         std::vector<std::uint8_t> config;
         if (input.extra != nullptr && input.bytes > 0)
@@ -512,27 +497,62 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
             const auto* begin = static_cast<const std::uint8_t*>(input.extra);
             config.assign(begin, begin + input.bytes);
         }
-        if (config.empty() || input.sample_rate <= 0 || input.channels <= 0)
+        if (!config.empty() && input.sample_rate > 0 && input.channels > 0)
         {
-            return false;
+            track = media_track{
+                .id = audio_track_id,
+                .kind = media_kind::audio,
+                .codec = codec_id::aac,
+                .clock_rate = static_cast<std::uint32_t>(input.sample_rate),
+                .channel_count = static_cast<std::uint16_t>(input.channels),
+                .codec_config = std::move(config),
+            };
         }
-        media_track track{
-            .id = audio_track_id,
-            .kind = media_kind::audio,
-            .codec = codec_id::aac,
-            .clock_rate = static_cast<std::uint32_t>(input.sample_rate),
-            .channel_count = static_cast<std::uint16_t>(input.channels),
-            .codec_config = std::move(config),
-        };
-        const bool changed = stream_->update_track(std::move(track));
+    }
+
+    if (!track)
+    {
+        return false;
+    }
+
+    if (tracks_initialized_)
+    {
+        const bool changed = stream_->update_track(*track);
         if (changed)
         {
-            spdlog::info("rtsp input track audio aac sample_rate {} channels {}", input.sample_rate, input.channels);
+            spdlog::info("rtsp input track {} {}", to_string(track->kind), to_string(track->codec));
         }
         return changed;
     }
 
-    return false;
+    bool changed = false;
+    auto& pending = track->kind == media_kind::video ? initial_video_track_ : initial_audio_track_;
+    if (pending)
+    {
+        changed = pending->codec != track->codec || pending->clock_rate != track->clock_rate || pending->channel_count != track->channel_count ||
+                  pending->codec_config != track->codec_config;
+    }
+    pending = *track;
+
+    if (!initial_video_track_ || (expected_audio_ && !initial_audio_track_))
+    {
+        return changed;
+    }
+
+    std::vector<media_track> tracks;
+    tracks.push_back(std::move(*initial_video_track_));
+    if (expected_audio_)
+    {
+        tracks.push_back(std::move(*initial_audio_track_));
+    }
+    tracks_initialized_ = stream_->set_tracks(std::move(tracks));
+    initial_video_track_.reset();
+    initial_audio_track_.reset();
+    if (tracks_initialized_)
+    {
+        spdlog::info("rtsp input tracks ready audio {}", expected_audio_);
+    }
+    return changed || tracks_initialized_;
 }
 
 }    // namespace media_server

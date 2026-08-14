@@ -779,9 +779,13 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     for (const auto& [mid, media] : media_answers)
     {
         answer << media;
-        if (mid == *transport_mid)
+        // libwebrtc 会逐个校验 bundled RTP media 是否显式启用 rtcp-mux。
+        if (std::find(accepted_mids.begin(), accepted_mids.end(), mid) != accepted_mids.end())
         {
             answer << "a=rtcp-mux\r\n";
+        }
+        if (mid == *transport_mid)
+        {
             append_transport(answer, config);
         }
     }

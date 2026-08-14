@@ -122,6 +122,41 @@ media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>
     return handle;
 }
 
+bool media_stream::set_tracks(std::vector<media_track> tracks)
+{
+    if (ended_ || !tracks_.empty() || tracks.empty())
+    {
+        return false;
+    }
+
+    std::map<track_id, media_track> initial_tracks;
+    for (auto& track : tracks)
+    {
+        if (track.id == 0 || track.codec_config.empty())
+        {
+            return false;
+        }
+        track.config_version = 1;
+        if (!initial_tracks.emplace(track.id, std::move(track)).second)
+        {
+            return false;
+        }
+    }
+
+    tracks_ = std::move(initial_tracks);
+    publish_track_snapshot();
+    dispatch_reader_tracks(track_snapshot_.load(std::memory_order_acquire));
+    if (sink_)
+    {
+        for (const auto& [id, track] : tracks_)
+        {
+            static_cast<void>(id);
+            sink_->on_track(track);
+        }
+    }
+    return true;
+}
+
 bool media_stream::update_track(media_track track)
 {
     if (ended_ || track.id == 0 || track.codec_config.empty())
@@ -130,23 +165,16 @@ bool media_stream::update_track(media_track track)
     }
 
     const auto existing = tracks_.find(track.id);
-    if (existing != tracks_.end())
+    if (existing == tracks_.end() || existing->second.kind != track.kind || existing->second.codec != track.codec)
     {
-        if (existing->second.kind != track.kind || existing->second.codec != track.codec)
-        {
-            return false;
-        }
-        if (existing->second.clock_rate == track.clock_rate && existing->second.channel_count == track.channel_count &&
-            existing->second.codec_config == track.codec_config)
-        {
-            return false;
-        }
-        track.config_version = existing->second.config_version + 1;
+        return false;
     }
-    else
+    if (existing->second.clock_rate == track.clock_rate && existing->second.channel_count == track.channel_count &&
+        existing->second.codec_config == track.codec_config)
     {
-        track.config_version = 1;
+        return false;
     }
+    track.config_version = existing->second.config_version + 1;
 
     const auto id = track.id;
     sink_replay_barrier_sequence_ = next_history_sequence_;
@@ -388,11 +416,6 @@ void media_stream::end_readers()
 
 void media_stream::append_history(std::uint64_t sequence, const media_frame& frame, const media_track& track)
 {
-    if (!has_video_track())
-    {
-        return;
-    }
-
     if (track.kind == media_kind::video && frame.key_frame)
     {
         if (current_gop_start_sequence_)
@@ -537,11 +560,6 @@ void media_stream::dispatch_reader_end(const std::shared_ptr<media_reader_state>
                               reader->on_end();
                           }
                       });
-}
-
-bool media_stream::has_video_track() const
-{
-    return std::ranges::any_of(tracks_, [](const auto& value) { return value.second.kind == media_kind::video; });
 }
 
 }    // namespace media_server

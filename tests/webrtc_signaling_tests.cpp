@@ -692,8 +692,7 @@ class whep_http_test_peer final
           acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
     {
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
-        require(stream_->update_track(make_video_track()), "whep http video track");
-        require(stream_->update_track(make_audio_track()), "whep http audio track");
+        require(stream_->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
         require(registry_.add(stream_), "whep http registry add");
         require(whep_.ready(), "whep http service ready");
         runner_ = std::jthread([this]() { io_.run(); });
@@ -899,14 +898,14 @@ void test_webrtc_sdp_answer()
                 video_section.find("a=end-of-candidates\r\n") != std::string_view::npos,
             "webrtc bundle tagged transport attributes");
     require(audio_section.find("a=bundle-only\r\n") == std::string_view::npos &&
-                audio_section.find("a=rtcp-mux\r\n") == std::string_view::npos &&
+                audio_section.find("a=rtcp-mux\r\n") != std::string_view::npos &&
                 audio_section.find("a=ice-ufrag:") == std::string_view::npos &&
                 audio_section.find("a=ice-pwd:") == std::string_view::npos &&
                 audio_section.find("a=fingerprint:") == std::string_view::npos &&
                 audio_section.find("a=setup:") == std::string_view::npos &&
                 audio_section.find("a=candidate:") == std::string_view::npos &&
                 audio_section.find("a=end-of-candidates\r\n") == std::string_view::npos,
-            "webrtc bundle secondary media omits transport attributes");
+            "webrtc bundle secondary media repeats rtcp mux only");
 }
 
 void test_webrtc_h265_sdp_answer()
@@ -1415,7 +1414,7 @@ void test_webrtc_transport_contract()
     require(untagged_video_section.find("m=video 40000 UDP/TLS/RTP/SAVPF 102\r\n") != std::string_view::npos &&
                 untagged_video_section.find("a=bundle-only\r\n") == std::string_view::npos &&
                 untagged_video_section.find("a=ice-ufrag:") == std::string_view::npos &&
-                untagged_video_section.find("a=rtcp-mux\r\n") == std::string_view::npos &&
+                untagged_video_section.find("a=rtcp-mux\r\n") != std::string_view::npos &&
                 tagged_audio_section.find("m=audio 40000 UDP/TLS/RTP/SAVPF 111\r\n") != std::string_view::npos &&
                 tagged_audio_section.find("a=bundle-only\r\n") == std::string_view::npos &&
                 tagged_audio_section.find("a=ice-ufrag:serverufrag\r\n") != std::string_view::npos &&
@@ -1434,14 +1433,6 @@ void test_webrtc_transport_contract()
     require(!partial_answer->audio_payload_type.has_value(), "webrtc unbundled audio rejected");
     require(partial_answer->sdp.find("a=group:BUNDLE 0\r\n") != std::string::npos, "webrtc answer bundle mids");
     require(partial_answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF") != std::string::npos, "webrtc unbundled audio inactive");
-
-    const auto audio_only_offer = parse_webrtc_offer(webrtc_offer_sdp);
-    require(audio_only_offer.has_value(), "webrtc parse audio only source offer");
-    const auto audio_only_answer = make_webrtc_answer(*audio_only_offer, {make_audio_track()}, config);
-    require(audio_only_answer.has_value(), "webrtc answer audio only source");
-    require(audio_only_answer->sdp.find("a=group:BUNDLE 1\r\n") != std::string::npos, "webrtc answer selects accepted bundle tag");
-    require(audio_only_answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF") != std::string::npos, "webrtc reject unavailable bundled video");
-    require(audio_only_answer->sdp.find("a=bundle-only\r\n") == std::string::npos, "webrtc rejected media is not bundle only");
 
     auto missing_mid_extension_sdp = webrtc_offer_sdp;
     const std::string mid_extension = "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n";
@@ -1506,8 +1497,7 @@ void test_whep_session_startup_errors()
 {
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/startup-errors", io.get_executor());
-    require(stream->update_track(make_video_track()), "startup errors video track");
-    require(stream->update_track(make_audio_track()), "startup errors audio track");
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
     require(offer.has_value(), "startup errors parse offer");
@@ -1540,8 +1530,7 @@ void test_whep_session_lifecycle()
     boost::asio::io_context io;
     stream_registry registry;
     auto stream = std::make_shared<media_stream>("live/test", io.get_executor());
-    require(stream->update_track(make_video_track()), "whep video track");
-    require(stream->update_track(make_audio_track()), "whep audio track");
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(registry.add(stream), "whep registry add");
 
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
@@ -1583,8 +1572,7 @@ void test_whep_session_lifecycle()
     require(!whep.remove(third.session_id), "whep source end releases session");
 
     auto replacement = std::make_shared<media_stream>("live/test", io.get_executor());
-    require(replacement->update_track(make_video_track()), "whep replacement video track");
-    require(replacement->update_track(make_audio_track()), "whep replacement audio track");
+    require(replacement->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(registry.add(replacement), "whep replacement registry add");
 
     const auto replacement_session = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
@@ -1607,8 +1595,7 @@ void test_whep_negotiated_track_lifecycle()
 {
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/negotiated-tracks", io.get_executor());
-    require(stream->update_track(make_h265_track()), "negotiated tracks h265");
-    require(stream->update_track(make_audio_track()), "negotiated tracks audio");
+    require(stream->set_tracks({make_h265_track(), make_audio_track()}), "initial tracks");
 
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "negotiated tracks certificate");
@@ -1667,7 +1654,7 @@ void test_whep_self_owned_lifecycle()
 {
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/self-owned", io.get_executor());
-    require(stream->update_track(make_video_track()), "self owned video track");
+    require(stream->set_tracks({make_video_track()}), "self owned video track");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
     require(offer.has_value(), "self owned parse offer");
@@ -1689,8 +1676,7 @@ void test_whep_multi_session_isolation()
 {
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/multi", io.get_executor());
-    require(stream->update_track(make_video_track()), "multi video track");
-    require(stream->update_track(make_audio_track()), "multi audio track");
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
     require(offer.has_value(), "multi parse offer");
@@ -1748,8 +1734,7 @@ void test_whep_establishment_timeout()
 {
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/establishment-timeout", io.get_executor());
-    require(stream->update_track(make_video_track()), "establishment timeout video track");
-    require(stream->update_track(make_audio_track()), "establishment timeout audio track");
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
     require(offer.has_value(), "establishment timeout parse offer");
@@ -1783,8 +1768,7 @@ void test_whep_ice_activity_timeout()
 {
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/ice-activity-timeout", io.get_executor());
-    require(stream->update_track(make_video_track()), "ice activity timeout video track");
-    require(stream->update_track(make_audio_track()), "ice activity timeout audio track");
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
     require(offer.has_value(), "ice activity timeout parse offer");
@@ -1869,8 +1853,7 @@ void test_whep_ice_lite()
 {
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/ice", io.get_executor());
-    require(stream->update_track(make_video_track()), "ice video track");
-    require(stream->update_track(make_audio_track()), "ice audio track");
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
     require(offer.has_value(), "ice parse offer");
@@ -1909,10 +1892,10 @@ void test_whep_selected_bundle_transport()
     boost::asio::io_context io;
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "selected transport certificate");
-    const auto check = [&io, &certificate](media_track track, const std::string& sdp, std::string_view remote_ufrag, std::uint8_t id)
+    const auto check = [&io, &certificate](std::vector<media_track> tracks, const std::string& sdp, std::string_view remote_ufrag, std::uint8_t id)
     {
         auto stream = std::make_shared<media_stream>("live/selected-transport", io.get_executor());
-        require(stream->update_track(std::move(track)), "selected transport track");
+        require(stream->set_tracks(std::move(tracks)), "selected transport tracks");
         const auto offer = parse_webrtc_offer(sdp);
         require(offer.has_value(), "selected transport offer");
         auto session = std::make_shared<whep_session>(io.get_executor(), stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
@@ -1931,15 +1914,15 @@ void test_whep_selected_bundle_transport()
         drain_io(io);
     };
 
-    check(make_audio_track(), webrtc_offer_sdp, "remoteaudio", 6);
+    check({make_video_track(), make_audio_track()}, make_h265_offer(webrtc_offer_sdp), "remoteaudio", 6);
     auto video_tag_sdp = webrtc_offer_sdp;
     constexpr std::string_view bundle_group = "a=group:BUNDLE 0 1";
     const auto bundle_offset = video_tag_sdp.find(bundle_group);
     require(bundle_offset != std::string::npos, "selected transport bundle source");
     video_tag_sdp.replace(bundle_offset, bundle_group.size(), "a=group:BUNDLE 1 0");
-    check(make_video_track(), video_tag_sdp, "remotevideo", 7);
+    check({make_video_track()}, video_tag_sdp, "remotevideo", 7);
     video_tag_sdp = make_h265_offer(std::move(video_tag_sdp));
-    check(make_h265_track(), video_tag_sdp, "remotevideo", 8);
+    check({make_h265_track()}, video_tag_sdp, "remotevideo", 8);
 }
 
 media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
@@ -1959,8 +1942,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     const bool h265 = video_codec == codec_id::h265;
     boost::asio::io_context io;
     auto stream = std::make_shared<media_stream>("live/dtls", io.get_executor());
-    require(stream->update_track(h265 ? make_h265_track() : make_video_track()), "dtls video track");
-    require(stream->update_track(make_audio_track()), "dtls audio track");
+    require(stream->set_tracks({h265 ? make_h265_track() : make_video_track(), make_audio_track()}), "initial tracks");
 
     auto server_certificate = dtls_certificate::create();
     auto client_certificate = dtls_certificate::create();

@@ -6,6 +6,7 @@
 
 extern "C"
 {
+#include "amf0.h"
 #include "flv-demuxer.h"
 #include "flv-proto.h"
 #include "rtmp-server.h"
@@ -13,6 +14,7 @@ extern "C"
 
 #include <boost/asio/post.hpp>
 
+#include <array>
 #include <utility>
 
 namespace media_server
@@ -192,7 +194,11 @@ int rtmp_session::audio_callback(void* param, const void* data, std::size_t byte
     return flv_demuxer_input(self->demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp);
 }
 
-int rtmp_session::script_callback(void*, const void*, std::size_t, std::uint32_t) { return 0; }
+int rtmp_session::script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
+{
+    return static_cast<rtmp_session*>(param)->on_script(
+        std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes));
+}
 
 int rtmp_session::duration_callback(void*, const char*, const char*, double* duration)
 {
@@ -298,6 +304,57 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     return 0;
 }
 
+int rtmp_session::on_script(std::span<const std::uint8_t> data)
+{
+    if (role_ != role::publisher)
+    {
+        return 0;
+    }
+    if (data.empty())
+    {
+        return 0;
+    }
+
+    const auto* end = data.data() + data.size();
+    std::array<char, 16> name{};
+    if (data.front() != AMF_STRING)
+    {
+        return 0;
+    }
+    const auto* values = AMFReadString(data.data() + 1, end, 0, name.data(), name.size());
+    if (values == nullptr)
+    {
+        return -1;
+    }
+    if (std::string_view(name.data()) != "onMetaData")
+    {
+        return 0;
+    }
+
+    double audio_codec{};
+    std::array<amf_object_item_t, 1> properties{
+        amf_object_item_t{AMF_NUMBER, "audiocodecid", &audio_codec, sizeof(audio_codec)},
+    };
+    std::array<amf_object_item_t, 1> metadata{
+        amf_object_item_t{AMF_OBJECT, "metadata", properties.data(), properties.size()},
+    };
+    if (amf_read_items(values, end, metadata.data(), metadata.size()) == nullptr)
+    {
+        return -1;
+    }
+
+    const bool audio = audio_codec != 0.0;
+    if ((metadata_received_ && expected_audio_ != audio) || (initial_audio_track_ && !audio))
+    {
+        return -1;
+    }
+
+    expected_audio_ = audio;
+    metadata_received_ = true;
+    try_initialize_tracks();
+    return 0;
+}
+
 int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
 {
     if (role_ != role::publisher || !stream_)
@@ -309,12 +366,20 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
     if (codec == FLV_VIDEO_AVCC || codec == FLV_VIDEO_HVCC)
     {
         const auto video_codec = codec == FLV_VIDEO_AVCC ? codec_id::h264 : codec_id::h265;
-        for (const auto& track : stream_->tracks())
+        if (!tracks_initialized_ && initial_video_track_ && initial_video_track_->codec != video_codec)
         {
-            if (track.id == video_track_id && track.codec != video_codec)
+            spdlog::warn("rtmp input video codec change {} {}", to_string(initial_video_track_->codec), to_string(video_codec));
+            return -1;
+        }
+        if (tracks_initialized_)
+        {
+            for (const auto& track : stream_->tracks())
             {
-                spdlog::warn("rtmp input video codec change {} {}", to_string(track.codec), to_string(video_codec));
-                return -1;
+                if (track.id == video_track_id && track.codec != video_codec)
+                {
+                    spdlog::warn("rtmp input video codec change {} {}", to_string(track.codec), to_string(video_codec));
+                    return -1;
+                }
             }
         }
 
@@ -331,6 +396,12 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
             .channel_count = 0,
             .codec_config = std::move(config),
         };
+        if (!tracks_initialized_)
+        {
+            initial_video_track_ = std::move(track);
+            try_initialize_tracks();
+            return 0;
+        }
         if (stream_->update_track(std::move(track)))
         {
             spdlog::info("rtmp input track video {}", to_string(video_codec));
@@ -339,8 +410,11 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
     }
 
     if (codec == FLV_AUDIO_ASC)
-
     {
+        if (metadata_received_ && !expected_audio_)
+        {
+            return -1;
+        }
         const auto config = parse_aac_asc(data);
         if (!config)
         {
@@ -354,6 +428,12 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
             .channel_count = config->channel_count,
             .codec_config = {data.begin(), data.end()},
         };
+        if (!tracks_initialized_)
+        {
+            initial_audio_track_ = std::move(track);
+            try_initialize_tracks();
+            return 0;
+        }
         if (stream_->update_track(std::move(track)))
         {
             spdlog::info("rtmp input track audio aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
@@ -388,6 +468,28 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
     };
     stream_->publish(std::move(frame));
     return 0;
+}
+
+void rtmp_session::try_initialize_tracks()
+{
+    if (tracks_initialized_ || !metadata_received_ || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
+    {
+        return;
+    }
+
+    std::vector<media_track> tracks;
+    tracks.push_back(std::move(*initial_video_track_));
+    if (expected_audio_)
+    {
+        tracks.push_back(std::move(*initial_audio_track_));
+    }
+    tracks_initialized_ = stream_->set_tracks(std::move(tracks));
+    initial_video_track_.reset();
+    initial_audio_track_.reset();
+    if (tracks_initialized_)
+    {
+        spdlog::info("rtmp input tracks ready audio {}", expected_audio_);
+    }
 }
 
 void rtmp_session::on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data)
