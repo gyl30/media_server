@@ -6,7 +6,6 @@
 #include "media/net/udp_socket.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/dtls_transport.h"
-#include "media/webrtc/rtcp_receiver.h"
 #include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/webrtc_output.h"
 #include "media/webrtc/webrtc_sdp.h"
@@ -27,12 +26,6 @@
 
 namespace media_server
 {
-
-struct whep_rtcp_stats
-{
-    std::size_t receiver_reports{};
-    std::size_t plis{};
-};
 
 struct whep_session_timeouts
 {
@@ -66,7 +59,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     [[nodiscard]] bool ice_connected() const noexcept;
     [[nodiscard]] bool dtls_connected() const noexcept;
     [[nodiscard]] bool srtp_started() const noexcept;
-    [[nodiscard]] const whep_rtcp_stats& rtcp_stats() const noexcept;
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;
@@ -81,7 +73,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_dtls(std::span<const std::uint8_t> packet);
-    void handle_srtp(std::span<const std::uint8_t> packet);
     bool startup_media();
     bool apply_tracks(const media_track_snapshot_ptr& tracks);
     bool start_media_read();
@@ -103,8 +94,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::vector<media_track> pending_tracks_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
-    rtcp_receiver rtcp_receiver_;
-    whep_rtcp_stats rtcp_stats_;
     std::shared_ptr<webrtc_output> output_;
     boost::asio::any_io_executor executor_;
     std::shared_ptr<udp_socket> udp_socket_;
