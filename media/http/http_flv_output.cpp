@@ -72,14 +72,11 @@ bool http_flv_output::apply_tracks(const media_track_snapshot_ptr& tracks)
         return false;
     }
 
-    std::vector<track_id> track_ids;
     bool has_audio = false;
     bool has_video = false;
     bool video_changed = false;
-    track_ids.reserve(tracks->tracks.size());
     for (const auto& track : tracks->tracks)
     {
-        track_ids.push_back(track.id);
         has_audio = has_audio || track.kind == media_kind::audio;
         has_video = has_video || track.kind == media_kind::video;
         const auto current = reader_tracks_.find(track.id);
@@ -88,13 +85,6 @@ bool http_flv_output::apply_tracks(const media_track_snapshot_ptr& tracks)
                          current->second.config_version != track.config_version);
     }
 
-    if (writer_ != nullptr && track_ids != track_ids_)
-    {
-        finish();
-        return true;
-    }
-
-    track_ids_ = std::move(track_ids);
     reader_tracks_.clear();
     output_buffer_.clear();
     if (writer_ == nullptr)

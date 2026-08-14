@@ -35,11 +35,6 @@ void hls_output::on_track(const media_track& track)
 {
     std::scoped_lock lock(mutex_);
     tracks_.insert_or_assign(track.id, track);
-    if (track.kind == media_kind::video)
-    {
-        has_video_ = true;
-    }
-
     if (!current_segment_.empty())
     {
         finish_segment(segment_max_pts_ns_);
@@ -48,7 +43,7 @@ void hls_output::on_track(const media_track& track)
 
     segment_start_pts_ns_.reset();
     segment_max_pts_ns_ = 0;
-    waiting_for_key_frame_ = has_video_;
+    waiting_for_key_frame_ = true;
 }
 
 void hls_output::on_frame(const media_frame& frame)
@@ -85,7 +80,7 @@ void hls_output::on_frame(const media_frame& frame)
 
     const auto elapsed_ns = frame.pts_ns - *segment_start_pts_ns_;
     const auto target_ns = static_cast<std::int64_t>(target_duration_seconds_ * 1'000'000'000.0);
-    const bool segment_boundary = has_video_ ? kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns : elapsed_ns >= target_ns;
+    const bool segment_boundary = kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns;
     if (segment_boundary && !current_segment_.empty())
     {
         finish_segment(frame.pts_ns);

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -53,7 +54,9 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
 
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
+    int on_script(std::span<const std::uint8_t> data);
     int on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
+    void try_initialize_tracks();
     void on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data);
     void on_tcp_write(boost::system::error_code error, std::size_t write_size);
     void safe_shutdown();
@@ -73,6 +76,11 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
     role role_{role::none};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
+    std::optional<media_track> initial_video_track_;
+    std::optional<media_track> initial_audio_track_;
+    bool expected_audio_{};
+    bool metadata_received_{};
+    bool tracks_initialized_{};
     bool waiting_for_key_frame_{};
     bool closed_{};
 };
