@@ -430,6 +430,12 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
 
     spdlog::debug("webrtc stun valid session {} remote {} {} use_candidate {}", id_, remote_address, remote_port, request->use_candidate);
 
+    if (request->use_candidate && remote_endpoint_.has_value() && endpoint != *remote_endpoint_)
+    {
+        spdlog::debug("webrtc stun rejected ice renomination session {} remote {} {}", id_, remote_address, remote_port);
+        return;
+    }
+
     auto response = make_stun_binding_success_response(*request, endpoint, ice_pwd_);
     if (response.empty())
     {
