@@ -741,6 +741,15 @@ class whep_http_test_peer final
         return send(std::move(request));
     }
 
+    boost::beast::http::response<boost::beast::http::string_body> request(boost::beast::http::verb method, std::string target)
+    {
+        boost::beast::http::request<boost::beast::http::string_body> request{method, std::move(target), 11};
+        request.set(boost::beast::http::field::host, "127.0.0.1");
+        request.set(boost::beast::http::field::origin, "https://player.example");
+        request.prepare_payload();
+        return send(std::move(request));
+    }
+
    private:
     boost::beast::http::response<boost::beast::http::string_body> send(boost::beast::http::request<boost::beast::http::string_body> request)
     {
@@ -770,13 +779,15 @@ class whep_http_test_peer final
     std::jthread runner_;
 };
 
-void require_whep_options(const boost::beast::http::response<boost::beast::http::string_body>& response)
+void require_whep_options(const boost::beast::http::response<boost::beast::http::string_body>& response,
+                          std::string_view methods,
+                          bool accept_post)
 {
     require(response.result() == boost::beast::http::status::ok, "whep options status");
     require(response["Access-Control-Allow-Origin"] == "*", "whep options allow origin");
-    require(response["Access-Control-Allow-Methods"] == "POST, DELETE, OPTIONS", "whep options allow methods");
+    require(response["Access-Control-Allow-Methods"] == methods, "whep options allow methods");
     require(response["Access-Control-Allow-Headers"] == "Content-Type", "whep options allow headers");
-    require(response["Accept-Post"] == "application/sdp", "whep options accept post");
+    require((response["Accept-Post"] == "application/sdp") == accept_post, "whep options accept post");
     require(response[boost::beast::http::field::content_length] == "0", "whep options content length");
     require(response.body().empty(), "whep options empty body");
 }
@@ -784,7 +795,20 @@ void require_whep_options(const boost::beast::http::response<boost::beast::http:
 void test_whep_http_cors()
 {
     whep_http_test_peer peer;
-    require_whep_options(peer.options("/whep/live/camera", "POST"));
+    require_whep_options(peer.options("/whep/live/camera", "POST"), "GET, HEAD, POST, OPTIONS", true);
+
+    const auto endpoint_get = peer.request(boost::beast::http::verb::get, "/whep/live/camera");
+    require(endpoint_get.result() == boost::beast::http::status::no_content && endpoint_get.body().empty(), "whep endpoint get");
+
+    const auto endpoint_head = peer.request(boost::beast::http::verb::head, "/whep/live/camera");
+    require(endpoint_head.result() == boost::beast::http::status::ok, "whep endpoint head status");
+    require(endpoint_head[boost::beast::http::field::content_type] == "application/sdp", "whep endpoint head content type");
+    require(endpoint_head[boost::beast::http::field::content_length] == "0", "whep endpoint head content length");
+    require(endpoint_head.body().empty(), "whep endpoint head body");
+
+    const auto endpoint_delete = peer.remove("/whep/live/camera");
+    require(endpoint_delete.result() == boost::beast::http::status::method_not_allowed, "whep endpoint delete status");
+    require(endpoint_delete[boost::beast::http::field::allow] == "GET, HEAD, POST, OPTIONS", "whep endpoint delete allow");
 
     const auto unavailable = peer.post("/whep/live/missing");
     require(unavailable.result() == boost::beast::http::status::conflict, "whep unavailable stream status");
@@ -800,7 +824,18 @@ void test_whep_http_cors()
     require(location.starts_with("/whep/session/"), "whep create location");
     require(created.body().starts_with("v=0\r\n"), "whep create answer");
 
-    require_whep_options(peer.options(location, "DELETE"));
+    require_whep_options(peer.options(location, "DELETE"), "GET, HEAD, DELETE, OPTIONS", false);
+
+    const auto session_get = peer.request(boost::beast::http::verb::get, location);
+    require(session_get.result() == boost::beast::http::status::no_content && session_get.body().empty(), "whep session get");
+
+    const auto session_head = peer.request(boost::beast::http::verb::head, location);
+    require(session_head.result() == boost::beast::http::status::no_content && session_head.body().empty(), "whep session head");
+
+    const auto session_post = peer.post(location);
+    require(session_post.result() == boost::beast::http::status::method_not_allowed, "whep session post status");
+    require(session_post[boost::beast::http::field::allow] == "GET, HEAD, DELETE, OPTIONS", "whep session post allow");
+
     const auto removed = peer.remove(location);
     require(removed.result() == boost::beast::http::status::no_content, "whep cors delete status");
     require(removed["Access-Control-Allow-Origin"] == "*", "whep delete allow origin");
