@@ -30,6 +30,7 @@ extern "C"
 #include <openssl/hmac.h>
 #include <openssl/ssl.h>
 #include <openssl/srtp.h>
+#include <srtp2/srtp.h>
 
 #include <array>
 #include <chrono>
@@ -52,6 +53,19 @@ namespace
 
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+
+struct test_srtp_packet
+{
+    bool rtcp{};
+    std::vector<std::uint8_t> bytes;
+};
+
+struct test_srtp_keying_material
+{
+    dtls_srtp_keying_material outbound;
+    std::vector<std::uint8_t> inbound_key;
+    std::vector<std::uint8_t> inbound_salt;
+};
 
 const std::vector<std::uint8_t> h264_config{
     0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
@@ -292,7 +306,7 @@ bool drive_dtls_client(boost::asio::io_context& io,
     return false;
 }
 
-std::optional<dtls_srtp_keying_material> make_peer_srtp_material(SSL* ssl)
+std::optional<test_srtp_keying_material> make_peer_srtp_material(SSL* ssl)
 {
     const auto* profile = SSL_get_selected_srtp_profile(ssl);
     if (profile == nullptr || profile->name == nullptr)
@@ -334,12 +348,14 @@ std::optional<dtls_srtp_keying_material> make_peer_srtp_material(SSL* ssl)
     const auto server_key = client_key + static_cast<std::ptrdiff_t>(key_size);
     const auto client_salt = server_key + static_cast<std::ptrdiff_t>(key_size);
     const auto server_salt = client_salt + static_cast<std::ptrdiff_t>(salt_size);
-    return dtls_srtp_keying_material{
-        .profile = std::string(name),
-        .client_write_key = std::vector<std::uint8_t>(server_key, client_salt),
-        .client_write_salt = std::vector<std::uint8_t>(server_salt, material.end()),
-        .server_write_key = std::vector<std::uint8_t>(client_key, server_key),
-        .server_write_salt = std::vector<std::uint8_t>(client_salt, server_salt),
+    return test_srtp_keying_material{
+        .outbound = dtls_srtp_keying_material{
+            .profile = std::string(name),
+            .server_write_key = std::vector<std::uint8_t>(client_key, server_key),
+            .server_write_salt = std::vector<std::uint8_t>(client_salt, server_salt),
+        },
+        .inbound_key = std::vector<std::uint8_t>(server_key, client_salt),
+        .inbound_salt = std::vector<std::uint8_t>(server_salt, material.end()),
     };
 }
 
@@ -1884,17 +1900,59 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
     const auto peer_material = make_peer_srtp_material(client->ssl.get());
     require(peer_material.has_value(), "dtls client srtp material");
     srtp_transport peer_srtp;
-    require(peer_srtp.startup(*peer_material), "srtp peer startup");
+    require(peer_srtp.startup(peer_material->outbound), "srtp peer startup");
 
     const std::array<std::uint8_t, 12> repeated_rtp{0x80, 96, 0x12, 0x34, 0, 0, 0, 1, 0x11, 0x22, 0x33, 0x44};
     require(peer_srtp.protect_rtp(repeated_rtp).has_value(), "srtp first protect");
     require(!peer_srtp.protect_rtp(repeated_rtp).has_value(), "srtp repeated sequence rejected");
 
+    auto peer_receive_key = peer_material->inbound_key;
+    peer_receive_key.insert(peer_receive_key.end(), peer_material->inbound_salt.begin(), peer_material->inbound_salt.end());
+    srtp_policy_t peer_receive_policy{};
+    if (peer_material->outbound.profile == "SRTP_AEAD_AES_128_GCM")
+    {
+        srtp_crypto_policy_set_aes_gcm_128_16_auth(&peer_receive_policy.rtp);
+        srtp_crypto_policy_set_aes_gcm_128_16_auth(&peer_receive_policy.rtcp);
+    }
+    else if (peer_material->outbound.profile == "SRTP_AEAD_AES_256_GCM")
+    {
+        srtp_crypto_policy_set_aes_gcm_256_16_auth(&peer_receive_policy.rtp);
+        srtp_crypto_policy_set_aes_gcm_256_16_auth(&peer_receive_policy.rtcp);
+    }
+    else
+    {
+        srtp_crypto_policy_set_rtp_default(&peer_receive_policy.rtp);
+        srtp_crypto_policy_set_rtcp_default(&peer_receive_policy.rtcp);
+    }
+    peer_receive_policy.ssrc.type = ssrc_any_inbound;
+    peer_receive_policy.key = peer_receive_key.data();
+    peer_receive_policy.window_size = 1024;
+    srtp_t peer_receiver{};
+    require(srtp_create(&peer_receiver, &peer_receive_policy) == srtp_err_status_ok, "srtp peer receiver create");
+
+    const auto unprotect_server_packet = [peer_receiver](std::span<const std::uint8_t> packet) -> std::optional<test_srtp_packet> {
+        if (packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
+        {
+            return std::nullopt;
+        }
+
+        const bool rtcp = packet.size() >= 2U && packet[1] >= 192U && packet[1] <= 223U;
+        std::vector<std::uint8_t> output(packet.begin(), packet.end());
+        int size = static_cast<int>(output.size());
+        const auto status = rtcp ? srtp_unprotect_rtcp(peer_receiver, output.data(), &size) : srtp_unprotect(peer_receiver, output.data(), &size);
+        if (status != srtp_err_status_ok || size < 0)
+        {
+            return std::nullopt;
+        }
+        output.resize(static_cast<std::size_t>(size));
+        return test_srtp_packet{.rtcp = rtcp, .bytes = std::move(output)};
+    };
+
     stream->publish(make_video_key_frame(video_codec));
 
     std::array<std::uint8_t, 4096> rtp_buffer{};
     boost::asio::ip::udp::endpoint rtp_sender;
-    std::optional<srtp_packet> clear_rtp;
+    std::optional<test_srtp_packet> clear_rtp;
     const auto rtp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!clear_rtp && std::chrono::steady_clock::now() < rtp_deadline)
     {
@@ -1913,7 +1971,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
         {
             continue;
         }
-        clear_rtp = peer_srtp.unprotect(packet);
+        clear_rtp = unprotect_server_packet(packet);
     }
 
     require(clear_rtp.has_value() && !clear_rtp->rtcp, "srtp decrypt video rtp");
@@ -1926,7 +1984,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
     require(nal_type == (h265 ? 19U : 5U), "srtp negotiated video codec");
     const auto video_ssrc = read_network_u32(clear_rtp->bytes, 8U);
 
-    std::optional<srtp_packet> clear_server_rtcp;
+    std::optional<test_srtp_packet> clear_server_rtcp;
     const auto server_rtcp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!clear_server_rtcp && std::chrono::steady_clock::now() < server_rtcp_deadline)
     {
@@ -1945,7 +2003,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
         {
             continue;
         }
-        auto clear = peer_srtp.unprotect(packet);
+        auto clear = unprotect_server_packet(packet);
         if (clear && clear->rtcp)
         {
             clear_server_rtcp = std::move(clear);
@@ -1962,7 +2020,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
         audio_pts_ns += 23'219'954;
     }
 
-    std::optional<srtp_packet> clear_audio_rtp;
+    std::optional<test_srtp_packet> clear_audio_rtp;
     const auto audio_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!clear_audio_rtp && std::chrono::steady_clock::now() < audio_deadline)
     {
@@ -1981,7 +2039,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
         {
             continue;
         }
-        auto clear = peer_srtp.unprotect(packet);
+        auto clear = unprotect_server_packet(packet);
         if (clear && !clear->rtcp && clear->bytes.size() >= 12U && (clear->bytes[1] & 0x7fU) == 111U)
         {
             clear_audio_rtp = std::move(clear);
@@ -1992,6 +2050,8 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
     require((clear_audio_rtp->bytes[0] >> 6U) == 2U, "srtp clear opus rtp version");
     require((clear_audio_rtp->bytes[1] & 0x7fU) == 111U, "srtp negotiated opus payload");
     require(!require_rtp_mid(clear_audio_rtp->bytes, "1", 4).empty(), "srtp opus mid payload");
+
+    require(srtp_dealloc(peer_receiver) == srtp_err_status_ok, "srtp peer receiver destroy");
 
     require(SSL_shutdown(client->ssl.get()) >= 0 && BIO_ctrl_pending(client->write_bio) > 0, "dtls client close notify");
     require(send_dtls_client_output(*client, client_socket, server_endpoint), "dtls client close notify send");
