@@ -79,7 +79,6 @@ bool create_session(std::string_view profile, std::vector<std::uint8_t>& master_
 struct srtp_transport::context
 {
     srtp_t outbound{};
-    std::vector<std::uint8_t> outbound_key;
 };
 
 srtp_transport::srtp_transport() = default;
@@ -97,8 +96,8 @@ bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
     spdlog::debug("webrtc srtp transport startup profile {}", keying_material.profile);
 
     auto state = std::make_unique<struct context>();
-    state->outbound_key = make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
-    if (!create_session(keying_material.profile, state->outbound_key, state->outbound))
+    auto master_key = make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
+    if (!create_session(keying_material.profile, master_key, state->outbound))
     {
         spdlog::debug("webrtc srtp outbound context create failed profile {}", keying_material.profile);
         return false;
