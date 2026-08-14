@@ -203,6 +203,10 @@ void whep_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    if (dtls_)
+    {
+        dtls_->shutdown();
+    }
     started_ = false;
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
