@@ -786,6 +786,11 @@ void test_whep_http_cors()
     whep_http_test_peer peer;
     require_whep_options(peer.options("/whep/live/camera", "POST"));
 
+    const auto unavailable = peer.post("/whep/live/missing");
+    require(unavailable.result() == boost::beast::http::status::conflict, "whep unavailable stream status");
+    require(unavailable[boost::beast::http::field::retry_after] == "1", "whep unavailable stream retry after");
+    require(unavailable["Access-Control-Allow-Origin"] == "*", "whep unavailable stream allow origin");
+
     const auto created = peer.post("/whep/live/camera");
     require(created.result() == boost::beast::http::status::created, "whep cors create status");
     require(created["Access-Control-Allow-Origin"] == "*", "whep create allow origin");

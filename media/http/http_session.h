@@ -42,7 +42,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void check_hls_playlist();
 
     void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body);
-    void send_whep_error_response(boost::beast::http::status status, std::string body);
+    void send_whep_error_response(boost::beast::http::status status, std::string body, int retry_after_seconds = 0);
     void send_whep_options_response();
     void send_whep_response(std::string session_id, std::string answer_sdp);
     void send_whep_empty_response(boost::beast::http::status status);
