@@ -4507,6 +4507,12 @@ void test_webrtc_output_initialization_failure()
                                 [](std::span<const std::uint8_t>) {});
     invalid_audio.on_track(make_audio_track());
     require(!invalid_audio.valid(), "webrtc invalid opus output rejected");
+
+    webrtc_output invalid_mid(
+        webrtc_output_config{.video_payload_type = 102, .video_mid = "0123456789abcdef0", .video_mid_extension_id = 4, .rtcp_cname = {}},
+        [](std::span<const std::uint8_t>) {});
+    invalid_mid.on_track(make_video_track());
+    require(!invalid_mid.valid(), "webrtc long mid output rejected");
 }
 
 void test_webrtc_rtcp_sender()
