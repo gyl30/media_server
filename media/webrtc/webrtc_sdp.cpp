@@ -486,15 +486,30 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
     }
 
     webrtc_offer result;
-    if (const char* group = sdp_attribute_find(sdp.get(), "group"); group != nullptr)
+    bool bundle_found = false;
+    const auto attribute_count = sdp_attribute_count(sdp.get());
+    for (int index = 0; index < attribute_count; ++index)
     {
-        const auto fields = split_words(group);
-        if (!fields.empty() && lower_copy(fields.front()) == "bundle")
+        const char* name = nullptr;
+        const char* value = nullptr;
+        if (sdp_attribute_get(sdp.get(), index, &name, &value) != 0 || name == nullptr || value == nullptr || std::string_view(name) != "group")
         {
-            for (std::size_t index = 1; index < fields.size(); ++index)
-            {
-                result.bundle_mids.emplace_back(fields[index]);
-            }
+            continue;
+        }
+
+        const auto fields = split_words(value);
+        if (fields.empty() || lower_copy(fields.front()) != "bundle")
+        {
+            continue;
+        }
+        if (bundle_found)
+        {
+            return std::nullopt;
+        }
+        bundle_found = true;
+        for (std::size_t field = 1; field < fields.size(); ++field)
+        {
+            result.bundle_mids.emplace_back(fields[field]);
         }
     }
 
