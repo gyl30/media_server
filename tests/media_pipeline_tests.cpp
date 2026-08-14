@@ -4452,6 +4452,45 @@ void test_webrtc_rtp_packetizer()
     require(rtp_timestamp(packets.back()) - first_timestamp == 3'600U, "h264 rtp timestamp step");
 }
 
+void test_webrtc_video_access_unit_marker()
+{
+    for (const bool h265 : std::array{false, true})
+    {
+        std::vector<std::vector<std::uint8_t>> packets;
+        webrtc_output output(
+            webrtc_output_config{
+                .video_codec = h265 ? codec_id::h265 : codec_id::h264,
+                .video_payload_type = 102,
+                .video_mid = "video",
+                .video_mid_extension_id = 4,
+                .rtcp_cname = {},
+            },
+            [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
+        output.on_track(h265 ? make_h265_track() : make_video_track());
+        require(output.valid(), "webrtc marker output valid");
+
+        auto frame = h265 ? make_h265_frame(0, true) : make_video_frame(0, true);
+        auto payload = std::make_shared<std::vector<std::uint8_t>>(*frame.payload);
+        if (h265)
+        {
+            const std::array<std::uint8_t, 9> suffix_sei{0, 0, 0, 1, 0x50, 0x01, 0x05, 0x01, 0x80};
+            payload->insert(payload->end(), suffix_sei.begin(), suffix_sei.end());
+        }
+        else
+        {
+            const std::array<std::uint8_t, 8> sei{0, 0, 0, 1, 0x06, 0x05, 0x01, 0x80};
+            payload->insert(payload->end(), sei.begin(), sei.end());
+        }
+        frame.payload = std::move(payload);
+        output.on_frame(frame);
+
+        require(packets.size() >= 2U, "webrtc marker multiple nalu packets");
+        const auto marker_count =
+            std::count_if(packets.begin(), packets.end(), [](const auto& packet) { return (packet[1] & 0x80U) != 0; });
+        require(marker_count == 1 && (packets.back()[1] & 0x80U) != 0, "webrtc marker on access unit last packet");
+    }
+}
+
 void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max_playback_rate = 48'000)
 {
     std::vector<std::vector<std::uint8_t>> packets;
@@ -4734,6 +4773,8 @@ int main()
     std::cout << "[pass] hls_service_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
+    media_server::test_webrtc_video_access_unit_marker();
+    std::cout << "[pass] webrtc_video_access_unit_marker\n";
     media_server::test_webrtc_opus_packetizer();
     std::cout << "[pass] webrtc_opus_packetizer\n";
     media_server::test_webrtc_output_initialization_failure();
