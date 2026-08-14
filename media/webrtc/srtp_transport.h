@@ -12,12 +12,6 @@
 namespace media_server
 {
 
-struct srtp_packet
-{
-    bool rtcp{};
-    std::vector<std::uint8_t> bytes;
-};
-
 class srtp_transport final
 {
    public:
@@ -28,7 +22,6 @@ class srtp_transport final
 
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> protect_rtp(std::span<const std::uint8_t> packet);
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> protect_rtcp(std::span<const std::uint8_t> packet);
-    [[nodiscard]] std::optional<srtp_packet> unprotect(std::span<const std::uint8_t> packet);
     [[nodiscard]] static bool is_rtp_or_rtcp(std::span<const std::uint8_t> packet) noexcept;
 
    private:
