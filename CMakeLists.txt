@@ -166,7 +166,6 @@ add_library(media_core STATIC
     media/http/http_server.cpp
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
-    media/webrtc/rtcp_receiver.cpp
     media/webrtc/stun_message.cpp
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp

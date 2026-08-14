@@ -163,7 +163,6 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     audio_channel_count_ = answer->audio_channel_count;
     audio_bitrate_ = answer->audio_bitrate;
     audio_max_playback_rate_ = answer->audio_max_playback_rate;
-    rtcp_stats_ = {};
     started_ = true;
 
     for (const auto& track : source_tracks)
@@ -254,8 +253,6 @@ bool whep_session::ice_connected() const noexcept { return remote_endpoint_.has_
 bool whep_session::dtls_connected() const noexcept { return dtls_ != nullptr && dtls_->connected(); }
 
 bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
-
-const whep_rtcp_stats& whep_session::rtcp_stats() const noexcept { return rtcp_stats_; }
 
 void whep_session::on_tracks(media_track_snapshot_ptr tracks)
 {
@@ -406,8 +403,7 @@ void whep_session::handle_packet(std::span<const std::uint8_t> packet, const boo
 
     if (srtp_transport::is_rtp_or_rtcp(packet))
     {
-        spdlog::trace("webrtc srtp packet received session {} size {}", id_, packet.size());
-        handle_srtp(packet);
+        spdlog::trace("webrtc inbound srtp ignored session {} size {}", id_, packet.size());
         return;
     }
 
@@ -490,58 +486,6 @@ void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
     }
 
     schedule_dtls_timeout();
-}
-
-void whep_session::handle_srtp(std::span<const std::uint8_t> packet)
-{
-    if (!srtp_)
-    {
-        return;
-    }
-
-    const auto clear_packet = srtp_->unprotect(packet);
-    if (!clear_packet)
-    {
-        spdlog::debug("webrtc srtp unprotect failed session {} size {}", id_, packet.size());
-        return;
-    }
-
-    spdlog::trace("webrtc srtp unprotected session {} rtcp {} size {}", id_, clear_packet->rtcp, clear_packet->bytes.size());
-
-    if (!clear_packet->rtcp)
-    {
-        return;
-    }
-
-    rtcp_receive_result result;
-    if (!rtcp_receiver_.input(clear_packet->bytes, result))
-    {
-        spdlog::debug("webrtc rtcp rejected session {} size {}", id_, clear_packet->bytes.size());
-        return;
-    }
-
-    for (const auto& report : result.receiver_reports)
-    {
-        ++rtcp_stats_.receiver_reports;
-        spdlog::trace(
-            "webrtc rtcp receiver report session {} sender_ssrc {} source_ssrc {} fraction_lost {} cumulative_lost {} highest_sequence {} jitter {} "
-            "lsr {} dlsr {}",
-            id_,
-            report.sender_ssrc,
-            report.source_ssrc,
-            report.fraction_lost,
-            report.cumulative_lost,
-            report.highest_sequence,
-            report.jitter,
-            report.lsr,
-            report.dlsr);
-    }
-
-    for (const auto& pli : result.plis)
-    {
-        ++rtcp_stats_.plis;
-        spdlog::trace("webrtc rtcp pli session {} sender_ssrc {} media_ssrc {}", id_, pli.sender_ssrc, pli.media_ssrc);
-    }
 }
 
 bool whep_session::startup_media()
