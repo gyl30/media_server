@@ -14,7 +14,6 @@ extern "C"
 
 #include <algorithm>
 #include <array>
-#include <random>
 #include <string_view>
 #include <utility>
 
@@ -32,12 +31,6 @@ constexpr std::string_view rtcp_name = "media_server";
 bool rtcp_mux_payload_type_allowed(int payload_type)
 {
     return payload_type >= 0 && payload_type <= 127 && (payload_type < 64 || payload_type > 95);
-}
-
-std::uint32_t random_u32()
-{
-    std::random_device device;
-    return (static_cast<std::uint32_t>(device()) << 16U) ^ static_cast<std::uint32_t>(device());
 }
 
 std::int64_t opus_samples_to_nanoseconds(std::uint32_t sample_count)
@@ -205,7 +198,7 @@ bool webrtc_output::add_h264_track(const media_track& track)
         return false;
     }
     const auto payload_index = rtsp_muxer_add_payload(
-        muxer_, "RTP/AVP", 90'000, config_.video_payload_type, "H264", 0, random_u32(), 0, avcc.data(), static_cast<int>(avcc.size()));
+        muxer_, "RTP/AVP", 90'000, config_.video_payload_type, "H264", 0, 0, 0, avcc.data(), static_cast<int>(avcc.size()));
     if (payload_index < 0)
     {
         spdlog::error("webrtc add h264 payload failed");
@@ -251,7 +244,7 @@ bool webrtc_output::add_h265_track(const media_track& track)
         return false;
     }
     const auto payload_index = rtsp_muxer_add_payload(
-        muxer_, "RTP/AVP", 90'000, config_.video_payload_type, "H265", 0, random_u32(), 0, hvcc.data(), static_cast<int>(hvcc.size()));
+        muxer_, "RTP/AVP", 90'000, config_.video_payload_type, "H265", 0, 0, 0, hvcc.data(), static_cast<int>(hvcc.size()));
     if (payload_index < 0)
     {
         spdlog::error("webrtc add h265 payload failed");
@@ -305,7 +298,7 @@ bool webrtc_output::add_aac_track(const media_track& track)
         return false;
     }
 
-    const auto payload_index = rtsp_muxer_add_payload(muxer_, "RTP/AVP", 48'000, config_.opus_payload_type, "opus", 0, random_u32(), 0, nullptr, 0);
+    const auto payload_index = rtsp_muxer_add_payload(muxer_, "RTP/AVP", 48'000, config_.opus_payload_type, "opus", 0, 0, 0, nullptr, 0);
     if (payload_index < 0)
     {
         spdlog::error("webrtc add opus payload failed");
