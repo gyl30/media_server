@@ -1935,6 +1935,10 @@ void test_whep_dtls(codec_id video_codec)
     auto server_certificate = dtls_certificate::create();
     auto client_certificate = dtls_certificate::create();
     require(server_certificate != nullptr && client_certificate != nullptr, "dtls certificates");
+    require(EVP_PKEY_base_id(server_certificate->private_key()) == EVP_PKEY_EC && EVP_PKEY_bits(server_certificate->private_key()) == 256,
+            "dtls server certificate ecdsa p256");
+    require(EVP_PKEY_base_id(client_certificate->private_key()) == EVP_PKEY_EC && EVP_PKEY_bits(client_certificate->private_key()) == 256,
+            "dtls client certificate ecdsa p256");
 
     auto offer_sdp = offer_with_fingerprint(client_certificate->sha256_fingerprint());
     if (h265)
@@ -1969,6 +1973,7 @@ void test_whep_dtls(codec_id video_codec)
     require(client.has_value(), "dtls client create");
     require(drive_dtls_client(io, client_socket, server_endpoint, *session, *client), "dtls handshake");
     require(session->dtls_connected(), "dtls server connected");
+    require(std::string_view(SSL_get_cipher_name(client->ssl.get())) == "ECDHE-ECDSA-AES128-GCM-SHA256", "dtls mandatory webrtc cipher");
 
     require(session->srtp_started(), "srtp server started");
 
