@@ -96,7 +96,7 @@ struct srtp_profile_size
 
 std::optional<srtp_profile_size> profile_size(std::string_view profile)
 {
-    if (profile == "SRTP_AES128_CM_SHA1_80" || profile == "SRTP_AES128_CM_SHA1_32")
+    if (profile == "SRTP_AES128_CM_SHA1_80")
     {
         return srtp_profile_size{.key_size = 16, .salt_size = 14};
     }
