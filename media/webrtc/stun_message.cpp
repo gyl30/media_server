@@ -26,8 +26,11 @@ constexpr std::uint16_t stun_binding_success_response_type = 0x0101;
 constexpr std::uint16_t stun_attribute_username = 0x0006;
 constexpr std::uint16_t stun_attribute_message_integrity = 0x0008;
 constexpr std::uint16_t stun_attribute_xor_mapped_address = 0x0020;
+constexpr std::uint16_t stun_attribute_priority = 0x0024;
 constexpr std::uint16_t stun_attribute_use_candidate = 0x0025;
 constexpr std::uint16_t stun_attribute_fingerprint = 0x8028;
+constexpr std::uint16_t stun_attribute_ice_controlled = 0x8029;
+constexpr std::uint16_t stun_attribute_ice_controlling = 0x802a;
 constexpr std::size_t stun_message_integrity_size = 20;
 constexpr std::uint32_t stun_fingerprint_xor = 0x5354554eU;
 
@@ -206,6 +209,8 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
     std::optional<std::string_view> username;
     std::optional<std::size_t> message_integrity_offset;
     std::optional<std::size_t> fingerprint_offset;
+    bool priority = false;
+    bool ice_controlling = false;
     bool use_candidate = false;
 
     std::size_t offset = stun_header_size;
@@ -224,6 +229,11 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
 
         if (type == stun_attribute_username)
         {
+            if (username.has_value() || message_integrity_offset.has_value())
+            {
+                spdlog::debug("stun reject invalid username position");
+                return std::nullopt;
+            }
             username = std::string_view(reinterpret_cast<const char*>(packet.data() + value_offset), length);
             spdlog::trace("stun username {}", *username);
         }
@@ -236,11 +246,20 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
             }
             message_integrity_offset = offset;
         }
+        else if (type == stun_attribute_priority)
+        {
+            if (length != 4U || priority || message_integrity_offset.has_value())
+            {
+                spdlog::debug("stun reject invalid priority attribute length {}", length);
+                return std::nullopt;
+            }
+            priority = true;
+        }
         else if (type == stun_attribute_use_candidate)
         {
-            if (length != 0)
+            if (length != 0 || use_candidate || message_integrity_offset.has_value())
             {
-                spdlog::debug("stun reject invalid use candidate length {}", length);
+                spdlog::debug("stun reject invalid use candidate attribute length {}", length);
                 return std::nullopt;
             }
             use_candidate = true;
@@ -253,6 +272,20 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
                 return std::nullopt;
             }
             fingerprint_offset = offset;
+        }
+        else if (type == stun_attribute_ice_controlling)
+        {
+            if (length != 8U || ice_controlling || message_integrity_offset.has_value())
+            {
+                spdlog::debug("stun reject invalid ice controlling attribute length {}", length);
+                return std::nullopt;
+            }
+            ice_controlling = true;
+        }
+        else if (type == stun_attribute_ice_controlled)
+        {
+            spdlog::debug("stun reject ice controlled peer");
+            return std::nullopt;
         }
 
         offset = value_offset + length;
@@ -274,6 +307,16 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
         spdlog::debug("stun reject username actual {} expected {}", *username, expected_username);
         return std::nullopt;
     }
+    if (!priority)
+    {
+        spdlog::debug("stun reject missing priority");
+        return std::nullopt;
+    }
+    if (!ice_controlling)
+    {
+        spdlog::debug("stun reject missing ice controlling");
+        return std::nullopt;
+    }
     if (!message_integrity_offset.has_value())
     {
         spdlog::debug("stun reject missing message integrity");
@@ -284,7 +327,12 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
         spdlog::debug("stun reject message integrity failed");
         return std::nullopt;
     }
-    if (fingerprint_offset.has_value() && !verify_fingerprint(packet, *fingerprint_offset))
+    if (!fingerprint_offset.has_value())
+    {
+        spdlog::debug("stun reject missing fingerprint");
+        return std::nullopt;
+    }
+    if (*fingerprint_offset + 8U != packet.size() || !verify_fingerprint(packet, *fingerprint_offset))
     {
         spdlog::debug("stun reject fingerprint failed");
         return std::nullopt;
