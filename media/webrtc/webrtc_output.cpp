@@ -29,6 +29,11 @@ constexpr std::size_t rtcp_buffer_size = 4096;
 constexpr std::size_t max_mid_size = 16;
 constexpr std::string_view rtcp_name = "media_server";
 
+bool rtcp_mux_payload_type_allowed(int payload_type)
+{
+    return payload_type >= 0 && payload_type <= 127 && (payload_type < 64 || payload_type > 95);
+}
+
 std::uint32_t random_u32()
 {
     std::random_device device;
@@ -188,7 +193,7 @@ int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, 
 
 bool webrtc_output::add_h264_track(const media_track& track)
 {
-    if (config_.video_payload_type < 0 || config_.video_payload_type > 127 || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
+    if (!rtcp_mux_payload_type_allowed(config_.video_payload_type) || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
         config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
     {
         return false;
@@ -234,7 +239,7 @@ bool webrtc_output::add_h264_track(const media_track& track)
 
 bool webrtc_output::add_h265_track(const media_track& track)
 {
-    if (config_.video_payload_type < 0 || config_.video_payload_type > 127 || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
+    if (!rtcp_mux_payload_type_allowed(config_.video_payload_type) || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
         config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
     {
         return false;
@@ -280,7 +285,7 @@ bool webrtc_output::add_h265_track(const media_track& track)
 
 bool webrtc_output::add_aac_track(const media_track& track)
 {
-    if (config_.opus_payload_type < 0 || config_.opus_payload_type > 127 || config_.audio_mid.empty() || config_.audio_mid.size() > max_mid_size ||
+    if (!rtcp_mux_payload_type_allowed(config_.opus_payload_type) || config_.audio_mid.empty() || config_.audio_mid.size() > max_mid_size ||
         config_.audio_mid_extension_id <= 0 || config_.audio_mid_extension_id > 255)
     {
         return false;
