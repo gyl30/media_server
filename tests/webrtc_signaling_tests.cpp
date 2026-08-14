@@ -1994,6 +1994,11 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
     require(peer_material.has_value(), "dtls client srtp material");
     srtp_transport peer_srtp;
     require(peer_srtp.startup(*peer_material), "srtp peer startup");
+
+    const std::array<std::uint8_t, 12> repeated_rtp{0x80, 96, 0x12, 0x34, 0, 0, 0, 1, 0x11, 0x22, 0x33, 0x44};
+    require(peer_srtp.protect_rtp(repeated_rtp).has_value(), "srtp first protect");
+    require(!peer_srtp.protect_rtp(repeated_rtp).has_value(), "srtp repeated sequence rejected");
+
     stream->publish(make_video_key_frame(video_codec));
 
     std::array<std::uint8_t, 4096> rtp_buffer{};

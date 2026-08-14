@@ -70,7 +70,6 @@ bool create_session(std::string_view profile, srtp_ssrc_type_t direction, std::v
     policy.ssrc.value = 0;
     policy.key = master_key.data();
     policy.window_size = 1024;
-    policy.allow_repeat_tx = direction == ssrc_any_outbound ? 1 : 0;
     policy.next = nullptr;
     return srtp_create(&session, &policy) == srtp_err_status_ok;
 }
