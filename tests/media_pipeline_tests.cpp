@@ -4513,6 +4513,24 @@ void test_webrtc_output_initialization_failure()
         [](std::span<const std::uint8_t>) {});
     invalid_mid.on_track(make_video_track());
     require(!invalid_mid.valid(), "webrtc long mid output rejected");
+
+    webrtc_output invalid_h264_payload(
+        webrtc_output_config{.video_payload_type = 72, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}},
+        [](std::span<const std::uint8_t>) {});
+    invalid_h264_payload.on_track(make_video_track());
+    require(!invalid_h264_payload.valid(), "webrtc rtcp mux h264 payload rejected");
+
+    webrtc_output invalid_h265_payload(
+        webrtc_output_config{.video_codec = codec_id::h265, .video_payload_type = 72, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}},
+        [](std::span<const std::uint8_t>) {});
+    invalid_h265_payload.on_track(make_h265_track());
+    require(!invalid_h265_payload.valid(), "webrtc rtcp mux h265 payload rejected");
+
+    webrtc_output invalid_opus_payload(
+        webrtc_output_config{.opus_payload_type = 95, .opus_channel_count = 2, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
+        [](std::span<const std::uint8_t>) {});
+    invalid_opus_payload.on_track(make_audio_track());
+    require(!invalid_opus_payload.valid(), "webrtc rtcp mux opus payload rejected");
 }
 
 void test_webrtc_rtcp_sender()
