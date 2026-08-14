@@ -200,21 +200,22 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
         return false;
     }
 
-    const auto result = SSL_do_handshake(ssl_.get());
+    std::array<std::uint8_t, 2048> discarded{};
+    const auto result = SSL_read(ssl_.get(), discarded.data(), static_cast<int>(discarded.size()));
     if (!pump_outgoing())
     {
         return false;
     }
 
-    if (result != 1)
+    if (result <= 0)
     {
         const auto error = SSL_get_error(ssl_.get(), result);
         if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
         {
-            spdlog::debug("webrtc dtls handshake failed ssl_error {}", error);
+            spdlog::debug("webrtc dtls read failed ssl_error {}", error);
             return false;
         }
-        spdlog::trace("webrtc dtls handshake pending ssl_error {}", error);
+        spdlog::trace("webrtc dtls read pending ssl_error {}", error);
     }
 
     if (!connected() && SSL_is_init_finished(ssl_.get()) != 0)

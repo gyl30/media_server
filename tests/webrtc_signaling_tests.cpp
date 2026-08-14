@@ -2098,8 +2098,11 @@ void test_whep_dtls(codec_id video_codec)
     require(session->rtcp_stats().receiver_reports == 2U, "srtcp receiver report dispatch");
     require(session->rtcp_stats().plis == 1U, "srtcp pli dispatch");
 
-    session->shutdown();
+    require(SSL_shutdown(client->ssl.get()) >= 0 && BIO_ctrl_pending(client->write_bio) > 0, "dtls client close notify");
+    require(send_dtls_client_output(*client, client_socket, server_endpoint), "dtls client close notify send");
     drain_io(io);
+    require(session->local_port() == 0U, "dtls close notify shutdown");
+
     boost::system::error_code error;
     client_socket.close(error);
 }
