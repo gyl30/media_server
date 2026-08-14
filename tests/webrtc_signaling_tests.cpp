@@ -1950,6 +1950,8 @@ void test_whep_dtls(codec_id video_codec)
 
     auto session = std::make_shared<whep_session>(io.get_executor(), stream, boost::asio::ip::make_address("127.0.0.1"), server_certificate);
     require(session->startup(*offer) == whep_session_startup_error::none, "dtls session startup");
+    require(sdp_attribute(session->answer_sdp(), "fingerprint") == "sha-256 " + server_certificate->sha256_fingerprint(),
+            "dtls answer server fingerprint");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
@@ -1974,6 +1976,9 @@ void test_whep_dtls(codec_id video_codec)
     require(drive_dtls_client(io, client_socket, server_endpoint, *session, *client), "dtls handshake");
     require(session->dtls_connected(), "dtls server connected");
     require(std::string_view(SSL_get_cipher_name(client->ssl.get())) == "ECDHE-ECDSA-AES128-GCM-SHA256", "dtls mandatory webrtc cipher");
+    std::unique_ptr<X509, decltype(&X509_free)> peer_certificate(SSL_get1_peer_certificate(client->ssl.get()), &X509_free);
+    require(peer_certificate != nullptr && X509_cmp(peer_certificate.get(), server_certificate->certificate()) == 0,
+            "dtls server certificate matches answer");
 
     require(session->srtp_started(), "srtp server started");
 
