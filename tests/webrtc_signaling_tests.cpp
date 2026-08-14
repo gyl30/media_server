@@ -145,7 +145,7 @@ struct dtls_test_client
     BIO* write_bio{};
 };
 
-std::optional<dtls_test_client> make_dtls_test_client(const std::shared_ptr<dtls_certificate>& certificate)
+std::optional<dtls_test_client> make_dtls_test_client(const std::shared_ptr<dtls_certificate>& certificate, const char* srtp_profile)
 {
     dtls_test_client client{
         .context = ssl_context_ptr(SSL_CTX_new(DTLS_method())),
@@ -155,7 +155,7 @@ std::optional<dtls_test_client> make_dtls_test_client(const std::shared_ptr<dtls
     };
     if (!client.context || SSL_CTX_set_min_proto_version(client.context.get(), DTLS1_2_VERSION) != 1 ||
         SSL_CTX_set_max_proto_version(client.context.get(), DTLS1_2_VERSION) != 1 ||
-        SSL_CTX_set_tlsext_use_srtp(client.context.get(), "SRTP_AEAD_AES_128_GCM:SRTP_AES128_CM_SHA1_80") != 0 ||
+        SSL_CTX_set_tlsext_use_srtp(client.context.get(), srtp_profile) != 0 ||
         SSL_CTX_use_certificate(client.context.get(), certificate->certificate()) != 1 ||
         SSL_CTX_use_PrivateKey(client.context.get(), certificate->private_key()) != 1)
     {
@@ -307,6 +307,11 @@ std::optional<dtls_srtp_keying_material> make_peer_srtp_material(SSL* ssl)
     if (name == "SRTP_AEAD_AES_128_GCM")
     {
         key_size = 16;
+        salt_size = 12;
+    }
+    else if (name == "SRTP_AEAD_AES_256_GCM")
+    {
+        key_size = 32;
         salt_size = 12;
     }
     else if (name == "SRTP_AES128_CM_SHA1_80")
@@ -1923,7 +1928,7 @@ media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
     };
 }
 
-void test_whep_dtls(codec_id video_codec)
+void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
 {
     require(video_codec == codec_id::h264 || video_codec == codec_id::h265, "dtls video codec");
     const bool h265 = video_codec == codec_id::h265;
@@ -1971,11 +1976,14 @@ void test_whep_dtls(codec_id video_codec)
     static_cast<void>(second_client_socket.send_to(boost::asio::buffer(second_nominate), server_endpoint));
     drain_io(io);
 
-    auto client = make_dtls_test_client(client_certificate);
+    auto client = make_dtls_test_client(client_certificate, srtp_profile);
     require(client.has_value(), "dtls client create");
     require(drive_dtls_client(io, client_socket, server_endpoint, *session, *client), "dtls handshake");
     require(session->dtls_connected(), "dtls server connected");
     require(std::string_view(SSL_get_cipher_name(client->ssl.get())) == "ECDHE-ECDSA-AES128-GCM-SHA256", "dtls mandatory webrtc cipher");
+    const auto* selected_srtp_profile = SSL_get_selected_srtp_profile(client->ssl.get());
+    require(selected_srtp_profile != nullptr && selected_srtp_profile->name != nullptr && std::string_view(selected_srtp_profile->name) == srtp_profile,
+            "dtls srtp profile");
     std::unique_ptr<X509, decltype(&X509_free)> peer_certificate(SSL_get1_peer_certificate(client->ssl.get()), &X509_free);
     require(peer_certificate != nullptr && X509_cmp(peer_certificate.get(), server_certificate->certificate()) == 0,
             "dtls server certificate matches answer");
@@ -2156,10 +2164,12 @@ int main()
     std::cout << "[pass] whep_selected_bundle_transport\n";
     media_server::test_rtcp_receiver();
     std::cout << "[pass] rtcp_receiver\n";
-    media_server::test_whep_dtls(media_server::codec_id::h264);
-    std::cout << "[pass] whep_dtls_h264\n";
-    media_server::test_whep_dtls(media_server::codec_id::h265);
-    std::cout << "[pass] whep_dtls_h265\n";
+    media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AEAD_AES_128_GCM");
+    std::cout << "[pass] whep_dtls_h264_gcm128\n";
+    media_server::test_whep_dtls(media_server::codec_id::h265, "SRTP_AEAD_AES_256_GCM");
+    std::cout << "[pass] whep_dtls_h265_gcm256\n";
+    media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AES128_CM_SHA1_80");
+    std::cout << "[pass] whep_dtls_h264_sha1_80\n";
     std::cout << "all tests passed\n";
     return 0;
 }
