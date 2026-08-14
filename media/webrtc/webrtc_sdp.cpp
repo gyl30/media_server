@@ -450,8 +450,14 @@ bool bundle_contains(const webrtc_offer& offer, std::string_view mid)
 
 bool bundle_media_supported(const webrtc_media_offer& media)
 {
-    return (media.port != 0 || media.bundle_only) && lower_copy(media.protocol) == "udp/tls/rtp/savpf" && media.rtcp_mux &&
-        media.mid_extension_id.has_value() && !media.mid.empty();
+    const bool transport_candidate = media.port != 0 && !media.bundle_only;
+    const bool bundle_only = media.port == 0 && media.bundle_only;
+    if ((!transport_candidate && !bundle_only) || lower_copy(media.protocol) != "udp/tls/rtp/savpf" || !media.mid_extension_id.has_value() ||
+        media.mid.empty())
+    {
+        return false;
+    }
+    return bundle_only || (media.rtcp_mux && lower_copy(media.setup) == "actpass");
 }
 
 void append_transport(std::ostringstream& answer, const webrtc_answer_config& config)
@@ -726,7 +732,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
                          }
                          const auto media = std::find_if(
                              offer.media.begin(), offer.media.end(), [&mid](const webrtc_media_offer& value) { return value.mid == mid; });
-                         return media != offer.media.end() && media->port != 0 && lower_copy(media->setup) == "actpass";
+                         return media != offer.media.end() && media->port != 0;
                      });
     if (transport_mid == offer.bundle_mids.end())
     {

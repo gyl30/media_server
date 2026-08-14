@@ -1323,6 +1323,63 @@ void test_webrtc_transport_contract()
     require(passive_offer.has_value(), "webrtc parse passive setup offer");
     const auto passive_answer = make_webrtc_answer(*passive_offer, tracks, config);
     require(passive_answer.has_value() && passive_answer->transport_mid == "1", "webrtc select next actpass transport");
+    require(!passive_answer->video_payload_type.has_value() && passive_answer->audio_payload_type == 111,
+            "webrtc reject media with passive initial setup");
+
+    auto active_offer_sdp = webrtc_offer_sdp;
+    const auto active_setup_offset = active_offer_sdp.find(actpass);
+    require(active_setup_offset != std::string::npos, "webrtc active setup offer");
+    active_offer_sdp.replace(active_setup_offset, actpass.size(), "a=setup:active\r\n");
+    const auto active_offer = parse_webrtc_offer(active_offer_sdp);
+    require(active_offer.has_value(), "webrtc parse active setup offer");
+    const auto active_answer = make_webrtc_answer(*active_offer, tracks, config);
+    require(active_answer.has_value() && active_answer->transport_mid == "1" && !active_answer->video_payload_type.has_value() &&
+                active_answer->audio_payload_type == 111,
+            "webrtc reject media with active initial setup");
+
+    const std::string audio_transport =
+        "m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8\r\n"
+        "c=IN IP4 0.0.0.0\r\n"
+        "a=ice-ufrag:remoteaudio\r\n"
+        "a=ice-pwd:remoteaudiopassword123456\r\n"
+        "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\n"
+        "a=setup:actpass\r\n"
+        "a=mid:1\r\n"
+        "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
+        "a=recvonly\r\n"
+        "a=rtcp-mux\r\n";
+    const std::string bundle_only_audio =
+        "m=audio 0 UDP/TLS/RTP/SAVPF 111 0 8\r\n"
+        "c=IN IP4 0.0.0.0\r\n"
+        "a=mid:1\r\n"
+        "a=bundle-only\r\n"
+        "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
+        "a=recvonly\r\n";
+    auto bundle_only_offer_sdp = webrtc_offer_sdp;
+    const auto audio_transport_offset = bundle_only_offer_sdp.find(audio_transport);
+    require(audio_transport_offset != std::string::npos, "webrtc bundle only audio transport source");
+    bundle_only_offer_sdp.replace(audio_transport_offset, audio_transport.size(), bundle_only_audio);
+    const auto bundle_only_offer = parse_webrtc_offer(bundle_only_offer_sdp);
+    require(bundle_only_offer.has_value(), "webrtc parse bundle only offer without transport attributes");
+    const auto bundle_only_answer = make_webrtc_answer(*bundle_only_offer, tracks, config);
+    require(bundle_only_answer.has_value() && bundle_only_answer->transport_mid == "0" && bundle_only_answer->video_payload_type == 102 &&
+                bundle_only_answer->audio_payload_type == 111,
+            "webrtc accept initial bundle only media without transport attributes");
+    const auto bundle_only_audio_offset = bundle_only_answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 111\r\n");
+    require(bundle_only_audio_offset != std::string::npos &&
+                bundle_only_answer->sdp.find("a=bundle-only\r\n", bundle_only_audio_offset) != std::string::npos,
+            "webrtc answer retains accepted bundle only media");
+
+    auto invalid_bundle_only_sdp = webrtc_offer_sdp;
+    const auto invalid_bundle_only_mid = invalid_bundle_only_sdp.find("a=mid:1\r\n");
+    require(invalid_bundle_only_mid != std::string::npos, "webrtc invalid bundle only source");
+    invalid_bundle_only_sdp.insert(invalid_bundle_only_mid + std::string_view("a=mid:1\r\n").size(), "a=bundle-only\r\n");
+    const auto invalid_bundle_only = parse_webrtc_offer(invalid_bundle_only_sdp);
+    require(invalid_bundle_only.has_value(), "webrtc parse nonzero bundle only offer");
+    const auto invalid_bundle_only_answer = make_webrtc_answer(*invalid_bundle_only, tracks, config);
+    require(invalid_bundle_only_answer.has_value() && invalid_bundle_only_answer->video_payload_type == 102 &&
+                !invalid_bundle_only_answer->audio_payload_type.has_value(),
+            "webrtc reject bundle only media with nonzero port");
 
     auto audio_tag_sdp = webrtc_offer_sdp;
     const auto audio_tag_bundle_offset = audio_tag_sdp.find(bundle);
