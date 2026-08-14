@@ -1290,6 +1290,21 @@ void test_webrtc_transport_contract()
     require(no_bundle.has_value(), "webrtc parse unbundled offer");
     require(!make_webrtc_answer(*no_bundle, tracks, config).has_value(), "webrtc reject unbundled offer");
 
+    auto multiple_group_sdp = webrtc_offer_sdp;
+    const auto multiple_group_offset = multiple_group_sdp.find(bundle);
+    require(multiple_group_offset != std::string::npos, "webrtc multiple group offer");
+    multiple_group_sdp.insert(multiple_group_offset, "a=group:LS 0 1\r\n");
+    const auto multiple_group = parse_webrtc_offer(multiple_group_sdp);
+    require(multiple_group.has_value() && multiple_group->bundle_mids == std::vector<std::string>{"0", "1"},
+            "webrtc find bundle among multiple group semantics");
+    require(make_webrtc_answer(*multiple_group, tracks, config).has_value(), "webrtc answer offer with non bundle group before bundle");
+
+    auto multiple_bundle_sdp = webrtc_offer_sdp;
+    const auto multiple_bundle_offset = multiple_bundle_sdp.find(bundle);
+    require(multiple_bundle_offset != std::string::npos, "webrtc multiple bundle offer");
+    multiple_bundle_sdp.insert(multiple_bundle_offset + bundle.size(), "a=group:BUNDLE 0 1\r\n");
+    require(!parse_webrtc_offer(multiple_bundle_sdp).has_value(), "webrtc reject multiple bundle groups");
+
     auto no_rtcp_mux_sdp = webrtc_offer_sdp;
     const std::string rtcp_mux = "a=rtcp-mux\r\n";
     const auto rtcp_mux_offset = no_rtcp_mux_sdp.find(rtcp_mux);
