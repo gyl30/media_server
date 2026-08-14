@@ -5,6 +5,7 @@
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/rtcp_receiver.h"
 #include "media/webrtc/srtp_transport.h"
+#include "media/webrtc/stun_message.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/whep_service.h"
 #include "media/webrtc/whep_session.h"
@@ -543,10 +544,21 @@ std::uint32_t stun_fingerprint(std::span<const std::uint8_t> data)
     return crc.checksum() ^ 0x5354554eU;
 }
 
+enum class stun_request_variant
+{
+    valid,
+    missing_priority,
+    missing_ice_controlling,
+    ice_controlled,
+    missing_fingerprint,
+    use_candidate_after_integrity,
+};
+
 std::vector<std::uint8_t> make_stun_request(std::string_view username,
                                             std::string_view password,
                                             const std::array<std::uint8_t, 12>& transaction_id,
-                                            bool use_candidate)
+                                            bool use_candidate,
+                                            stun_request_variant variant = stun_request_variant::valid)
 {
     std::vector<std::uint8_t> packet;
     append_u16(packet, 0x0001);
@@ -555,7 +567,17 @@ std::vector<std::uint8_t> make_stun_request(std::string_view username,
     packet.insert(packet.end(), transaction_id.begin(), transaction_id.end());
 
     append_stun_attribute(packet, 0x0006, std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(username.data()), username.size()));
-    if (use_candidate)
+    if (variant != stun_request_variant::missing_priority)
+    {
+        constexpr std::array<std::uint8_t, 4> priority{0x6e, 0x7f, 0xff, 0xff};
+        append_stun_attribute(packet, 0x0024, priority);
+    }
+    if (variant != stun_request_variant::missing_ice_controlling)
+    {
+        constexpr std::array<std::uint8_t, 8> tie_breaker{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+        append_stun_attribute(packet, variant == stun_request_variant::ice_controlled ? 0x8029 : 0x802a, tie_breaker);
+    }
+    if (use_candidate && variant != stun_request_variant::use_candidate_after_integrity)
     {
         append_stun_attribute(packet, 0x0025, {});
     }
@@ -564,15 +586,27 @@ std::vector<std::uint8_t> make_stun_request(std::string_view username,
     const auto digest = stun_hmac(password, packet);
     append_stun_attribute(packet, 0x0008, digest);
 
-    set_stun_length(packet, packet.size() - 20U + 8U);
-    const auto fingerprint = stun_fingerprint(packet);
-    const std::array<std::uint8_t, 4> fingerprint_bytes{
-        static_cast<std::uint8_t>(fingerprint >> 24U),
-        static_cast<std::uint8_t>((fingerprint >> 16U) & 0xffU),
-        static_cast<std::uint8_t>((fingerprint >> 8U) & 0xffU),
-        static_cast<std::uint8_t>(fingerprint & 0xffU),
-    };
-    append_stun_attribute(packet, 0x8028, fingerprint_bytes);
+    if (use_candidate && variant == stun_request_variant::use_candidate_after_integrity)
+    {
+        append_stun_attribute(packet, 0x0025, {});
+    }
+
+    if (variant != stun_request_variant::missing_fingerprint)
+    {
+        set_stun_length(packet, packet.size() - 20U + 8U);
+        const auto fingerprint = stun_fingerprint(packet);
+        const std::array<std::uint8_t, 4> fingerprint_bytes{
+            static_cast<std::uint8_t>(fingerprint >> 24U),
+            static_cast<std::uint8_t>((fingerprint >> 16U) & 0xffU),
+            static_cast<std::uint8_t>((fingerprint >> 8U) & 0xffU),
+            static_cast<std::uint8_t>(fingerprint & 0xffU),
+        };
+        append_stun_attribute(packet, 0x8028, fingerprint_bytes);
+    }
+    else
+    {
+        set_stun_length(packet, packet.size() - 20U);
+    }
     return packet;
 }
 
@@ -1725,6 +1759,38 @@ void test_whep_ice_activity_timeout()
     client.close(error);
 }
 
+void test_stun_ice_connectivity_check_contract()
+{
+    constexpr std::string_view username = "local:remote";
+    constexpr std::string_view password = "localpassword1234567890";
+    const std::array<std::uint8_t, 12> transaction_id{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+
+    const auto valid = make_stun_request(username, password, transaction_id, true);
+    const auto parsed = parse_stun_binding_request(valid, username, password);
+    require(parsed.has_value() && parsed->use_candidate, "stun valid ice connectivity check");
+
+    require(!parse_stun_binding_request(
+                 make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_priority), username, password)
+                 .has_value(),
+            "stun reject missing priority");
+    require(!parse_stun_binding_request(
+                 make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_ice_controlling), username, password)
+                 .has_value(),
+            "stun reject missing ice controlling");
+    require(!parse_stun_binding_request(
+                 make_stun_request(username, password, transaction_id, false, stun_request_variant::ice_controlled), username, password)
+                 .has_value(),
+            "stun reject ice controlled peer");
+    require(!parse_stun_binding_request(
+                 make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_fingerprint), username, password)
+                 .has_value(),
+            "stun reject missing fingerprint");
+    require(!parse_stun_binding_request(
+                 make_stun_request(username, password, transaction_id, true, stun_request_variant::use_candidate_after_integrity), username, password)
+                 .has_value(),
+            "stun reject unauthenticated use candidate");
+}
+
 void test_whep_ice_lite()
 {
     boost::asio::io_context io;
@@ -1892,6 +1958,12 @@ void test_whep_dtls(codec_id video_codec)
         exchange_stun(io, client_socket, server_endpoint, make_stun_request(local_ufrag + ":remotevideo", local_pwd, nominate_id, true));
     require_stun_success(nominate_response, nominate_id);
     require(session->ice_connected(), "dtls ice connected");
+
+    boost::asio::ip::udp::socket second_client_socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const std::array<std::uint8_t, 12> second_nominate_id{2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    const auto second_nominate = make_stun_request(local_ufrag + ":remotevideo", local_pwd, second_nominate_id, true);
+    static_cast<void>(second_client_socket.send_to(boost::asio::buffer(second_nominate), server_endpoint));
+    drain_io(io);
 
     auto client = make_dtls_test_client(client_certificate);
     require(client.has_value(), "dtls client create");
@@ -2063,6 +2135,8 @@ int main()
     std::cout << "[pass] whep_establishment_timeout\n";
     media_server::test_whep_ice_activity_timeout();
     std::cout << "[pass] whep_ice_activity_timeout\n";
+    media_server::test_stun_ice_connectivity_check_contract();
+    std::cout << "[pass] stun_ice_connectivity_check_contract\n";
     media_server::test_whep_ice_lite();
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();
