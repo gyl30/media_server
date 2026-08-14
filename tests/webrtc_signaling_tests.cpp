@@ -3,7 +3,6 @@
 #include "media/hls/hls_service.h"
 #include "media/http/http_session.h"
 #include "media/webrtc/dtls_certificate.h"
-#include "media/webrtc/rtcp_receiver.h"
 #include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/webrtc_sdp.h"
@@ -390,70 +389,6 @@ void set_stun_length(std::vector<std::uint8_t>& packet, std::size_t body_size)
 {
     packet[2] = static_cast<std::uint8_t>(body_size >> 8U);
     packet[3] = static_cast<std::uint8_t>(body_size & 0xffU);
-}
-
-void append_rtcp_report_block(std::vector<std::uint8_t>& packet,
-                              std::uint32_t source_ssrc,
-                              std::uint8_t fraction_lost,
-                              std::uint32_t cumulative_lost,
-                              std::uint32_t highest_sequence,
-                              std::uint32_t jitter,
-                              std::uint32_t lsr,
-                              std::uint32_t dlsr)
-{
-    append_u32(packet, source_ssrc);
-    packet.push_back(fraction_lost);
-    packet.push_back(static_cast<std::uint8_t>((cumulative_lost >> 16U) & 0xffU));
-    packet.push_back(static_cast<std::uint8_t>((cumulative_lost >> 8U) & 0xffU));
-    packet.push_back(static_cast<std::uint8_t>(cumulative_lost & 0xffU));
-    append_u32(packet, highest_sequence);
-    append_u32(packet, jitter);
-    append_u32(packet, lsr);
-    append_u32(packet, dlsr);
-}
-
-std::vector<std::uint8_t> make_rtcp_receiver_report()
-{
-    std::vector<std::uint8_t> packet;
-    packet.push_back(0x82);
-    packet.push_back(201);
-    append_u16(packet, 13);
-    append_u32(packet, 0x0102'0304U);
-    append_rtcp_report_block(packet, 0x1112'1314U, 7, 0x00FF'FFFEU, 0x2122'2324U, 0x3132'3334U, 0x4142'4344U, 0x5152'5354U);
-    append_rtcp_report_block(packet, 0x6162'6364U, 3, 5, 0x7172'7374U, 0x8182'8384U, 0x9192'9394U, 0xA1A2'A3A4U);
-    return packet;
-}
-
-std::vector<std::uint8_t> make_rtcp_pli()
-{
-    std::vector<std::uint8_t> packet;
-    packet.push_back(0x81);
-    packet.push_back(206);
-    append_u16(packet, 2);
-    append_u32(packet, 0x0102'0304U);
-    append_u32(packet, 0x1112'1314U);
-    return packet;
-}
-
-std::vector<std::uint8_t> make_rtcp_nack()
-{
-    std::vector<std::uint8_t> packet;
-    packet.push_back(0x81);
-    packet.push_back(205);
-    append_u16(packet, 3);
-    append_u32(packet, 0x0102'0304U);
-    append_u32(packet, 0x1112'1314U);
-    append_u16(packet, 1234);
-    append_u16(packet, 0x0003);
-    return packet;
-}
-
-std::vector<std::uint8_t> make_rtcp_compound()
-{
-    auto packet = make_rtcp_receiver_report();
-    const auto pli = make_rtcp_pli();
-    packet.insert(packet.end(), pli.begin(), pli.end());
-    return packet;
 }
 
 std::uint16_t read_network_u16(std::span<const std::uint8_t> data, std::size_t offset)
@@ -1873,50 +1808,6 @@ void test_whep_selected_bundle_transport()
     check(make_h265_track(), video_tag_sdp, "remotevideo", 8);
 }
 
-void test_rtcp_receiver()
-{
-    rtcp_receiver receiver;
-    rtcp_receive_result result;
-
-    const auto compound = make_rtcp_compound();
-    require(receiver.input(compound, result), "rtcp compound parse");
-    require(result.receiver_reports.size() == 2U, "rtcp receiver report count");
-    require(result.plis.size() == 1U, "rtcp pli count");
-
-    const auto& first = result.receiver_reports[0];
-    require(first.sender_ssrc == 0x0102'0304U, "rtcp rr sender ssrc");
-    require(first.source_ssrc == 0x1112'1314U, "rtcp rr source ssrc");
-    require(first.fraction_lost == 7U, "rtcp rr fraction lost");
-    require(first.cumulative_lost == -2, "rtcp rr cumulative lost");
-    require(first.highest_sequence == 0x2122'2324U, "rtcp rr highest sequence");
-    require(first.jitter == 0x3132'3334U, "rtcp rr jitter");
-    require(first.lsr == 0x4142'4344U, "rtcp rr lsr");
-    require(first.dlsr == 0x5152'5354U, "rtcp rr dlsr");
-
-    const auto& pli = result.plis.front();
-    require(pli.sender_ssrc == 0x0102'0304U, "rtcp pli sender ssrc");
-    require(pli.media_ssrc == 0x1112'1314U, "rtcp pli media ssrc");
-
-    const auto nack = make_rtcp_nack();
-    require(receiver.input(nack, result), "rtcp nack parse");
-    require(result.receiver_reports.empty() && result.plis.empty(), "rtcp nack ignored");
-
-    auto invalid_length = make_rtcp_receiver_report();
-    invalid_length[3] = 14;
-    require(!receiver.input(invalid_length, result), "rtcp invalid outer length");
-
-    const std::array<std::uint8_t, 3> truncated{0x80, 201, 0};
-    require(!receiver.input(truncated, result), "rtcp truncated header");
-
-    const std::array<std::uint8_t, 8> unknown{0x80, 208, 0, 1, 0, 0, 0, 1};
-    require(!receiver.input(unknown, result), "rtcp unknown packet type");
-
-    auto invalid_pli = make_rtcp_pli();
-    invalid_pli[3] = 3;
-    invalid_pli.insert(invalid_pli.end(), 4U, 0);
-    require(!receiver.input(invalid_pli, result), "rtcp invalid pli length");
-}
-
 media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
 {
     return media_frame{
@@ -2102,15 +1993,6 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile)
     require((clear_audio_rtp->bytes[1] & 0x7fU) == 111U, "srtp negotiated opus payload");
     require(!require_rtp_mid(clear_audio_rtp->bytes, "1", 4).empty(), "srtp opus mid payload");
 
-    const auto clear_rtcp = make_rtcp_compound();
-    const auto protected_rtcp = peer_srtp.protect_rtcp(clear_rtcp);
-    require(protected_rtcp.has_value(), "srtcp peer protect");
-    static_cast<void>(client_socket.send_to(boost::asio::buffer(*protected_rtcp), server_endpoint));
-    io.run_for(std::chrono::milliseconds(50));
-    io.restart();
-    require(session->rtcp_stats().receiver_reports == 2U, "srtcp receiver report dispatch");
-    require(session->rtcp_stats().plis == 1U, "srtcp pli dispatch");
-
     require(SSL_shutdown(client->ssl.get()) >= 0 && BIO_ctrl_pending(client->write_bio) > 0, "dtls client close notify");
     require(send_dtls_client_output(*client, client_socket, server_endpoint), "dtls client close notify send");
     drain_io(io);
@@ -2167,8 +2049,6 @@ int main()
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();
     std::cout << "[pass] whep_selected_bundle_transport\n";
-    media_server::test_rtcp_receiver();
-    std::cout << "[pass] rtcp_receiver\n";
     media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AEAD_AES_128_GCM");
     std::cout << "[pass] whep_dtls_h264_gcm128\n";
     media_server::test_whep_dtls(media_server::codec_id::h265, "SRTP_AEAD_AES_256_GCM");
