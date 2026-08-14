@@ -104,6 +104,10 @@ std::optional<srtp_profile_size> profile_size(std::string_view profile)
     {
         return srtp_profile_size{.key_size = 16, .salt_size = 12};
     }
+    if (profile == "SRTP_AEAD_AES_256_GCM")
+    {
+        return srtp_profile_size{.key_size = 32, .salt_size = 12};
+    }
     return std::nullopt;
 }
 
@@ -126,7 +130,7 @@ bool dtls_transport::startup()
     if (!context_ || SSL_CTX_set_min_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
         SSL_CTX_set_max_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
         SSL_CTX_set_cipher_list(context_.get(), "ECDHE-ECDSA-AES128-GCM-SHA256") != 1 ||
-        SSL_CTX_set_tlsext_use_srtp(context_.get(), "SRTP_AEAD_AES_128_GCM:SRTP_AES128_CM_SHA1_80") != 0 ||
+        SSL_CTX_set_tlsext_use_srtp(context_.get(), "SRTP_AEAD_AES_128_GCM:SRTP_AEAD_AES_256_GCM:SRTP_AES128_CM_SHA1_80") != 0 ||
         SSL_CTX_use_certificate(context_.get(), certificate_->certificate()) != 1 ||
         SSL_CTX_use_PrivateKey(context_.get(), certificate_->private_key()) != 1 || SSL_CTX_check_private_key(context_.get()) != 1)
     {

@@ -32,6 +32,13 @@ bool set_crypto_policy(std::string_view profile, srtp_policy_t& policy)
         return true;
     }
 
+    if (profile == "SRTP_AEAD_AES_256_GCM")
+    {
+        srtp_crypto_policy_set_aes_gcm_256_16_auth(&policy.rtp);
+        srtp_crypto_policy_set_aes_gcm_256_16_auth(&policy.rtcp);
+        return true;
+    }
+
     if (profile == "SRTP_AES128_CM_SHA1_80")
     {
         srtp_crypto_policy_set_rtp_default(&policy.rtp);
