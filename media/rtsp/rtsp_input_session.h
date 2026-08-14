@@ -81,6 +81,10 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     avpkt2bs_t bitstream_{};
     std::chrono::seconds keepalive_interval_{30};
     std::optional<std::chrono::steady_clock::time_point> keepalive_deadline_;
+    std::optional<media_track> initial_video_track_;
+    std::optional<media_track> initial_audio_track_;
+    bool expected_audio_{};
+    bool tracks_initialized_{};
     bool closed_{};
 };
 

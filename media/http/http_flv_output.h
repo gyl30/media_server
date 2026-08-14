@@ -38,7 +38,6 @@ class http_flv_output final : public media_reader
 
     write_handler on_write_;
     end_handler on_end_;
-    std::vector<track_id> track_ids_;
     std::map<track_id, media_track> reader_tracks_;
     media_read_batch batch_;
     std::vector<std::uint8_t> output_buffer_;
