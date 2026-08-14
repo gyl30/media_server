@@ -875,7 +875,7 @@ void test_webrtc_sdp_answer()
     require(answer->sdp.find("m=video 40000 UDP/TLS/RTP/SAVPF 102\r\n") != std::string::npos, "webrtc h264 payload selection");
     require(answer->sdp.find("a=rtpmap:102 H264/90000\r\n") != std::string::npos, "webrtc h264 rtpmap");
     require(answer->sdp.find("profile-level-id=42c01f") != std::string::npos, "webrtc source h264 profile");
-    require(answer->sdp.find("m=audio 40000 UDP/TLS/RTP/SAVPF 111\r\n") != std::string::npos, "webrtc opus payload selection");
+    require(answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 111\r\n") != std::string::npos, "webrtc bundled opus payload selection");
     require(answer->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos, "webrtc opus rtpmap");
     require(answer->sdp.find("sprop-stereo=1") != std::string::npos, "webrtc opus stereo sender property");
     require(answer->sdp.find("a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n") != std::string::npos, "webrtc mid extension");
@@ -898,7 +898,8 @@ void test_webrtc_sdp_answer()
                 video_section.find("a=candidate:1 1 UDP 2130706431 127.0.0.1 40000 typ host\r\n") != std::string_view::npos &&
                 video_section.find("a=end-of-candidates\r\n") != std::string_view::npos,
             "webrtc bundle tagged transport attributes");
-    require(audio_section.find("a=rtcp-mux\r\n") == std::string_view::npos &&
+    require(audio_section.find("a=bundle-only\r\n") != std::string_view::npos &&
+                audio_section.find("a=rtcp-mux\r\n") == std::string_view::npos &&
                 audio_section.find("a=ice-ufrag:") == std::string_view::npos &&
                 audio_section.find("a=ice-pwd:") == std::string_view::npos &&
                 audio_section.find("a=fingerprint:") == std::string_view::npos &&
@@ -1339,8 +1340,12 @@ void test_webrtc_transport_contract()
             "webrtc audio tagged media order");
     const auto untagged_video_section = audio_tag_answer_sdp.substr(audio_tag_video_offset, audio_tag_audio_offset - audio_tag_video_offset);
     const auto tagged_audio_section = audio_tag_answer_sdp.substr(audio_tag_audio_offset);
-    require(untagged_video_section.find("a=ice-ufrag:") == std::string_view::npos &&
+    require(untagged_video_section.find("m=video 0 UDP/TLS/RTP/SAVPF 102\r\n") != std::string_view::npos &&
+                untagged_video_section.find("a=bundle-only\r\n") != std::string_view::npos &&
+                untagged_video_section.find("a=ice-ufrag:") == std::string_view::npos &&
                 untagged_video_section.find("a=rtcp-mux\r\n") == std::string_view::npos &&
+                tagged_audio_section.find("m=audio 40000 UDP/TLS/RTP/SAVPF 111\r\n") != std::string_view::npos &&
+                tagged_audio_section.find("a=bundle-only\r\n") == std::string_view::npos &&
                 tagged_audio_section.find("a=ice-ufrag:serverufrag\r\n") != std::string_view::npos &&
                 tagged_audio_section.find("a=rtcp-mux\r\n") != std::string_view::npos,
             "webrtc transport follows answer bundle tag");
@@ -1364,6 +1369,7 @@ void test_webrtc_transport_contract()
     require(audio_only_answer.has_value(), "webrtc answer audio only source");
     require(audio_only_answer->sdp.find("a=group:BUNDLE 1\r\n") != std::string::npos, "webrtc answer selects accepted bundle tag");
     require(audio_only_answer->sdp.find("m=video 0 UDP/TLS/RTP/SAVPF") != std::string::npos, "webrtc reject unavailable bundled video");
+    require(audio_only_answer->sdp.find("a=bundle-only\r\n") == std::string::npos, "webrtc rejected media is not bundle only");
 
     auto missing_mid_extension_sdp = webrtc_offer_sdp;
     const std::string mid_extension = "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n";
