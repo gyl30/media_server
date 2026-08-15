@@ -1,7 +1,7 @@
 #ifndef MEDIA_WEBRTC_OUTPUT_H
 #define MEDIA_WEBRTC_OUTPUT_H
 
-#include "media/codec/aac_opus_transcoder.h"
+#include "media/codec/audio_transcoder.h"
 #include "media/core/media_types.h"
 
 #include <cstdint>
@@ -51,12 +51,10 @@ class webrtc_output final
     struct track_state
     {
         codec_id codec{};
-        std::unique_ptr<aac_opus_transcoder> transcoder;
-        std::int64_t audio_pts_ns{};
+        std::unique_ptr<audio_transcoder> transcoder;
         int media_id{-1};
         int payload_id{-1};
         bool waiting_key_frame{};
-        bool audio_pts_started{};
     };
 
     bool add_h264_track(const media_track& track);

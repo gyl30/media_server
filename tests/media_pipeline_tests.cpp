@@ -1,3 +1,4 @@
+#include "media/codec/audio_transcoder.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
@@ -22,6 +23,12 @@
 
 extern "C"
 {
+#include <libavcodec/avcodec.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/error.h>
+#include <libavutil/frame.h>
+#include <libavutil/mathematics.h>
+
 #include "amf0.h"
 #include "avpbs.h"
 #include "flv-demuxer.h"
@@ -51,6 +58,7 @@ extern "C"
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -3905,6 +3913,165 @@ void test_rtsp_aac_adts_round_trip()
     require(avpkt2bs_destroy(&capture.bitstream) == 0, "rtsp aac bitstream destroy");
 }
 
+void test_audio_transcoder_aac_opus()
+{
+    const audio_transcoder_config config{
+        .input = audio_transcoder_format{
+            .codec = codec_id::aac,
+            .sample_rate = 44'100,
+            .channel_count = 2,
+        },
+        .output = audio_transcoder_format{
+            .codec = codec_id::opus,
+            .sample_rate = 48'000,
+            .channel_count = 2,
+        },
+        .input_codec_config = aac_asc,
+        .output_bit_rate = 128'000,
+        .output_cutoff = 20'000,
+    };
+
+    audio_transcoder transcoder;
+    require(transcoder.startup(config), "audio transcoder startup");
+
+    std::vector<media_frame> output;
+    std::int64_t pts_ns = 37'000'000;
+    for (const auto& adts : valid_aac_adts_frames)
+    {
+        require(transcoder.transcode(media_frame{
+                                         .track = audio_track_id,
+                                         .dts_ns = pts_ns,
+                                         .pts_ns = pts_ns,
+                                         .key_frame = false,
+                                         .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                                     },
+                                     output),
+                "audio transcoder continuous input");
+        pts_ns += 23'219'954;
+    }
+
+    require(!output.empty(), "audio transcoder streaming output");
+    const auto streaming_packet_count = output.size();
+    require(transcoder.flush(output), "audio transcoder flush");
+    require(output.size() > streaming_packet_count, "audio transcoder flush pending output");
+    const auto flushed_packet_count = output.size();
+    require(transcoder.flush(output), "audio transcoder repeated flush");
+    require(output.size() == flushed_packet_count, "audio transcoder repeated flush no duplicate");
+
+    std::vector<media_frame> after_flush;
+    require(!transcoder.transcode(media_frame{
+                                      .track = audio_track_id,
+                                      .dts_ns = pts_ns,
+                                      .pts_ns = pts_ns,
+                                      .key_frame = false,
+                                      .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
+                                  },
+                                  after_flush),
+            "audio transcoder rejects input after flush");
+    require(output.front().track == audio_track_id && output.front().pts_ns == 37'000'000, "audio transcoder output timeline origin");
+    for (std::size_t index = 0; index < output.size(); ++index)
+    {
+        require(output[index].payload && !output[index].payload->empty(), "audio transcoder opus payload");
+        require(output[index].dts_ns == output[index].pts_ns, "audio transcoder output dts");
+        if (index > 0)
+        {
+            require(output[index].pts_ns > output[index - 1U].pts_ns, "audio transcoder continuous output timeline");
+        }
+    }
+
+    const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_OPUS);
+    require(decoder != nullptr, "audio transcoder opus decoder");
+    AVCodecContext* decoder_context = avcodec_alloc_context3(decoder);
+    require(decoder_context != nullptr, "audio transcoder opus decoder context");
+    decoder_context->sample_rate = 48'000;
+    av_channel_layout_default(&decoder_context->ch_layout, 2);
+    require(avcodec_open2(decoder_context, decoder, nullptr) == 0, "audio transcoder opus decoder open");
+
+    AVPacket* packet = av_packet_alloc();
+    AVFrame* decoded = av_frame_alloc();
+    require(packet != nullptr && decoded != nullptr, "audio transcoder opus decode buffers");
+
+    std::int64_t decoded_samples = 0;
+    const auto receive_decoded = [&]()
+    {
+        while (true)
+        {
+            av_frame_unref(decoded);
+            const int result = avcodec_receive_frame(decoder_context, decoded);
+            if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
+            {
+                return;
+            }
+            require(result == 0, "audio transcoder opus decode receive");
+            require(decoded->sample_rate == 48'000 && decoded->ch_layout.nb_channels == 2, "audio transcoder opus output format");
+            require(decoded->nb_samples > 0, "audio transcoder opus decoded samples");
+            decoded_samples += decoded->nb_samples;
+        }
+    };
+
+    for (const auto& encoded : output)
+    {
+        av_packet_unref(packet);
+        require(av_new_packet(packet, static_cast<int>(encoded.payload->size())) == 0, "audio transcoder opus packet allocate");
+        std::memcpy(packet->data, encoded.payload->data(), encoded.payload->size());
+        require(avcodec_send_packet(decoder_context, packet) == 0, "audio transcoder opus decode send");
+        receive_decoded();
+    }
+    require(avcodec_send_packet(decoder_context, nullptr) == 0, "audio transcoder opus decoder flush");
+    receive_decoded();
+    const auto minimum_output_samples = av_rescale_rnd(
+        static_cast<std::int64_t>(valid_aac_adts_frames.size()) * 1'024, 48'000, 44'100, AV_ROUND_DOWN);
+    require(decoded_samples >= minimum_output_samples, "audio transcoder flush preserves tail samples");
+
+    av_frame_free(&decoded);
+    av_packet_free(&packet);
+    avcodec_free_context(&decoder_context);
+
+    transcoder.shutdown();
+    transcoder.shutdown();
+    require(!transcoder.transcode(media_frame{
+                                      .track = audio_track_id,
+                                      .dts_ns = 0,
+                                      .pts_ns = 0,
+                                      .key_frame = false,
+                                      .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
+                                  },
+                                  after_flush),
+            "audio transcoder rejects input after shutdown");
+
+    require(transcoder.startup(config), "audio transcoder restart");
+    std::vector<media_frame> restarted_output;
+    require(!transcoder.transcode(media_frame{
+                                      .track = audio_track_id,
+                                      .dts_ns = 1'000'000'000,
+                                      .pts_ns = 1'000'000'000,
+                                      .key_frame = false,
+                                      .payload = std::make_shared<const std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{0, 1, 2}),
+                                  },
+                                  restarted_output),
+            "audio transcoder rejects invalid first frame");
+
+    pts_ns = 5'000'000'000;
+    for (const auto& adts : valid_aac_adts_frames)
+    {
+        require(transcoder.transcode(media_frame{
+                                         .track = audio_track_id,
+                                         .dts_ns = pts_ns,
+                                         .pts_ns = pts_ns,
+                                         .key_frame = false,
+                                         .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                                     },
+                                     restarted_output),
+                "audio transcoder input after restart");
+        pts_ns += 23'219'954;
+    }
+    require(transcoder.flush(restarted_output), "audio transcoder flush after restart");
+    require(!restarted_output.empty(), "audio transcoder output after restart");
+    require(restarted_output.front().pts_ns == 5'000'000'000, "audio transcoder invalid first frame does not start timeline");
+    transcoder.shutdown();
+    transcoder.shutdown();
+}
+
 void test_media_stream_configless_audio_track()
 {
     boost::asio::io_context io;
@@ -5238,6 +5405,8 @@ int main()
     std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
     media_server::test_rtsp_aac_adts_round_trip();
     std::cout << "[pass] rtsp_aac_adts_round_trip\n";
+    media_server::test_audio_transcoder_aac_opus();
+    std::cout << "[pass] audio_transcoder_aac_opus\n";
     media_server::test_media_stream_configless_audio_track();
     std::cout << "[pass] media_stream_configless_audio_track\n";
     media_server::test_rtsp_client_session_timeout();
