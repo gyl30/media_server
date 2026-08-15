@@ -132,7 +132,7 @@ bool media_stream::set_tracks(std::vector<media_track> tracks)
     std::map<track_id, media_track> initial_tracks;
     for (auto& track : tracks)
     {
-        if (track.id == 0 || track.codec_config.empty())
+        if (track.id == 0)
         {
             return false;
         }
@@ -159,7 +159,7 @@ bool media_stream::set_tracks(std::vector<media_track> tracks)
 
 bool media_stream::update_track(media_track track)
 {
-    if (ended_ || track.id == 0 || track.codec_config.empty())
+    if (ended_ || track.id == 0)
     {
         return false;
     }

@@ -22,7 +22,11 @@ enum class codec_id
 {
     h264,
     h265,
+    av1,
     aac,
+    opus,
+    g711a,
+    g711u,
 };
 
 struct media_track
@@ -33,7 +37,7 @@ struct media_track
     std::uint32_t clock_rate{};
     std::uint16_t channel_count{};
 
-    // H.264 为 Annex-B SPS/PPS；H.265 为 Annex-B VPS/SPS/PPS；AAC 为 AudioSpecificConfig。
+    // H.264 为 Annex-B SPS/PPS；H.265 为 Annex-B VPS/SPS/PPS；AAC 为 AudioSpecificConfig；无需额外配置的 codec 可为空。
     std::vector<std::uint8_t> codec_config;
 
     // 由 media_stream 维护，同一 track 实际配置变化时递增。
@@ -71,8 +75,16 @@ struct media_frame
             return "h264";
         case codec_id::h265:
             return "h265";
+        case codec_id::av1:
+            return "av1";
         case codec_id::aac:
             return "aac";
+        case codec_id::opus:
+            return "opus";
+        case codec_id::g711a:
+            return "g711a";
+        case codec_id::g711u:
+            return "g711u";
     }
     return "unknown";
 }
