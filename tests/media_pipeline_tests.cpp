@@ -2360,6 +2360,43 @@ void test_rtsp_pull_url_contract()
     require(weak_pull.expired(), "rtsp pull releases itself after shutdown");
 }
 
+void test_rtsp_input_establishment_timeout()
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/timeout";
+    auto pull = std::make_shared<rtsp_input_session>(
+        client_io, registry, "relay/timeout", request_url, std::chrono::milliseconds(100));
+    const std::weak_ptr<rtsp_input_session> weak_pull = pull;
+    require(pull->startup(), "rtsp establishment timeout pull startup");
+    pull.reset();
+
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+    const auto describe = read_rtsp_headers(socket);
+    require(describe.starts_with("DESCRIBE " + request_url + " RTSP/1.0\r\n"), "rtsp establishment timeout describe");
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (registry.find("relay/timeout") && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(!registry.find("relay/timeout"), "rtsp establishment timeout removes stream");
+    const auto release_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!weak_pull.expired() && std::chrono::steady_clock::now() < release_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(weak_pull.expired(), "rtsp establishment timeout releases session");
+
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+}
+
 void test_rtsp_input_selects_single_audio_and_video()
 {
     boost::asio::io_context server_io;
@@ -2559,7 +2596,8 @@ void test_rtsp_input_media_driven_keepalive()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/keepalive";
-    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/keepalive", request_url);
+    auto pull = std::make_shared<rtsp_input_session>(
+        client_io, registry, "relay/keepalive", request_url, std::chrono::milliseconds(750));
     require(pull->startup(), "rtsp keepalive pull startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -4886,6 +4924,8 @@ int main()
     std::cout << "[pass] http_flv_config_reset\n";
     media_server::test_rtsp_pull_url_contract();
     std::cout << "[pass] rtsp_pull_url_contract\n";
+    media_server::test_rtsp_input_establishment_timeout();
+    std::cout << "[pass] rtsp_input_establishment_timeout\n";
     media_server::test_rtsp_input_selects_single_audio_and_video();
     std::cout << "[pass] rtsp_input_selects_single_audio_and_video\n";
     media_server::test_rtsp_input_waits_for_complete_topology();

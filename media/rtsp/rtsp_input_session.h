@@ -29,7 +29,11 @@ namespace media_server
 class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_session>
 {
    public:
-    rtsp_input_session(boost::asio::io_context& io, stream_registry& registry, std::string stream_name, std::string url);
+    rtsp_input_session(boost::asio::io_context& io,
+                       stream_registry& registry,
+                       std::string stream_name,
+                       std::string url,
+                       std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000});
     ~rtsp_input_session();
 
     bool startup();
@@ -74,11 +78,13 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     std::string password_;
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket connect_socket_;
+    boost::asio::steady_timer establishment_timer_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<media_stream> stream_;
     rtsp_client_t* client_{};
     std::array<rtsp_demuxer_t*, 2> demuxers_{};
     avpkt2bs_t bitstream_{};
+    std::chrono::milliseconds establishment_timeout_;
     std::chrono::seconds keepalive_interval_{30};
     std::optional<std::chrono::steady_clock::time_point> keepalive_deadline_;
     std::optional<media_track> initial_video_track_;
