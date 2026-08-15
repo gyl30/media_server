@@ -25,7 +25,7 @@ static int avpbs_h266_create_stream(struct avpbs_h266_t* bs)
         return -(ENOMEM);
 
     bs->stream->stream = bs->avs;
-    bs->stream->codecid = AVCODEC_VIDEO_H265;
+    bs->stream->codecid = AVCODEC_VIDEO_H266;
     bs->stream->width = bs->vvc.max_picture_width;
     bs->stream->height = bs->vvc.max_picture_height;
     bs->stream->bytes = mpeg4_vvc_decoder_configuration_record_save(&bs->vvc, bs->stream->extra, bs->stream->bytes);
