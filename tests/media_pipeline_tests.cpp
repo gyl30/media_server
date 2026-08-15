@@ -299,6 +299,19 @@ media_track make_opus_track(std::uint16_t channel_count = 2)
     };
 }
 
+media_track make_g711_track(codec_id codec)
+{
+    require(codec == codec_id::g711a || codec == codec_id::g711u, "g711 track codec");
+    return media_track{
+        .id = audio_track_id,
+        .kind = media_kind::audio,
+        .codec = codec,
+        .clock_rate = 8'000,
+        .channel_count = 1,
+        .codec_config = {},
+    };
+}
+
 media_track make_video_track(std::uint8_t config_marker)
 {
     auto track = make_video_track();
@@ -432,7 +445,7 @@ media_frame make_audio_frame(std::int64_t pts_ns)
     };
 }
 
-media_frame make_opus_frame(std::int64_t pts_ns, std::vector<std::uint8_t> payload = {0xf8, 0xff, 0xfe})
+media_frame make_raw_audio_frame(std::int64_t pts_ns, std::vector<std::uint8_t> payload)
 {
     return media_frame{
         .track = audio_track_id,
@@ -441,6 +454,11 @@ media_frame make_opus_frame(std::int64_t pts_ns, std::vector<std::uint8_t> paylo
         .key_frame = false,
         .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(payload)),
     };
+}
+
+media_frame make_opus_frame(std::int64_t pts_ns, std::vector<std::uint8_t> payload = {0xf8, 0xff, 0xfe})
+{
+    return make_raw_audio_frame(pts_ns, std::move(payload));
 }
 
 class counting_sink final : public media_sink
@@ -460,7 +478,7 @@ class counting_sink final : public media_sink
     std::vector<std::pair<track_id, std::int64_t>> received_frames;
 };
 
-class opus_capture_sink final : public media_sink
+class raw_audio_capture_sink final : public media_sink
 {
    public:
     void on_track(const media_track& track) override
@@ -2700,7 +2718,7 @@ void test_rtsp_input_opus_passthrough_case(std::string_view fmtp, std::uint16_t 
                 tracks[1].codec_config.empty(),
             "rtsp opus input core track contract");
 
-    auto sink = std::make_shared<opus_capture_sink>();
+    auto sink = std::make_shared<raw_audio_capture_sink>();
     stream->add_sink(sink);
     const auto sink_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (sink->tracks().size() < 2U && std::chrono::steady_clock::now() < sink_deadline)
@@ -2817,6 +2835,187 @@ void test_rtsp_input_rejects_invalid_opus_rate()
     }
     require(stream != nullptr && stream->tracks().size() == 1U && stream->tracks()[0].kind == media_kind::video,
             "rtsp invalid opus rate excluded from topology");
+
+    pull->shutdown();
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+}
+
+void test_rtsp_input_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
+{
+    require(codec == codec_id::g711a || codec == codec_id::g711u, "rtsp g711 input codec");
+    const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
+    const auto encoding = codec == codec_id::g711a ? "PCMA" : "PCMU";
+
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto stream_name = "relay/" + std::string(to_string(codec)) + (explicit_rtpmap ? "-rtpmap" : "-static");
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711";
+    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, stream_name, request_url);
+    require(pull->startup(), "rtsp g711 input startup");
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto describe = read_rtsp_headers(socket);
+    auto sdp = std::string("v=0\r\n") +
+               "o=- 0 0 IN IP4 127.0.0.1\r\n"
+               "s=test\r\n"
+               "c=IN IP4 127.0.0.1\r\n"
+               "t=0 0\r\n"
+               "m=video 0 RTP/AVP 96\r\n"
+               "a=rtpmap:96 H264/90000\r\n"
+               "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+               "a=control:video\r\n"
+               "m=audio 0 RTP/AVP " +
+               std::to_string(payload_type) + "\r\n";
+    if (explicit_rtpmap)
+    {
+        sdp += "a=rtpmap:" + std::to_string(payload_type) + " " + encoding + "/8000\r\n";
+    }
+    sdp += "a=control:audio\r\n";
+    const auto describe_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(describe, "CSeq:") + "\r\nContent-Base: " + request_url +
+                                   "/\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
+    boost::asio::write(socket, boost::asio::buffer(describe_response));
+
+    const auto video_setup = read_rtsp_headers(socket);
+    require(video_setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp g711 input video setup");
+    const auto video_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(video_setup, "CSeq:") +
+                                "\r\nSession: g711-input;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(video_response));
+
+    const auto audio_setup = read_rtsp_headers(socket);
+    require(audio_setup.starts_with("SETUP " + request_url + "/audio RTSP/1.0\r\n"), "rtsp g711 static payload setup");
+    const auto audio_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(audio_setup, "CSeq:") +
+                                "\r\nSession: g711-input;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(audio_response));
+
+    const auto play = read_rtsp_headers(socket);
+    const auto play_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: g711-input;timeout=60\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(play_response));
+
+    constexpr std::array<std::uint8_t, 21> video_rtp{
+        0x24, 0x00, 0x00, 0x11, 0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0,
+    };
+    boost::asio::write(socket, boost::asio::buffer(video_rtp));
+
+    std::shared_ptr<media_stream> stream;
+    const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!(stream = registry.find(stream_name)) && std::chrono::steady_clock::now() < stream_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(stream != nullptr, "rtsp g711 input publishes stream");
+    const auto tracks = stream->tracks();
+    require(tracks.size() == 2U && tracks[1].codec == codec && tracks[1].clock_rate == 8'000 && tracks[1].channel_count == 1 &&
+                tracks[1].codec_config.empty(),
+            "rtsp g711 input core track contract");
+
+    auto sink = std::make_shared<raw_audio_capture_sink>();
+    stream->add_sink(sink);
+    const auto sink_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (sink->tracks().size() < 2U && std::chrono::steady_clock::now() < sink_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(sink->tracks().size() == 2U, "rtsp g711 input sink ready");
+
+    std::array<std::vector<std::uint8_t>, 3> payloads;
+    for (std::size_t index = 0; index < payloads.size(); ++index)
+    {
+        payloads[index].assign(160U, static_cast<std::uint8_t>(0x20U + index));
+        std::vector<std::uint8_t> packet(12U + payloads[index].size());
+        packet[0] = 0x80;
+        packet[1] = static_cast<std::uint8_t>(payload_type);
+        packet[2] = 0;
+        packet[3] = static_cast<std::uint8_t>(index + 1U);
+        const auto timestamp = static_cast<std::uint32_t>(index * 160U);
+        packet[4] = static_cast<std::uint8_t>(timestamp >> 24U);
+        packet[5] = static_cast<std::uint8_t>(timestamp >> 16U);
+        packet[6] = static_cast<std::uint8_t>(timestamp >> 8U);
+        packet[7] = static_cast<std::uint8_t>(timestamp);
+        packet[8] = 0x76;
+        packet[9] = 0x54;
+        packet[10] = 0x32;
+        packet[11] = 0x10;
+        std::copy(payloads[index].begin(), payloads[index].end(), packet.begin() + 12);
+        const std::array<std::uint8_t, 4> header{
+            0x24, 0x02, static_cast<std::uint8_t>(packet.size() >> 8U), static_cast<std::uint8_t>(packet.size())};
+        boost::asio::write(socket, boost::asio::buffer(header));
+        boost::asio::write(socket, boost::asio::buffer(packet));
+    }
+
+    const auto frame_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (sink->frames().size() < payloads.size() && std::chrono::steady_clock::now() < frame_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const auto frames = sink->frames();
+    require(frames.size() == payloads.size(), "rtsp g711 input frame count");
+    for (std::size_t index = 0; index < frames.size(); ++index)
+    {
+        require(*frames[index].payload == payloads[index], "rtsp g711 input raw payload");
+        require(frames[index].pts_ns == static_cast<std::int64_t>(index) * 20'000'000 && frames[index].dts_ns == frames[index].pts_ns,
+                "rtsp g711 input 20ms timeline");
+    }
+
+    pull->shutdown();
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+}
+
+void test_rtsp_input_g711_passthrough()
+{
+    test_rtsp_input_g711_passthrough_case(codec_id::g711a, false);
+    test_rtsp_input_g711_passthrough_case(codec_id::g711u, false);
+    test_rtsp_input_g711_passthrough_case(codec_id::g711a, true);
+}
+
+void test_rtsp_input_rejects_mismatched_g711_rtpmap()
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711-mismatch";
+    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/g711-mismatch", request_url);
+    require(pull->startup(), "rtsp mismatched g711 startup");
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto describe = read_rtsp_headers(socket);
+    constexpr std::string_view sdp =
+        "v=0\r\n"
+        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "s=test\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\n"
+        "a=rtpmap:96 H264/90000\r\n"
+        "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+        "a=control:video\r\n"
+        "m=audio 0 RTP/AVP 8\r\n"
+        "a=rtpmap:8 PCMU/8000\r\n"
+        "a=control:audio\r\n";
+    const auto response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(describe, "CSeq:") + "\r\nContent-Base: " + request_url +
+                          "/\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + std::string(sdp);
+    boost::asio::write(socket, boost::asio::buffer(response));
+
+    const auto setup = read_rtsp_headers(socket);
+    require(setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp mismatched g711 skips audio");
+    const auto setup_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(setup, "CSeq:") +
+                                "\r\nSession: g711-mismatch;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(setup_response));
+    const auto play = read_rtsp_headers(socket);
+    const auto play_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") +
+                               "\r\nSession: g711-mismatch;timeout=60\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(play_response));
 
     pull->shutdown();
     boost::system::error_code error;
@@ -3649,6 +3848,100 @@ void test_rtsp_output_opus_passthrough_boundaries()
     const auto capacity = static_cast<std::size_t>(rtp_packet_getsize() - RTP_FIXED_HEADER);
     peer.publish(make_opus_frame(60'000'000, std::vector<std::uint8_t>(capacity + 1U, 0x55)));
     require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp opus output rejects oversized packet");
+}
+
+void test_rtsp_output_g711_passthrough_case(codec_id codec)
+{
+    require(codec == codec_id::g711a || codec == codec_id::g711u, "rtsp g711 output codec");
+    const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
+    rtsp_output_test_peer peer({make_video_track(), make_g711_track(codec)});
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+    const auto describe = peer.request("DESCRIBE " + base +
+                                       " RTSP/1.0\r\n"
+                                       "CSeq: 1\r\n"
+                                       "Accept: application/sdp\r\n\r\n");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp g711 output describe");
+    require(describe.find("m=audio 0 RTP/AVP " + std::to_string(payload_type) + "\n") != std::string::npos,
+            "rtsp g711 output static payload type");
+    require(describe.find("a=rtpmap:" + std::to_string(payload_type)) == std::string::npos,
+            "rtsp g711 output does not require rtpmap");
+
+    const auto setup = peer.request("SETUP " + base +
+                                    "/trackID=2 RTSP/1.0\r\n"
+                                    "CSeq: 2\r\n"
+                                    "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
+    const auto session = rtsp_header_value(setup, "Session:");
+    require(setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp g711 output setup");
+    require(peer.request("PLAY " + base +
+                         " RTSP/1.0\r\n"
+                         "CSeq: 3\r\n"
+                         "Session: " +
+                         session + "\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp g711 output play");
+
+    peer.publish(make_video_frame(0, true));
+    std::array<std::vector<std::uint8_t>, 2> payloads;
+    payloads[0].assign(160U, 0x31);
+    payloads[1].assign(160U, 0x32);
+    peer.publish(make_raw_audio_frame(20'000'000, payloads[0]));
+    peer.publish(make_raw_audio_frame(40'000'000, payloads[1]));
+
+    std::vector<rtp_packet_t> packets;
+    std::vector<std::vector<std::uint8_t>> received_payloads;
+    while (const auto interleaved = peer.read_interleaved(std::chrono::milliseconds(100)))
+    {
+        if (interleaved->channel == 3U)
+        {
+            continue;
+        }
+        require(interleaved->channel == 2U, "rtsp g711 output rtp channel");
+        rtp_packet_t packet{};
+        require(rtp_packet_deserialize(&packet, interleaved->payload.data(), static_cast<int>(interleaved->payload.size())) == 0,
+                "rtsp g711 output rtp packet");
+        require(packet.rtp.pt == static_cast<unsigned int>(payload_type), "rtsp g711 output static rtp payload type");
+        const auto* begin = static_cast<const std::uint8_t*>(packet.payload);
+        received_payloads.emplace_back(begin, begin + packet.payloadlen);
+        packets.push_back(packet);
+    }
+    require(received_payloads == std::vector<std::vector<std::uint8_t>>(payloads.begin(), payloads.end()),
+            "rtsp g711 output raw payload");
+    require(packets.size() == 2U && packets[1].rtp.timestamp - packets[0].rtp.timestamp == 160U,
+            "rtsp g711 output 20ms timestamp step");
+
+    peer.publish(make_raw_audio_frame(60'000'001, std::vector<std::uint8_t>(160U, 0x33)));
+    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp g711 output rejects fractional millisecond");
+
+    const auto capacity = static_cast<std::size_t>(rtp_packet_getsize() - RTP_FIXED_HEADER);
+    peer.publish(make_raw_audio_frame(80'000'000, std::vector<std::uint8_t>(capacity, 0x44)));
+    std::optional<rtsp_interleaved_packet> maximum;
+    while (const auto interleaved = peer.read_interleaved(std::chrono::milliseconds(100)))
+    {
+        if (interleaved->channel == 3U)
+        {
+            continue;
+        }
+        maximum = interleaved;
+        break;
+    }
+    require(maximum.has_value() && maximum->channel == 2U, "rtsp g711 output accepts maximum payload");
+    rtp_packet_t maximum_packet{};
+    require(rtp_packet_deserialize(&maximum_packet, maximum->payload.data(), static_cast<int>(maximum->payload.size())) == 0 &&
+                maximum_packet.payloadlen == static_cast<int>(capacity),
+            "rtsp g711 output maximum payload size");
+    while (const auto interleaved = peer.read_interleaved(std::chrono::milliseconds(20)))
+    {
+        require(interleaved->channel == 3U, "rtsp g711 output drains rtcp after maximum payload");
+    }
+
+    peer.publish(make_raw_audio_frame(100'000'000, std::vector<std::uint8_t>(capacity + 1U, 0x55)));
+    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp g711 output rejects oversized packet");
+}
+
+void test_rtsp_output_g711_passthrough()
+{
+    test_rtsp_output_g711_passthrough_case(codec_id::g711a);
+    test_rtsp_output_g711_passthrough_case(codec_id::g711u);
 }
 
 void test_rtsp_output_setup_track_lifecycle()
@@ -5836,6 +6129,10 @@ int main()
     std::cout << "[pass] rtsp_input_opus_passthrough\n";
     media_server::test_rtsp_input_rejects_invalid_opus_rate();
     std::cout << "[pass] rtsp_input_rejects_invalid_opus_rate\n";
+    media_server::test_rtsp_input_g711_passthrough();
+    std::cout << "[pass] rtsp_input_g711_passthrough\n";
+    media_server::test_rtsp_input_rejects_mismatched_g711_rtpmap();
+    std::cout << "[pass] rtsp_input_rejects_mismatched_g711_rtpmap\n";
     media_server::test_rtsp_input_rejects_audio_only_source();
     std::cout << "[pass] rtsp_input_rejects_audio_only_source\n";
     media_server::test_rtsp_input_uses_complete_sdp_topology_without_track_wait();
@@ -5856,6 +6153,8 @@ int main()
     std::cout << "[pass] rtsp_output_h265\n";
     media_server::test_rtsp_output_opus_passthrough_boundaries();
     std::cout << "[pass] rtsp_output_opus_passthrough_boundaries\n";
+    media_server::test_rtsp_output_g711_passthrough();
+    std::cout << "[pass] rtsp_output_g711_passthrough\n";
     media_server::test_rtsp_output_setup_track_lifecycle();
     std::cout << "[pass] rtsp_output_setup_track_lifecycle\n";
     media_server::test_rtsp_output_unsetup_audio_update_keeps_video_continuity();

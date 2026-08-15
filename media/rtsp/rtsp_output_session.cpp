@@ -51,7 +51,9 @@ bool supported_track(const media_track& track)
            (track.kind == media_kind::audio &&
             (track.codec == codec_id::aac ||
              (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
-              (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty())));
+              (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty()) ||
+             ((track.codec == codec_id::g711a || track.codec == codec_id::g711u) && track.clock_rate == 8'000 && track.channel_count == 1 &&
+              track.codec_config.empty())));
 }
 }    // namespace
 
@@ -149,14 +151,15 @@ void rtsp_output_session::on_read(media_read_batch batch)
         }
 
         const auto& state = iterator->second;
-        if (state.codec == codec_id::opus)
+        if (state.codec == codec_id::opus || state.codec == codec_id::g711a || state.codec == codec_id::g711u)
         {
             constexpr std::int64_t nanoseconds_per_millisecond = 1'000'000;
             if ((entry.frame.pts_ns % nanoseconds_per_millisecond) != 0 ||
                 (entry.frame.dts_ns % nanoseconds_per_millisecond) != 0)
             {
-                spdlog::error("rtsp opus output timestamp precision unsupported track {} pts_ns {} dts_ns {}",
+                spdlog::error("rtsp audio output timestamp precision unsupported track {} codec {} pts_ns {} dts_ns {}",
                               entry.frame.track,
+                              to_string(state.codec),
                               entry.frame.pts_ns,
                               entry.frame.dts_ns);
                 continue;
@@ -166,8 +169,9 @@ void rtsp_output_session::on_read(media_read_batch batch)
             const auto payload_capacity = packet_size - RTP_FIXED_HEADER;
             if (entry.frame.payload->size() > static_cast<std::size_t>(payload_capacity))
             {
-                spdlog::error("rtsp opus output packet too large track {} bytes {} capacity {}",
+                spdlog::error("rtsp audio output packet too large track {} codec {} bytes {} capacity {}",
                               entry.frame.track,
+                              to_string(state.codec),
                               entry.frame.payload->size(),
                               payload_capacity);
                 continue;
@@ -551,6 +555,7 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
         const char* encoding = nullptr;
         int rtp_codec = -1;
         int frequency = static_cast<int>(track.clock_rate);
+        int payload_type = -1;
 
         if (track.codec == codec_id::h264)
 
@@ -563,6 +568,7 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
             encoding = "H264";
             rtp_codec = RTP_PAYLOAD_H264;
             frequency = 90'000;
+            payload_type = next_payload_type++;
         }
         else if (track.codec == codec_id::h265)
         {
@@ -574,6 +580,7 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
             encoding = "H265";
             rtp_codec = RTP_PAYLOAD_H265;
             frequency = 90'000;
+            payload_type = next_payload_type++;
         }
         else if (track.codec == codec_id::aac)
         {
@@ -584,6 +591,7 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
             }
             encoding = "MPEG4-GENERIC";
             rtp_codec = RTP_PAYLOAD_MP4A;
+            payload_type = next_payload_type++;
         }
         else if (track.codec == codec_id::opus)
         {
@@ -594,13 +602,27 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
             encoding = "opus";
             rtp_codec = RTP_PAYLOAD_OPUS;
             frequency = 48'000;
+            payload_type = next_payload_type++;
+        }
+        else if (track.codec == codec_id::g711a)
+        {
+            encoding = "PCMA";
+            rtp_codec = RTP_PAYLOAD_PCMA;
+            frequency = 8'000;
+            payload_type = RTP_PAYLOAD_PCMA;
+        }
+        else if (track.codec == codec_id::g711u)
+        {
+            encoding = "PCMU";
+            rtp_codec = RTP_PAYLOAD_PCMU;
+            frequency = 8'000;
+            payload_type = RTP_PAYLOAD_PCMU;
         }
         else
         {
             continue;
         }
 
-        const auto payload_type = next_payload_type++;
         const auto payload_index = rtsp_muxer_add_payload(
             muxer_, "RTP/AVP", frequency, payload_type, encoding, 0, random_u32(), 0, extra.data(), static_cast<int>(extra.size()));
         if (payload_index < 0)
