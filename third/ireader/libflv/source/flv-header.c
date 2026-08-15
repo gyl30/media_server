@@ -95,8 +95,7 @@ static int flv_audio_tag_header_read_fourcc(struct flv_audio_tag_header_t* audio
 		audio->codecid = FLV_AUDIO_AAC;
 		break;
 	default:
-		audio->codecid = FLV_AUDIO_AAC; // unknown
-		break;
+		return -1;
 	}
 
 	return 0;
@@ -434,7 +433,7 @@ int flv_video_tag_header_write(const struct flv_video_tag_header_t* video, uint8
 
 	buf[0] = (video->keyframe << 4) /*FrameType*/ | (video->codecid & 0x0F) /*CodecID*/;
 
-	if (FLV_VIDEO_H264 == video->codecid || FLV_VIDEO_H265 == video->codecid || FLV_VIDEO_H266 == video->codecid || FLV_VIDEO_AV1 == video->codecid)
+	if (FLV_VIDEO_H264 == video->codecid || FLV_VIDEO_H265 == video->codecid || FLV_VIDEO_H266 == video->codecid || FLV_VIDEO_AV1 == video->codecid || FLV_VIDEO_AVS3 == video->codecid)
 	{
 		assert(FLV_SEQUENCE_HEADER == video->avpacket || FLV_AVPACKET == video->avpacket || FLV_END_OF_SEQUENCE == video->avpacket);
 		if (len < 5)
