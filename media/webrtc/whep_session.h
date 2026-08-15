@@ -37,7 +37,6 @@ enum class whep_session_startup_error
 {
     none,
     invalid_offer,
-    stream_not_ready,
     internal_error,
 };
 

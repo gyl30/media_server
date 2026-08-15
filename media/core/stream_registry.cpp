@@ -5,7 +5,7 @@ namespace media_server
 
 bool stream_registry::add(const std::shared_ptr<media_stream>& stream)
 {
-    if (!stream || stream->name().empty())
+    if (!stream || stream->name().empty() || stream->tracks().empty())
     {
         return false;
     }
