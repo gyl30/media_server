@@ -661,6 +661,18 @@ media_track make_audio_track()
     };
 }
 
+media_track make_opus_track(std::uint16_t channel_count = 2)
+{
+    return media_track{
+        .id = audio_track_id,
+        .kind = media_kind::audio,
+        .codec = codec_id::opus,
+        .clock_rate = 48'000,
+        .channel_count = channel_count,
+        .codec_config = {},
+    };
+}
+
 media_frame make_video_key_frame(codec_id codec)
 {
     require(codec == codec_id::h264 || codec == codec_id::h265, "video key frame codec");
@@ -861,6 +873,7 @@ void test_webrtc_sdp_answer()
                                            });
     require(answer.has_value(), "make webrtc answer");
     require(answer->video_codec == codec_id::h264, "webrtc negotiated h264 codec");
+    require(answer->audio_codec == codec_id::aac, "webrtc negotiated aac source codec");
     require(answer->video_payload_type == 102, "webrtc negotiated h264 payload");
     require(answer->audio_payload_type == 111, "webrtc negotiated opus payload");
     require(answer->audio_channel_count == 2, "webrtc negotiated opus stereo");
@@ -1290,6 +1303,118 @@ void test_webrtc_opus_receive_limits()
     require(!make_webrtc_answer(*missing_channels, {make_audio_track()}, config).has_value(), "webrtc reject opus missing channels");
 }
 
+void test_webrtc_opus_source_negotiation()
+{
+    auto compatible_sdp = webrtc_offer_sdp;
+    const auto compatible_fmtp = compatible_sdp.find("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n");
+    require(compatible_fmtp != std::string::npos, "webrtc opus source compatible fmtp");
+    compatible_sdp.replace(compatible_fmtp,
+                           std::string_view("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n").size(),
+                           "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=510000\r\n");
+    const auto offer = parse_webrtc_offer(compatible_sdp);
+    require(offer.has_value(), "parse webrtc opus source offer");
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .stream_id = "serverstream",
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+    };
+
+    const auto stereo = make_webrtc_answer(*offer, {make_video_track(), make_opus_track(2)}, config);
+    require(stereo.has_value() && stereo->audio_codec == codec_id::opus && stereo->audio_payload_type == 111 &&
+                stereo->audio_channel_count == 2,
+            "webrtc negotiate stereo opus source");
+    require(stereo->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos &&
+                stereo->sdp.find("sprop-stereo=1") != std::string::npos,
+            "webrtc stereo opus source answer");
+
+    const auto mono = make_webrtc_answer(*offer, {make_video_track(), make_opus_track(1)}, config);
+    require(mono.has_value() && mono->audio_codec == codec_id::opus && mono->audio_channel_count == 1,
+            "webrtc negotiate mono opus source");
+    require(mono->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos && mono->sdp.find("sprop-stereo=0") != std::string::npos,
+            "webrtc mono opus keeps rfc mapping");
+
+    auto no_bitrate_sdp = compatible_sdp;
+    const auto bitrate_parameter = no_bitrate_sdp.find(";maxaveragebitrate=510000");
+    require(bitrate_parameter != std::string::npos, "webrtc opus passthrough bitrate parameter");
+    no_bitrate_sdp.erase(bitrate_parameter, std::string_view(";maxaveragebitrate=510000").size());
+    const auto no_bitrate_offer = parse_webrtc_offer(no_bitrate_sdp);
+    require(no_bitrate_offer.has_value(), "parse webrtc opus passthrough default bitrate");
+    const auto no_bitrate = make_webrtc_answer(*no_bitrate_offer, {make_video_track(), make_opus_track(2)}, config);
+    require(no_bitrate.has_value() && no_bitrate->video_codec == codec_id::h264 && !no_bitrate->audio_codec,
+            "webrtc reject opus passthrough default bitrate limit");
+
+    auto limited_bitrate_sdp = compatible_sdp;
+    const auto limited_bitrate = limited_bitrate_sdp.find("maxaveragebitrate=510000");
+    require(limited_bitrate != std::string::npos, "webrtc opus passthrough limited bitrate parameter");
+    limited_bitrate_sdp.replace(limited_bitrate, std::string_view("maxaveragebitrate=510000").size(), "maxaveragebitrate=128000");
+    const auto limited_bitrate_offer = parse_webrtc_offer(limited_bitrate_sdp);
+    require(limited_bitrate_offer.has_value(), "parse webrtc opus passthrough limited bitrate");
+    const auto incompatible_bitrate = make_webrtc_answer(*limited_bitrate_offer, {make_video_track(), make_opus_track(2)}, config);
+    require(incompatible_bitrate.has_value() && !incompatible_bitrate->audio_codec, "webrtc reject opus passthrough bitrate limit");
+
+    for (const int maxptime : {20, 40, 60})
+    {
+        auto maxptime_sdp = compatible_sdp;
+        const auto audio_mid = maxptime_sdp.find("a=mid:1\r\n");
+        require(audio_mid != std::string::npos, "webrtc opus maxptime audio media");
+        maxptime_sdp.insert(audio_mid, "a=maxptime:" + std::to_string(maxptime) + "\r\n");
+        const auto maxptime_offer = parse_webrtc_offer(maxptime_sdp);
+        require(maxptime_offer.has_value() && maxptime_offer->media.back().max_packet_time_ms == maxptime,
+                "parse webrtc opus maxptime");
+        const auto incompatible_maxptime = make_webrtc_answer(*maxptime_offer, {make_video_track(), make_opus_track(2)}, config);
+        require(incompatible_maxptime.has_value() && !incompatible_maxptime->audio_codec, "webrtc reject opus passthrough maxptime limit");
+    }
+
+    auto maxptime_sdp = compatible_sdp;
+    const auto audio_mid = maxptime_sdp.find("a=mid:1\r\n");
+    require(audio_mid != std::string::npos, "webrtc opus maxptime 120 audio media");
+    maxptime_sdp.insert(audio_mid, "a=maxptime:120\r\n");
+    const auto maxptime_offer = parse_webrtc_offer(maxptime_sdp);
+    require(maxptime_offer.has_value() && maxptime_offer->media.back().max_packet_time_ms == 120,
+            "parse webrtc opus maxptime 120");
+    const auto compatible_maxptime = make_webrtc_answer(*maxptime_offer, {make_video_track(), make_opus_track(2)}, config);
+    require(compatible_maxptime.has_value() && compatible_maxptime->audio_codec == codec_id::opus,
+            "webrtc accept opus passthrough maxptime 120");
+
+    const auto audio_rejected = [&offer, &config](media_track track)
+    {
+        const auto answer = make_webrtc_answer(*offer, {make_video_track(), std::move(track)}, config);
+        return answer && !answer->audio_codec && !answer->audio_payload_type &&
+            answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 111 0 8\r\n") != std::string::npos;
+    };
+
+    auto invalid_rate = make_opus_track();
+    invalid_rate.clock_rate = 44'100;
+    require(audio_rejected(std::move(invalid_rate)), "webrtc reject opus source rate");
+    auto invalid_config = make_opus_track();
+    invalid_config.codec_config = {0x01};
+    require(audio_rejected(std::move(invalid_config)), "webrtc reject opus source config");
+    require(audio_rejected(make_opus_track(0)) && audio_rejected(make_opus_track(3)), "webrtc reject opus source channels");
+
+    auto mono_offer_sdp = compatible_sdp;
+    const auto stereo_parameter = mono_offer_sdp.find(";stereo=1");
+    require(stereo_parameter != std::string::npos, "webrtc opus source stereo parameter");
+    mono_offer_sdp.erase(stereo_parameter, std::string_view(";stereo=1").size());
+    const auto mono_offer = parse_webrtc_offer(mono_offer_sdp);
+    require(mono_offer.has_value(), "parse webrtc mono receiver offer");
+    const auto incompatible_stereo = make_webrtc_answer(*mono_offer, {make_video_track(), make_opus_track(2)}, config);
+    require(incompatible_stereo.has_value() && !incompatible_stereo->audio_codec, "webrtc reject stereo opus for mono receiver");
+
+    auto limited_sdp = compatible_sdp;
+    const auto fmtp = limited_sdp.find("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=510000\r\n");
+    require(fmtp != std::string::npos, "webrtc opus passthrough limit source");
+    limited_sdp.replace(fmtp,
+                        std::string_view("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=510000\r\n").size(),
+                        "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=510000;maxplaybackrate=16000\r\n");
+    const auto limited_offer = parse_webrtc_offer(limited_sdp);
+    require(limited_offer.has_value(), "parse webrtc opus passthrough limit");
+    const auto incompatible_rate = make_webrtc_answer(*limited_offer, {make_video_track(), make_opus_track(2)}, config);
+    require(incompatible_rate.has_value() && !incompatible_rate->audio_codec, "webrtc reject opus passthrough playback limit");
+}
+
 void test_webrtc_transport_contract()
 {
     const auto config = webrtc_answer_config{
@@ -1604,6 +1729,33 @@ void test_whep_session_lifecycle()
     require(updated_session.error == whep_create_error::none, "whep create after config change");
     require(whep.remove(updated_session.session_id), "whep remove updated session");
     drain_io(io);
+}
+
+void test_whep_opus_source_session_lifecycle()
+{
+    boost::asio::io_context io;
+    stream_registry registry;
+    auto stream = std::make_shared<media_stream>("live/opus", io.get_executor());
+    require(stream->set_tracks({make_video_track(), make_opus_track(1)}), "whep opus source tracks");
+    require(registry.add(stream), "whep opus source registry add");
+
+    whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
+    require(whep.ready(), "whep opus source service ready");
+    auto compatible_sdp = webrtc_offer_sdp;
+    const auto fmtp = compatible_sdp.find("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n");
+    require(fmtp != std::string::npos, "whep opus source compatible fmtp");
+    compatible_sdp.replace(fmtp,
+                           std::string_view("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n").size(),
+                           "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=510000\r\n");
+    const auto session = whep.create(io.get_executor(), "live/opus", compatible_sdp);
+    require(session.error == whep_create_error::none && session.answer_sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos &&
+                session.answer_sdp.find("sprop-stereo=0") != std::string::npos,
+            "whep opus source session answer");
+
+    auto changed = make_opus_track(2);
+    require(stream->update_track(std::move(changed)), "whep opus source track update");
+    drain_io(io);
+    require(!whep.remove(session.session_id), "whep opus source negotiated track lifecycle");
 }
 
 void test_whep_negotiated_track_lifecycle()
@@ -2233,12 +2385,16 @@ int main()
     std::cout << "[pass] webrtc_opus_mono_default\n";
     media_server::test_webrtc_opus_receive_limits();
     std::cout << "[pass] webrtc_opus_receive_limits\n";
+    media_server::test_webrtc_opus_source_negotiation();
+    std::cout << "[pass] webrtc_opus_source_negotiation\n";
     media_server::test_webrtc_transport_contract();
     std::cout << "[pass] webrtc_transport_contract\n";
     media_server::test_whep_session_startup_errors();
     std::cout << "[pass] whep_session_startup_errors\n";
     media_server::test_whep_session_lifecycle();
     std::cout << "[pass] whep_session_lifecycle\n";
+    media_server::test_whep_opus_source_session_lifecycle();
+    std::cout << "[pass] whep_opus_source_session_lifecycle\n";
     media_server::test_whep_negotiated_track_lifecycle();
     std::cout << "[pass] whep_negotiated_track_lifecycle\n";
     media_server::test_whep_self_owned_lifecycle();

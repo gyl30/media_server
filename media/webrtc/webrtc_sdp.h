@@ -37,6 +37,7 @@ struct webrtc_media_offer
     bool rtcp_mux{};
     bool bundle_only{};
     std::optional<int> mid_extension_id;
+    std::optional<int> max_packet_time_ms;
     std::vector<int> payload_types;
     std::vector<webrtc_codec_offer> codecs;
 };
@@ -52,6 +53,7 @@ struct webrtc_answer
     std::string sdp;
     std::string transport_mid;
     std::optional<codec_id> video_codec;
+    std::optional<codec_id> audio_codec;
     std::optional<int> video_payload_type;
     std::optional<int> audio_payload_type;
     std::optional<std::string> video_mid;
