@@ -2397,6 +2397,70 @@ void test_rtsp_input_establishment_timeout()
     runner.join();
 }
 
+void test_rtsp_input_establishment_progress_timeout()
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-timeout";
+    auto pull = std::make_shared<rtsp_input_session>(
+        client_io, registry, "relay/play-timeout", request_url, std::chrono::milliseconds(800));
+    const std::weak_ptr<rtsp_input_session> weak_pull = pull;
+    require(pull->startup(), "rtsp establishment progress timeout pull startup");
+    pull.reset();
+
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto describe = read_rtsp_headers(socket);
+    constexpr std::string_view sdp =
+        "v=0\r\n"
+        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "s=test\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\n"
+        "a=rtpmap:96 H264/90000\r\n"
+        "a=control:trackID=0\r\n";
+    const auto describe_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(describe, "CSeq:") + "\r\nContent-Base: " + request_url +
+                                   "/\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" +
+                                   std::string(sdp);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    boost::asio::write(socket, boost::asio::buffer(describe_response));
+
+    const auto setup = read_rtsp_headers(socket);
+    const auto setup_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(setup, "CSeq:") +
+                                "\r\nSession: play-timeout;timeout=60\r\n"
+                                "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    boost::asio::write(socket, boost::asio::buffer(setup_response));
+
+    const auto play = read_rtsp_headers(socket);
+    require(play.starts_with("PLAY "), "rtsp establishment progress timeout play request");
+    const auto play_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: play-timeout;timeout=60\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(play_response));
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (registry.find("relay/play-timeout") && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(!registry.find("relay/play-timeout"), "rtsp establishment progress timeout removes stream");
+    const auto release_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!weak_pull.expired() && std::chrono::steady_clock::now() < release_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(weak_pull.expired(), "rtsp establishment progress timeout releases session");
+
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+}
+
 void test_rtsp_input_selects_single_audio_and_video()
 {
     boost::asio::io_context server_io;
@@ -2629,10 +2693,13 @@ void test_rtsp_input_media_driven_keepalive()
         "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: keepalive-session;timeout=2\r\nContent-Length: 0\r\n\r\n";
     boost::asio::write(socket, boost::asio::buffer(play_response));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(1'100));
     constexpr std::array<std::uint8_t, 21> interleaved_rtp{
         0x24, 0x00, 0x00, 0x11, 0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0,
     };
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    boost::asio::write(socket, boost::asio::buffer(interleaved_rtp));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1'100));
     boost::asio::write(socket, boost::asio::buffer(interleaved_rtp));
 
     const auto options = read_rtsp_headers_until(socket, std::chrono::seconds(1));
@@ -4926,6 +4993,8 @@ int main()
     std::cout << "[pass] rtsp_pull_url_contract\n";
     media_server::test_rtsp_input_establishment_timeout();
     std::cout << "[pass] rtsp_input_establishment_timeout\n";
+    media_server::test_rtsp_input_establishment_progress_timeout();
+    std::cout << "[pass] rtsp_input_establishment_progress_timeout\n";
     media_server::test_rtsp_input_selects_single_audio_and_video();
     std::cout << "[pass] rtsp_input_selects_single_audio_and_video\n";
     media_server::test_rtsp_input_waits_for_complete_topology();

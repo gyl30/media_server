@@ -126,17 +126,10 @@ bool rtsp_input_session::startup()
 
     static_cast<void>(avpkt2bs_create(&bitstream_));
 
+    record_establishment_progress();
+    wait_establishment_timeout();
+
     const auto self = shared_from_this();
-    establishment_timer_.expires_after(establishment_timeout_);
-    establishment_timer_.async_wait(
-        [self](const boost::system::error_code& error)
-        {
-            if (!error)
-            {
-                spdlog::warn("rtsp input establishment timeout stream {}", self->stream_name_);
-                self->shutdown();
-            }
-        });
     resolver_.async_resolve(parsed->host,
                             std::to_string(parsed->port),
                             [this, self](const boost::system::error_code& error, boost::asio::ip::tcp::resolver::results_type endpoints)
@@ -150,6 +143,7 @@ bool rtsp_input_session::startup()
                                     shutdown();
                                     return;
                                 }
+                                record_establishment_progress();
                                 boost::asio::async_connect(connect_socket_,
                                                            endpoints,
                                                            [this, self](const boost::system::error_code& connect_error,
@@ -163,6 +157,35 @@ void rtsp_input_session::shutdown()
 {
     const auto self = shared_from_this();
     boost::asio::post(io_, [self]() { self->safe_shutdown(); });
+}
+
+void rtsp_input_session::record_establishment_progress()
+{
+    last_establishment_progress_ = std::chrono::steady_clock::now();
+}
+
+void rtsp_input_session::wait_establishment_timeout()
+{
+    establishment_timer_.expires_at(last_establishment_progress_ + establishment_timeout_);
+    const auto self = shared_from_this();
+    establishment_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_ || self->media_started_)
+            {
+                return;
+            }
+
+            const auto deadline = self->last_establishment_progress_ + self->establishment_timeout_;
+            if (std::chrono::steady_clock::now() < deadline)
+            {
+                self->wait_establishment_timeout();
+                return;
+            }
+
+            spdlog::warn("rtsp input establishment timeout stream {}", self->stream_name_);
+            self->shutdown();
+        });
 }
 
 void rtsp_input_session::safe_shutdown()
@@ -211,6 +234,10 @@ int rtsp_input_session::send_callback(void* param, const char*, const void* requ
     if (!self->connection_)
     {
         return -1;
+    }
+    if (!self->media_started_)
+    {
+        self->record_establishment_progress();
     }
     self->connection_->write(request, bytes);
     return static_cast<int>(bytes);
@@ -390,12 +417,7 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
     }
     keepalive_deadline_ = std::chrono::steady_clock::now() + keepalive_interval_;
     std::uint64_t npt{};
-    const auto result = rtsp_client_play(client_, &npt, nullptr);
-    if (result == 0)
-    {
-        establishment_timer_.cancel();
-    }
-    return result;
+    return rtsp_client_play(client_, &npt, nullptr);
 }
 
 void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
@@ -405,6 +427,20 @@ void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uin
     {
         return;
     }
+
+    if (!media_started_)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= last_establishment_progress_ + establishment_timeout_)
+        {
+            spdlog::warn("rtsp input establishment timeout stream {}", stream_name_);
+            shutdown();
+            return;
+        }
+        media_started_ = true;
+        establishment_timer_.cancel();
+    }
+
     static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
 
     if (closed_ || client_ == nullptr || !keepalive_deadline_)
