@@ -110,6 +110,11 @@ void flv_output_muxer::on_frame(const media_frame& frame)
         case codec_id::aac:
             result = flv_muxer_aac(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
             break;
+        case codec_id::av1:
+        case codec_id::opus:
+        case codec_id::g711a:
+        case codec_id::g711u:
+            break;
     }
 
     if (result != 0)

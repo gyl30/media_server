@@ -3905,6 +3905,37 @@ void test_rtsp_aac_adts_round_trip()
     require(avpkt2bs_destroy(&capture.bitstream) == 0, "rtsp aac bitstream destroy");
 }
 
+void test_media_stream_configless_audio_track()
+{
+    boost::asio::io_context io;
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          auto stream = std::make_shared<media_stream>("live/configless-audio", io.get_executor());
+                          media_track track{
+                              .id = audio_track_id,
+                              .kind = media_kind::audio,
+                              .codec = codec_id::opus,
+                              .clock_rate = 48'000,
+                              .channel_count = 1,
+                              .codec_config = {},
+                              .config_version = 0,
+                          };
+                          require(stream->set_tracks({track}), "configless audio track accepted");
+                          require(stream->tracks().front().config_version == 1, "configless audio initial config version");
+
+                          track.codec = codec_id::g711a;
+                          require(!stream->update_track(track), "configless audio codec change rejected");
+
+                          track.codec = codec_id::opus;
+                          track.channel_count = 2;
+                          require(stream->update_track(track), "configless audio track update accepted");
+                          const auto tracks = stream->tracks();
+                          require(tracks.front().channel_count == 2 && tracks.front().config_version == 2, "configless audio update published");
+                      });
+    io.run();
+}
+
 void test_media_stream_sink_lifecycle()
 {
     boost::asio::io_context io;
@@ -5207,6 +5238,8 @@ int main()
     std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
     media_server::test_rtsp_aac_adts_round_trip();
     std::cout << "[pass] rtsp_aac_adts_round_trip\n";
+    media_server::test_media_stream_configless_audio_track();
+    std::cout << "[pass] media_stream_configless_audio_track\n";
     media_server::test_rtsp_client_session_timeout();
     std::cout << "[pass] rtsp_client_session_timeout\n";
     media_server::test_tcp_connection_shutdown_lifecycle();
