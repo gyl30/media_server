@@ -6,6 +6,8 @@
 extern "C"
 {
 #include "rtp-profile.h"
+#include "rtp-packet.h"
+#include "rtp-payload.h"
 #include "rtsp-header-transport.h"
 #include "rtsp-muxer.h"
 #include "rtsp-server.h"
@@ -46,7 +48,10 @@ std::string local_ip(const tcp_connection& connection)
 bool supported_track(const media_track& track)
 {
     return (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
-           (track.kind == media_kind::audio && track.codec == codec_id::aac);
+           (track.kind == media_kind::audio &&
+            (track.codec == codec_id::aac ||
+             (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
+              (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty())));
 }
 }    // namespace
 
@@ -144,6 +149,30 @@ void rtsp_output_session::on_read(media_read_batch batch)
         }
 
         const auto& state = iterator->second;
+        if (state.codec == codec_id::opus)
+        {
+            constexpr std::int64_t nanoseconds_per_millisecond = 1'000'000;
+            if ((entry.frame.pts_ns % nanoseconds_per_millisecond) != 0 ||
+                (entry.frame.dts_ns % nanoseconds_per_millisecond) != 0)
+            {
+                spdlog::error("rtsp opus output timestamp precision unsupported track {} pts_ns {} dts_ns {}",
+                              entry.frame.track,
+                              entry.frame.pts_ns,
+                              entry.frame.dts_ns);
+                continue;
+            }
+
+            const auto packet_size = rtp_packet_getsize();
+            const auto payload_capacity = packet_size - RTP_FIXED_HEADER;
+            if (entry.frame.payload->size() > static_cast<std::size_t>(payload_capacity))
+            {
+                spdlog::error("rtsp opus output packet too large track {} bytes {} capacity {}",
+                              entry.frame.track,
+                              entry.frame.payload->size(),
+                              payload_capacity);
+                continue;
+            }
+        }
         const auto result = rtsp_muxer_input(muxer_,
                                              state.media_id,
                                              ns_to_milliseconds(entry.frame.pts_ns),
@@ -514,6 +543,10 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
     for (const auto& track : tracks)
 
     {
+        if (!supported_track(track))
+        {
+            continue;
+        }
         std::vector<std::uint8_t> extra;
         const char* encoding = nullptr;
         int rtp_codec = -1;
@@ -552,6 +585,16 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
             encoding = "MPEG4-GENERIC";
             rtp_codec = RTP_PAYLOAD_MP4A;
         }
+        else if (track.codec == codec_id::opus)
+        {
+            if (track.clock_rate != 48'000 || (track.channel_count != 1 && track.channel_count != 2) || !track.codec_config.empty())
+            {
+                return false;
+            }
+            encoding = "opus";
+            rtp_codec = RTP_PAYLOAD_OPUS;
+            frequency = 48'000;
+        }
         else
         {
             continue;
@@ -583,6 +626,7 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
 
         tracks_.insert_or_assign(track.id,
                                  track_state{
+                                     .codec = track.codec,
                                      .config_version = track.config_version,
                                      .payload_index = payload_index,
                                      .media_id = media_id,

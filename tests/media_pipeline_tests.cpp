@@ -287,6 +287,18 @@ media_track make_audio_track()
     };
 }
 
+media_track make_opus_track(std::uint16_t channel_count = 2)
+{
+    return media_track{
+        .id = audio_track_id,
+        .kind = media_kind::audio,
+        .codec = codec_id::opus,
+        .clock_rate = 48'000,
+        .channel_count = channel_count,
+        .codec_config = {},
+    };
+}
+
 media_track make_video_track(std::uint8_t config_marker)
 {
     auto track = make_video_track();
@@ -420,6 +432,17 @@ media_frame make_audio_frame(std::int64_t pts_ns)
     };
 }
 
+media_frame make_opus_frame(std::int64_t pts_ns, std::vector<std::uint8_t> payload = {0xf8, 0xff, 0xfe})
+{
+    return media_frame{
+        .track = audio_track_id,
+        .dts_ns = pts_ns,
+        .pts_ns = pts_ns,
+        .key_frame = false,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(payload)),
+    };
+}
+
 class counting_sink final : public media_sink
 {
    public:
@@ -435,6 +458,45 @@ class counting_sink final : public media_sink
     std::size_t frames{};
     std::size_t ends{};
     std::vector<std::pair<track_id, std::int64_t>> received_frames;
+};
+
+class opus_capture_sink final : public media_sink
+{
+   public:
+    void on_track(const media_track& track) override
+    {
+        std::scoped_lock lock(mutex_);
+        tracks_.push_back(track);
+    }
+
+    void on_frame(const media_frame& frame) override
+    {
+        if (frame.track != audio_track_id || !frame.payload)
+        {
+            return;
+        }
+        std::scoped_lock lock(mutex_);
+        frames_.push_back(frame);
+    }
+
+    void on_end() override {}
+
+    [[nodiscard]] std::vector<media_track> tracks() const
+    {
+        std::scoped_lock lock(mutex_);
+        return tracks_;
+    }
+
+    [[nodiscard]] std::vector<media_frame> frames() const
+    {
+        std::scoped_lock lock(mutex_);
+        return frames_;
+    }
+
+   private:
+    mutable std::mutex mutex_;
+    std::vector<media_track> tracks_;
+    std::vector<media_frame> frames_;
 };
 
 class worker_sink final : public media_sink
@@ -2527,12 +2589,11 @@ void test_rtsp_input_selects_single_audio_and_video()
                      "m=video 0 RTP/AVP 98\r\n"
                      "a=rtpmap:98 H264/90000\r\n"
                      "a=control:h264\r\n"
-                     "m=audio 0 RTP/AVP 99\r\n"
-                     "a=rtpmap:99 opus/48000/2\r\n"
-                     "a=control:opus\r\n"
-                     "m=audio 0 RTP/AVP 100\r\n"
+                     "m=audio 0 RTP/AVP 100 99\r\n"
                      "a=rtpmap:100 MPEG4-GENERIC/44100/2\r\n"
                      "a=fmtp:100 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1210\r\n"
+                     "a=rtpmap:99 opus/48000/2\r\n"
+                     "a=fmtp:99 sprop-stereo=1\r\n"
                      "a=control:aac-first\r\n"
                      "m=audio 0 RTP/AVP 101\r\n"
                      "a=rtpmap:101 MPEG4-GENERIC/48000/2\r\n"
@@ -2567,6 +2628,200 @@ void test_rtsp_input_selects_single_audio_and_video()
     socket.close(error);
     runner.join();
     require(!registry.find("relay/single-av"), "rtsp single audio video pull closes");
+}
+
+void test_rtsp_input_opus_passthrough_case(std::string_view fmtp, std::uint16_t expected_channels)
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto stream_name = "relay/opus-" + std::to_string(expected_channels) + "-" + std::to_string(fmtp.size());
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus";
+    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, stream_name, request_url);
+    require(pull->startup(), "rtsp opus input startup");
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto describe = read_rtsp_headers(socket);
+    auto sdp = std::string("v=0\r\n") +
+               "o=- 0 0 IN IP4 127.0.0.1\r\n"
+               "s=test\r\n"
+               "c=IN IP4 127.0.0.1\r\n"
+               "t=0 0\r\n"
+               "m=video 0 RTP/AVP 96\r\n"
+               "a=rtpmap:96 H264/90000\r\n"
+               "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+               "a=control:video\r\n"
+               "m=audio 0 RTP/AVP 111\r\n"
+               "a=rtpmap:111 OpUs/48000/2\r\n";
+    if (!fmtp.empty())
+    {
+        sdp += "a=fmtp:111 minptime=10;" + std::string(fmtp) + ";useinbandfec=1\r\n";
+    }
+    sdp += "a=control:audio\r\n";
+    const auto describe_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(describe, "CSeq:") + "\r\nContent-Base: " + request_url +
+                                   "/\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
+    boost::asio::write(socket, boost::asio::buffer(describe_response));
+
+    const auto video_setup = read_rtsp_headers(socket);
+    require(video_setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp opus input video setup");
+    const auto video_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(video_setup, "CSeq:") +
+                                "\r\nSession: opus-input;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(video_response));
+
+    const auto audio_setup = read_rtsp_headers(socket);
+    require(audio_setup.starts_with("SETUP " + request_url + "/audio RTSP/1.0\r\n"), "rtsp opus dynamic payload setup");
+    const auto audio_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(audio_setup, "CSeq:") +
+                                "\r\nSession: opus-input;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(audio_response));
+
+    const auto play = read_rtsp_headers(socket);
+    const auto play_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: opus-input;timeout=60\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(play_response));
+
+    constexpr std::array<std::uint8_t, 21> video_rtp{
+        0x24, 0x00, 0x00, 0x11, 0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0,
+    };
+    boost::asio::write(socket, boost::asio::buffer(video_rtp));
+
+    std::shared_ptr<media_stream> stream;
+    const auto stream_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!(stream = registry.find(stream_name)) && std::chrono::steady_clock::now() < stream_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(stream != nullptr, "rtsp opus input publishes stream");
+    const auto tracks = stream->tracks();
+    require(tracks.size() == 2U, "rtsp opus input complete topology");
+    require(tracks[1].codec == codec_id::opus && tracks[1].clock_rate == 48'000 && tracks[1].channel_count == expected_channels &&
+                tracks[1].codec_config.empty(),
+            "rtsp opus input core track contract");
+
+    auto sink = std::make_shared<opus_capture_sink>();
+    stream->add_sink(sink);
+    const auto sink_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (sink->tracks().size() < 2U && std::chrono::steady_clock::now() < sink_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(sink->tracks().size() == 2U, "rtsp opus input sink ready");
+
+    const std::array<std::vector<std::uint8_t>, 3> opus_payloads{
+        std::vector<std::uint8_t>{0xf8, 0xff, 0xfe},
+        std::vector<std::uint8_t>{0x78, 0x11, 0x22, 0x33},
+        std::vector<std::uint8_t>{0x48, 0x44, 0x55},
+    };
+    for (std::size_t index = 0; index < opus_payloads.size(); ++index)
+    {
+        std::vector<std::uint8_t> packet(12U + opus_payloads[index].size());
+        packet[0] = 0x80;
+        packet[1] = 0xef;
+        packet[2] = 0;
+        packet[3] = static_cast<std::uint8_t>(index + 1U);
+        const auto timestamp = static_cast<std::uint32_t>(index * 960U);
+        packet[4] = static_cast<std::uint8_t>(timestamp >> 24U);
+        packet[5] = static_cast<std::uint8_t>(timestamp >> 16U);
+        packet[6] = static_cast<std::uint8_t>(timestamp >> 8U);
+        packet[7] = static_cast<std::uint8_t>(timestamp);
+        packet[8] = 0x87;
+        packet[9] = 0x65;
+        packet[10] = 0x43;
+        packet[11] = 0x21;
+        std::copy(opus_payloads[index].begin(), opus_payloads[index].end(), packet.begin() + 12);
+        const std::array<std::uint8_t, 4> header{
+            0x24, 0x02, static_cast<std::uint8_t>(packet.size() >> 8U), static_cast<std::uint8_t>(packet.size())};
+        boost::asio::write(socket, boost::asio::buffer(header));
+        boost::asio::write(socket, boost::asio::buffer(packet));
+    }
+
+    const auto frame_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (sink->frames().size() < opus_payloads.size() && std::chrono::steady_clock::now() < frame_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const auto frames = sink->frames();
+    require(frames.size() == opus_payloads.size(), "rtsp opus input frame count");
+    for (std::size_t index = 0; index < frames.size(); ++index)
+    {
+        require(*frames[index].payload == opus_payloads[index], "rtsp opus input raw payload");
+        require(frames[index].pts_ns == static_cast<std::int64_t>(index) * 20'000'000 && frames[index].dts_ns == frames[index].pts_ns,
+                "rtsp opus input 20ms timeline");
+    }
+
+    pull->shutdown();
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
+}
+
+void test_rtsp_input_opus_passthrough()
+{
+    test_rtsp_input_opus_passthrough_case({}, 1);
+    test_rtsp_input_opus_passthrough_case("sprop-stereo=0", 1);
+    test_rtsp_input_opus_passthrough_case("sprop-stereo=1", 2);
+}
+
+void test_rtsp_input_rejects_invalid_opus_rate()
+{
+    boost::asio::io_context server_io;
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::io_context client_io;
+    stream_registry registry;
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus-rate";
+    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/opus-rate", request_url);
+    require(pull->startup(), "rtsp invalid opus rate startup");
+    std::jthread runner([&client_io]() { client_io.run(); });
+    boost::asio::ip::tcp::socket socket(server_io);
+    acceptor.accept(socket);
+
+    const auto describe = read_rtsp_headers(socket);
+    constexpr std::string_view sdp =
+        "v=0\r\n"
+        "o=- 0 0 IN IP4 127.0.0.1\r\n"
+        "s=test\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\n"
+        "a=rtpmap:96 H264/90000\r\n"
+        "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+        "a=control:video\r\n"
+        "m=audio 0 RTP/AVP 111\r\n"
+        "a=rtpmap:111 opus/16000/2\r\n"
+        "a=control:audio\r\n";
+    const auto response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(describe, "CSeq:") + "\r\nContent-Base: " + request_url +
+                          "/\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + std::string(sdp);
+    boost::asio::write(socket, boost::asio::buffer(response));
+
+    const auto setup = read_rtsp_headers(socket);
+    require(setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp invalid opus rate skips audio");
+    const auto setup_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(setup, "CSeq:") +
+                                "\r\nSession: opus-rate;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(setup_response));
+    const auto play = read_rtsp_headers(socket);
+    const auto play_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: opus-rate;timeout=60\r\nContent-Length: 0\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(play_response));
+
+    constexpr std::array<std::uint8_t, 21> video_rtp{
+        0x24, 0x00, 0x00, 0x11, 0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0,
+    };
+    boost::asio::write(socket, boost::asio::buffer(video_rtp));
+    std::shared_ptr<media_stream> stream;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!(stream = registry.find("relay/opus-rate")) && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(stream != nullptr && stream->tracks().size() == 1U && stream->tracks()[0].kind == media_kind::video,
+            "rtsp invalid opus rate excluded from topology");
+
+    pull->shutdown();
+    boost::system::error_code error;
+    socket.close(error);
+    runner.join();
 }
 
 void test_rtsp_input_rejects_audio_only_source()
@@ -2882,10 +3137,11 @@ void test_rtsp_input_media_driven_keepalive()
 class rtsp_output_test_peer final
 {
    public:
-    explicit rtsp_output_test_peer(bool h265 = false) : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_(io_)
+    explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()})
+        : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_(io_)
     {
         stream_ = std::make_shared<media_stream>("live/test", io_.get_executor());
-        require(stream_->set_tracks({h265 ? make_h265_track() : make_video_track(), make_audio_track()}), "rtsp output tracks");
+        require(stream_->set_tracks(std::move(tracks)), "rtsp output tracks");
         require(registry_.add(stream_), "rtsp output registry add");
 
         client_.connect(acceptor_.local_endpoint());
@@ -3277,7 +3533,7 @@ void test_rtsp_output_audio_video_order()
 
 void test_rtsp_output_h265()
 {
-    rtsp_output_test_peer peer(true);
+    rtsp_output_test_peer peer({make_h265_track(), make_audio_track()});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
     const auto describe = peer.request("DESCRIBE " + base +
                                        " RTSP/1.0\r\n"
@@ -3338,10 +3594,67 @@ void test_rtsp_output_h265()
     require(capture.access_unit == *frame.payload, "rtsp h265 cached access unit");
 }
 
+void test_rtsp_output_opus_passthrough_boundaries()
+{
+    rtsp_output_test_peer peer({make_video_track(), make_opus_track(1)});
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+    const auto describe = peer.request("DESCRIBE " + base +
+                                       " RTSP/1.0\r\n"
+                                       "CSeq: 1\r\n"
+                                       "Accept: application/sdp\r\n\r\n");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp opus output describe");
+    require(describe.find("m=audio ") != std::string::npos && describe.find(" RTP/AVP 97\n") != std::string::npos,
+            "rtsp opus output dynamic payload type");
+    require(describe.find("a=rtpmap:97 opus/48000/2\n") != std::string::npos, "rtsp opus output rtpmap");
+
+    const auto setup = peer.request("SETUP " + base +
+                                    "/trackID=2 RTSP/1.0\r\n"
+                                    "CSeq: 2\r\n"
+                                    "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
+    const auto session = rtsp_header_value(setup, "Session:");
+    require(setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp opus output setup");
+    require(peer.request("PLAY " + base +
+                         " RTSP/1.0\r\n"
+                         "CSeq: 3\r\n"
+                         "Session: " +
+                         session + "\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp opus output play");
+
+    peer.publish(make_video_frame(0, true));
+    const auto opus = make_opus_frame(20'000'000, {0x78, 0x11, 0x22, 0x33, 0x44});
+    peer.publish(opus);
+    std::size_t rtp_packets = 0;
+    std::vector<std::uint8_t> received_payload;
+    while (const auto interleaved = peer.read_interleaved(std::chrono::milliseconds(100)))
+    {
+        if (interleaved->channel == 3U)
+        {
+            continue;
+        }
+        require(interleaved->channel == 2U, "rtsp opus output rtp channel");
+        rtp_packet_t packet{};
+        require(rtp_packet_deserialize(&packet, interleaved->payload.data(), static_cast<int>(interleaved->payload.size())) == 0,
+                "rtsp opus output rtp packet");
+        require(packet.rtp.pt == 97U, "rtsp opus output negotiated payload type");
+        const auto* begin = static_cast<const std::uint8_t*>(packet.payload);
+        received_payload.assign(begin, begin + packet.payloadlen);
+        ++rtp_packets;
+    }
+    require(rtp_packets == 1U && received_payload == *opus.payload, "rtsp opus output one packet raw payload");
+
+    peer.publish(make_opus_frame(40'000'001));
+    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp opus output rejects fractional millisecond");
+
+    const auto capacity = static_cast<std::size_t>(rtp_packet_getsize() - RTP_FIXED_HEADER);
+    peer.publish(make_opus_frame(60'000'000, std::vector<std::uint8_t>(capacity + 1U, 0x55)));
+    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp opus output rejects oversized packet");
+}
+
 void test_rtsp_output_setup_track_lifecycle()
 {
     {
-        rtsp_output_test_peer peer(true);
+        rtsp_output_test_peer peer({make_h265_track(), make_audio_track()});
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
         const auto describe = peer.request("DESCRIBE " + base +
                                            " RTSP/1.0\r\n"
@@ -5455,6 +5768,10 @@ int main()
     std::cout << "[pass] rtsp_input_establishment_progress_timeout\n";
     media_server::test_rtsp_input_selects_single_audio_and_video();
     std::cout << "[pass] rtsp_input_selects_single_audio_and_video\n";
+    media_server::test_rtsp_input_opus_passthrough();
+    std::cout << "[pass] rtsp_input_opus_passthrough\n";
+    media_server::test_rtsp_input_rejects_invalid_opus_rate();
+    std::cout << "[pass] rtsp_input_rejects_invalid_opus_rate\n";
     media_server::test_rtsp_input_rejects_audio_only_source();
     std::cout << "[pass] rtsp_input_rejects_audio_only_source\n";
     media_server::test_rtsp_input_uses_complete_sdp_topology_without_track_wait();
@@ -5473,6 +5790,8 @@ int main()
     std::cout << "[pass] rtsp_output_audio_video_order\n";
     media_server::test_rtsp_output_h265();
     std::cout << "[pass] rtsp_output_h265\n";
+    media_server::test_rtsp_output_opus_passthrough_boundaries();
+    std::cout << "[pass] rtsp_output_opus_passthrough_boundaries\n";
     media_server::test_rtsp_output_setup_track_lifecycle();
     std::cout << "[pass] rtsp_output_setup_track_lifecycle\n";
     media_server::test_rtsp_output_unsetup_audio_update_keeps_video_continuity();
