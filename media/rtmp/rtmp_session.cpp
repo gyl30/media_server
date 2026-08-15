@@ -26,8 +26,13 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 }    // namespace
 
-rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry)
-    : connection_(std::move(connection)), registry_(registry)
+rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection,
+                           stream_registry& registry,
+                           std::chrono::milliseconds initial_tracks_timeout)
+    : connection_(std::move(connection)),
+      registry_(registry),
+      initial_tracks_timer_(connection_->socket().get_executor()),
+      initial_tracks_timeout_(initial_tracks_timeout)
 {
 }
 
@@ -290,16 +295,19 @@ int rtmp_session::on_publish(std::string app, std::string stream)
         stream_.reset();
         return -1;
     }
-    if (!registry_.add(stream_))
-    {
-        spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
-        flv_demuxer_destroy(demuxer_);
-        demuxer_ = nullptr;
-        stream_.reset();
-        return -1;
-    }
-
     role_ = role::publisher;
+    initial_tracks_timer_.expires_after(initial_tracks_timeout_);
+    const auto self = shared_from_this();
+    initial_tracks_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_ || self->role_ != role::publisher || self->tracks_initialized_)
+            {
+                return;
+            }
+            spdlog::warn("rtmp input initial tracks timeout stream {}", self->stream_name_);
+            self->shutdown();
+        });
     spdlog::info("rtmp publish {}", stream_name_);
     return 0;
 }
@@ -477,6 +485,12 @@ void rtmp_session::try_initialize_tracks()
         return;
     }
 
+    if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
+    {
+        shutdown();
+        return;
+    }
+
     std::vector<media_track> tracks;
     tracks.push_back(std::move(*initial_video_track_));
     if (expected_audio_)
@@ -486,10 +500,18 @@ void rtmp_session::try_initialize_tracks()
     tracks_initialized_ = stream_->set_tracks(std::move(tracks));
     initial_video_track_.reset();
     initial_audio_track_.reset();
-    if (tracks_initialized_)
+    if (!tracks_initialized_)
     {
-        spdlog::info("rtmp input tracks ready audio {}", expected_audio_);
+        return;
     }
+    if (!registry_.add(stream_))
+    {
+        spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
+        shutdown();
+        return;
+    }
+    initial_tracks_timer_.cancel();
+    spdlog::info("rtmp input tracks ready audio {}", expected_audio_);
 }
 
 void rtmp_session::on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data)
@@ -542,6 +564,7 @@ void rtmp_session::safe_shutdown()
     reader_tracks_.clear();
     track_revision_ = 0;
     waiting_for_key_frame_ = false;
+    initial_tracks_timer_.cancel();
     connection_->shutdown();
     stream_.reset();
     output_muxer_.reset();

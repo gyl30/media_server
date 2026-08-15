@@ -322,10 +322,6 @@ int rtsp_output_session::on_describe(std::string_view uri)
         return rtsp_server_reply_describe(server_, 404, "");
     }
     const auto snapshot = stream->tracks();
-    if (snapshot.empty())
-    {
-        return rtsp_server_reply_describe(server_, 503, "");
-    }
 
     muxer_ = rtsp_muxer_create(&rtsp_output_session::muxer_packet_callback, this);
     if (muxer_ == nullptr)

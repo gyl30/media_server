@@ -62,11 +62,6 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         return whep_session_startup_error::internal_error;
     }
     const auto source_tracks = stream_->tracks();
-    if (source_tracks.empty())
-    {
-        spdlog::debug("webrtc whep startup rejected stream without tracks");
-        return whep_session_startup_error::stream_not_ready;
-    }
 
     const auto bind_address = advertised_address_.is_v6() ? boost::asio::ip::address(boost::asio::ip::address_v6::any())
                                                           : boost::asio::ip::address(boost::asio::ip::address_v4::any());
