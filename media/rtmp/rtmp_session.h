@@ -7,6 +7,9 @@
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/flv/flv_output_muxer.h"
 
+#include <boost/asio/steady_timer.hpp>
+
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -23,7 +26,9 @@ namespace media_server
 class rtmp_session final : public media_reader, public std::enable_shared_from_this<rtmp_session>
 {
    public:
-    rtmp_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry);
+    rtmp_session(std::shared_ptr<tcp_connection> connection,
+                 stream_registry& registry,
+                 std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
     ~rtmp_session() override;
 
     void startup();
@@ -65,6 +70,8 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
 
     std::shared_ptr<tcp_connection> connection_;
     stream_registry& registry_;
+    boost::asio::steady_timer initial_tracks_timer_;
+    std::chrono::milliseconds initial_tracks_timeout_;
     rtmp_server_t* server_{};
     flv_demuxer_t* demuxer_{};
     std::unique_ptr<flv_output_muxer> output_muxer_;

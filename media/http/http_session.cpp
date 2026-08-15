@@ -162,9 +162,6 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
         case whep_create_error::stream_not_found:
             send_whep_error_response(boost::beast::http::status::conflict, "stream not found\n", whep_retry_after_seconds);
             return;
-        case whep_create_error::stream_not_ready:
-            send_whep_error_response(boost::beast::http::status::conflict, "stream not ready\n", whep_retry_after_seconds);
-            return;
         case whep_create_error::invalid_offer:
             send_whep_error_response(boost::beast::http::status::bad_request, "invalid or unsupported sdp offer\n");
             return;
@@ -201,12 +198,6 @@ void http_session::handle_flv(const boost::urls::url_view& target)
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");
         return;
     }
-    if (media_stream->tracks().empty())
-    {
-        send_text_response(boost::beast::http::status::service_unavailable, "text/plain", "stream not ready\n");
-        return;
-    }
-
     auto response =
         std::make_shared<boost::beast::http::response<boost::beast::http::empty_body>>(boost::beast::http::status::ok, request_.version());
     response->set(boost::beast::http::field::server, "media_server");

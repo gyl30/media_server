@@ -77,8 +77,6 @@ whep_create_result whep_service::create(boost::asio::any_io_executor executor, s
             break;
         case whep_session_startup_error::invalid_offer:
             return {.error = whep_create_error::invalid_offer, .session_id = {}, .answer_sdp = {}};
-        case whep_session_startup_error::stream_not_ready:
-            return {.error = whep_create_error::stream_not_ready, .session_id = {}, .answer_sdp = {}};
         case whep_session_startup_error::internal_error:
             return {.error = whep_create_error::internal_error, .session_id = {}, .answer_sdp = {}};
     }

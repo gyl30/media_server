@@ -21,7 +21,6 @@ enum class whep_create_error
 {
     none,
     stream_not_found,
-    stream_not_ready,
     invalid_offer,
     internal_error,
 };

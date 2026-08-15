@@ -6,9 +6,11 @@
 extern "C"
 {
 #include "avpacket.h"
+#include "base64.h"
 #include "avstream.h"
 #include "rtsp-client.h"
 #include "rtsp-demuxer.h"
+#include "sdp-a-fmtp.h"
 #include "sdp.h"
 }
 
@@ -30,6 +32,37 @@ namespace
 {
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+
+bool append_sdp_parameter_sets(std::vector<std::uint8_t>& config, std::string_view encoded)
+{
+    constexpr std::array<std::uint8_t, 4> start_code{0x00, 0x00, 0x00, 0x01};
+    while (!encoded.empty())
+    {
+        const auto comma = encoded.find(',');
+        const auto parameter_set = encoded.substr(0, comma);
+        if (parameter_set.empty())
+        {
+            return false;
+        }
+
+        std::vector<std::uint8_t> decoded((parameter_set.size() + 3U) / 4U * 3U);
+        const auto bytes = base64_decode(decoded.data(), parameter_set.data(), parameter_set.size());
+        if (bytes == 0)
+        {
+            return false;
+        }
+        decoded.resize(bytes);
+        config.insert(config.end(), start_code.begin(), start_code.end());
+        config.insert(config.end(), decoded.begin(), decoded.end());
+
+        if (comma == std::string_view::npos)
+        {
+            break;
+        }
+        encoded.remove_prefix(comma + 1U);
+    }
+    return !config.empty();
+}
 
 bool iequals(const char* value, std::string_view expected)
 {
@@ -73,7 +106,8 @@ rtsp_input_session::rtsp_input_session(boost::asio::io_context& io,
                                        stream_registry& registry,
                                        std::string stream_name,
                                        std::string url,
-                                       std::chrono::milliseconds establishment_timeout)
+                                       std::chrono::milliseconds establishment_timeout,
+                                       std::chrono::milliseconds initial_tracks_timeout)
     : io_(io),
       registry_(registry),
       stream_name_(std::move(stream_name)),
@@ -81,7 +115,9 @@ rtsp_input_session::rtsp_input_session(boost::asio::io_context& io,
       resolver_(io),
       connect_socket_(io),
       establishment_timer_(io),
-      establishment_timeout_(establishment_timeout)
+      initial_tracks_timer_(io),
+      establishment_timeout_(establishment_timeout),
+      initial_tracks_timeout_(initial_tracks_timeout)
 {
 }
 
@@ -118,11 +154,6 @@ bool rtsp_input_session::startup()
     password_ = parsed->password;
 
     stream_ = std::make_shared<media_stream>(stream_name_, io_.get_executor());
-    if (!registry_.add(stream_))
-    {
-        stream_.reset();
-        return false;
-    }
 
     static_cast<void>(avpkt2bs_create(&bitstream_));
 
@@ -203,6 +234,7 @@ void rtsp_input_session::safe_shutdown()
     }
     keepalive_deadline_.reset();
     establishment_timer_.cancel();
+    initial_tracks_timer_.cancel();
     resolver_.cancel();
     boost::system::error_code error;
     connect_socket_.close(error);
@@ -400,9 +432,12 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
         return -1;
     }
 
+    bool expected_video = false;
     for (int media = 0; media < media_count; ++media)
     {
-        expected_audio_ = expected_audio_ || rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO;
+        const auto media_type = rtsp_client_get_media_type(client_, media);
+        expected_video = expected_video || media_type == SDP_M_MEDIA_VIDEO;
+        expected_audio_ = expected_audio_ || media_type == SDP_M_MEDIA_AUDIO;
 
         const auto* encoding = rtsp_client_get_media_encoding(client_, media);
         const auto* fmtp = rtsp_client_get_media_fmtp(client_, media);
@@ -414,7 +449,84 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
         {
             return -1;
         }
+
+        std::optional<media_track> track;
+        if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_VIDEO && iequals(encoding, "H264"))
+        {
+            sdp_a_fmtp_h264_t parameters{};
+            auto format = payload;
+            std::vector<std::uint8_t> config;
+            if (fmtp != nullptr && sdp_a_fmtp_h264(fmtp, &format, &parameters) == 0 &&
+                append_sdp_parameter_sets(config, parameters.sprop_parameter_sets) && !h264_annex_b_to_avcc(config).empty())
+            {
+                track = media_track{
+                    .id = video_track_id,
+                    .kind = media_kind::video,
+                    .codec = codec_id::h264,
+                    .clock_rate = 90'000,
+                    .channel_count = 0,
+                    .codec_config = std::move(config),
+                };
+            }
+        }
+        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_VIDEO &&
+                 (iequals(encoding, "H265") || iequals(encoding, "HEVC")))
+        {
+            sdp_a_fmtp_h265_t parameters{};
+            auto format = payload;
+            std::vector<std::uint8_t> config;
+            if (fmtp != nullptr && sdp_a_fmtp_h265(fmtp, &format, &parameters) == 0 &&
+                append_sdp_parameter_sets(config, parameters.sprop_vps) && append_sdp_parameter_sets(config, parameters.sprop_sps) &&
+                append_sdp_parameter_sets(config, parameters.sprop_pps) && !h265_annex_b_to_hvcc(config).empty())
+            {
+                track = media_track{
+                    .id = video_track_id,
+                    .kind = media_kind::video,
+                    .codec = codec_id::h265,
+                    .clock_rate = 90'000,
+                    .channel_count = 0,
+                    .codec_config = std::move(config),
+                };
+            }
+        }
+        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO && iequals(encoding, "MPEG4-GENERIC"))
+        {
+            sdp_a_fmtp_mpeg4_t parameters{};
+            auto format = payload;
+            if (fmtp != nullptr && sdp_a_fmtp_mpeg4(fmtp, &format, &parameters) == 0)
+            {
+                const std::string_view encoded(parameters.config);
+                if (!encoded.empty() && (encoded.size() % 2U) == 0U &&
+                    std::all_of(encoded.begin(), encoded.end(), [](char value) { return std::isxdigit(static_cast<unsigned char>(value)) != 0; }))
+                {
+                    std::vector<std::uint8_t> config(encoded.size() / 2U);
+                    static_cast<void>(base16_decode(config.data(), encoded.data(), encoded.size()));
+                    if (const auto aac = parse_aac_asc(config))
+                    {
+                        track = media_track{
+                            .id = audio_track_id,
+                            .kind = media_kind::audio,
+                            .codec = codec_id::aac,
+                            .clock_rate = aac->sample_rate,
+                            .channel_count = aac->channel_count,
+                            .codec_config = std::move(config),
+                        };
+                    }
+                }
+            }
+        }
+
+        if (track)
+        {
+            auto& pending = track->kind == media_kind::video ? initial_video_track_ : initial_audio_track_;
+            pending = std::move(*track);
+        }
     }
+    if (!expected_video)
+    {
+        return -1;
+    }
+
     keepalive_deadline_ = std::chrono::steady_clock::now() + keepalive_interval_;
     std::uint64_t npt{};
     return rtsp_client_play(client_, &npt, nullptr);
@@ -439,6 +551,22 @@ void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uin
         }
         media_started_ = true;
         establishment_timer_.cancel();
+        static_cast<void>(try_initialize_tracks());
+        if (!tracks_initialized_)
+        {
+            initial_tracks_timer_.expires_after(initial_tracks_timeout_);
+            const auto self = shared_from_this();
+            initial_tracks_timer_.async_wait(
+                [self](const boost::system::error_code& error)
+                {
+                    if (error || self->closed_ || self->tracks_initialized_)
+                    {
+                        return;
+                    }
+                    spdlog::warn("rtsp input initial tracks timeout stream {}", self->stream_name_);
+                    self->shutdown();
+                });
+        }
     }
 
     static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
@@ -597,9 +725,19 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
     }
     pending = *track;
 
-    if (!initial_video_track_ || (expected_audio_ && !initial_audio_track_))
+    if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
     {
+        shutdown();
         return changed;
+    }
+    return try_initialize_tracks() || changed;
+}
+
+bool rtsp_input_session::try_initialize_tracks()
+{
+    if (tracks_initialized_ || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
+    {
+        return false;
     }
 
     std::vector<media_track> tracks;
@@ -611,11 +749,19 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
     tracks_initialized_ = stream_->set_tracks(std::move(tracks));
     initial_video_track_.reset();
     initial_audio_track_.reset();
-    if (tracks_initialized_)
+    if (!tracks_initialized_)
     {
-        spdlog::info("rtsp input tracks ready audio {}", expected_audio_);
+        return false;
     }
-    return changed || tracks_initialized_;
+    if (!registry_.add(stream_))
+    {
+        spdlog::warn("rtsp input duplicate stream {}", stream_name_);
+        shutdown();
+        return true;
+    }
+    initial_tracks_timer_.cancel();
+    spdlog::info("rtsp input tracks ready audio {}", expected_audio_);
+    return true;
 }
 
 }    // namespace media_server

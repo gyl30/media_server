@@ -1542,9 +1542,6 @@ void test_whep_session_startup_errors()
 
     require(make_session(stream, nullptr)->startup(*offer) == whep_session_startup_error::internal_error, "startup errors internal error");
 
-    auto empty_stream = std::make_shared<media_stream>("live/startup-errors-empty", io.get_executor());
-    require(make_session(empty_stream, certificate)->startup(*offer) == whep_session_startup_error::stream_not_ready,
-            "startup errors stream without tracks");
 }
 
 void test_whep_session_lifecycle()
@@ -1557,10 +1554,6 @@ void test_whep_session_lifecycle()
 
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
     require(whep.ready(), "whep certificate ready");
-
-    auto empty_stream = std::make_shared<media_stream>("live/empty", io.get_executor());
-    require(registry.add(empty_stream), "whep empty stream add");
-    require(whep.create(io.get_executor(), "live/empty", webrtc_offer_sdp).error == whep_create_error::stream_not_ready, "whep empty stream not ready");
 
     auto missing_ice_offer = webrtc_offer_sdp;
     const std::string video_ice_ufrag = "a=ice-ufrag:remotevideo\r\n";
