@@ -10,6 +10,7 @@ extern "C"
 #include "avstream.h"
 #include "rtsp-client.h"
 #include "rtsp-demuxer.h"
+#include "rtp-profile.h"
 #include "sdp-a-fmtp.h"
 #include "sdp.h"
 }
@@ -146,6 +147,26 @@ std::optional<std::uint16_t> opus_channel_count_from_fmtp(const char* fmtp)
     return 1;
 }
 
+std::optional<codec_id> selected_g711_codec(rtsp_client_t* client, int media)
+{
+    if (rtsp_client_get_media_type(client, media) != SDP_M_MEDIA_AUDIO || rtsp_client_get_media_rate(client, media) != 8'000)
+    {
+        return std::nullopt;
+    }
+
+    const auto payload = rtsp_client_get_media_payload(client, media);
+    const auto* encoding = rtsp_client_get_media_encoding(client, media);
+    if (payload == RTP_PAYLOAD_PCMA && (encoding == nullptr || *encoding == '\0' || iequals(encoding, "PCMA")))
+    {
+        return codec_id::g711a;
+    }
+    if (payload == RTP_PAYLOAD_PCMU && (encoding == nullptr || *encoding == '\0' || iequals(encoding, "PCMU")))
+    {
+        return codec_id::g711u;
+    }
+    return std::nullopt;
+}
+
 bool should_setup_media(rtsp_client_t* client, int media)
 {
     const auto type = rtsp_client_get_media_type(client, media);
@@ -154,7 +175,8 @@ bool should_setup_media(rtsp_client_t* client, int media)
                            (type == SDP_M_MEDIA_AUDIO &&
                             (iequals(encoding, "MPEG4-GENERIC") ||
                              (iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
-                              opus_channel_count_from_fmtp(rtsp_client_get_media_fmtp(client, media)).has_value())));
+                              opus_channel_count_from_fmtp(rtsp_client_get_media_fmtp(client, media)).has_value()) ||
+                             selected_g711_codec(client, media).has_value()));
     if (!supported)
     {
         return false;
@@ -599,6 +621,17 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
                 };
             }
         }
+        else if (const auto codec = selected_g711_codec(client_, media))
+        {
+            track = media_track{
+                .id = audio_track_id,
+                .kind = media_kind::audio,
+                .codec = *codec,
+                .clock_rate = 8'000,
+                .channel_count = 1,
+                .codec_config = {},
+            };
+        }
 
         if (track)
         {
@@ -698,7 +731,8 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     {
         id = video_track_id;
     }
-    else if (packet->stream->codecid == AVCODEC_AUDIO_AAC || packet->stream->codecid == AVCODEC_AUDIO_OPUS)
+    else if (packet->stream->codecid == AVCODEC_AUDIO_AAC || packet->stream->codecid == AVCODEC_AUDIO_OPUS ||
+             packet->stream->codecid == AVCODEC_AUDIO_G711A || packet->stream->codecid == AVCODEC_AUDIO_G711U)
     {
         id = audio_track_id;
     }
@@ -783,6 +817,17 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
                 .codec_config = std::move(config),
             };
         }
+    }
+    else if ((input.codecid == AVCODEC_AUDIO_G711A || input.codecid == AVCODEC_AUDIO_G711U) && input.sample_rate == 8'000 && input.channels == 1)
+    {
+        track = media_track{
+            .id = audio_track_id,
+            .kind = media_kind::audio,
+            .codec = input.codecid == AVCODEC_AUDIO_G711A ? codec_id::g711a : codec_id::g711u,
+            .clock_rate = 8'000,
+            .channel_count = 1,
+            .codec_config = {},
+        };
     }
 
     if (!track)
