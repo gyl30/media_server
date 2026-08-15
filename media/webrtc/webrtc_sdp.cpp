@@ -334,13 +334,6 @@ std::optional<h265_profile_tier_level> source_h265_profile_tier_level(const medi
     };
 }
 
-const media_track* find_track(const std::vector<media_track>& tracks, media_kind kind, codec_id codec)
-{
-    const auto iterator =
-        std::find_if(tracks.begin(), tracks.end(), [kind, codec](const media_track& track) { return track.kind == kind && track.codec == codec; });
-    return iterator == tracks.end() ? nullptr : &*iterator;
-}
-
 bool rtcp_mux_payload_type_allowed(int payload_type)
 {
     return payload_type >= 0 && payload_type <= 127 && (payload_type < 64 || payload_type > 95);
@@ -415,6 +408,30 @@ int opus_output_channel_count(const webrtc_codec_offer& codec, const media_track
         return 2;
     }
     return 1;
+}
+
+bool opus_passthrough_compatible(const webrtc_codec_offer& codec, const media_track& track)
+{
+    if (track.channel_count == 2 && !has_parameter(codec.format_parameters, "stereo", "1"))
+    {
+        return false;
+    }
+
+    if (parameter_value(codec.format_parameters, "maxplaybackrate"))
+    {
+        const auto rate = decimal_parameter(codec.format_parameters, "maxplaybackrate", 48'000, 48'000);
+        if (!rate || *rate != 48'000)
+        {
+            return false;
+        }
+    }
+
+    const auto bitrate = decimal_parameter(codec.format_parameters, "maxaveragebitrate", 0, 510'000);
+    if (!bitrate || *bitrate != 510'000)
+    {
+        return false;
+    }
+    return true;
 }
 
 std::string h264_profile_level_id(const media_track& track)
@@ -558,9 +575,21 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
             .rtcp_mux = sdp_media_attribute_find(sdp.get(), index, "rtcp-mux") != nullptr,
             .bundle_only = sdp_media_attribute_find(sdp.get(), index, "bundle-only") != nullptr,
             .mid_extension_id = std::nullopt,
+            .max_packet_time_ms = std::nullopt,
             .payload_types = {},
             .codecs = {},
         };
+
+        if (const char* maxptime = sdp_media_attribute_find(sdp.get(), index, "maxptime"); maxptime != nullptr)
+        {
+            int value = 0;
+            const std::string_view maxptime_text(maxptime);
+            const auto [pointer, error] = std::from_chars(maxptime_text.data(), maxptime_text.data() + maxptime_text.size(), value);
+            if (error == std::errc{} && pointer == maxptime_text.data() + maxptime_text.size() && value > 0)
+            {
+                media.max_packet_time_ms = value;
+            }
+        }
 
         const auto format_count = sdp_media_formats(sdp.get(), index, nullptr, 0);
         if (format_count > 0)
@@ -603,12 +632,23 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         tracks.end(),
         [](const media_track& track) { return track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265); });
     const auto* video_track = video_iterator == tracks.end() ? nullptr : &*video_iterator;
-    const auto* audio_track = find_track(tracks, media_kind::audio, codec_id::aac);
+    const auto audio_iterator = std::find_if(
+        tracks.begin(),
+        tracks.end(),
+        [](const media_track& track)
+        {
+            return track.kind == media_kind::audio &&
+                (track.codec == codec_id::aac ||
+                 (track.codec == codec_id::opus && track.clock_rate == 48'000 && (track.channel_count == 1 || track.channel_count == 2) &&
+                  track.codec_config.empty()));
+        });
+    const auto* audio_track = audio_iterator == tracks.end() ? nullptr : &*audio_iterator;
     const auto address_type = config.address.is_v6() ? "IP6" : "IP4";
 
     std::vector<std::pair<std::string, std::string>> media_answers;
     std::vector<std::string> accepted_mids;
     std::optional<codec_id> video_codec;
+    std::optional<codec_id> audio_codec;
     std::optional<int> video_payload_type;
     std::optional<int> audio_payload_type;
     std::optional<std::string> video_mid;
@@ -652,6 +692,11 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         else if (can_receive && lower_copy(media.type) == "audio" && audio_track != nullptr && !audio_payload_type.has_value())
         {
             codec = find_opus(media);
+            if (codec != nullptr && audio_track->codec == codec_id::opus &&
+                (!opus_passthrough_compatible(*codec, *audio_track) || (media.max_packet_time_ms && *media.max_packet_time_ms != 120)))
+            {
+                codec = nullptr;
+            }
         }
 
         if (codec != nullptr && ((video_payload_type && *video_payload_type == codec->payload_type) ||
@@ -688,6 +733,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         }
         else
         {
+            audio_codec = audio_track->codec;
             audio_payload_type = codec->payload_type;
             audio_mid = media.mid;
             audio_mid_extension_id = media.mid_extension_id;
@@ -800,6 +846,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         .sdp = answer.str(),
         .transport_mid = *transport_mid,
         .video_codec = video_codec,
+        .audio_codec = audio_codec,
         .video_payload_type = video_payload_type,
         .audio_payload_type = audio_payload_type,
         .video_mid = video_mid,

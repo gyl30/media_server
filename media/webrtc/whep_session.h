@@ -106,6 +106,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::string remote_ice_ufrag_;
     std::string answer_sdp_;
     std::optional<codec_id> video_codec_;
+    std::optional<codec_id> audio_codec_;
     std::optional<int> video_payload_type_;
     std::optional<int> audio_payload_type_;
     std::optional<int> audio_channel_count_;

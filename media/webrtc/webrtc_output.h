@@ -54,16 +54,17 @@ class webrtc_output final
         std::unique_ptr<audio_transcoder> transcoder;
         int media_id{-1};
         int payload_id{-1};
+        std::size_t rtp_extension_bytes{};
         bool waiting_key_frame{};
     };
 
     bool add_h264_track(const media_track& track);
     bool add_h265_track(const media_track& track);
-    bool add_aac_track(const media_track& track);
+    bool add_audio_track(const media_track& track);
     bool configure_rtcp(int payload_id);
     void emit_rtcp(int payload_id);
     void input_video(track_state& state, const media_frame& frame);
-    void input_aac(track_state& state, const media_frame& frame);
+    void input_audio(track_state& state, const media_frame& frame);
 
     webrtc_output_config config_;
     packet_handler rtp_handler_;
