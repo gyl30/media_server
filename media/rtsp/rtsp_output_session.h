@@ -33,6 +33,7 @@ class rtsp_output_session final : public media_reader, public std::enable_shared
    private:
     struct track_state
     {
+        codec_id codec{};
         std::uint64_t config_version{};
         int payload_index{-1};
         int media_id{-1};

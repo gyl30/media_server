@@ -79,12 +79,82 @@ bool iequals(const char* value, std::string_view expected)
                       [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
 }
 
+std::optional<std::uint16_t> opus_channel_count_from_fmtp(const char* fmtp)
+{
+    if (fmtp == nullptr)
+    {
+        return 1;
+    }
+
+    std::string_view parameters(fmtp);
+    if (const auto space = parameters.find(' '); space != std::string_view::npos)
+    {
+        parameters.remove_prefix(space + 1U);
+    }
+
+    while (!parameters.empty())
+    {
+        const auto separator = parameters.find(';');
+        auto parameter = parameters.substr(0, separator);
+        const auto first = parameter.find_first_not_of(" \t");
+        if (first != std::string_view::npos)
+        {
+            parameter.remove_prefix(first);
+            const auto last = parameter.find_last_not_of(" \t");
+            parameter = parameter.substr(0, last + 1U);
+        }
+
+        const auto equals = parameter.find('=');
+        if (equals != std::string_view::npos)
+        {
+            auto name = parameter.substr(0, equals);
+            auto value = parameter.substr(equals + 1U);
+            while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back())) != 0)
+            {
+                name.remove_suffix(1U);
+            }
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0)
+            {
+                value.remove_prefix(1U);
+            }
+            const bool sprop_stereo = name.size() == std::string_view("sprop-stereo").size() &&
+                                      std::equal(name.begin(),
+                                                 name.end(),
+                                                 std::string_view("sprop-stereo").begin(),
+                                                 [](unsigned char left, unsigned char right)
+                                                 { return std::tolower(left) == std::tolower(right); });
+            if (sprop_stereo)
+            {
+                if (value == "0")
+                {
+                    return 1;
+                }
+                if (value == "1")
+                {
+                    return 2;
+                }
+                return std::nullopt;
+            }
+        }
+
+        if (separator == std::string_view::npos)
+        {
+            break;
+        }
+        parameters.remove_prefix(separator + 1U);
+    }
+    return 1;
+}
+
 bool should_setup_media(rtsp_client_t* client, int media)
 {
     const auto type = rtsp_client_get_media_type(client, media);
     const auto* encoding = rtsp_client_get_media_encoding(client, media);
     const bool supported = (type == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H264") || iequals(encoding, "H265") || iequals(encoding, "HEVC"))) ||
-                           (type == SDP_M_MEDIA_AUDIO && iequals(encoding, "MPEG4-GENERIC"));
+                           (type == SDP_M_MEDIA_AUDIO &&
+                            (iequals(encoding, "MPEG4-GENERIC") ||
+                             (iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
+                              opus_channel_count_from_fmtp(rtsp_client_get_media_fmtp(client, media)).has_value())));
     if (!supported)
     {
         return false;
@@ -515,6 +585,20 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
                 }
             }
         }
+        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO && iequals(encoding, "opus") && rate == 48'000)
+        {
+            if (const auto channel_count = opus_channel_count_from_fmtp(fmtp))
+            {
+                track = media_track{
+                    .id = audio_track_id,
+                    .kind = media_kind::audio,
+                    .codec = codec_id::opus,
+                    .clock_rate = 48'000,
+                    .channel_count = *channel_count,
+                    .codec_config = {},
+                };
+            }
+        }
 
         if (track)
         {
@@ -614,7 +698,7 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     {
         id = video_track_id;
     }
-    else if (packet->stream->codecid == AVCODEC_AUDIO_AAC)
+    else if (packet->stream->codecid == AVCODEC_AUDIO_AAC || packet->stream->codecid == AVCODEC_AUDIO_OPUS)
     {
         id = audio_track_id;
     }
