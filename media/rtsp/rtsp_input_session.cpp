@@ -69,8 +69,19 @@ bool should_setup_media(rtsp_client_t* client, int media)
 }
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(boost::asio::io_context& io, stream_registry& registry, std::string stream_name, std::string url)
-    : io_(io), registry_(registry), stream_name_(std::move(stream_name)), url_(std::move(url)), resolver_(io), connect_socket_(io)
+rtsp_input_session::rtsp_input_session(boost::asio::io_context& io,
+                                       stream_registry& registry,
+                                       std::string stream_name,
+                                       std::string url,
+                                       std::chrono::milliseconds establishment_timeout)
+    : io_(io),
+      registry_(registry),
+      stream_name_(std::move(stream_name)),
+      url_(std::move(url)),
+      resolver_(io),
+      connect_socket_(io),
+      establishment_timer_(io),
+      establishment_timeout_(establishment_timeout)
 {
 }
 
@@ -116,6 +127,16 @@ bool rtsp_input_session::startup()
     static_cast<void>(avpkt2bs_create(&bitstream_));
 
     const auto self = shared_from_this();
+    establishment_timer_.expires_after(establishment_timeout_);
+    establishment_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (!error)
+            {
+                spdlog::warn("rtsp input establishment timeout stream {}", self->stream_name_);
+                self->shutdown();
+            }
+        });
     resolver_.async_resolve(parsed->host,
                             std::to_string(parsed->port),
                             [this, self](const boost::system::error_code& error, boost::asio::ip::tcp::resolver::results_type endpoints)
@@ -158,6 +179,7 @@ void rtsp_input_session::safe_shutdown()
         stream_.reset();
     }
     keepalive_deadline_.reset();
+    establishment_timer_.cancel();
     resolver_.cancel();
     boost::system::error_code error;
     connect_socket_.close(error);
@@ -368,7 +390,12 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
     }
     keepalive_deadline_ = std::chrono::steady_clock::now() + keepalive_interval_;
     std::uint64_t npt{};
-    return rtsp_client_play(client_, &npt, nullptr);
+    const auto result = rtsp_client_play(client_, &npt, nullptr);
+    if (result == 0)
+    {
+        establishment_timer_.cancel();
+    }
+    return result;
 }
 
 void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
