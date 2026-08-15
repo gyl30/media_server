@@ -993,6 +993,28 @@ void test_webrtc_video_codec_parameters()
     const auto wrong_h265_tx_mode_answer = make_webrtc_answer(*wrong_h265_tx_mode, {make_h265_track(), make_audio_track()}, config);
     require(wrong_h265_tx_mode_answer.has_value() && !wrong_h265_tx_mode_answer->video_payload_type.has_value(),
             "webrtc reject unsupported h265 tx mode");
+
+    auto h265_compatibility_sdp = make_h265_offer(webrtc_offer_sdp);
+    const auto h265_compatibility_offset = h265_compatibility_sdp.find("level-id=120");
+    require(h265_compatibility_offset != std::string::npos, "webrtc h265 compatibility source");
+    h265_compatibility_sdp.insert(h265_compatibility_offset + 12U, ";profile-compatibility-indicator=00000000");
+    const auto h265_compatibility = parse_webrtc_offer(h265_compatibility_sdp);
+    require(h265_compatibility.has_value(), "webrtc parse unsupported h265 compatibility");
+    const auto h265_compatibility_answer = make_webrtc_answer(*h265_compatibility, {make_h265_track(), make_audio_track()}, config);
+    require(h265_compatibility_answer.has_value() && !h265_compatibility_answer->video_payload_type.has_value() &&
+                h265_compatibility_answer->audio_payload_type.has_value(),
+            "webrtc reject unsupported h265 compatibility only");
+
+    auto h265_constraints_sdp = make_h265_offer(webrtc_offer_sdp);
+    const auto h265_constraints_offset = h265_constraints_sdp.find("level-id=120");
+    require(h265_constraints_offset != std::string::npos, "webrtc h265 constraints source");
+    h265_constraints_sdp.insert(h265_constraints_offset + 12U, ";interop-constraints=000000000000");
+    const auto h265_constraints = parse_webrtc_offer(h265_constraints_sdp);
+    require(h265_constraints.has_value(), "webrtc parse unsupported h265 constraints");
+    const auto h265_constraints_answer = make_webrtc_answer(*h265_constraints, {make_h265_track(), make_audio_track()}, config);
+    require(h265_constraints_answer.has_value() && !h265_constraints_answer->video_payload_type.has_value() &&
+                h265_constraints_answer->audio_payload_type.has_value(),
+            "webrtc reject unsupported h265 constraints only");
 }
 
 void test_webrtc_payload_type_membership()

@@ -378,6 +378,12 @@ const webrtc_codec_offer* find_h265(const webrtc_media_offer& media, const h265_
                 return false;
             }
 
+            if (parameter_value(codec.format_parameters, "profile-compatibility-indicator") ||
+                parameter_value(codec.format_parameters, "interop-constraints"))
+            {
+                return false;
+            }
+
             // RFC 7798 对省略的 profile-space/profile-id/tier-flag/level-id 分别推导 0/1/0/93，tx-mode 推导 SRST。
             const auto profile_space = decimal_parameter(codec.format_parameters, "profile-space", 0, 3);
             const auto profile = decimal_parameter(codec.format_parameters, "profile-id", 1, 31);
