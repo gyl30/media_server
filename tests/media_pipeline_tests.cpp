@@ -18,11 +18,15 @@
 #include "media/webrtc/webrtc_output.h"
 #include "media/webrtc/whep_service.h"
 
+#include <cstddef>
+
 extern "C"
 {
 #include "amf0.h"
+#include "avpbs.h"
 #include "flv-demuxer.h"
 #include "flv-header.h"
+#include "flv-muxer.h"
 #include "flv-parser.h"
 #include "flv-proto.h"
 #include "mpeg-ts.h"
@@ -3585,6 +3589,95 @@ void test_rtmp_aac_asc_adts_contract()
     require(make_adts_frame(scalable_object_type, raw_aac).empty(), "unsupported aac object type cannot create adts");
 }
 
+void test_ireader_h266_avpacket_codec_identity()
+{
+    struct capture
+    {
+        AVPACKET_CODEC_ID codec{AVCODEC_NONE};
+    } captured;
+
+    const auto on_packet = [](void* param, avpacket_t* packet) -> int {
+        if (packet != nullptr && packet->stream != nullptr)
+        {
+            static_cast<capture*>(param)->codec = packet->stream->codecid;
+        }
+        return 0;
+    };
+
+    constexpr std::array<std::uint8_t, 23> config{
+        0xfe, 0x03, 0x8e, 0x00, 0x01, 0x00, 0x02, 0x00, 0x70, 0x8f, 0x00, 0x01,
+        0x00, 0x02, 0x00, 0x78, 0x90, 0x00, 0x01, 0x00, 0x02, 0x00, 0x80,
+    };
+    constexpr std::array<std::uint8_t, 8> frame{0x00, 0x00, 0x00, 0x01, 0x00, 0x38, 0x80, 0x00};
+
+    auto* bitstream = avpbs_find(AVCODEC_VIDEO_H266);
+    require(bitstream != nullptr, "ireader h266 bitstream helper");
+
+    void* context = bitstream->create(
+        7,
+        AVCODEC_VIDEO_H266,
+        config.data(),
+        static_cast<int>(config.size()),
+        on_packet,
+        &captured);
+    require(context != nullptr, "ireader h266 bitstream create");
+    require(
+        bitstream->input(
+            context,
+            1,
+            1,
+            frame.data(),
+            static_cast<int>(frame.size()),
+            AVPACKET_FLAG_KEY) == 0,
+        "ireader h266 bitstream input");
+    require(captured.codec == AVCODEC_VIDEO_H266, "ireader h266 codec identity");
+    require(bitstream->destroy(&context) == 0, "ireader h266 bitstream destroy");
+}
+
+void test_ireader_avs3_flv_mux_codec_identity()
+{
+    struct capture
+    {
+        std::vector<std::uint8_t> first_video_tag;
+    } captured;
+
+    const auto on_flv = [](void* param, int type, const void* data, std::size_t bytes, std::uint32_t) -> int {
+        auto& output = *static_cast<capture*>(param);
+        if (type == FLV_TYPE_VIDEO && output.first_video_tag.empty())
+        {
+            const auto* begin = static_cast<const std::uint8_t*>(data);
+            output.first_video_tag.assign(begin, begin + bytes);
+        }
+        return 0;
+    };
+
+    constexpr std::array<std::uint8_t, 12> frame{
+        0x00, 0x00, 0x01, 0xb0, 0x20, 0x44, 0x88, 0xf0, 0x00, 0x00, 0x01, 0xb3,
+    };
+
+    auto* muxer = flv_muxer_create(on_flv, &captured);
+    require(muxer != nullptr, "ireader avs3 flv muxer create");
+    require(flv_muxer_avs3(muxer, frame.data(), frame.size(), 0, 0) == 0, "ireader avs3 flv mux");
+    flv_muxer_destroy(muxer);
+
+    require(!captured.first_video_tag.empty(), "ireader avs3 sequence tag");
+    flv_video_tag_header_t header{};
+    require(
+        flv_video_tag_header_read(&header, captured.first_video_tag.data(), captured.first_video_tag.size()) == 5,
+        "ireader avs3 sequence tag header");
+    require(header.codecid == FLV_VIDEO_AVS3, "ireader avs3 codec identity");
+    require(header.avpacket == FLV_SEQUENCE_HEADER, "ireader avs3 sequence header type");
+}
+
+void test_ireader_rejects_unknown_enhanced_audio_fourcc()
+{
+    constexpr std::array<std::uint8_t, 5> tag{
+        static_cast<std::uint8_t>(FLV_AUDIO_FOURCC | FLV_AVPACKET), 'x', 'x', 'x', 'x',
+    };
+    flv_audio_tag_header_t header{};
+    require(flv_audio_tag_header_read(&header, tag.data(), tag.size()) < 0, "ireader unknown enhanced audio fourcc");
+}
+
 void test_flv_config_cache_lifecycle()
 {
     flv_demux_capture capture;
@@ -5100,6 +5193,12 @@ int main()
     std::cout << "[pass] rtmp_output_config_reset_and_end\n";
     media_server::test_rtmp_tcp_error_lifecycle();
     std::cout << "[pass] rtmp_tcp_error_lifecycle\n";
+    media_server::test_ireader_h266_avpacket_codec_identity();
+    std::cout << "[pass] ireader_h266_avpacket_codec_identity\n";
+    media_server::test_ireader_avs3_flv_mux_codec_identity();
+    std::cout << "[pass] ireader_avs3_flv_mux_codec_identity\n";
+    media_server::test_ireader_rejects_unknown_enhanced_audio_fourcc();
+    std::cout << "[pass] ireader_rejects_unknown_enhanced_audio_fourcc\n";
     media_server::test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     media_server::test_h265_output_paths();

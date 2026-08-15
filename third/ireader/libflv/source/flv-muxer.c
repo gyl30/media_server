@@ -527,7 +527,7 @@ int flv_muxer_avs3(flv_muxer_t* flv, const void* data, size_t bytes, uint32_t pt
 	}
 
 	m = 0;
-	video.codecid = FLV_VIDEO_H266; // codec 14, same as H.266
+	video.codecid = FLV_VIDEO_AVS3;
 	video.enhanced_rtmp = flv->enhanced_rtmp;
 	if (0 == flv->video_sequence_header)
 	{
