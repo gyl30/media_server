@@ -149,6 +149,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     answer_sdp_ = answer->sdp;
     video_codec_ = answer->video_codec;
+    audio_codec_ = answer->audio_codec;
     video_payload_type_ = answer->video_payload_type;
     audio_payload_type_ = answer->audio_payload_type;
     video_mid_ = answer->video_mid;
@@ -163,7 +164,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     for (const auto& track : source_tracks)
     {
         const bool negotiated_video = video_codec_ && track.kind == media_kind::video && track.codec == *video_codec_;
-        const bool negotiated_audio = audio_payload_type_ && track.kind == media_kind::audio && track.codec == codec_id::aac;
+        const bool negotiated_audio = audio_payload_type_ && audio_codec_ && track.kind == media_kind::audio && track.codec == *audio_codec_;
         if (negotiated_video || negotiated_audio)
         {
             track_versions_.emplace(track.id, track.config_version);
@@ -222,6 +223,7 @@ void whep_session::safe_shutdown()
     dtls_.reset();
     answer_sdp_.clear();
     video_codec_.reset();
+    audio_codec_.reset();
     video_payload_type_.reset();
     audio_payload_type_.reset();
     video_mid_.reset();

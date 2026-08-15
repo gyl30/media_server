@@ -5561,6 +5561,69 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
     }
 }
 
+void test_webrtc_opus_passthrough()
+{
+    constexpr std::string_view cname = "webrtc-opus-passthrough";
+    constexpr std::string_view mid = "audio-mid";
+    constexpr int mid_extension_id = 20;
+    std::vector<std::vector<std::uint8_t>> rtp_packets;
+    std::vector<std::vector<std::uint8_t>> rtcp_packets;
+    webrtc_output output(
+        webrtc_output_config{
+            .opus_payload_type = 109,
+            .opus_channel_count = 2,
+            .audio_mid = std::string(mid),
+            .audio_mid_extension_id = mid_extension_id,
+            .rtcp_cname = std::string(cname),
+        },
+        [&rtp_packets](std::span<const std::uint8_t> packet) { rtp_packets.emplace_back(packet.begin(), packet.end()); },
+        [&rtcp_packets](std::span<const std::uint8_t> packet) { rtcp_packets.emplace_back(packet.begin(), packet.end()); });
+    output.on_track(make_opus_track(2));
+    require(output.valid(), "webrtc opus passthrough output valid");
+
+    const std::array<std::vector<std::uint8_t>, 3> payloads{
+        std::vector<std::uint8_t>{0xf8, 0xff, 0xfe},
+        std::vector<std::uint8_t>{0x78, 0x11, 0x22, 0x33},
+        std::vector<std::uint8_t>{0x48, 0x44, 0x55},
+    };
+    for (std::size_t index = 0; index < payloads.size(); ++index)
+    {
+        output.on_frame(make_opus_frame(static_cast<std::int64_t>(index) * 20'000'000, payloads[index]));
+    }
+
+    require(rtp_packets.size() == payloads.size(), "webrtc opus passthrough packet count");
+    for (std::size_t index = 0; index < rtp_packets.size(); ++index)
+    {
+        require((rtp_packets[index][1] & 0x7fU) == 109U, "webrtc opus passthrough negotiated payload type");
+        const auto payload = require_rtp_mid(rtp_packets[index], mid, mid_extension_id);
+        require(std::ranges::equal(payload, payloads[index]), "webrtc opus passthrough raw payload");
+        if (index > 0)
+        {
+            require(rtp_timestamp(rtp_packets[index]) - rtp_timestamp(rtp_packets[index - 1U]) == 960U,
+                    "webrtc opus passthrough timestamp step");
+        }
+    }
+    require(!rtcp_packets.empty(), "webrtc opus passthrough rtcp report");
+    require(require_rtcp_sender_report(rtcp_packets.back(), cname) == rtp_ssrc(rtp_packets.back()),
+            "webrtc opus passthrough rtcp sender state");
+
+    const auto packet_count = rtp_packets.size();
+    output.on_frame(make_opus_frame(60'000'001));
+    require(rtp_packets.size() == packet_count, "webrtc opus passthrough rejects fractional millisecond");
+
+    const auto extension_data_size = (2U + mid.size() + 3U) & ~std::size_t{3U};
+    const auto payload_capacity = static_cast<std::size_t>(rtp_packet_getsize() - RTP_FIXED_HEADER) - 4U - extension_data_size;
+    const std::vector<std::uint8_t> maximum_payload(payload_capacity, 0x55);
+    output.on_frame(make_opus_frame(80'000'000, maximum_payload));
+    require(rtp_packets.size() == packet_count + 1U && rtp_packets.back().size() == static_cast<std::size_t>(rtp_packet_getsize()),
+            "webrtc opus passthrough mid adjusted capacity");
+    require(std::ranges::equal(require_rtp_mid(rtp_packets.back(), mid, mid_extension_id), maximum_payload),
+            "webrtc opus passthrough maximum raw payload");
+
+    output.on_frame(make_opus_frame(100'000'000, std::vector<std::uint8_t>(payload_capacity + 1U, 0x66)));
+    require(rtp_packets.size() == packet_count + 1U, "webrtc opus passthrough rejects oversized packet");
+}
+
 void test_webrtc_output_initialization_failure()
 {
     webrtc_output invalid_video(
@@ -5673,6 +5736,7 @@ void test_webrtc_opus_packetizer()
     test_webrtc_opus_channel_count(1);
     test_webrtc_opus_channel_count(2);
     test_webrtc_opus_channel_count(2, 32'000, 16'000);
+    test_webrtc_opus_passthrough();
 }
 
 }    // namespace

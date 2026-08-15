@@ -8,6 +8,7 @@ extern "C"
 {
 #include "rtp-ext.h"
 #include "rtp-packet.h"
+#include "rtp-payload.h"
 #include "rtp-profile.h"
 #include "rtsp-muxer.h"
 }
@@ -71,10 +72,11 @@ void webrtc_output::on_track(const media_track& track)
             added = add_h265_track(track);
         }
     }
-    else if (track.kind == media_kind::audio && config_.opus_payload_type >= 0 && track.codec == codec_id::aac)
+    else if (track.kind == media_kind::audio && config_.opus_payload_type >= 0 &&
+             (track.codec == codec_id::aac || track.codec == codec_id::opus))
     {
         negotiated = true;
-        added = add_aac_track(track);
+        added = add_audio_track(track);
     }
 
     if (negotiated && !added)
@@ -100,9 +102,9 @@ void webrtc_output::on_frame(const media_frame& frame)
     {
         input_video(state, frame);
     }
-    else if (state.codec == codec_id::aac)
+    else if (state.codec == codec_id::aac || state.codec == codec_id::opus)
     {
-        input_aac(state, frame);
+        input_audio(state, frame);
     }
 }
 
@@ -266,7 +268,7 @@ bool webrtc_output::add_h265_track(const media_track& track)
     return true;
 }
 
-bool webrtc_output::add_aac_track(const media_track& track)
+bool webrtc_output::add_audio_track(const media_track& track)
 {
     if (!rtcp_mux_payload_type_allowed(config_.opus_payload_type) || config_.audio_mid.empty() || config_.audio_mid.size() > max_mid_size ||
         config_.audio_mid_extension_id <= 0 || config_.audio_mid_extension_id > 255)
@@ -283,42 +285,52 @@ bool webrtc_output::add_aac_track(const media_track& track)
         return false;
     }
 
-    auto transcoder = std::make_unique<audio_transcoder>();
-    const auto bitrate = config_.opus_bitrate > 0 ? config_.opus_bitrate : 64'000 * config_.opus_channel_count;
-    int cutoff = 20'000;
-    if (config_.opus_max_playback_rate <= 8'000)
+    std::unique_ptr<audio_transcoder> transcoder;
+    if (track.codec == codec_id::aac)
     {
-        cutoff = 4'000;
+        transcoder = std::make_unique<audio_transcoder>();
+        const auto bitrate = config_.opus_bitrate > 0 ? config_.opus_bitrate : 64'000 * config_.opus_channel_count;
+        int cutoff = 20'000;
+        if (config_.opus_max_playback_rate <= 8'000)
+        {
+            cutoff = 4'000;
+        }
+        else if (config_.opus_max_playback_rate <= 12'000)
+        {
+            cutoff = 6'000;
+        }
+        else if (config_.opus_max_playback_rate <= 16'000)
+        {
+            cutoff = 8'000;
+        }
+        else if (config_.opus_max_playback_rate <= 24'000)
+        {
+            cutoff = 12'000;
+        }
+        if (!transcoder->startup(audio_transcoder_config{
+                .input = audio_transcoder_format{
+                    .codec = track.codec,
+                    .sample_rate = track.clock_rate,
+                    .channel_count = track.channel_count,
+                },
+                .output = audio_transcoder_format{
+                    .codec = codec_id::opus,
+                    .sample_rate = opus_sample_rate,
+                    .channel_count = static_cast<std::uint16_t>(config_.opus_channel_count),
+                },
+                .input_codec_config = track.codec_config,
+                .output_bit_rate = bitrate,
+                .output_cutoff = cutoff,
+            }))
+        {
+            spdlog::error("webrtc audio transcoder startup failed track {}", track.id);
+            return false;
+        }
     }
-    else if (config_.opus_max_playback_rate <= 12'000)
+    else if (track.codec != codec_id::opus || track.clock_rate != opus_sample_rate ||
+             (track.channel_count != 1 && track.channel_count != 2) || config_.opus_channel_count != track.channel_count ||
+             config_.opus_max_playback_rate != 48'000 || !track.codec_config.empty())
     {
-        cutoff = 6'000;
-    }
-    else if (config_.opus_max_playback_rate <= 16'000)
-    {
-        cutoff = 8'000;
-    }
-    else if (config_.opus_max_playback_rate <= 24'000)
-    {
-        cutoff = 12'000;
-    }
-    if (!transcoder->startup(audio_transcoder_config{
-            .input = audio_transcoder_format{
-                .codec = track.codec,
-                .sample_rate = track.clock_rate,
-                .channel_count = track.channel_count,
-            },
-            .output = audio_transcoder_format{
-                .codec = codec_id::opus,
-                .sample_rate = opus_sample_rate,
-                .channel_count = static_cast<std::uint16_t>(config_.opus_channel_count),
-            },
-            .input_codec_config = track.codec_config,
-            .output_bit_rate = bitrate,
-            .output_cutoff = cutoff,
-        }))
-    {
-        spdlog::error("webrtc audio transcoder startup failed track {}", track.id);
         return false;
     }
 
@@ -346,6 +358,8 @@ bool webrtc_output::add_aac_track(const media_track& track)
                                  .transcoder = std::move(transcoder),
                                  .media_id = media_id,
                                  .payload_id = payload_index,
+                                 .rtp_extension_bytes = 4U +
+                                     (((config_.audio_mid_extension_id > 14 ? 2U : 1U) + config_.audio_mid.size() + 3U) & ~std::size_t{3U}),
                                  .waiting_key_frame = false,
                              });
     spdlog::debug("webrtc opus output track ready id {} pt {} channels {}", track.id, config_.opus_payload_type, config_.opus_channel_count);
@@ -427,8 +441,47 @@ void webrtc_output::input_video(track_state& state, const media_frame& frame)
     emit_rtcp(state.payload_id);
 }
 
-void webrtc_output::input_aac(track_state& state, const media_frame& frame)
+void webrtc_output::input_audio(track_state& state, const media_frame& frame)
 {
+    if (state.codec == codec_id::opus)
+    {
+        constexpr std::int64_t nanoseconds_per_millisecond = 1'000'000;
+        if ((frame.pts_ns % nanoseconds_per_millisecond) != 0 || (frame.dts_ns % nanoseconds_per_millisecond) != 0)
+        {
+            spdlog::error("webrtc opus passthrough timestamp precision unsupported track {} pts_ns {} dts_ns {}",
+                          frame.track,
+                          frame.pts_ns,
+                          frame.dts_ns);
+            return;
+        }
+
+        const auto packet_size = rtp_packet_getsize();
+        const auto payload_capacity = packet_size - RTP_FIXED_HEADER - static_cast<int>(state.rtp_extension_bytes);
+        if (frame.payload->size() > static_cast<std::size_t>(payload_capacity))
+        {
+            spdlog::error("webrtc opus passthrough packet too large track {} bytes {} capacity {}",
+                          frame.track,
+                          frame.payload->size(),
+                          payload_capacity);
+            return;
+        }
+
+        const auto result = rtsp_muxer_input(muxer_,
+                                             state.media_id,
+                                             ns_to_milliseconds(frame.pts_ns),
+                                             ns_to_milliseconds(frame.dts_ns),
+                                             frame.payload->data(),
+                                             static_cast<int>(frame.payload->size()),
+                                             0);
+        if (result < 0)
+        {
+            spdlog::error("webrtc opus rtp packetize failed result {}", result);
+            return;
+        }
+        emit_rtcp(state.payload_id);
+        return;
+    }
+
     if (!state.transcoder)
     {
         return;
