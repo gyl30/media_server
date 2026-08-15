@@ -152,7 +152,7 @@ add_library(media_core STATIC
     media/core/log.cpp
     media/core/media_stream.cpp
     media/core/stream_registry.cpp
-    media/codec/aac_opus_transcoder.cpp
+    media/codec/audio_transcoder.cpp
     media/codec/codec_utils.cpp
     media/net/io_context_pool.cpp
     media/net/tcp_connection.cpp

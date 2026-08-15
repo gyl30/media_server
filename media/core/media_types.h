@@ -51,7 +51,7 @@ struct media_frame
     std::int64_t pts_ns{};
     bool key_frame{};
 
-    // H.264/H.265 为 Annex-B access unit；AAC 为完整 ADTS frame。
+    // H.264/H.265 为 Annex-B access unit；AAC 为完整 ADTS frame；Opus 为单个 packet。
     byte_buffer payload;
 };
 
