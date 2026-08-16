@@ -5581,6 +5581,29 @@ void test_hls_output()
 
 }
 
+void test_hls_g711_output()
+{
+    for (const auto codec : {codec_id::g711a, codec_id::g711u})
+    {
+        hls_output output(hls_config{.target_duration_seconds = 1.0, .window_size = 4});
+        output.on_track(make_video_track());
+        output.on_track(make_g711_track(codec));
+        output.on_frame(make_video_frame(0, true));
+        const auto payload = std::make_shared<const std::vector<std::uint8_t>>(160, codec == codec_id::g711a ? 0xd5 : 0xff);
+        output.on_frame(media_frame{.track = audio_track_id, .dts_ns = 20'000'000, .pts_ns = 20'000'000, .key_frame = false, .payload = payload});
+        output.on_frame(make_video_frame(1'000'000'000, true));
+        output.on_end();
+        require(output.segment_count() >= 1U && output.playlist(".").find("#EXTM3U") != std::string::npos, "hls g711 segment lifecycle");
+        const auto segment = output.segment(0);
+        require(segment.has_value(), "hls g711 segment");
+        const auto capture = demux_ts_segment(*segment);
+        const auto stream_type = codec == codec_id::g711a ? PSI_STREAM_AUDIO_G711A : PSI_STREAM_AUDIO_G711U;
+        require(std::ranges::find(capture.stream_codecs, stream_type) != capture.stream_codecs.end(), "hls g711 pmt stream type");
+        const auto packet = std::ranges::find_if(capture.packets, [stream_type](const demuxed_packet& value) { return value.codec == stream_type; });
+        require(packet != capture.packets.end() && packet->payload == *payload, "hls g711 pes payload");
+    }
+}
+
 void test_hls_service_lifecycle()
 {
     boost::asio::io_context io;
@@ -6302,6 +6325,8 @@ int main()
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_output();
     std::cout << "[pass] hls_output\n";
+    media_server::test_hls_g711_output();
+    std::cout << "[pass] hls_g711_output\n";
     media_server::test_hls_service_lifecycle();
     std::cout << "[pass] hls_service_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
