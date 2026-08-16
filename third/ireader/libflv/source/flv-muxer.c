@@ -228,12 +228,16 @@ int flv_muxer_aac(struct flv_muxer_t* flv, const void* data, size_t bytes, uint3
 int flv_muxer_opus(flv_muxer_t* flv, const void* data, size_t bytes, uint32_t pts, uint32_t dts)
 {
 	int r, m, n;
+	size_t capacity;
 	struct flv_audio_tag_header_t audio;
 	(void)pts;
 
-	if (flv->capacity < bytes + 2/*AudioTagHeader*/ + 29/*OpusHead*/)
+	capacity = bytes + 5 /* enhanced AudioTagHeader */;
+	if (capacity < 5 + 29 /* OpusHead */)
+		capacity = 5 + 29;
+	if (flv->capacity < capacity)
 	{
-		if (0 != flv_muxer_alloc(flv, bytes + 4))
+		if (0 != flv_muxer_alloc(flv, capacity))
 			return -ENOMEM;
 	}
 
@@ -253,10 +257,13 @@ int flv_muxer_opus(flv_muxer_t* flv, const void* data, size_t bytes, uint32_t pt
 		
 		// Opus Head
 		m = flv_audio_tag_header_write(&audio, flv->ptr, flv->capacity);
-        m += opus_head_save(&flv->a.opus, flv->ptr+m, flv->capacity-m-(bytes+m));
+		n = opus_head_save(&flv->a.opus, flv->ptr + m, flv->capacity - m);
+		if (n < 0)
+			return n;
+		m += n;
 		assert(m <= (int)flv->capacity);
 		r = flv->handler(flv->param, FLV_TYPE_AUDIO, flv->ptr, m, dts);
-		if (0 != r) return r;
+		return r;
 	}
 
 	audio.avpacket = FLV_AVPACKET;

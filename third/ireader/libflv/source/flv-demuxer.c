@@ -122,7 +122,8 @@ static int flv_demuxer_audio(struct flv_demuxer_t* flv, const uint8_t* data, int
 	{
 		if (FLV_SEQUENCE_HEADER == audio.avpacket)
 		{
-			opus_head_load(data + n, bytes - n, &flv->a.opus);
+			if (opus_head_load(data + n, bytes - n, &flv->a.opus) < 0)
+				return -EINVAL;
 			return flv->handler(flv->param, FLV_AUDIO_OPUS_HEAD, data + n, bytes - n, timestamp, timestamp, 0);
 		}
 		else if (FLV_AVPACKET == audio.avpacket)
