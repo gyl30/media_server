@@ -350,7 +350,7 @@ bool webrtc_output::add_audio_track(const media_track& track)
         rtsp_muxer_add_payload(muxer_, "RTP/AVP", clock_rate, config_.audio_payload_type, encoding, 0, 0, 0, nullptr, 0);
     if (payload_index < 0)
     {
-        spdlog::error("webrtc add opus payload failed");
+        spdlog::error("webrtc add audio payload failed");
         return false;
     }
     if (!configure_rtcp(payload_index))
@@ -361,14 +361,13 @@ bool webrtc_output::add_audio_track(const media_track& track)
     const auto media_id = rtsp_muxer_add_media(muxer_, payload_index, rtp_codec, nullptr, 0);
     if (media_id < 0)
     {
-        spdlog::error("webrtc add opus media failed");
+        spdlog::error("webrtc add audio media failed");
         return false;
     }
 
     tracks_.insert_or_assign(track.id,
                              track_state{
                                  .codec = track.codec,
-                                 .clock_rate = static_cast<std::uint32_t>(clock_rate),
                                  .transcoder = std::move(transcoder),
                                  .media_id = media_id,
                                  .payload_id = payload_index,
