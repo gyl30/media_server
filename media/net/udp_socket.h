@@ -26,6 +26,10 @@ class udp_socket final : public std::enable_shared_from_this<udp_socket>
     explicit udp_socket(boost::asio::any_io_executor executor);
 
     [[nodiscard]] bool startup(boost::asio::ip::address bind_address, read_handler on_read, write_error_handler on_write_error);
+    [[nodiscard]] bool startup(boost::asio::ip::address bind_address,
+                               std::uint16_t port,
+                               read_handler on_read,
+                               write_error_handler on_write_error);
     void send(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint);
     void shutdown();
 

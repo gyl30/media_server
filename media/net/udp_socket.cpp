@@ -12,6 +12,14 @@ udp_socket::udp_socket(boost::asio::any_io_executor executor) : socket_(std::mov
 
 bool udp_socket::startup(boost::asio::ip::address bind_address, read_handler on_read, write_error_handler on_write_error)
 {
+    return startup(std::move(bind_address), 0, std::move(on_read), std::move(on_write_error));
+}
+
+bool udp_socket::startup(boost::asio::ip::address bind_address,
+                         std::uint16_t port,
+                         read_handler on_read,
+                         write_error_handler on_write_error)
+{
     if (closed_ || socket_.is_open())
     {
         return false;
@@ -24,7 +32,7 @@ bool udp_socket::startup(boost::asio::ip::address bind_address, read_handler on_
         return false;
     }
 
-    socket_.bind(boost::asio::ip::udp::endpoint(std::move(bind_address), 0), error);
+    socket_.bind(boost::asio::ip::udp::endpoint(std::move(bind_address), port), error);
     if (error)
     {
         socket_.close(error);
