@@ -20,8 +20,9 @@ namespace media_server
 struct webrtc_output_config
 {
     codec_id video_codec{codec_id::h264};
+    codec_id audio_codec{codec_id::aac};
     int video_payload_type{-1};
-    int opus_payload_type{-1};
+    int audio_payload_type{-1};
     int opus_channel_count{1};
     int opus_bitrate{-1};
     int opus_max_playback_rate{48'000};
@@ -51,6 +52,7 @@ class webrtc_output final
     struct track_state
     {
         codec_id codec{};
+        std::uint32_t clock_rate{};
         std::unique_ptr<audio_transcoder> transcoder;
         int media_id{-1};
         int payload_id{-1};

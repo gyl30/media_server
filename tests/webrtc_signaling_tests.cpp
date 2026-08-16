@@ -13,6 +13,7 @@ extern "C"
 {
 #include "rtp-ext.h"
 #include "rtp-packet.h"
+#include "rtp-profile.h"
 }
 
 #include <boost/asio/buffer.hpp>
@@ -669,6 +670,19 @@ media_track make_opus_track(std::uint16_t channel_count = 2)
         .codec = codec_id::opus,
         .clock_rate = 48'000,
         .channel_count = channel_count,
+        .codec_config = {},
+    };
+}
+
+media_track make_g711_track(codec_id codec)
+{
+    require(codec == codec_id::g711a || codec == codec_id::g711u, "webrtc g711 track codec");
+    return media_track{
+        .id = audio_track_id,
+        .kind = media_kind::audio,
+        .codec = codec,
+        .clock_rate = 8'000,
+        .channel_count = 1,
         .codec_config = {},
     };
 }
@@ -1413,6 +1427,64 @@ void test_webrtc_opus_source_negotiation()
     require(limited_offer.has_value(), "parse webrtc opus passthrough limit");
     const auto incompatible_rate = make_webrtc_answer(*limited_offer, {make_video_track(), make_opus_track(2)}, config);
     require(incompatible_rate.has_value() && !incompatible_rate->audio_codec, "webrtc reject opus passthrough playback limit");
+}
+
+void test_webrtc_g711_source_negotiation()
+{
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .stream_id = "serverstream",
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+    };
+    const auto check = [&config](codec_id codec, std::string sdp, int payload_type)
+    {
+        const auto offer = parse_webrtc_offer(sdp);
+        require(offer.has_value(), "parse webrtc g711 offer");
+        const auto answer = make_webrtc_answer(*offer, {make_video_track(), make_g711_track(codec)}, config);
+        require(answer.has_value() && answer->video_codec == codec_id::h264 && answer->audio_codec == codec &&
+                    answer->audio_payload_type == payload_type && answer->audio_channel_count == 1,
+                "webrtc negotiate g711 source");
+        require(answer->sdp.find("m=audio 40000 UDP/TLS/RTP/SAVPF " + std::to_string(payload_type) + "\r\n") != std::string::npos,
+                "webrtc g711 static payload answer");
+    };
+
+    check(codec_id::g711u, webrtc_offer_sdp, RTP_PAYLOAD_PCMU);
+    check(codec_id::g711a, webrtc_offer_sdp, RTP_PAYLOAD_PCMA);
+
+    auto implicit_sdp = webrtc_offer_sdp;
+    const auto pcmu = implicit_sdp.find("a=rtpmap:0 PCMU/8000\r\n");
+    const auto pcma = implicit_sdp.find("a=rtpmap:8 PCMA/8000\r\n");
+    require(pcmu != std::string::npos && pcma != std::string::npos, "webrtc g711 explicit rtpmap source");
+    implicit_sdp.erase(pcma, std::string_view("a=rtpmap:8 PCMA/8000\r\n").size());
+    implicit_sdp.erase(pcmu, std::string_view("a=rtpmap:0 PCMU/8000\r\n").size());
+    check(codec_id::g711u, implicit_sdp, RTP_PAYLOAD_PCMU);
+    check(codec_id::g711a, implicit_sdp, RTP_PAYLOAD_PCMA);
+
+    auto mismatch_sdp = webrtc_offer_sdp;
+    const auto mismatch = mismatch_sdp.find("a=rtpmap:8 PCMA/8000\r\n");
+    require(mismatch != std::string::npos, "webrtc g711 mismatch source");
+    mismatch_sdp.replace(mismatch, std::string_view("a=rtpmap:8 PCMA/8000\r\n").size(), "a=rtpmap:8 PCMU/8000\r\n");
+    const auto mismatch_offer = parse_webrtc_offer(mismatch_sdp);
+    require(mismatch_offer.has_value(), "parse webrtc mismatched g711 offer");
+    const auto mismatch_answer = make_webrtc_answer(*mismatch_offer, {make_video_track(), make_g711_track(codec_id::g711a)}, config);
+    require(mismatch_answer.has_value() && mismatch_answer->video_codec == codec_id::h264 && !mismatch_answer->audio_codec,
+            "webrtc reject mismatched g711 audio only");
+
+    for (const auto codec : {codec_id::g711a, codec_id::g711u})
+    {
+        auto invalid = make_g711_track(codec);
+        invalid.clock_rate = 16'000;
+        require(!make_webrtc_answer(*parse_webrtc_offer(webrtc_offer_sdp), {std::move(invalid)}, config).has_value(), "webrtc reject g711 rate");
+        invalid = make_g711_track(codec);
+        invalid.channel_count = 2;
+        require(!make_webrtc_answer(*parse_webrtc_offer(webrtc_offer_sdp), {std::move(invalid)}, config).has_value(), "webrtc reject g711 channels");
+        invalid = make_g711_track(codec);
+        invalid.codec_config = {1};
+        require(!make_webrtc_answer(*parse_webrtc_offer(webrtc_offer_sdp), {std::move(invalid)}, config).has_value(), "webrtc reject g711 config");
+    }
 }
 
 void test_webrtc_transport_contract()
@@ -2387,6 +2459,8 @@ int main()
     std::cout << "[pass] webrtc_opus_receive_limits\n";
     media_server::test_webrtc_opus_source_negotiation();
     std::cout << "[pass] webrtc_opus_source_negotiation\n";
+    media_server::test_webrtc_g711_source_negotiation();
+    std::cout << "[pass] webrtc_g711_source_negotiation\n";
     media_server::test_webrtc_transport_contract();
     std::cout << "[pass] webrtc_transport_contract\n";
     media_server::test_whep_session_startup_errors();

@@ -3,6 +3,7 @@
 extern "C"
 {
 #include "mpeg4-hevc.h"
+#include "rtp-profile.h"
 #include "sdp-a-rtpmap.h"
 #include "sdp-a-webrtc.h"
 #include "sdp.h"
@@ -401,6 +402,20 @@ const webrtc_codec_offer* find_opus(const webrtc_media_offer& media)
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
+const webrtc_codec_offer* find_g711(const webrtc_media_offer& media, codec_id codec)
+{
+    const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
+    const auto encoding = codec == codec_id::g711a ? "pcma" : "pcmu";
+    const auto iterator = std::find_if(media.codecs.begin(),
+                                       media.codecs.end(),
+                                       [payload_type, encoding](const webrtc_codec_offer& offered)
+                                       {
+                                           return offered.payload_type == payload_type && lower_copy(offered.encoding_name) == encoding &&
+                                               offered.clock_rate == 8'000U && (offered.channel_count == 0 || offered.channel_count == 1);
+                                       });
+    return iterator == media.codecs.end() ? nullptr : &*iterator;
+}
+
 int opus_output_channel_count(const webrtc_codec_offer& codec, const media_track& track)
 {
     if (track.channel_count >= 2 && has_parameter(codec.format_parameters, "stereo", "1"))
@@ -601,6 +616,22 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
         static_cast<void>(sdp_media_attribute_list(sdp.get(), index, "rtpmap", &on_rtpmap, &media));
         static_cast<void>(sdp_media_attribute_list(sdp.get(), index, "fmtp", &on_fmtp, &media));
         static_cast<void>(sdp_media_attribute_list(sdp.get(), index, "extmap", &on_extmap, &media));
+        for (const auto payload_type : media.payload_types)
+        {
+            if ((payload_type == RTP_PAYLOAD_PCMU || payload_type == RTP_PAYLOAD_PCMA) &&
+                std::none_of(media.codecs.begin(), media.codecs.end(), [payload_type](const webrtc_codec_offer& codec) {
+                    return codec.payload_type == payload_type;
+                }))
+            {
+                media.codecs.push_back(webrtc_codec_offer{
+                    .payload_type = payload_type,
+                    .encoding_name = payload_type == RTP_PAYLOAD_PCMU ? "PCMU" : "PCMA",
+                    .clock_rate = 8'000,
+                    .channel_count = 1,
+                    .format_parameters = {},
+                });
+            }
+        }
         if (std::any_of(result.media.begin(), result.media.end(), [&media](const webrtc_media_offer& existing) { return existing.mid == media.mid; }))
         {
             return std::nullopt;
@@ -640,6 +671,8 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
             return track.kind == media_kind::audio &&
                 (track.codec == codec_id::aac ||
                  (track.codec == codec_id::opus && track.clock_rate == 48'000 && (track.channel_count == 1 || track.channel_count == 2) &&
+                  track.codec_config.empty()) ||
+                 ((track.codec == codec_id::g711a || track.codec == codec_id::g711u) && track.clock_rate == 8'000 && track.channel_count == 1 &&
                   track.codec_config.empty()));
         });
     const auto* audio_track = audio_iterator == tracks.end() ? nullptr : &*audio_iterator;
@@ -691,7 +724,8 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         }
         else if (can_receive && lower_copy(media.type) == "audio" && audio_track != nullptr && !audio_payload_type.has_value())
         {
-            codec = find_opus(media);
+            codec = audio_track->codec == codec_id::g711a || audio_track->codec == codec_id::g711u ? find_g711(media, audio_track->codec)
+                                                                                                  : find_opus(media);
             if (codec != nullptr && audio_track->codec == codec_id::opus &&
                 (!opus_passthrough_compatible(*codec, *audio_track) || (media.max_packet_time_ms && *media.max_packet_time_ms != 120)))
             {
@@ -738,22 +772,28 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
             audio_mid = media.mid;
             audio_mid_extension_id = media.mid_extension_id;
             bundle_mid_extension_id = media.mid_extension_id;
-            audio_channel_count = opus_output_channel_count(*codec, *audio_track);
-            audio_bitrate = 64'000 * *audio_channel_count;
-            const auto offered_bitrate = decimal_parameter(codec->format_parameters, "maxaveragebitrate", -1, 510'000);
-            if (offered_bitrate && *offered_bitrate >= 0)
+            audio_channel_count = audio_track->codec == codec_id::g711a || audio_track->codec == codec_id::g711u
+                ? 1
+                : opus_output_channel_count(*codec, *audio_track);
+            if (audio_track->codec == codec_id::aac || audio_track->codec == codec_id::opus)
             {
-                audio_bitrate = std::min(*audio_bitrate, std::max(*offered_bitrate, 6'000));
+                audio_bitrate = 64'000 * *audio_channel_count;
+                const auto offered_bitrate = decimal_parameter(codec->format_parameters, "maxaveragebitrate", -1, 510'000);
+                if (offered_bitrate && *offered_bitrate >= 0)
+                {
+                    audio_bitrate = std::min(*audio_bitrate, std::max(*offered_bitrate, 6'000));
+                }
+                const auto offered_max_playback_rate = decimal_parameter(codec->format_parameters, "maxplaybackrate", 48'000, 48'000);
+                audio_max_playback_rate =
+                    offered_max_playback_rate && *offered_max_playback_rate >= 8'000 ? *offered_max_playback_rate : 48'000;
             }
-            const auto offered_max_playback_rate = decimal_parameter(codec->format_parameters, "maxplaybackrate", 48'000, 48'000);
-            audio_max_playback_rate =
-                offered_max_playback_rate && *offered_max_playback_rate >= 8'000 ? *offered_max_playback_rate : 48'000;
-            spdlog::debug("webrtc answer audio mid {} pt {} codec opus channels {} bitrate {} max_playback_rate {}",
+            spdlog::debug("webrtc answer audio mid {} pt {} codec {} channels {} bitrate {} max_playback_rate {}",
                           media.mid,
                           codec->payload_type,
+                          to_string(*audio_codec),
                           *audio_channel_count,
-                          *audio_bitrate,
-                          *audio_max_playback_rate);
+                          audio_bitrate.value_or(0),
+                          audio_max_playback_rate.value_or(0));
         }
         media_answer << "m=" << media.type << ' ' << config.port << ' ' << media.protocol << ' ' << codec->payload_type << "\r\n";
         media_answer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";
@@ -784,9 +824,12 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         }
         else
         {
-            media_answer << "a=rtpmap:" << codec->payload_type << " opus/48000/2\r\n";
-            media_answer << "a=fmtp:" << codec->payload_type << " minptime=10;useinbandfec=1;sprop-stereo=" << (*audio_channel_count == 2 ? 1 : 0)
-                         << "\r\n";
+            if (audio_track->codec == codec_id::aac || audio_track->codec == codec_id::opus)
+            {
+                media_answer << "a=rtpmap:" << codec->payload_type << " opus/48000/2\r\n";
+                media_answer << "a=fmtp:" << codec->payload_type << " minptime=10;useinbandfec=1;sprop-stereo="
+                             << (*audio_channel_count == 2 ? 1 : 0) << "\r\n";
+            }
         }
         media_answers.emplace_back(media.mid, media_answer.str());
     }
