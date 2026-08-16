@@ -286,7 +286,8 @@ static int flv_demuxer_video(struct flv_demuxer_t* flv, const uint8_t* data, int
 		{
 			// AV1CodecConfigurationRecord
 			assert(bytes > n + 5);
-			aom_av1_codec_configuration_record_load(data + n, bytes - n, &flv->v.av1);
+			if (aom_av1_codec_configuration_record_load(data + n, bytes - n, &flv->v.av1) != (int)(bytes - n))
+				return -EINVAL;
 			return flv->handler(flv->param, FLV_VIDEO_AV1C, data + n, bytes - n, timestamp + video.cts, timestamp, 0);
 		}
 		else if (FLV_AVPACKET == video.avpacket)

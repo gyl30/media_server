@@ -1,3 +1,4 @@
+#include "media/codec/output_video_config.h"
 #include "media/core/log.h"
 #include "media/core/stream_registry.h"
 #include "media/hls/hls_service.h"
@@ -33,6 +34,7 @@ struct options
     std::string webrtc_address{"127.0.0.1"};
     std::size_t threads{std::max(1U, std::thread::hardware_concurrency())};
     std::vector<std::pair<std::string, std::string>> rtsp_pulls;
+    media_server::output_video_config http_video;
     bool help{};
 };
 
@@ -109,6 +111,22 @@ std::optional<options> parse_options(int argc, char** argv)
             result.threads = threads;
             continue;
         }
+        if (const auto value = read_value("--http-video-codec"))
+        {
+            if (*value == "passthrough")
+            {
+                result.http_video.codec = media_server::output_video_codec::passthrough;
+            }
+            else if (*value == "av1")
+            {
+                result.http_video.codec = media_server::output_video_codec::av1;
+            }
+            else
+            {
+                return std::nullopt;
+            }
+            continue;
+        }
         if (const auto value = read_value("--rtsp-pull"))
         {
             const auto equal = value->find('=');
@@ -133,7 +151,8 @@ void print_usage()
               << "  --http-port <port>\n"
               << "  --webrtc-address <ip>\n"
               << "  --threads <count>\n"
-              << "  --rtsp-pull <stream_name=rtsp_url>\n";
+              << "  --rtsp-pull <stream_name=rtsp_url>\n"
+              << "  --http-video-codec <passthrough|av1>\n";
 }
 
 }    // namespace
@@ -165,7 +184,7 @@ int main(int argc, char** argv)
     media_server::io_context_pool workers(parsed->threads);
     auto& control_io = workers.context(0);
     media_server::stream_registry registry;
-    media_server::hls_service hls(registry);
+    media_server::hls_service hls(registry, media_server::hls_config{.video = parsed->http_video});
     media_server::whep_service whep(registry, webrtc_address);
     if (!whep.ready())
     {
@@ -174,7 +193,7 @@ int main(int argc, char** argv)
     }
     auto rtmp = std::make_shared<media_server::rtmp_server>(workers, registry, parsed->rtmp_port);
     auto rtsp = std::make_shared<media_server::rtsp_server>(workers, registry, parsed->rtsp_port);
-    auto http = std::make_shared<media_server::http_server>(workers, registry, hls, whep, parsed->http_port);
+    auto http = std::make_shared<media_server::http_server>(workers, registry, hls, whep, parsed->http_port, parsed->http_video);
 
     if (const auto error = rtmp->startup())
     {

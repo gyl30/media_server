@@ -185,7 +185,9 @@ int flv_muxer_mp3(struct flv_muxer_t* flv, const void* data, size_t bytes, uint3
 
 int flv_muxer_aac(struct flv_muxer_t* flv, const void* data, size_t bytes, uint32_t pts, uint32_t dts)
 {
-    int r, n, m, k;
+	int r, n, m, k;
+	int previous_config_bytes, current_config_bytes;
+	uint8_t previous_config[8], current_config[8];
 	struct flv_audio_tag_header_t audio;
 	(void)pts;
 
@@ -195,24 +197,32 @@ int flv_muxer_aac(struct flv_muxer_t* flv, const void* data, size_t bytes, uint3
 			return -ENOMEM;
 	}
 
+	previous_config_bytes = 0;
+	if (flv->audio_sequence_header)
+		previous_config_bytes = mpeg4_aac_audio_specific_config_save(&flv->a.aac, previous_config, sizeof(previous_config));
+
 	/* ADTS */
 	n = mpeg4_aac_adts_load(data, bytes, &flv->a.aac);
 	if (n <= 0)
 		return -1; // invalid data
+
+	current_config_bytes = mpeg4_aac_audio_specific_config_save(&flv->a.aac, current_config, sizeof(current_config));
+	if (current_config_bytes <= 0)
+		return -1;
 
 	m = 0;
 	audio.codecid = FLV_AUDIO_AAC;
 	audio.rate = FLV_SOUND_RATE_44100; // 44k-SoundRate
 	audio.bits = FLV_SOUND_BIT_16; // 16-bit samples
 	audio.channels = FLV_SOUND_CHANNEL_STEREO; // Stereo sound
-	if (0 == flv->audio_sequence_header)
+	if (0 == flv->audio_sequence_header || previous_config_bytes != current_config_bytes || previous_config_bytes <= 0 ||
+		0 != memcmp(previous_config, current_config, (size_t)current_config_bytes))
 	{
-		flv->audio_sequence_header = 1; // once only
+		flv->audio_sequence_header = 1;
 		audio.avpacket = FLV_SEQUENCE_HEADER;
-
-		// AudioSpecificConfig(AAC sequence header)
 		m = flv_audio_tag_header_write(&audio, flv->ptr, flv->capacity);
-		m += mpeg4_aac_audio_specific_config_save(&flv->a.aac, flv->ptr + m, flv->capacity - m - ((bytes - n) + m));
+		memcpy(flv->ptr + m, current_config, (size_t)current_config_bytes);
+		m += current_config_bytes;
 		assert(m <= (int)flv->capacity);
 		r = flv->handler(flv->param, FLV_TYPE_AUDIO, flv->ptr, m, dts);
 		if (0 != r) return r;
@@ -221,7 +231,7 @@ int flv_muxer_aac(struct flv_muxer_t* flv, const void* data, size_t bytes, uint3
 	audio.avpacket = FLV_AVPACKET;
 	k = flv_audio_tag_header_write(&audio, flv->ptr + m /*asc*/, flv->capacity - m);
 	assert(m + k + bytes - n <= flv->capacity);
-	memcpy(flv->ptr + m /*asc*/ + k /*tag*/, (uint8_t*)data + n, bytes - n); // AAC exclude ADTS
+	memcpy(flv->ptr + m /*asc*/ + k /*tag*/, (uint8_t*)data + n, bytes - n);
 	return flv->handler(flv->param, FLV_TYPE_AUDIO, flv->ptr + m, k + bytes - n, dts);
 }
 
@@ -470,7 +480,7 @@ int flv_muxer_vvc(struct flv_muxer_t* flv, const void* data, size_t bytes, uint3
 	return flv_muxer_h266(flv, pts, dts);
 }
 
-int flv_muxer_av1(flv_muxer_t* flv, const void* data, size_t bytes, uint32_t pts, uint32_t dts)
+int flv_muxer_av1(flv_muxer_t* flv, const void* data, size_t bytes, uint32_t pts, uint32_t dts, int keyframe)
 {
 	int r;
 	int m, n;
@@ -483,6 +493,7 @@ int flv_muxer_av1(flv_muxer_t* flv, const void* data, size_t bytes, uint32_t pts
 	}
 
 	m = 0;
+	flv->vcl = keyframe ? 1 : 2;
 	video.codecid = FLV_VIDEO_AV1;
 	video.enhanced_rtmp = flv->enhanced_rtmp;
 	if (0 == flv->video_sequence_header)

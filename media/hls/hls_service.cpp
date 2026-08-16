@@ -17,6 +17,16 @@ std::optional<std::string> hls_service::playlist(std::string_view stream_name)
     return output->playlist(".");
 }
 
+std::optional<std::vector<std::uint8_t>> hls_service::init_segment(std::string_view stream_name)
+{
+    auto output = get_or_create(stream_name);
+    if (!output)
+    {
+        return std::nullopt;
+    }
+    return output->init_segment();
+}
+
 std::optional<std::vector<std::uint8_t>> hls_service::segment(std::string_view stream_name, std::uint64_t sequence)
 {
     auto output = get_or_create(stream_name);
