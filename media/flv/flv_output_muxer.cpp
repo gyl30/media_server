@@ -29,6 +29,11 @@ flv_output_muxer::~flv_output_muxer()
 
 void flv_output_muxer::on_track(const media_track& track)
 {
+    if ((track.codec == codec_id::g711a || track.codec == codec_id::g711u) &&
+        (track.clock_rate != 8'000 || track.channel_count != 1 || !track.codec_config.empty()))
+    {
+        return;
+    }
     const auto existing = tracks_.find(track.id);
     if (existing != tracks_.end() && existing->second.config_version == track.config_version)
     {
@@ -110,10 +115,14 @@ void flv_output_muxer::on_frame(const media_frame& frame)
         case codec_id::aac:
             result = flv_muxer_aac(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
             break;
+        case codec_id::g711a:
+            result = flv_muxer_g711a(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
+            break;
+        case codec_id::g711u:
+            result = flv_muxer_g711u(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
+            break;
         case codec_id::av1:
         case codec_id::opus:
-        case codec_id::g711a:
-        case codec_id::g711u:
             break;
     }
 

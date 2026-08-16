@@ -449,12 +449,46 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
         return 0;
     }
 
+    if (codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
+    {
+        if (metadata_received_ && !expected_audio_)
+        {
+            return -1;
+        }
+        const auto audio_codec = codec == FLV_AUDIO_G711A ? codec_id::g711a : codec_id::g711u;
+        if (!tracks_initialized_)
+        {
+            initial_audio_track_ = media_track{
+                .id = audio_track_id,
+                .kind = media_kind::audio,
+                .codec = audio_codec,
+                .clock_rate = 8'000,
+                .channel_count = 1,
+                .codec_config = {},
+            };
+            try_initialize_tracks();
+            if (!tracks_initialized_)
+            {
+                return 0;
+            }
+        }
+        else
+        {
+            const auto tracks = stream_->tracks();
+            const auto audio = std::find_if(tracks.begin(), tracks.end(), [](const media_track& track) { return track.id == audio_track_id; });
+            if (audio == tracks.end() || audio->codec != audio_codec)
+            {
+                return -1;
+            }
+        }
+    }
+
     track_id id{};
     if (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265)
     {
         id = video_track_id;
     }
-    else if (codec == FLV_AUDIO_AAC)
+    else if (codec == FLV_AUDIO_AAC || codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
     {
         id = audio_track_id;
     }
