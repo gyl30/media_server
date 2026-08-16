@@ -5818,7 +5818,7 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
     std::vector<std::vector<std::uint8_t>> packets;
     webrtc_output output(
         webrtc_output_config{
-            .opus_payload_type = 111,
+            .audio_payload_type = 111,
             .opus_channel_count = channel_count,
             .opus_bitrate = bitrate,
             .opus_max_playback_rate = max_playback_rate,
@@ -5863,7 +5863,8 @@ void test_webrtc_opus_passthrough()
     std::vector<std::vector<std::uint8_t>> rtcp_packets;
     webrtc_output output(
         webrtc_output_config{
-            .opus_payload_type = 109,
+            .audio_codec = codec_id::opus,
+            .audio_payload_type = 109,
             .opus_channel_count = 2,
             .audio_mid = std::string(mid),
             .audio_mid_extension_id = mid_extension_id,
@@ -5917,6 +5918,88 @@ void test_webrtc_opus_passthrough()
     require(rtp_packets.size() == packet_count + 1U, "webrtc opus passthrough rejects oversized packet");
 }
 
+void test_webrtc_g711_passthrough_case(codec_id codec)
+{
+    require(codec == codec_id::g711a || codec == codec_id::g711u, "webrtc g711 passthrough codec");
+    constexpr std::string_view mid = "g711-audio-mid";
+    constexpr int extension_id = 20;
+    const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
+    std::vector<std::vector<std::uint8_t>> packets;
+    webrtc_output output(
+        webrtc_output_config{
+            .audio_codec = codec,
+            .audio_payload_type = payload_type,
+            .audio_mid = std::string(mid),
+            .audio_mid_extension_id = extension_id,
+            .rtcp_cname = {},
+        },
+        [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
+    output.on_track(make_g711_track(codec));
+    require(output.valid(), "webrtc g711 passthrough output valid");
+
+    const std::array<std::vector<std::uint8_t>, 3> payloads{
+        std::vector<std::uint8_t>(160, 0x11),
+        std::vector<std::uint8_t>(160, 0x22),
+        std::vector<std::uint8_t>(160, 0x33),
+    };
+    for (std::size_t index = 0; index < payloads.size(); ++index)
+    {
+        output.on_frame(media_frame{
+            .track = audio_track_id,
+            .dts_ns = static_cast<std::int64_t>(index) * 20'000'000,
+            .pts_ns = static_cast<std::int64_t>(index) * 20'000'000,
+            .key_frame = false,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(payloads[index]),
+        });
+    }
+    require(packets.size() == payloads.size(), "webrtc g711 passthrough packet count");
+    for (std::size_t index = 0; index < packets.size(); ++index)
+    {
+        require((packets[index][1] & 0x7fU) == static_cast<unsigned int>(payload_type), "webrtc g711 static payload type");
+        require(std::ranges::equal(require_rtp_mid(packets[index], mid, extension_id), payloads[index]), "webrtc g711 raw payload");
+        if (index > 0)
+        {
+            require(rtp_timestamp(packets[index]) - rtp_timestamp(packets[index - 1U]) == 160U, "webrtc g711 timestamp step");
+        }
+    }
+
+    const auto packet_count = packets.size();
+    output.on_frame(media_frame{
+        .track = audio_track_id,
+        .dts_ns = 60'000'001,
+        .pts_ns = 60'000'001,
+        .key_frame = false,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0x44),
+    });
+    require(packets.size() == packet_count, "webrtc g711 rejects fractional millisecond");
+
+    const auto extension_data_size = (2U + mid.size() + 3U) & ~std::size_t{3U};
+    const auto capacity = static_cast<std::size_t>(rtp_packet_getsize() - RTP_FIXED_HEADER) - 4U - extension_data_size;
+    output.on_frame(media_frame{
+        .track = audio_track_id,
+        .dts_ns = 80'000'000,
+        .pts_ns = 80'000'000,
+        .key_frame = false,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(capacity, 0x55),
+    });
+    require(packets.size() == packet_count + 1U && packets.back().size() == static_cast<std::size_t>(rtp_packet_getsize()),
+            "webrtc g711 mid adjusted capacity");
+    output.on_frame(media_frame{
+        .track = audio_track_id,
+        .dts_ns = 100'000'000,
+        .pts_ns = 100'000'000,
+        .key_frame = false,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(capacity + 1U, 0x66),
+    });
+    require(packets.size() == packet_count + 1U, "webrtc g711 rejects oversized packet");
+}
+
+void test_webrtc_g711_passthrough()
+{
+    test_webrtc_g711_passthrough_case(codec_id::g711a);
+    test_webrtc_g711_passthrough_case(codec_id::g711u);
+}
+
 void test_webrtc_output_initialization_failure()
 {
     webrtc_output invalid_video(
@@ -5927,7 +6010,7 @@ void test_webrtc_output_initialization_failure()
     require(!invalid_video.valid(), "webrtc invalid h264 output rejected");
 
     webrtc_output invalid_audio(
-        webrtc_output_config{.opus_payload_type = 111, .opus_channel_count = 3, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
+        webrtc_output_config{.audio_payload_type = 111, .opus_channel_count = 3, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
                                 [](std::span<const std::uint8_t>) {});
     invalid_audio.on_track(make_audio_track());
     require(!invalid_audio.valid(), "webrtc invalid opus output rejected");
@@ -5951,7 +6034,7 @@ void test_webrtc_output_initialization_failure()
     require(!invalid_h265_payload.valid(), "webrtc rtcp mux h265 payload rejected");
 
     webrtc_output invalid_opus_payload(
-        webrtc_output_config{.opus_payload_type = 95, .opus_channel_count = 2, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
+        webrtc_output_config{.audio_payload_type = 95, .opus_channel_count = 2, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
     invalid_opus_payload.on_track(make_audio_track());
     require(!invalid_opus_payload.valid(), "webrtc rtcp mux opus payload rejected");
@@ -5965,7 +6048,7 @@ void test_webrtc_rtcp_sender()
     webrtc_output output(
         webrtc_output_config{
             .video_payload_type = 102,
-            .opus_payload_type = 111,
+            .audio_payload_type = 111,
             .opus_channel_count = 2,
             .video_mid = "0",
             .audio_mid = "1",
@@ -6197,6 +6280,8 @@ int main()
     std::cout << "[pass] webrtc_video_access_unit_marker\n";
     media_server::test_webrtc_opus_packetizer();
     std::cout << "[pass] webrtc_opus_packetizer\n";
+    media_server::test_webrtc_g711_passthrough();
+    std::cout << "[pass] webrtc_g711_passthrough\n";
     media_server::test_webrtc_output_initialization_failure();
     std::cout << "[pass] webrtc_output_initialization_failure\n";
     media_server::test_webrtc_rtcp_sender();

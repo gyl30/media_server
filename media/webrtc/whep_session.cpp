@@ -506,8 +506,9 @@ bool whep_session::startup_media()
     auto output = std::make_shared<webrtc_output>(
         webrtc_output_config{
             .video_codec = video_codec_.value_or(codec_id::h264),
+            .audio_codec = audio_codec_.value_or(codec_id::aac),
             .video_payload_type = video_payload_type_.value_or(-1),
-            .opus_payload_type = audio_payload_type_.value_or(-1),
+            .audio_payload_type = audio_payload_type_.value_or(-1),
             .opus_channel_count = audio_channel_count_.value_or(1),
             .opus_bitrate = audio_bitrate_.value_or(64'000 * audio_channel_count_.value_or(1)),
             .opus_max_playback_rate = audio_max_playback_rate_.value_or(48'000),
