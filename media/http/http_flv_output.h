@@ -22,7 +22,7 @@ class http_flv_output final : public media_reader
     using write_handler = std::function<void(std::uint64_t, std::vector<std::uint8_t>, bool)>;
     using end_handler = std::function<void()>;
 
-    http_flv_output(write_handler on_write, end_handler on_end);
+    http_flv_output(write_handler on_write, end_handler on_end, output_video_config video = {});
     ~http_flv_output() override;
 
     void on_tracks(media_track_snapshot_ptr tracks) override;

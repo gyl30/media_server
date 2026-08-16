@@ -18,8 +18,12 @@ constexpr int whep_retry_after_seconds = 1;
 
 }    // namespace
 
-http_session::http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep)
-    : stream_(std::move(socket)), registry_(registry), hls_(hls), whep_(whep), hls_wait_timer_(stream_.get_executor())
+http_session::http_session(boost::asio::ip::tcp::socket socket,
+                           stream_registry& registry,
+                           hls_service& hls,
+                           whep_service& whep,
+                           output_video_config video)
+    : stream_(std::move(socket)), registry_(registry), hls_(hls), whep_(whep), video_config_(video), hls_wait_timer_(stream_.get_executor())
 {
 }
 
@@ -267,13 +271,29 @@ void http_session::handle_hls(const boost::urls::url_view& target)
         return;
     }
 
-    if (!file.ends_with(".ts"))
+    if (file == "init.mp4")
+    {
+        const auto init = hls_.init_segment(stream_name);
+        if (!init)
+        {
+            send_text_response(boost::beast::http::status::not_found, "text/plain", "init segment not found\n");
+            return;
+        }
+        send_binary_response(boost::beast::http::status::ok, "video/mp4", *init);
+        return;
+    }
+
+    const bool transport_stream = file.ends_with(".ts");
+    const bool fragmented_mp4 = file.ends_with(".m4s");
+    const bool fmp4_mode = video_config_.codec == output_video_codec::av1;
+    if ((!transport_stream && !fragmented_mp4) || (transport_stream && fmp4_mode) || (fragmented_mp4 && !fmp4_mode))
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
         return;
     }
 
-    const std::string_view number(file.data(), file.size() - 3);
+    const auto suffix_size = transport_stream ? 3U : 4U;
+    const std::string_view number(file.data(), file.size() - suffix_size);
     std::uint64_t sequence = 0;
     const auto [pointer, parse_error] = std::from_chars(number.data(), number.data() + number.size(), sequence);
     if (parse_error != std::errc{} || pointer != number.data() + number.size())
@@ -288,7 +308,7 @@ void http_session::handle_hls(const boost::urls::url_view& target)
         send_text_response(boost::beast::http::status::not_found, "text/plain", "segment not found\n");
         return;
     }
-    send_binary_response(boost::beast::http::status::ok, "video/mp2t", *segment);
+    send_binary_response(boost::beast::http::status::ok, fragmented_mp4 ? "video/mp4" : "video/mp2t", *segment);
 }
 
 void http_session::wait_hls_playlist(std::string stream_name)
@@ -516,7 +536,8 @@ void http_session::startup_flv(std::shared_ptr<media_stream> media_stream)
             {
                 self->shutdown();
             }
-        });
+        },
+        video_config_);
 
     flv_reader_ = media_stream->add_reader(flv_output_, stream_.get_executor());
     read_flv_client();

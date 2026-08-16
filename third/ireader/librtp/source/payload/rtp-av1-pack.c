@@ -88,6 +88,11 @@ static void rtp_av1_pack_destroy(void* pack)
 {
 	struct rtp_encode_av1_t *packer;
 	packer = (struct rtp_encode_av1_t *)pack;
+	if (packer->ptr)
+	{
+		packer->handler.free(packer->cbparam, packer->ptr);
+		packer->ptr = NULL;
+	}
 #if defined(_DEBUG) || defined(DEBUG)
 	memset(packer, 0xCC, sizeof(*packer));
 #endif
@@ -192,7 +197,12 @@ static int rtp_av1_pack_input_annexb(void* pack, const void* data, int bytes, ui
 	packer = (struct rtp_encode_av1_t *)pack;
 	packer->pkt.rtp.timestamp = timestamp;
 	packer->pkt.rtp.m = 0;
-	packer->ptr = NULL; // TODO: ptr memory leak
+	if (packer->ptr)
+	{
+		packer->handler.free(packer->cbparam, packer->ptr);
+		packer->ptr = NULL;
+	}
+	packer->offset = 0;
 
 	temporal_id0 = spatial_id0 = 0;
 	ptr = (const uint8_t *)data;
@@ -274,7 +284,12 @@ static int rtp_av1_pack_input_obu(void* pack, const void* data, int bytes, uint3
 	packer = (struct rtp_encode_av1_t*)pack;
 	packer->pkt.rtp.timestamp = timestamp;
 	packer->pkt.rtp.m = 0;
-	packer->ptr = NULL; // TODO: ptr memory leak
+	if (packer->ptr)
+	{
+		packer->handler.free(packer->cbparam, packer->ptr);
+		packer->ptr = NULL;
+	}
+	packer->offset = 0;
 	packer->aggregation = 0;
 
 	raw = (const uint8_t*)data;

@@ -1,6 +1,7 @@
 #ifndef MEDIA_HTTP_HTTP_SESSION_H
 #define MEDIA_HTTP_HTTP_SESSION_H
 
+#include "media/codec/output_video_config.h"
 #include "media/core/stream_registry.h"
 #include "media/hls/hls_service.h"
 #include "media/http/http_flv_output.h"
@@ -24,7 +25,7 @@ namespace media_server
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
-    http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep);
+    http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep, output_video_config video = {});
 
     void startup();
     void shutdown();
@@ -65,6 +66,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     stream_registry& registry_;
     hls_service& hls_;
     whep_service& whep_;
+    output_video_config video_config_;
     boost::asio::steady_timer hls_wait_timer_;
     std::chrono::steady_clock::time_point hls_wait_deadline_{};
     std::string hls_wait_stream_name_;

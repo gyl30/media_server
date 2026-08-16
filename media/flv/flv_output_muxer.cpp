@@ -15,9 +15,13 @@ extern "C"
 namespace media_server
 {
 
-flv_output_muxer::flv_output_muxer(output_handler handler)
-    : handler_(std::move(handler)), muxer_(flv_muxer_create(&flv_output_muxer::on_output, this))
+flv_output_muxer::flv_output_muxer(output_handler handler, output_video_config video)
+    : handler_(std::move(handler)), video_config_(video), muxer_(flv_muxer_create(&flv_output_muxer::on_output, this))
 {
+    if (muxer_ != nullptr && video_config_.codec == output_video_codec::av1)
+    {
+        flv_muxer_set_enhanced_rtmp(muxer_, 1);
+    }
 }
 
 flv_output_muxer::~flv_output_muxer()
@@ -48,10 +52,18 @@ void flv_output_muxer::on_track(const media_track& track)
 
     const bool reconfigured = existing != tracks_.end();
     tracks_.insert_or_assign(track.id, track);
+    if (video_config_.codec == output_video_codec::av1 && track.kind == media_kind::video)
+    {
+        startup_video_transcoder(track);
+    }
 
     if (reconfigured)
     {
-        // flv_muxer 会缓存 AVC/AAC sequence-header 状态，配置代际变化时统一重置。
+        if (video_config_.codec == output_video_codec::av1 && track.kind == media_kind::audio)
+        {
+            return;
+        }
+        // flv_muxer 会缓存视频 sequence-header 状态，视频配置代际变化时统一重置。
         static_cast<void>(flv_muxer_reset(muxer_));
         video_config_pending_ = true;
         return;
@@ -62,6 +74,10 @@ void flv_output_muxer::on_track(const media_track& track)
 
 void flv_output_muxer::prime_video_config(const media_track& track, std::uint32_t timestamp)
 {
+    if (video_config_.codec == output_video_codec::av1 && track.kind == media_kind::video)
+    {
+        return;
+    }
     if (track.codec_config.empty() && track.codec != codec_id::opus)
     {
         return;
@@ -129,6 +145,12 @@ void flv_output_muxer::on_frame(const media_frame& frame)
         video_config_pending_ = false;
     }
 
+    if (video_config_.codec == output_video_codec::av1 && iterator->second.kind == media_kind::video)
+    {
+        input_av1(frame);
+        return;
+    }
+
     int result = -1;
 
     switch (iterator->second.codec)
@@ -160,6 +182,60 @@ void flv_output_muxer::on_frame(const media_frame& frame)
 
     {
         spdlog::error("flv mux failed track {} result {}", frame.track, result);
+    }
+}
+
+void flv_output_muxer::startup_video_transcoder(const media_track& track)
+{
+    video_transcoder_.reset();
+    video_track_id_ = 0;
+    if (track.codec != codec_id::h264 && track.codec != codec_id::h265)
+    {
+        return;
+    }
+    auto transcoder = std::make_unique<video_transcoder>();
+    if (!transcoder->startup(video_transcoder_config{
+            .input_codec = track.codec,
+            .output_codec = codec_id::av1,
+            .input_codec_config = track.codec_config,
+        }))
+    {
+        spdlog::error("flv av1 transcoder startup failed track {}", track.id);
+        return;
+    }
+    video_track_id_ = track.id;
+    video_transcoder_ = std::move(transcoder);
+}
+
+void flv_output_muxer::input_av1(const media_frame& frame)
+{
+    if (!video_transcoder_ || frame.track != video_track_id_)
+    {
+        return;
+    }
+    std::vector<media_frame> output;
+    if (!video_transcoder_->transcode(frame, output))
+    {
+        spdlog::error("flv av1 transcode failed track {}", frame.track);
+        video_transcoder_.reset();
+        return;
+    }
+    for (const auto& encoded : output)
+    {
+        if (!encoded.payload)
+        {
+            continue;
+        }
+        const auto result = flv_muxer_av1(muxer_,
+                                          encoded.payload->data(),
+                                          encoded.payload->size(),
+                                          ns_to_flv_milliseconds(encoded.pts_ns),
+                                          ns_to_flv_milliseconds(encoded.dts_ns),
+                                          encoded.key_frame ? 1 : 0);
+        if (result != 0)
+        {
+            spdlog::error("flv av1 mux failed track {} result {}", frame.track, result);
+        }
     }
 }
 
