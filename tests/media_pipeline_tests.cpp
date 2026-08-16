@@ -4458,6 +4458,22 @@ void test_flv_g711_round_trip()
     }
 }
 
+void test_flv_opus_adapter_round_trip()
+{
+    flv_demux_capture capture;
+    const auto demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
+        flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+    flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp) {
+        require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv opus adapter demux");
+    });
+    output.on_track(make_opus_track(2));
+    const std::vector<std::uint8_t> payload{0xf8, 0xff, 0xfe};
+    output.on_frame(make_opus_frame(20'000'000, payload));
+    require(capture.packets.size() == 2U && capture.packets[0].codec == FLV_AUDIO_OPUS_HEAD &&
+                capture.packets[1].codec == FLV_AUDIO_OPUS && capture.packets[1].payload == payload && capture.packets[1].pts == 20,
+            "flv opus sequence then raw packet");
+}
+
 void test_h265_output_paths()
 {
     flv_demux_capture capture;
@@ -6244,6 +6260,8 @@ int main()
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     media_server::test_flv_g711_round_trip();
     std::cout << "[pass] flv_g711_round_trip\n";
+    media_server::test_flv_opus_adapter_round_trip();
+    std::cout << "[pass] flv_opus_adapter_round_trip\n";
     media_server::test_h265_output_paths();
     std::cout << "[pass] h265_output_paths\n";
     media_server::test_rtsp_muxer_zero_origin_timeline();
