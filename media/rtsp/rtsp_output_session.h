@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 struct rtsp_server_t;
 struct rtsp_muxer_t;
@@ -23,7 +24,7 @@ class rtsp_output_session final : public media_reader, public std::enable_shared
     rtsp_output_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry, std::uint16_t server_port);
     ~rtsp_output_session() override;
 
-    void startup();
+    void startup(std::vector<std::uint8_t> initial_data = {});
     void shutdown();
 
     void on_tracks(media_track_snapshot_ptr tracks) override;

@@ -74,7 +74,7 @@ rtsp_output_session::~rtsp_output_session()
     }
 }
 
-void rtsp_output_session::startup()
+void rtsp_output_session::startup(std::vector<std::uint8_t> initial_data)
 {
     rtsp_handler_t handler{};
     handler.send = &rtsp_output_session::send_callback;
@@ -110,6 +110,11 @@ void rtsp_output_session::startup()
                 self->shutdown();
             }
         });
+
+    if (!initial_data.empty())
+    {
+        on_tcp_read(initial_data);
+    }
 }
 
 void rtsp_output_session::on_tracks(media_track_snapshot_ptr tracks)

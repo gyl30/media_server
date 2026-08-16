@@ -4,7 +4,7 @@
 
 namespace media_server
 {
-http_flv_output::http_flv_output(write_handler on_write, end_handler on_end)
+http_flv_output::http_flv_output(write_handler on_write, end_handler on_end, output_video_config video)
     : on_write_(std::move(on_write)),
       on_end_(std::move(on_end)),
       muxer_(
@@ -15,7 +15,8 @@ http_flv_output::http_flv_output(write_handler on_write, end_handler on_end)
               {
                   static_cast<void>(flv_writer_input(writer_, type, data.data(), data.size(), timestamp));
               }
-          })
+          },
+          video)
 {
 }
 

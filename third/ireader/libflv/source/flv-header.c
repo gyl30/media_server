@@ -209,6 +209,8 @@ int flv_video_tag_header_read(struct flv_video_tag_header_t* video, const uint8_
 		{
 		case FLV_VIDEO_FOURCC_AV1:
 			video->codecid = FLV_VIDEO_AV1;
+			if (FLV_PACKET_TYPE_CODED_FRAMES_X == video->avpacket)
+				video->avpacket = FLV_AVPACKET;
 			return 5;
 
 		//case FLV_VIDEO_FOURCC_VP9:
