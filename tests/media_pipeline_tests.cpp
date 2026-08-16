@@ -4393,6 +4393,34 @@ void test_flv_config_cache_lifecycle()
             "flv updated h264 config content");
 }
 
+void test_flv_g711_round_trip()
+{
+    for (const auto codec : {codec_id::g711a, codec_id::g711u})
+    {
+        flv_demux_capture capture;
+        const auto demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
+            flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+        require(demuxer != nullptr, "flv g711 demuxer create");
+        flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp) {
+            require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv g711 demux input");
+        });
+        output.on_track(make_g711_track(codec));
+        const std::vector<std::uint8_t> payload(160, codec == codec_id::g711a ? 0xd5 : 0xff);
+        output.on_frame(media_frame{
+            .track = audio_track_id,
+            .dts_ns = 40'000'000,
+            .pts_ns = 40'000'000,
+            .key_frame = false,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(payload),
+        });
+        require(capture.packets.size() == 1U, "flv g711 packet count");
+        require(capture.packets.front().codec == (codec == codec_id::g711a ? FLV_AUDIO_G711A : FLV_AUDIO_G711U),
+                "flv g711 codec identity");
+        require(capture.packets.front().pts == 40 && capture.packets.front().dts == 40 && capture.packets.front().payload == payload,
+                "flv g711 raw payload timestamp");
+    }
+}
+
 void test_h265_output_paths()
 {
     flv_demux_capture capture;
@@ -6152,6 +6180,8 @@ int main()
     std::cout << "[pass] ireader_rejects_unknown_enhanced_audio_fourcc\n";
     media_server::test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
+    media_server::test_flv_g711_round_trip();
+    std::cout << "[pass] flv_g711_round_trip\n";
     media_server::test_h265_output_paths();
     std::cout << "[pass] h265_output_paths\n";
     media_server::test_rtsp_muxer_zero_origin_timeline();
