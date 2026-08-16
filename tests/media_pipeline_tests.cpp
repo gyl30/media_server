@@ -1,5 +1,6 @@
 #include "media/codec/audio_transcoder.h"
 #include "media/codec/codec_utils.h"
+#include "media/codec/video_transcoder.h"
 #include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
@@ -28,6 +29,7 @@ extern "C"
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/opt.h>
 
 #include "amf0.h"
 #include "avpbs.h"
@@ -68,6 +70,7 @@ extern "C"
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <string>
@@ -82,6 +85,170 @@ namespace
 
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+
+[[noreturn]] void fail(std::string_view message);
+void require(bool condition, std::string_view message);
+
+struct encoded_video_fixture
+{
+    codec_id codec{};
+    int width{};
+    int height{};
+    std::vector<std::uint8_t> codec_config;
+    std::vector<media_frame> frames;
+};
+
+encoded_video_fixture make_video_transcoder_fixture(codec_id codec)
+{
+    constexpr int width = 64;
+    constexpr int height = 48;
+    constexpr int frame_count = 5;
+    constexpr AVRational source_time_base{1, 25};
+    constexpr std::int64_t origin_ns = 5'000'000'000;
+
+    if (codec == codec_id::h265)
+    {
+        const std::array<std::vector<std::uint8_t>, frame_count> payloads{
+            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x28, 0x01, 0xac, 0x76, 0x23, 0xef, 0x90, 0x4d, 0x80,
+                                      0x71, 0x27, 0x9f, 0x74, 0xc1, 0x2d, 0x86, 0xe1, 0x55, 0x25, 0xeb, 0x9f, 0x73, 0xf8},
+            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xd0, 0x11, 0x56, 0x20, 0xe4, 0x49, 0x2a, 0x44, 0x87,
+                                      0x11, 0x8c, 0x7a, 0x46, 0x46, 0x4d, 0xdb, 0x7e, 0x49, 0x4c, 0xc8, 0x76, 0xb7, 0x8c},
+            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0xe0, 0x24, 0xbe, 0x08, 0x14, 0xc0, 0xd2, 0xa9},
+            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xd0, 0x21, 0xd5, 0x62, 0x0e, 0xc0, 0x26, 0xa0, 0x73,
+                                      0xc6, 0x35, 0x6e, 0xdd, 0x23, 0xc3, 0xc7, 0xd6, 0x1a, 0x00, 0xa3, 0x66, 0x30},
+            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0xe0, 0x66, 0xb5, 0xe0, 0x81, 0x44, 0xd2, 0xa9},
+        };
+        const std::array<std::int64_t, frame_count> dts{4'920'000'000, 4'960'000'000, 5'000'000'000, 5'040'000'000, 5'080'000'000};
+        const std::array<std::int64_t, frame_count> pts{5'000'000'000, 5'080'000'000, 5'040'000'000, 5'160'000'000, 5'120'000'000};
+        encoded_video_fixture fixture{
+            .codec = codec,
+            .width = width,
+            .height = height,
+            .codec_config = {0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03,
+                             0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x1e, 0x91, 0x30, 0x24, 0x00, 0x00,
+                             0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03,
+                             0x00, 0x00, 0x03, 0x00, 0x1e, 0xa0, 0x20, 0x83, 0x16, 0x59, 0x13, 0x4a, 0x4c, 0x2e, 0x68,
+                             0x08, 0x00, 0x00, 0x03, 0x00, 0x08, 0x00, 0x00, 0x03, 0x00, 0xc8, 0x40, 0x00, 0x00, 0x00,
+                             0x01, 0x44, 0x01, 0xc0, 0x73, 0xc0, 0x89},
+            .frames = {},
+        };
+        for (std::size_t index = 0; index < payloads.size(); ++index)
+        {
+            fixture.frames.push_back(media_frame{
+                .track = video_track_id,
+                .dts_ns = dts[index],
+                .pts_ns = pts[index],
+                .key_frame = index == 0,
+                .payload = std::make_shared<const std::vector<std::uint8_t>>(payloads[index]),
+            });
+        }
+        return fixture;
+    }
+
+    const AVCodec* encoder = avcodec_find_encoder_by_name("libx264");
+    require(encoder != nullptr, "video transcoder fixture encoder");
+    AVCodecContext* context = avcodec_alloc_context3(encoder);
+    AVFrame* frame = av_frame_alloc();
+    AVPacket* packet = av_packet_alloc();
+    require(context != nullptr && frame != nullptr && packet != nullptr, "video transcoder fixture allocate");
+
+    context->width = width;
+    context->height = height;
+    context->pix_fmt = AV_PIX_FMT_YUV420P;
+    context->time_base = source_time_base;
+    context->framerate = AVRational{25, 1};
+    context->gop_size = frame_count;
+    context->max_b_frames = 1;
+    context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    context->color_range = AVCOL_RANGE_JPEG;
+    context->color_primaries = AVCOL_PRI_BT709;
+    context->color_trc = AVCOL_TRC_BT709;
+    context->colorspace = AVCOL_SPC_BT709;
+    context->chroma_sample_location = AVCHROMA_LOC_LEFT;
+    require(av_opt_set(context->priv_data, "preset", "ultrafast", 0) == 0, "video transcoder fixture preset");
+    require(avcodec_open2(context, encoder, nullptr) == 0, "video transcoder fixture encoder open");
+    require(context->extradata != nullptr && context->extradata_size > 4, "video transcoder fixture extradata");
+
+    encoded_video_fixture fixture{
+        .codec = codec,
+        .width = width,
+        .height = height,
+        .codec_config = {context->extradata, context->extradata + context->extradata_size},
+        .frames = {},
+    };
+    require(fixture.codec_config[0] == 0 && fixture.codec_config[1] == 0 &&
+                (fixture.codec_config[2] == 1 || (fixture.codec_config[2] == 0 && fixture.codec_config[3] == 1)),
+            "video transcoder fixture annex-b config");
+
+    frame->format = context->pix_fmt;
+    frame->width = width;
+    frame->height = height;
+    require(av_frame_get_buffer(frame, 32) == 0, "video transcoder fixture frame buffer");
+
+    for (int index = 0; index < frame_count; ++index)
+    {
+        require(av_frame_make_writable(frame) == 0, "video transcoder fixture writable");
+        for (int y = 0; y < height; ++y)
+        {
+            std::fill_n(frame->data[0] + y * frame->linesize[0], width, static_cast<std::uint8_t>(y < height / 2 ? 0 : 255));
+        }
+        for (int y = 0; y < height / 2; ++y)
+        {
+            std::fill_n(frame->data[1] + y * frame->linesize[1], width / 2, static_cast<std::uint8_t>(128));
+            std::fill_n(frame->data[2] + y * frame->linesize[2], width / 2, static_cast<std::uint8_t>(128));
+        }
+        frame->pts = index;
+        require(avcodec_send_frame(context, frame) == 0, "video transcoder fixture send frame");
+        while (true)
+        {
+            av_packet_unref(packet);
+            const int result = avcodec_receive_packet(context, packet);
+            if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
+            {
+                break;
+            }
+            require(result == 0, "video transcoder fixture receive packet");
+            fixture.frames.push_back(media_frame{
+                .track = video_track_id,
+                .dts_ns = origin_ns + av_rescale_q(packet->dts, source_time_base, AVRational{1, 1'000'000'000}),
+                .pts_ns = origin_ns + av_rescale_q(packet->pts, source_time_base, AVRational{1, 1'000'000'000}),
+                .key_frame = (packet->flags & AV_PKT_FLAG_KEY) != 0,
+                .payload = std::make_shared<const std::vector<std::uint8_t>>(packet->data, packet->data + packet->size),
+            });
+        }
+    }
+
+    require(avcodec_send_frame(context, nullptr) == 0, "video transcoder fixture flush");
+    while (true)
+    {
+        av_packet_unref(packet);
+        const int result = avcodec_receive_packet(context, packet);
+        if (result == AVERROR_EOF)
+        {
+            break;
+        }
+        require(result == 0, "video transcoder fixture flush receive");
+        fixture.frames.push_back(media_frame{
+            .track = video_track_id,
+            .dts_ns = origin_ns + av_rescale_q(packet->dts, source_time_base, AVRational{1, 1'000'000'000}),
+            .pts_ns = origin_ns + av_rescale_q(packet->pts, source_time_base, AVRational{1, 1'000'000'000}),
+            .key_frame = (packet->flags & AV_PKT_FLAG_KEY) != 0,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(packet->data, packet->data + packet->size),
+        });
+    }
+
+    av_packet_free(&packet);
+    av_frame_free(&frame);
+    avcodec_free_context(&context);
+    require(fixture.frames.size() == frame_count, "video transcoder fixture packet count");
+    for (const auto& encoded : fixture.frames)
+    {
+        require(encoded.payload && encoded.payload->size() >= 4 && (*encoded.payload)[0] == 0 && (*encoded.payload)[1] == 0 &&
+                    ((*encoded.payload)[2] == 1 || ((*encoded.payload)[2] == 0 && (*encoded.payload)[3] == 1)),
+                "video transcoder fixture annex-b frame");
+    }
+    return fixture;
+}
 
 const std::vector<std::uint8_t> h264_config{
     0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
@@ -5038,6 +5205,256 @@ void test_audio_transcoder_aac_opus()
     transcoder.shutdown();
 }
 
+void validate_av1_transcoder_output(const encoded_video_fixture& source, const std::vector<media_frame>& output)
+{
+    const AVCodec* decoder = avcodec_find_decoder_by_name("libdav1d");
+    if (decoder == nullptr)
+    {
+        decoder = avcodec_find_decoder(AV_CODEC_ID_AV1);
+    }
+    require(decoder != nullptr, "video transcoder av1 decoder");
+    AVCodecContext* decoder_context = avcodec_alloc_context3(decoder);
+    AVCodecContext* parser_context = avcodec_alloc_context3(nullptr);
+    AVCodecParserContext* parser = av_parser_init(AV_CODEC_ID_AV1);
+    AVPacket* packet = av_packet_alloc();
+    AVFrame* decoded = av_frame_alloc();
+    require(decoder_context != nullptr && parser_context != nullptr && parser != nullptr && packet != nullptr && decoded != nullptr,
+            "video transcoder av1 validation allocate");
+    decoder_context->pkt_timebase = AVRational{1, 1'000'000'000};
+    require(avcodec_open2(decoder_context, decoder, nullptr) == 0, "video transcoder av1 decoder open");
+
+    int decoded_frames{};
+    bool first_temporal_unit_sequence_header{};
+    bool frame_obu{};
+    bool parsed_key{};
+    bool color_signaling{};
+    std::int64_t dark_luma_sum{};
+    std::int64_t bright_luma_sum{};
+    std::int64_t luma_sample_count{};
+    for (std::size_t frame_index = 0; frame_index < output.size(); ++frame_index)
+    {
+        const auto& frame = output[frame_index];
+        require(frame.track == video_track_id && frame.payload && !frame.payload->empty(), "video transcoder av1 media frame");
+        require(frame.pts_ns != AV_NOPTS_VALUE && frame.dts_ns != AV_NOPTS_VALUE, "video transcoder av1 packet timestamps");
+
+        std::size_t offset{};
+        while (offset < frame.payload->size())
+        {
+            const std::uint8_t header = (*frame.payload)[offset++];
+            require((header & 0x80U) == 0 && (header & 0x02U) != 0, "video transcoder av1 low-overhead obu header");
+            const auto obu_type = static_cast<std::uint8_t>((header >> 3U) & 0x0fU);
+            if ((header & 0x04U) != 0)
+            {
+                require(offset < frame.payload->size(), "video transcoder av1 obu extension");
+                ++offset;
+            }
+            std::uint64_t obu_size{};
+            unsigned shift{};
+            while (true)
+            {
+                require(offset < frame.payload->size() && shift <= 56U, "video transcoder av1 obu leb128");
+                const std::uint8_t value = (*frame.payload)[offset++];
+                obu_size |= static_cast<std::uint64_t>(value & 0x7fU) << shift;
+                if ((value & 0x80U) == 0)
+                {
+                    break;
+                }
+                shift += 7U;
+            }
+            require(obu_size <= frame.payload->size() - offset, "video transcoder av1 obu boundary");
+            first_temporal_unit_sequence_header = first_temporal_unit_sequence_header || (frame_index == 0 && obu_type == 1U);
+            frame_obu = frame_obu || obu_type == 3U || obu_type == 6U;
+            offset += static_cast<std::size_t>(obu_size);
+        }
+        require(offset == frame.payload->size(), "video transcoder av1 complete temporal unit");
+
+        std::uint8_t* parsed_data{};
+        int parsed_size{};
+        const int consumed = av_parser_parse2(parser,
+                                              parser_context,
+                                              &parsed_data,
+                                              &parsed_size,
+                                              frame.payload->data(),
+                                              static_cast<int>(frame.payload->size()),
+                                              frame.pts_ns,
+                                              frame.dts_ns,
+                                              0);
+        require(consumed == static_cast<int>(frame.payload->size()) && parsed_size == static_cast<int>(frame.payload->size()),
+                "video transcoder av1 parser temporal unit");
+        require(parser->width == source.width && parser->height == source.height, "video transcoder av1 parser dimensions");
+        if (frame.key_frame)
+        {
+            parsed_key = parser->key_frame == 1;
+        }
+
+        av_packet_unref(packet);
+        require(av_new_packet(packet, static_cast<int>(frame.payload->size())) == 0, "video transcoder av1 decode packet allocate");
+        std::memcpy(packet->data, frame.payload->data(), frame.payload->size());
+        packet->pts = frame.pts_ns;
+        packet->dts = frame.dts_ns;
+        require(avcodec_send_packet(decoder_context, packet) == 0, "video transcoder av1 decode send");
+        while (true)
+        {
+            av_frame_unref(decoded);
+            const int result = avcodec_receive_frame(decoder_context, decoded);
+            if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
+            {
+                break;
+            }
+            require(result == 0 && decoded->width == source.width && decoded->height == source.height,
+                    "video transcoder av1 decoded dimensions");
+            if (source.codec == codec_id::h264)
+            {
+                color_signaling = decoded->color_range == AVCOL_RANGE_JPEG && decoded->color_primaries == AVCOL_PRI_BT709 &&
+                    decoded->color_trc == AVCOL_TRC_BT709 && decoded->colorspace == AVCOL_SPC_BT709;
+                for (int y = 0; y < decoded->height; ++y)
+                {
+                    const auto* row = decoded->data[0] + y * decoded->linesize[0];
+                    if (y < decoded->height / 4 || y >= decoded->height * 3 / 4)
+                    {
+                        const auto row_sum = std::accumulate(row, row + decoded->width, std::int64_t{});
+                        if (y < decoded->height / 4)
+                        {
+                            dark_luma_sum += row_sum;
+                        }
+                        else
+                        {
+                            bright_luma_sum += row_sum;
+                        }
+                        luma_sample_count += decoded->width;
+                    }
+                }
+            }
+            ++decoded_frames;
+        }
+    }
+
+    require(avcodec_send_packet(decoder_context, nullptr) == 0, "video transcoder av1 decoder flush");
+    while (true)
+    {
+        av_frame_unref(decoded);
+        const int result = avcodec_receive_frame(decoder_context, decoded);
+        if (result == AVERROR_EOF)
+        {
+            break;
+        }
+        require(result == 0 && decoded->width == source.width && decoded->height == source.height,
+                "video transcoder av1 flush dimensions");
+        if (source.codec == codec_id::h264)
+        {
+            color_signaling = decoded->color_range == AVCOL_RANGE_JPEG && decoded->color_primaries == AVCOL_PRI_BT709 &&
+                decoded->color_trc == AVCOL_TRC_BT709 && decoded->colorspace == AVCOL_SPC_BT709;
+            for (int y = 0; y < decoded->height; ++y)
+            {
+                const auto* row = decoded->data[0] + y * decoded->linesize[0];
+                if (y < decoded->height / 4 || y >= decoded->height * 3 / 4)
+                {
+                    const auto row_sum = std::accumulate(row, row + decoded->width, std::int64_t{});
+                    if (y < decoded->height / 4)
+                    {
+                        dark_luma_sum += row_sum;
+                    }
+                    else
+                    {
+                        bright_luma_sum += row_sum;
+                    }
+                    luma_sample_count += decoded->width;
+                }
+            }
+        }
+        ++decoded_frames;
+    }
+
+    require(first_temporal_unit_sequence_header && frame_obu, "video transcoder av1 first temporal unit sequence and frame obu");
+    require(source.codec != codec_id::h264 || color_signaling, "video transcoder av1 color signaling");
+    require(source.codec != codec_id::h264 ||
+                (luma_sample_count > 0 && dark_luma_sum / (luma_sample_count / 2) <= 8 &&
+                 bright_luma_sum / (luma_sample_count / 2) >= 247),
+            "video transcoder av1 full range pixels");
+    require(parsed_key, "video transcoder av1 packet key flag matches parser");
+    require(decoded_frames == static_cast<int>(source.frames.size()), "video transcoder av1 decoded frame count");
+    av_frame_free(&decoded);
+    av_packet_free(&packet);
+    av_parser_close(parser);
+    avcodec_free_context(&parser_context);
+    avcodec_free_context(&decoder_context);
+}
+
+void test_video_transcoder_h26x_av1()
+{
+    for (const auto input_codec : {codec_id::h264, codec_id::h265})
+    {
+        const auto source = make_video_transcoder_fixture(input_codec);
+        const video_transcoder_config config{
+            .input_codec = input_codec,
+            .output_codec = codec_id::av1,
+            .input_codec_config = source.codec_config,
+        };
+
+        video_transcoder transcoder;
+        require(transcoder.startup(config), "video transcoder startup");
+        std::vector<media_frame> output;
+        for (const auto& frame : source.frames)
+        {
+            require(transcoder.transcode(frame, output), "video transcoder input frame");
+        }
+        const auto before_flush = output.size();
+        require(transcoder.flush(output), "video transcoder flush");
+        require(output.size() == source.frames.size() && output.size() > before_flush, "video transcoder delayed flush output");
+        const auto after_flush = output.size();
+        require(transcoder.flush(output) && output.size() == after_flush, "video transcoder repeated flush");
+        require(!transcoder.transcode(source.frames.front(), output), "video transcoder rejects input after flush");
+        require(std::ranges::any_of(output, [](const media_frame& frame) { return frame.key_frame; }), "video transcoder key packet");
+        require(output.front().pts_ns >= 5'000'000'000 && output.front().dts_ns >= 5'000'000'000,
+                "video transcoder nonzero timeline");
+        for (std::size_t index = 1; index < output.size(); ++index)
+        {
+            require(output[index].pts_ns > output[index - 1].pts_ns, "video transcoder monotonic pts");
+        }
+        validate_av1_transcoder_output(source, output);
+
+        video_transcoder invalid_timeline;
+        require(invalid_timeline.startup(config), "video transcoder invalid timeline startup");
+        auto invalid = source.frames.front();
+        invalid.pts_ns = AV_NOPTS_VALUE;
+        require(!invalid_timeline.transcode(invalid, output), "video transcoder invalid first timeline");
+        std::vector<media_frame> recovered;
+        for (const auto& frame : source.frames)
+        {
+            require(invalid_timeline.transcode(frame, recovered), "video transcoder timeline recovery");
+        }
+        require(invalid_timeline.flush(recovered) && recovered.size() == source.frames.size(), "video transcoder timeline recovery flush");
+
+        video_transcoder malformed;
+        require(malformed.startup(config), "video transcoder malformed startup");
+        auto bad = source.frames.front();
+        bad.payload = std::make_shared<const std::vector<std::uint8_t>>(16U, 0xffU);
+        std::vector<media_frame> rejected;
+        require(!malformed.transcode(bad, rejected) && malformed.flush(rejected) && rejected.empty(),
+                "video transcoder malformed annex-b rejected");
+
+        video_transcoder restarted;
+        require(restarted.startup(config), "video transcoder new generation startup");
+        std::vector<media_frame> restarted_output;
+        for (const auto& frame : source.frames)
+        {
+            require(restarted.transcode(frame, restarted_output), "video transcoder new generation input");
+        }
+        require(restarted.flush(restarted_output) && restarted_output.size() == source.frames.size(),
+                "video transcoder new generation output");
+        restarted.shutdown();
+        restarted.shutdown();
+    }
+
+    video_transcoder unsupported;
+    require(!unsupported.startup(video_transcoder_config{
+                .input_codec = codec_id::av1,
+                .output_codec = codec_id::h264,
+                .input_codec_config = {0, 0, 0, 1},
+            }),
+            "video transcoder unsupported pair");
+}
+
 void test_media_stream_configless_audio_track()
 {
     boost::asio::io_context io;
@@ -6553,6 +6970,8 @@ int main()
     std::cout << "[pass] rtsp_aac_adts_round_trip\n";
     media_server::test_audio_transcoder_aac_opus();
     std::cout << "[pass] audio_transcoder_aac_opus\n";
+    media_server::test_video_transcoder_h26x_av1();
+    std::cout << "[pass] video_transcoder_h26x_av1\n";
     media_server::test_media_stream_configless_audio_track();
     std::cout << "[pass] media_stream_configless_audio_track\n";
     media_server::test_rtsp_client_session_timeout();
