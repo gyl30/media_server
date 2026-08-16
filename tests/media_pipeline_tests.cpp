@@ -4292,6 +4292,43 @@ void test_ireader_rejects_unknown_enhanced_audio_fourcc()
     require(flv_audio_tag_header_read(&header, tag.data(), tag.size()) < 0, "ireader unknown enhanced audio fourcc");
 }
 
+void test_ireader_opus_flv_correctness()
+{
+    const std::vector<std::uint8_t> head{'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', 1, 2, 0, 0, 0x80, 0xbb, 0, 0, 0, 0, 0};
+    std::vector<std::vector<std::uint8_t>> tags;
+    auto* muxer = flv_muxer_create(
+        [](void* param, int type, const void* data, std::size_t bytes, std::uint32_t) {
+            if (type == FLV_TYPE_AUDIO)
+            {
+                const auto* begin = static_cast<const std::uint8_t*>(data);
+                static_cast<std::vector<std::vector<std::uint8_t>>*>(param)->emplace_back(begin, begin + bytes);
+            }
+            return 0;
+        },
+        &tags);
+    require(muxer != nullptr, "ireader opus flv muxer create");
+    require(flv_muxer_opus(muxer, head.data(), head.size(), 0, 0) == 0 && tags.size() == 1U, "ireader opus head only sequence tag");
+    flv_audio_tag_header_t header{};
+    require(flv_audio_tag_header_read(&header, tags.front().data(), tags.front().size()) == 5 && header.avpacket == FLV_SEQUENCE_HEADER,
+            "ireader opus sequence header type");
+    const std::vector<std::uint8_t> raw{0xf8, 0xff, 0xfe};
+    require(flv_muxer_opus(muxer, raw.data(), raw.size(), 20, 20) == 0 && tags.size() == 2U, "ireader opus raw tag");
+    require(flv_audio_tag_header_read(&header, tags.back().data(), tags.back().size()) == 5 && header.avpacket == FLV_AVPACKET &&
+                std::ranges::equal(std::span<const std::uint8_t>(tags.back()).subspan(5), raw),
+            "ireader opus raw payload unchanged");
+    flv_muxer_destroy(muxer);
+
+    flv_demux_capture capture;
+    const auto demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
+        flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+    require(flv_demuxer_input(demuxer.get(), FLV_TYPE_AUDIO, tags.front().data(), tags.front().size(), 0) == 0,
+            "ireader valid opus head demux");
+    auto invalid = tags.front();
+    invalid.resize(6);
+    require(flv_demuxer_input(demuxer.get(), FLV_TYPE_AUDIO, invalid.data(), invalid.size(), 0) < 0,
+            "ireader invalid opus head rejected");
+}
+
 void test_flv_config_cache_lifecycle()
 {
     flv_demux_capture capture;
@@ -6201,6 +6238,8 @@ int main()
     std::cout << "[pass] ireader_avs3_flv_mux_codec_identity\n";
     media_server::test_ireader_rejects_unknown_enhanced_audio_fourcc();
     std::cout << "[pass] ireader_rejects_unknown_enhanced_audio_fourcc\n";
+    media_server::test_ireader_opus_flv_correctness();
+    std::cout << "[pass] ireader_opus_flv_correctness\n";
     media_server::test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     media_server::test_flv_g711_round_trip();
