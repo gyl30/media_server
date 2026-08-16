@@ -37,7 +37,7 @@ struct media_track
     std::uint32_t clock_rate{};
     std::uint16_t channel_count{};
 
-    // H.264 为 Annex-B SPS/PPS；H.265 为 Annex-B VPS/SPS/PPS；AAC 为 AudioSpecificConfig；无需额外配置的 codec 可为空。
+    // H.264 为 Annex-B SPS/PPS；H.265 为 Annex-B VPS/SPS/PPS；AV1 sequence header 位于 payload，config 为空；AAC 为 AudioSpecificConfig。
     std::vector<std::uint8_t> codec_config;
 
     // 由 media_stream 维护，同一 track 实际配置变化时递增。
@@ -51,7 +51,7 @@ struct media_frame
     std::int64_t pts_ns{};
     bool key_frame{};
 
-    // H.264/H.265 为 Annex-B access unit；AAC 为完整 ADTS frame；Opus 为单个 packet。
+    // H.264/H.265 为 Annex-B access unit；AV1 为 low-overhead OBU temporal unit；AAC 为完整 ADTS frame；Opus 为单个 packet。
     byte_buffer payload;
 };
 

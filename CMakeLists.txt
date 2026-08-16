@@ -153,6 +153,7 @@ add_library(media_core STATIC
     media/core/media_stream.cpp
     media/core/stream_registry.cpp
     media/codec/audio_transcoder.cpp
+    media/codec/video_transcoder.cpp
     media/codec/codec_utils.cpp
     media/net/io_context_pool.cpp
     media/net/tcp_connection.cpp
@@ -194,6 +195,7 @@ target_link_libraries(media_core PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     FFmpeg::audio
+    FFmpeg::scale
     libSRTP::srtp2
     spdlog::spdlog
     ${MEDIA_SERVER_BOOST_LIBS}
