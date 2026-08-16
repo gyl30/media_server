@@ -52,7 +52,6 @@ class webrtc_output final
     struct track_state
     {
         codec_id codec{};
-        std::uint32_t clock_rate{};
         std::unique_ptr<audio_transcoder> transcoder;
         int media_id{-1};
         int payload_id{-1};
