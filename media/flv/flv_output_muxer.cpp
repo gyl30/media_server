@@ -7,6 +7,7 @@ extern "C"
 {
 #include "flv-muxer.h"
 #include "flv-proto.h"
+#include "opus-head.h"
 }
 
 #include <limits>
@@ -34,6 +35,11 @@ void flv_output_muxer::on_track(const media_track& track)
     {
         return;
     }
+    if (track.codec == codec_id::opus &&
+        (track.clock_rate != 48'000 || (track.channel_count != 1 && track.channel_count != 2) || !track.codec_config.empty()))
+    {
+        return;
+    }
     const auto existing = tracks_.find(track.id);
     if (existing != tracks_.end() && existing->second.config_version == track.config_version)
     {
@@ -56,7 +62,7 @@ void flv_output_muxer::on_track(const media_track& track)
 
 void flv_output_muxer::prime_video_config(const media_track& track, std::uint32_t timestamp)
 {
-    if (track.codec_config.empty())
+    if (track.codec_config.empty() && track.codec != codec_id::opus)
     {
         return;
     }
@@ -69,6 +75,28 @@ void flv_output_muxer::prime_video_config(const media_track& track, std::uint32_
     else if (track.codec == codec_id::h265)
     {
         result = flv_muxer_hevc(muxer_, track.codec_config.data(), track.codec_config.size(), timestamp, timestamp);
+    }
+    else if (track.codec == codec_id::opus)
+    {
+        std::array<std::uint8_t, 29> head_data{};
+        const opus_head_t head{
+            .version = 1,
+            .channels = static_cast<std::uint8_t>(track.channel_count),
+            .pre_skip = 0,
+            .input_sample_rate = 48'000,
+            .output_gain = 0,
+            .channel_mapping_family = 0,
+            .stream_count = 0,
+            .coupled_count = 0,
+            .channel_mapping = {},
+        };
+        const auto bytes = opus_head_save(&head, head_data.data(), head_data.size());
+        if (bytes <= 0)
+        {
+            spdlog::error("flv opus head create failed track {}", track.id);
+            return;
+        }
+        result = flv_muxer_opus(muxer_, head_data.data(), static_cast<std::size_t>(bytes), timestamp, timestamp);
     }
     else
     {
@@ -115,6 +143,9 @@ void flv_output_muxer::on_frame(const media_frame& frame)
         case codec_id::aac:
             result = flv_muxer_aac(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
             break;
+        case codec_id::opus:
+            result = flv_muxer_opus(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
+            break;
         case codec_id::g711a:
             result = flv_muxer_g711a(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
             break;
@@ -122,7 +153,6 @@ void flv_output_muxer::on_frame(const media_frame& frame)
             result = flv_muxer_g711u(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
             break;
         case codec_id::av1:
-        case codec_id::opus:
             break;
     }
 

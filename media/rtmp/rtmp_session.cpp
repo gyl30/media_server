@@ -9,6 +9,7 @@ extern "C"
 #include "amf0.h"
 #include "flv-demuxer.h"
 #include "flv-proto.h"
+#include "opus-head.h"
 #include "rtmp-server.h"
 }
 
@@ -449,6 +450,31 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
         return 0;
     }
 
+    if (codec == FLV_AUDIO_OPUS_HEAD)
+    {
+        opus_head_t head{};
+        if (opus_head_load(data.data(), data.size(), &head) < 0 || (opus_head_channels(&head) != 1 && opus_head_channels(&head) != 2))
+        {
+            return -1;
+        }
+        media_track track{
+            .id = audio_track_id,
+            .kind = media_kind::audio,
+            .codec = codec_id::opus,
+            .clock_rate = 48'000,
+            .channel_count = static_cast<std::uint16_t>(opus_head_channels(&head)),
+            .codec_config = {},
+        };
+        if (!tracks_initialized_)
+        {
+            initial_audio_track_ = std::move(track);
+            try_initialize_tracks();
+            return 0;
+        }
+        static_cast<void>(stream_->update_track(std::move(track)));
+        return 0;
+    }
+
     if (codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
     {
         if (metadata_received_ && !expected_audio_)
@@ -488,7 +514,7 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
     {
         id = video_track_id;
     }
-    else if (codec == FLV_AUDIO_AAC || codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
+    else if (codec == FLV_AUDIO_AAC || codec == FLV_AUDIO_OPUS || codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
     {
         id = audio_track_id;
     }
