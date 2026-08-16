@@ -37,6 +37,7 @@ extern "C"
 #include "flv-parser.h"
 #include "flv-proto.h"
 #include "mpeg-ts.h"
+#include "opus-head.h"
 #include "rtmp-chunk-header.h"
 #include "rtmp-client.h"
 #include "rtmp-internal.h"
@@ -1139,11 +1140,92 @@ class rtmp_input_test_peer final
         require(rtmp_client_push_video(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push video config");
     }
 
+    void push_raw_video(codec_id codec)
+    {
+        std::vector<std::uint8_t> packet;
+        flv_output_muxer muxer(
+            [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
+            {
+                if (type == FLV_TYPE_VIDEO)
+                {
+                    packet.assign(data.begin(), data.end());
+                }
+            });
+        muxer.on_track(codec == codec_id::h264 ? make_video_track() : make_h265_track());
+        packet.clear();
+        muxer.on_frame(codec == codec_id::h264 ? make_video_frame(0, true) : make_h265_frame(0, true));
+        require(!packet.empty(), "rtmp input raw video packet");
+        require(rtmp_client_push_video(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push raw video");
+    }
+
     void push_audio_config(std::span<const std::uint8_t> asc)
     {
         std::vector<std::uint8_t> packet{0xaf, FLV_SEQUENCE_HEADER};
         packet.insert(packet.end(), asc.begin(), asc.end());
         require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push audio config");
+    }
+
+    void push_opus_config(std::uint16_t channel_count = 2)
+    {
+        std::vector<std::uint8_t> packet;
+        flv_output_muxer muxer(
+            [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
+            {
+                if (type == FLV_TYPE_AUDIO && packet.empty())
+                {
+                    packet.assign(data.begin(), data.end());
+                }
+            });
+        muxer.on_track(make_opus_track(channel_count));
+        require(!packet.empty(), "rtmp input opus config");
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push opus config");
+    }
+
+    void push_raw_opus(std::uint32_t timestamp, std::vector<std::uint8_t> payload = {0xf8, 0xff, 0xfe})
+    {
+        std::vector<std::uint8_t> packet;
+        flv_output_muxer muxer(
+            [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
+            {
+                if (type == FLV_TYPE_AUDIO)
+                {
+                    packet.assign(data.begin(), data.end());
+                }
+            });
+        muxer.on_track(make_opus_track(1));
+        packet.clear();
+        muxer.on_frame(make_opus_frame(static_cast<std::int64_t>(timestamp) * 1'000'000, std::move(payload)));
+        require(!packet.empty(), "rtmp input raw opus packet");
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), timestamp) == 0, "rtmp input push raw opus");
+    }
+
+    void push_g711(codec_id codec, std::uint32_t timestamp = 0)
+    {
+        std::vector<std::uint8_t> packet;
+        flv_output_muxer muxer(
+            [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
+            {
+                if (type == FLV_TYPE_AUDIO)
+                {
+                    packet.assign(data.begin(), data.end());
+                }
+            });
+        muxer.on_track(make_g711_track(codec));
+        muxer.on_frame(media_frame{
+            .track = audio_track_id,
+            .dts_ns = 0,
+            .pts_ns = 0,
+            .key_frame = false,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(160U, codec == codec_id::g711a ? 0xd5U : 0xffU),
+        });
+        require(!packet.empty(), "rtmp input g711 packet");
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), timestamp) == 0, "rtmp input push g711");
+    }
+
+    void push_raw_aac()
+    {
+        const std::array<std::uint8_t, 4> packet{0xaf, FLV_AVPACKET, 0x11, 0x22};
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push raw aac");
     }
 
     void wait_track(const media_track& expected, std::uint64_t config_version)
@@ -1177,6 +1259,39 @@ class rtmp_input_test_peer final
     }
 
     bool stream_exists() { return query_stream_exists(); }
+
+    std::shared_ptr<raw_audio_capture_sink> attach_audio_capture()
+    {
+        auto sink = std::make_shared<raw_audio_capture_sink>();
+        std::promise<bool> promise;
+        auto future = promise.get_future();
+        boost::asio::post(io_,
+                          [this, sink, &promise]()
+                          {
+                              const auto stream = registry_.find(stream_name_);
+                              if (stream)
+                              {
+                                  stream->add_sink(sink);
+                              }
+                              promise.set_value(static_cast<bool>(stream));
+                          });
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp input attach audio capture");
+        return sink;
+    }
+
+    void wait_audio_frames(const std::shared_ptr<raw_audio_capture_sink>& sink, std::size_t count)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            if (sink->frames().size() >= count)
+            {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        fail("rtmp input audio frame capture");
+    }
 
     void wait_session_closed()
     {
@@ -1629,6 +1744,142 @@ void test_rtmp_input_rejects_video_codec_change()
         peer.wait_track(h265, 1);
         peer.push_video_config(make_video_track());
         peer.wait_stream_removed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/raw-video-pending-switch");
+        peer.push_video_config(make_video_track());
+        peer.push_raw_video(codec_id::h265);
+        peer.wait_session_closed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/raw-video-switch");
+        peer.push_metadata(false);
+        peer.push_video_config(make_video_track());
+        peer.wait_track(make_video_track(), 1);
+        peer.push_raw_video(codec_id::h265);
+        peer.wait_stream_removed();
+    }
+}
+
+void test_rtmp_input_rejects_audio_codec_change()
+{
+    {
+        rtmp_input_test_peer peer("live/g711a-aac-pending");
+        peer.push_g711(codec_id::g711a);
+        peer.push_audio_config(aac_asc);
+        peer.wait_session_closed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/g711a-raw-aac-pending");
+        peer.push_g711(codec_id::g711a);
+        peer.push_raw_aac();
+        peer.wait_session_closed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/aac-raw-opus-pending");
+        peer.push_audio_config(aac_asc);
+        peer.push_raw_opus(0);
+        peer.wait_session_closed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/aac-opus-pending");
+        peer.push_audio_config(aac_asc);
+        peer.push_opus_config();
+        peer.wait_session_closed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/opus-g711u-pending");
+        peer.push_opus_config();
+        peer.push_g711(codec_id::g711u);
+        peer.wait_session_closed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/aac-opus-established");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        peer.push_audio_config(aac_asc);
+        peer.wait_track(make_audio_track(), 1);
+        peer.push_opus_config();
+        peer.wait_stream_removed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/opus-aac-established");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        peer.push_opus_config();
+        peer.wait_track(make_opus_track(2), 1);
+        peer.push_audio_config(aac_asc);
+        peer.wait_stream_removed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/g711a-aac-established");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        peer.push_g711(codec_id::g711a);
+        peer.wait_track(make_g711_track(codec_id::g711a), 1);
+        peer.push_audio_config(aac_asc);
+        peer.wait_stream_removed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/g711a-raw-aac-established");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        peer.push_g711(codec_id::g711a);
+        peer.wait_track(make_g711_track(codec_id::g711a), 1);
+        peer.push_raw_aac();
+        peer.wait_stream_removed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/video-only-opus");
+        peer.push_metadata(false);
+        peer.push_video_config(make_video_track());
+        peer.wait_track(make_video_track(), 1);
+        peer.push_opus_config();
+        peer.wait_stream_removed();
+    }
+
+    {
+        rtmp_input_test_peer peer("live/valid-opus");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        peer.push_opus_config(1);
+        peer.wait_track(make_opus_track(1), 1);
+        const auto capture = peer.attach_audio_capture();
+        const std::vector<std::uint8_t> first{0xf8, 0xff, 0xfe};
+        const std::vector<std::uint8_t> second{0x78, 0x11, 0x22, 0x33};
+        peer.push_raw_opus(20, first);
+        peer.push_raw_opus(40, second);
+        peer.push_opus_config(2);
+        peer.wait_track(make_opus_track(2), 2);
+        peer.wait_audio_frames(capture, 2);
+        const auto frames = capture->frames();
+        require(*frames[0].payload == first && *frames[1].payload == second, "rtmp input raw opus payloads");
+    }
+
+    {
+        rtmp_input_test_peer peer("live/g711-first-frame");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        constexpr std::uint32_t near_wrap = 0xfffffff0U;
+        peer.push_g711(codec_id::g711u, near_wrap);
+        peer.wait_track(make_g711_track(codec_id::g711u), 1);
+        const auto capture = peer.attach_audio_capture();
+        peer.push_g711(codec_id::g711u, 20);
+        peer.wait_audio_frames(capture, 1);
+        const auto frames = capture->frames();
+        require(frames.front().pts_ns == milliseconds_to_ns(static_cast<std::int64_t>(near_wrap) + 36),
+                "rtmp input g711 first frame advances shared timeline");
     }
 }
 
@@ -4329,6 +4580,34 @@ void test_ireader_opus_flv_correctness()
             "ireader invalid opus head rejected");
 }
 
+void test_ireader_avpbs_opus_lifetime()
+{
+    const auto on_packet = [](void* param, avpacket_t*) -> int {
+        ++*static_cast<int*>(param);
+        return 0;
+    };
+    int packets{};
+    auto* bitstream = avpbs_find(AVCODEC_AUDIO_OPUS);
+    require(bitstream != nullptr, "ireader opus bitstream helper");
+    void* context = bitstream->create(2, AVCODEC_AUDIO_OPUS, nullptr, 0, on_packet, &packets);
+    require(context != nullptr, "ireader opus bitstream create");
+
+    opus_head_t head{};
+    head.version = 1;
+    head.channels = 2;
+    head.input_sample_rate = 48'000;
+    std::array<std::uint8_t, 64> encoded{};
+    const auto bytes = opus_head_save(&head, encoded.data(), encoded.size());
+    require(bytes > 0, "ireader opus head encode");
+    require(bitstream->input(context, 0, 0, encoded.data(), bytes, 0) == 0 && packets == 0,
+            "ireader opus head only does not allocate media packet");
+
+    const std::array<std::uint8_t, 9> malformed{'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', 0xff};
+    require(bitstream->input(context, 0, 0, malformed.data(), malformed.size(), 0) < 0 && packets == 0,
+            "ireader malformed opus head rejected without packet");
+    require(bitstream->destroy(&context) == 0 && context == nullptr, "ireader opus bitstream destroy");
+}
+
 void test_flv_config_cache_lifecycle()
 {
     flv_demux_capture capture;
@@ -6240,6 +6519,8 @@ int main()
     std::cout << "[pass] rtmp_input_codec_configuration_updates\n";
     media_server::test_rtmp_input_rejects_video_codec_change();
     std::cout << "[pass] rtmp_input_rejects_video_codec_change\n";
+    media_server::test_rtmp_input_rejects_audio_codec_change();
+    std::cout << "[pass] rtmp_input_rejects_audio_codec_change\n";
     media_server::test_rtmp_rejects_live_playback_control();
     std::cout << "[pass] rtmp_rejects_live_playback_control\n";
     media_server::test_rtmp_output_pull_codecs_and_order();
@@ -6256,6 +6537,8 @@ int main()
     std::cout << "[pass] ireader_rejects_unknown_enhanced_audio_fourcc\n";
     media_server::test_ireader_opus_flv_correctness();
     std::cout << "[pass] ireader_opus_flv_correctness\n";
+    media_server::test_ireader_avpbs_opus_lifetime();
+    std::cout << "[pass] ireader_avpbs_opus_lifetime\n";
     media_server::test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     media_server::test_flv_g711_round_trip();

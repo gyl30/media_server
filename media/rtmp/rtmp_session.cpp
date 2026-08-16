@@ -375,21 +375,10 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
     if (codec == FLV_VIDEO_AVCC || codec == FLV_VIDEO_HVCC)
     {
         const auto video_codec = codec == FLV_VIDEO_AVCC ? codec_id::h264 : codec_id::h265;
-        if (!tracks_initialized_ && initial_video_track_ && initial_video_track_->codec != video_codec)
+        if (initial_video_track_ && initial_video_track_->codec != video_codec)
         {
             spdlog::warn("rtmp input video codec change {} {}", to_string(initial_video_track_->codec), to_string(video_codec));
             return -1;
-        }
-        if (tracks_initialized_)
-        {
-            for (const auto& track : stream_->tracks())
-            {
-                if (track.id == video_track_id && track.codec != video_codec)
-                {
-                    spdlog::warn("rtmp input video codec change {} {}", to_string(track.codec), to_string(video_codec));
-                    return -1;
-                }
-            }
         }
 
         auto config = codec == FLV_VIDEO_AVCC ? h264_avcc_to_annex_b(data) : h265_hvcc_to_annex_b(data);
@@ -424,6 +413,11 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
         {
             return -1;
         }
+        if (initial_audio_track_ && initial_audio_track_->codec != codec_id::aac)
+        {
+            spdlog::warn("rtmp input audio codec change {} aac", to_string(initial_audio_track_->codec));
+            return -1;
+        }
         const auto config = parse_aac_asc(data);
         if (!config)
         {
@@ -452,6 +446,15 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
 
     if (codec == FLV_AUDIO_OPUS_HEAD)
     {
+        if (metadata_received_ && !expected_audio_)
+        {
+            return -1;
+        }
+        if (initial_audio_track_ && initial_audio_track_->codec != codec_id::opus)
+        {
+            spdlog::warn("rtmp input audio codec change {} opus", to_string(initial_audio_track_->codec));
+            return -1;
+        }
         opus_head_t head{};
         if (opus_head_load(data.data(), data.size(), &head) < 0 || (opus_head_channels(&head) != 1 && opus_head_channels(&head) != 2))
         {
@@ -484,6 +487,11 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
         const auto audio_codec = codec == FLV_AUDIO_G711A ? codec_id::g711a : codec_id::g711u;
         if (!tracks_initialized_)
         {
+            if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
+            {
+                spdlog::warn("rtmp input audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
+                return -1;
+            }
             initial_audio_track_ = media_track{
                 .id = audio_track_id,
                 .kind = media_kind::audio,
@@ -496,15 +504,6 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
             if (!tracks_initialized_)
             {
                 return 0;
-            }
-        }
-        else
-        {
-            const auto tracks = stream_->tracks();
-            const auto audio = std::find_if(tracks.begin(), tracks.end(), [](const media_track& track) { return track.id == audio_track_id; });
-            if (audio == tracks.end() || audio->codec != audio_codec)
-            {
-                return -1;
             }
         }
     }
@@ -521,6 +520,27 @@ int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, st
     else
     {
         return 0;
+    }
+
+    const auto incoming_codec = codec == FLV_VIDEO_H264    ? codec_id::h264
+                                : codec == FLV_VIDEO_H265  ? codec_id::h265
+                                : codec == FLV_AUDIO_AAC   ? codec_id::aac
+                                : codec == FLV_AUDIO_OPUS  ? codec_id::opus
+                                : codec == FLV_AUDIO_G711A ? codec_id::g711a
+                                                           : codec_id::g711u;
+    const auto& fixed = id == video_track_id ? initial_video_track_ : initial_audio_track_;
+    if (fixed && fixed->codec != incoming_codec)
+    {
+        spdlog::warn("rtmp input raw codec change {} {}", to_string(fixed->codec), to_string(incoming_codec));
+        return -1;
+    }
+    if (!tracks_initialized_)
+    {
+        return 0;
+    }
+    if (!fixed)
+    {
+        return -1;
     }
 
     const auto dts_ms = unwrap_rtmp_timestamp(dts, timestamp_);
@@ -552,14 +572,12 @@ void rtmp_session::try_initialize_tracks()
     }
 
     std::vector<media_track> tracks;
-    tracks.push_back(std::move(*initial_video_track_));
+    tracks.push_back(*initial_video_track_);
     if (expected_audio_)
     {
-        tracks.push_back(std::move(*initial_audio_track_));
+        tracks.push_back(*initial_audio_track_);
     }
     tracks_initialized_ = stream_->set_tracks(std::move(tracks));
-    initial_video_track_.reset();
-    initial_audio_track_.reset();
     if (!tracks_initialized_)
     {
         return;
