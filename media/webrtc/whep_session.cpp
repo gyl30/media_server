@@ -42,10 +42,12 @@ whep_session::whep_session(boost::asio::any_io_executor executor,
                            std::shared_ptr<media_stream> stream,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
-                           whep_session_timeouts timeouts)
+                           whep_session_timeouts timeouts,
+                           output_video_config video)
     : stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
+      video_config_(video),
       timeouts_(timeouts),
       executor_(executor),
       dtls_timer_(executor),
@@ -111,6 +113,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
                                                .ice_ufrag = ice_ufrag_,
                                                .ice_pwd = ice_pwd_,
                                                .fingerprint = certificate_->sha256_fingerprint(),
+                                               .video = video_config_,
                                            });
     if (!answer)
     {
@@ -163,7 +166,8 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     for (const auto& track : source_tracks)
     {
-        const bool negotiated_video = video_codec_ && track.kind == media_kind::video && track.codec == *video_codec_;
+        const bool negotiated_video = video_codec_ && track.kind == media_kind::video &&
+            ((*video_codec_ == codec_id::av1 && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) || track.codec == *video_codec_);
         const bool negotiated_audio = audio_payload_type_ && audio_codec_ && track.kind == media_kind::audio && track.codec == *audio_codec_;
         if (negotiated_video || negotiated_audio)
         {

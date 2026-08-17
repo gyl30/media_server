@@ -390,6 +390,26 @@ const webrtc_codec_offer* find_h265(const webrtc_media_offer& media, const h265_
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
+const webrtc_codec_offer* find_av1(const webrtc_media_offer& media)
+{
+    const auto iterator = std::find_if(
+        media.codecs.begin(),
+        media.codecs.end(),
+        [](const webrtc_codec_offer& codec)
+        {
+            if (!rtcp_mux_payload_type_allowed(codec.payload_type) || lower_copy(codec.encoding_name) != "av1" || codec.clock_rate != 90'000U)
+            {
+                return false;
+            }
+            const auto profile = decimal_parameter(codec.format_parameters, "profile", 0, 2);
+            const auto level_idx = decimal_parameter(codec.format_parameters, "level-idx", 5, 31);
+            const auto tier = decimal_parameter(codec.format_parameters, "tier", 0, 1);
+            // 浏览器的 level-idx 目前不能作为实际解码上限；WHEP 固定发送 Main profile/Main tier，这里只校验 AV1 fmtp。
+            return profile && level_idx && tier;
+        });
+    return iterator == media.codecs.end() ? nullptr : &*iterator;
+}
+
 const webrtc_codec_offer* find_opus(const webrtc_media_offer& media)
 {
     const auto iterator = std::find_if(media.codecs.begin(),
@@ -704,7 +724,11 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
 
         if (can_receive && lower_copy(media.type) == "video" && video_track != nullptr && !video_payload_type.has_value())
         {
-            if (video_track->codec == codec_id::h264)
+            if (config.video.codec == output_video_codec::av1)
+            {
+                codec = find_av1(media);
+            }
+            else if (video_track->codec == codec_id::h264)
             {
                 profile_level_id = h264_profile_level_id(*video_track);
                 const auto source = parse_h264_profile_level(profile_level_id);
@@ -758,7 +782,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         accepted_mids.push_back(media.mid);
         if (lower_copy(media.type) == "video")
         {
-            video_codec = video_track->codec;
+            video_codec = config.video.codec == output_video_codec::av1 ? codec_id::av1 : video_track->codec;
             video_payload_type = codec->payload_type;
             video_mid = media.mid;
             video_mid_extension_id = media.mid_extension_id;
@@ -804,7 +828,15 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
 
         if (lower_copy(media.type) == "video")
         {
-            if (video_track->codec == codec_id::h264)
+            if (config.video.codec == output_video_codec::av1)
+            {
+                media_answer << "a=rtpmap:" << codec->payload_type << " AV1/90000\r\n";
+                if (!codec->format_parameters.empty())
+                {
+                    media_answer << "a=fmtp:" << codec->payload_type << ' ' << codec->format_parameters << "\r\n";
+                }
+            }
+            else if (video_track->codec == codec_id::h264)
             {
                 media_answer << "a=rtpmap:" << codec->payload_type << " H264/90000\r\n";
                 media_answer << "a=fmtp:" << codec->payload_type

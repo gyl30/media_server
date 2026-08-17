@@ -1,6 +1,7 @@
 #ifndef MEDIA_WEBRTC_WHEP_SESSION_H
 #define MEDIA_WEBRTC_WHEP_SESSION_H
 
+#include "media/codec/output_video_config.h"
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
 #include "media/net/udp_socket.h"
@@ -47,7 +48,8 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
                  std::shared_ptr<media_stream> stream,
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
-                 whep_session_timeouts timeouts = {});
+                 whep_session_timeouts timeouts = {},
+                 output_video_config video = {});
 
     [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
     void shutdown();
@@ -87,6 +89,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
+    output_video_config video_config_;
     whep_session_timeouts timeouts_;
     media_reader_handle reader_;
     std::map<track_id, std::uint64_t> track_versions_;

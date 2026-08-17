@@ -386,6 +386,33 @@ std::string make_h265_offer(std::string offer)
     return offer;
 }
 
+std::string make_av1_offer(std::string offer, int payload_type, int rtx_payload_type, std::string_view format_parameters)
+{
+    constexpr std::string_view video_mline = "m=video 9 UDP/TLS/RTP/SAVPF 102 127\r\n";
+    constexpr std::string_view h264_rtpmap = "a=rtpmap:102 H264/90000\r\n";
+    constexpr std::string_view h264_fmtp = "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n";
+    constexpr std::string_view rtx_rtpmap = "a=rtpmap:127 rtx/90000\r\n";
+    constexpr std::string_view rtx_fmtp = "a=fmtp:127 apt=102\r\n";
+    const auto mline_offset = offer.find(video_mline);
+    const auto rtpmap_offset = offer.find(h264_rtpmap);
+    const auto fmtp_offset = offer.find(h264_fmtp);
+    const auto rtx_rtpmap_offset = offer.find(rtx_rtpmap);
+    const auto rtx_fmtp_offset = offer.find(rtx_fmtp);
+    require(mline_offset != std::string::npos && rtpmap_offset != std::string::npos && fmtp_offset != std::string::npos &&
+                rtx_rtpmap_offset != std::string::npos && rtx_fmtp_offset != std::string::npos,
+            "webrtc av1 offer source");
+    const auto payload = std::to_string(payload_type);
+    const auto rtx_payload = std::to_string(rtx_payload_type);
+    offer.replace(rtx_fmtp_offset, rtx_fmtp.size(), "a=fmtp:" + rtx_payload + " apt=" + payload + "\r\n");
+    offer.replace(rtx_rtpmap_offset, rtx_rtpmap.size(), "a=rtpmap:" + rtx_payload + " rtx/90000\r\n");
+    offer.replace(fmtp_offset,
+                  h264_fmtp.size(),
+                  format_parameters.empty() ? std::string{} : "a=fmtp:" + payload + ' ' + std::string(format_parameters) + "\r\n");
+    offer.replace(rtpmap_offset, h264_rtpmap.size(), "a=rtpmap:" + payload + " AV1/90000\r\n");
+    offer.replace(mline_offset, video_mline.size(), "m=video 9 UDP/TLS/RTP/SAVPF " + payload + ' ' + rtx_payload + "\r\n");
+    return offer;
+}
+
 constexpr std::uint32_t stun_magic_cookie = 0x2112a442U;
 
 void append_u16(std::vector<std::uint8_t>& output, std::uint16_t value)
@@ -884,6 +911,7 @@ void test_webrtc_sdp_answer()
                                                .ice_ufrag = "serverufrag",
                                                .ice_pwd = "serverpassword1234567890",
                                                .fingerprint = "AA:BB:CC:DD",
+                                               .video = {},
                                            });
     require(answer.has_value(), "make webrtc answer");
     require(answer->video_codec == codec_id::h264, "webrtc negotiated h264 codec");
@@ -949,6 +977,7 @@ void test_webrtc_h265_sdp_answer()
                                                .ice_ufrag = "serverufrag",
                                                .ice_pwd = "serverpassword1234567890",
                                                .fingerprint = "AA:BB:CC:DD",
+                                               .video = {},
                                            });
     require(answer.has_value(), "make webrtc h265 answer");
     require(answer->video_codec == codec_id::h265, "webrtc negotiated h265 codec");
@@ -957,6 +986,41 @@ void test_webrtc_h265_sdp_answer()
     require(answer->sdp.find("a=fmtp:102 profile-space=0;profile-id=1;tier-flag=0;level-id=120\r\n") != std::string::npos,
             "webrtc h265 source profile tier level");
     require(answer->sdp.find("H264/90000") == std::string::npos, "webrtc h265 answer excludes h264");
+}
+
+void test_webrtc_av1_sdp_answer()
+{
+    const auto make_answer = [](std::string offer_sdp)
+    {
+        const auto offer = parse_webrtc_offer(offer_sdp);
+        require(offer.has_value(), "parse webrtc av1 offer");
+        return make_webrtc_answer(*offer,
+                                  {make_video_track()},
+                                  webrtc_answer_config{
+                                      .address = boost::asio::ip::make_address("127.0.0.1"),
+                                      .port = 40000,
+                                      .stream_id = "serverstream",
+                                      .ice_ufrag = "serverufrag",
+                                      .ice_pwd = "serverpassword1234567890",
+                                      .fingerprint = "AA:BB:CC:DD",
+                                      .video = output_video_config{.codec = output_video_codec::av1},
+                                  });
+    };
+
+    const auto firefox = make_answer(make_av1_offer(webrtc_offer_sdp, 99, 100, {}));
+    require(firefox.has_value(), "webrtc firefox av1 answer");
+    require(firefox->video_codec == codec_id::av1 && firefox->video_payload_type == 99, "webrtc firefox av1 codec");
+    require(firefox->sdp.find("a=rtpmap:99 AV1/90000\r\n") != std::string::npos, "webrtc firefox av1 rtpmap");
+    require(firefox->sdp.find("a=fmtp:99 ") == std::string::npos, "webrtc firefox av1 keeps omitted fmtp");
+
+    const auto chrome = make_answer(make_av1_offer(webrtc_offer_sdp, 45, 46, "level-idx=5;profile=0;tier=0"));
+    require(chrome.has_value(), "webrtc chrome av1 answer");
+    require(chrome->video_codec == codec_id::av1 && chrome->video_payload_type == 45, "webrtc chrome av1 codec");
+    require(chrome->sdp.find("a=fmtp:45 level-idx=5;profile=0;tier=0\r\n") != std::string::npos,
+            "webrtc chrome av1 fmtp");
+
+    const auto profile1 = make_answer(make_av1_offer(webrtc_offer_sdp, 47, 48, "level-idx=5;profile=1;tier=0"));
+    require(profile1.has_value() && profile1->video_codec == codec_id::av1, "webrtc av1 profile 1 receiver accepts profile 0 output");
 }
 
 void test_webrtc_video_codec_parameters()
@@ -968,6 +1032,7 @@ void test_webrtc_video_codec_parameters()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
 
     constexpr std::string_view h264_profile_level = "profile-level-id=42e01f";
@@ -1053,6 +1118,7 @@ void test_webrtc_payload_type_membership()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
     const auto answer_for = [&config](const std::string& sdp, std::vector<media_track> tracks)
     {
@@ -1092,6 +1158,7 @@ void test_webrtc_payload_type_range()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
     auto invalid_sdp = webrtc_offer_sdp;
     const auto replace = [&invalid_sdp](std::string_view source, std::string_view target)
@@ -1161,6 +1228,7 @@ void test_webrtc_disabled_media()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
     auto disabled_video_sdp = webrtc_offer_sdp;
     disabled_video_sdp.replace(disabled_video_sdp.find("m=video 9 "), 10U, "m=video 0 ");
@@ -1218,6 +1286,7 @@ void test_webrtc_single_media_per_kind()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
     const auto offer = parse_webrtc_offer(duplicate_sdp);
     require(offer.has_value(), "webrtc parse duplicate media offer");
@@ -1264,6 +1333,7 @@ void test_webrtc_opus_mono_default()
                                                .ice_ufrag = "serverufrag",
                                                .ice_pwd = "serverpassword1234567890",
                                                .fingerprint = "AA:BB:CC:DD",
+                                               .video = {},
                                            });
     require(answer.has_value(), "make webrtc mono answer");
     require(answer->audio_channel_count == 1, "webrtc opus mono default");
@@ -1279,6 +1349,7 @@ void test_webrtc_opus_receive_limits()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
 
     auto limited_sdp = webrtc_offer_sdp;
@@ -1334,6 +1405,7 @@ void test_webrtc_opus_source_negotiation()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
 
     const auto stereo = make_webrtc_answer(*offer, {make_video_track(), make_opus_track(2)}, config);
@@ -1438,6 +1510,7 @@ void test_webrtc_g711_source_negotiation()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
     const auto check = [&config](codec_id codec, std::string sdp, int payload_type)
     {
@@ -1496,6 +1569,7 @@ void test_webrtc_transport_contract()
         .ice_ufrag = "serverufrag",
         .ice_pwd = "serverpassword1234567890",
         .fingerprint = "AA:BB:CC:DD",
+        .video = {},
     };
     const auto tracks = std::vector<media_track>{make_video_track(), make_audio_track()};
 
@@ -2443,6 +2517,8 @@ int main()
     std::cout << "[pass] webrtc_sdp_answer\n";
     media_server::test_webrtc_h265_sdp_answer();
     std::cout << "[pass] webrtc_h265_sdp_answer\n";
+    media_server::test_webrtc_av1_sdp_answer();
+    std::cout << "[pass] webrtc_av1_sdp_answer\n";
     media_server::test_webrtc_video_codec_parameters();
     std::cout << "[pass] webrtc_video_codec_parameters\n";
     media_server::test_webrtc_payload_type_membership();

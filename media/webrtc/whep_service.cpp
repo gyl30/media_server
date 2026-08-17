@@ -7,8 +7,8 @@
 namespace media_server
 {
 
-whep_service::whep_service(stream_registry& registry, boost::asio::ip::address advertised_address)
-    : registry_(registry), advertised_address_(std::move(advertised_address)), certificate_(dtls_certificate::create())
+whep_service::whep_service(stream_registry& registry, boost::asio::ip::address advertised_address, output_video_config video)
+    : registry_(registry), advertised_address_(std::move(advertised_address)), video_config_(video), certificate_(dtls_certificate::create())
 {
 }
 
@@ -70,7 +70,7 @@ whep_create_result whep_service::create(boost::asio::any_io_executor executor, s
         }
     }
 
-    auto session = std::make_shared<whep_session>(std::move(executor), stream, advertised_address_, certificate_);
+    auto session = std::make_shared<whep_session>(std::move(executor), stream, advertised_address_, certificate_, whep_session_timeouts{}, video_config_);
     switch (session->startup(std::move(*offer)))
     {
         case whep_session_startup_error::none:

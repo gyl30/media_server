@@ -2,6 +2,7 @@
 #define MEDIA_WEBRTC_OUTPUT_H
 
 #include "media/codec/audio_transcoder.h"
+#include "media/codec/video_transcoder.h"
 #include "media/core/media_types.h"
 
 #include <cstdint>
@@ -53,6 +54,7 @@ class webrtc_output final
     {
         codec_id codec{};
         std::unique_ptr<audio_transcoder> transcoder;
+        std::unique_ptr<video_transcoder> video_transcoder_;
         int media_id{-1};
         int payload_id{-1};
         std::size_t rtp_extension_bytes{};
@@ -61,6 +63,7 @@ class webrtc_output final
 
     bool add_h264_track(const media_track& track);
     bool add_h265_track(const media_track& track);
+    bool add_av1_track(const media_track& track);
     bool add_audio_track(const media_track& track);
     bool configure_rtcp(int payload_id);
     void emit_rtcp(int payload_id);
