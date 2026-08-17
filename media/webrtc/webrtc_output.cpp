@@ -6,6 +6,7 @@
 
 extern "C"
 {
+#include "aom-av1.h"
 #include "rtp-ext.h"
 #include "rtp-packet.h"
 #include "rtp-payload.h"
@@ -27,6 +28,11 @@ constexpr std::uint32_t opus_sample_rate = 48'000U;
 constexpr std::size_t rtcp_buffer_size = 4096;
 constexpr std::size_t max_mid_size = 16;
 constexpr std::string_view rtcp_name = "media_server";
+constexpr av1_encoding_parameters whep_av1_parameters{
+    .profile = 0,
+    .level_idx = 8,
+    .tier = 0,
+};
 
 bool rtcp_mux_payload_type_allowed(int payload_type)
 {
@@ -72,6 +78,12 @@ void webrtc_output::on_track(const media_track& track)
             added = add_h265_track(track);
         }
     }
+    else if (track.kind == media_kind::video && config_.video_payload_type >= 0 && config_.video_codec == codec_id::av1 &&
+             (track.codec == codec_id::h264 || track.codec == codec_id::h265))
+    {
+        negotiated = true;
+        added = add_av1_track(track);
+    }
     else if (track.kind == media_kind::audio && config_.audio_payload_type >= 0 && track.codec == config_.audio_codec &&
              (track.codec == codec_id::aac || track.codec == codec_id::opus || track.codec == codec_id::g711a || track.codec == codec_id::g711u))
     {
@@ -98,7 +110,7 @@ void webrtc_output::on_frame(const media_frame& frame)
     }
 
     auto& state = iterator->second;
-    if (state.codec == codec_id::h264 || state.codec == codec_id::h265)
+    if (state.codec == codec_id::h264 || state.codec == codec_id::h265 || state.codec == codec_id::av1)
     {
         input_video(state, frame);
     }
@@ -128,7 +140,7 @@ int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, 
         return -1;
     }
 
-    const bool video = state->second.codec == codec_id::h264 || state->second.codec == codec_id::h265;
+    const bool video = state->second.codec == codec_id::h264 || state->second.codec == codec_id::h265 || state->second.codec == codec_id::av1;
     const auto& mid = video ? self->config_.video_mid : self->config_.audio_mid;
     const auto extension_id = video ? self->config_.video_mid_extension_id : self->config_.audio_mid_extension_id;
     std::vector<std::uint8_t> extension;
@@ -216,6 +228,7 @@ bool webrtc_output::add_h264_track(const media_track& track)
                              track_state{
                                  .codec = track.codec,
                                  .transcoder = {},
+                                 .video_transcoder_ = {},
                                  .media_id = media_id,
                                  .payload_id = payload_index,
                                  .waiting_key_frame = true,
@@ -260,11 +273,88 @@ bool webrtc_output::add_h265_track(const media_track& track)
                              track_state{
                                  .codec = track.codec,
                                  .transcoder = {},
+                                 .video_transcoder_ = {},
                                  .media_id = media_id,
                                  .payload_id = payload_index,
                                  .waiting_key_frame = true,
                              });
     spdlog::debug("webrtc h265 output track ready id {} pt {}", track.id, config_.video_payload_type);
+    return true;
+}
+
+bool webrtc_output::add_av1_track(const media_track& track)
+{
+    if (!rtcp_mux_payload_type_allowed(config_.video_payload_type) || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
+        config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
+    {
+        return false;
+    }
+
+    auto transcoder = std::make_unique<video_transcoder>();
+    if (!transcoder->startup(video_transcoder_config{
+            .input_codec = track.codec,
+            .output_codec = codec_id::av1,
+            .input_codec_config = track.codec_config,
+            .av1 = whep_av1_parameters,
+        }))
+    {
+        spdlog::error("webrtc av1 video transcoder startup failed track {}", track.id);
+        return false;
+    }
+
+    aom_av1_t av1{};
+    av1.marker = 1;
+    av1.version = 1;
+    av1.seq_profile = whep_av1_parameters.profile;
+    av1.seq_level_idx_0 = whep_av1_parameters.level_idx;
+    av1.seq_tier_0 = whep_av1_parameters.tier;
+    av1.chroma_subsampling_x = 1;
+    av1.chroma_subsampling_y = 1;
+    std::array<std::uint8_t, 4> configuration_record{};
+    if (aom_av1_codec_configuration_record_save(&av1, configuration_record.data(), configuration_record.size()) !=
+        static_cast<int>(configuration_record.size()))
+    {
+        return false;
+    }
+
+    const auto payload_index = rtsp_muxer_add_payload(muxer_,
+                                                       "RTP/AVP",
+                                                       90'000,
+                                                       config_.video_payload_type,
+                                                       "AV1",
+                                                       0,
+                                                       0,
+                                                       0,
+                                                       configuration_record.data(),
+                                                       static_cast<int>(configuration_record.size()));
+    if (payload_index < 0)
+    {
+        spdlog::error("webrtc add av1 payload failed");
+        return false;
+    }
+    if (!configure_rtcp(payload_index))
+    {
+        return false;
+    }
+
+    const auto media_id = rtsp_muxer_add_media(
+        muxer_, payload_index, RTP_PAYLOAD_AV1, configuration_record.data(), static_cast<int>(configuration_record.size()));
+    if (media_id < 0)
+    {
+        spdlog::error("webrtc add av1 media failed");
+        return false;
+    }
+
+    tracks_.insert_or_assign(track.id,
+                             track_state{
+                                 .codec = codec_id::av1,
+                                 .transcoder = {},
+                                 .video_transcoder_ = std::move(transcoder),
+                                 .media_id = media_id,
+                                 .payload_id = payload_index,
+                                 .waiting_key_frame = true,
+                             });
+    spdlog::debug("webrtc av1 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
 
@@ -369,6 +459,7 @@ bool webrtc_output::add_audio_track(const media_track& track)
                              track_state{
                                  .codec = track.codec,
                                  .transcoder = std::move(transcoder),
+                                 .video_transcoder_ = {},
                                  .media_id = media_id,
                                  .payload_id = payload_index,
                                  .rtp_extension_bytes = 4U +
@@ -434,6 +525,47 @@ void webrtc_output::emit_rtcp(int payload_id)
 
 void webrtc_output::input_video(track_state& state, const media_frame& frame)
 {
+    if (state.video_transcoder_)
+    {
+        std::vector<media_frame> output;
+        if (!state.video_transcoder_->transcode(frame, output))
+        {
+            spdlog::error("webrtc av1 video transcode failed track {}", frame.track);
+            return;
+        }
+
+        bool sent = false;
+        for (const auto& encoded : output)
+        {
+            if (!encoded.payload || (state.waiting_key_frame && !encoded.key_frame))
+            {
+                continue;
+            }
+            const auto result = rtsp_muxer_input(muxer_,
+                                                 state.media_id,
+                                                 ns_to_milliseconds(encoded.pts_ns),
+                                                 ns_to_milliseconds(encoded.dts_ns),
+                                                 encoded.payload->data(),
+                                                 static_cast<int>(encoded.payload->size()),
+                                                 encoded.key_frame ? 1 : 0);
+            if (result < 0)
+            {
+                spdlog::error("webrtc av1 rtp packetize failed result {}", result);
+                return;
+            }
+            sent = true;
+            if (encoded.key_frame)
+            {
+                state.waiting_key_frame = false;
+            }
+        }
+        if (sent)
+        {
+            emit_rtcp(state.payload_id);
+        }
+        return;
+    }
+
     if (state.waiting_key_frame)
     {
         if (!frame.key_frame)

@@ -37,6 +37,7 @@ struct options
     media_server::output_video_config rtmp_video;
     media_server::output_video_config rtsp_video;
     media_server::output_video_config http_video;
+    media_server::output_video_config whep_video;
     bool help{};
 };
 
@@ -161,6 +162,22 @@ std::optional<options> parse_options(int argc, char** argv)
             }
             continue;
         }
+        if (const auto value = read_value("--whep-video-codec"))
+        {
+            if (*value == "passthrough")
+            {
+                result.whep_video.codec = media_server::output_video_codec::passthrough;
+            }
+            else if (*value == "av1")
+            {
+                result.whep_video.codec = media_server::output_video_codec::av1;
+            }
+            else
+            {
+                return std::nullopt;
+            }
+            continue;
+        }
         if (const auto value = read_value("--rtsp-pull"))
         {
             const auto equal = value->find('=');
@@ -188,7 +205,8 @@ void print_usage()
               << "  --rtsp-pull <stream_name=rtsp_url>\n"
               << "  --rtmp-video-codec <passthrough|av1>\n"
               << "  --rtsp-video-codec <passthrough|av1>\n"
-              << "  --http-video-codec <passthrough|av1>\n";
+              << "  --http-video-codec <passthrough|av1>\n"
+              << "  --whep-video-codec <passthrough|av1>\n";
 }
 
 }    // namespace
@@ -221,7 +239,7 @@ int main(int argc, char** argv)
     auto& control_io = workers.context(0);
     media_server::stream_registry registry;
     media_server::hls_service hls(registry, media_server::hls_config{.video = parsed->http_video});
-    media_server::whep_service whep(registry, webrtc_address);
+    media_server::whep_service whep(registry, webrtc_address, parsed->whep_video);
     if (!whep.ready())
     {
         spdlog::error("dtls certificate create failed");

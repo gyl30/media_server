@@ -1,6 +1,7 @@
 #ifndef MEDIA_WEBRTC_WEBRTC_SDP_H
 #define MEDIA_WEBRTC_WEBRTC_SDP_H
 
+#include "media/codec/output_video_config.h"
 #include "media/core/media_types.h"
 
 #include <boost/asio/ip/address.hpp>
@@ -73,6 +74,7 @@ struct webrtc_answer_config
     std::string ice_ufrag;
     std::string ice_pwd;
     std::string fingerprint;
+    output_video_config video;
 };
 
 [[nodiscard]] std::optional<webrtc_offer> parse_webrtc_offer(std::string_view sdp);

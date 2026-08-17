@@ -7698,6 +7698,43 @@ void test_webrtc_video_access_unit_marker()
     }
 }
 
+void test_webrtc_av1_packetizer()
+{
+    for (const auto input_codec : {codec_id::h264, codec_id::h265})
+    {
+        const auto source = make_video_transcoder_fixture(input_codec);
+        std::vector<std::vector<std::uint8_t>> packets;
+        webrtc_output output(
+            webrtc_output_config{
+                .video_codec = codec_id::av1,
+                .video_payload_type = 99,
+                .video_mid = "video",
+                .video_mid_extension_id = 4,
+                .rtcp_cname = {},
+            },
+            [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
+        output.on_track(media_track{
+            .id = video_track_id,
+            .kind = media_kind::video,
+            .codec = input_codec,
+            .clock_rate = 90'000,
+            .channel_count = 0,
+            .codec_config = source.codec_config,
+        });
+        require(output.valid(), "webrtc av1 output valid");
+        for (const auto& frame : source.frames)
+        {
+            output.on_frame(frame);
+        }
+        require(!packets.empty(), "webrtc av1 packets");
+        require(std::ranges::all_of(packets, [](const auto& packet) { return packet.size() >= 12U && (packet[1] & 0x7fU) == 99U; }),
+                "webrtc av1 payload type");
+        require(!require_rtp_mid(packets.front(), "video", 4).empty(), "webrtc av1 mid");
+        require(std::ranges::any_of(packets, [](const auto& packet) { return (packet[1] & 0x80U) != 0; }),
+                "webrtc av1 marker");
+    }
+}
+
 void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max_playback_rate = 48'000)
 {
     std::vector<std::vector<std::uint8_t>> packets;
@@ -8195,6 +8232,8 @@ int main()
     std::cout << "[pass] webrtc_rtp_packetizer\n";
     media_server::test_webrtc_video_access_unit_marker();
     std::cout << "[pass] webrtc_video_access_unit_marker\n";
+    media_server::test_webrtc_av1_packetizer();
+    std::cout << "[pass] webrtc_av1_packetizer\n";
     media_server::test_webrtc_opus_packetizer();
     std::cout << "[pass] webrtc_opus_packetizer\n";
     media_server::test_webrtc_g711_passthrough();
