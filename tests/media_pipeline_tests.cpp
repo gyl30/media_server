@@ -5354,6 +5354,52 @@ void test_ireader_av1_packet_lifetime()
     require(state.frees == 1, "ireader av1 immediate destroy releases pending buffer");
 }
 
+void test_ireader_av1_marker_boundary()
+{
+    struct capture
+    {
+        std::vector<bool> markers;
+    } state;
+
+    rtp_payload_t handler{};
+    handler.alloc = [](void*, int bytes) -> void* { return std::malloc(static_cast<std::size_t>(bytes)); };
+    handler.free = [](void*, void* packet) { std::free(packet); };
+    handler.packet = [](void* param, const void* packet, int bytes, std::uint32_t, int) -> int {
+        auto& capture_state = *static_cast<capture*>(param);
+        const auto* data = static_cast<const std::uint8_t*>(packet);
+        capture_state.markers.push_back(bytes >= 2 && (data[1] & 0x80U) != 0);
+        return 0;
+    };
+
+    const auto encode = [&](const std::vector<std::uint8_t>& temporal_unit) {
+        state.markers.clear();
+        void* encoder = rtp_payload_encode_create(RTP_PAYLOAD_AV1, "AV1", 1, 2, &handler, &state);
+        require(encoder != nullptr, "ireader av1 marker encoder create");
+        require(rtp_payload_encode_input(encoder, temporal_unit.data(), static_cast<int>(temporal_unit.size()), 90'000) == 0,
+                "ireader av1 marker packetize");
+        rtp_payload_encode_destroy(encoder);
+    };
+
+    // 1200 字节 RTP 包下，最后一个 OBU 分片完成后只剩 7 字节空间。
+    std::vector<std::uint8_t> fragmented_obu(2'363, 0);
+    fragmented_obu[0] = 0x32;
+    fragmented_obu[1] = 0xb8;
+    fragmented_obu[2] = 0x12;
+    encode(fragmented_obu);
+    require(state.markers == std::vector<bool>{false, true}, "ireader av1 fragmented temporal unit final marker");
+
+    // 第一个 OBU 完成后仅剩 1 字节，写后续 OBU 前必须先发送当前 RTP 包。
+    std::vector<std::uint8_t> aggregated_obus(1'187, 0);
+    aggregated_obus[0] = 0x32;
+    aggregated_obus[1] = 0x9d;
+    aggregated_obus[2] = 0x09;
+    aggregated_obus[1'184] = 0x32;
+    aggregated_obus[1'185] = 0x01;
+    aggregated_obus[1'186] = 0x00;
+    encode(aggregated_obus);
+    require(state.markers == std::vector<bool>{false, true}, "ireader av1 next obu flush keeps final marker");
+}
+
 void test_flv_config_cache_lifecycle()
 {
     flv_demux_capture capture;
@@ -7931,6 +7977,8 @@ int main()
     std::cout << "[pass] ireader_avpbs_opus_lifetime\n";
     media_server::test_ireader_av1_packet_lifetime();
     std::cout << "[pass] ireader_av1_packet_lifetime\n";
+    media_server::test_ireader_av1_marker_boundary();
+    std::cout << "[pass] ireader_av1_marker_boundary\n";
     media_server::test_flv_config_cache_lifecycle();
     std::cout << "[pass] flv_config_cache_lifecycle\n";
     media_server::test_flv_av1_transcode_round_trip();
