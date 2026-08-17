@@ -1,6 +1,7 @@
 #ifndef MEDIA_WEBRTC_WHEP_SERVICE_H
 #define MEDIA_WEBRTC_WHEP_SERVICE_H
 
+#include "media/codec/output_video_config.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/whep_session.h"
@@ -35,7 +36,7 @@ struct whep_create_result
 class whep_service final
 {
    public:
-    whep_service(stream_registry& registry, boost::asio::ip::address advertised_address);
+    whep_service(stream_registry& registry, boost::asio::ip::address advertised_address, output_video_config video = {});
     ~whep_service();
 
     [[nodiscard]] bool ready() const noexcept;
@@ -46,6 +47,7 @@ class whep_service final
    private:
     stream_registry& registry_;
     boost::asio::ip::address advertised_address_;
+    output_video_config video_config_;
     std::shared_ptr<dtls_certificate> certificate_;
     std::mutex sessions_mutex_;
     std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions_;
