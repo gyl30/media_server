@@ -6157,6 +6157,26 @@ void test_video_transcoder_h26x_av1()
                 "video transcoder new generation output");
         restarted.shutdown();
         restarted.shutdown();
+
+        video_transcoder long_running;
+        require(long_running.startup(config), "video transcoder long timeline startup");
+        std::vector<media_frame> long_running_output;
+        constexpr std::int64_t cycle_duration_ns = 200'000'000;
+        constexpr int cycle_count = 30;
+        for (int cycle = 0; cycle < cycle_count; ++cycle)
+        {
+            for (const auto& frame : source.frames)
+            {
+                auto shifted = frame;
+                shifted.pts_ns += static_cast<std::int64_t>(cycle) * cycle_duration_ns;
+                shifted.dts_ns += static_cast<std::int64_t>(cycle) * cycle_duration_ns;
+                require(long_running.transcode(shifted, long_running_output), "video transcoder long timeline frame");
+            }
+        }
+        require(long_running.flush(long_running_output), "video transcoder long timeline flush");
+        require(long_running_output.size() == source.frames.size() * cycle_count, "video transcoder long timeline output");
+        require(long_running_output.back().pts_ns - long_running_output.front().pts_ns > 4'294'967'295LL,
+                "video transcoder long timeline exceeds libaom nanosecond boundary");
     }
 
     const auto source = make_video_transcoder_fixture(codec_id::h264);
