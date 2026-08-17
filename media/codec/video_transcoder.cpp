@@ -382,8 +382,11 @@ bool video_transcoder::startup_encoder()
     {
         state_->encoder->profile = AV_PROFILE_AV1_MAIN;
     }
-    state_->encoder->time_base = nanoseconds_time_base;
     state_->encoder->framerate = state_->decoder->framerate;
+    // libaom 的 presentation time 为 32 位，不能直接使用核心层的纳秒时间基。
+    state_->encoder->time_base = state_->encoder->framerate.num > 0 && state_->encoder->framerate.den > 0
+        ? av_inv_q(state_->encoder->framerate)
+        : AVRational{1, 1'000};
     state_->encoder->color_range = state_->decoded_frame->color_range;
     state_->encoder->color_primaries = state_->decoded_frame->color_primaries;
     state_->encoder->color_trc = state_->decoded_frame->color_trc;
@@ -557,6 +560,12 @@ bool video_transcoder::encode_decoded(std::vector<media_frame>& output)
             return false;
         }
         frame = state_->converted_frame;
+    }
+
+    frame->pts = av_rescale_q(frame->pts, nanoseconds_time_base, state_->encoder->time_base);
+    if (frame->duration > 0)
+    {
+        frame->duration = av_rescale_q(frame->duration, nanoseconds_time_base, state_->encoder->time_base);
     }
 
     int result = avcodec_send_frame(state_->encoder, frame);
