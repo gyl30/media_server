@@ -3,17 +3,27 @@
 
 #include "media/core/media_types.h"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace media_server
 {
+
+struct av1_encoding_parameters
+{
+    std::uint8_t profile{};
+    std::uint8_t level_idx{};
+    std::uint8_t tier{};
+};
 
 struct video_transcoder_config
 {
     codec_id input_codec{};
     codec_id output_codec{};
     std::vector<std::uint8_t> input_codec_config;
+    std::optional<av1_encoding_parameters> av1{};
 };
 
 class video_transcoder final

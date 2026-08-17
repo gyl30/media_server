@@ -54,6 +54,7 @@ struct video_transcoder::state
     AVPacket* input_packet{};
     AVPacket* output_packet{};
     codec_id input_codec{};
+    std::optional<av1_encoding_parameters> av1;
     track_id output_track{};
     int width{};
     int height{};
@@ -75,7 +76,8 @@ bool video_transcoder::startup(const video_transcoder_config& config)
     const bool annex_b_config = config.input_codec_config.size() >= 4 && config.input_codec_config[0] == 0 && config.input_codec_config[1] == 0 &&
         ((config.input_codec_config[2] == 1) || (config.input_codec_config[2] == 0 && config.input_codec_config[3] == 1));
     if ((config.input_codec != codec_id::h264 && config.input_codec != codec_id::h265) || config.output_codec != codec_id::av1 ||
-        !annex_b_config || config.input_codec_config.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        !annex_b_config || config.input_codec_config.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        (config.av1 && (config.av1->profile != 0 || config.av1->tier != 0)))
     {
         spdlog::error("video transcoder invalid config input {} output {} config_bytes {}",
                       to_string(config.input_codec),
@@ -93,6 +95,7 @@ bool video_transcoder::startup(const video_transcoder_config& config)
 
     state_ = std::make_unique<state>();
     state_->input_codec = config.input_codec;
+    state_->av1 = config.av1;
     state_->decoder = avcodec_alloc_context3(decoder);
     if (state_->decoder == nullptr)
     {
@@ -325,27 +328,44 @@ bool video_transcoder::startup_encoder()
     state_->height = state_->decoded_frame->height;
     state_->decoded_format = static_cast<AVPixelFormat>(state_->decoded_frame->format);
     const auto* pixel_formats = static_cast<const AVPixelFormat*>(formats);
-    const auto direct = std::find(pixel_formats, pixel_formats + format_count, state_->decoded_format);
-    if (direct != pixel_formats + format_count)
+    if (state_->av1)
     {
-        state_->encoder_format = state_->decoded_format;
+        const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(state_->decoded_format);
+        state_->encoder_format = descriptor != nullptr && descriptor->comp[0].depth > 8 ? AV_PIX_FMT_YUV420P10 : AV_PIX_FMT_YUV420P;
+        if (std::find(pixel_formats, pixel_formats + format_count, state_->encoder_format) == pixel_formats + format_count)
+        {
+            state_->encoder_format = AV_PIX_FMT_YUV420P;
+        }
+        if (std::find(pixel_formats, pixel_formats + format_count, state_->encoder_format) == pixel_formats + format_count)
+        {
+            spdlog::error("video transcoder av1 main profile pixel format not supported");
+            return false;
+        }
     }
     else
     {
-        const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(state_->decoded_format);
-        state_->encoder_format = AV_PIX_FMT_NONE;
-        for (int index = 0; index < format_count; ++index)
+        const auto direct = std::find(pixel_formats, pixel_formats + format_count, state_->decoded_format);
+        if (direct != pixel_formats + format_count)
         {
-            state_->encoder_format = av_find_best_pix_fmt_of_2(state_->encoder_format,
-                                                               pixel_formats[index],
-                                                               state_->decoded_format,
-                                                               descriptor != nullptr && (descriptor->flags & AV_PIX_FMT_FLAG_ALPHA) != 0,
-                                                               nullptr);
+            state_->encoder_format = state_->decoded_format;
         }
-        if (state_->encoder_format == AV_PIX_FMT_NONE)
+        else
         {
-            spdlog::error("video transcoder compatible pixel format not found");
-            return false;
+            const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(state_->decoded_format);
+            state_->encoder_format = AV_PIX_FMT_NONE;
+            for (int index = 0; index < format_count; ++index)
+            {
+                state_->encoder_format = av_find_best_pix_fmt_of_2(state_->encoder_format,
+                                                                   pixel_formats[index],
+                                                                   state_->decoded_format,
+                                                                   descriptor != nullptr && (descriptor->flags & AV_PIX_FMT_FLAG_ALPHA) != 0,
+                                                                   nullptr);
+            }
+            if (state_->encoder_format == AV_PIX_FMT_NONE)
+            {
+                spdlog::error("video transcoder compatible pixel format not found");
+                return false;
+            }
         }
     }
 
@@ -358,6 +378,10 @@ bool video_transcoder::startup_encoder()
     state_->encoder->width = state_->width;
     state_->encoder->height = state_->height;
     state_->encoder->pix_fmt = state_->encoder_format;
+    if (state_->av1)
+    {
+        state_->encoder->profile = AV_PROFILE_AV1_MAIN;
+    }
     state_->encoder->time_base = nanoseconds_time_base;
     state_->encoder->framerate = state_->decoder->framerate;
     state_->encoder->color_range = state_->decoded_frame->color_range;
@@ -366,10 +390,26 @@ bool video_transcoder::startup_encoder()
     state_->encoder->colorspace = state_->decoded_frame->colorspace;
     state_->encoder->chroma_sample_location = state_->decoded_frame->chroma_location;
 
-    if (av_opt_set(state_->encoder->priv_data, "usage", "realtime", 0) < 0 ||
+    AVDictionary* aom_parameters{};
+    if (state_->av1)
+    {
+        const auto level_idx = std::to_string(state_->av1->level_idx);
+        if (av_dict_set(&aom_parameters, "target-seq-level-idx", level_idx.c_str(), 0) < 0 ||
+            av_dict_set(&aom_parameters, "set-tier-mask", "0", 0) < 0 ||
+            av_dict_set(&aom_parameters, "strict-level-conformance", "1", 0) < 0)
+        {
+            av_dict_free(&aom_parameters);
+            spdlog::error("video transcoder av1 parameters allocate failed");
+            return false;
+        }
+    }
+    const bool options_failed = av_opt_set(state_->encoder->priv_data, "usage", "realtime", 0) < 0 ||
         av_opt_set_int(state_->encoder->priv_data, "cpu-used", 8, 0) < 0 ||
         av_opt_set_int(state_->encoder->priv_data, "lag-in-frames", 0, 0) < 0 ||
-        av_opt_set_int(state_->encoder->priv_data, "crf", 32, 0) < 0)
+        av_opt_set_int(state_->encoder->priv_data, "crf", 32, 0) < 0 ||
+        (aom_parameters != nullptr && av_opt_set_dict_val(state_->encoder->priv_data, "aom-params", aom_parameters, 0) < 0);
+    av_dict_free(&aom_parameters);
+    if (options_failed)
     {
         spdlog::error("video transcoder encoder options failed");
         return false;

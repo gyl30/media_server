@@ -6069,6 +6069,45 @@ void test_video_transcoder_h26x_av1()
         restarted.shutdown();
     }
 
+    const auto source = make_video_transcoder_fixture(codec_id::h264);
+    video_transcoder constrained;
+    require(constrained.startup(video_transcoder_config{
+                .input_codec = codec_id::h264,
+                .output_codec = codec_id::av1,
+                .input_codec_config = source.codec_config,
+                .av1 = av1_encoding_parameters{
+                    .profile = 0,
+                    .level_idx = 13,
+                    .tier = 0,
+                },
+            }),
+            "video transcoder av1 parameters startup");
+    std::vector<media_frame> constrained_output;
+    for (const auto& frame : source.frames)
+    {
+        require(constrained.transcode(frame, constrained_output), "video transcoder av1 parameters frame");
+    }
+    require(constrained.flush(constrained_output) && !constrained_output.empty(), "video transcoder av1 parameters flush");
+    aom_av1_t av1{};
+    require(aom_av1_codec_configuration_record_init(
+                &av1, constrained_output.front().payload->data(), constrained_output.front().payload->size()) == 0,
+            "video transcoder av1 parameters sequence header");
+    require(av1.seq_profile == 0 && av1.seq_level_idx_0 <= 13 && av1.seq_tier_0 == 0,
+            "video transcoder av1 parameters stream properties");
+
+    video_transcoder unsupported_profile;
+    require(!unsupported_profile.startup(video_transcoder_config{
+                .input_codec = codec_id::h264,
+                .output_codec = codec_id::av1,
+                .input_codec_config = source.codec_config,
+                .av1 = av1_encoding_parameters{
+                    .profile = 1,
+                    .level_idx = 13,
+                    .tier = 0,
+                },
+            }),
+            "video transcoder av1 unsupported profile");
+
     video_transcoder unsupported;
     require(!unsupported.startup(video_transcoder_config{
                 .input_codec = codec_id::av1,
