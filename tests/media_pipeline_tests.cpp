@@ -1263,7 +1263,7 @@ class rtmp_input_test_peer final
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto session = std::make_shared<rtmp_session>(std::move(connection), registry_, initial_tracks_timeout);
+        auto session = std::make_shared<rtmp_session>(std::move(connection), registry_, output_video_config{}, initial_tracks_timeout);
         session_ = session;
         session->startup();
         runner_ = std::jthread([this]() { io_.run(); });

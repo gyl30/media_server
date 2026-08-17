@@ -163,8 +163,8 @@ for transport in tcp udp; do
     kill -0 "$main_pid"
 done
 
-# AV1 只作为显式 HTTP 输出能力启用：HTTP-FLV 使用 Enhanced FLV，HLS 使用 fMP4。
-"$server_bin" --rtmp-port 19352 --rtsp-port 18556 --http-port 18082 --http-video-codec av1 \
+# AV1 作为显式输出能力启用：RTMP/HTTP-FLV 使用 Enhanced FLV，HLS 使用 fMP4。
+"$server_bin" --rtmp-port 19352 --rtsp-port 18556 --http-port 18082 --rtmp-video-codec av1 --http-video-codec av1 \
     >"$work_dir/av1_server.log" 2>&1 &
 av1_server_pid=$!
 sleep 0.4
@@ -181,6 +181,18 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
 av1_publish_pid=$!
 
 wait_log "$work_dir/av1_server.log" 'rtmp publish live/av1'
+
+# RTMP AV1 必须由 peer 通过 legacy fourCcList 显式声明 av01；未声明时不能回退到其他视频编码。
+wait_probe_streams "$work_dir/rtmp_av1.txt" av1 aac -rtmp_enhanced_codecs av01 'rtmp://127.0.0.1:19352/live/av1'
+timeout 3s ffprobe -v error \
+    -show_entries stream=codec_name \
+    -of compact=p=0:nk=0 \
+    'rtmp://127.0.0.1:19352/live/av1' >"$work_dir/rtmp_av1_without_capability.txt" 2>&1 || true
+if grep -q 'codec_name=' "$work_dir/rtmp_av1_without_capability.txt"; then
+    echo 'rtmp av1 unexpectedly served peer without av01 capability' >&2
+    cat "$work_dir/rtmp_av1_without_capability.txt" >&2
+    exit 1
+fi
 wait_probe_streams "$work_dir/http_flv_av1.txt" av1 aac 'http://127.0.0.1:18082/live/av1.flv'
 wait_probe_streams "$work_dir/hls_av1.txt" av1 aac 'http://127.0.0.1:18082/hls/live/av1/index.m3u8'
 
@@ -209,6 +221,8 @@ rtsp input -> http-flv output: pass
 rtsp input -> hls output: pass
 rtsp push tcp -> rtsp/rtmp/http-flv/hls outputs: pass
 rtsp push udp -> rtsp/rtmp/http-flv/hls outputs: pass
+rtmp explicit av1 output: pass
+rtmp av1 rejects peer without av01: pass
 http-flv explicit av1 output: pass
 hls explicit av1 fmp4 output: pass
 all servers remained alive after client disconnects: pass
