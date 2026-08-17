@@ -5595,6 +5595,49 @@ void test_rtsp_muxer_zero_origin_timeline()
     rtsp_muxer_destroy(muxer);
 }
 
+void test_ireader_av1_sdp_payload_type()
+{
+    constexpr int payload_type = 98;
+    aom_av1_t av1{};
+    av1.marker = 1;
+    av1.version = 1;
+    av1.seq_profile = 0;
+    av1.seq_level_idx_0 = 13;
+    av1.chroma_subsampling_x = 1;
+    av1.chroma_subsampling_y = 1;
+    std::array<std::uint8_t, 4> config{};
+    require(aom_av1_codec_configuration_record_save(&av1, config.data(), config.size()) == static_cast<int>(config.size()),
+            "ireader av1 config save");
+
+    rtp_timeline_capture capture;
+    auto* muxer = rtsp_muxer_create(&capture_rtp_timestamp, &capture);
+    require(muxer != nullptr, "ireader av1 sdp muxer create");
+    const auto payload = rtsp_muxer_add_payload(muxer,
+                                                 "RTP/AVP",
+                                                 90'000,
+                                                 payload_type,
+                                                 "AV1",
+                                                 0,
+                                                 0x12345678U,
+                                                 0,
+                                                 config.data(),
+                                                 static_cast<int>(config.size()));
+    require(payload >= 0, "ireader av1 sdp add payload");
+
+    std::uint16_t sequence{};
+    std::uint32_t timestamp{};
+    const char* media_text{};
+    int media_text_size{};
+    require(rtsp_muxer_getinfo(muxer, payload, &sequence, &timestamp, &media_text, &media_text_size) == 0 && media_text != nullptr &&
+                media_text_size > 0,
+            "ireader av1 sdp getinfo");
+    const std::string_view sdp(media_text, static_cast<std::size_t>(media_text_size));
+    require(sdp.contains("m=video 0 RTP/AVP 98\n"), "ireader av1 sdp media payload type");
+    require(sdp.contains("a=rtpmap:98 AV1/90000\n"), "ireader av1 sdp rtpmap payload type");
+    require(sdp.contains("a=fmtp:98 profile=0;level-idx=13;tier=0"), "ireader av1 sdp fmtp payload type");
+    require(rtsp_muxer_destroy(muxer) == 0, "ireader av1 sdp muxer destroy");
+}
+
 void test_rtsp_aac_adts_round_trip()
 {
     rtsp_aac_capture capture;
@@ -7751,6 +7794,8 @@ int main()
     std::cout << "[pass] h265_output_paths\n";
     media_server::test_rtsp_muxer_zero_origin_timeline();
     std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
+    media_server::test_ireader_av1_sdp_payload_type();
+    std::cout << "[pass] ireader_av1_sdp_payload_type\n";
     media_server::test_rtsp_aac_adts_round_trip();
     std::cout << "[pass] rtsp_aac_adts_round_trip\n";
     media_server::test_audio_transcoder_aac_opus();
