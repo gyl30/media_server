@@ -113,7 +113,7 @@ int rtp_packet_getsize()
 static int rtp_payload_find(int payload, const char* encoding, struct rtp_payload_delegate_t* codec)
 {
 	assert(payload >= 0 && payload <= 127);
-	if (payload >= RTP_PAYLOAD_DYNAMIC && encoding)
+	if (encoding && *encoding && (payload < 72 || payload > 76))
 	{
 		if (0 == strcasecmp(encoding, "H264"))
 		{
@@ -171,7 +171,7 @@ static int rtp_payload_find(int payload, const char* encoding, struct rtp_payloa
 			codec->encoder = rtp_vp9_encode();
 			codec->decoder = rtp_vp9_decode();
 		}
-		else if (0 == strcasecmp(encoding, "AV1"))
+		else if (0 == strcasecmp(encoding, "AV1") || 0 == strcasecmp(encoding, "AV1X"))
 		{
 			/// https://aomediacodec.github.io/av1-rtp-spec/#7-payload-format-parameters
 			codec->encoder = rtp_av1_encode();
@@ -187,7 +187,26 @@ static int rtp_payload_find(int payload, const char* encoding, struct rtp_payloa
 			codec->encoder = rtp_ts_encode();
 			codec->decoder = rtp_ts_decode();
 		}
-		else if (0 == strcasecmp(encoding, "opus")	// RFC7587 RTP Payload Format for the Opus Speech and Audio Codec
+		else if (payload == RTP_PAYLOAD_MP3 && (0 == strcasecmp(encoding, "MP3") || 0 == strcasecmp(encoding, "MPA")))
+		{
+			codec->encoder = rtp_mpeg1or2es_encode();
+			codec->decoder = rtp_mpeg1or2es_decode();
+		}
+		else if (payload == RTP_PAYLOAD_MPV && 0 == strcasecmp(encoding, "MPV"))
+		{
+			codec->encoder = rtp_mpeg1or2es_encode();
+			codec->decoder = rtp_mpeg1or2es_decode();
+		}
+		else if (payload == RTP_PAYLOAD_MP2T && (0 == strcasecmp(encoding, "MP2T") || 0 == strcasecmp(encoding, "TS")))
+		{
+			codec->encoder = rtp_ts_encode();
+			codec->decoder = rtp_ts_decode();
+		}
+		else if (0 == strcasecmp(encoding, "PCMU")
+			|| 0 == strcasecmp(encoding, "PCMA")
+			|| 0 == strcasecmp(encoding, "G722")
+			|| 0 == strcasecmp(encoding, "G729")
+			|| 0 == strcasecmp(encoding, "opus")	// RFC7587 RTP Payload Format for the Opus Speech and Audio Codec
 			|| 0 == strcasecmp(encoding, "G726-16") // ITU-T G.726 audio 16 kbit/s (RFC 3551)
 			|| 0 == strcasecmp(encoding, "G726-24")	// ITU-T G.726 audio 24 kbit/s (RFC 3551)
 			|| 0 == strcasecmp(encoding, "G726-32") // ITU-T G.726 audio 32 kbit/s (RFC 3551)

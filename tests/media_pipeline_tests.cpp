@@ -5731,6 +5731,74 @@ void test_rtsp_muxer_zero_origin_timeline()
     rtsp_muxer_destroy(muxer);
 }
 
+void test_ireader_negotiated_payload_mapping()
+{
+    struct capture
+    {
+        std::vector<std::uint8_t> packet;
+    } state;
+
+    const auto on_packet = [](void* param, int, const void* packet, int bytes, std::uint32_t, int) {
+        auto& capture_state = *static_cast<capture*>(param);
+        capture_state.packet.assign(static_cast<const std::uint8_t*>(packet), static_cast<const std::uint8_t*>(packet) + bytes);
+        return 0;
+    };
+    auto* muxer = rtsp_muxer_create(on_packet, &state);
+    require(muxer != nullptr, "ireader negotiated payload muxer create");
+
+    aom_av1_t av1{};
+    av1.marker = 1;
+    av1.version = 1;
+    av1.seq_profile = 0;
+    av1.seq_level_idx_0 = 13;
+    av1.chroma_subsampling_x = 1;
+    av1.chroma_subsampling_y = 1;
+    std::array<std::uint8_t, 4> av1_config{};
+    require(aom_av1_codec_configuration_record_save(&av1, av1_config.data(), av1_config.size()) == static_cast<int>(av1_config.size()),
+            "ireader negotiated payload av1 config");
+    require(rtsp_muxer_add_payload(
+                muxer, "RTP/AVP", 90'000, 45, "AV1", 0, 2, 0, av1_config.data(), static_cast<int>(av1_config.size())) >= 0,
+            "ireader negotiated payload av1 payload");
+    require(rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 64, "H264", 0, 2, 0, nullptr, 0) >= 0,
+            "ireader negotiated payload h264 payload");
+    require(rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 77, "H265", 0, 2, 0, nullptr, 0) >= 0,
+            "ireader negotiated payload h265 payload");
+    rtsp_muxer_destroy(muxer);
+
+    muxer = rtsp_muxer_create(on_packet, &state);
+    require(muxer != nullptr, "ireader negotiated payload override muxer create");
+    auto payload = rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 35, "VP9", 0, 2, 0, nullptr, 0);
+    require(payload >= 0, "ireader negotiated payload vp9 payload");
+    auto media = rtsp_muxer_add_media(muxer, payload, RTP_PAYLOAD_VP9, nullptr, 0);
+    require(media >= 0, "ireader negotiated payload vp9 media");
+    const std::array<std::uint8_t, 4> vp9_frame{0x01, 0x02, 0x03, 0x04};
+    require(rtsp_muxer_input(muxer, media, 0, 0, vp9_frame.data(), static_cast<int>(vp9_frame.size()), 1) == 0,
+            "ireader negotiated payload vp9 packetize");
+    require(state.packet.size() == 17U && (state.packet[1] & 0x7fU) == 35U && state.packet[12] == 0x0cU,
+            "ireader negotiated payload vp9 uses negotiated encoding");
+    rtsp_muxer_destroy(muxer);
+
+    state.packet.clear();
+    muxer = rtsp_muxer_create(on_packet, &state);
+    require(muxer != nullptr, "ireader static payload override muxer create");
+    payload = rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 18, "H264", 0, 2, 0, nullptr, 0);
+    require(payload >= 0, "ireader static payload override h264 payload");
+    media = rtsp_muxer_add_media(muxer, payload, RTP_PAYLOAD_H264, nullptr, 0);
+    require(media >= 0, "ireader static payload override h264 media");
+    const std::array<std::uint8_t, 8> h264_frame{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x11};
+    require(rtsp_muxer_input(muxer, media, 0, 0, h264_frame.data(), static_cast<int>(h264_frame.size()), 1) == 0,
+            "ireader static payload override h264 packetize");
+    require(state.packet.size() == 16U && (state.packet[1] & 0x7fU) == 18U && state.packet[12] == 0x41U,
+            "ireader static payload override uses h264 encoding");
+    rtsp_muxer_destroy(muxer);
+
+    muxer = rtsp_muxer_create(on_packet, &state);
+    require(muxer != nullptr, "ireader static payload default muxer create");
+    require(rtsp_muxer_add_payload(muxer, "RTP/AVP", 8'000, RTP_PAYLOAD_PCMA, "PCMA", 0, 2, 0, nullptr, 0) >= 0,
+            "ireader static payload pcma remains supported");
+    rtsp_muxer_destroy(muxer);
+}
+
 void test_ireader_av1_sdp_payload_type()
 {
     constexpr int payload_type = 98;
@@ -7991,6 +8059,8 @@ int main()
     std::cout << "[pass] h265_output_paths\n";
     media_server::test_rtsp_muxer_zero_origin_timeline();
     std::cout << "[pass] rtsp_muxer_zero_origin_timeline\n";
+    media_server::test_ireader_negotiated_payload_mapping();
+    std::cout << "[pass] ireader_negotiated_payload_mapping\n";
     media_server::test_ireader_av1_sdp_payload_type();
     std::cout << "[pass] ireader_av1_sdp_payload_type\n";
     media_server::test_rtsp_aac_adts_round_trip();
