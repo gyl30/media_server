@@ -29,11 +29,13 @@ constexpr track_id audio_track_id = 2;
 
 rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection,
                            stream_registry& registry,
+                           output_video_config video,
                            std::chrono::milliseconds initial_tracks_timeout)
     : connection_(std::move(connection)),
       registry_(registry),
       initial_tracks_timer_(connection_->socket().get_executor()),
-      initial_tracks_timeout_(initial_tracks_timeout)
+      initial_tracks_timeout_(initial_tracks_timeout),
+      video_config_(video)
 {
 }
 
@@ -240,6 +242,12 @@ int rtmp_session::on_play(std::string app, std::string stream)
         spdlog::warn("rtmp play stream not found {}", stream_name_);
         return -1;
     }
+    if (video_config_.codec == output_video_codec::av1 && !rtmp_server_peer_supports_fourcc(server_, "av01"))
+    {
+        spdlog::warn("rtmp play av1 unsupported by peer {}", stream_name_);
+        stream_.reset();
+        return -1;
+    }
 
     role_ = role::player;
     output_muxer_ = std::make_unique<flv_output_muxer>(
@@ -257,7 +265,8 @@ int rtmp_session::on_play(std::string app, std::string stream)
             {
                 static_cast<void>(rtmp_server_send_audio(server_, data.data(), data.size(), timestamp));
             }
-        });
+        },
+        video_config_);
 
     const auto self = shared_from_this();
     boost::asio::post(connection_->socket().get_executor(),
