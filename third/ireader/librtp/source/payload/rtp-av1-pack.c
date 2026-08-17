@@ -141,6 +141,12 @@ static int rtp_av1_pack_obu(struct rtp_encode_av1_t *packer, const uint8_t* obu,
 	
 	while (bytes > 0)
 	{
+		if (packer->ptr && packer->size - packer->offset < 8)
+		{
+			r = rtp_av1_pack_flush(packer, packer->aggregation);
+			if (0 != r) return r;
+		}
+
 		if (NULL == packer->ptr)
 		{
 			packer->ptr = (uint8_t*)packer->handler.alloc(packer->cbparam, packer->size);
@@ -166,9 +172,9 @@ static int rtp_av1_pack_obu(struct rtp_encode_av1_t *packer, const uint8_t* obu,
 		bytes -= n;
 		packer->offset = (int)(ptr - packer->ptr);
 
-		if (packer->size - packer->offset < 8)
+		if (bytes > 0 && packer->size - packer->offset < 8)
 		{
-			r = rtp_av1_pack_flush(packer, packer->aggregation | (bytes > 0 ? AV1_AGGREGATION_HEADER_Y : 0));
+			r = rtp_av1_pack_flush(packer, packer->aggregation | AV1_AGGREGATION_HEADER_Y);
 			if (0 != r) return r;
 		}
 
