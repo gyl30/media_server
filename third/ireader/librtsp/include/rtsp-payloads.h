@@ -148,11 +148,25 @@ static inline int avpayload_find_by_payload(uint8_t payload)
 static inline int avpayload_find_by_rtp(uint8_t payload, const char* encoding)
 {
     size_t i;
+    if (payload >= 72 && payload <= 76)
+        return -1;
+
+    if (encoding && *encoding)
+    {
+        for (i = 0; i < sizeof(s_payloads) / sizeof(s_payloads[0]); i++)
+        {
+            if (0 == strcasecmp(encoding, s_payloads[i].encoding))
+                return (int)i;
+        }
+
+        const struct rtp_profile_t* profile = rtp_profile_find(payload);
+        if (!profile || 0 != strcasecmp(encoding, profile->name))
+            return -1;
+    }
+
     for (i = 0; i < sizeof(s_payloads) / sizeof(s_payloads[0]); i++)
     {
-        if ( (payload < RTP_PAYLOAD_DYNAMIC || !encoding || !*encoding) && s_payloads[i].payload == payload)
-            return (int)i;
-        else if (payload >= RTP_PAYLOAD_DYNAMIC && encoding && 0 == strcasecmp(encoding, s_payloads[i].encoding))
+        if (s_payloads[i].payload == payload)
             return (int)i;
     }
 

@@ -18,7 +18,7 @@ int rtsp_muxer_destroy(struct rtsp_muxer_t* muxer);
 
 /// @param[in] proto RTP/AVP, see more @librtsp/include/sdp-options.h
 /// @param[in] payload rtp payload id, e.g. RTP_PAYLOAD_MP2P, see more @librtp/include/rtp-profile.h
-/// @param[in] encoding rtp payload encoding(for payload > 96 only)
+/// @param[in] encoding rtp payload encoding
 /// @return >=0-paylad index, <0-error
 int rtsp_muxer_add_payload(struct rtsp_muxer_t* muxer, const char* proto, int frequence, int payload, const char* encoding, uint16_t seq, uint32_t ssrc, uint16_t port, const void* extra, int size);
 
