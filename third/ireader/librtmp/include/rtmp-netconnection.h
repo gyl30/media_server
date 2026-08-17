@@ -69,6 +69,7 @@ struct rtmp_connect_t
 
 	// https://veovera.org/docs/enhanced/enhanced-rtmp-v2.html#enhancing-netconnection-connect-command
 	double capsEx;
+	char fourCcList[16][5];
 };
 
 uint8_t* rtmp_netconnection_connect(uint8_t* out, size_t bytes, double transactionId, const struct rtmp_connect_t* connect);

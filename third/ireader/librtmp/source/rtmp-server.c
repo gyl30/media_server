@@ -472,6 +472,17 @@ int rtmp_server_getstate(struct rtmp_server_t* ctx)
 	return ctx->handshake_state;
 }
 
+int rtmp_server_peer_supports_fourcc(const rtmp_server_t* rtmp, const char* fourcc)
+{
+	size_t i;
+	for (i = 0; i < sizeof(rtmp->info.fourCcList) / sizeof(rtmp->info.fourCcList[0]); i++)
+	{
+		if (0 == strcmp(rtmp->info.fourCcList[i], "*") || 0 == strcmp(rtmp->info.fourCcList[i], fourcc))
+			return 1;
+	}
+	return 0;
+}
+
 int rtmp_server_input(struct rtmp_server_t* ctx, const uint8_t* data, size_t bytes)
 {
 	int r;

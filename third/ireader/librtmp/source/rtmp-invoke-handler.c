@@ -13,7 +13,9 @@ static int rtmp_command_onconnect(struct rtmp_t* rtmp, double transaction, const
 	int r;
 	struct rtmp_connect_t connect;
 	struct amf_object_item_t items[1];
-	struct amf_object_item_t commands[9];
+	struct amf_object_item_t commands[10];
+	struct amf_object_item_t fourccs[sizeof(connect.fourCcList) / sizeof(connect.fourCcList[0])];
+	size_t i;
 
 	memset(&connect, 0, sizeof(connect));
 	connect.encoding = (double)RTMP_ENCODING_AMF_0;
@@ -26,6 +28,9 @@ static int rtmp_command_onconnect(struct rtmp_t* rtmp, double transaction, const
 	AMF_OBJECT_ITEM_VALUE(commands[6], AMF_NUMBER, "videoFunction", &connect.videoFunction, 8);
 	AMF_OBJECT_ITEM_VALUE(commands[7], AMF_NUMBER, "objectEncoding", &connect.encoding, 8);
 	AMF_OBJECT_ITEM_VALUE(commands[8], AMF_NUMBER, "capsEx", &connect.capsEx, 8);
+	for (i = 0; i < sizeof(connect.fourCcList) / sizeof(connect.fourCcList[0]); i++)
+		AMF_OBJECT_ITEM_VALUE(fourccs[i], AMF_STRING, NULL, connect.fourCcList[i], sizeof(connect.fourCcList[i]));
+	AMF_OBJECT_ITEM_VALUE(commands[9], AMF_STRICT_ARRAY, "fourCcList", fourccs, sizeof(fourccs) / sizeof(fourccs[0]));
 
 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", commands, sizeof(commands) / sizeof(commands[0]));
 

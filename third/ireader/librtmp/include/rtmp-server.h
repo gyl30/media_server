@@ -57,6 +57,8 @@ void rtmp_server_destroy(rtmp_server_t* rtmp);
 
 int rtmp_server_getstate(rtmp_server_t* rtmp);
 
+int rtmp_server_peer_supports_fourcc(const rtmp_server_t* rtmp, const char* fourcc);
+
 /// @param[in] rtmp rtmp_server_create instance
 /// @param[in] data rtmp chunk stream data
 /// @param[in] bytes data length
