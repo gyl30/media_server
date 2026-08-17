@@ -1,6 +1,8 @@
 #ifndef MEDIA_RTSP_RTSP_OUTPUT_SESSION_H
 #define MEDIA_RTSP_RTSP_OUTPUT_SESSION_H
 
+#include "media/codec/output_video_config.h"
+#include "media/codec/video_transcoder.h"
 #include "media/core/media_reader.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_connection.h"
@@ -21,7 +23,7 @@ namespace media_server
 class rtsp_output_session final : public media_reader, public std::enable_shared_from_this<rtsp_output_session>
 {
    public:
-    rtsp_output_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry, std::uint16_t server_port);
+    rtsp_output_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry, std::uint16_t server_port, output_video_config video = {});
     ~rtsp_output_session() override;
 
     void startup(std::vector<std::uint8_t> initial_data = {});
@@ -68,11 +70,14 @@ class rtsp_output_session final : public media_reader, public std::enable_shared
     std::shared_ptr<tcp_connection> connection_;
     stream_registry& registry_;
     std::uint16_t server_port_{};
+    output_video_config video_config_;
     rtsp_server_t* server_{};
     rtsp_muxer_t* muxer_{};
     std::shared_ptr<media_stream> stream_;
     media_reader_handle reader_;
     std::map<track_id, track_state> tracks_;
+    std::unique_ptr<video_transcoder> video_transcoder_;
+    track_id video_track_id_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     std::string stream_name_;
