@@ -5,6 +5,7 @@
 
 extern "C"
 {
+#include "aom-av1.h"
 #include "rtp-profile.h"
 #include "rtp-packet.h"
 #include "rtp-payload.h"
@@ -32,6 +33,13 @@ namespace media_server
 
 namespace
 {
+// 初始 RTSP AV1 输出固定为 Main Profile / Level 5.1 / Main Tier。
+constexpr av1_encoding_parameters rtsp_av1_parameters{
+    .profile = 0,
+    .level_idx = 13,
+    .tier = 0,
+};
+
 std::uint32_t random_u32()
 {
     std::random_device device;
@@ -57,8 +65,9 @@ bool supported_track(const media_track& track)
 }
 }    // namespace
 
-rtsp_output_session::rtsp_output_session(std::shared_ptr<tcp_connection> connection, stream_registry& registry, std::uint16_t server_port)
-    : connection_(std::move(connection)), registry_(registry), server_port_(server_port)
+rtsp_output_session::rtsp_output_session(
+    std::shared_ptr<tcp_connection> connection, stream_registry& registry, std::uint16_t server_port, output_video_config video)
+    : connection_(std::move(connection)), registry_(registry), server_port_(server_port), video_config_(video)
 {
 }
 
@@ -182,6 +191,36 @@ void rtsp_output_session::on_read(media_read_batch batch)
                 continue;
             }
         }
+        if (video_config_.codec == output_video_codec::av1 && entry.frame.track == video_track_id_)
+        {
+            std::vector<media_frame> output;
+            if (!video_transcoder_ || !video_transcoder_->transcode(entry.frame, output))
+            {
+                spdlog::error("rtsp av1 transcode failed track {}", entry.frame.track);
+                shutdown();
+                return;
+            }
+            for (const auto& encoded : output)
+            {
+                if (!encoded.payload)
+                {
+                    continue;
+                }
+                const auto result = rtsp_muxer_input(muxer_,
+                                                     state.media_id,
+                                                     ns_to_milliseconds(encoded.pts_ns),
+                                                     ns_to_milliseconds(encoded.dts_ns),
+                                                     encoded.payload->data(),
+                                                     static_cast<int>(encoded.payload->size()),
+                                                     encoded.key_frame ? 1 : 0);
+                if (result < 0)
+                {
+                    spdlog::error("rtsp output av1 mux failed result {}", result);
+                }
+            }
+            continue;
+        }
+
         const auto result = rtsp_muxer_input(muxer_,
                                              state.media_id,
                                              ns_to_milliseconds(entry.frame.pts_ns),
@@ -321,6 +360,8 @@ void rtsp_output_session::safe_shutdown()
     reader_ = {};
     reader_cursor_.reset();
     track_revision_ = 0;
+    video_transcoder_.reset();
+    video_track_id_ = 0;
     connection_->shutdown();
     stream_.reset();
 
@@ -350,6 +391,8 @@ int rtsp_output_session::on_describe(std::string_view uri)
         muxer_ = nullptr;
     }
     tracks_.clear();
+    video_transcoder_.reset();
+    video_track_id_ = 0;
     stream_.reset();
 
     const auto stream_name = stream_name_from_uri(uri);
@@ -382,6 +425,8 @@ int rtsp_output_session::on_describe(std::string_view uri)
         rtsp_muxer_destroy(muxer_);
         muxer_ = nullptr;
         tracks_.clear();
+        video_transcoder_.reset();
+        video_track_id_ = 0;
         return rtsp_server_reply_describe(server_, 415, "");
     }
     stream_ = std::move(stream);
@@ -562,7 +607,41 @@ bool rtsp_output_session::configure_tracks(std::span<const media_track> tracks, 
         int frequency = static_cast<int>(track.clock_rate);
         int payload_type = -1;
 
-        if (track.codec == codec_id::h264)
+        if (track.kind == media_kind::video && video_config_.codec == output_video_codec::av1)
+        {
+            aom_av1_t av1{};
+            av1.marker = 1;
+            av1.version = 1;
+            av1.seq_profile = rtsp_av1_parameters.profile;
+            av1.seq_level_idx_0 = rtsp_av1_parameters.level_idx;
+            av1.seq_tier_0 = rtsp_av1_parameters.tier;
+            av1.chroma_subsampling_x = 1;
+            av1.chroma_subsampling_y = 1;
+            std::array<std::uint8_t, 4> config{};
+            if (aom_av1_codec_configuration_record_save(&av1, config.data(), config.size()) != static_cast<int>(config.size()))
+            {
+                return false;
+            }
+            extra.assign(config.begin(), config.end());
+            encoding = "AV1";
+            rtp_codec = RTP_PAYLOAD_AV1;
+            frequency = 90'000;
+            payload_type = next_payload_type++;
+
+            auto transcoder = std::make_unique<video_transcoder>();
+            if (!transcoder->startup(video_transcoder_config{
+                    .input_codec = track.codec,
+                    .output_codec = codec_id::av1,
+                    .input_codec_config = track.codec_config,
+                    .av1 = rtsp_av1_parameters,
+                }))
+            {
+                return false;
+            }
+            video_track_id_ = track.id;
+            video_transcoder_ = std::move(transcoder);
+        }
+        else if (track.codec == codec_id::h264)
 
         {
             extra = h264_annex_b_to_avcc(track.codec_config);

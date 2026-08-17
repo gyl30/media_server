@@ -1,6 +1,7 @@
 #ifndef MEDIA_RTSP_RTSP_SERVER_H
 #define MEDIA_RTSP_RTSP_SERVER_H
 
+#include "media/codec/output_video_config.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_listener.h"
 
@@ -20,7 +21,7 @@ class rtsp_connection_router;
 class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
 {
    public:
-    rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port);
+    rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port, output_video_config video = {});
 
     [[nodiscard]] boost::system::error_code startup();
     void shutdown();
@@ -32,6 +33,7 @@ class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
 
     stream_registry& registry_;
     std::uint16_t port_{};
+    output_video_config video_config_;
     std::shared_ptr<tcp_listener> listener_;
     std::mutex sessions_mutex_;
     std::vector<std::weak_ptr<rtsp_connection_router>> routers_;
