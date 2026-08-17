@@ -4940,6 +4940,63 @@ void test_timebase_conversions()
     require(ns_to_90khz(negative_ns) == -3'600, "90khz timeline keeps negative values");
 }
 
+void test_rtmp_legacy_fourcc_connect_parse()
+{
+    const auto make_connect = [](std::span<const std::string_view> fourccs) {
+        std::array<std::uint8_t, 512> data{};
+        auto* current = AMFWriteString(data.data(), data.data() + data.size(), "connect", 7);
+        current = AMFWriteDouble(current, data.data() + data.size(), 1.0);
+        current = AMFWriteObject(current, data.data() + data.size());
+        current = AMFWriteNamedString(current, data.data() + data.size(), "app", 3, "live", 4);
+        current = AMFWriteNamed(current, data.data() + data.size(), "fourCcList", 10);
+        require(current != nullptr && current + 5 <= data.data() + data.size(), "rtmp fourcc array header fits");
+        *current++ = AMF_STRICT_ARRAY;
+        const auto count = static_cast<std::uint32_t>(fourccs.size());
+        *current++ = static_cast<std::uint8_t>(count >> 24U);
+        *current++ = static_cast<std::uint8_t>(count >> 16U);
+        *current++ = static_cast<std::uint8_t>(count >> 8U);
+        *current++ = static_cast<std::uint8_t>(count);
+        for (const auto fourcc : fourccs)
+        {
+            current = AMFWriteString(current, data.data() + data.size(), fourcc.data(), fourcc.size());
+            require(current != nullptr, "rtmp fourcc array value fits");
+        }
+        current = AMFWriteObjectEnd(current, data.data() + data.size());
+        require(current != nullptr, "rtmp fourcc connect object fits");
+        return std::pair{data, static_cast<std::size_t>(current - data.data())};
+    };
+
+    const auto parse_connect = [](const std::array<std::uint8_t, 512>& data, std::size_t bytes) {
+        rtmp_connect_t connect{};
+        rtmp_t rtmp{};
+        rtmp.param = &connect;
+        rtmp.server.onconnect = [](void* param, int result, double transaction, const rtmp_connect_t* parsed) {
+            if (result != 0 || transaction != 1.0 || parsed == nullptr)
+            {
+                return -1;
+            }
+            *static_cast<rtmp_connect_t*>(param) = *parsed;
+            return 0;
+        };
+        rtmp_chunk_header_t header{};
+        header.length = static_cast<std::uint32_t>(bytes);
+        require(rtmp_invoke_handler(&rtmp, &header, data.data()) == 0, "rtmp fourcc connect parses");
+        return connect;
+    };
+
+    constexpr std::array<std::string_view, 3> codecs{"hvc1", "av01", "vp09"};
+    const auto [connect_data, connect_bytes] = make_connect(codecs);
+    const auto connect = parse_connect(connect_data, connect_bytes);
+    require(std::string_view(connect.fourCcList[0]) == "hvc1", "rtmp fourcc preserves hvc1");
+    require(std::string_view(connect.fourCcList[1]) == "av01", "rtmp fourcc preserves av01");
+    require(std::string_view(connect.fourCcList[2]) == "vp09", "rtmp fourcc preserves vp09");
+
+    constexpr std::array<std::string_view, 1> wildcard{"*"};
+    const auto [wildcard_data, wildcard_bytes] = make_connect(wildcard);
+    const auto wildcard_connect = parse_connect(wildcard_data, wildcard_bytes);
+    require(std::string_view(wildcard_connect.fourCcList[0]) == "*", "rtmp fourcc preserves wildcard");
+}
+
 void test_rtmp_timestamp_timeline()
 {
     rtmp_timestamp_state state;
@@ -7644,6 +7701,8 @@ int main()
 {
     media_server::test_timebase_conversions();
     std::cout << "[pass] timebase_conversions\n";
+    media_server::test_rtmp_legacy_fourcc_connect_parse();
+    std::cout << "[pass] rtmp_legacy_fourcc_connect_parse\n";
     media_server::test_rtmp_timestamp_timeline();
     std::cout << "[pass] rtmp_timestamp_timeline\n";
     media_server::test_internal_format_contract();
