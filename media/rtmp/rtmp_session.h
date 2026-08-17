@@ -1,6 +1,7 @@
 #ifndef MEDIA_RTMP_RTMP_SESSION_H
 #define MEDIA_RTMP_RTMP_SESSION_H
 
+#include "media/codec/output_video_config.h"
 #include "media/core/media_reader.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_connection.h"
@@ -28,6 +29,7 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
    public:
     rtmp_session(std::shared_ptr<tcp_connection> connection,
                  stream_registry& registry,
+                 output_video_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
     ~rtmp_session() override;
 
@@ -72,6 +74,7 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
     stream_registry& registry_;
     boost::asio::steady_timer initial_tracks_timer_;
     std::chrono::milliseconds initial_tracks_timeout_;
+    output_video_config video_config_;
     rtmp_server_t* server_{};
     flv_demuxer_t* demuxer_{};
     std::unique_ptr<flv_output_muxer> output_muxer_;

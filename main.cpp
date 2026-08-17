@@ -34,6 +34,7 @@ struct options
     std::string webrtc_address{"127.0.0.1"};
     std::size_t threads{std::max(1U, std::thread::hardware_concurrency())};
     std::vector<std::pair<std::string, std::string>> rtsp_pulls;
+    media_server::output_video_config rtmp_video;
     media_server::output_video_config http_video;
     bool help{};
 };
@@ -111,6 +112,22 @@ std::optional<options> parse_options(int argc, char** argv)
             result.threads = threads;
             continue;
         }
+        if (const auto value = read_value("--rtmp-video-codec"))
+        {
+            if (*value == "passthrough")
+            {
+                result.rtmp_video.codec = media_server::output_video_codec::passthrough;
+            }
+            else if (*value == "av1")
+            {
+                result.rtmp_video.codec = media_server::output_video_codec::av1;
+            }
+            else
+            {
+                return std::nullopt;
+            }
+            continue;
+        }
         if (const auto value = read_value("--http-video-codec"))
         {
             if (*value == "passthrough")
@@ -152,6 +169,7 @@ void print_usage()
               << "  --webrtc-address <ip>\n"
               << "  --threads <count>\n"
               << "  --rtsp-pull <stream_name=rtsp_url>\n"
+              << "  --rtmp-video-codec <passthrough|av1>\n"
               << "  --http-video-codec <passthrough|av1>\n";
 }
 
@@ -191,7 +209,7 @@ int main(int argc, char** argv)
         spdlog::error("dtls certificate create failed");
         return 2;
     }
-    auto rtmp = std::make_shared<media_server::rtmp_server>(workers, registry, parsed->rtmp_port);
+    auto rtmp = std::make_shared<media_server::rtmp_server>(workers, registry, parsed->rtmp_port, parsed->rtmp_video);
     auto rtsp = std::make_shared<media_server::rtsp_server>(workers, registry, parsed->rtsp_port);
     auto http = std::make_shared<media_server::http_server>(workers, registry, hls, whep, parsed->http_port, parsed->http_video);
 
