@@ -194,8 +194,8 @@ class rtsp_connection_router final : public std::enable_shared_from_this<rtsp_co
     bool closed_{};
 };
 
-rtsp_server::rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port)
-    : registry_(registry), port_(port), listener_(std::make_shared<tcp_listener>(workers, port))
+rtsp_server::rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port, output_video_config video)
+    : registry_(registry), port_(port), video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
 {
 }
 
@@ -292,7 +292,7 @@ void rtsp_server::on_connection(boost::asio::ip::tcp::socket socket, std::vector
     }
     else
     {
-        auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, port_);
+        auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, port_, video_config_);
         std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
         sessions_.emplace_back(session);
         session->startup(std::move(initial_data));

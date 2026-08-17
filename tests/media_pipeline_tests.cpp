@@ -4137,7 +4137,7 @@ void test_rtsp_publish_server_contract()
 class rtsp_output_test_peer final
 {
    public:
-    explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()})
+    explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()}, output_video_config video = {})
         : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_(io_)
     {
         stream_ = std::make_shared<media_stream>("live/test", io_.get_executor());
@@ -4147,7 +4147,7 @@ class rtsp_output_test_peer final
         client_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, acceptor_.local_endpoint().port());
+        auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, acceptor_.local_endpoint().port(), video);
         session_ = session;
         session->startup();
         runner_ = std::jthread([this]() { io_.run(); });
@@ -4592,6 +4592,96 @@ void test_rtsp_output_h265()
         marker = packet.rtp.m != 0;
     }
     require(capture.access_unit == *frame.payload, "rtsp h265 cached access unit");
+}
+
+void test_rtsp_output_av1()
+{
+    for (const auto input_codec : {codec_id::h264, codec_id::h265})
+    {
+        const auto source = make_video_transcoder_fixture(input_codec);
+        auto video = input_codec == codec_id::h264 ? make_video_track() : make_h265_track();
+        video.codec_config = source.codec_config;
+        rtsp_output_test_peer peer({std::move(video)}, output_video_config{.codec = output_video_codec::av1});
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+        const auto describe = peer.request("DESCRIBE " + base +
+                                           " RTSP/1.0\r\n"
+                                           "CSeq: 1\r\n"
+                                           "Accept: application/sdp\r\n\r\n");
+        require(describe.starts_with("RTSP/1.0 200"), "rtsp av1 describe");
+        require(describe.find("m=video 0 RTP/AVP 96") != std::string::npos, "rtsp av1 dynamic payload type");
+        require(describe.find("a=rtpmap:96 AV1/90000") != std::string::npos, "rtsp av1 rtpmap");
+        require(describe.find("a=fmtp:96 profile=0;level-idx=13;tier=0") != std::string::npos, "rtsp av1 fmtp");
+        require(describe.find(input_codec == codec_id::h264 ? "H264/90000" : "H265/90000") == std::string::npos,
+                "rtsp av1 excludes source codec");
+
+        const auto setup = peer.request("SETUP " + base +
+                                        "/trackID=1 RTSP/1.0\r\n"
+                                        "CSeq: 2\r\n"
+                                        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+        require(setup.starts_with("RTSP/1.0 200"), "rtsp av1 setup");
+        const auto session = rtsp_header_value(setup, "Session:");
+        require(!session.empty(), "rtsp av1 session");
+        require(peer.request("PLAY " + base +
+                             " RTSP/1.0\r\n"
+                             "CSeq: 3\r\n"
+                             "Session: " +
+                             session + "\r\n\r\n")
+                    .starts_with("RTSP/1.0 200"),
+                "rtsp av1 play");
+
+        struct av1_capture
+        {
+            std::vector<std::uint8_t> temporal_unit;
+        } capture;
+        rtp_payload_t handler{
+            .alloc = nullptr,
+            .free = nullptr,
+            .packet = [](void* param, const void* packet, int bytes, std::uint32_t, int)
+            {
+                if (param == nullptr || packet == nullptr || bytes <= 0)
+                {
+                    return -1;
+                }
+                auto& value = *static_cast<av1_capture*>(param);
+                value.temporal_unit.assign(static_cast<const std::uint8_t*>(packet), static_cast<const std::uint8_t*>(packet) + bytes);
+                return 0;
+            },
+        };
+        const auto decoder = std::unique_ptr<void, decltype(&rtp_payload_decode_destroy)>(
+            rtp_payload_decode_create(96, "AV1", &handler, &capture), &rtp_payload_decode_destroy);
+        require(decoder != nullptr, "rtsp av1 depacketizer create");
+
+        for (const auto& frame : source.frames)
+        {
+            peer.publish(frame);
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (capture.temporal_unit.empty() && std::chrono::steady_clock::now() < deadline)
+        {
+            const auto interleaved = peer.read_interleaved(std::chrono::milliseconds(200));
+            if (!interleaved)
+            {
+                continue;
+            }
+            if (interleaved->channel == 1U)
+            {
+                continue;
+            }
+            require(interleaved->channel == 0U, "rtsp av1 rtp channel");
+            rtp_packet_t packet{};
+            require(rtp_packet_deserialize(&packet, interleaved->payload.data(), static_cast<int>(interleaved->payload.size())) == 0,
+                    "rtsp av1 rtp packet");
+            require(packet.rtp.pt == 96U, "rtsp av1 rtp payload type");
+            require(rtp_payload_decode_input(decoder.get(), interleaved->payload.data(), static_cast<int>(interleaved->payload.size())) >= 0,
+                    "rtsp av1 depacketize");
+        }
+        require(!capture.temporal_unit.empty(), "rtsp av1 temporal unit");
+        aom_av1_t av1{};
+        require(aom_av1_codec_configuration_record_init(&av1, capture.temporal_unit.data(), capture.temporal_unit.size()) == 0,
+                "rtsp av1 sequence header");
+        require(av1.seq_profile == 0 && av1.seq_level_idx_0 <= 13 && av1.seq_tier_0 == 0,
+                "rtsp av1 stream parameters match sdp");
+    }
 }
 
 void test_rtsp_output_opus_passthrough_boundaries()
@@ -7917,6 +8007,8 @@ int main()
     std::cout << "[pass] rtsp_output_audio_video_order\n";
     media_server::test_rtsp_output_h265();
     std::cout << "[pass] rtsp_output_h265\n";
+    media_server::test_rtsp_output_av1();
+    std::cout << "[pass] rtsp_output_av1\n";
     media_server::test_rtsp_output_opus_passthrough_boundaries();
     std::cout << "[pass] rtsp_output_opus_passthrough_boundaries\n";
     media_server::test_rtsp_output_g711_passthrough();

@@ -7,6 +7,13 @@ mkdir -p "$work_dir"
 work_dir="$(cd "$work_dir" && pwd)"
 server_bin="$(realpath "$server_bin")"
 
+ffprobe_version="$(ffprobe -version | head -1)"
+ffprobe_major="$(sed -n 's/^ffprobe version n\?\([0-9][0-9]*\).*/\1/p' <<<"$ffprobe_version")"
+if [[ -z "$ffprobe_major" || "$ffprobe_major" -lt 8 ]]; then
+    echo "ffprobe 8 or newer is required for AV1 RTP integration tests: $ffprobe_version" >&2
+    exit 1
+fi
+
 main_pid=""
 pull_pid=""
 publish_pid=""
@@ -163,8 +170,25 @@ for transport in tcp udp; do
     kill -0 "$main_pid"
 done
 
-# AV1 作为显式输出能力启用：RTMP/HTTP-FLV 使用 Enhanced FLV，HLS 使用 fMP4。
-"$server_bin" --rtmp-port 19352 --rtsp-port 18556 --http-port 18082 --rtmp-video-codec av1 --http-video-codec av1 \
+# RTSP pull AV1 回归使用独立 H.264 RTSP 源，避免依赖前面已经结束的 RTMP publisher。
+ffmpeg -nostdin -hide_banner -loglevel error -re \
+    -f lavfi -i 'testsrc=size=320x180:rate=25' \
+    -f lavfi -i 'sine=frequency=1300:sample_rate=44100' \
+    -map 0:v:0 -map 1:a:0 \
+    -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+    -g 25 -keyint_min 25 -sc_threshold 0 \
+    -c:a aac -b:a 96k -ac 2 \
+    -rtsp_transport tcp -f rtsp 'rtsp://127.0.0.1:18554/live/av1-pull-source' \
+    >"$work_dir/av1_rtsp_pull_source.log" 2>&1 &
+rtsp_publish_pid=$!
+
+wait_probe_streams "$work_dir/av1_rtsp_pull_source.txt" h264 aac -rtsp_transport tcp \
+    'rtsp://127.0.0.1:18554/live/av1-pull-source'
+
+# AV1 作为显式输出能力启用：RTMP/HTTP-FLV 使用 Enhanced FLV，HLS 使用 fMP4，RTSP 使用 AV1/RTP。
+"$server_bin" --rtmp-port 19352 --rtsp-port 18556 --http-port 18082 \
+    --rtmp-video-codec av1 --rtsp-video-codec av1 --http-video-codec av1 \
+    --rtsp-pull 'relay/av1=rtsp://127.0.0.1:18554/live/av1-pull-source' \
     >"$work_dir/av1_server.log" 2>&1 &
 av1_server_pid=$!
 sleep 0.4
@@ -176,11 +200,33 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
     -g 25 -keyint_min 25 -sc_threshold 0 \
     -c:a aac -b:a 96k -ac 2 \
-    -t 24 -f flv 'rtmp://127.0.0.1:19352/live/av1' \
+    -f flv 'rtmp://127.0.0.1:19352/live/av1' \
     >"$work_dir/av1_publisher.log" 2>&1 &
 av1_publish_pid=$!
 
 wait_log "$work_dir/av1_server.log" 'rtmp publish live/av1'
+wait_log "$work_dir/av1_server.log" 'rtsp input connected stream relay/av1'
+wait_log "$work_dir/av1_server.log" 'rtsp input tracks ready audio true'
+
+wait_probe_streams "$work_dir/rtsp_av1_from_rtmp.txt" av1 aac -rtsp_transport tcp \
+    'rtsp://127.0.0.1:18556/live/av1'
+wait_probe_streams "$work_dir/rtsp_av1_from_pull.txt" av1 aac -rtsp_transport tcp \
+    'rtsp://127.0.0.1:18556/relay/av1'
+
+# 快速连接/断开多个 AV1 RTSP client，随后确认会话和转码器仍可正常重新建立。
+for _ in $(seq 1 3); do
+    timeout 2s ffprobe -v error -rtsp_transport tcp \
+        -show_entries stream=codec_name \
+        -of compact=p=0:nk=0 \
+        'rtsp://127.0.0.1:18556/live/av1' >/dev/null 2>&1 || true
+done
+wait_probe_streams "$work_dir/rtsp_av1_after_churn.txt" av1 aac -rtsp_transport tcp \
+    'rtsp://127.0.0.1:18556/live/av1'
+kill -0 "$av1_server_pid"
+
+kill "$rtsp_publish_pid" 2>/dev/null || true
+wait "$rtsp_publish_pid" 2>/dev/null || true
+rtsp_publish_pid=""
 
 # RTMP AV1 必须由 peer 通过 legacy fourCcList 显式声明 av01；未声明时不能回退到其他视频编码。
 wait_probe_streams "$work_dir/rtmp_av1.txt" av1 aac -rtmp_enhanced_codecs av01 'rtmp://127.0.0.1:19352/live/av1'
@@ -206,9 +252,39 @@ curl -fsS "http://127.0.0.1:18082/hls/live/av1/$av1_segment" >"$work_dir/hls_av1
 [[ -s "$work_dir/hls_av1_init.mp4" ]]
 [[ -s "$work_dir/hls_av1_segment.m4s" ]]
 
+# RTSP push TCP/UDP 继续以 H.264 输入，验证同一 RTSP 服务的 AV1 playback 输出。
+for transport in tcp udp; do
+    stream_name="rtsp-av1-$transport"
+    ffmpeg -nostdin -hide_banner -loglevel error -re \
+        -f lavfi -i 'testsrc=size=320x180:rate=25' \
+        -f lavfi -i 'sine=frequency=1500:sample_rate=44100' \
+        -map 0:v:0 -map 1:a:0 \
+        -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+        -g 25 -keyint_min 25 -sc_threshold 0 \
+        -c:a aac -b:a 96k -ac 2 \
+        -rtsp_transport "$transport" -f rtsp "rtsp://127.0.0.1:18556/live/$stream_name" \
+        >"$work_dir/rtsp_av1_publish_${transport}.log" 2>&1 &
+    rtsp_publish_pid=$!
+
+    wait_probe_streams "$work_dir/rtsp_av1_push_${transport}.txt" av1 aac -rtsp_transport tcp \
+        "rtsp://127.0.0.1:18556/live/$stream_name"
+
+    kill "$rtsp_publish_pid" 2>/dev/null || true
+    wait "$rtsp_publish_pid" 2>/dev/null || true
+    rtsp_publish_pid=""
+    sleep 0.2
+    kill -0 "$av1_server_pid"
+done
+
 kill -0 "$main_pid"
 kill -0 "$pull_pid"
 kill -0 "$av1_server_pid"
+
+if grep -Fq 'rtsp av1 transcode failed' "$work_dir/av1_server.log"; then
+    echo 'rtsp av1 transcode failure detected' >&2
+    grep -F 'rtsp av1 transcode failed' "$work_dir/av1_server.log" >&2
+    exit 1
+fi
 
 cat >"$work_dir/summary.txt" <<SUMMARY
 rtmp input -> rtsp output: pass
@@ -221,6 +297,11 @@ rtsp input -> http-flv output: pass
 rtsp input -> hls output: pass
 rtsp push tcp -> rtsp/rtmp/http-flv/hls outputs: pass
 rtsp push udp -> rtsp/rtmp/http-flv/hls outputs: pass
+rtmp input -> rtsp av1 output: pass
+rtsp pull input -> rtsp av1 output: pass
+rtsp push tcp -> rtsp av1 output: pass
+rtsp push udp -> rtsp av1 output: pass
+rtsp av1 client churn: pass
 rtmp explicit av1 output: pass
 rtmp av1 rejects peer without av01: pass
 http-flv explicit av1 output: pass
