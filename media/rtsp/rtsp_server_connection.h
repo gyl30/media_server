@@ -68,6 +68,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
 
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<const rtsp_server_connection_handler> handler_;
+    std::string local_address_;
     rtsp_server_t* server_{};
     bool closed_{};
 };

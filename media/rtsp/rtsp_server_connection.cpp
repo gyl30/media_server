@@ -25,6 +25,18 @@ bool rtsp_server_connection::startup(std::shared_ptr<const rtsp_server_connectio
         return false;
     }
 
+    boost::system::error_code endpoint_error;
+    const auto peer = connection_->socket().remote_endpoint(endpoint_error);
+    if (endpoint_error)
+    {
+        return false;
+    }
+    const auto local = connection_->socket().local_endpoint(endpoint_error);
+    if (endpoint_error)
+    {
+        return false;
+    }
+
     handler_ = std::move(handler);
     rtsp_handler_t rtsp_handler{};
     rtsp_handler.send = &rtsp_server_connection::send_callback;
@@ -37,15 +49,14 @@ bool rtsp_server_connection::startup(std::shared_ptr<const rtsp_server_connectio
     rtsp_handler.onoptions = &rtsp_server_connection::options_callback;
     rtsp_handler.ongetparameter = handler_->on_get_parameter ? &rtsp_server_connection::get_parameter_callback : nullptr;
 
-    boost::system::error_code peer_error;
-    const auto peer = connection_->socket().remote_endpoint(peer_error);
-    const auto address = peer_error ? std::string("0.0.0.0") : peer.address().to_string();
-    server_ = rtsp_server_create(address.c_str(), peer_error ? 0 : peer.port(), &rtsp_handler, this, this);
+    const auto peer_address = peer.address().to_string();
+    server_ = rtsp_server_create(peer_address.c_str(), peer.port(), &rtsp_handler, this, this);
     if (server_ == nullptr)
     {
         handler_.reset();
         return false;
     }
+    local_address_ = local.address().to_string();
 
     const auto self = shared_from_this();
     connection_->startup(
@@ -119,16 +130,7 @@ void rtsp_server_connection::shutdown()
 
 boost::asio::any_io_executor rtsp_server_connection::executor() const { return connection_->socket().get_executor(); }
 
-std::string rtsp_server_connection::local_address() const
-{
-    if (!connection_)
-    {
-        return "0.0.0.0";
-    }
-    boost::system::error_code error;
-    const auto endpoint = connection_->socket().local_endpoint(error);
-    return error ? "0.0.0.0" : endpoint.address().to_string();
-}
+std::string rtsp_server_connection::local_address() const { return local_address_; }
 
 int rtsp_server_connection::send_callback(void* param, const void* data, std::size_t bytes)
 {
