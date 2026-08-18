@@ -3958,6 +3958,31 @@ void test_rtsp_publish_server_contract()
     const auto tracks = stream->tracks();
     require(tracks.size() == 1U && tracks.front().codec == codec_id::h264, "rtsp publish complete initial tracks");
 
+    boost::asio::ip::tcp::socket setup_first(client_io);
+    setup_first.connect({boost::asio::ip::address_v4::loopback(), port});
+    const auto setup_first_request = [&](std::string value)
+    {
+        boost::asio::write(setup_first, boost::asio::buffer(value));
+        return read_rtsp_headers(setup_first);
+    };
+    const auto setup_first_video = base + "/trackID=" + std::to_string(tracks.front().id);
+    const auto setup_first_response =
+        setup_first_request("SETUP " + setup_first_video +
+                            " RTSP/1.0\r\nCSeq: 10\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=play\r\n\r\n");
+    require(setup_first_response.starts_with("RTSP/1.0 200"), "rtsp playback setup first");
+    auto setup_first_session = rtsp_header_value(setup_first_response, "Session:");
+    if (const auto separator = setup_first_session.find(';'); separator != std::string::npos)
+    {
+        setup_first_session.resize(separator);
+    }
+    require(!setup_first_session.empty(), "rtsp playback setup first session");
+    require(setup_first_request("PLAY " + base + " RTSP/1.0\r\nCSeq: 11\r\nSession: " + setup_first_session + "\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp playback setup first play");
+    require(setup_first_request("TEARDOWN " + base + " RTSP/1.0\r\nCSeq: 12\r\nSession: " + setup_first_session + "\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp playback setup first teardown");
+
     boost::asio::ip::tcp::socket duplicate(client_io);
     duplicate.connect({boost::asio::ip::address_v4::loopback(), port});
     const auto duplicate_request = [&](std::string value)
