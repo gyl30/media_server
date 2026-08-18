@@ -5,7 +5,7 @@
 #include "media/http/http_server.h"
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_server.h"
-#include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_server.h"
 #include "media/webrtc/whep_service.h"
 
@@ -265,10 +265,10 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    std::vector<std::weak_ptr<media_server::rtsp_input_session>> pulls;
+    std::vector<std::weak_ptr<media_server::rtsp_pull_session>> pulls;
     for (const auto& [name, url] : parsed->rtsp_pulls)
     {
-        auto pull = std::make_shared<media_server::rtsp_input_session>(workers.next(), registry, name, url);
+        auto pull = std::make_shared<media_server::rtsp_pull_session>(workers.next(), registry, name, url);
         if (!pull->startup())
         {
             spdlog::error("rtsp pull startup failed stream {}", name);
