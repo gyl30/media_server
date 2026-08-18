@@ -149,7 +149,7 @@ class rtsp_connection_router final : public std::enable_shared_from_this<rtsp_co
             return;
         }
 
-        if (!boost::iequals(method, "ANNOUNCE") && !boost::iequals(method, "DESCRIBE"))
+        if (!boost::iequals(method, "ANNOUNCE") && !boost::iequals(method, "DESCRIBE") && !boost::iequals(method, "SETUP"))
         {
             close();
             return;
