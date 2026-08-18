@@ -4424,6 +4424,7 @@ void test_rtsp_output_session_contract()
                                        "CSeq: 5\r\n"
                                        "Accept: application/sdp\r\n\r\n");
     require(describe.starts_with("RTSP/1.0 200"), "rtsp output describe");
+    require(describe.find("o=- 1 1 IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp output describe local address");
     require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
     require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp output audio control");
 
