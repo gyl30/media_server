@@ -3696,7 +3696,7 @@ void test_rtsp_input_initial_tracks_timeout()
     runner.join();
 }
 
-void test_rtsp_input_media_driven_keepalive()
+void test_rtsp_input_independent_keepalive()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
@@ -3742,11 +3742,8 @@ void test_rtsp_input_media_driven_keepalive()
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     boost::asio::write(socket, boost::asio::buffer(interleaved_rtp));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(1'100));
-    boost::asio::write(socket, boost::asio::buffer(interleaved_rtp));
-
-    const auto options = read_rtsp_headers_until(socket, std::chrono::seconds(1));
-    require(options.starts_with("OPTIONS * RTSP/1.0\r\n"), "rtsp media drives keepalive options");
+    const auto options = read_rtsp_headers_until(socket, std::chrono::seconds(2));
+    require(options.starts_with("OPTIONS * RTSP/1.0\r\n"), "rtsp keepalive timer sends options without more media");
     require(options.find("Session: keepalive-session\r\n") != std::string::npos, "rtsp keepalive carries session");
     const auto options_response =
         "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(options, "CSeq:") + "\r\nPublic: OPTIONS\r\nContent-Length: 0\r\n\r\n";
@@ -8229,8 +8226,8 @@ int main()
     std::cout << "[pass] rtsp_input_uses_complete_sdp_topology_without_track_wait\n";
     media_server::test_rtsp_input_initial_tracks_timeout();
     std::cout << "[pass] rtsp_input_initial_tracks_timeout\n";
-    media_server::test_rtsp_input_media_driven_keepalive();
-    std::cout << "[pass] rtsp_input_media_driven_keepalive\n";
+    media_server::test_rtsp_input_independent_keepalive();
+    std::cout << "[pass] rtsp_input_independent_keepalive\n";
     media_server::test_rtsp_client_rejects_empty_media_selection();
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
     media_server::test_rtsp_publish_server_contract();

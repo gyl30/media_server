@@ -208,6 +208,7 @@ rtsp_input_session::rtsp_input_session(boost::asio::io_context& io,
       connect_socket_(io),
       establishment_timer_(io),
       initial_tracks_timer_(io),
+      keepalive_timer_(io),
       establishment_timeout_(establishment_timeout),
       initial_tracks_timeout_(initial_tracks_timeout)
 {
@@ -311,6 +312,26 @@ void rtsp_input_session::wait_establishment_timeout()
         });
 }
 
+void rtsp_input_session::wait_keepalive()
+{
+    keepalive_timer_.expires_after(keepalive_interval_);
+    const auto self = shared_from_this();
+    keepalive_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_ || self->client_ == nullptr)
+            {
+                return;
+            }
+            if (rtsp_client_options(self->client_, nullptr) != 0)
+            {
+                self->shutdown();
+                return;
+            }
+            self->wait_keepalive();
+        });
+}
+
 void rtsp_input_session::safe_shutdown()
 {
     if (closed_)
@@ -324,9 +345,9 @@ void rtsp_input_session::safe_shutdown()
         stream_->end();
         stream_.reset();
     }
-    keepalive_deadline_.reset();
     establishment_timer_.cancel();
     initial_tracks_timer_.cancel();
+    keepalive_timer_.cancel();
     resolver_.cancel();
     boost::system::error_code error;
     connect_socket_.close(error);
@@ -644,7 +665,6 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
         return -1;
     }
 
-    keepalive_deadline_ = std::chrono::steady_clock::now() + keepalive_interval_;
     std::uint64_t npt{};
     return rtsp_client_play(client_, &npt, nullptr);
 }
@@ -668,6 +688,7 @@ void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uin
         }
         media_started_ = true;
         establishment_timer_.cancel();
+        wait_keepalive();
         static_cast<void>(try_initialize_tracks());
         if (!tracks_initialized_)
         {
@@ -688,22 +709,6 @@ void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uin
 
     static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
 
-    if (closed_ || client_ == nullptr || !keepalive_deadline_)
-    {
-        return;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    if (now < *keepalive_deadline_)
-    {
-        return;
-    }
-
-    keepalive_deadline_ = now + keepalive_interval_;
-    if (rtsp_client_options(client_, nullptr) != 0)
-    {
-        shutdown();
-    }
 }
 
 int rtsp_input_session::on_packet(avpacket_t* packet)
