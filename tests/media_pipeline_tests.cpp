@@ -3812,6 +3812,15 @@ void test_rtsp_publish_server_contract()
             "rtsp publish router advertised methods");
 
     {
+        boost::asio::ip::tcp::socket parameter(client_io);
+        parameter.connect({boost::asio::ip::address_v4::loopback(), port});
+        boost::asio::write(parameter, boost::asio::buffer("GET_PARAMETER " + base + " RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n"));
+        require(read_rtsp_headers(parameter).starts_with("RTSP/1.0 200"), "rtsp publish router get parameter ping");
+        boost::asio::write(parameter, boost::asio::buffer("OPTIONS * RTSP/1.0\r\nCSeq: 2\r\n\r\n"));
+        require(read_rtsp_headers(parameter).starts_with("RTSP/1.0 200"), "rtsp publish router remains pre role after get parameter");
+    }
+
+    {
         boost::asio::ip::tcp::socket handoff(client_io);
         handoff.connect({boost::asio::ip::address_v4::loopback(), port});
         const auto handoff_base = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/publish-handoff";
