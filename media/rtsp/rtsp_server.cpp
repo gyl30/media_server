@@ -196,7 +196,7 @@ class rtsp_connection_router final : public std::enable_shared_from_this<rtsp_co
 };
 
 rtsp_server::rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port, output_video_config video)
-    : registry_(registry), port_(port), video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
+    : registry_(registry), video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
 {
 }
 
@@ -216,8 +216,7 @@ boost::system::error_code rtsp_server::startup()
 void rtsp_server::shutdown()
 {
     std::vector<std::weak_ptr<rtsp_connection_router>> routers;
-    std::vector<std::weak_ptr<rtsp_output_session>> sessions;
-    std::vector<std::weak_ptr<rtsp_server_connection>> input_connections;
+    std::vector<std::weak_ptr<rtsp_server_connection>> connections;
     {
         std::scoped_lock lock(sessions_mutex_);
         if (closed_)
@@ -227,10 +226,8 @@ void rtsp_server::shutdown()
         closed_ = true;
         routers = std::move(routers_);
         routers_.clear();
-        sessions = std::move(sessions_);
-        sessions_.clear();
-        input_connections = std::move(input_connections_);
-        input_connections_.clear();
+        connections = std::move(connections_);
+        connections_.clear();
     }
     listener_->shutdown();
     for (const auto& weak_router : routers)
@@ -240,14 +237,7 @@ void rtsp_server::shutdown()
             router->shutdown();
         }
     }
-    for (const auto& weak_session : sessions)
-    {
-        if (const auto session = weak_session.lock())
-        {
-            session->shutdown();
-        }
-    }
-    for (const auto& weak_connection : input_connections)
+    for (const auto& weak_connection : connections)
     {
         if (const auto connection = weak_connection.lock())
         {
@@ -283,22 +273,21 @@ void rtsp_server::on_connection(boost::asio::ip::tcp::socket socket, std::vector
         socket.close(error);
         return;
     }
-    auto connection = std::make_shared<tcp_connection>(std::move(socket));
+
+    auto tcp = std::make_shared<tcp_connection>(std::move(socket));
+    auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp));
+    std::erase_if(connections_, [](const auto& value) { return value.expired(); });
+    connections_.emplace_back(connection);
+
     if (publish)
     {
-        auto control = std::make_shared<rtsp_server_connection>(std::move(connection));
-        auto session = std::make_shared<rtsp_input_session>(control, registry_, std::move(initial_data));
-        std::erase_if(input_connections_, [](const auto& value) { return value.expired(); });
-        input_connections_.emplace_back(control);
+        auto session = std::make_shared<rtsp_input_session>(connection, registry_, std::move(initial_data));
         session->startup();
+        return;
     }
-    else
-    {
-        auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, port_, video_config_);
-        std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
-        sessions_.emplace_back(session);
-        session->startup(std::move(initial_data));
-    }
+
+    auto session = std::make_shared<rtsp_output_session>(connection, registry_, video_config_);
+    session->startup(std::move(initial_data));
 }
 
 }    // namespace media_server

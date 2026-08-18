@@ -99,6 +99,14 @@ std::size_t rtsp_server_connection::input(std::span<const std::uint8_t> data)
     return consumed;
 }
 
+void rtsp_server_connection::write(std::span<const std::uint8_t> data)
+{
+    if (!closed_ && connection_ && !data.empty())
+    {
+        connection_->write(data);
+    }
+}
+
 void rtsp_server_connection::shutdown()
 {
     if (connection_ == nullptr)
@@ -110,6 +118,17 @@ void rtsp_server_connection::shutdown()
 }
 
 boost::asio::any_io_executor rtsp_server_connection::executor() const { return connection_->socket().get_executor(); }
+
+std::string rtsp_server_connection::local_address() const
+{
+    if (!connection_)
+    {
+        return "0.0.0.0";
+    }
+    boost::system::error_code error;
+    const auto endpoint = connection_->socket().local_endpoint(error);
+    return error ? "0.0.0.0" : endpoint.address().to_string();
+}
 
 int rtsp_server_connection::send_callback(void* param, const void* data, std::size_t bytes)
 {
