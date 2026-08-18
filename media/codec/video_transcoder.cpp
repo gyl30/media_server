@@ -324,19 +324,20 @@ bool video_transcoder::startup_encoder()
         return false;
     }
 
-    state_->width = state_->decoded_frame->width;
-    state_->height = state_->decoded_frame->height;
-    state_->decoded_format = static_cast<AVPixelFormat>(state_->decoded_frame->format);
+    const int width = state_->decoded_frame->width;
+    const int height = state_->decoded_frame->height;
+    const auto decoded_format = static_cast<AVPixelFormat>(state_->decoded_frame->format);
+    AVPixelFormat encoder_format = AV_PIX_FMT_NONE;
     const auto* pixel_formats = static_cast<const AVPixelFormat*>(formats);
     if (state_->av1)
     {
-        const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(state_->decoded_format);
-        state_->encoder_format = descriptor != nullptr && descriptor->comp[0].depth > 8 ? AV_PIX_FMT_YUV420P10 : AV_PIX_FMT_YUV420P;
-        if (std::find(pixel_formats, pixel_formats + format_count, state_->encoder_format) == pixel_formats + format_count)
+        const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(decoded_format);
+        encoder_format = descriptor != nullptr && descriptor->comp[0].depth > 8 ? AV_PIX_FMT_YUV420P10 : AV_PIX_FMT_YUV420P;
+        if (std::find(pixel_formats, pixel_formats + format_count, encoder_format) == pixel_formats + format_count)
         {
-            state_->encoder_format = AV_PIX_FMT_YUV420P;
+            encoder_format = AV_PIX_FMT_YUV420P;
         }
-        if (std::find(pixel_formats, pixel_formats + format_count, state_->encoder_format) == pixel_formats + format_count)
+        if (std::find(pixel_formats, pixel_formats + format_count, encoder_format) == pixel_formats + format_count)
         {
             spdlog::error("video transcoder av1 main profile pixel format not supported");
             return false;
@@ -344,24 +345,23 @@ bool video_transcoder::startup_encoder()
     }
     else
     {
-        const auto direct = std::find(pixel_formats, pixel_formats + format_count, state_->decoded_format);
+        const auto direct = std::find(pixel_formats, pixel_formats + format_count, decoded_format);
         if (direct != pixel_formats + format_count)
         {
-            state_->encoder_format = state_->decoded_format;
+            encoder_format = decoded_format;
         }
         else
         {
-            const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(state_->decoded_format);
-            state_->encoder_format = AV_PIX_FMT_NONE;
+            const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(decoded_format);
             for (int index = 0; index < format_count; ++index)
             {
-                state_->encoder_format = av_find_best_pix_fmt_of_2(state_->encoder_format,
-                                                                   pixel_formats[index],
-                                                                   state_->decoded_format,
-                                                                   descriptor != nullptr && (descriptor->flags & AV_PIX_FMT_FLAG_ALPHA) != 0,
-                                                                   nullptr);
+                encoder_format = av_find_best_pix_fmt_of_2(encoder_format,
+                                                           pixel_formats[index],
+                                                           decoded_format,
+                                                           descriptor != nullptr && (descriptor->flags & AV_PIX_FMT_FLAG_ALPHA) != 0,
+                                                           nullptr);
             }
-            if (state_->encoder_format == AV_PIX_FMT_NONE)
+            if (encoder_format == AV_PIX_FMT_NONE)
             {
                 spdlog::error("video transcoder compatible pixel format not found");
                 return false;
@@ -369,29 +369,44 @@ bool video_transcoder::startup_encoder()
         }
     }
 
-    state_->encoder = avcodec_alloc_context3(encoder);
-    if (state_->encoder == nullptr)
+    AVCodecContext* encoder_context = avcodec_alloc_context3(encoder);
+    if (encoder_context == nullptr)
     {
         spdlog::error("video transcoder encoder context allocate failed");
         return false;
     }
-    state_->encoder->width = state_->width;
-    state_->encoder->height = state_->height;
-    state_->encoder->pix_fmt = state_->encoder_format;
+    SwsContext* scaler{};
+    AVFrame* converted_frame{};
+    const auto cleanup = [&]() {
+        if (converted_frame != nullptr)
+        {
+            av_frame_free(&converted_frame);
+        }
+        if (scaler != nullptr)
+        {
+            sws_freeContext(scaler);
+            scaler = nullptr;
+        }
+        avcodec_free_context(&encoder_context);
+    };
+
+    encoder_context->width = width;
+    encoder_context->height = height;
+    encoder_context->pix_fmt = encoder_format;
     if (state_->av1)
     {
-        state_->encoder->profile = AV_PROFILE_AV1_MAIN;
+        encoder_context->profile = AV_PROFILE_AV1_MAIN;
     }
-    state_->encoder->framerate = state_->decoder->framerate;
+    encoder_context->framerate = state_->decoder->framerate;
     // libaom 的 presentation time 为 32 位，不能直接使用核心层的纳秒时间基。
-    state_->encoder->time_base = state_->encoder->framerate.num > 0 && state_->encoder->framerate.den > 0
-        ? av_inv_q(state_->encoder->framerate)
+    encoder_context->time_base = encoder_context->framerate.num > 0 && encoder_context->framerate.den > 0
+        ? av_inv_q(encoder_context->framerate)
         : AVRational{1, 1'000};
-    state_->encoder->color_range = state_->decoded_frame->color_range;
-    state_->encoder->color_primaries = state_->decoded_frame->color_primaries;
-    state_->encoder->color_trc = state_->decoded_frame->color_trc;
-    state_->encoder->colorspace = state_->decoded_frame->colorspace;
-    state_->encoder->chroma_sample_location = state_->decoded_frame->chroma_location;
+    encoder_context->color_range = state_->decoded_frame->color_range;
+    encoder_context->color_primaries = state_->decoded_frame->color_primaries;
+    encoder_context->color_trc = state_->decoded_frame->color_trc;
+    encoder_context->colorspace = state_->decoded_frame->colorspace;
+    encoder_context->chroma_sample_location = state_->decoded_frame->chroma_location;
 
     AVDictionary* aom_parameters{};
     if (state_->av1)
@@ -402,32 +417,35 @@ bool video_transcoder::startup_encoder()
             av_dict_set(&aom_parameters, "strict-level-conformance", "1", 0) < 0)
         {
             av_dict_free(&aom_parameters);
+            cleanup();
             spdlog::error("video transcoder av1 parameters allocate failed");
             return false;
         }
     }
-    const bool options_failed = av_opt_set(state_->encoder->priv_data, "usage", "realtime", 0) < 0 ||
-        av_opt_set_int(state_->encoder->priv_data, "cpu-used", 8, 0) < 0 ||
-        av_opt_set_int(state_->encoder->priv_data, "lag-in-frames", 0, 0) < 0 ||
-        av_opt_set_int(state_->encoder->priv_data, "crf", 32, 0) < 0 ||
-        (aom_parameters != nullptr && av_opt_set_dict_val(state_->encoder->priv_data, "aom-params", aom_parameters, 0) < 0);
+    const bool options_failed = av_opt_set(encoder_context->priv_data, "usage", "realtime", 0) < 0 ||
+        av_opt_set_int(encoder_context->priv_data, "cpu-used", 8, 0) < 0 ||
+        av_opt_set_int(encoder_context->priv_data, "lag-in-frames", 0, 0) < 0 ||
+        av_opt_set_int(encoder_context->priv_data, "crf", 32, 0) < 0 ||
+        (aom_parameters != nullptr && av_opt_set_dict_val(encoder_context->priv_data, "aom-params", aom_parameters, 0) < 0);
     av_dict_free(&aom_parameters);
     if (options_failed)
     {
+        cleanup();
         spdlog::error("video transcoder encoder options failed");
         return false;
     }
 
-    result = avcodec_open2(state_->encoder, encoder, nullptr);
+    result = avcodec_open2(encoder_context, encoder, nullptr);
     if (result < 0)
     {
+        cleanup();
         spdlog::error("video transcoder encoder open failed encoder {} error {}", encoder->name, ffmpeg_error(result));
         return false;
     }
 
-    if (state_->encoder_format != state_->decoded_format)
+    if (encoder_format != decoded_format)
     {
-        AVPixelFormat scaler_input_format = state_->decoded_format;
+        AVPixelFormat scaler_input_format = decoded_format;
         switch (scaler_input_format)
         {
         case AV_PIX_FMT_YUVJ420P:
@@ -443,24 +461,21 @@ bool video_transcoder::startup_encoder()
             break;
         }
         const int full_range = state_->decoded_frame->color_range == AVCOL_RANGE_JPEG ? 1 : 0;
-        state_->scaler = sws_alloc_context();
-        if (state_->scaler != nullptr &&
-            (av_opt_set_int(state_->scaler, "srcw", state_->width, 0) < 0 ||
-             av_opt_set_int(state_->scaler, "srch", state_->height, 0) < 0 ||
-             av_opt_set_int(state_->scaler, "dstw", state_->width, 0) < 0 ||
-             av_opt_set_int(state_->scaler, "dsth", state_->height, 0) < 0 ||
-             av_opt_set_int(state_->scaler, "src_format", scaler_input_format, 0) < 0 ||
-             av_opt_set_int(state_->scaler, "dst_format", state_->encoder_format, 0) < 0 ||
-             av_opt_set_int(state_->scaler, "sws_flags", SWS_BILINEAR, 0) < 0 ||
-             av_opt_set_int(state_->scaler, "src_range", full_range, 0) < 0 ||
-             av_opt_set_int(state_->scaler, "dst_range", full_range, 0) < 0 || sws_init_context(state_->scaler, nullptr, nullptr) < 0))
+        scaler = sws_alloc_context();
+        if (scaler != nullptr &&
+            (av_opt_set_int(scaler, "srcw", width, 0) < 0 || av_opt_set_int(scaler, "srch", height, 0) < 0 ||
+             av_opt_set_int(scaler, "dstw", width, 0) < 0 || av_opt_set_int(scaler, "dsth", height, 0) < 0 ||
+             av_opt_set_int(scaler, "src_format", scaler_input_format, 0) < 0 || av_opt_set_int(scaler, "dst_format", encoder_format, 0) < 0 ||
+             av_opt_set_int(scaler, "sws_flags", SWS_BILINEAR, 0) < 0 || av_opt_set_int(scaler, "src_range", full_range, 0) < 0 ||
+             av_opt_set_int(scaler, "dst_range", full_range, 0) < 0 || sws_init_context(scaler, nullptr, nullptr) < 0))
         {
-            sws_freeContext(state_->scaler);
-            state_->scaler = nullptr;
+            sws_freeContext(scaler);
+            scaler = nullptr;
         }
-        state_->converted_frame = av_frame_alloc();
-        if (state_->scaler == nullptr || state_->converted_frame == nullptr)
+        converted_frame = av_frame_alloc();
+        if (scaler == nullptr || converted_frame == nullptr)
         {
+            cleanup();
             spdlog::error("video transcoder pixel converter allocate failed");
             return false;
         }
@@ -486,7 +501,7 @@ bool video_transcoder::startup_encoder()
         default:
             break;
         }
-        const int colorspace_result = sws_setColorspaceDetails(state_->scaler,
+        const int colorspace_result = sws_setColorspaceDetails(scaler,
                                                                sws_getCoefficients(sws_colorspace),
                                                                full_range,
                                                                sws_getCoefficients(sws_colorspace),
@@ -496,19 +511,29 @@ bool video_transcoder::startup_encoder()
                                                                1 << 16);
         if (colorspace_result < 0)
         {
+            cleanup();
             spdlog::error("video transcoder pixel converter colorspace failed {}", ffmpeg_error(colorspace_result));
             return false;
         }
-        state_->converted_frame->format = state_->encoder_format;
-        state_->converted_frame->width = state_->width;
-        state_->converted_frame->height = state_->height;
-        result = av_frame_get_buffer(state_->converted_frame, 32);
+        converted_frame->format = encoder_format;
+        converted_frame->width = width;
+        converted_frame->height = height;
+        result = av_frame_get_buffer(converted_frame, 32);
         if (result < 0)
         {
+            cleanup();
             spdlog::error("video transcoder converted frame allocate failed {}", ffmpeg_error(result));
             return false;
         }
     }
+
+    state_->width = width;
+    state_->height = height;
+    state_->decoded_format = decoded_format;
+    state_->encoder_format = encoder_format;
+    state_->encoder = encoder_context;
+    state_->scaler = scaler;
+    state_->converted_frame = converted_frame;
 
     spdlog::debug("video transcoder encoder started name {} width {} height {} input_format {} output_format {}",
                   encoder->name,

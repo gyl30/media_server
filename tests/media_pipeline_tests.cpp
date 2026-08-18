@@ -5551,6 +5551,9 @@ void test_flv_av1_transcode_round_trip()
             .codec_config = fixture.codec_config,
             .config_version = 1,
         });
+        auto malformed = fixture.frames.front();
+        malformed.payload = std::make_shared<const std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{0x01, 0x02, 0x03, 0x04});
+        output.on_frame(malformed);
         if (codec == codec_id::h264)
         {
             auto audio = make_audio_track();
@@ -7294,6 +7297,9 @@ void test_hls_av1_fmp4_output()
             .channel_count = 0,
             .codec_config = source.codec_config,
         });
+        auto malformed = source.frames.front();
+        malformed.payload = std::make_shared<const std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{0x01, 0x02, 0x03, 0x04});
+        output.on_frame(malformed);
         if (input_codec == codec_id::h264)
         {
             output.on_track(make_audio_track());
