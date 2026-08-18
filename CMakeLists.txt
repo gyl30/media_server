@@ -178,9 +178,13 @@ add_library(media_core STATIC
     media/rtmp/rtmp_session.cpp
     media/rtmp/rtmp_server.cpp
     media/rtsp/rtsp_pull_session.cpp
+    media/rtsp/rtsp_input_session.cpp
+    media/rtsp/rtsp_input_tcp_session.cpp
+    media/rtsp/rtsp_input_udp_session.cpp
     media/rtsp/rtsp_output_session.cpp
-    media/rtsp/rtsp_publish_session.cpp
+    media/rtsp/rtsp_input_media.cpp
     media/rtsp/rtsp_server.cpp
+    media/rtsp/rtsp_server_connection.cpp
 )
 
 target_include_directories(media_core PUBLIC

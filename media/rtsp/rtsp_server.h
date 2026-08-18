@@ -15,7 +15,7 @@
 namespace media_server
 {
 class rtsp_output_session;
-class rtsp_publish_session;
+class rtsp_server_connection;
 class rtsp_connection_router;
 
 class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
@@ -38,7 +38,7 @@ class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
     std::mutex sessions_mutex_;
     std::vector<std::weak_ptr<rtsp_connection_router>> routers_;
     std::vector<std::weak_ptr<rtsp_output_session>> sessions_;
-    std::vector<std::weak_ptr<rtsp_publish_session>> publish_sessions_;
+    std::vector<std::weak_ptr<rtsp_server_connection>> input_connections_;
     bool closed_{};
 };
 
