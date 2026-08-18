@@ -5278,6 +5278,20 @@ void test_ireader_opus_flv_correctness()
     require(flv_audio_tag_header_read(&header, tags.back().data(), tags.back().size()) == 5 && header.avpacket == FLV_AVPACKET &&
                 std::ranges::equal(std::span<const std::uint8_t>(tags.back()).subspan(5), raw),
             "ireader opus raw payload unchanged");
+
+    auto updated_head = head;
+    updated_head[9] = 1;
+    require(flv_muxer_opus(muxer, updated_head.data(), updated_head.size(), 40, 40) == 0 && tags.size() == 3U,
+            "ireader opus updated head sequence tag");
+    require(flv_audio_tag_header_read(&header, tags.back().data(), tags.back().size()) == 5 && header.avpacket == FLV_SEQUENCE_HEADER,
+            "ireader opus updated sequence header type");
+    opus_head_t parsed_head{};
+    require(opus_head_load(tags.back().data() + 5, tags.back().size() - 5, &parsed_head) > 0 && parsed_head.channels == 1,
+            "ireader opus updated sequence header content");
+    require(flv_muxer_opus(muxer, raw.data(), raw.size(), 60, 60) == 0 && tags.size() == 4U, "ireader opus raw tag after update");
+    require(flv_audio_tag_header_read(&header, tags.back().data(), tags.back().size()) == 5 && header.avpacket == FLV_AVPACKET &&
+                std::ranges::equal(std::span<const std::uint8_t>(tags.back()).subspan(5), raw),
+            "ireader opus raw payload unchanged after update");
     flv_muxer_destroy(muxer);
 
     flv_demux_capture capture;
@@ -5648,6 +5662,39 @@ void test_flv_opus_adapter_round_trip()
     require(capture.packets.size() == 2U && capture.packets[0].codec == FLV_AUDIO_OPUS_HEAD &&
                 capture.packets[1].codec == FLV_AUDIO_OPUS && capture.packets[1].payload == payload && capture.packets[1].pts == 20,
             "flv opus sequence then raw packet");
+
+    flv_demux_capture av1_capture;
+    const auto av1_demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
+        flv_demuxer_create(&capture_flv_packet, &av1_capture), &flv_demuxer_destroy);
+    flv_output_muxer av1_output(
+        [&av1_demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp) {
+            require(flv_demuxer_input(av1_demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 opus adapter demux");
+        },
+        output_video_config{
+            .codec = output_video_codec::av1,
+        });
+    auto video = make_video_track();
+    video.config_version = 1;
+    av1_output.on_track(video);
+    auto mono = make_opus_track(1);
+    mono.config_version = 1;
+    av1_output.on_track(mono);
+    av1_output.on_frame(make_opus_frame(20'000'000, payload));
+    auto stereo = make_opus_track(2);
+    stereo.config_version = 2;
+    av1_output.on_track(stereo);
+    av1_output.on_frame(make_opus_frame(40'000'000, payload));
+
+    require(av1_capture.packets.size() == 4U && av1_capture.packets[0].codec == FLV_AUDIO_OPUS_HEAD &&
+                av1_capture.packets[1].codec == FLV_AUDIO_OPUS && av1_capture.packets[2].codec == FLV_AUDIO_OPUS_HEAD &&
+                av1_capture.packets[3].codec == FLV_AUDIO_OPUS,
+            "flv av1 opus config generation packet order");
+    opus_head_t first_head{};
+    opus_head_t second_head{};
+    require(opus_head_load(av1_capture.packets[0].payload.data(), av1_capture.packets[0].payload.size(), &first_head) > 0 &&
+                opus_head_load(av1_capture.packets[2].payload.data(), av1_capture.packets[2].payload.size(), &second_head) > 0 &&
+                first_head.channels == 1 && second_head.channels == 2,
+            "flv av1 opus config generation channels");
 }
 
 void test_h265_output_paths()
