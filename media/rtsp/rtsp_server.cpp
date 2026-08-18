@@ -86,9 +86,13 @@ class rtsp_connection_router final : public std::enable_shared_from_this<rtsp_co
             return;
         }
         const auto method = data.substr(0, space);
-        if (boost::iequals(method, "OPTIONS"))
+        const auto options = boost::iequals(method, "OPTIONS");
+        const auto get_parameter = boost::iequals(method, "GET_PARAMETER");
+        if (options || get_parameter)
         {
             std::optional<unsigned int> cseq;
+            std::size_t content_length{};
+            bool has_session{};
             auto header_offset = line_end + 2U;
             while (header_offset < header_end)
             {
@@ -100,7 +104,7 @@ class rtsp_connection_router final : public std::enable_shared_from_this<rtsp_co
                 }
                 auto line = data.substr(header_offset, header_line_end - header_offset);
                 const auto colon = line.find(':');
-                if (colon != std::string_view::npos && boost::iequals(line.substr(0, colon), "CSeq"))
+                if (!cseq && colon != std::string_view::npos && boost::iequals(line.substr(0, colon), "CSeq"))
                 {
                     auto value = line.substr(colon + 1U);
                     const auto first = value.find_first_not_of(" \t");
@@ -120,19 +124,47 @@ class rtsp_connection_router final : public std::enable_shared_from_this<rtsp_co
                         return;
                     }
                     cseq = parsed;
-                    break;
+                }
+                else if (get_parameter && colon != std::string_view::npos && boost::iequals(line.substr(0, colon), "Content-Length"))
+                {
+                    auto value = line.substr(colon + 1U);
+                    const auto first = value.find_first_not_of(" \t");
+                    if (first == std::string_view::npos)
+                    {
+                        close();
+                        return;
+                    }
+                    value.remove_prefix(first);
+                    const auto last = value.find_first_of(" \t");
+                    value = value.substr(0, last);
+                    std::size_t parsed{};
+                    const auto [pointer, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+                    if (error != std::errc{} || pointer != value.data() + value.size())
+                    {
+                        close();
+                        return;
+                    }
+                    content_length = parsed;
+                }
+                else if (get_parameter && colon != std::string_view::npos && boost::iequals(line.substr(0, colon), "Session"))
+                {
+                    has_session = true;
                 }
                 header_offset = header_line_end + 2U;
             }
-            if (!cseq)
+            if (!cseq || (get_parameter && (content_length != 0U || has_session)))
             {
                 close();
                 return;
             }
             const auto consumed = header_end + 4U;
             buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(consumed));
-            pending_write_ = "RTSP/1.0 200 OK\r\nCSeq: " + std::to_string(*cseq) +
-                             "\r\nPublic: OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER\r\nContent-Length: 0\r\n\r\n";
+            pending_write_ = "RTSP/1.0 200 OK\r\nCSeq: " + std::to_string(*cseq);
+            if (options)
+            {
+                pending_write_ += "\r\nPublic: OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER";
+            }
+            pending_write_ += "\r\nContent-Length: 0\r\n\r\n";
             writing_ = true;
             const auto self = shared_from_this();
             boost::asio::async_write(socket_, boost::asio::buffer(pending_write_), [self](const boost::system::error_code& write_error, std::size_t)
