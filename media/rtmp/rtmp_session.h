@@ -2,52 +2,36 @@
 #define MEDIA_RTMP_RTMP_SESSION_H
 
 #include "media/codec/output_video_config.h"
-#include "media/core/media_reader.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_connection.h"
-#include "media/rtmp/rtmp_timestamp.h"
-#include "media/flv/flv_output_muxer.h"
-
-#include <boost/asio/steady_timer.hpp>
 
 #include <chrono>
 #include <cstdint>
-#include <map>
 #include <memory>
-#include <optional>
 #include <string>
-#include <vector>
+#include <string_view>
 
-struct flv_demuxer_t;
 struct rtmp_server_t;
 
 namespace media_server
 {
 
-class rtmp_session final : public media_reader, public std::enable_shared_from_this<rtmp_session>
+class rtmp_input_session;
+class rtmp_output_session;
+
+class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 {
    public:
     rtmp_session(std::shared_ptr<tcp_connection> connection,
                  stream_registry& registry,
                  output_video_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
-    ~rtmp_session() override;
+    ~rtmp_session();
 
     void startup();
     void shutdown();
 
-    void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read(media_read_batch batch) override;
-    void on_end() override;
-
    private:
-    enum class role
-    {
-        none,
-        publisher,
-        player,
-    };
-
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);
     static int play_callback(void* param, const char* app, const char* stream, double start, double duration, std::uint8_t reset);
     static int pause_callback(void* param, int pause, std::uint32_t milliseconds);
@@ -57,41 +41,22 @@ class rtmp_session final : public media_reader, public std::enable_shared_from_t
     static int audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
     static int script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
     static int duration_callback(void* param, const char* app, const char* stream, double* duration);
-    static int demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags);
 
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
-    int on_script(std::span<const std::uint8_t> data);
-    int on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
-    void try_initialize_tracks();
     void on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data);
     void on_tcp_write(boost::system::error_code error, std::size_t write_size);
     void safe_shutdown();
-    void apply_tracks(const media_track_snapshot_ptr& tracks);
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     std::shared_ptr<tcp_connection> connection_;
     stream_registry& registry_;
-    boost::asio::steady_timer initial_tracks_timer_;
     std::chrono::milliseconds initial_tracks_timeout_;
     output_video_config video_config_;
     rtmp_server_t* server_{};
-    flv_demuxer_t* demuxer_{};
-    std::unique_ptr<flv_output_muxer> output_muxer_;
-    media_reader_handle reader_;
-    std::map<track_id, media_track> reader_tracks_;
-    rtmp_timestamp_state timestamp_;
-    std::shared_ptr<media_stream> stream_;
+    std::shared_ptr<rtmp_input_session> input_;
+    std::shared_ptr<rtmp_output_session> output_;
     std::string stream_name_;
-    role role_{role::none};
-    media_reader_cursor reader_cursor_;
-    std::uint64_t track_revision_{};
-    std::optional<media_track> initial_video_track_;
-    std::optional<media_track> initial_audio_track_;
-    bool expected_audio_{};
-    bool metadata_received_{};
-    bool tracks_initialized_{};
-    bool waiting_for_key_frame_{};
     bool closed_{};
 };
 
