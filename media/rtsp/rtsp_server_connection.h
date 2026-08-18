@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 extern "C"
@@ -41,9 +42,11 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     bool startup(std::shared_ptr<const rtsp_server_connection_handler> handler, std::vector<std::uint8_t> initial_data = {});
     void set_handler(std::shared_ptr<const rtsp_server_connection_handler> handler);
     [[nodiscard]] std::size_t input(std::span<const std::uint8_t> data);
+    void write(std::span<const std::uint8_t> data);
     void shutdown();
 
     [[nodiscard]] boost::asio::any_io_executor executor() const;
+    [[nodiscard]] std::string local_address() const;
 
    private:
     static int send_callback(void* param, const void* data, std::size_t bytes);

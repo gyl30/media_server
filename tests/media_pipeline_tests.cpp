@@ -4251,9 +4251,10 @@ class rtsp_output_test_peer final
 
         client_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto session = std::make_shared<rtsp_output_session>(std::move(connection), registry_, acceptor_.local_endpoint().port(), video);
-        session_ = session;
+        auto tcp = std::make_shared<tcp_connection>(std::move(server_socket));
+        auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp));
+        auto session = std::make_shared<rtsp_output_session>(connection, registry_, video);
+        session_ = connection;
         session->startup();
         runner_ = std::jthread([this]() { io_.run(); });
     }
@@ -4383,7 +4384,7 @@ class rtsp_output_test_peer final
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_;
-    std::weak_ptr<rtsp_output_session> session_;
+    std::weak_ptr<rtsp_server_connection> session_;
     std::string read_buffer_;
     std::jthread runner_;
 };
