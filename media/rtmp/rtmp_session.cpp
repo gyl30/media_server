@@ -1,31 +1,21 @@
 #include "media/rtmp/rtmp_session.h"
 
-#include "media/codec/codec_utils.h"
-#include "media/rtmp/rtmp_timestamp.h"
+#include "media/rtmp/rtmp_input_session.h"
+#include "media/rtmp/rtmp_output_session.h"
 #include <spdlog/spdlog.h>
 
 extern "C"
 {
-#include "amf0.h"
-#include "flv-demuxer.h"
 #include "flv-proto.h"
-#include "opus-head.h"
 #include "rtmp-server.h"
 }
 
 #include <boost/asio/post.hpp>
 
-#include <array>
 #include <utility>
 
 namespace media_server
 {
-
-namespace
-{
-constexpr track_id video_track_id = 1;
-constexpr track_id audio_track_id = 2;
-}    // namespace
 
 rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection,
                            stream_registry& registry,
@@ -33,7 +23,6 @@ rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection,
                            std::chrono::milliseconds initial_tracks_timeout)
     : connection_(std::move(connection)),
       registry_(registry),
-      initial_tracks_timer_(connection_->socket().get_executor()),
       initial_tracks_timeout_(initial_tracks_timeout),
       video_config_(video)
 {
@@ -41,10 +30,6 @@ rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection,
 
 rtmp_session::~rtmp_session()
 {
-    if (demuxer_ != nullptr)
-    {
-        flv_demuxer_destroy(demuxer_);
-    }
     if (server_ != nullptr)
     {
         rtmp_server_destroy(server_);
@@ -77,89 +62,6 @@ void rtmp_session::startup()
         [self](boost::system::error_code error, std::size_t write_size) { self->on_tcp_write(error, write_size); });
 }
 
-void rtmp_session::on_tracks(media_track_snapshot_ptr tracks)
-{
-    if (closed_ || role_ != role::player || !output_muxer_)
-    {
-        return;
-    }
-
-    apply_tracks(tracks);
-    if (!closed_)
-    {
-        reader_handle().async_read(reader_cursor_);
-    }
-}
-
-void rtmp_session::on_read(media_read_batch batch)
-{
-    if (closed_ || role_ != role::player || !output_muxer_)
-    {
-        return;
-    }
-
-    reader_cursor_ = batch.next_cursor;
-    apply_tracks(batch.tracks);
-    if (closed_)
-    {
-        return;
-    }
-
-    for (auto& entry : batch.entries)
-    {
-        const auto track = reader_tracks_.find(entry.frame.track);
-        if (track == reader_tracks_.end() || track->second.config_version != entry.config_version)
-        {
-            continue;
-        }
-
-        if (waiting_for_key_frame_)
-        {
-            if (track->second.kind != media_kind::video || !entry.frame.key_frame)
-            {
-                continue;
-            }
-            waiting_for_key_frame_ = false;
-        }
-        output_muxer_->on_frame(entry.frame);
-    }
-
-    reader_handle().async_read(reader_cursor_);
-}
-
-void rtmp_session::on_end() { shutdown(); }
-
-void rtmp_session::apply_tracks(const media_track_snapshot_ptr& tracks)
-{
-    if (!tracks || tracks->revision <= track_revision_)
-    {
-        return;
-    }
-
-    bool video_changed = false;
-    if (track_revision_ != 0)
-    {
-        for (const auto& track : tracks->tracks)
-        {
-            const auto current = reader_tracks_.find(track.id);
-            if (current != reader_tracks_.end() && track.kind == media_kind::video &&
-                current->second.config_version != track.config_version)
-            {
-                video_changed = true;
-            }
-        }
-    }
-
-    reader_tracks_.clear();
-    for (const auto& track : tracks->tracks)
-    {
-        reader_tracks_.emplace(track.id, track);
-        output_muxer_->on_track(track);
-    }
-    track_revision_ = tracks->revision;
-    waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
-}
-
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
 {
     auto* self = static_cast<rtmp_session*>(param);
@@ -185,27 +87,23 @@ int rtmp_session::publish_callback(void* param, const char* app, const char* str
 int rtmp_session::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    if (self->demuxer_ == nullptr)
-    {
-        return -1;
-    }
-    return flv_demuxer_input(self->demuxer_, FLV_TYPE_VIDEO, data, bytes, timestamp);
+    return self->input_ ? self->input_->on_video(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    if (self->demuxer_ == nullptr)
-    {
-        return -1;
-    }
-    return flv_demuxer_input(self->demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp);
+    return self->input_ ? self->input_->on_audio(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
 {
-    return static_cast<rtmp_session*>(param)->on_script(
-        std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes));
+    auto* self = static_cast<rtmp_session*>(param);
+    if (!self->input_)
+    {
+        return 0;
+    }
+    return self->input_->on_script(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes));
 }
 
 int rtmp_session::duration_callback(void*, const char*, const char*, double* duration)
@@ -217,27 +115,16 @@ int rtmp_session::duration_callback(void*, const char*, const char*, double* dur
     return 0;
 }
 
-int rtmp_session::demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
-{
-    if (data == nullptr)
-
-    {
-        return -1;
-    }
-    return static_cast<rtmp_session*>(param)->on_flv_demux(
-        codec, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), pts, dts, flags);
-}
-
 int rtmp_session::on_play(std::string app, std::string stream)
 {
-    if (role_ != role::none)
+    if (input_ || output_)
     {
         return -1;
     }
 
     stream_name_ = make_stream_name(app, stream);
-    stream_ = registry_.find(stream_name_);
-    if (!stream_)
+    auto media = registry_.find(stream_name_);
+    if (!media)
     {
         spdlog::warn("rtmp play stream not found {}", stream_name_);
         return -1;
@@ -245,45 +132,52 @@ int rtmp_session::on_play(std::string app, std::string stream)
     if (video_config_.codec == output_video_codec::av1 && !rtmp_server_peer_supports_fourcc(server_, "av01"))
     {
         spdlog::warn("rtmp play av1 unsupported by peer {}", stream_name_);
-        stream_.reset();
         return -1;
     }
 
-    role_ = role::player;
-    output_muxer_ = std::make_unique<flv_output_muxer>(
-        [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+    const std::weak_ptr<rtmp_session> weak = shared_from_this();
+    output_ = std::make_shared<rtmp_output_session>(
+        connection_->socket().get_executor(),
+        std::move(media),
+        [weak](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
-            if (server_ == nullptr)
+            const auto self = weak.lock();
+            if (!self || self->closed_ || self->server_ == nullptr)
             {
                 return;
             }
             if (type == FLV_TYPE_VIDEO)
             {
-                static_cast<void>(rtmp_server_send_video(server_, data.data(), data.size(), timestamp));
+                static_cast<void>(rtmp_server_send_video(self->server_, data.data(), data.size(), timestamp));
             }
             else if (type == FLV_TYPE_AUDIO)
             {
-                static_cast<void>(rtmp_server_send_audio(server_, data.data(), data.size(), timestamp));
+                static_cast<void>(rtmp_server_send_audio(self->server_, data.data(), data.size(), timestamp));
             }
         },
-        video_config_);
+        video_config_,
+        [weak]()
+        {
+            if (const auto self = weak.lock())
+            {
+                self->shutdown();
+            }
+        });
 
     const auto self = shared_from_this();
     boost::asio::post(connection_->socket().get_executor(),
                       [self]()
                       {
-                          if (self->closed_ || self->server_ == nullptr || !self->stream_)
+                          if (self->closed_ || self->server_ == nullptr || !self->output_)
                           {
                               return;
                           }
-
                           if (rtmp_server_start(self->server_, 0, nullptr) != 0)
                           {
                               self->shutdown();
                               return;
                           }
-
-                          self->reader_ = self->stream_->add_reader(self, self->connection_->socket().get_executor());
+                          self->output_->startup();
                           spdlog::info("rtmp play {}", self->stream_name_);
                       });
 
@@ -292,313 +186,31 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
 int rtmp_session::on_publish(std::string app, std::string stream)
 {
-    if (role_ != role::none)
+    if (input_ || output_)
     {
         return -1;
     }
 
     stream_name_ = make_stream_name(app, stream);
-    stream_ = std::make_shared<media_stream>(stream_name_, connection_->socket().get_executor());
-    demuxer_ = flv_demuxer_create(&rtmp_session::demux_callback, this);
-    if (demuxer_ == nullptr)
+    const std::weak_ptr<rtmp_session> weak = shared_from_this();
+    auto input = std::make_shared<rtmp_input_session>(connection_->socket().get_executor(),
+                                                     registry_,
+                                                     stream_name_,
+                                                     initial_tracks_timeout_,
+                                                     [weak]()
+                                                     {
+                                                         if (const auto self = weak.lock())
+                                                         {
+                                                             self->shutdown();
+                                                         }
+                                                     });
+    if (!input->startup())
     {
-        stream_.reset();
         return -1;
     }
-    role_ = role::publisher;
-    initial_tracks_timer_.expires_after(initial_tracks_timeout_);
-    const auto self = shared_from_this();
-    initial_tracks_timer_.async_wait(
-        [self](const boost::system::error_code& error)
-        {
-            if (error || self->closed_ || self->role_ != role::publisher || self->tracks_initialized_)
-            {
-                return;
-            }
-            spdlog::warn("rtmp input initial tracks timeout stream {}", self->stream_name_);
-            self->shutdown();
-        });
+    input_ = std::move(input);
     spdlog::info("rtmp publish {}", stream_name_);
     return 0;
-}
-
-int rtmp_session::on_script(std::span<const std::uint8_t> data)
-{
-    if (role_ != role::publisher)
-    {
-        return 0;
-    }
-    if (data.empty())
-    {
-        return 0;
-    }
-
-    const auto* end = data.data() + data.size();
-    std::array<char, 16> name{};
-    if (data.front() != AMF_STRING)
-    {
-        return 0;
-    }
-    const auto* values = AMFReadString(data.data() + 1, end, 0, name.data(), name.size());
-    if (values == nullptr)
-    {
-        return -1;
-    }
-    if (std::string_view(name.data()) != "onMetaData")
-    {
-        return 0;
-    }
-
-    double audio_codec{};
-    std::array<amf_object_item_t, 1> properties{
-        amf_object_item_t{AMF_NUMBER, "audiocodecid", &audio_codec, sizeof(audio_codec)},
-    };
-    std::array<amf_object_item_t, 1> metadata{
-        amf_object_item_t{AMF_OBJECT, "metadata", properties.data(), properties.size()},
-    };
-    if (amf_read_items(values, end, metadata.data(), metadata.size()) == nullptr)
-    {
-        return -1;
-    }
-
-    const bool audio = audio_codec != 0.0;
-    if ((metadata_received_ && expected_audio_ != audio) || (initial_audio_track_ && !audio))
-    {
-        return -1;
-    }
-
-    expected_audio_ = audio;
-    metadata_received_ = true;
-    try_initialize_tracks();
-    return 0;
-}
-
-int rtmp_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
-{
-    if (role_ != role::publisher || !stream_)
-
-    {
-        return -1;
-    }
-
-    if (codec == FLV_VIDEO_AVCC || codec == FLV_VIDEO_HVCC)
-    {
-        const auto video_codec = codec == FLV_VIDEO_AVCC ? codec_id::h264 : codec_id::h265;
-        if (initial_video_track_ && initial_video_track_->codec != video_codec)
-        {
-            spdlog::warn("rtmp input video codec change {} {}", to_string(initial_video_track_->codec), to_string(video_codec));
-            return -1;
-        }
-
-        auto config = codec == FLV_VIDEO_AVCC ? h264_avcc_to_annex_b(data) : h265_hvcc_to_annex_b(data);
-        if (config.empty())
-        {
-            return -1;
-        }
-        media_track track{
-            .id = video_track_id,
-            .kind = media_kind::video,
-            .codec = video_codec,
-            .clock_rate = 90'000,
-            .channel_count = 0,
-            .codec_config = std::move(config),
-        };
-        if (!tracks_initialized_)
-        {
-            initial_video_track_ = std::move(track);
-            try_initialize_tracks();
-            return 0;
-        }
-        if (stream_->update_track(std::move(track)))
-        {
-            spdlog::info("rtmp input track video {}", to_string(video_codec));
-        }
-        return 0;
-    }
-
-    if (codec == FLV_AUDIO_ASC)
-    {
-        if (metadata_received_ && !expected_audio_)
-        {
-            return -1;
-        }
-        if (initial_audio_track_ && initial_audio_track_->codec != codec_id::aac)
-        {
-            spdlog::warn("rtmp input audio codec change {} aac", to_string(initial_audio_track_->codec));
-            return -1;
-        }
-        const auto config = parse_aac_asc(data);
-        if (!config)
-        {
-            return -1;
-        }
-        media_track track{
-            .id = audio_track_id,
-            .kind = media_kind::audio,
-            .codec = codec_id::aac,
-            .clock_rate = config->sample_rate,
-            .channel_count = config->channel_count,
-            .codec_config = {data.begin(), data.end()},
-        };
-        if (!tracks_initialized_)
-        {
-            initial_audio_track_ = std::move(track);
-            try_initialize_tracks();
-            return 0;
-        }
-        if (stream_->update_track(std::move(track)))
-        {
-            spdlog::info("rtmp input track audio aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
-        }
-        return 0;
-    }
-
-    if (codec == FLV_AUDIO_OPUS_HEAD)
-    {
-        if (metadata_received_ && !expected_audio_)
-        {
-            return -1;
-        }
-        if (initial_audio_track_ && initial_audio_track_->codec != codec_id::opus)
-        {
-            spdlog::warn("rtmp input audio codec change {} opus", to_string(initial_audio_track_->codec));
-            return -1;
-        }
-        opus_head_t head{};
-        if (opus_head_load(data.data(), data.size(), &head) < 0 || (opus_head_channels(&head) != 1 && opus_head_channels(&head) != 2))
-        {
-            return -1;
-        }
-        media_track track{
-            .id = audio_track_id,
-            .kind = media_kind::audio,
-            .codec = codec_id::opus,
-            .clock_rate = 48'000,
-            .channel_count = static_cast<std::uint16_t>(opus_head_channels(&head)),
-            .codec_config = {},
-        };
-        if (!tracks_initialized_)
-        {
-            initial_audio_track_ = std::move(track);
-            try_initialize_tracks();
-            return 0;
-        }
-        static_cast<void>(stream_->update_track(std::move(track)));
-        return 0;
-    }
-
-    if (codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
-    {
-        if (metadata_received_ && !expected_audio_)
-        {
-            return -1;
-        }
-        const auto audio_codec = codec == FLV_AUDIO_G711A ? codec_id::g711a : codec_id::g711u;
-        if (!tracks_initialized_)
-        {
-            if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
-            {
-                spdlog::warn("rtmp input audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
-                return -1;
-            }
-            initial_audio_track_ = media_track{
-                .id = audio_track_id,
-                .kind = media_kind::audio,
-                .codec = audio_codec,
-                .clock_rate = 8'000,
-                .channel_count = 1,
-                .codec_config = {},
-            };
-            try_initialize_tracks();
-            if (!tracks_initialized_)
-            {
-                return 0;
-            }
-        }
-    }
-
-    track_id id{};
-    if (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265)
-    {
-        id = video_track_id;
-    }
-    else if (codec == FLV_AUDIO_AAC || codec == FLV_AUDIO_OPUS || codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
-    {
-        id = audio_track_id;
-    }
-    else
-    {
-        return 0;
-    }
-
-    const auto incoming_codec = codec == FLV_VIDEO_H264    ? codec_id::h264
-                                : codec == FLV_VIDEO_H265  ? codec_id::h265
-                                : codec == FLV_AUDIO_AAC   ? codec_id::aac
-                                : codec == FLV_AUDIO_OPUS  ? codec_id::opus
-                                : codec == FLV_AUDIO_G711A ? codec_id::g711a
-                                                           : codec_id::g711u;
-    const auto& fixed = id == video_track_id ? initial_video_track_ : initial_audio_track_;
-    if (fixed && fixed->codec != incoming_codec)
-    {
-        spdlog::warn("rtmp input raw codec change {} {}", to_string(fixed->codec), to_string(incoming_codec));
-        return -1;
-    }
-    if (!tracks_initialized_)
-    {
-        return 0;
-    }
-    if (!fixed)
-    {
-        return -1;
-    }
-
-    const auto dts_ms = unwrap_rtmp_timestamp(dts, timestamp_);
-    const auto pts_ms = dts_ms + rtmp_timestamp_delta(pts, dts);
-
-    auto payload = std::make_shared<const std::vector<std::uint8_t>>(data.begin(), data.end());
-    media_frame frame{
-        .track = id,
-        .dts_ns = milliseconds_to_ns(dts_ms),
-        .pts_ns = milliseconds_to_ns(pts_ms),
-        .key_frame = (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265) && flags != 0,
-        .payload = std::move(payload),
-    };
-    stream_->publish(std::move(frame));
-    return 0;
-}
-
-void rtmp_session::try_initialize_tracks()
-{
-    if (tracks_initialized_ || !metadata_received_ || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
-    {
-        return;
-    }
-
-    if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
-    {
-        shutdown();
-        return;
-    }
-
-    std::vector<media_track> tracks;
-    tracks.push_back(*initial_video_track_);
-    if (expected_audio_)
-    {
-        tracks.push_back(*initial_audio_track_);
-    }
-    tracks_initialized_ = stream_->set_tracks(std::move(tracks));
-    if (!tracks_initialized_)
-    {
-        return;
-    }
-    if (!registry_.add(stream_))
-    {
-        spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
-        shutdown();
-        return;
-    }
-    initial_tracks_timer_.cancel();
-    spdlog::info("rtmp input tracks ready audio {}", expected_audio_);
 }
 
 void rtmp_session::on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data)
@@ -640,27 +252,17 @@ void rtmp_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    if (role_ == role::publisher && stream_)
+    if (input_)
     {
-        registry_.remove(*stream_);
-        stream_->end();
+        input_->shutdown();
+        input_.reset();
     }
-    reader_.remove();
-    reader_ = {};
-    reader_cursor_.reset();
-    reader_tracks_.clear();
-    track_revision_ = 0;
-    waiting_for_key_frame_ = false;
-    initial_tracks_timer_.cancel();
+    if (output_)
+    {
+        output_->shutdown();
+        output_.reset();
+    }
     connection_->shutdown();
-    stream_.reset();
-    output_muxer_.reset();
-
-    if (demuxer_ != nullptr)
-    {
-        flv_demuxer_destroy(demuxer_);
-        demuxer_ = nullptr;
-    }
     if (server_ != nullptr)
     {
         rtmp_server_destroy(server_);
