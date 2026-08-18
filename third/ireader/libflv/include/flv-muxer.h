@@ -36,7 +36,7 @@ int flv_muxer_mp3(flv_muxer_t* muxer, const void* data, size_t bytes, uint32_t p
 int flv_muxer_g711a(flv_muxer_t* muxer, const void* data, size_t bytes, uint32_t pts, uint32_t dts);
 int flv_muxer_g711u(flv_muxer_t* muxer, const void* data, size_t bytes, uint32_t pts, uint32_t dts);
 
-/// @param[in] data opus stream, first opus head, then opus samples
+/// @param[in] data opus stream, opus head or opus samples; a new OpusHead refreshes the sequence header
 int flv_muxer_opus(flv_muxer_t* muxer, const void* data, size_t bytes, uint32_t pts, uint32_t dts);
 
 int flv_muxer_ac3(flv_muxer_t* muxer, const void* data, size_t bytes, uint32_t pts, uint32_t dts);

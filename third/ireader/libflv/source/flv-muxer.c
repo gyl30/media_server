@@ -257,12 +257,12 @@ int flv_muxer_opus(flv_muxer_t* flv, const void* data, size_t bytes, uint32_t pt
 	audio.bits = FLV_SOUND_BIT_16; // 16-bit samples
 	audio.channels = FLV_SOUND_CHANNEL_STEREO; // Stereo sound
 
-	if (0 == flv->audio_sequence_header)
+	if (0 == flv->audio_sequence_header || (bytes >= 8 && 0 == memcmp(data, "OpusHead", 8)))
 	{
 		if (opus_head_load(data, bytes, &flv->a.opus) < 0)
 			return -1;
 
-		flv->audio_sequence_header = 1; // once only
+		flv->audio_sequence_header = 1;
 		audio.avpacket = FLV_SEQUENCE_HEADER;
 		
 		// Opus Head
