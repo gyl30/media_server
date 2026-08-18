@@ -67,6 +67,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     void safe_shutdown();
     void record_establishment_progress();
     void wait_establishment_timeout();
+    void wait_keepalive();
     int on_describe(const char* sdp, int length);
     int on_setup(int timeout, std::int64_t duration);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
@@ -84,6 +85,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     boost::asio::ip::tcp::socket connect_socket_;
     boost::asio::steady_timer establishment_timer_;
     boost::asio::steady_timer initial_tracks_timer_;
+    boost::asio::steady_timer keepalive_timer_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<media_stream> stream_;
     rtsp_client_t* client_{};
@@ -93,7 +95,6 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     std::chrono::milliseconds initial_tracks_timeout_;
     std::chrono::steady_clock::time_point last_establishment_progress_{};
     std::chrono::seconds keepalive_interval_{30};
-    std::optional<std::chrono::steady_clock::time_point> keepalive_deadline_;
     std::optional<media_track> initial_video_track_;
     std::optional<media_track> initial_audio_track_;
     bool expected_audio_{};
