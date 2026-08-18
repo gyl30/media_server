@@ -677,10 +677,12 @@ int rtsp_publish_session::on_setup(std::string_view uri,
                                                          std::span<const std::uint8_t> data,
                                                          const boost::asio::ip::udp::endpoint& endpoint)
                                         {
-                                            if (!error)
+                                            if (error)
                                             {
-                                                self->on_udp_rtp(selected, data, endpoint);
+                                                self->shutdown();
+                                                return;
                                             }
+                                            self->on_udp_rtp(selected, data, endpoint);
                                         },
                                         [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
                                         {
@@ -693,11 +695,23 @@ int rtsp_publish_session::on_setup(std::string_view uri,
                 continue;
             }
             auto candidate_rtcp = std::make_shared<udp_socket>(connection_->socket().get_executor());
-            if (!candidate_rtcp->startup(boost::asio::ip::address_v4::any(),
-                                         static_cast<std::uint16_t>(port + 1U),
-                                         [](boost::system::error_code, std::span<const std::uint8_t>,
-                                            const boost::asio::ip::udp::endpoint&) {},
-                                         [](boost::system::error_code, const boost::asio::ip::udp::endpoint&) {}))
+            if (!candidate_rtcp->startup(
+                    boost::asio::ip::address_v4::any(),
+                    static_cast<std::uint16_t>(port + 1U),
+                    [self](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+                    {
+                        if (error)
+                        {
+                            self->shutdown();
+                        }
+                    },
+                    [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+                    {
+                        if (error)
+                        {
+                            self->shutdown();
+                        }
+                    }))
             {
                 candidate_rtp->shutdown();
                 continue;
