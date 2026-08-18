@@ -489,7 +489,6 @@ void hls_output::input_av1(const media_frame& frame)
     if (!video_transcoder_->transcode(frame, output))
     {
         spdlog::error("hls av1 transcode failed track {}", frame.track);
-        video_transcoder_.reset();
         return;
     }
     for (const auto& encoded : output)
