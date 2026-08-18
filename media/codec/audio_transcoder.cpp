@@ -11,6 +11,7 @@ extern "C"
 #include <libavutil/frame.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/mem.h>
+#include <libavutil/opt.h>
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 }
@@ -27,6 +28,9 @@ namespace media_server
 {
 namespace
 {
+
+constexpr AVRational nanoseconds_time_base{1, 1'000'000'000};
+constexpr double timestamp_compensation_threshold_seconds = 0.001;
 
 std::string ffmpeg_error(int error)
 {
@@ -131,6 +135,7 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
     }
 
     state_->decoder->sample_rate = static_cast<int>(config.input.sample_rate);
+    state_->decoder->pkt_timebase = AVRational{1, state_->decoder->sample_rate};
     av_channel_layout_default(&state_->decoder->ch_layout, config.input.channel_count);
     state_->decoder->extradata = static_cast<std::uint8_t*>(av_mallocz(config.input_codec_config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
     if (state_->decoder->extradata == nullptr)
@@ -296,6 +301,8 @@ bool audio_transcoder::transcode(const media_frame& input, std::vector<media_fra
         return false;
     }
     std::memcpy(state_->input_packet->data, payload->data(), payload->size());
+    state_->input_packet->pts = av_rescale_q(input.pts_ns, nanoseconds_time_base, state_->decoder->pkt_timebase);
+    state_->input_packet->dts = av_rescale_q(input.dts_ns, nanoseconds_time_base, state_->decoder->pkt_timebase);
 
     result = avcodec_send_packet(state_->decoder, state_->input_packet);
     if (result == AVERROR(EAGAIN))
@@ -474,6 +481,17 @@ bool audio_transcoder::configure_resampler()
         return false;
     }
 
+    const int min_comp_result =
+        av_opt_set_double(state_->resampler, "min_comp", timestamp_compensation_threshold_seconds, 0);
+    const int min_hard_comp_result =
+        av_opt_set_double(state_->resampler, "min_hard_comp", timestamp_compensation_threshold_seconds, 0);
+    if (min_comp_result < 0 || min_hard_comp_result < 0)
+    {
+        spdlog::error("audio transcoder resampler timestamp compensation configure failed");
+        swr_free(&state_->resampler);
+        return false;
+    }
+
     const int init_result = swr_init(state_->resampler);
     if (init_result < 0)
     {
@@ -497,6 +515,15 @@ bool audio_transcoder::resample_decoded()
     {
         return false;
     }
+
+    if (frame.pts == AV_NOPTS_VALUE)
+    {
+        return false;
+    }
+
+    const auto frame_sample_pts = av_rescale_q(frame.pts, state_->decoder->pkt_timebase, AVRational{1, frame.sample_rate});
+    const auto resampler_pts = av_rescale(frame_sample_pts, state_->encoder->sample_rate, 1);
+    swr_next_pts(state_->resampler, resampler_pts);
 
     const auto delayed_samples = swr_get_delay(state_->resampler, frame.sample_rate);
     const auto capacity = av_rescale_rnd(

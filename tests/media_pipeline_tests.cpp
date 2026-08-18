@@ -6093,6 +6093,127 @@ void test_audio_transcoder_aac_opus()
     transcoder.shutdown();
 }
 
+void test_audio_transcoder_timestamp_compensation()
+{
+    const audio_transcoder_config config{
+        .input = audio_transcoder_format{
+            .codec = codec_id::aac,
+            .sample_rate = 44'100,
+            .channel_count = 2,
+        },
+        .output = audio_transcoder_format{
+            .codec = codec_id::opus,
+            .sample_rate = 48'000,
+            .channel_count = 2,
+        },
+        .input_codec_config = aac_asc,
+        .output_bit_rate = 128'000,
+        .output_cutoff = 20'000,
+    };
+
+    const auto decoded_sample_count = [](const std::vector<media_frame>& encoded)
+    {
+        const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_OPUS);
+        require(decoder != nullptr, "audio timestamp opus decoder");
+        AVCodecContext* context = avcodec_alloc_context3(decoder);
+        AVPacket* packet = av_packet_alloc();
+        AVFrame* frame = av_frame_alloc();
+        require(context != nullptr && packet != nullptr && frame != nullptr, "audio timestamp opus decode allocate");
+        context->sample_rate = 48'000;
+        av_channel_layout_default(&context->ch_layout, 2);
+        require(avcodec_open2(context, decoder, nullptr) == 0, "audio timestamp opus decoder open");
+
+        std::int64_t samples = 0;
+        const auto receive = [&]()
+        {
+            while (true)
+            {
+                av_frame_unref(frame);
+                const int result = avcodec_receive_frame(context, frame);
+                if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
+                {
+                    return;
+                }
+                require(result == 0 && frame->nb_samples > 0, "audio timestamp opus decode receive");
+                samples += frame->nb_samples;
+            }
+        };
+
+        for (const auto& output : encoded)
+        {
+            require(output.payload && !output.payload->empty(), "audio timestamp opus payload");
+            av_packet_unref(packet);
+            require(av_new_packet(packet, static_cast<int>(output.payload->size())) == 0, "audio timestamp opus packet allocate");
+            std::memcpy(packet->data, output.payload->data(), output.payload->size());
+            require(avcodec_send_packet(context, packet) == 0, "audio timestamp opus decode send");
+            receive();
+        }
+        require(avcodec_send_packet(context, nullptr) == 0, "audio timestamp opus decode flush");
+        receive();
+
+        av_frame_free(&frame);
+        av_packet_free(&packet);
+        avcodec_free_context(&context);
+        return samples;
+    };
+
+    const auto run_timeline = [&](const auto& timestamps)
+    {
+        audio_transcoder transcoder;
+        require(transcoder.startup(config), "audio timestamp transcoder startup");
+        std::vector<media_frame> output;
+        for (std::size_t index = 0; index < timestamps.size(); ++index)
+        {
+            require(transcoder.transcode(media_frame{
+                                             .track = audio_track_id,
+                                             .dts_ns = timestamps[index],
+                                             .pts_ns = timestamps[index],
+                                             .key_frame = false,
+                                             .payload = std::make_shared<const std::vector<std::uint8_t>>(
+                                                 valid_aac_adts_frames[index % valid_aac_adts_frames.size()]),
+                                         },
+                                         output),
+                    "audio timestamp transcode");
+        }
+        require(transcoder.flush(output) && !output.empty(), "audio timestamp flush");
+        require(output.front().pts_ns == timestamps.front(), "audio timestamp keeps origin");
+        return decoded_sample_count(output);
+    };
+
+    constexpr AVRational nanoseconds_time_base{1, 1'000'000'000};
+    constexpr std::int64_t origin_ns = 5'000'000'000;
+    // 23 帧会让毫秒量化误差跨过一个 20 ms Opus 包边界，使零阈值回归可观测。
+    constexpr std::size_t quantization_frame_count = 23;
+    std::array<std::int64_t, quantization_frame_count> exact_timestamps{};
+    std::array<std::int64_t, quantization_frame_count> millisecond_timestamps{};
+    for (std::size_t index = 0; index < exact_timestamps.size(); ++index)
+    {
+        const auto sample_offset = static_cast<std::int64_t>(index) * 1'024;
+        exact_timestamps[index] = origin_ns + av_rescale_q(sample_offset, AVRational{1, 44'100}, nanoseconds_time_base);
+        millisecond_timestamps[index] = origin_ns + milliseconds_to_ns(sample_offset * 1'000 / 44'100);
+    }
+    require(run_timeline(exact_timestamps) == run_timeline(millisecond_timestamps),
+            "audio timestamp millisecond quantization does not change duration");
+
+    constexpr std::int64_t compensation_ns = 20'000'000;
+    const std::array<std::int64_t, 4> continuous{
+        millisecond_timestamps[0], millisecond_timestamps[1], millisecond_timestamps[2], millisecond_timestamps[3]};
+    auto gap = continuous;
+    gap[2] += compensation_ns;
+    gap[3] += compensation_ns;
+    auto overlap = continuous;
+    overlap[2] -= compensation_ns;
+    overlap[3] -= compensation_ns;
+
+    const auto continuous_samples = run_timeline(continuous);
+    constexpr std::int64_t compensation_samples = 960;
+    const auto one_frame_samples = av_rescale_rnd(1'024, 48'000, 44'100, AV_ROUND_NEAR_INF);
+    require(continuous_samples > 3 * one_frame_samples && continuous_samples < 5 * one_frame_samples,
+            "audio timestamp nonzero origin adds no leading silence");
+    require(run_timeline(gap) - continuous_samples == compensation_samples, "audio timestamp gap inserts silence");
+    require(continuous_samples - run_timeline(overlap) == compensation_samples, "audio timestamp overlap trims samples");
+}
+
 void validate_av1_transcoder_output(const encoded_video_fixture& source, const std::vector<media_frame>& output)
 {
     const AVCodec* decoder = avcodec_find_decoder_by_name("libdav1d");
@@ -8168,6 +8289,8 @@ int main()
     std::cout << "[pass] rtsp_aac_adts_round_trip\n";
     media_server::test_audio_transcoder_aac_opus();
     std::cout << "[pass] audio_transcoder_aac_opus\n";
+    media_server::test_audio_transcoder_timestamp_compensation();
+    std::cout << "[pass] audio_transcoder_timestamp_compensation\n";
     media_server::test_video_transcoder_h26x_av1();
     std::cout << "[pass] video_transcoder_h26x_av1\n";
     media_server::test_media_stream_configless_audio_track();
