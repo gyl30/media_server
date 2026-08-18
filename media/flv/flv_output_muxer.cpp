@@ -61,6 +61,10 @@ void flv_output_muxer::on_track(const media_track& track)
     {
         if (video_config_.codec == output_video_codec::av1 && track.kind == media_kind::audio)
         {
+            if (track.codec == codec_id::opus)
+            {
+                video_config_pending_ = true;
+            }
             return;
         }
         // flv_muxer 会缓存视频 sequence-header 状态，视频配置代际变化时统一重置。
