@@ -1,7 +1,8 @@
 #include "media/rtsp/rtsp_server.h"
 
 #include "media/net/tcp_connection.h"
-#include "media/rtsp/rtsp_publish_session.h"
+#include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_server_connection.h"
 #include "media/rtsp/rtsp_output_session.h"
 
 #include <boost/asio/write.hpp>
@@ -216,7 +217,7 @@ void rtsp_server::shutdown()
 {
     std::vector<std::weak_ptr<rtsp_connection_router>> routers;
     std::vector<std::weak_ptr<rtsp_output_session>> sessions;
-    std::vector<std::weak_ptr<rtsp_publish_session>> publish_sessions;
+    std::vector<std::weak_ptr<rtsp_server_connection>> input_connections;
     {
         std::scoped_lock lock(sessions_mutex_);
         if (closed_)
@@ -228,8 +229,8 @@ void rtsp_server::shutdown()
         routers_.clear();
         sessions = std::move(sessions_);
         sessions_.clear();
-        publish_sessions = std::move(publish_sessions_);
-        publish_sessions_.clear();
+        input_connections = std::move(input_connections_);
+        input_connections_.clear();
     }
     listener_->shutdown();
     for (const auto& weak_router : routers)
@@ -246,11 +247,11 @@ void rtsp_server::shutdown()
             session->shutdown();
         }
     }
-    for (const auto& weak_session : publish_sessions)
+    for (const auto& weak_connection : input_connections)
     {
-        if (const auto session = weak_session.lock())
+        if (const auto connection = weak_connection.lock())
         {
-            session->shutdown();
+            connection->shutdown();
         }
     }
 }
@@ -285,9 +286,10 @@ void rtsp_server::on_connection(boost::asio::ip::tcp::socket socket, std::vector
     auto connection = std::make_shared<tcp_connection>(std::move(socket));
     if (publish)
     {
-        auto session = std::make_shared<rtsp_publish_session>(std::move(connection), registry_, std::move(initial_data));
-        std::erase_if(publish_sessions_, [](const auto& value) { return value.expired(); });
-        publish_sessions_.emplace_back(session);
+        auto control = std::make_shared<rtsp_server_connection>(std::move(connection));
+        auto session = std::make_shared<rtsp_input_session>(control, registry_, std::move(initial_data));
+        std::erase_if(input_connections_, [](const auto& value) { return value.expired(); });
+        input_connections_.emplace_back(control);
         session->startup();
     }
     else

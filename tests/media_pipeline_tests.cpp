@@ -3811,6 +3811,112 @@ void test_rtsp_publish_server_contract()
     require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER",
             "rtsp publish router advertised methods");
 
+    {
+        boost::asio::ip::tcp::socket handoff(client_io);
+        handoff.connect({boost::asio::ip::address_v4::loopback(), port});
+        const auto handoff_base = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/publish-handoff";
+        const auto handoff_video = handoff_base + "/trackID=0";
+        const auto handoff_audio = handoff_base + "/trackID=1";
+        const auto handoff_sdp = std::string("v=0\r\n") +
+            "o=- 0 0 IN IP4 127.0.0.1\r\n"
+            "s=publish-handoff\r\n"
+            "c=IN IP4 127.0.0.1\r\n"
+            "t=0 0\r\n"
+            "m=video 0 RTP/AVP 96\r\n"
+            "a=rtpmap:96 H264/90000\r\n"
+            "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+            "a=control:" + handoff_video + "\r\n"
+            "m=audio 0 RTP/AVP 8\r\n"
+            "a=rtpmap:8 PCMA/8000\r\n"
+            "a=control:" + handoff_audio + "\r\n";
+        boost::asio::write(handoff,
+                           boost::asio::buffer("ANNOUNCE " + handoff_base + " RTSP/1.0\r\nCSeq: 100\r\nContent-Type: application/sdp\r\nContent-Length: " +
+                                               std::to_string(handoff_sdp.size()) + "\r\n\r\n" + handoff_sdp));
+        require(read_rtsp_headers(handoff).starts_with("RTSP/1.0 200"), "rtsp publish handoff announce");
+
+        const auto first_setup = "SETUP " + handoff_video +
+            " RTSP/1.0\r\nCSeq: 101\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
+        const auto second_setup = "SETUP " + handoff_audio +
+            " RTSP/1.0\r\nCSeq: 102\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record\r\n\r\n";
+        boost::asio::write(handoff, boost::asio::buffer(first_setup + second_setup));
+
+        std::string responses;
+        boost::asio::read_until(handoff, boost::asio::dynamic_buffer(responses), "\r\n\r\n");
+        auto header_end = responses.find("\r\n\r\n");
+        require(header_end != std::string::npos, "rtsp publish handoff first response");
+        auto first_response = responses.substr(0, header_end + 4U);
+        responses.erase(0, header_end + 4U);
+        boost::asio::read_until(handoff, boost::asio::dynamic_buffer(responses), "\r\n\r\n");
+        header_end = responses.find("\r\n\r\n");
+        require(header_end != std::string::npos, "rtsp publish handoff second response");
+        const auto second_response = responses.substr(0, header_end + 4U);
+        require(first_response.starts_with("RTSP/1.0 200"), "rtsp publish first setup handoff");
+        require(second_response.starts_with("RTSP/1.0 200"), "rtsp publish concrete session handles buffered setup");
+
+        auto handoff_session = rtsp_header_value(first_response, "Session:");
+        if (const auto separator = handoff_session.find(';'); separator != std::string::npos)
+        {
+            handoff_session.resize(separator);
+        }
+        boost::asio::write(handoff,
+                           boost::asio::buffer("RECORD " + handoff_base + " RTSP/1.0\r\nCSeq: 103\r\nSession: " + handoff_session + "\r\n\r\n"));
+        require(read_rtsp_headers(handoff).starts_with("RTSP/1.0 200"), "rtsp publish handoff record");
+        boost::asio::write(handoff,
+                           boost::asio::buffer("TEARDOWN " + handoff_base + " RTSP/1.0\r\nCSeq: 104\r\nSession: " + handoff_session + "\r\n\r\n"));
+        require(read_rtsp_headers(handoff).starts_with("RTSP/1.0 200"), "rtsp publish handoff teardown");
+    }
+
+    const auto test_mixed_transport = [&](bool udp_first)
+    {
+        boost::asio::ip::tcp::socket mixed(client_io);
+        mixed.connect({boost::asio::ip::address_v4::loopback(), port});
+        const auto suffix = udp_first ? "udp" : "tcp";
+        const auto mixed_base = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/publish-mixed-" + suffix;
+        const auto video = mixed_base + "/trackID=0";
+        const auto audio = mixed_base + "/trackID=1";
+        const auto mixed_sdp = std::string("v=0\r\n") +
+            "o=- 0 0 IN IP4 127.0.0.1\r\n"
+            "s=publish-mixed\r\n"
+            "c=IN IP4 127.0.0.1\r\n"
+            "t=0 0\r\n"
+            "m=video 0 RTP/AVP 96\r\n"
+            "a=rtpmap:96 H264/90000\r\n"
+            "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+            "a=control:" + video + "\r\n"
+            "m=audio 0 RTP/AVP 8\r\n"
+            "a=rtpmap:8 PCMA/8000\r\n"
+            "a=control:" + audio + "\r\n";
+        const auto mixed_request = [&](std::string value)
+        {
+            boost::asio::write(mixed, boost::asio::buffer(value));
+            return read_rtsp_headers(mixed);
+        };
+        require(mixed_request("ANNOUNCE " + mixed_base + " RTSP/1.0\r\nCSeq: 110\r\nContent-Type: application/sdp\r\nContent-Length: " +
+                              std::to_string(mixed_sdp.size()) + "\r\n\r\n" + mixed_sdp)
+                    .starts_with("RTSP/1.0 200"),
+                "rtsp publish mixed transport announce");
+
+        const auto first_transport = udp_first ? "RTP/AVP;unicast;client_port=12000-12001;mode=record"
+                                               : "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record";
+        const auto first = mixed_request("SETUP " + video + " RTSP/1.0\r\nCSeq: 111\r\nTransport: " + first_transport + "\r\n\r\n");
+        require(first.starts_with("RTSP/1.0 200"), "rtsp publish mixed transport first setup");
+        auto mixed_session = rtsp_header_value(first, "Session:");
+        if (const auto separator = mixed_session.find(';'); separator != std::string::npos)
+        {
+            mixed_session.resize(separator);
+        }
+        const auto second_transport = udp_first ? "RTP/AVP/TCP;unicast;interleaved=2-3;mode=record"
+                                                : "RTP/AVP;unicast;client_port=12002-12003;mode=record";
+        const auto second = mixed_request("SETUP " + audio + " RTSP/1.0\r\nCSeq: 112\r\nSession: " + mixed_session + "\r\nTransport: " +
+                                          second_transport + "\r\n\r\n");
+        require(second.starts_with("RTSP/1.0 461"), "rtsp publish mixed transport rejected");
+        require(mixed_request("TEARDOWN " + mixed_base + " RTSP/1.0\r\nCSeq: 113\r\nSession: " + mixed_session + "\r\n\r\n")
+                    .starts_with("RTSP/1.0 200"),
+                "rtsp publish mixed transport teardown");
+    };
+    test_mixed_transport(false);
+    test_mixed_transport(true);
+
     const auto sdp = std::string("v=0\r\n") +
         "o=- 0 0 IN IP4 127.0.0.1\r\n"
         "s=publish\r\n"
