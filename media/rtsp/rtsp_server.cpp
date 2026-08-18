@@ -131,7 +131,7 @@ class rtsp_connection_router final : public std::enable_shared_from_this<rtsp_co
             const auto consumed = header_end + 4U;
             buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(consumed));
             pending_write_ = "RTSP/1.0 200 OK\r\nCSeq: " + std::to_string(*cseq) +
-                             "\r\nPublic: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, ANNOUNCE, RECORD\r\nContent-Length: 0\r\n\r\n";
+                             "\r\nPublic: OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER\r\nContent-Length: 0\r\n\r\n";
             writing_ = true;
             const auto self = shared_from_this();
             boost::asio::async_write(socket_, boost::asio::buffer(pending_write_), [self](const boost::system::error_code& write_error, std::size_t)

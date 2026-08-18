@@ -3811,6 +3811,8 @@ void test_rtsp_publish_server_contract()
 
     const auto options = request("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n");
     require(options.starts_with("RTSP/1.0 200"), "rtsp publish router options");
+    require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER",
+            "rtsp publish router advertised methods");
 
     const auto sdp = std::string("v=0\r\n") +
         "o=- 0 0 IN IP4 127.0.0.1\r\n"
@@ -4327,6 +4329,18 @@ void test_rtsp_output_session_contract()
                                            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
     require(wrong_stream.starts_with("RTSP/1.0 404"), "rtsp output setup stream identity");
 
+    const auto record_setup = peer.request("SETUP " + base +
+                                           "/trackID=1 RTSP/1.0\r\n"
+                                           "CSeq: 61\r\n"
+                                           "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
+    require(record_setup.starts_with("RTSP/1.0 461"), "rtsp output setup record mode unsupported");
+
+    const auto multicast_setup = peer.request("SETUP " + base +
+                                              "/trackID=1 RTSP/1.0\r\n"
+                                              "CSeq: 62\r\n"
+                                              "Transport: RTP/AVP/TCP;multicast;interleaved=0-1;mode=play\r\n\r\n");
+    require(multicast_setup.starts_with("RTSP/1.0 461"), "rtsp output setup multicast unsupported");
+
     const auto video_setup = peer.request("SETUP " + base +
                                           "/trackID=1 RTSP/1.0\r\n"
                                           "CSeq: 7\r\n"
@@ -4341,7 +4355,7 @@ void test_rtsp_output_session_contract()
                                               "Session: " +
                                               session +
                                               "\r\n"
-                                              "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+                                              "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=play\r\n\r\n");
     require(duplicate_setup.starts_with("RTSP/1.0 200"), "rtsp output idempotent setup");
 
     const auto wrong_session = peer.request("SETUP " + base +

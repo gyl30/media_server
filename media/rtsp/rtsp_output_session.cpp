@@ -473,7 +473,8 @@ int rtsp_output_session::on_setup(std::string_view uri, std::string_view session
     const rtsp_header_transport_t* selected = nullptr;
     for (std::size_t index = 0; index < count; ++index)
     {
-        if (transports[index].transport == RTSP_TRANSPORT_RTP_TCP)
+        if (transports[index].transport == RTSP_TRANSPORT_RTP_TCP && transports[index].multicast == 0 &&
+            (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_PLAY))
         {
             selected = &transports[index];
             break;
