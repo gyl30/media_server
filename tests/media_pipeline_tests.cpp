@@ -12,7 +12,7 @@
 #include "media/net/udp_socket.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtmp/rtmp_session.h"
-#include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/rtsp/rtsp_server.h"
 #include "media/http/http_flv_output.h"
@@ -2849,15 +2849,15 @@ void test_rtsp_pull_url_contract()
 
     boost::asio::io_context client_io;
     stream_registry registry;
-    auto invalid = std::make_shared<rtsp_input_session>(client_io, registry, "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
+    auto invalid = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
     require(!invalid->startup(), "rtsp invalid port rejected");
     require(!registry.find("relay/invalid"), "rtsp invalid url leaves registry unchanged");
 
     const auto port = acceptor.local_endpoint().port();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/test";
     const auto credential_url = "rtsp://us%65r:p%40ss@127.0.0.1:" + std::to_string(port) + "/live/test";
-    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/auth", credential_url);
-    const std::weak_ptr<rtsp_input_session> weak_pull = pull;
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/auth", credential_url);
+    const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp auth pull startup");
     pull.reset();
 
@@ -2909,9 +2909,9 @@ void test_rtsp_input_establishment_timeout()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/timeout";
-    auto pull = std::make_shared<rtsp_input_session>(
+    auto pull = std::make_shared<rtsp_pull_session>(
         client_io, registry, "relay/timeout", request_url, std::chrono::milliseconds(100));
-    const std::weak_ptr<rtsp_input_session> weak_pull = pull;
+    const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp establishment timeout pull startup");
     pull.reset();
 
@@ -2946,9 +2946,9 @@ void test_rtsp_input_establishment_progress_timeout()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-timeout";
-    auto pull = std::make_shared<rtsp_input_session>(
+    auto pull = std::make_shared<rtsp_pull_session>(
         client_io, registry, "relay/play-timeout", request_url, std::chrono::milliseconds(800));
-    const std::weak_ptr<rtsp_input_session> weak_pull = pull;
+    const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp establishment progress timeout pull startup");
     pull.reset();
 
@@ -3010,7 +3010,7 @@ void test_rtsp_input_selects_single_audio_and_video()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/multi";
-    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/single-av", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/single-av", request_url);
     require(pull->startup(), "rtsp single audio video pull startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -3081,7 +3081,7 @@ void test_rtsp_input_opus_passthrough_case(std::string_view fmtp, std::uint16_t 
     stream_registry registry;
     const auto stream_name = "relay/opus-" + std::to_string(expected_channels) + "-" + std::to_string(fmtp.size());
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus";
-    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, stream_name, request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, stream_name, request_url);
     require(pull->startup(), "rtsp opus input startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -3214,7 +3214,7 @@ void test_rtsp_input_rejects_invalid_opus_rate()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus-rate";
-    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/opus-rate", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/opus-rate", request_url);
     require(pull->startup(), "rtsp invalid opus rate startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -3279,7 +3279,7 @@ void test_rtsp_input_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     stream_registry registry;
     const auto stream_name = "relay/" + std::string(to_string(codec)) + (explicit_rtpmap ? "-rtpmap" : "-static");
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711";
-    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, stream_name, request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, stream_name, request_url);
     require(pull->startup(), "rtsp g711 input startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -3408,7 +3408,7 @@ void test_rtsp_input_rejects_mismatched_g711_rtpmap()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711-mismatch";
-    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/g711-mismatch", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/g711-mismatch", request_url);
     require(pull->startup(), "rtsp mismatched g711 startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -3455,8 +3455,8 @@ void test_rtsp_input_rejects_audio_only_source()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/audio-only";
-    auto pull = std::make_shared<rtsp_input_session>(client_io, registry, "relay/audio-only", request_url);
-    const std::weak_ptr<rtsp_input_session> weak_pull = pull;
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/audio-only", request_url);
+    const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp audio only pull startup");
     pull.reset();
 
@@ -3505,7 +3505,7 @@ void test_rtsp_input_uses_complete_sdp_topology_without_track_wait()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/topology";
-    auto pull = std::make_shared<rtsp_input_session>(client_io,
+    auto pull = std::make_shared<rtsp_pull_session>(client_io,
                                                      registry,
                                                      "relay/topology",
                                                      request_url,
@@ -3606,13 +3606,13 @@ void test_rtsp_input_initial_tracks_timeout()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/initial-tracks-timeout";
-    auto pull = std::make_shared<rtsp_input_session>(client_io,
+    auto pull = std::make_shared<rtsp_pull_session>(client_io,
                                                      registry,
                                                      "relay/initial-tracks-timeout",
                                                      request_url,
                                                      std::chrono::milliseconds(500),
                                                      std::chrono::milliseconds(100));
-    const std::weak_ptr<rtsp_input_session> weak_pull = pull;
+    const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp initial tracks timeout pull startup");
     pull.reset();
 
@@ -3703,7 +3703,7 @@ void test_rtsp_input_independent_keepalive()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/keepalive";
-    auto pull = std::make_shared<rtsp_input_session>(
+    auto pull = std::make_shared<rtsp_pull_session>(
         client_io, registry, "relay/keepalive", request_url, std::chrono::milliseconds(750));
     require(pull->startup(), "rtsp keepalive pull startup");
     std::jthread runner([&client_io]() { client_io.run(); });

@@ -1,4 +1,4 @@
-#include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_pull_session.h"
 
 #include "media/codec/codec_utils.h"
 #include <spdlog/spdlog.h>
@@ -194,7 +194,7 @@ bool should_setup_media(rtsp_client_t* client, int media)
 }
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(boost::asio::io_context& io,
+rtsp_pull_session::rtsp_pull_session(boost::asio::io_context& io,
                                        stream_registry& registry,
                                        std::string stream_name,
                                        std::string url,
@@ -214,7 +214,7 @@ rtsp_input_session::rtsp_input_session(boost::asio::io_context& io,
 {
 }
 
-rtsp_input_session::~rtsp_input_session()
+rtsp_pull_session::~rtsp_pull_session()
 {
     for (auto*& demuxer : demuxers_)
     {
@@ -230,7 +230,7 @@ rtsp_input_session::~rtsp_input_session()
     avpkt2bs_destroy(&bitstream_);
 }
 
-bool rtsp_input_session::startup()
+bool rtsp_pull_session::startup()
 {
     if (closed_ || stream_)
     {
@@ -277,18 +277,18 @@ bool rtsp_input_session::startup()
     return true;
 }
 
-void rtsp_input_session::shutdown()
+void rtsp_pull_session::shutdown()
 {
     const auto self = shared_from_this();
     boost::asio::post(io_, [self]() { self->safe_shutdown(); });
 }
 
-void rtsp_input_session::record_establishment_progress()
+void rtsp_pull_session::record_establishment_progress()
 {
     last_establishment_progress_ = std::chrono::steady_clock::now();
 }
 
-void rtsp_input_session::wait_establishment_timeout()
+void rtsp_pull_session::wait_establishment_timeout()
 {
     establishment_timer_.expires_at(last_establishment_progress_ + establishment_timeout_);
     const auto self = shared_from_this();
@@ -312,7 +312,7 @@ void rtsp_input_session::wait_establishment_timeout()
         });
 }
 
-void rtsp_input_session::wait_keepalive()
+void rtsp_pull_session::wait_keepalive()
 {
     keepalive_timer_.expires_after(keepalive_interval_);
     const auto self = shared_from_this();
@@ -332,7 +332,7 @@ void rtsp_input_session::wait_keepalive()
         });
 }
 
-void rtsp_input_session::safe_shutdown()
+void rtsp_pull_session::safe_shutdown()
 {
     if (closed_)
     {
@@ -373,9 +373,9 @@ void rtsp_input_session::safe_shutdown()
     spdlog::debug("rtsp input shutdown {}", stream_name_);
 }
 
-int rtsp_input_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
+int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
 {
-    auto* self = static_cast<rtsp_input_session*>(param);
+    auto* self = static_cast<rtsp_pull_session*>(param);
     if (!self->connection_)
     {
         return -1;
@@ -388,9 +388,9 @@ int rtsp_input_session::send_callback(void* param, const char*, const void* requ
     return static_cast<int>(bytes);
 }
 
-int rtsp_input_session::rtp_port_callback(void* param, int media, const char*, unsigned short port[2], char*, int)
+int rtsp_pull_session::rtp_port_callback(void* param, int media, const char*, unsigned short port[2], char*, int)
 {
-    auto* self = static_cast<rtsp_input_session*>(param);
+    auto* self = static_cast<rtsp_pull_session*>(param);
     if (self->client_ == nullptr)
     {
         return -1;
@@ -406,33 +406,33 @@ int rtsp_input_session::rtp_port_callback(void* param, int media, const char*, u
     return RTSP_TRANSPORT_RTP_TCP;
 }
 
-int rtsp_input_session::describe_callback(void* param, const char* sdp, int length)
+int rtsp_pull_session::describe_callback(void* param, const char* sdp, int length)
 {
-    return static_cast<rtsp_input_session*>(param)->on_describe(sdp, length);
+    return static_cast<rtsp_pull_session*>(param)->on_describe(sdp, length);
 }
 
-int rtsp_input_session::setup_callback(void* param, int timeout, std::int64_t duration)
+int rtsp_pull_session::setup_callback(void* param, int timeout, std::int64_t duration)
 {
-    return static_cast<rtsp_input_session*>(param)->on_setup(timeout, duration);
+    return static_cast<rtsp_pull_session*>(param)->on_setup(timeout, duration);
 }
 
-int rtsp_input_session::play_callback(void*, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
+int rtsp_pull_session::play_callback(void*, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
 {
     return 0;
 }
 
-int rtsp_input_session::pause_callback(void*) { return 0; }
+int rtsp_pull_session::pause_callback(void*) { return 0; }
 
-int rtsp_input_session::teardown_callback(void*) { return 0; }
+int rtsp_pull_session::teardown_callback(void*) { return 0; }
 
-void rtsp_input_session::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
+void rtsp_pull_session::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
-    static_cast<rtsp_input_session*>(param)->on_rtp(channel, data, bytes);
+    static_cast<rtsp_pull_session*>(param)->on_rtp(channel, data, bytes);
 }
 
-int rtsp_input_session::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_input_session*>(param)->on_packet(packet); }
+int rtsp_pull_session::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_pull_session*>(param)->on_packet(packet); }
 
-std::optional<rtsp_input_session::parsed_url> rtsp_input_session::parse_url(std::string_view url)
+std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::string_view url)
 {
     const auto parsed = boost::urls::parse_uri(url);
     if (!parsed || parsed->scheme() != "rtsp" || !parsed->has_authority())
@@ -463,7 +463,7 @@ std::optional<rtsp_input_session::parsed_url> rtsp_input_session::parse_url(std:
     return result;
 }
 
-void rtsp_input_session::on_connect(const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
+void rtsp_pull_session::on_connect(const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
 {
     if (closed_)
     {
@@ -476,14 +476,14 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
     }
 
     rtsp_client_handler_t handler{};
-    handler.send = &rtsp_input_session::send_callback;
-    handler.rtpport = &rtsp_input_session::rtp_port_callback;
-    handler.ondescribe = &rtsp_input_session::describe_callback;
-    handler.onsetup = &rtsp_input_session::setup_callback;
-    handler.onplay = &rtsp_input_session::play_callback;
-    handler.onpause = &rtsp_input_session::pause_callback;
-    handler.onteardown = &rtsp_input_session::teardown_callback;
-    handler.onrtp = &rtsp_input_session::rtp_callback;
+    handler.send = &rtsp_pull_session::send_callback;
+    handler.rtpport = &rtsp_pull_session::rtp_port_callback;
+    handler.ondescribe = &rtsp_pull_session::describe_callback;
+    handler.onsetup = &rtsp_pull_session::setup_callback;
+    handler.onplay = &rtsp_pull_session::play_callback;
+    handler.onpause = &rtsp_pull_session::pause_callback;
+    handler.onteardown = &rtsp_pull_session::teardown_callback;
+    handler.onrtp = &rtsp_pull_session::rtp_callback;
 
     client_ = rtsp_client_create(
         url_.c_str(), username_.empty() ? nullptr : username_.c_str(), password_.empty() ? nullptr : password_.c_str(), &handler, this);
@@ -520,7 +520,7 @@ void rtsp_input_session::on_connect(const boost::system::error_code& error, boos
     }
 }
 
-void rtsp_input_session::on_read(std::span<const std::uint8_t> data)
+void rtsp_pull_session::on_read(std::span<const std::uint8_t> data)
 {
     if (client_ != nullptr && rtsp_client_input(client_, data.data(), data.size()) != 0)
     {
@@ -528,13 +528,13 @@ void rtsp_input_session::on_read(std::span<const std::uint8_t> data)
     }
 }
 
-int rtsp_input_session::on_describe(const char* sdp, int length)
+int rtsp_pull_session::on_describe(const char* sdp, int length)
 {
     spdlog::debug("rtsp input describe {}", stream_name_);
     return rtsp_client_setup(client_, sdp, length);
 }
 
-int rtsp_input_session::on_setup(int timeout, std::int64_t)
+int rtsp_pull_session::on_setup(int timeout, std::int64_t)
 {
     const auto keepalive_seconds = timeout > 0 ? std::max(timeout / 2, 1) : 30;
     keepalive_interval_ = std::chrono::seconds(keepalive_seconds);
@@ -557,7 +557,7 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
         const auto rate = rtsp_client_get_media_rate(client_, media);
         const auto payload = rtsp_client_get_media_payload(client_, media);
         auto*& demuxer = demuxers_[static_cast<std::size_t>(media)];
-        demuxer = rtsp_demuxer_create(media, 500, &rtsp_input_session::packet_callback, this);
+        demuxer = rtsp_demuxer_create(media, 500, &rtsp_pull_session::packet_callback, this);
         if (demuxer == nullptr || rtsp_demuxer_add_payload(demuxer, rate, payload, encoding, fmtp) != 0)
         {
             return -1;
@@ -669,7 +669,7 @@ int rtsp_input_session::on_setup(int timeout, std::int64_t)
     return rtsp_client_play(client_, &npt, nullptr);
 }
 
-void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
+void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
     const auto media = static_cast<std::size_t>(channel / 2U);
     if (media >= demuxers_.size() || demuxers_[media] == nullptr || (channel % 2U) != 0U)
@@ -711,7 +711,7 @@ void rtsp_input_session::on_rtp(std::uint8_t channel, const void* data, std::uin
 
 }
 
-int rtsp_input_session::on_packet(avpacket_t* packet)
+int rtsp_pull_session::on_packet(avpacket_t* packet)
 {
     if (packet == nullptr || packet->stream == nullptr || closed_ || !stream_)
     {
@@ -758,7 +758,7 @@ int rtsp_input_session::on_packet(avpacket_t* packet)
     return 0;
 }
 
-bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
+bool rtsp_pull_session::update_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
     std::optional<media_track> track;
@@ -867,7 +867,7 @@ bool rtsp_input_session::update_track_from_packet(const avpacket_t& packet)
     return try_initialize_tracks() || changed;
 }
 
-bool rtsp_input_session::try_initialize_tracks()
+bool rtsp_pull_session::try_initialize_tracks()
 {
     if (tracks_initialized_ || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
     {

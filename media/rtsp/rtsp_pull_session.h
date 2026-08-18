@@ -1,5 +1,5 @@
-#ifndef MEDIA_RTSP_RTSP_INPUT_SESSION_H
-#define MEDIA_RTSP_RTSP_INPUT_SESSION_H
+#ifndef MEDIA_RTSP_RTSP_PULL_SESSION_H
+#define MEDIA_RTSP_RTSP_PULL_SESSION_H
 
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_connection.h"
@@ -26,16 +26,16 @@ struct avpacket_t;
 namespace media_server
 {
 
-class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_session>
+class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_session>
 {
    public:
-    rtsp_input_session(boost::asio::io_context& io,
+    rtsp_pull_session(boost::asio::io_context& io,
                        stream_registry& registry,
                        std::string stream_name,
                        std::string url,
                        std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
                        std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
-    ~rtsp_input_session();
+    ~rtsp_pull_session();
 
     bool startup();
     void shutdown();
