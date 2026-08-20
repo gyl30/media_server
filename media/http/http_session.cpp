@@ -362,16 +362,25 @@ void http_session::check_hls_playlist()
         });
 }
 
-void http_session::send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body)
+void http_session::write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
 {
-    auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::content_type, content_type);
-    response->keep_alive(false);
-    response->body() = std::move(body);
-    response->prepare_payload();
-
     const auto self = shared_from_this();
+    if (request_.method() == boost::beast::http::verb::head)
+    {
+        auto serializer = std::make_shared<boost::beast::http::response_serializer<boost::beast::http::string_body>>(*response);
+        boost::beast::http::async_write_header(stream_,
+                                               *serializer,
+                                               [self, response, serializer](boost::system::error_code error, std::size_t bytes)
+                                               {
+                                                   static_cast<void>(response);
+                                                   static_cast<void>(serializer);
+                                                   static_cast<void>(error);
+                                                   static_cast<void>(bytes);
+                                                   self->shutdown();
+                                               });
+        return;
+    }
+
     boost::beast::http::async_write(stream_,
                                     *response,
                                     [self, response](boost::system::error_code error, std::size_t bytes)
@@ -381,6 +390,18 @@ void http_session::send_text_response(boost::beast::http::status status, std::st
                                         static_cast<void>(bytes);
                                         self->shutdown();
                                     });
+}
+
+void http_session::send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body)
+{
+    auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
+    response->set(boost::beast::http::field::server, "media_server");
+    response->set(boost::beast::http::field::content_type, content_type);
+    response->keep_alive(false);
+    response->body() = std::move(body);
+    response->prepare_payload();
+
+    write_string_response(std::move(response));
 }
 
 void http_session::send_whep_error_response(
@@ -402,16 +423,7 @@ void http_session::send_whep_error_response(
     response->body() = std::move(body);
     response->prepare_payload();
 
-    const auto self = shared_from_this();
-    boost::beast::http::async_write(stream_,
-                                    *response,
-                                    [self, response](boost::system::error_code error, std::size_t bytes)
-                                    {
-                                        static_cast<void>(response);
-                                        static_cast<void>(error);
-                                        static_cast<void>(bytes);
-                                        self->shutdown();
-                                    });
+    write_string_response(std::move(response));
 }
 
 void http_session::send_whep_options_response(bool session_resource)

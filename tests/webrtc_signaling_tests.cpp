@@ -905,10 +905,31 @@ class whep_http_test_peer final
         auto session = std::make_shared<http_session>(std::move(server_socket), registry_, hls_, whep_);
         session->startup();
 
+        const bool head = request.method() == boost::beast::http::verb::head;
         boost::beast::http::write(client, request);
         boost::beast::flat_buffer buffer;
         boost::beast::http::response<boost::beast::http::string_body> response;
-        boost::beast::http::read(client, buffer, response);
+        if (head)
+        {
+            boost::beast::http::response_parser<boost::beast::http::string_body> parser;
+            parser.skip(true);
+            boost::beast::http::read(client, buffer, parser);
+            response = parser.release();
+
+            std::array<std::uint8_t, 256> trailing{};
+            std::size_t trailing_bytes = buffer.size();
+            boost::system::error_code read_error;
+            while (!read_error)
+            {
+                trailing_bytes += client.read_some(boost::asio::buffer(trailing), read_error);
+            }
+            require(read_error == boost::asio::error::eof, "http head response close");
+            require(trailing_bytes == 0, "http head response wire body");
+        }
+        else
+        {
+            boost::beast::http::read(client, buffer, response);
+        }
         boost::system::error_code error;
         client.close(error);
         return response;
@@ -936,6 +957,33 @@ void require_whep_options(const boost::beast::http::response<boost::beast::http:
     require((response["Accept-Post"] == "application/sdp") == accept_post, "whep options accept post");
     require(response[boost::beast::http::field::content_length] == "0", "whep options content length");
     require(response.body().empty(), "whep options empty body");
+}
+
+void test_http_head_response_contract()
+{
+    whep_http_test_peer peer;
+
+    const auto text_get = peer.request(boost::beast::http::verb::get, "/");
+    require(text_get.result() == boost::beast::http::status::not_found && text_get.body() == "not found\n", "http text get error");
+    const auto text_head = peer.request(boost::beast::http::verb::head, "/");
+    require(text_head.result() == text_get.result(), "http text head status");
+    require(text_head[boost::beast::http::field::content_type] == text_get[boost::beast::http::field::content_type], "http text head content type");
+    require(text_head[boost::beast::http::field::content_length] == text_get[boost::beast::http::field::content_length],
+            "http text head content length");
+    require(text_head.body().empty(), "http text head body");
+
+    const auto whep_get = peer.request(boost::beast::http::verb::get, "/whep");
+    require(whep_get.result() == boost::beast::http::status::not_found && whep_get.body() == "not found\n", "whep invalid resource get");
+    const auto whep_head = peer.request(boost::beast::http::verb::head, "/whep");
+    require(whep_head.result() == whep_get.result(), "whep invalid resource head status");
+    require(whep_head[boost::beast::http::field::content_type] == whep_get[boost::beast::http::field::content_type],
+            "whep invalid resource head content type");
+    require(whep_head[boost::beast::http::field::content_length] == whep_get[boost::beast::http::field::content_length],
+            "whep invalid resource head content length");
+    require(whep_head[boost::beast::http::field::access_control_allow_origin] ==
+                whep_get[boost::beast::http::field::access_control_allow_origin],
+            "whep invalid resource head allow origin");
+    require(whep_head.body().empty(), "whep invalid resource head body");
 }
 
 void test_whep_http_cors()
@@ -2849,6 +2897,8 @@ int main()
     std::cout << "[pass] whep_negotiated_track_lifecycle\n";
     media_server::test_whep_self_owned_lifecycle();
     std::cout << "[pass] whep_self_owned_lifecycle\n";
+    media_server::test_http_head_response_contract();
+    std::cout << "[pass] http_head_response_contract\n";
     media_server::test_whep_http_cors();
     std::cout << "[pass] whep_http_cors\n";
     media_server::test_whep_multi_session_isolation();
