@@ -256,9 +256,16 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
             return std::nullopt;
         }
 
+        if (message_integrity_offset.has_value() && type != stun_attribute_fingerprint)
+        {
+            offset = value_offset + length;
+            offset += (4U - (offset % 4U)) % 4U;
+            continue;
+        }
+
         if (type == stun_attribute_username)
         {
-            if (username.has_value() || message_integrity_offset.has_value())
+            if (username.has_value())
             {
                 spdlog::debug("stun reject invalid username position");
                 return std::nullopt;
@@ -277,7 +284,7 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
         }
         else if (type == stun_attribute_priority)
         {
-            if (length != 4U || priority || message_integrity_offset.has_value())
+            if (length != 4U || priority)
             {
                 spdlog::debug("stun reject invalid priority attribute length {}", length);
                 return std::nullopt;
@@ -286,7 +293,7 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
         }
         else if (type == stun_attribute_use_candidate)
         {
-            if (length != 0 || use_candidate || message_integrity_offset.has_value())
+            if (length != 0 || use_candidate)
             {
                 spdlog::debug("stun reject invalid use candidate attribute length {}", length);
                 return std::nullopt;
@@ -304,7 +311,7 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
         }
         else if (type == stun_attribute_ice_controlling)
         {
-            if (length != 8U || ice_controlling || message_integrity_offset.has_value())
+            if (length != 8U || ice_controlling)
             {
                 spdlog::debug("stun reject invalid ice controlling attribute length {}", length);
                 return std::nullopt;
@@ -313,7 +320,7 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
         }
         else if (type == stun_attribute_ice_controlled)
         {
-            if (length != 8U || ice_controlled || message_integrity_offset.has_value())
+            if (length != 8U || ice_controlled)
             {
                 spdlog::debug("stun reject invalid ice controlled attribute length {}", length);
                 return std::nullopt;
