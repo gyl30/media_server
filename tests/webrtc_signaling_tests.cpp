@@ -2354,6 +2354,12 @@ void test_whep_ice_lite()
     const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
     const auto username = local_ufrag + ":remotevideo";
 
+    const std::array<std::uint8_t, 12> role_conflict_id{12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
+    const auto role_conflict_response =
+        exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, role_conflict_id, true, stun_request_variant::ice_controlled));
+    require_stun_error(role_conflict_response, role_conflict_id, 487, {}, local_pwd);
+    require(!session->ice_connected(), "ice role conflict not nominated");
+
     const std::array<std::uint8_t, 12> check_id{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     const auto check_response = exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, check_id, false));
     require_stun_success(check_response, check_id);
