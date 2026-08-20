@@ -113,6 +113,22 @@ whep_create_result whep_service::create(boost::asio::any_io_executor executor, s
     };
 }
 
+bool whep_service::contains(std::string_view session_id)
+{
+    std::scoped_lock lock(sessions_mutex_);
+    const auto iterator = sessions_.find(session_id);
+    if (iterator == sessions_.end())
+    {
+        return false;
+    }
+    if (iterator->second.expired())
+    {
+        sessions_.erase(iterator);
+        return false;
+    }
+    return true;
+}
+
 bool whep_service::remove(std::string_view session_id)
 {
     std::shared_ptr<whep_session> session;

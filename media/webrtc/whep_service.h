@@ -41,6 +41,7 @@ class whep_service final
 
     [[nodiscard]] bool ready() const noexcept;
     [[nodiscard]] whep_create_result create(boost::asio::any_io_executor executor, std::string_view stream_name, std::string_view offer_sdp);
+    [[nodiscard]] bool contains(std::string_view session_id);
     [[nodiscard]] bool remove(std::string_view session_id);
     void shutdown();
 
