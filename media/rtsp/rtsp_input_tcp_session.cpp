@@ -3,6 +3,8 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstdlib>
 #include <sstream>
 #include <utility>
@@ -17,10 +19,10 @@ rtsp_input_tcp_session::rtsp_input_tcp_session(std::weak_ptr<rtsp_server_connect
                                                std::string session_id,
                                                std::vector<rtsp_input_track_description> descriptions)
     : connection_(std::move(connection)),
-      media_(registry, std::move(executor), std::move(stream_name),
-             std::move(descriptions)),
+      media_(registry, executor, std::move(stream_name), session_id, std::move(descriptions)),
       session_id_(std::move(session_id)),
-      tracks_(media_.descriptions().size())
+      tracks_(media_.descriptions().size()),
+      rtcp_timer_(std::move(executor))
 {
 }
 
@@ -116,13 +118,13 @@ std::size_t rtsp_input_tcp_session::on_read(std::span<const std::uint8_t> data)
 
 void rtsp_input_tcp_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
-    if (!recording_ || data == nullptr || bytes < 12)
+    if (!recording_ || data == nullptr)
     {
         return;
     }
     for (std::size_t index = 0; index < tracks_.size(); ++index)
     {
-        if (tracks_[index].rtp_channel == channel)
+        if (tracks_[index].rtp_channel == channel || tracks_[index].rtcp_channel == channel)
         {
             if (!media_.input(index, std::span(static_cast<const std::uint8_t*>(data), bytes)))
             {
@@ -208,6 +210,7 @@ int rtsp_input_tcp_session::on_record(rtsp_server_t* server, std::string_view se
         return 0;
     }
     recording_ = true;
+    wait_rtcp();
     return rtsp_server_reply_record(server, 200, nullptr, nullptr);
 }
 
@@ -222,6 +225,46 @@ int rtsp_input_tcp_session::on_teardown(rtsp_server_t* server, std::string_view 
     return result;
 }
 
+void rtsp_input_tcp_session::wait_rtcp()
+{
+    rtcp_timer_.expires_after(std::chrono::seconds(1));
+    const auto self = shared_from_this();
+    rtcp_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_ || !self->recording_)
+            {
+                return;
+            }
+
+            const auto connection = self->connection_.lock();
+            if (!connection)
+            {
+                self->shutdown();
+                return;
+            }
+
+            std::array<std::uint8_t, 1500> buffer{};
+            for (std::size_t index = 0; index < self->tracks_.size(); ++index)
+            {
+                const auto bytes = self->media_.rtcp(index, buffer);
+                if (bytes <= 0)
+                {
+                    continue;
+                }
+
+                std::vector<std::uint8_t> packet(static_cast<std::size_t>(bytes) + 4U);
+                packet[0] = '$';
+                packet[1] = static_cast<std::uint8_t>(self->tracks_[index].rtcp_channel);
+                packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
+                packet[3] = static_cast<std::uint8_t>(bytes);
+                std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
+                connection->write(packet);
+            }
+            self->wait_rtcp();
+        });
+}
+
 void rtsp_input_tcp_session::safe_shutdown()
 {
     if (closed_)
@@ -229,6 +272,7 @@ void rtsp_input_tcp_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    rtcp_timer_.cancel();
     media_.shutdown();
     if (interleaved_.data != nullptr)
     {

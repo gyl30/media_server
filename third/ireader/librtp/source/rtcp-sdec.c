@@ -14,6 +14,7 @@ void rtcp_sdes_unpack(struct rtp_context *ctx, const rtcp_header_t *header, cons
 	end = ptr + bytes;
 	assert(header->length >= header->rc);
 
+	msg.type = RTCP_SDES;
 	for (i = 0; i < header->rc && p + 8 /*4-ssrc + 1-PT*/ <= end; i++)
 	{
 		msg.ssrc = nbo_r32(p);

@@ -68,6 +68,7 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     void record_establishment_progress();
     void wait_establishment_timeout();
     void wait_keepalive();
+    void wait_rtcp();
     int on_describe(const char* sdp, int length);
     int on_setup(int timeout, std::int64_t duration);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
@@ -86,6 +87,7 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     boost::asio::steady_timer establishment_timer_;
     boost::asio::steady_timer initial_tracks_timer_;
     boost::asio::steady_timer keepalive_timer_;
+    boost::asio::steady_timer rtcp_timer_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<media_stream> stream_;
     rtsp_client_t* client_{};

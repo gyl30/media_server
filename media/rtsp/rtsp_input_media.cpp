@@ -20,13 +20,19 @@ namespace
 {
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+constexpr char rtcp_name[] = "media_server";
 }
 
 rtsp_input_media::rtsp_input_media(stream_registry& registry,
                                    boost::asio::any_io_executor executor,
                                    std::string stream_name,
+                                   std::string rtcp_cname,
                                    std::vector<rtsp_input_track_description> descriptions)
-    : registry_(registry), executor_(std::move(executor)), stream_name_(std::move(stream_name)), descriptions_(std::move(descriptions))
+    : registry_(registry),
+      executor_(std::move(executor)),
+      stream_name_(std::move(stream_name)),
+      rtcp_cname_(std::move(rtcp_cname)),
+      descriptions_(std::move(descriptions))
 {
 }
 
@@ -51,7 +57,8 @@ bool rtsp_input_media::startup()
                                      description.clock_rate,
                                      description.payload_type,
                                      description.encoding.c_str(),
-                                     description.fmtp.empty() ? nullptr : description.fmtp.c_str()) != 0)
+                                     description.fmtp.empty() ? nullptr : description.fmtp.c_str()) != 0 ||
+            rtsp_demuxer_set_info(demuxer, rtcp_cname_.c_str(), rtcp_name) != 0)
         {
             if (demuxer != nullptr)
             {
@@ -89,7 +96,7 @@ bool rtsp_input_media::start_recording()
 
 bool rtsp_input_media::input(std::size_t track_index, std::span<const std::uint8_t> data)
 {
-    if (closed_ || !recording_ || track_index >= demuxers_.size() || data.size() < 12)
+    if (closed_ || !recording_ || track_index >= demuxers_.size() || data.size() < 4)
     {
         return !closed_;
     }
@@ -99,6 +106,15 @@ bool rtsp_input_media::input(std::size_t track_index, std::span<const std::uint8
         static_cast<void>(rtsp_demuxer_input(demuxer, data.data(), static_cast<int>(data.size())));
     }
     return !fatal_codec_change_;
+}
+
+int rtsp_input_media::rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
+{
+    if (closed_ || !recording_ || track_index >= demuxers_.size() || demuxers_[track_index] == nullptr)
+    {
+        return 0;
+    }
+    return rtsp_demuxer_rtcp(demuxers_[track_index], buffer.data(), static_cast<int>(buffer.size()));
 }
 
 void rtsp_input_media::shutdown()
