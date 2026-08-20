@@ -79,7 +79,7 @@ void http_session::handle_request()
 
     if (request_.method() != boost::beast::http::verb::get)
     {
-        send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n");
+        send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "GET");
         return;
     }
 
@@ -392,11 +392,16 @@ void http_session::write_string_response(std::shared_ptr<boost::beast::http::res
                                     });
 }
 
-void http_session::send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body)
+void http_session::send_text_response(
+    boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
     response->set(boost::beast::http::field::content_type, content_type);
+    if (!allow.empty())
+    {
+        response->set(boost::beast::http::field::allow, allow);
+    }
     response->keep_alive(false);
     response->body() = std::move(body);
     response->prepare_payload();
