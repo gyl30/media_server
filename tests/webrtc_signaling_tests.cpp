@@ -2367,10 +2367,11 @@ void test_stun_ice_connectivity_check_contract()
                  make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_fingerprint), username, password)
                  .has_value(),
             "stun reject missing fingerprint");
-    require(!parse_stun_binding_request(
-                 make_stun_request(username, password, transaction_id, true, stun_request_variant::use_candidate_after_integrity), username, password)
-                 .has_value(),
-            "stun reject unauthenticated use candidate");
+    const auto use_candidate_after_integrity = parse_stun_binding_request(
+        make_stun_request(username, password, transaction_id, true, stun_request_variant::use_candidate_after_integrity), username, password);
+    require(use_candidate_after_integrity.has_value() && !use_candidate_after_integrity->use_candidate && use_candidate_after_integrity->priority &&
+                use_candidate_after_integrity->ice_controlling,
+            "stun ignore use candidate after message integrity");
 
     constexpr std::array<std::uint16_t, 2> required_attributes{0x1234, 0x2345};
     const auto unknown_required = parse_stun_binding_request(
@@ -2483,6 +2484,12 @@ void test_whep_ice_lite()
         exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, role_conflict_id, true, stun_request_variant::ice_controlled));
     require_stun_error(role_conflict_response, role_conflict_id, 487, {}, local_pwd);
     require(!session->ice_connected(), "ice role conflict not nominated");
+
+    const std::array<std::uint8_t, 12> after_integrity_id{1, 3, 5, 7, 9, 11, 2, 4, 6, 8, 10, 12};
+    const auto after_integrity_response = exchange_stun(
+        io, client, server_endpoint, make_stun_request(username, local_pwd, after_integrity_id, true, stun_request_variant::use_candidate_after_integrity));
+    require_stun_success(after_integrity_response, after_integrity_id);
+    require(!session->ice_connected(), "ice use candidate after message integrity ignored");
 
     const std::array<std::uint8_t, 12> check_id{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     const auto check_response = exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, check_id, false));
