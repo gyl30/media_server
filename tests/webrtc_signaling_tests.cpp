@@ -971,6 +971,18 @@ void test_whep_http_cors()
     require(unavailable[boost::beast::http::field::retry_after] == "1", "whep unavailable stream retry after");
     require(unavailable["Access-Control-Allow-Origin"] == "*", "whep unavailable stream allow origin");
 
+    const auto missing_get = peer.request(boost::beast::http::verb::get, "/whep/session/missing");
+    require(missing_get.result() == boost::beast::http::status::not_found && missing_get.body().empty(), "whep missing session get");
+
+    const auto missing_head = peer.request(boost::beast::http::verb::head, "/whep/session/missing");
+    require(missing_head.result() == missing_get.result(), "whep missing session head status");
+    require(missing_head[boost::beast::http::field::cache_control] == missing_get[boost::beast::http::field::cache_control],
+            "whep missing session head cache control");
+    require(missing_head[boost::beast::http::field::access_control_allow_origin] ==
+                missing_get[boost::beast::http::field::access_control_allow_origin],
+            "whep missing session head allow origin");
+    require(missing_head.body().empty(), "whep missing session head body");
+
     const auto created = peer.post("/whep/live/camera");
     require(created.result() == boost::beast::http::status::created, "whep cors create status");
     require(created["Access-Control-Allow-Origin"] == "*", "whep create allow origin");
@@ -1001,6 +1013,18 @@ void test_whep_http_cors()
     const auto removed = peer.remove(location);
     require(removed.result() == boost::beast::http::status::no_content, "whep cors delete status");
     require(removed["Access-Control-Allow-Origin"] == "*", "whep delete allow origin");
+
+    const auto removed_get = peer.request(boost::beast::http::verb::get, location);
+    require(removed_get.result() == boost::beast::http::status::not_found && removed_get.body().empty(), "whep removed session get");
+
+    const auto removed_head = peer.request(boost::beast::http::verb::head, location);
+    require(removed_head.result() == removed_get.result(), "whep removed session head status");
+    require(removed_head[boost::beast::http::field::cache_control] == removed_get[boost::beast::http::field::cache_control],
+            "whep removed session head cache control");
+    require(removed_head[boost::beast::http::field::access_control_allow_origin] ==
+                removed_get[boost::beast::http::field::access_control_allow_origin],
+            "whep removed session head allow origin");
+    require(removed_head.body().empty(), "whep removed session head body");
 
     const auto missing = peer.remove(location);
     require(missing.result() == boost::beast::http::status::not_found, "whep cors error status");
@@ -2053,6 +2077,7 @@ void test_whep_session_lifecycle()
     updated_video.codec_config.push_back(0x01);
     require(replacement->update_track(std::move(updated_video)), "whep source config update");
     drain_io(io);
+    require(!whep.contains(replacement_session.session_id), "whep source config change releases session resource");
     require(!whep.remove(replacement_session.session_id), "whep source config change releases session");
 
     const auto updated_session = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
