@@ -453,7 +453,14 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
     }
     if (request->ice_controlled)
     {
-        spdlog::debug("webrtc stun rejected ice controlled peer session {} remote {} {}", id_, remote_address, remote_port);
+        auto response = make_stun_binding_error_response(*request, 487, "Role Conflict", {}, ice_pwd_);
+        if (response.empty())
+        {
+            spdlog::error("webrtc stun response create failed session {}", id_);
+            return;
+        }
+        spdlog::debug("webrtc stun role conflict session {} remote {} {}", id_, remote_address, remote_port);
+        udp_socket_->send(std::move(response), endpoint);
         return;
     }
     if (!request->ice_controlling)
