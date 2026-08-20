@@ -113,12 +113,7 @@ void http_session::handle_whep(const std::vector<std::string>& segments)
         send_whep_options_response(session_resource);
         return;
     }
-    if (request_.method() == boost::beast::http::verb::get)
-    {
-        send_whep_empty_response(boost::beast::http::status::no_content);
-        return;
-    }
-    if (request_.method() == boost::beast::http::verb::head)
+    if (request_.method() == boost::beast::http::verb::get || request_.method() == boost::beast::http::verb::head)
     {
         if (endpoint_resource)
         {
