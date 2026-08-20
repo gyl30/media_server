@@ -39,9 +39,9 @@ void rtcp_bye_unpack(struct rtp_context *ctx, const rtcp_header_t *header, const
 	ctx->handler.on_rtcp(ctx->cbparam, &msg);
 
 	// other SSRC/CSRC
-	for (i = 0; i < header->rc /*source count*/; i++)
+	for (i = 1; i < header->rc /*source count*/; i++)
 	{
-		msg.ssrc = nbo_r32(ptr + 4 + i * 4);
+		msg.ssrc = nbo_r32(ptr + i * 4);
 		rtp_member_list_delete(ctx->members, msg.ssrc);
 		rtp_member_list_delete(ctx->senders, msg.ssrc);
 		ctx->handler.on_rtcp(ctx->cbparam, &msg);

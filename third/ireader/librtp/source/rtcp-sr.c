@@ -19,7 +19,7 @@ void rtcp_sr_unpack(struct rtp_context *ctx, const rtcp_header_t *header, const 
 		return;
 	}
 	msg.ssrc = nbo_r32(ptr);
-	msg.type = RTCP_RR;
+	msg.type = RTCP_SR;
 
 	sender = rtp_sender_fetch(ctx, msg.ssrc);
 	if(!sender) return; // error

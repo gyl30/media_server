@@ -33,6 +33,7 @@ namespace
 {
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+constexpr char rtcp_name[] = "media_server";
 
 bool append_sdp_parameter_sets(std::vector<std::uint8_t>& config, std::string_view encoded)
 {
@@ -209,6 +210,7 @@ rtsp_pull_session::rtsp_pull_session(boost::asio::io_context& io,
       establishment_timer_(io),
       initial_tracks_timer_(io),
       keepalive_timer_(io),
+      rtcp_timer_(io),
       establishment_timeout_(establishment_timeout),
       initial_tracks_timeout_(initial_tracks_timeout)
 {
@@ -332,6 +334,43 @@ void rtsp_pull_session::wait_keepalive()
         });
 }
 
+void rtsp_pull_session::wait_rtcp()
+{
+    rtcp_timer_.expires_after(std::chrono::seconds(1));
+    const auto self = shared_from_this();
+    rtcp_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_ || !self->media_started_ || !self->connection_)
+            {
+                return;
+            }
+
+            std::array<std::uint8_t, 1500> buffer{};
+            for (std::size_t media = 0; media < self->demuxers_.size(); ++media)
+            {
+                if (self->demuxers_[media] == nullptr)
+                {
+                    continue;
+                }
+                const auto bytes = rtsp_demuxer_rtcp(self->demuxers_[media], buffer.data(), static_cast<int>(buffer.size()));
+                if (bytes <= 0)
+                {
+                    continue;
+                }
+
+                std::vector<std::uint8_t> packet(static_cast<std::size_t>(bytes) + 4U);
+                packet[0] = '$';
+                packet[1] = static_cast<std::uint8_t>(media * 2U + 1U);
+                packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
+                packet[3] = static_cast<std::uint8_t>(bytes);
+                std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
+                self->connection_->write(packet);
+            }
+            self->wait_rtcp();
+        });
+}
+
 void rtsp_pull_session::safe_shutdown()
 {
     if (closed_)
@@ -348,6 +387,7 @@ void rtsp_pull_session::safe_shutdown()
     establishment_timer_.cancel();
     initial_tracks_timer_.cancel();
     keepalive_timer_.cancel();
+    rtcp_timer_.cancel();
     resolver_.cancel();
     boost::system::error_code error;
     connect_socket_.close(error);
@@ -558,7 +598,8 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
         const auto payload = rtsp_client_get_media_payload(client_, media);
         auto*& demuxer = demuxers_[static_cast<std::size_t>(media)];
         demuxer = rtsp_demuxer_create(media, 500, &rtsp_pull_session::packet_callback, this);
-        if (demuxer == nullptr || rtsp_demuxer_add_payload(demuxer, rate, payload, encoding, fmtp) != 0)
+        if (demuxer == nullptr || rtsp_demuxer_add_payload(demuxer, rate, payload, encoding, fmtp) != 0 ||
+            rtsp_demuxer_set_info(demuxer, stream_name_.c_str(), rtcp_name) != 0)
         {
             return -1;
         }
@@ -672,8 +713,14 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
 void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
     const auto media = static_cast<std::size_t>(channel / 2U);
-    if (media >= demuxers_.size() || demuxers_[media] == nullptr || (channel % 2U) != 0U)
+    const bool rtcp = (channel % 2U) != 0U;
+    if (media >= demuxers_.size() || demuxers_[media] == nullptr || data == nullptr || bytes < (rtcp ? 4U : 12U))
     {
+        return;
+    }
+    if (rtcp)
+    {
+        static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
         return;
     }
 
@@ -689,6 +736,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
         media_started_ = true;
         establishment_timer_.cancel();
         wait_keepalive();
+        wait_rtcp();
         static_cast<void>(try_initialize_tracks());
         if (!tracks_initialized_)
         {

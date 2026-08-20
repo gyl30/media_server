@@ -5,6 +5,7 @@
 #include "media/rtsp/rtsp_server_connection.h"
 
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -57,12 +58,14 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
                  std::size_t count);
     int on_record(rtsp_server_t* server, std::string_view session);
     int on_teardown(rtsp_server_t* server, std::string_view session);
+    void wait_rtcp();
     void safe_shutdown();
 
     std::weak_ptr<rtsp_server_connection> connection_;
     rtsp_input_media media_;
     std::string session_id_;
     std::vector<track_state> tracks_;
+    boost::asio::steady_timer rtcp_timer_;
     rtp_over_rtsp_t interleaved_{};
     bool recording_{};
     bool closed_{};

@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <stdio.h>
 #include <errno.h>
 
 struct rtp_demuxer_t
@@ -40,13 +39,8 @@ static int rtp_onpacket(void* param, const void *packet, int bytes, uint32_t tim
 
 static void rtp_on_rtcp(void* param, const struct rtcp_msg_t* msg)
 {
-    //struct rtp_demuxer_t* rtp;
-    //rtp = (struct rtp_demuxer_t*)param;
-    if (RTCP_BYE == msg->type)
-    {
-        printf("finished: %p\n", param);
-        //rtp->onpkt(rtp->param, NULL, 0, 0, 0);
-    }
+    (void)param;
+    (void)msg;
 }
 
 static struct rtp_packet_t* rtp_demuxer_alloc(struct rtp_demuxer_t* rtp, const void* data, int bytes)
@@ -118,6 +112,7 @@ static int rtp_demuxer_init(struct rtp_demuxer_t* rtp, int jitter, int frequency
     rtp->payload = rtp_payload_decode_create(payload, encoding, &handler, rtp);
     
     timestamp = (uint32_t)rtpclock();
+    rtp->ssrc = rtp_ssrc();
     evthandler.on_rtcp = rtp_on_rtcp;
     rtp->rtp = rtp_create(&evthandler, rtp, rtp->ssrc, timestamp, frequency ? frequency : 90000, 2 * 1024 * 1024, 0);
     
@@ -142,7 +137,6 @@ struct rtp_demuxer_t* rtp_demuxer_create(int jitter, int frequency, int payload,
     rtp->onpkt = onpkt;
     rtp->param = param;
     rtp->clock = rtpclock();
-    rtp->ssrc = rtp_ssrc();
     rtp->max = RTP_PAYLOAD_MAX_SIZE;
     return rtp;
 }
@@ -176,7 +170,7 @@ int rtp_demuxer_input(struct rtp_demuxer_t* rtp, const void* data, int bytes)
     uint8_t pt;
     struct rtp_packet_t* pkt;
     
-    if (bytes < 12 || bytes > rtp->max)
+    if (bytes < 4 || bytes > rtp->max)
         return -EINVAL;
 
     pt = ((uint8_t*)data)[1];
@@ -186,6 +180,9 @@ int rtp_demuxer_input(struct rtp_demuxer_t* rtp, const void* data, int bytes)
     // RTCP packet types in the ranges 1-191 and 224-254 SHOULD only be used when other values have been exhausted.
     if(pt < RTCP_FIR || pt > RTCP_LIMIT)
     {
+        if (bytes < 12)
+            return -EINVAL;
+
         pkt = rtp_demuxer_alloc(rtp, data, bytes);
         if (!pkt)
             return -ENOMEM;
@@ -221,6 +218,14 @@ int rtp_demuxer_input(struct rtp_demuxer_t* rtp, const void* data, int bytes)
     }
 
     return 0;
+}
+
+int rtp_demuxer_set_info(struct rtp_demuxer_t* rtp, const char* cname, const char* name)
+{
+    if (!rtp || !cname || !name)
+        return -EINVAL;
+
+    return rtp_set_info(rtp->rtp, cname, name);
 }
 
 int rtp_demuxer_rtcp(struct rtp_demuxer_t* rtp, void* buf, int len)

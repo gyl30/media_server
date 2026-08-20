@@ -562,7 +562,10 @@ int rtsp_demuxer_input(struct rtsp_demuxer_t* demuxer, const void* data, int byt
     uint8_t id;
     struct rtp_payload_info_t* pt;
 
-    id = bytes > 1 ? ((const uint8_t*)data)[1] : 255;
+    if (!demuxer || !data || bytes < 4)
+        return -EINVAL;
+
+    id = ((const uint8_t*)data)[1];
     for (i = demuxer->idx; i < demuxer->count + demuxer->idx; i++)
     {
         pt = &demuxer->pt[i % demuxer->count];
@@ -582,6 +585,21 @@ int rtsp_demuxer_input(struct rtsp_demuxer_t* demuxer, const void* data, int byt
 
     //assert(0);
     //return -1;
+    return 0;
+}
+
+int rtsp_demuxer_set_info(struct rtsp_demuxer_t* demuxer, const char* cname, const char* name)
+{
+    int i, r;
+    if (!demuxer || !cname || !name)
+        return -EINVAL;
+
+    for (i = 0; i < demuxer->count; i++)
+    {
+        r = rtp_demuxer_set_info(demuxer->pt[i].rtp, cname, name);
+        if (0 != r)
+            return r;
+    }
     return 0;
 }
 

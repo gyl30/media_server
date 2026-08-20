@@ -28,6 +28,8 @@ int rtp_demuxer_destroy(struct rtp_demuxer_t** rtp);
 /// @return >0-rtcp message, 0-ok, <0-error
 int rtp_demuxer_input(struct rtp_demuxer_t* rtp, const void* data, int bytes);
 
+int rtp_demuxer_set_info(struct rtp_demuxer_t* rtp, const char* cname, const char* name);
+
 /// @return >0-rtcp report length, 0-don't need send rtcp
 int rtp_demuxer_rtcp(struct rtp_demuxer_t* rtp, void* buf, int len);
 

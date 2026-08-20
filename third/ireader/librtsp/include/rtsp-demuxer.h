@@ -31,6 +31,8 @@ int rtsp_demuxer_rtpinfo(struct rtsp_demuxer_t* demuxer, uint16_t seq, uint32_t 
 /// @return 0-ok, >0-rtcp message type, <0-error
 int rtsp_demuxer_input(struct rtsp_demuxer_t* demuxer, const void* data, int bytes);
 
+int rtsp_demuxer_set_info(struct rtsp_demuxer_t* demuxer, const char* cname, const char* name);
+
 /// Get RTCP packet
 /// @return >0-rtcp report length, 0-don't need send rtcp
 int rtsp_demuxer_rtcp(struct rtsp_demuxer_t* demuxer, void* buf, int len);

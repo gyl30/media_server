@@ -3,6 +3,8 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <sstream>
 #include <utility>
 
@@ -16,9 +18,10 @@ rtsp_input_udp_session::rtsp_input_udp_session(std::weak_ptr<rtsp_server_connect
                                                std::string session_id,
                                                std::vector<rtsp_input_track_description> descriptions)
     : connection_(std::move(connection)),
-      media_(registry, std::move(executor), std::move(stream_name), std::move(descriptions)),
+      media_(registry, executor, std::move(stream_name), session_id, std::move(descriptions)),
       session_id_(std::move(session_id)),
-      tracks_(media_.descriptions().size())
+      tracks_(media_.descriptions().size()),
+      rtcp_timer_(std::move(executor))
 {
 }
 
@@ -89,7 +92,26 @@ void rtsp_input_udp_session::on_rtp(std::size_t track_index,
         return;
     }
     const auto& state = tracks_[track_index];
-    if (!state.rtp_socket || endpoint != state.client_endpoint)
+    if (!state.rtp_socket || endpoint != state.rtp_endpoint)
+    {
+        return;
+    }
+    if (!media_.input(track_index, data))
+    {
+        shutdown();
+    }
+}
+
+void rtsp_input_udp_session::on_rtcp(std::size_t track_index,
+                                     std::span<const std::uint8_t> data,
+                                     const boost::asio::ip::udp::endpoint& endpoint)
+{
+    if (!recording_ || track_index >= tracks_.size() || data.size() < 4)
+    {
+        return;
+    }
+    const auto& state = tracks_[track_index];
+    if (!state.rtcp_socket || endpoint != state.rtcp_endpoint)
     {
         return;
     }
@@ -184,12 +206,16 @@ int rtsp_input_udp_session::on_setup(rtsp_server_t* server,
         if (!candidate_rtcp->startup(
                 boost::asio::ip::address_v4::any(),
                 static_cast<std::uint16_t>(port + 1U),
-                [self](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+                [self, selected_index](boost::system::error_code error,
+                                       std::span<const std::uint8_t> data,
+                                       const boost::asio::ip::udp::endpoint& endpoint)
                 {
                     if (error)
                     {
                         self->shutdown();
+                        return;
                     }
+                    self->on_rtcp(selected_index, data, endpoint);
                 },
                 [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
                 {
@@ -214,7 +240,8 @@ int rtsp_input_udp_session::on_setup(rtsp_server_t* server,
     auto& state = tracks_[selected_index];
     state.rtp_socket = std::move(rtp_socket);
     state.rtcp_socket = std::move(rtcp_socket);
-    state.client_endpoint = boost::asio::ip::udp::endpoint(client_address, transport->rtp.u.client_port1);
+    state.rtp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport->rtp.u.client_port1);
+    state.rtcp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport->rtp.u.client_port2);
 
     rtsp_server_set_session_timeout(server, 60);
     const auto response = "RTP/AVP;unicast;client_port=" + std::to_string(transport->rtp.u.client_port1) + "-" +
@@ -240,6 +267,7 @@ int rtsp_input_udp_session::on_record(rtsp_server_t* server, std::string_view se
         return 0;
     }
     recording_ = true;
+    wait_rtcp();
     return rtsp_server_reply_record(server, 200, nullptr, nullptr);
 }
 
@@ -254,6 +282,33 @@ int rtsp_input_udp_session::on_teardown(rtsp_server_t* server, std::string_view 
     return result;
 }
 
+void rtsp_input_udp_session::wait_rtcp()
+{
+    rtcp_timer_.expires_after(std::chrono::seconds(1));
+    const auto self = shared_from_this();
+    rtcp_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_ || !self->recording_)
+            {
+                return;
+            }
+
+            std::array<std::uint8_t, 1500> buffer{};
+            for (std::size_t index = 0; index < self->tracks_.size(); ++index)
+            {
+                auto& state = self->tracks_[index];
+                const auto bytes = self->media_.rtcp(index, buffer);
+                if (bytes <= 0 || !state.rtcp_socket)
+                {
+                    continue;
+                }
+                state.rtcp_socket->send(std::vector<std::uint8_t>(buffer.begin(), buffer.begin() + bytes), state.rtcp_endpoint);
+            }
+            self->wait_rtcp();
+        });
+}
+
 void rtsp_input_udp_session::safe_shutdown()
 {
     if (closed_)
@@ -261,6 +316,7 @@ void rtsp_input_udp_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    rtcp_timer_.cancel();
     media_.shutdown();
     for (auto& state : tracks_)
     {
