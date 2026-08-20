@@ -115,6 +115,11 @@ void http_session::handle_whep(const std::vector<std::string>& segments)
     }
     if (request_.method() == boost::beast::http::verb::get || request_.method() == boost::beast::http::verb::head)
     {
+        if (session_resource && !whep_.contains(segments[2]))
+        {
+            send_whep_empty_response(boost::beast::http::status::not_found);
+            return;
+        }
         if (endpoint_resource)
         {
             send_whep_empty_response(boost::beast::http::status::ok, "application/sdp");
