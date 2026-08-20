@@ -23,8 +23,11 @@ constexpr std::size_t stun_header_size = 20;
 constexpr std::uint32_t stun_magic_cookie = 0x2112a442U;
 constexpr std::uint16_t stun_binding_request_type = 0x0001;
 constexpr std::uint16_t stun_binding_success_response_type = 0x0101;
+constexpr std::uint16_t stun_binding_error_response_type = 0x0111;
 constexpr std::uint16_t stun_attribute_username = 0x0006;
 constexpr std::uint16_t stun_attribute_message_integrity = 0x0008;
+constexpr std::uint16_t stun_attribute_error_code = 0x0009;
+constexpr std::uint16_t stun_attribute_unknown_attributes = 0x000a;
 constexpr std::uint16_t stun_attribute_xor_mapped_address = 0x0020;
 constexpr std::uint16_t stun_attribute_priority = 0x0024;
 constexpr std::uint16_t stun_attribute_use_candidate = 0x0025;
@@ -147,6 +150,30 @@ std::vector<std::uint8_t> make_header(std::uint16_t type, const std::array<std::
     return packet;
 }
 
+bool append_integrity_and_fingerprint(std::vector<std::uint8_t>& packet, std::string_view password)
+{
+    const auto body_before_integrity = packet.size() - stun_header_size;
+    set_message_length(packet, body_before_integrity + 24U);
+    const auto digest = hmac_sha1(password, packet);
+    if (!digest)
+    {
+        return false;
+    }
+    append_attribute(packet, stun_attribute_message_integrity, *digest);
+
+    const auto body_before_fingerprint = packet.size() - stun_header_size;
+    set_message_length(packet, body_before_fingerprint + 8U);
+    const auto fingerprint_value = fingerprint(packet);
+    const std::array<std::uint8_t, 4> fingerprint_bytes{
+        static_cast<std::uint8_t>(fingerprint_value >> 24U),
+        static_cast<std::uint8_t>((fingerprint_value >> 16U) & 0xffU),
+        static_cast<std::uint8_t>((fingerprint_value >> 8U) & 0xffU),
+        static_cast<std::uint8_t>(fingerprint_value & 0xffU),
+    };
+    append_attribute(packet, stun_attribute_fingerprint, fingerprint_bytes);
+    return true;
+}
+
 std::vector<std::uint8_t> xor_mapped_address(const boost::asio::ip::udp::endpoint& endpoint, const std::array<std::uint8_t, 12>& transaction_id)
 {
     std::vector<std::uint8_t> value;
@@ -209,8 +236,10 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
     std::optional<std::string_view> username;
     std::optional<std::size_t> message_integrity_offset;
     std::optional<std::size_t> fingerprint_offset;
+    std::vector<std::uint16_t> unknown_required_attributes;
     bool priority = false;
     bool ice_controlling = false;
+    bool ice_controlled = false;
     bool use_candidate = false;
 
     std::size_t offset = stun_header_size;
@@ -284,8 +313,17 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
         }
         else if (type == stun_attribute_ice_controlled)
         {
-            spdlog::debug("stun reject ice controlled peer");
-            return std::nullopt;
+            if (length != 8U || ice_controlled || message_integrity_offset.has_value())
+            {
+                spdlog::debug("stun reject invalid ice controlled attribute length {}", length);
+                return std::nullopt;
+            }
+            ice_controlled = true;
+        }
+        else if (type < 0x8000U && !message_integrity_offset.has_value() && type != stun_attribute_error_code &&
+                 type != stun_attribute_unknown_attributes && type != stun_attribute_xor_mapped_address)
+        {
+            unknown_required_attributes.push_back(type);
         }
 
         offset = value_offset + length;
@@ -305,16 +343,6 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
     if (*username != expected_username)
     {
         spdlog::debug("stun reject username actual {} expected {}", *username, expected_username);
-        return std::nullopt;
-    }
-    if (!priority)
-    {
-        spdlog::debug("stun reject missing priority");
-        return std::nullopt;
-    }
-    if (!ice_controlling)
-    {
-        spdlog::debug("stun reject missing ice controlling");
         return std::nullopt;
     }
     if (!message_integrity_offset.has_value())
@@ -340,10 +368,14 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
 
     stun_binding_request request{
         .transaction_id = {},
+        .unknown_required_attributes = std::move(unknown_required_attributes),
+        .priority = priority,
         .use_candidate = use_candidate,
+        .ice_controlling = ice_controlling,
+        .ice_controlled = ice_controlled,
     };
     std::copy_n(packet.data() + 8U, request.transaction_id.size(), request.transaction_id.begin());
-    spdlog::trace("stun binding request accepted use_candidate {}", use_candidate);
+    spdlog::trace("stun binding request authenticated use_candidate {}", use_candidate);
     return request;
 }
 
@@ -355,25 +387,40 @@ std::vector<std::uint8_t> make_stun_binding_success_response(const stun_binding_
     const auto mapped_address = xor_mapped_address(remote_endpoint, request.transaction_id);
     append_attribute(packet, stun_attribute_xor_mapped_address, mapped_address);
 
-    const auto body_before_integrity = packet.size() - stun_header_size;
-    set_message_length(packet, body_before_integrity + 24U);
-    const auto digest = hmac_sha1(password, packet);
-    if (!digest)
+    if (!append_integrity_and_fingerprint(packet, password))
     {
         return {};
     }
-    append_attribute(packet, stun_attribute_message_integrity, *digest);
+    return packet;
+}
 
-    const auto body_before_fingerprint = packet.size() - stun_header_size;
-    set_message_length(packet, body_before_fingerprint + 8U);
-    const auto fingerprint_value = fingerprint(packet);
-    std::array<std::uint8_t, 4> fingerprint_bytes{
-        static_cast<std::uint8_t>(fingerprint_value >> 24U),
-        static_cast<std::uint8_t>((fingerprint_value >> 16U) & 0xffU),
-        static_cast<std::uint8_t>((fingerprint_value >> 8U) & 0xffU),
-        static_cast<std::uint8_t>(fingerprint_value & 0xffU),
-    };
-    append_attribute(packet, stun_attribute_fingerprint, fingerprint_bytes);
+std::vector<std::uint8_t> make_stun_binding_error_response(const stun_binding_request& request,
+                                                           std::uint16_t error_code,
+                                                           std::string_view reason,
+                                                           std::span<const std::uint16_t> unknown_attributes,
+                                                           std::string_view password)
+{
+    auto packet = make_header(stun_binding_error_response_type, request.transaction_id);
+
+    std::vector<std::uint8_t> error_value{0, 0, static_cast<std::uint8_t>(error_code / 100U), static_cast<std::uint8_t>(error_code % 100U)};
+    error_value.insert(error_value.end(), reason.begin(), reason.end());
+    append_attribute(packet, stun_attribute_error_code, error_value);
+
+    if (!unknown_attributes.empty())
+    {
+        std::vector<std::uint8_t> unknown_value;
+        unknown_value.reserve(unknown_attributes.size() * 2U);
+        for (const auto type : unknown_attributes)
+        {
+            append_u16(unknown_value, type);
+        }
+        append_attribute(packet, stun_attribute_unknown_attributes, unknown_value);
+    }
+
+    if (!append_integrity_and_fingerprint(packet, password))
+    {
+        return {};
+    }
     return packet;
 }
 

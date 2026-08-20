@@ -429,6 +429,39 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
         return;
     }
 
+    if (!request->unknown_required_attributes.empty())
+    {
+        auto response = make_stun_binding_error_response(*request, 420, "Unknown Attribute", request->unknown_required_attributes, ice_pwd_);
+        if (response.empty())
+        {
+            spdlog::error("webrtc stun response create failed session {}", id_);
+            return;
+        }
+        spdlog::debug("webrtc stun unknown attribute session {} remote {} {} count {}",
+                      id_,
+                      remote_address,
+                      remote_port,
+                      request->unknown_required_attributes.size());
+        udp_socket_->send(std::move(response), endpoint);
+        return;
+    }
+
+    if (!request->priority)
+    {
+        spdlog::debug("webrtc stun rejected missing priority session {} remote {} {}", id_, remote_address, remote_port);
+        return;
+    }
+    if (request->ice_controlled)
+    {
+        spdlog::debug("webrtc stun rejected ice controlled peer session {} remote {} {}", id_, remote_address, remote_port);
+        return;
+    }
+    if (!request->ice_controlling)
+    {
+        spdlog::debug("webrtc stun rejected missing ice controlling session {} remote {} {}", id_, remote_address, remote_port);
+        return;
+    }
+
     spdlog::debug("webrtc stun valid session {} remote {} {} use_candidate {}", id_, remote_address, remote_port, request->use_candidate);
 
     if (request->use_candidate && remote_endpoint_.has_value() && endpoint != *remote_endpoint_)
