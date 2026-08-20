@@ -4318,6 +4318,8 @@ class rtsp_output_test_peer final
 
     [[nodiscard]] std::uint16_t port() const { return acceptor_.local_endpoint().port(); }
 
+    void write(std::span<const std::uint8_t> data) { boost::asio::write(client_, boost::asio::buffer(data)); }
+
     bool update_track(media_track track)
     {
         auto promise = std::make_shared<std::promise<bool>>();
@@ -4535,6 +4537,19 @@ void test_rtsp_output_session_contract()
                                    "Session: " +
                                    session + "\r\n\r\n");
     require(play.starts_with("RTSP/1.0 200"), "rtsp output play");
+
+    constexpr std::array<std::uint8_t, 12> receiver_report{
+        0x24, 0x01, 0x00, 0x08,
+        0x80, 0xc9, 0x00, 0x01, 0x01, 0x02, 0x03, 0x04,
+    };
+    peer.write(std::span(receiver_report).first(3));
+    peer.write(std::span(receiver_report).subspan(3));
+    const auto after_rtcp = peer.request("GET_PARAMETER " + base +
+                                         " RTSP/1.0\r\n"
+                                         "CSeq: 131\r\n"
+                                         "Session: " +
+                                         session + "\r\n\r\n");
+    require(after_rtcp.starts_with("RTSP/1.0 200"), "rtsp output accepts interleaved rtcp");
 
     const auto late_setup = peer.request("SETUP " + base +
                                          "/trackID=1 RTSP/1.0\r\n"

@@ -14,6 +14,11 @@
 #include <string>
 #include <vector>
 
+extern "C"
+{
+#include "rtp-over-rtsp.h"
+}
+
 struct rtsp_muxer_t;
 struct rtsp_server_t;
 struct rtsp_header_transport_t;
@@ -57,8 +62,10 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     };
 
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
+    static void rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);
 
     [[nodiscard]] std::size_t on_control_read(std::span<const std::uint8_t> data);
+    void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
     void safe_shutdown();
     bool create_muxer();
     bool apply_tracks(const media_track_snapshot_ptr& tracks);
@@ -87,6 +94,7 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     track_id video_track_id_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
+    rtp_over_rtsp_t interleaved_{};
     std::string session_id_;
     bool playing_{};
     bool closed_{};

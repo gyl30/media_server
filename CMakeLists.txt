@@ -223,6 +223,10 @@ if(BUILD_TESTING)
     target_link_libraries(media_pipeline_tests PRIVATE media_core media_server_link_options)
     add_test(NAME media_pipeline_tests COMMAND media_pipeline_tests)
 
+    add_executable(ireader_rtcp_tests tests/ireader_rtcp_tests.cpp)
+    target_link_libraries(ireader_rtcp_tests PRIVATE ireader_media)
+    add_test(NAME ireader_rtcp_tests COMMAND ireader_rtcp_tests)
+
     add_executable(webrtc_signaling_tests tests/webrtc_signaling_tests.cpp)
     target_link_libraries(webrtc_signaling_tests PRIVATE media_core media_server_link_options)
     add_test(NAME webrtc_signaling_tests COMMAND webrtc_signaling_tests)

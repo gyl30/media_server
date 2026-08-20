@@ -19,6 +19,7 @@ extern "C"
 #include <array>
 #include <boost/url/parse.hpp>
 #include <charconv>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <random>
@@ -73,6 +74,11 @@ rtsp_output_tcp_session::rtsp_output_tcp_session(std::weak_ptr<rtsp_server_conne
 
 rtsp_output_tcp_session::~rtsp_output_tcp_session()
 {
+    if (interleaved_.data != nullptr)
+    {
+        std::free(interleaved_.data);
+        interleaved_.data = nullptr;
+    }
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
@@ -89,6 +95,8 @@ int rtsp_output_tcp_session::startup(rtsp_server_t* server,
     {
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
     }
+    interleaved_.onrtp = &rtsp_output_tcp_session::rtp_callback;
+    interleaved_.param = this;
 
     const auto result = on_setup(server, uri, session, transports, count);
     if (result != 0 || !std::ranges::any_of(tracks_, [](const auto& item) { return item.second.setup; }))
@@ -255,10 +263,53 @@ int rtsp_output_tcp_session::muxer_packet_callback(void* param, int pid, const v
     return static_cast<rtsp_output_tcp_session*>(param)->on_muxer_packet(pid, data, bytes);
 }
 
+void rtsp_output_tcp_session::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
+{
+    static_cast<rtsp_output_tcp_session*>(param)->on_rtp(channel, data, bytes);
+}
+
 std::size_t rtsp_output_tcp_session::on_control_read(std::span<const std::uint8_t> data)
 {
+    if (closed_ || data.empty())
+    {
+        return data.size();
+    }
+
+    if (interleaved_.state != 0 || data.front() == '$')
+    {
+        const auto* next = rtp_over_rtsp(&interleaved_, data.data(), data.data() + data.size());
+        if (next == data.data())
+        {
+            shutdown();
+            return data.size();
+        }
+        return static_cast<std::size_t>(next - data.data());
+    }
+
     const auto connection = connection_.lock();
     return connection ? connection->input(data) : data.size();
+}
+
+void rtsp_output_tcp_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
+{
+    if (muxer_ == nullptr || data == nullptr)
+    {
+        return;
+    }
+
+    for (const auto& item : tracks_)
+    {
+        const auto& state = item.second;
+        if (!state.setup || state.rtcp_channel != channel)
+        {
+            continue;
+        }
+        if (rtsp_muxer_onrtcp(muxer_, state.payload_index, data, static_cast<int>(bytes)) < 0)
+        {
+            shutdown();
+        }
+        return;
+    }
 }
 
 void rtsp_output_tcp_session::safe_shutdown()
@@ -272,6 +323,15 @@ void rtsp_output_tcp_session::safe_shutdown()
     reader_ = {};
     reader_cursor_.reset();
     track_revision_ = 0;
+    if (interleaved_.data != nullptr)
+    {
+        std::free(interleaved_.data);
+        interleaved_.data = nullptr;
+    }
+    interleaved_.capacity = 0;
+    interleaved_.bytes = 0;
+    interleaved_.length = 0;
+    interleaved_.state = 0;
     video_transcoder_.reset();
     video_track_id_ = 0;
     stream_.reset();
