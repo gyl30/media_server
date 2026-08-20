@@ -536,13 +536,15 @@ enum class stun_request_variant
     ice_controlled,
     missing_fingerprint,
     use_candidate_after_integrity,
+    attributes_after_integrity,
 };
 
 std::vector<std::uint8_t> make_stun_request(std::string_view username,
                                             std::string_view password,
                                             const std::array<std::uint8_t, 12>& transaction_id,
                                             bool use_candidate,
-                                            stun_request_variant variant = stun_request_variant::valid)
+                                            stun_request_variant variant = stun_request_variant::valid,
+                                            std::span<const std::uint16_t> extra_attributes = {})
 {
     std::vector<std::uint8_t> packet;
     append_u16(packet, 0x0001);
@@ -565,6 +567,13 @@ std::vector<std::uint8_t> make_stun_request(std::string_view username,
     {
         append_stun_attribute(packet, 0x0025, {});
     }
+    if (variant != stun_request_variant::attributes_after_integrity)
+    {
+        for (const auto type : extra_attributes)
+        {
+            append_stun_attribute(packet, type, {});
+        }
+    }
 
     set_stun_length(packet, packet.size() - 20U + 24U);
     const auto digest = stun_hmac(password, packet);
@@ -573,6 +582,13 @@ std::vector<std::uint8_t> make_stun_request(std::string_view username,
     if (use_candidate && variant == stun_request_variant::use_candidate_after_integrity)
     {
         append_stun_attribute(packet, 0x0025, {});
+    }
+    if (variant == stun_request_variant::attributes_after_integrity)
+    {
+        for (const auto type : extra_attributes)
+        {
+            append_stun_attribute(packet, type, {});
+        }
     }
 
     if (variant != stun_request_variant::missing_fingerprint)
@@ -651,6 +667,75 @@ void require_stun_success(std::span<const std::uint8_t> response, const std::arr
     require(response[0] == 0x01 && response[1] == 0x01, "stun binding success type");
     require(response[4] == 0x21 && response[5] == 0x12 && response[6] == 0xa4 && response[7] == 0x42, "stun response cookie");
     require(std::equal(transaction_id.begin(), transaction_id.end(), response.begin() + 8), "stun response transaction id");
+}
+
+void require_stun_error(std::span<const std::uint8_t> response,
+                        const std::array<std::uint8_t, 12>& transaction_id,
+                        int expected_code,
+                        std::span<const std::uint16_t> expected_unknown_attributes,
+                        std::string_view password)
+{
+    require(response.size() >= 20U, "stun error response size");
+    require(response[0] == 0x01 && response[1] == 0x11, "stun binding error type");
+    require(response[4] == 0x21 && response[5] == 0x12 && response[6] == 0xa4 && response[7] == 0x42, "stun error response cookie");
+    require(std::equal(transaction_id.begin(), transaction_id.end(), response.begin() + 8), "stun error response transaction id");
+    require(read_network_u16(response, 2U) == response.size() - 20U, "stun error response length");
+
+    int error_code = 0;
+    std::vector<std::uint16_t> unknown_attributes;
+    std::optional<std::size_t> message_integrity_offset;
+    std::optional<std::size_t> fingerprint_offset;
+    std::size_t offset = 20U;
+    while (offset + 4U <= response.size())
+    {
+        const auto type = read_network_u16(response, offset);
+        const auto length = static_cast<std::size_t>(read_network_u16(response, offset + 2U));
+        const auto value_offset = offset + 4U;
+        require(value_offset + length <= response.size(), "stun error attribute range");
+
+        if (type == 0x0009)
+        {
+            require(length >= 4U, "stun error code length");
+            error_code = static_cast<int>(response[value_offset + 2U] & 0x07U) * 100 + static_cast<int>(response[value_offset + 3U]);
+        }
+        else if (type == 0x000a)
+        {
+            require((length % 2U) == 0U, "stun unknown attributes length");
+            for (std::size_t index = 0; index < length; index += 2U)
+            {
+                unknown_attributes.push_back(read_network_u16(response, value_offset + index));
+            }
+        }
+        else if (type == 0x0008)
+        {
+            require(length == 20U && !message_integrity_offset.has_value(), "stun error message integrity");
+            message_integrity_offset = offset;
+        }
+        else if (type == 0x8028)
+        {
+            require(length == 4U && !fingerprint_offset.has_value(), "stun error fingerprint");
+            fingerprint_offset = offset;
+        }
+
+        offset = value_offset + length;
+        offset += (4U - (offset % 4U)) % 4U;
+    }
+
+    require(offset == response.size(), "stun error response attributes");
+    require(error_code == expected_code, "stun error response code");
+    require(unknown_attributes.size() == expected_unknown_attributes.size() &&
+                std::equal(unknown_attributes.begin(), unknown_attributes.end(), expected_unknown_attributes.begin()),
+            "stun error unknown attributes");
+    require(message_integrity_offset.has_value(), "stun error message integrity present");
+    require(fingerprint_offset.has_value() && *fingerprint_offset + 8U == response.size(), "stun error fingerprint present");
+
+    std::vector<std::uint8_t> integrity_input(response.begin(), response.begin() + static_cast<std::ptrdiff_t>(*message_integrity_offset));
+    set_stun_length(integrity_input, *message_integrity_offset - 20U + 24U);
+    const auto digest = stun_hmac(password, integrity_input);
+    require(std::equal(digest.begin(), digest.end(), response.begin() + static_cast<std::ptrdiff_t>(*message_integrity_offset + 4U)),
+            "stun error message integrity valid");
+    require(stun_fingerprint(response.first(*fingerprint_offset)) == read_network_u32(response, *fingerprint_offset + 4U),
+            "stun error fingerprint valid");
 }
 
 media_track make_video_track()
@@ -2138,20 +2223,22 @@ void test_stun_ice_connectivity_check_contract()
 
     const auto valid = make_stun_request(username, password, transaction_id, true);
     const auto parsed = parse_stun_binding_request(valid, username, password);
-    require(parsed.has_value() && parsed->use_candidate, "stun valid ice connectivity check");
+    require(parsed.has_value() && parsed->priority && parsed->use_candidate && parsed->ice_controlling && !parsed->ice_controlled,
+            "stun valid ice connectivity check");
 
-    require(!parse_stun_binding_request(
-                 make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_priority), username, password)
-                 .has_value(),
-            "stun reject missing priority");
-    require(!parse_stun_binding_request(
-                 make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_ice_controlling), username, password)
-                 .has_value(),
-            "stun reject missing ice controlling");
-    require(!parse_stun_binding_request(
-                 make_stun_request(username, password, transaction_id, false, stun_request_variant::ice_controlled), username, password)
-                 .has_value(),
-            "stun reject ice controlled peer");
+    const auto missing_priority =
+        parse_stun_binding_request(make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_priority), username, password);
+    require(missing_priority.has_value() && !missing_priority->priority, "stun parse missing priority");
+
+    const auto missing_ice_controlling = parse_stun_binding_request(
+        make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_ice_controlling), username, password);
+    require(missing_ice_controlling.has_value() && !missing_ice_controlling->ice_controlling && !missing_ice_controlling->ice_controlled,
+            "stun parse missing ice role");
+
+    const auto ice_controlled =
+        parse_stun_binding_request(make_stun_request(username, password, transaction_id, false, stun_request_variant::ice_controlled), username, password);
+    require(ice_controlled.has_value() && ice_controlled->ice_controlled && !ice_controlled->ice_controlling, "stun parse ice controlled peer");
+
     require(!parse_stun_binding_request(
                  make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_fingerprint), username, password)
                  .has_value(),
@@ -2160,6 +2247,89 @@ void test_stun_ice_connectivity_check_contract()
                  make_stun_request(username, password, transaction_id, true, stun_request_variant::use_candidate_after_integrity), username, password)
                  .has_value(),
             "stun reject unauthenticated use candidate");
+
+    constexpr std::array<std::uint16_t, 2> required_attributes{0x1234, 0x2345};
+    const auto unknown_required = parse_stun_binding_request(
+        make_stun_request(username, password, transaction_id, false, stun_request_variant::valid, required_attributes), username, password);
+    require(unknown_required.has_value() && unknown_required->unknown_required_attributes ==
+                                                std::vector<std::uint16_t>(required_attributes.begin(), required_attributes.end()),
+            "stun collect unknown required attributes");
+
+    constexpr std::array<std::uint16_t, 1> optional_attributes{0x9234};
+    const auto unknown_optional = parse_stun_binding_request(
+        make_stun_request(username, password, transaction_id, false, stun_request_variant::valid, optional_attributes), username, password);
+    require(unknown_optional.has_value() && unknown_optional->unknown_required_attributes.empty(), "stun ignore unknown optional attribute");
+
+    const auto after_integrity = parse_stun_binding_request(
+        make_stun_request(username, password, transaction_id, false, stun_request_variant::attributes_after_integrity, required_attributes),
+        username,
+        password);
+    require(after_integrity.has_value() && after_integrity->unknown_required_attributes.empty(), "stun ignore attributes after message integrity");
+}
+
+void test_whep_stun_unknown_attribute_contract()
+{
+    boost::asio::io_context io;
+    auto stream = std::make_shared<media_stream>("live/stun-unknown", io.get_executor());
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "stun unknown initial tracks");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "stun unknown parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "stun unknown certificate");
+
+    auto session = std::make_shared<whep_session>(io.get_executor(), stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+    require(session->startup(*offer) == whep_session_startup_error::none, "stun unknown session startup");
+
+    const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
+    const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
+    require(!local_ufrag.empty() && !local_pwd.empty(), "stun unknown local credentials");
+
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
+    const auto username = local_ufrag + ":remotevideo";
+
+    constexpr std::array<std::uint16_t, 1> single_unknown{0x1234};
+    const std::array<std::uint8_t, 12> single_id{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    const auto single_response =
+        exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, single_id, true, stun_request_variant::valid, single_unknown));
+    require_stun_error(single_response, single_id, 420, single_unknown, local_pwd);
+    require(!session->ice_connected(), "stun unknown does not nominate");
+
+    constexpr std::array<std::uint16_t, 2> multiple_unknown{0x1234, 0x2345};
+    const std::array<std::uint8_t, 12> multiple_id{2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
+    const auto multiple_response = exchange_stun(
+        io, client, server_endpoint, make_stun_request(username, local_pwd, multiple_id, false, stun_request_variant::valid, multiple_unknown));
+    require_stun_error(multiple_response, multiple_id, 420, multiple_unknown, local_pwd);
+
+    constexpr std::array<std::uint16_t, 1> optional_unknown{0x9234};
+    const std::array<std::uint8_t, 12> optional_id{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
+    require_stun_success(
+        exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, optional_id, false, stun_request_variant::valid, optional_unknown)),
+        optional_id);
+    require(!session->ice_connected(), "stun optional unknown does not nominate");
+
+    const std::array<std::uint8_t, 12> role_conflict_id{4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
+    const auto role_conflict_response = exchange_stun(
+        io,
+        client,
+        server_endpoint,
+        make_stun_request(username, local_pwd, role_conflict_id, false, stun_request_variant::ice_controlled, single_unknown));
+    require_stun_error(role_conflict_response, role_conflict_id, 420, single_unknown, local_pwd);
+
+    const std::array<std::uint8_t, 12> unauthenticated_id{5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5};
+    const auto unauthenticated_request =
+        make_stun_request(username, "wrongpassword1234567890", unauthenticated_id, false, stun_request_variant::valid, single_unknown);
+    static_cast<void>(client.send_to(boost::asio::buffer(unauthenticated_request), server_endpoint));
+    io.run_for(std::chrono::milliseconds(100));
+    io.restart();
+    boost::system::error_code available_error;
+    require(client.available(available_error) == 0U && !available_error, "stun unknown unauthenticated request has no response");
+
+    session->shutdown();
+    drain_io(io);
+    boost::system::error_code error;
+    client.close(error);
 }
 
 void test_whep_ice_lite()
@@ -2559,6 +2729,8 @@ int main()
     std::cout << "[pass] whep_ice_activity_timeout\n";
     media_server::test_stun_ice_connectivity_check_contract();
     std::cout << "[pass] stun_ice_connectivity_check_contract\n";
+    media_server::test_whep_stun_unknown_attribute_contract();
+    std::cout << "[pass] whep_stun_unknown_attribute_contract\n";
     media_server::test_whep_ice_lite();
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();
