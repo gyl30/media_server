@@ -39,6 +39,7 @@ struct webrtc_media_offer
     bool bundle_only{};
     std::optional<int> mid_extension_id;
     std::optional<int> max_packet_time_ms;
+    std::vector<std::string> formats;
     std::vector<int> payload_types;
     std::vector<webrtc_codec_offer> codecs;
 };

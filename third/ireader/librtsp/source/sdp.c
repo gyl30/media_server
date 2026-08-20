@@ -1576,6 +1576,16 @@ int sdp_media_formats(struct sdp_t* sdp, int media, int *formats, int count)
 	return (int)m->fmt.count;
 }
 
+const char* sdp_media_format(struct sdp_t* sdp, int media, int format)
+{
+	struct sdp_media *m;
+	m = sdp_get_media(sdp, media);
+	if(!m || format < 0 || format >= m->fmt.count)
+		return NULL;
+
+	return format < N_MEDIA_FORMAT ? m->fmt.formats[format] : m->fmt.ptr[format-N_MEDIA_FORMAT];
+}
+
 int sdp_media_get_connection(sdp_t* sdp, int media, const char** network, const char** addrtype, const char** address)
 {
     struct sdp_media *m;
