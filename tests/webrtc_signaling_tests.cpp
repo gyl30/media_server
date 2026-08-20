@@ -986,6 +986,24 @@ void test_http_head_response_contract()
     require(whep_head.body().empty(), "whep invalid resource head body");
 }
 
+void test_http_method_contract()
+{
+    whep_http_test_peer peer;
+
+    const auto hls_post = peer.request(boost::beast::http::verb::post, "/hls/live/camera/index.m3u8");
+    require(hls_post.result() == boost::beast::http::status::method_not_allowed, "http hls post status");
+    require(hls_post[boost::beast::http::field::allow] == "GET", "http hls post allow");
+
+    const auto flv_post = peer.request(boost::beast::http::verb::post, "/live/camera.flv");
+    require(flv_post.result() == boost::beast::http::status::method_not_allowed, "http flv post status");
+    require(flv_post[boost::beast::http::field::allow] == "GET", "http flv post allow");
+
+    const auto hls_head = peer.request(boost::beast::http::verb::head, "/hls/live/camera/index.m3u8");
+    require(hls_head.result() == boost::beast::http::status::method_not_allowed, "http hls head status");
+    require(hls_head[boost::beast::http::field::allow] == "GET", "http hls head allow");
+    require(hls_head.body().empty(), "http hls head body");
+}
+
 void test_whep_http_cors()
 {
     whep_http_test_peer peer;
@@ -2899,6 +2917,8 @@ int main()
     std::cout << "[pass] whep_self_owned_lifecycle\n";
     media_server::test_http_head_response_contract();
     std::cout << "[pass] http_head_response_contract\n";
+    media_server::test_http_method_contract();
+    std::cout << "[pass] http_method_contract\n";
     media_server::test_whep_http_cors();
     std::cout << "[pass] whep_http_cors\n";
     media_server::test_whep_multi_session_isolation();
