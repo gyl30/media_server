@@ -944,12 +944,22 @@ void test_whep_http_cors()
     require_whep_options(peer.options("/whep/live/camera", "POST"), "GET, HEAD, POST, OPTIONS", true);
 
     const auto endpoint_get = peer.request(boost::beast::http::verb::get, "/whep/live/camera");
-    require(endpoint_get.result() == boost::beast::http::status::no_content && endpoint_get.body().empty(), "whep endpoint get");
+    require(endpoint_get.result() == boost::beast::http::status::ok, "whep endpoint get status");
+    require(endpoint_get[boost::beast::http::field::content_type] == "application/sdp", "whep endpoint get content type");
+    require(endpoint_get[boost::beast::http::field::content_length] == "0", "whep endpoint get content length");
+    require(endpoint_get.body().empty(), "whep endpoint get body");
 
     const auto endpoint_head = peer.request(boost::beast::http::verb::head, "/whep/live/camera");
-    require(endpoint_head.result() == boost::beast::http::status::ok, "whep endpoint head status");
-    require(endpoint_head[boost::beast::http::field::content_type] == "application/sdp", "whep endpoint head content type");
-    require(endpoint_head[boost::beast::http::field::content_length] == "0", "whep endpoint head content length");
+    require(endpoint_head.result() == endpoint_get.result(), "whep endpoint head status");
+    require(endpoint_head[boost::beast::http::field::content_type] == endpoint_get[boost::beast::http::field::content_type],
+            "whep endpoint head content type");
+    require(endpoint_head[boost::beast::http::field::content_length] == endpoint_get[boost::beast::http::field::content_length],
+            "whep endpoint head content length");
+    require(endpoint_head[boost::beast::http::field::cache_control] == endpoint_get[boost::beast::http::field::cache_control],
+            "whep endpoint head cache control");
+    require(endpoint_head[boost::beast::http::field::access_control_allow_origin] ==
+                endpoint_get[boost::beast::http::field::access_control_allow_origin],
+            "whep endpoint head allow origin");
     require(endpoint_head.body().empty(), "whep endpoint head body");
 
     const auto endpoint_delete = peer.remove("/whep/live/camera");
@@ -976,7 +986,13 @@ void test_whep_http_cors()
     require(session_get.result() == boost::beast::http::status::no_content && session_get.body().empty(), "whep session get");
 
     const auto session_head = peer.request(boost::beast::http::verb::head, location);
-    require(session_head.result() == boost::beast::http::status::no_content && session_head.body().empty(), "whep session head");
+    require(session_head.result() == session_get.result(), "whep session head status");
+    require(session_head[boost::beast::http::field::cache_control] == session_get[boost::beast::http::field::cache_control],
+            "whep session head cache control");
+    require(session_head[boost::beast::http::field::access_control_allow_origin] ==
+                session_get[boost::beast::http::field::access_control_allow_origin],
+            "whep session head allow origin");
+    require(session_head.body().empty(), "whep session head body");
 
     const auto session_post = peer.post(location);
     require(session_post.result() == boost::beast::http::status::method_not_allowed, "whep session post status");
