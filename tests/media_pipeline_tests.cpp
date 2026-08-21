@@ -3846,7 +3846,6 @@ void test_rtsp_publish_server_contract()
             "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
             "a=control:" + handoff_video + "\r\n"
             "m=audio 0 RTP/AVP 8\r\n"
-            "a=rtpmap:8 PCMA/8000\r\n"
             "a=control:" + handoff_audio + "\r\n";
         boost::asio::write(handoff,
                            boost::asio::buffer("ANNOUNCE " + handoff_base + " RTSP/1.0\r\nCSeq: 100\r\nContent-Type: application/sdp\r\nContent-Length: " +
@@ -3902,8 +3901,7 @@ void test_rtsp_publish_server_contract()
             "a=rtpmap:96 H264/90000\r\n"
             "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
             "a=control:" + video + "\r\n"
-            "m=audio 0 RTP/AVP 8\r\n"
-            "a=rtpmap:8 PCMA/8000\r\n"
+            "m=audio 0 RTP/AVP 0\r\n"
             "a=control:" + audio + "\r\n";
         const auto mixed_request = [&](std::string value)
         {
