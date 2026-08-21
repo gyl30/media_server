@@ -15,7 +15,7 @@ tcp_listener::tcp_listener(io_context_pool& workers, std::uint16_t port)
 {
 }
 
-boost::system::error_code tcp_listener::startup(accept_handler handler)
+boost::system::error_code tcp_listener::startup(accept_handler handler, std::size_t accept_limit)
 {
     if (started_)
     {
@@ -49,7 +49,10 @@ boost::system::error_code tcp_listener::startup(accept_handler handler)
 
     started_ = true;
     handler_ = std::move(handler);
-    accept_next();
+    accept_limit_ = accept_limit;
+    accepted_count_ = 0;
+    const auto self = shared_from_this();
+    boost::asio::post(acceptor_.get_executor(), [self]() { self->accept_next(); });
     return {};
 }
 
@@ -86,12 +89,25 @@ void tcp_listener::accept_next()
             acceptor_.get_executor(),
             [self](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
             {
-                if (!error && self->handler_)
+                if (!error)
                 {
+                    ++self->accepted_count_;
                     auto handler = self->handler_;
-                    boost::asio::dispatch(socket.get_executor(), [handler = std::move(handler), socket = std::move(socket)]() mutable {
-                        handler(std::move(socket));
-                    });
+                    if (self->accept_limit_ != 0 && self->accepted_count_ >= self->accept_limit_)
+                    {
+                        self->safe_shutdown();
+                    }
+                    else
+                    {
+                        self->accept_next();
+                    }
+                    if (handler)
+                    {
+                        boost::asio::dispatch(socket.get_executor(), [handler = std::move(handler), socket = std::move(socket)]() mutable {
+                            handler(std::move(socket));
+                        });
+                    }
+                    return;
                 }
                 if (self->started_)
                 {
