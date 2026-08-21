@@ -10,16 +10,24 @@
 namespace media_server
 {
 
-struct gb28181_udp_description
+enum class gb28181_transport
 {
-    boost::asio::ip::address bind_address;
+    udp,
+    tcp_active,
+    tcp_passive,
+};
+
+struct gb28181_description
+{
+    gb28181_transport transport{gb28181_transport::udp};
+    boost::asio::ip::address address;
     std::uint16_t rtp_port{};
     std::uint16_t rtcp_port{};
     std::uint8_t payload_type{};
     std::uint32_t ssrc{};
 };
 
-[[nodiscard]] std::optional<gb28181_udp_description> parse_gb28181_udp_sdp(std::string_view text);
+[[nodiscard]] std::optional<gb28181_description> parse_gb28181_sdp(std::string_view text);
 
 }    // namespace media_server
 
