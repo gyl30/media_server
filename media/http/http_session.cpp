@@ -22,8 +22,15 @@ http_session::http_session(boost::asio::ip::tcp::socket socket,
                            stream_registry& registry,
                            hls_service& hls,
                            whep_service& whep,
+                           gb28181_service& gb28181,
                            output_video_config video)
-    : stream_(std::move(socket)), registry_(registry), hls_(hls), whep_(whep), video_config_(video), hls_wait_timer_(stream_.get_executor())
+    : stream_(std::move(socket)),
+      registry_(registry),
+      hls_(hls),
+      whep_(whep),
+      gb28181_(gb28181),
+      video_config_(video),
+      hls_wait_timer_(stream_.get_executor())
 {
 }
 
@@ -74,6 +81,11 @@ void http_session::handle_request()
     if (segments.front() == "whep")
     {
         handle_whep(segments);
+        return;
+    }
+    if (segments.front() == "gb28181")
+    {
+        handle_gb28181(segments);
         return;
     }
 
@@ -183,6 +195,56 @@ void http_session::handle_whep_delete(const std::vector<std::string>& segments)
         return;
     }
     send_whep_empty_response(boost::beast::http::status::no_content);
+}
+
+void http_session::handle_gb28181(const std::vector<std::string>& segments)
+{
+    if (segments.size() < 2)
+    {
+        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
+        return;
+    }
+
+    const auto stream_name = join_segments(segments, 1, segments.size());
+    if (request_.method() == boost::beast::http::verb::post)
+    {
+        const auto content_type = request_[boost::beast::http::field::content_type];
+        if (!boost::beast::iequals(content_type, "application/sdp"))
+        {
+            send_text_response(boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
+            return;
+        }
+
+        switch (gb28181_.create(stream_.get_executor(), stream_name, request_.body()))
+        {
+            case gb28181_create_error::none:
+                send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
+                return;
+            case gb28181_create_error::duplicate_stream:
+            case gb28181_create_error::stream_conflict:
+                send_text_response(boost::beast::http::status::conflict, "text/plain", "stream already exists\n");
+                return;
+            case gb28181_create_error::invalid_sdp:
+                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid or unsupported gb28181 sdp\n");
+                return;
+            case gb28181_create_error::internal_error:
+                send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "gb28181 session create failed\n");
+                return;
+        }
+    }
+
+    if (request_.method() == boost::beast::http::verb::delete_)
+    {
+        if (!gb28181_.remove(stream_name))
+        {
+            send_text_response(boost::beast::http::status::not_found, "text/plain", "gb28181 session not found\n");
+            return;
+        }
+        send_text_response(boost::beast::http::status::no_content, "text/plain", {});
+        return;
+    }
+
+    send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "POST, DELETE");
 }
 
 void http_session::handle_flv(const boost::urls::url_view& target)

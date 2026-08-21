@@ -4,6 +4,7 @@
 #include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_service.h"
 #include "media/hls/hls_output.h"
 #include "media/hls/hls_service.h"
 #include "media/net/tcp_connection.h"
@@ -2833,6 +2834,7 @@ void test_http_flv_client_disconnect()
     stream_registry registry;
     hls_service hls(registry);
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
+    gb28181_service gb28181(registry);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-disconnect", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv disconnect track");
@@ -2841,7 +2843,7 @@ void test_http_flv_client_disconnect()
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
-    auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep);
+    auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep, gb28181);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -2867,6 +2869,7 @@ void test_http_flv_stream_end_during_write()
     stream_registry registry;
     hls_service hls(registry);
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
+    gb28181_service gb28181(registry);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-end-write", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv end write track");
@@ -2875,7 +2878,7 @@ void test_http_flv_stream_end_during_write()
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
-    auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep);
+    auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep, gb28181);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -2900,6 +2903,7 @@ void test_http_flv_pending_bootstrap_end()
     stream_registry registry;
     hls_service hls(registry);
     whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
+    gb28181_service gb28181(registry);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-pending-end", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv pending end track");
@@ -2908,7 +2912,7 @@ void test_http_flv_pending_bootstrap_end()
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
-    auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep);
+    auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep, gb28181);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();

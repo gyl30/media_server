@@ -588,6 +588,27 @@ int rtsp_demuxer_input(struct rtsp_demuxer_t* demuxer, const void* data, int byt
     return 0;
 }
 
+int rtsp_demuxer_set_ps_notify(struct rtsp_demuxer_t* demuxer, rtsp_demuxer_onstream onstream, void* param)
+{
+    int i, count;
+    struct ps_demuxer_notify_t notify;
+    if (!demuxer || !onstream)
+        return -EINVAL;
+
+    memset(&notify, 0, sizeof(notify));
+    notify.onstream = onstream;
+    count = 0;
+    for (i = 0; i < demuxer->count; i++)
+    {
+        if (demuxer->pt[i].ps)
+        {
+            ps_demuxer_set_notify(demuxer->pt[i].ps, &notify, param);
+            ++count;
+        }
+    }
+    return count > 0 ? 0 : -ENOENT;
+}
+
 int rtsp_demuxer_set_info(struct rtsp_demuxer_t* demuxer, const char* cname, const char* name)
 {
     int i, r;

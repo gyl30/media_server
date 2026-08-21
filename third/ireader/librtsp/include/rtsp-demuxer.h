@@ -12,6 +12,7 @@ struct rtsp_demuxer_t;
 
 /// @param[in] pkt rtp packet flags, RTP_PAYLOAD_FLAG_PACKET_xxx, see more @rtp-payload.h
 typedef int (*rtsp_demuxer_onpacket)(void* param, struct avpacket_t* pkt);
+typedef void (*rtsp_demuxer_onstream)(void* param, int stream, int codecid, const void* extra, int bytes, int finish);
 
 /// @param[in] stream user defined stream id, copy to rtsp_demuxer_onpacket pkt->stream->stream
 /// @param[in] jitter rtp reorder jitter(ms), e.g. 200(ms)
@@ -32,6 +33,7 @@ int rtsp_demuxer_rtpinfo(struct rtsp_demuxer_t* demuxer, uint16_t seq, uint32_t 
 int rtsp_demuxer_input(struct rtsp_demuxer_t* demuxer, const void* data, int bytes);
 
 int rtsp_demuxer_set_info(struct rtsp_demuxer_t* demuxer, const char* cname, const char* name);
+int rtsp_demuxer_set_ps_notify(struct rtsp_demuxer_t* demuxer, rtsp_demuxer_onstream onstream, void* param);
 
 /// Get RTCP packet
 /// @return >0-rtcp report length, 0-don't need send rtcp

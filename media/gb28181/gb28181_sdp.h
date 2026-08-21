@@ -1,0 +1,26 @@
+#ifndef MEDIA_GB28181_GB28181_SDP_H
+#define MEDIA_GB28181_GB28181_SDP_H
+
+#include <boost/asio/ip/address.hpp>
+
+#include <cstdint>
+#include <optional>
+#include <string_view>
+
+namespace media_server
+{
+
+struct gb28181_udp_description
+{
+    boost::asio::ip::address bind_address;
+    std::uint16_t rtp_port{};
+    std::uint16_t rtcp_port{};
+    std::uint8_t payload_type{};
+    std::uint32_t ssrc{};
+};
+
+[[nodiscard]] std::optional<gb28181_udp_description> parse_gb28181_udp_sdp(std::string_view text);
+
+}    // namespace media_server
+
+#endif

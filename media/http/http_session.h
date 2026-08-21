@@ -3,6 +3,7 @@
 
 #include "media/codec/output_video_config.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_service.h"
 #include "media/hls/hls_service.h"
 #include "media/http/http_flv_output.h"
 #include "media/webrtc/whep_service.h"
@@ -25,7 +26,7 @@ namespace media_server
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
-    http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep, output_video_config video = {});
+    http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep, gb28181_service& gb28181, output_video_config video = {});
 
     void startup();
     void shutdown();
@@ -37,6 +38,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void handle_flv(const boost::urls::url_view& target);
     void handle_hls(const boost::urls::url_view& target);
     void handle_whep(const std::vector<std::string>& segments);
+    void handle_gb28181(const std::vector<std::string>& segments);
     void handle_whep_post(const std::vector<std::string>& segments);
     void handle_whep_delete(const std::vector<std::string>& segments);
     void wait_hls_playlist(std::string stream_name);
@@ -68,6 +70,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     stream_registry& registry_;
     hls_service& hls_;
     whep_service& whep_;
+    gb28181_service& gb28181_;
     output_video_config video_config_;
     boost::asio::steady_timer hls_wait_timer_;
     std::chrono::steady_clock::time_point hls_wait_deadline_{};
