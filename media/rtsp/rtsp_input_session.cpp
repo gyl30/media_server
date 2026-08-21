@@ -196,7 +196,14 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
         std::optional<rtsp_input_track_description> selected;
         for (int format_index = 0; format_index < description.avformat_count; ++format_index)
         {
-            const auto& format = description.avformats[static_cast<std::size_t>(format_index)];
+            auto format = description.avformats[static_cast<std::size_t>(format_index)];
+            if (format.rate == 0)
+            {
+                if (const auto* profile = rtp_profile_find(format.fmt))
+                {
+                    format.rate = profile->frequency;
+                }
+            }
             auto track = track_from_format(description, format);
             if (!track)
             {
