@@ -10,7 +10,6 @@
 #include <memory>
 #include <span>
 #include <string>
-#include <vector>
 
 extern "C"
 {
@@ -39,7 +38,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     explicit rtsp_server_connection(std::shared_ptr<tcp_connection> connection);
     ~rtsp_server_connection();
 
-    bool startup(std::shared_ptr<const rtsp_server_connection_handler> handler, std::vector<std::uint8_t> initial_data = {});
+    bool startup(std::shared_ptr<const rtsp_server_connection_handler> handler);
     void set_handler(std::shared_ptr<const rtsp_server_connection_handler> handler);
     [[nodiscard]] std::size_t input(std::span<const std::uint8_t> data);
     void write(std::span<const std::uint8_t> data);

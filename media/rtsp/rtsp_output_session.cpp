@@ -51,14 +51,21 @@ rtsp_output_session::rtsp_output_session(std::weak_ptr<rtsp_server_connection> c
 {
 }
 
-void rtsp_output_session::startup(std::vector<std::uint8_t> initial_data)
+void rtsp_output_session::startup()
 {
     const auto connection = connection_.lock();
     if (closed_ || !connection)
     {
         return;
     }
+    if (!connection->startup(make_handler()))
+    {
+        connection->shutdown();
+    }
+}
 
+std::shared_ptr<const rtsp_server_connection_handler> rtsp_output_session::make_handler()
+{
     const auto self = shared_from_this();
     auto handler = std::make_shared<rtsp_server_connection_handler>();
     handler->on_read = [self](std::span<const std::uint8_t> data) { return self->on_read(data); };
@@ -75,11 +82,7 @@ void rtsp_output_session::startup(std::vector<std::uint8_t> initial_data)
     handler->on_teardown = [self](rtsp_server_t* server, const char*, const char* session) { return self->on_teardown(server, session); };
     handler->on_get_parameter = [](rtsp_server_t* server, const char*, const char*, const void*, int)
     { return rtsp_server_reply_get_parameter(server, 200, nullptr, 0); };
-
-    if (!connection->startup(std::move(handler), std::move(initial_data)))
-    {
-        connection->shutdown();
-    }
+    return handler;
 }
 
 void rtsp_output_session::shutdown()
