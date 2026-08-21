@@ -7,6 +7,7 @@
 #include "media/hls/hls_output.h"
 #include "media/hls/hls_service.h"
 #include "media/net/tcp_connection.h"
+#include "media/net/tcp_connector.h"
 #include "media/net/io_context_pool.h"
 #include "media/net/tcp_listener.h"
 #include "media/net/udp_socket.h"
@@ -2127,6 +2128,102 @@ void test_tcp_listener_startup_error()
     require(static_cast<bool>(listener->startup([](boost::asio::ip::tcp::socket) {})), "tcp listener reports bind failure");
 }
 
+void test_tcp_connector_successful_connect()
+{
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port());
+    std::optional<boost::asio::ip::tcp::socket> client;
+    std::optional<boost::asio::ip::tcp::socket> server;
+    int completion_count = 0;
+
+    acceptor.async_accept(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        {
+            require(!error, "tcp connector server accept");
+            server.emplace(std::move(socket));
+        });
+    auto connector = std::make_shared<tcp_connector>(io.get_executor());
+    connector->startup(endpoint,
+                       std::chrono::seconds(2),
+                       [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+                       {
+                           ++completion_count;
+                           require(!error, "tcp connector connect success");
+                           client.emplace(std::move(socket));
+                       });
+    io.run();
+
+    require(completion_count == 1, "tcp connector success completes once");
+    require(client && server && client->is_open() && server->is_open(), "tcp connector transfers connected socket");
+
+    const std::array<std::uint8_t, 4> outbound{1, 2, 3, 4};
+    const std::array<std::uint8_t, 3> inbound{5, 6, 7};
+    std::array<std::uint8_t, outbound.size()> server_received{};
+    std::array<std::uint8_t, inbound.size()> client_received{};
+    boost::asio::write(*client, boost::asio::buffer(outbound));
+    boost::asio::read(*server, boost::asio::buffer(server_received));
+    boost::asio::write(*server, boost::asio::buffer(inbound));
+    boost::asio::read(*client, boost::asio::buffer(client_received));
+    require(server_received == outbound && client_received == inbound, "tcp connector transferred socket bidirectional io");
+}
+
+void test_tcp_connector_connection_refused()
+{
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor reserved(io);
+    reserved.open(boost::asio::ip::tcp::v4());
+    reserved.bind({boost::asio::ip::address_v4::loopback(), 0});
+    const auto endpoint = reserved.local_endpoint();
+    int completion_count = 0;
+    boost::system::error_code connect_error;
+    const auto started_at = std::chrono::steady_clock::now();
+
+    auto connector = std::make_shared<tcp_connector>(io.get_executor());
+    connector->startup(endpoint,
+                       std::chrono::seconds(5),
+                       [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+                       {
+                           ++completion_count;
+                           connect_error = error;
+                           require(!socket.is_open(), "tcp connector closes refused socket");
+                       });
+    io.run();
+
+    require(completion_count == 1, "tcp connector refusal completes once");
+    require(connect_error && connect_error != boost::asio::error::timed_out, "tcp connector preserves refused error");
+    require(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(2), "tcp connector refusal does not wait for timeout");
+}
+
+void test_tcp_connector_shutdown_lifecycle()
+{
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port());
+    int completion_count = 0;
+    boost::system::error_code completion_error;
+    auto connector = std::make_shared<tcp_connector>(io.get_executor());
+    const std::weak_ptr<tcp_connector> weak_connector = connector;
+    connector->startup(endpoint,
+                       std::chrono::seconds(5),
+                       [&](boost::system::error_code error, boost::asio::ip::tcp::socket)
+                       {
+                           ++completion_count;
+                           completion_error = error;
+                       });
+    connector->shutdown();
+    connector->shutdown();
+    connector->shutdown();
+    connector.reset();
+    require(!weak_connector.expired(), "tcp connector shutdown keeps self until owner cleanup");
+
+    io.run();
+
+    require(completion_count <= 1, "tcp connector shutdown never duplicates completion");
+    require(completion_count == 0 || !completion_error, "tcp connector queued success may precede shutdown");
+    require(weak_connector.expired(), "tcp connector shutdown releases pending operations");
+}
+
 
 void test_tcp_connection_shutdown_lifecycle()
 {
@@ -2417,11 +2514,243 @@ void test_tcp_listener_worker_affinity()
     require(threads[0] != threads[1], "tcp listener assigns different workers");
 }
 
+void test_tcp_listener_unlimited_accepts()
+{
+    io_context_pool workers(1);
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    const auto port = probe.local_endpoint().port();
+    probe.close();
+
+    int accept_count = 0;
+    auto listener = std::make_shared<tcp_listener>(workers, port);
+    require(!listener->startup(
+                [&](boost::asio::ip::tcp::socket socket)
+                {
+                    ++accept_count;
+                    boost::system::error_code error;
+                    socket.close(error);
+                    if (accept_count == 3)
+                    {
+                        listener->shutdown();
+                        workers.release_work();
+                    }
+                },
+                0),
+            "tcp listener unlimited startup");
+
+    boost::asio::io_context client_io;
+    std::array<boost::asio::ip::tcp::socket, 3> clients{boost::asio::ip::tcp::socket(client_io),
+                                                        boost::asio::ip::tcp::socket(client_io),
+                                                        boost::asio::ip::tcp::socket(client_io)};
+    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
+    for (auto& client : clients)
+    {
+        client.connect(endpoint);
+    }
+
+    workers.run();
+    require(accept_count == 3, "tcp listener unlimited accepts all clients");
+}
+
+void test_tcp_listener_single_accept_limit()
+{
+    io_context_pool workers(1);
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    const auto port = probe.local_endpoint().port();
+    probe.close();
+
+    int accept_count = 0;
+    std::array<std::uint8_t, 4> received{};
+    auto listener = std::make_shared<tcp_listener>(workers, port);
+    const std::weak_ptr<tcp_listener> weak_listener = listener;
+    require(!listener->startup(
+                [&](boost::asio::ip::tcp::socket socket)
+                {
+                    ++accept_count;
+                    boost::asio::read(socket, boost::asio::buffer(received));
+                    workers.release_work();
+                },
+                1),
+            "tcp listener single startup");
+
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::socket first(client_io);
+    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
+    first.connect(endpoint);
+    const std::array<std::uint8_t, 4> payload{1, 3, 5, 7};
+    boost::asio::write(first, boost::asio::buffer(payload));
+
+    workers.run();
+    require(accept_count == 1 && received == payload, "tcp listener single transfers final socket");
+
+    boost::asio::ip::tcp::socket second(client_io);
+    boost::system::error_code second_error;
+    second.connect(endpoint, second_error);
+    require(static_cast<bool>(second_error), "tcp listener single stops listening before handler");
+    require(accept_count == 1, "tcp listener single never invokes second handler");
+
+    listener->shutdown();
+    listener->shutdown();
+    listener.reset();
+    workers.context(0).restart();
+    workers.run();
+    require(weak_listener.expired(), "tcp listener single shutdown remains idempotent after limit");
+}
+
+void test_tcp_listener_dynamic_startup()
+{
+    io_context_pool workers(2);
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    const auto port = probe.local_endpoint().port();
+    probe.close();
+
+    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
+    const std::array<std::uint8_t, 4> request{2, 4, 6, 8};
+    const std::array<std::uint8_t, 3> response{1, 3, 5};
+    std::array<std::uint8_t, request.size()> server_received{};
+    std::array<std::uint8_t, response.size()> client_received{};
+    boost::system::error_code startup_error;
+    boost::system::error_code first_connect_error;
+    boost::system::error_code client_write_error;
+    boost::system::error_code client_read_error;
+    boost::system::error_code second_connect_error;
+    boost::system::error_code server_read_error;
+    boost::system::error_code server_write_error;
+    std::thread::id startup_thread;
+    std::thread::id accept_thread;
+    int accept_count = 0;
+    bool timed_out = false;
+    bool finished = false;
+
+    auto listener = std::make_shared<tcp_listener>(workers, port);
+    auto first = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0));
+    auto second = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0));
+    boost::asio::steady_timer watchdog(workers.context(0));
+    const std::function<void()> finish = [&]()
+    {
+        if (finished)
+        {
+            return;
+        }
+        finished = true;
+        watchdog.cancel();
+        listener->shutdown();
+        listener->shutdown();
+        workers.release_work();
+    };
+    watchdog.expires_after(std::chrono::seconds(5));
+    watchdog.async_wait(
+        [&](const boost::system::error_code& error)
+        {
+            if (error)
+            {
+                return;
+            }
+            timed_out = true;
+            boost::system::error_code ignored;
+            first->close(ignored);
+            second->close(ignored);
+            finish();
+        });
+    boost::asio::post(
+        workers.context(1),
+        [&]()
+        {
+            startup_thread = std::this_thread::get_id();
+            startup_error = listener->startup(
+                [&](boost::asio::ip::tcp::socket socket)
+                {
+                    accept_thread = std::this_thread::get_id();
+                    ++accept_count;
+                    auto server = std::make_shared<boost::asio::ip::tcp::socket>(std::move(socket));
+                    boost::asio::async_read(
+                        *server,
+                        boost::asio::buffer(server_received),
+                        [&, server](boost::system::error_code error, std::size_t)
+                        {
+                            server_read_error = error;
+                            if (!error)
+                            {
+                                boost::asio::async_write(
+                                    *server,
+                                    boost::asio::buffer(response),
+                                    [&, server](boost::system::error_code write_error, std::size_t) { server_write_error = write_error; });
+                            }
+                        });
+                },
+                1);
+
+            if (startup_error)
+            {
+                boost::asio::post(workers.context(0), finish);
+                return;
+            }
+
+            boost::asio::post(
+                workers.context(0),
+                [&]()
+                {
+                    first->async_connect(
+                        endpoint,
+                        [&](boost::system::error_code error)
+                        {
+                            first_connect_error = error;
+                            if (error)
+                            {
+                                finish();
+                                return;
+                            }
+                            boost::asio::async_write(
+                                *first,
+                                boost::asio::buffer(request),
+                                [&](boost::system::error_code write_error, std::size_t)
+                                {
+                                    client_write_error = write_error;
+                                    if (write_error)
+                                    {
+                                        boost::system::error_code ignored;
+                                        first->close(ignored);
+                                        finish();
+                                        return;
+                                    }
+                                    boost::asio::async_read(
+                                        *first,
+                                        boost::asio::buffer(client_received),
+                                        [&](boost::system::error_code read_error, std::size_t)
+                                        {
+                                            client_read_error = read_error;
+                                            second->async_connect(
+                                                endpoint,
+                                                [&](boost::system::error_code second_error)
+                                                {
+                                                    second_connect_error = second_error;
+                                                    finish();
+                                                });
+                                        });
+                                });
+                        });
+                });
+        });
+
+    workers.run();
+
+    require(!timed_out, "tcp listener dynamic startup completes without timeout");
+    require(!startup_error, "tcp listener dynamic startup succeeds");
+    require(!first_connect_error, "tcp listener dynamic first client connects");
+    require(!client_write_error && !client_read_error, "tcp listener dynamic client io");
+    require(!server_read_error && !server_write_error, "tcp listener dynamic accepted socket io");
+    require(server_received == request && client_received == response, "tcp listener dynamic payloads");
+    require(accept_count == 1, "tcp listener dynamic accepts once");
+    require(static_cast<bool>(second_connect_error), "tcp listener dynamic closes after limit");
+    require(startup_thread != accept_thread, "tcp listener dynamic first accept runs on owner executor");
+}
+
 void test_tcp_listener_shutdown_lifecycle()
 {
     io_context_pool workers(1);
     auto listener = std::make_shared<tcp_listener>(workers, 0);
-    require(!listener->startup([](boost::asio::ip::tcp::socket) {}), "tcp listener shutdown startup");
+    int accept_count = 0;
+    require(!listener->startup([&](boost::asio::ip::tcp::socket) { ++accept_count; }), "tcp listener shutdown startup");
     const std::weak_ptr<tcp_listener> weak_listener = listener;
 
     listener->shutdown();
@@ -2432,6 +2761,7 @@ void test_tcp_listener_shutdown_lifecycle()
     workers.release_work();
     workers.run();
 
+    require(accept_count == 0, "tcp listener shutdown suppresses accept callback");
     require(weak_listener.expired(), "tcp listener released after owner worker cleanup");
 }
 
@@ -8462,6 +8792,12 @@ int main()
     std::cout << "[pass] media_stream_configless_audio_track\n";
     media_server::test_rtsp_client_session_timeout();
     std::cout << "[pass] rtsp_client_session_timeout\n";
+    media_server::test_tcp_connector_successful_connect();
+    std::cout << "[pass] tcp_connector_successful_connect\n";
+    media_server::test_tcp_connector_connection_refused();
+    std::cout << "[pass] tcp_connector_connection_refused\n";
+    media_server::test_tcp_connector_shutdown_lifecycle();
+    std::cout << "[pass] tcp_connector_shutdown_lifecycle\n";
     media_server::test_tcp_connection_shutdown_lifecycle();
     std::cout << "[pass] tcp_connection_shutdown_lifecycle\n";
     media_server::test_tcp_connection_io_error_propagation();
@@ -8478,6 +8814,12 @@ int main()
     std::cout << "[pass] tcp_listener_startup_error\n";
     media_server::test_tcp_listener_worker_affinity();
     std::cout << "[pass] tcp_listener_worker_affinity\n";
+    media_server::test_tcp_listener_unlimited_accepts();
+    std::cout << "[pass] tcp_listener_unlimited_accepts\n";
+    media_server::test_tcp_listener_single_accept_limit();
+    std::cout << "[pass] tcp_listener_single_accept_limit\n";
+    media_server::test_tcp_listener_dynamic_startup();
+    std::cout << "[pass] tcp_listener_dynamic_startup\n";
     media_server::test_tcp_listener_shutdown_lifecycle();
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
     media_server::test_rtmp_server_shutdown_lifecycle();
