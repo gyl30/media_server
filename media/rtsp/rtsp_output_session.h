@@ -23,10 +23,13 @@ class rtsp_output_session final : public std::enable_shared_from_this<rtsp_outpu
    public:
     rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, stream_registry& registry, output_video_config video = {});
 
-    void startup(std::vector<std::uint8_t> initial_data = {});
+    void startup();
     void shutdown();
 
    private:
+    friend class rtsp_server;
+
+    [[nodiscard]] std::shared_ptr<const rtsp_server_connection_handler> make_handler();
     [[nodiscard]] std::size_t on_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
     int on_describe(rtsp_server_t* server, std::string_view uri);

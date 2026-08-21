@@ -135,44 +135,9 @@ std::uint32_t random_u32()
 
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection,
-                                       stream_registry& registry,
-                                       std::vector<std::uint8_t> initial_data)
-    : connection_(std::move(connection)), registry_(registry), initial_data_(std::move(initial_data))
+rtsp_input_session::rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection, stream_registry& registry)
+    : connection_(std::move(connection)), registry_(registry)
 {
-}
-
-void rtsp_input_session::startup()
-{
-    const auto connection = connection_.lock();
-    if (closed_ || !connection)
-    {
-        return;
-    }
-
-    const auto self = shared_from_this();
-    auto handler = std::make_shared<rtsp_server_connection_handler>();
-    handler->on_read = [self](std::span<const std::uint8_t> data) { return self->on_read(data); };
-    handler->on_shutdown = [self]() { self->safe_shutdown(); };
-    handler->on_setup = [self](rtsp_server_t* server,
-                               const char* uri,
-                               const char* session,
-                               const rtsp_header_transport_t transports[],
-                               std::size_t count)
-    { return self->on_setup(server, uri, session, transports, count); };
-    handler->on_teardown = [self](rtsp_server_t* server, const char*, const char* session) { return self->on_teardown(server, session); };
-    handler->on_announce = [self](rtsp_server_t* server, const char* uri, const char* sdp, int length)
-    { return self->on_announce(server, uri, sdp, length); };
-    handler->on_record = [self](rtsp_server_t* server, const char*, const char* session, const std::int64_t*, const double*)
-    { return self->on_record(server, session); };
-    handler->on_get_parameter = [](rtsp_server_t* server, const char*, const char*, const void*, int)
-    { return rtsp_server_reply_get_parameter(server, 200, nullptr, 0); };
-
-    if (!connection->startup(std::move(handler), std::move(initial_data_)))
-    {
-        connection->shutdown();
-    }
-    initial_data_.clear();
 }
 
 void rtsp_input_session::shutdown()

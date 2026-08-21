@@ -18,7 +18,7 @@ rtsp_server_connection::~rtsp_server_connection()
     }
 }
 
-bool rtsp_server_connection::startup(std::shared_ptr<const rtsp_server_connection_handler> handler, std::vector<std::uint8_t> initial_data)
+bool rtsp_server_connection::startup(std::shared_ptr<const rtsp_server_connection_handler> handler)
 {
     if (closed_ || connection_ == nullptr || server_ != nullptr)
     {
@@ -77,10 +77,6 @@ bool rtsp_server_connection::startup(std::shared_ptr<const rtsp_server_connectio
             }
         });
 
-    if (!initial_data.empty())
-    {
-        on_tcp_read(initial_data);
-    }
     return !closed_;
 }
 
