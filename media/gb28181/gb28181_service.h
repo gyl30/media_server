@@ -5,16 +5,14 @@
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include <map>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <string_view>
 
 namespace media_server
 {
 
-class gb28181_udp_session;
+class io_context_pool;
 
 enum class gb28181_create_error
 {
@@ -28,7 +26,7 @@ enum class gb28181_create_error
 class gb28181_service final
 {
    public:
-    explicit gb28181_service(stream_registry& registry);
+    explicit gb28181_service(stream_registry& registry, io_context_pool* workers = nullptr);
     ~gb28181_service();
 
     [[nodiscard]] gb28181_create_error create(boost::asio::any_io_executor executor, std::string stream_name, std::string_view sdp);
@@ -36,10 +34,11 @@ class gb28181_service final
     void shutdown();
 
    private:
+    struct state;
+
     stream_registry& registry_;
-    std::mutex sessions_mutex_;
-    std::map<std::string, std::weak_ptr<gb28181_udp_session>, std::less<>> sessions_;
-    bool closed_{};
+    io_context_pool* workers_{};
+    std::shared_ptr<state> state_;
 };
 
 }    // namespace media_server

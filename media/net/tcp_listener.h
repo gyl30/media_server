@@ -6,6 +6,7 @@
 #include <boost/asio.hpp>
 #include <boost/system/error_code.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -19,19 +20,27 @@ class tcp_listener final : public std::enable_shared_from_this<tcp_listener>
    public:
     using accept_handler = std::function<void(boost::asio::ip::tcp::socket)>;
 
-    tcp_listener(io_context_pool& workers, std::uint16_t port);
+    tcp_listener(io_context_pool& workers,
+                 std::uint16_t port,
+                 boost::asio::ip::address bind_address = boost::asio::ip::address_v4::any());
 
-    [[nodiscard]] boost::system::error_code startup(accept_handler handler, std::size_t accept_limit = 0);
+    [[nodiscard]] boost::system::error_code startup(accept_handler handler,
+                                                    std::size_t accept_limit = 0,
+                                                    std::chrono::milliseconds timeout = {});
     void shutdown();
 
    private:
+    void wait_timeout();
     void safe_shutdown();
     void accept_next();
 
     boost::asio::ip::tcp::acceptor acceptor_;
+    boost::asio::steady_timer timer_;
     io_context_pool& workers_;
+    boost::asio::ip::address bind_address_;
     std::uint16_t port_{};
     accept_handler handler_;
+    std::chrono::milliseconds timeout_{};
     std::size_t accept_limit_{};
     std::size_t accepted_count_{};
     bool started_{};

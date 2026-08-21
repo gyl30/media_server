@@ -22,7 +22,7 @@ class gb28181_udp_session final : public std::enable_shared_from_this<gb28181_ud
     gb28181_udp_session(stream_registry& registry,
                         boost::asio::any_io_executor executor,
                         std::string stream_name,
-                        gb28181_udp_description description);
+                        gb28181_description description);
 
     [[nodiscard]] bool startup();
     void shutdown();
@@ -36,7 +36,7 @@ class gb28181_udp_session final : public std::enable_shared_from_this<gb28181_ud
     void safe_shutdown();
 
     boost::asio::any_io_executor executor_;
-    gb28181_udp_description description_;
+    gb28181_description description_;
     gb28181_input_media media_;
     std::shared_ptr<udp_socket> rtp_socket_;
     std::shared_ptr<udp_socket> rtcp_socket_;
