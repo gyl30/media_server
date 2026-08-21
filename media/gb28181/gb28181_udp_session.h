@@ -1,0 +1,50 @@
+#ifndef MEDIA_GB28181_GB28181_UDP_SESSION_H
+#define MEDIA_GB28181_GB28181_UDP_SESSION_H
+
+#include "media/gb28181/gb28181_input_media.h"
+#include "media/gb28181/gb28181_sdp.h"
+#include "media/net/udp_socket.h"
+
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/steady_timer.hpp>
+
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+
+namespace media_server
+{
+
+class gb28181_udp_session final : public std::enable_shared_from_this<gb28181_udp_session>
+{
+   public:
+    gb28181_udp_session(stream_registry& registry,
+                        boost::asio::any_io_executor executor,
+                        std::string stream_name,
+                        gb28181_udp_description description);
+
+    [[nodiscard]] bool startup();
+    void shutdown();
+
+    [[nodiscard]] const std::string& stream_name() const noexcept;
+
+   private:
+    void on_rtp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
+    void on_rtcp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
+    void wait_rtcp();
+    void safe_shutdown();
+
+    boost::asio::any_io_executor executor_;
+    gb28181_udp_description description_;
+    gb28181_input_media media_;
+    std::shared_ptr<udp_socket> rtp_socket_;
+    std::shared_ptr<udp_socket> rtcp_socket_;
+    boost::asio::steady_timer rtcp_timer_;
+    std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
+    bool closed_{};
+};
+
+}    // namespace media_server
+
+#endif

@@ -1,6 +1,7 @@
 #include "media/codec/output_video_config.h"
 #include "media/core/log.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_service.h"
 #include "media/hls/hls_service.h"
 #include "media/http/http_server.h"
 #include "media/net/io_context_pool.h"
@@ -240,6 +241,7 @@ int main(int argc, char** argv)
     media_server::stream_registry registry;
     media_server::hls_service hls(registry, media_server::hls_config{.video = parsed->http_video});
     media_server::whep_service whep(registry, webrtc_address, parsed->whep_video);
+    media_server::gb28181_service gb28181(registry);
     if (!whep.ready())
     {
         spdlog::error("dtls certificate create failed");
@@ -247,7 +249,7 @@ int main(int argc, char** argv)
     }
     auto rtmp = std::make_shared<media_server::rtmp_server>(workers, registry, parsed->rtmp_port, parsed->rtmp_video);
     auto rtsp = std::make_shared<media_server::rtsp_server>(workers, registry, parsed->rtsp_port, parsed->rtsp_video);
-    auto http = std::make_shared<media_server::http_server>(workers, registry, hls, whep, parsed->http_port, parsed->http_video);
+    auto http = std::make_shared<media_server::http_server>(workers, registry, hls, whep, gb28181, parsed->http_port, parsed->http_video);
 
     if (const auto error = rtmp->startup())
     {
@@ -285,6 +287,7 @@ int main(int argc, char** argv)
     spdlog::info("http flv path app/stream.flv");
     spdlog::info("hls path hls/app/stream/index.m3u8");
     spdlog::info("whep path whep/app/stream");
+    spdlog::info("gb28181 path gb28181/app/stream");
 
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
     signals.async_wait(
@@ -301,6 +304,7 @@ int main(int argc, char** argv)
             http->shutdown();
             http.reset();
             whep.shutdown();
+            gb28181.shutdown();
             rtsp->shutdown();
             rtsp.reset();
             rtmp->shutdown();

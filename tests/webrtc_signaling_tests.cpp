@@ -1,5 +1,6 @@
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_service.h"
 #include "media/hls/hls_service.h"
 #include "media/http/http_session.h"
 #include "media/webrtc/dtls_certificate.h"
@@ -836,6 +837,7 @@ class whep_http_test_peer final
         : work_(boost::asio::make_work_guard(io_)),
           hls_(registry_),
           whep_(registry_, boost::asio::ip::make_address("127.0.0.1")),
+          gb28181_(registry_),
           acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
     {
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
@@ -851,6 +853,7 @@ class whep_http_test_peer final
                           [this]()
                           {
                               whep_.shutdown();
+                              gb28181_.shutdown();
                               work_.reset();
                           });
         runner_.join();
@@ -902,7 +905,7 @@ class whep_http_test_peer final
         boost::asio::ip::tcp::socket client(client_io_);
         client.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto session = std::make_shared<http_session>(std::move(server_socket), registry_, hls_, whep_);
+        auto session = std::make_shared<http_session>(std::move(server_socket), registry_, hls_, whep_, gb28181_);
         session->startup();
 
         const bool head = request.method() == boost::beast::http::verb::head;
@@ -940,6 +943,7 @@ class whep_http_test_peer final
     stream_registry registry_;
     hls_service hls_;
     whep_service whep_;
+    gb28181_service gb28181_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::io_context client_io_;
     std::shared_ptr<media_stream> stream_;
