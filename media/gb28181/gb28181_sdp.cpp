@@ -4,10 +4,12 @@ extern "C"
 {
 #include "sdp-a-rtpmap.h"
 #include "sdp-a-webrtc.h"
+#include "sdp-options.h"
 #include "sdp.h"
 }
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/asio/ip/address.hpp>
 
 #include <charconv>
 #include <cstring>
@@ -38,45 +40,10 @@ std::optional<std::uint32_t> parse_ssrc(const char* text)
     return value;
 }
 
-}    // namespace
-
-std::optional<gb28181_udp_description> parse_gb28181_udp_sdp(std::string_view text)
+std::optional<std::uint8_t> find_ps_payload(sdp_t* sdp)
 {
-    if (text.empty())
-    {
-        return std::nullopt;
-    }
-
-    sdp_ptr sdp(sdp_parse(text.data(), static_cast<int>(text.size())), &sdp_destroy);
-    if (!sdp || sdp_media_count(sdp.get()) != 1 || std::strcmp(sdp_media_type(sdp.get(), 0), "video") != 0 ||
-        std::strcmp(sdp_media_proto(sdp.get(), 0), "RTP/AVP") != 0)
-    {
-        return std::nullopt;
-    }
-
-    int ports[2]{};
-    if (sdp_media_port(sdp.get(), 0, ports, 2) != 1 || ports[0] <= 0 || ports[0] > 65'535)
-    {
-        return std::nullopt;
-    }
-
-    const auto addrtype = sdp_media_get_connection_addrtype(sdp.get(), 0);
-    boost::asio::ip::address bind_address;
-    if (addrtype == SDP_C_ADDRESS_IP4)
-    {
-        bind_address = boost::asio::ip::address_v4::any();
-    }
-    else if (addrtype == SDP_C_ADDRESS_IP6)
-    {
-        bind_address = boost::asio::ip::address_v6::any();
-    }
-    else
-    {
-        return std::nullopt;
-    }
-
     int formats[16]{};
-    const auto format_count = sdp_media_formats(sdp.get(), 0, formats, 16);
+    const auto format_count = sdp_media_formats(sdp, 0, formats, 16);
     if (format_count <= 0 || format_count > 16)
     {
         return std::nullopt;
@@ -99,7 +66,7 @@ std::optional<gb28181_udp_description> parse_gb28181_udp_sdp(std::string_view te
             char encoding[16]{};
         } lookup{.wanted = payload};
         sdp_media_attribute_list(
-            sdp.get(),
+            sdp,
             0,
             "rtpmap",
             [](void* param, const char*, const char* value)
@@ -132,6 +99,53 @@ std::optional<gb28181_udp_description> parse_gb28181_udp_sdp(std::string_view te
     {
         return std::nullopt;
     }
+    return static_cast<std::uint8_t>(selected_payload);
+}
+
+}    // namespace
+
+std::optional<gb28181_description> parse_gb28181_sdp(std::string_view text)
+{
+    if (text.empty())
+    {
+        return std::nullopt;
+    }
+
+    sdp_ptr sdp(sdp_parse(text.data(), static_cast<int>(text.size())), &sdp_destroy);
+    if (!sdp || sdp_media_count(sdp.get()) != 1 || std::strcmp(sdp_media_type(sdp.get(), 0), "video") != 0)
+    {
+        return std::nullopt;
+    }
+
+    const auto proto = sdp_option_proto_from(sdp_media_proto(sdp.get(), 0));
+    if (proto != SDP_M_PROTO_RTP_AVP && proto != SDP_M_PROTO_RTP_AVP_TCP)
+    {
+        return std::nullopt;
+    }
+
+    int ports[2]{};
+    if (sdp_media_port(sdp.get(), 0, ports, 2) != 1 || ports[0] <= 0 || ports[0] > 65'535)
+    {
+        return std::nullopt;
+    }
+
+    char address_text[64]{};
+    if (sdp_media_get_connection_address(sdp.get(), 0, address_text, sizeof(address_text)) != 0)
+    {
+        return std::nullopt;
+    }
+    boost::system::error_code address_error;
+    auto address = boost::asio::ip::make_address(address_text, address_error);
+    if (address_error)
+    {
+        return std::nullopt;
+    }
+
+    const auto payload_type = find_ps_payload(sdp.get());
+    if (!payload_type)
+    {
+        return std::nullopt;
+    }
 
     auto ssrc = parse_ssrc(sdp_media_attribute_find(sdp.get(), 0, "ssrc"));
     if (!ssrc)
@@ -143,6 +157,41 @@ std::optional<gb28181_udp_description> parse_gb28181_udp_sdp(std::string_view te
         return std::nullopt;
     }
 
+    if (proto == SDP_M_PROTO_RTP_AVP_TCP)
+    {
+        const auto* setup_text = sdp_media_attribute_find(sdp.get(), 0, "setup");
+        if (setup_text == nullptr)
+        {
+            setup_text = sdp_attribute_find(sdp.get(), "setup");
+        }
+        const auto setup = sdp_option_setup_from(setup_text);
+        if (setup != SDP_A_SETUP_ACTIVE && setup != SDP_A_SETUP_PASSIVE)
+        {
+            return std::nullopt;
+        }
+        auto* connection = sdp_media_attribute_find(sdp.get(), 0, "connection");
+        if (connection == nullptr)
+        {
+            connection = sdp_attribute_find(sdp.get(), "connection");
+        }
+        if (connection != nullptr && !boost::iequals(connection, "new"))
+        {
+            return std::nullopt;
+        }
+        if (setup == SDP_A_SETUP_ACTIVE && address.is_unspecified())
+        {
+            return std::nullopt;
+        }
+
+        return gb28181_description{
+            .transport = setup == SDP_A_SETUP_ACTIVE ? gb28181_transport::tcp_active : gb28181_transport::tcp_passive,
+            .address = std::move(address),
+            .rtp_port = static_cast<std::uint16_t>(ports[0]),
+            .payload_type = *payload_type,
+            .ssrc = *ssrc,
+        };
+    }
+
     if (sdp_media_attribute_find(sdp.get(), 0, "rtcp-mux") != nullptr)
     {
         return std::nullopt;
@@ -151,12 +200,12 @@ std::optional<gb28181_udp_description> parse_gb28181_udp_sdp(std::string_view te
     std::uint16_t rtcp_port{};
     if (const auto* rtcp = sdp_media_attribute_find(sdp.get(), 0, "rtcp"))
     {
-        sdp_address_t address{};
-        if (sdp_a_rtcp(rtcp, static_cast<int>(std::strlen(rtcp)), &address) != 0 || address.port[0] <= 0 || address.port[0] > 65'535)
+        sdp_address_t rtcp_address{};
+        if (sdp_a_rtcp(rtcp, static_cast<int>(std::strlen(rtcp)), &rtcp_address) != 0 || rtcp_address.port[0] <= 0 || rtcp_address.port[0] > 65'535)
         {
             return std::nullopt;
         }
-        rtcp_port = static_cast<std::uint16_t>(address.port[0]);
+        rtcp_port = static_cast<std::uint16_t>(rtcp_address.port[0]);
     }
     else
     {
@@ -171,11 +220,12 @@ std::optional<gb28181_udp_description> parse_gb28181_udp_sdp(std::string_view te
         return std::nullopt;
     }
 
-    return gb28181_udp_description{
-        .bind_address = std::move(bind_address),
+    return gb28181_description{
+        .transport = gb28181_transport::udp,
+        .address = std::move(address),
         .rtp_port = static_cast<std::uint16_t>(ports[0]),
         .rtcp_port = rtcp_port,
-        .payload_type = static_cast<std::uint8_t>(selected_payload),
+        .payload_type = *payload_type,
         .ssrc = *ssrc,
     };
 }

@@ -241,7 +241,7 @@ int main(int argc, char** argv)
     media_server::stream_registry registry;
     media_server::hls_service hls(registry, media_server::hls_config{.video = parsed->http_video});
     media_server::whep_service whep(registry, webrtc_address, parsed->whep_video);
-    media_server::gb28181_service gb28181(registry);
+    media_server::gb28181_service gb28181(registry, &workers);
     if (!whep.ready())
     {
         spdlog::error("dtls certificate create failed");

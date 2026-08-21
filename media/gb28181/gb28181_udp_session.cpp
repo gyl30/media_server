@@ -15,7 +15,7 @@ namespace media_server
 gb28181_udp_session::gb28181_udp_session(stream_registry& registry,
                                          boost::asio::any_io_executor executor,
                                          std::string stream_name,
-                                         gb28181_udp_description description)
+                                         gb28181_description description)
     : executor_(executor),
       description_(std::move(description)),
       media_(registry, executor, std::move(stream_name), description_.payload_type, description_.ssrc),
@@ -31,9 +31,11 @@ bool gb28181_udp_session::startup()
     }
 
     const auto self = shared_from_this();
+    const auto bind_address = description_.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
+                                                           : boost::asio::ip::address{boost::asio::ip::address_v6::any()};
     auto rtp_socket = std::make_shared<udp_socket>(executor_);
     if (!rtp_socket->startup(
-            description_.bind_address,
+            bind_address,
             description_.rtp_port,
             [self](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
             {
@@ -58,7 +60,7 @@ bool gb28181_udp_session::startup()
 
     auto rtcp_socket = std::make_shared<udp_socket>(executor_);
     if (!rtcp_socket->startup(
-            description_.bind_address,
+            bind_address,
             description_.rtcp_port,
             [self](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
             {

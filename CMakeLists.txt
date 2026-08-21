@@ -169,6 +169,7 @@ add_library(media_core STATIC
     media/gb28181/gb28181_sdp.cpp
     media/gb28181/gb28181_input_media.cpp
     media/gb28181/gb28181_udp_session.cpp
+    media/gb28181/gb28181_tcp_session.cpp
     media/gb28181/gb28181_service.cpp
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
