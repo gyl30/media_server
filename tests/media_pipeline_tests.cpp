@@ -3765,7 +3765,7 @@ void test_rtsp_publish_server_contract()
         probe.close();
         stream_registry registry;
         auto server = std::make_shared<rtsp_server>(workers, registry, port);
-        require(!server->startup(), "rtsp publish router server startup");
+        require(!server->startup(), "rtsp publish pre role server startup");
         std::jthread runner([&workers]() { workers.run(); });
 
         boost::asio::io_context client_io;
@@ -3783,7 +3783,7 @@ void test_rtsp_publish_server_contract()
         boost::system::error_code error;
         static_cast<void>(client.read_some(boost::asio::buffer(byte), error));
         require(error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::not_connected,
-                "rtsp publish router shutdown closes partial connection");
+                "rtsp publish pre role shutdown closes partial connection");
     }
 
     io_context_pool workers(1);
@@ -3807,17 +3807,27 @@ void test_rtsp_publish_server_contract()
     };
 
     const auto options = request("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n");
-    require(options.starts_with("RTSP/1.0 200"), "rtsp publish router options");
+    require(options.starts_with("RTSP/1.0 200"), "rtsp publish pre role options");
     require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER",
-            "rtsp publish router advertised methods");
+            "rtsp publish pre role advertised methods");
 
     {
         boost::asio::ip::tcp::socket parameter(client_io);
         parameter.connect({boost::asio::ip::address_v4::loopback(), port});
         boost::asio::write(parameter, boost::asio::buffer("GET_PARAMETER " + base + " RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n"));
-        require(read_rtsp_headers(parameter).starts_with("RTSP/1.0 200"), "rtsp publish router get parameter ping");
-        boost::asio::write(parameter, boost::asio::buffer("OPTIONS * RTSP/1.0\r\nCSeq: 2\r\n\r\n"));
-        require(read_rtsp_headers(parameter).starts_with("RTSP/1.0 200"), "rtsp publish router remains pre role after get parameter");
+        require(read_rtsp_headers(parameter).starts_with("RTSP/1.0 200"), "rtsp publish pre role get parameter ping");
+        boost::asio::write(parameter, boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 2\r\n\r\n"}));
+        require(read_rtsp_headers(parameter).starts_with("RTSP/1.0 200"), "rtsp publish remains pre role after get parameter");
+    }
+
+    {
+        boost::asio::ip::tcp::socket framing(client_io);
+        framing.connect({boost::asio::ip::address_v4::loopback(), port});
+        boost::asio::write(framing,
+                           boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 4\r\n\r\nping"}));
+        require(read_rtsp_headers(framing).starts_with("RTSP/1.0 200"), "rtsp publish pre role options body");
+        boost::asio::write(framing, boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 2\r\n\r\n"}));
+        require(read_rtsp_headers(framing).starts_with("RTSP/1.0 200"), "rtsp publish pre role options body framing");
     }
 
     {

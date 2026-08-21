@@ -2,230 +2,15 @@
 
 #include "media/net/tcp_connection.h"
 #include "media/rtsp/rtsp_input_session.h"
-#include "media/rtsp/rtsp_server_connection.h"
 #include "media/rtsp/rtsp_output_session.h"
-
-#include <boost/asio/write.hpp>
-#include <boost/algorithm/string/predicate.hpp>
-#include <boost/asio/post.hpp>
+#include "media/rtsp/rtsp_server_connection.h"
 
 #include <algorithm>
-#include <array>
-#include <charconv>
-#include <optional>
-#include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace media_server
 {
-
-class rtsp_connection_router final : public std::enable_shared_from_this<rtsp_connection_router>
-{
-   public:
-    rtsp_connection_router(std::weak_ptr<rtsp_server> owner, boost::asio::ip::tcp::socket socket)
-        : owner_(std::move(owner)), socket_(std::move(socket)), executor_(socket_.get_executor())
-    {
-    }
-
-    void startup() { read_next(); }
-
-    void shutdown()
-    {
-        const auto self = shared_from_this();
-        boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
-    }
-
-   private:
-    void read_next()
-    {
-        if (closed_ || routed_ || writing_)
-        {
-            return;
-        }
-        const auto self = shared_from_this();
-        socket_.async_read_some(boost::asio::buffer(read_buffer_),
-                                [self](const boost::system::error_code& error, std::size_t bytes)
-                                {
-                                    if (error || bytes == 0)
-                                    {
-                                        self->close();
-                                        return;
-                                    }
-                                    self->buffer_.insert(self->buffer_.end(), self->read_buffer_.begin(), self->read_buffer_.begin() + bytes);
-                                    self->process();
-                                });
-    }
-
-    void process()
-    {
-        const std::string_view data(reinterpret_cast<const char*>(buffer_.data()), buffer_.size());
-        const auto header_end = data.find("\r\n\r\n");
-        if (header_end == std::string_view::npos)
-        {
-            if (buffer_.size() > 64U * 1024U)
-            {
-                close();
-                return;
-            }
-            read_next();
-            return;
-        }
-
-        const auto line_end = data.find("\r\n");
-        if (line_end == std::string_view::npos)
-        {
-            close();
-            return;
-        }
-        const auto space = data.find(' ');
-        if (space == std::string_view::npos || space > line_end)
-        {
-            close();
-            return;
-        }
-        const auto method = data.substr(0, space);
-        const auto options = boost::iequals(method, "OPTIONS");
-        const auto get_parameter = boost::iequals(method, "GET_PARAMETER");
-        if (options || get_parameter)
-        {
-            std::optional<unsigned int> cseq;
-            std::size_t content_length{};
-            bool has_session{};
-            auto header_offset = line_end + 2U;
-            while (header_offset < header_end)
-            {
-                const auto header_line_end = data.find("\r\n", header_offset);
-                if (header_line_end == std::string_view::npos || header_line_end > header_end)
-                {
-                    close();
-                    return;
-                }
-                auto line = data.substr(header_offset, header_line_end - header_offset);
-                const auto colon = line.find(':');
-                if (!cseq && colon != std::string_view::npos && boost::iequals(line.substr(0, colon), "CSeq"))
-                {
-                    auto value = line.substr(colon + 1U);
-                    const auto first = value.find_first_not_of(" \t");
-                    if (first == std::string_view::npos)
-                    {
-                        close();
-                        return;
-                    }
-                    value.remove_prefix(first);
-                    const auto last = value.find_first_of(" \t");
-                    value = value.substr(0, last);
-                    unsigned int parsed{};
-                    const auto [pointer, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
-                    if (error != std::errc{} || pointer != value.data() + value.size())
-                    {
-                        close();
-                        return;
-                    }
-                    cseq = parsed;
-                }
-                else if (get_parameter && colon != std::string_view::npos && boost::iequals(line.substr(0, colon), "Content-Length"))
-                {
-                    auto value = line.substr(colon + 1U);
-                    const auto first = value.find_first_not_of(" \t");
-                    if (first == std::string_view::npos)
-                    {
-                        close();
-                        return;
-                    }
-                    value.remove_prefix(first);
-                    const auto last = value.find_first_of(" \t");
-                    value = value.substr(0, last);
-                    std::size_t parsed{};
-                    const auto [pointer, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
-                    if (error != std::errc{} || pointer != value.data() + value.size())
-                    {
-                        close();
-                        return;
-                    }
-                    content_length = parsed;
-                }
-                else if (get_parameter && colon != std::string_view::npos && boost::iequals(line.substr(0, colon), "Session"))
-                {
-                    has_session = true;
-                }
-                header_offset = header_line_end + 2U;
-            }
-            if (!cseq || (get_parameter && (content_length != 0U || has_session)))
-            {
-                close();
-                return;
-            }
-            const auto consumed = header_end + 4U;
-            buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<std::ptrdiff_t>(consumed));
-            pending_write_ = "RTSP/1.0 200 OK\r\nCSeq: " + std::to_string(*cseq);
-            if (options)
-            {
-                pending_write_ += "\r\nPublic: OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER";
-            }
-            pending_write_ += "\r\nContent-Length: 0\r\n\r\n";
-            writing_ = true;
-            const auto self = shared_from_this();
-            boost::asio::async_write(socket_, boost::asio::buffer(pending_write_), [self](const boost::system::error_code& write_error, std::size_t)
-                                     {
-                                         if (write_error || self->closed_)
-                                         {
-                                             self->close();
-                                             return;
-                                         }
-                                         self->writing_ = false;
-                                         self->pending_write_.clear();
-                                         self->process();
-                                     });
-            return;
-        }
-
-        if (!boost::iequals(method, "ANNOUNCE") && !boost::iequals(method, "DESCRIBE") && !boost::iequals(method, "SETUP"))
-        {
-            close();
-            return;
-        }
-        const auto owner = owner_.lock();
-        if (!owner)
-        {
-            close();
-            return;
-        }
-        routed_ = true;
-        closed_ = true;
-        owner->on_connection(std::move(socket_), std::move(buffer_), boost::iequals(method, "ANNOUNCE"));
-    }
-
-    void close()
-    {
-        safe_shutdown();
-    }
-
-    void safe_shutdown()
-    {
-        if (closed_)
-        {
-            return;
-        }
-        closed_ = true;
-        boost::system::error_code error;
-        socket_.cancel(error);
-        socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
-        socket_.close(error);
-        buffer_.clear();
-    }
-
-    std::weak_ptr<rtsp_server> owner_;
-    boost::asio::ip::tcp::socket socket_;
-    boost::asio::any_io_executor executor_;
-    std::array<std::uint8_t, 16 * 1024> read_buffer_{};
-    std::vector<std::uint8_t> buffer_;
-    std::string pending_write_;
-    bool writing_{};
-    bool routed_{};
-    bool closed_{};
-};
 
 rtsp_server::rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port, output_video_config video)
     : registry_(registry), video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
@@ -247,7 +32,6 @@ boost::system::error_code rtsp_server::startup()
 
 void rtsp_server::shutdown()
 {
-    std::vector<std::weak_ptr<rtsp_connection_router>> routers;
     std::vector<std::weak_ptr<rtsp_server_connection>> connections;
     {
         std::scoped_lock lock(sessions_mutex_);
@@ -256,19 +40,10 @@ void rtsp_server::shutdown()
             return;
         }
         closed_ = true;
-        routers = std::move(routers_);
-        routers_.clear();
         connections = std::move(connections_);
         connections_.clear();
     }
     listener_->shutdown();
-    for (const auto& weak_router : routers)
-    {
-        if (const auto router = weak_router.lock())
-        {
-            router->shutdown();
-        }
-    }
     for (const auto& weak_connection : connections)
     {
         if (const auto connection = weak_connection.lock())
@@ -280,46 +55,96 @@ void rtsp_server::shutdown()
 
 void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
 {
-    std::shared_ptr<rtsp_connection_router> router;
+    auto tcp = std::make_shared<tcp_connection>(std::move(socket));
+    auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp));
     {
         std::scoped_lock lock(sessions_mutex_);
         if (closed_)
         {
-            boost::system::error_code error;
-            socket.close(error);
+            connection->shutdown();
             return;
         }
-        router = std::make_shared<rtsp_connection_router>(shared_from_this(), std::move(socket));
-        std::erase_if(routers_, [](const auto& value) { return value.expired(); });
-        routers_.emplace_back(router);
+        std::erase_if(connections_, [](const auto& value) { return value.expired(); });
+        connections_.emplace_back(connection);
     }
-    router->startup();
-}
 
-void rtsp_server::on_connection(boost::asio::ip::tcp::socket socket, std::vector<std::uint8_t> initial_data, bool publish)
-{
-    std::scoped_lock lock(sessions_mutex_);
-    if (closed_)
+    const std::weak_ptr<rtsp_server> weak_owner = shared_from_this();
+    const std::weak_ptr<rtsp_server_connection> weak_connection = connection;
+    auto handler = std::make_shared<rtsp_server_connection_handler>();
+    handler->on_read = [weak_connection](std::span<const std::uint8_t> data)
     {
-        boost::system::error_code error;
-        socket.close(error);
-        return;
-    }
-
-    auto tcp = std::make_shared<tcp_connection>(std::move(socket));
-    auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp));
-    std::erase_if(connections_, [](const auto& value) { return value.expired(); });
-    connections_.emplace_back(connection);
-
-    if (publish)
+        const auto current = weak_connection.lock();
+        return current ? current->input(data) : data.size();
+    };
+    handler->on_describe = [weak_owner, weak_connection](rtsp_server_t* server, const char* uri)
     {
-        auto session = std::make_shared<rtsp_input_session>(connection, registry_, std::move(initial_data));
-        session->startup();
-        return;
-    }
+        const auto owner = weak_owner.lock();
+        const auto current = weak_connection.lock();
+        if (!owner || !current)
+        {
+            return -1;
+        }
+        auto session = std::make_shared<rtsp_output_session>(current, owner->registry_, owner->video_config_);
+        current->set_handler(session->make_handler());
+        return session->on_describe(server, uri != nullptr ? uri : "");
+    };
+    handler->on_setup = [weak_owner, weak_connection](rtsp_server_t* server,
+                                                       const char* uri,
+                                                       const char* session,
+                                                       const rtsp_header_transport_t transports[],
+                                                       std::size_t count)
+    {
+        const auto owner = weak_owner.lock();
+        const auto current = weak_connection.lock();
+        if (!owner || !current)
+        {
+            return -1;
+        }
+        auto output = std::make_shared<rtsp_output_session>(current, owner->registry_, owner->video_config_);
+        current->set_handler(output->make_handler());
+        return output->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
+    };
+    handler->on_announce = [weak_owner, weak_connection](rtsp_server_t* server, const char* uri, const char* sdp, int length)
+    {
+        const auto owner = weak_owner.lock();
+        const auto current = weak_connection.lock();
+        if (!owner || !current)
+        {
+            return -1;
+        }
+        auto input = std::make_shared<rtsp_input_session>(current, owner->registry_);
+        auto input_handler = std::make_shared<rtsp_server_connection_handler>();
+        input_handler->on_read = [input](std::span<const std::uint8_t> data) { return input->on_read(data); };
+        input_handler->on_shutdown = [input]() { input->safe_shutdown(); };
+        input_handler->on_setup = [input](rtsp_server_t* handler_server,
+                                          const char* handler_uri,
+                                          const char* handler_session,
+                                          const rtsp_header_transport_t handler_transports[],
+                                          std::size_t handler_count)
+        { return input->on_setup(handler_server, handler_uri, handler_session, handler_transports, handler_count); };
+        input_handler->on_teardown = [input](rtsp_server_t* handler_server, const char*, const char* handler_session)
+        { return input->on_teardown(handler_server, handler_session); };
+        input_handler->on_announce = [input](rtsp_server_t* handler_server, const char* handler_uri, const char* handler_sdp, int handler_length)
+        { return input->on_announce(handler_server, handler_uri, handler_sdp, handler_length); };
+        input_handler->on_record = [input](rtsp_server_t* handler_server, const char*, const char* handler_session, const std::int64_t*, const double*)
+        { return input->on_record(handler_server, handler_session); };
+        input_handler->on_get_parameter = [](rtsp_server_t* handler_server, const char*, const char*, const void*, int)
+        { return rtsp_server_reply_get_parameter(handler_server, 200, nullptr, 0); };
+        current->set_handler(std::move(input_handler));
+        return input->on_announce(server, uri != nullptr ? uri : "", sdp, length);
+    };
+    handler->on_play = [](rtsp_server_t*, const char*, const char*, const std::int64_t*, const double*) { return -1; };
+    handler->on_teardown = [](rtsp_server_t*, const char*, const char*) { return -1; };
+    handler->on_record = [](rtsp_server_t*, const char*, const char*, const std::int64_t*, const double*) { return -1; };
+    handler->on_get_parameter = [](rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
+    {
+        return bytes == 0 && (session == nullptr || session[0] == '\0') ? rtsp_server_reply_get_parameter(server, 200, nullptr, 0) : -1;
+    };
 
-    auto session = std::make_shared<rtsp_output_session>(connection, registry_, video_config_);
-    session->startup(std::move(initial_data));
+    if (!connection->startup(std::move(handler)))
+    {
+        connection->shutdown();
+    }
 }
 
 }    // namespace media_server
