@@ -163,6 +163,54 @@ void test_rtp_demuxer_receiver_report()
     rtp_demuxer_destroy(&demuxer);
 }
 
+void test_rtp_sender_report_statistics()
+{
+    constexpr std::uint32_t ssrc = 0x10203040U;
+    rtp_event_t handler{};
+    auto* sender = rtp_create(&handler, nullptr, ssrc, 0, 90'000, 2 * 1024 * 1024, 1);
+    require(sender != nullptr, "rtp sender create");
+
+    std::vector<std::uint8_t> first(112U, 0x11U);
+    first[0] = 0x80U;
+    first[1] = 96U;
+    first[2] = 0x00U;
+    first[3] = 0x01U;
+    write_u32(first.data() + 4, 9'000U);
+    write_u32(first.data() + 8, ssrc);
+    require(rtp_onsend(sender, first.data(), static_cast<int>(first.size())) == 0, "rtp sender first packet");
+
+    std::vector<std::uint8_t> second(212U, 0x22U);
+    second[0] = 0x80U;
+    second[1] = 96U;
+    second[2] = 0x00U;
+    second[3] = 0x02U;
+    write_u32(second.data() + 4, 18'000U);
+    write_u32(second.data() + 8, ssrc);
+    require(rtp_onsend(sender, second.data(), static_cast<int>(second.size())) == 0, "rtp sender second packet");
+
+    std::array<std::uint8_t, 1500> first_report{};
+    const auto first_bytes = rtp_rtcp_report(sender, first_report.data(), static_cast<int>(first_report.size()));
+    require(first_bytes >= 28 && first_report[1] == RTCP_SR, "rtp sender first report");
+    require(read_u32(first_report.data() + 4) == ssrc, "rtp sender report ssrc");
+    require(read_u32(first_report.data() + 8) != 0, "rtp sender report ntp");
+    require(read_u32(first_report.data() + 16) >= 18'000U, "rtp sender report timestamp");
+    require(read_u32(first_report.data() + 20) == 2U, "rtp sender report packet count");
+    require(read_u32(first_report.data() + 24) == 300U, "rtp sender report payload octets");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::array<std::uint8_t, 1500> second_report{};
+    const auto second_bytes = rtp_rtcp_report(sender, second_report.data(), static_cast<int>(second_report.size()));
+    require(second_bytes >= 28 && second_report[1] == RTCP_SR, "rtp sender second report");
+    const auto first_ntp = (static_cast<std::uint64_t>(read_u32(first_report.data() + 8)) << 32U) | read_u32(first_report.data() + 12);
+    const auto second_ntp = (static_cast<std::uint64_t>(read_u32(second_report.data() + 8)) << 32U) | read_u32(second_report.data() + 12);
+    require(second_ntp > first_ntp, "rtp sender report ntp progression");
+    require(read_u32(second_report.data() + 16) > read_u32(first_report.data() + 16), "rtp sender report timestamp progression");
+    require(read_u32(second_report.data() + 20) == 2U && read_u32(second_report.data() + 24) == 300U,
+            "rtp sender report stable counters");
+
+    rtp_destroy(sender);
+}
+
 } // namespace
 
 int main()
@@ -173,6 +221,8 @@ int main()
         std::cout << "[pass] rtcp_unpack_regressions\n";
         test_rtp_demuxer_receiver_report();
         std::cout << "[pass] rtp_demuxer_receiver_report\n";
+        test_rtp_sender_report_statistics();
+        std::cout << "[pass] rtp_sender_report_statistics\n";
     }
     catch (const std::exception& error)
     {
