@@ -38,8 +38,8 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void handle_flv(const boost::urls::url_view& target);
     void handle_hls(const boost::urls::url_view& target);
     void handle_whep(const std::vector<std::string>& segments);
-    void handle_gb28181(const std::vector<std::string>& segments);
-    void handle_gb28181_output(const std::vector<std::string>& segments);
+    void handle_gb28181(const boost::urls::url_view& target, const std::vector<std::string>& segments);
+    void handle_gb28181_output(const boost::urls::url_view& target, const std::vector<std::string>& segments);
     void handle_whep_post(const std::vector<std::string>& segments);
     void handle_whep_delete(const std::vector<std::string>& segments);
     void wait_hls_playlist(std::string stream_name);

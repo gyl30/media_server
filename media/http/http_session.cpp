@@ -85,7 +85,7 @@ void http_session::handle_request()
     }
     if (segments.front() == "gb28181")
     {
-        handle_gb28181(segments);
+        handle_gb28181(*parsed, segments);
         return;
     }
 
@@ -197,11 +197,11 @@ void http_session::handle_whep_delete(const std::vector<std::string>& segments)
     send_whep_empty_response(boost::beast::http::status::no_content);
 }
 
-void http_session::handle_gb28181(const std::vector<std::string>& segments)
+void http_session::handle_gb28181(const boost::urls::url_view& target, const std::vector<std::string>& segments)
 {
     if (segments.size() >= 2 && segments[1] == "output")
     {
-        handle_gb28181_output(segments);
+        handle_gb28181_output(target, segments);
         return;
     }
     if (segments.size() < 2)
@@ -252,7 +252,7 @@ void http_session::handle_gb28181(const std::vector<std::string>& segments)
     send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "POST, DELETE");
 }
 
-void http_session::handle_gb28181_output(const std::vector<std::string>& segments)
+void http_session::handle_gb28181_output(const boost::urls::url_view& target, const std::vector<std::string>& segments)
 {
     if (segments.size() < 3)
     {
@@ -261,6 +261,24 @@ void http_session::handle_gb28181_output(const std::vector<std::string>& segment
     }
 
     const auto stream_name = join_segments(segments, 2, segments.size());
+    std::string output_id;
+    bool output_id_seen = false;
+    for (const auto parameter : target.params())
+    {
+        if (parameter.key != "output_id" || output_id_seen || !parameter.has_value || parameter.value.empty())
+        {
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
+            return;
+        }
+        output_id.assign(parameter.value.data(), parameter.value.size());
+        output_id_seen = true;
+    }
+    if (!output_id_seen)
+    {
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "output_id is required\n");
+        return;
+    }
+
     if (request_.method() == boost::beast::http::verb::post)
     {
         const auto content_type = request_[boost::beast::http::field::content_type];
@@ -270,7 +288,7 @@ void http_session::handle_gb28181_output(const std::vector<std::string>& segment
             return;
         }
 
-        switch (gb28181_.create_output(stream_.get_executor(), stream_name, request_.body()))
+        switch (gb28181_.create_output(stream_.get_executor(), stream_name, output_id, request_.body()))
         {
             case gb28181_output_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
@@ -295,7 +313,7 @@ void http_session::handle_gb28181_output(const std::vector<std::string>& segment
 
     if (request_.method() == boost::beast::http::verb::delete_)
     {
-        if (!gb28181_.remove_output(stream_name))
+        if (!gb28181_.remove_output(stream_name, output_id))
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "gb28181 output not found\n");
             return;
