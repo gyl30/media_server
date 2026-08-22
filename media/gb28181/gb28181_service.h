@@ -41,8 +41,11 @@ class gb28181_service final
 
     [[nodiscard]] gb28181_create_error create(boost::asio::any_io_executor executor, std::string stream_name, std::string_view sdp);
     [[nodiscard]] bool remove(std::string_view stream_name);
-    [[nodiscard]] gb28181_output_create_error create_output(boost::asio::any_io_executor executor, std::string stream_name, std::string_view sdp);
-    [[nodiscard]] bool remove_output(std::string_view stream_name);
+    [[nodiscard]] gb28181_output_create_error create_output(boost::asio::any_io_executor executor,
+                                                            std::string stream_name,
+                                                            std::string output_id,
+                                                            std::string_view sdp);
+    [[nodiscard]] bool remove_output(std::string_view stream_name, std::string_view output_id);
     void shutdown();
 
    private:
