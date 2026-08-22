@@ -292,6 +292,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
 gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_executor executor,
                                                            std::string stream_name,
                                                            std::string output_id,
+                                                           bool rtcp,
                                                            std::string_view sdp)
 {
     if (stream_name.empty() || output_id.empty())
@@ -301,6 +302,10 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
 
     auto description = parse_gb28181_sdp(sdp);
     if (!description || (description->transport == gb28181_transport::udp && description->address.is_unspecified()))
+    {
+        return gb28181_output_create_error::invalid_sdp;
+    }
+    if (rtcp && description->transport != gb28181_transport::udp)
     {
         return gb28181_output_create_error::invalid_sdp;
     }
@@ -404,7 +409,7 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
     output_resource resource;
     if (description->transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_output_session>(executor, std::move(stream), *description);
+        auto session = std::make_shared<gb28181_udp_output_session>(executor, std::move(stream), *description, rtcp);
         if (!session->startup())
         {
             std::scoped_lock lock(state_->mutex);

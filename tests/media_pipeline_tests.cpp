@@ -66,6 +66,8 @@ extern "C"
 #include <boost/asio/read.hpp>
 #include <boost/asio/read_until.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/beast/http/read.hpp>
+#include <boost/beast/http/write.hpp>
 #include <array>
 #include <chrono>
 #include <condition_variable>
@@ -2787,13 +2789,13 @@ void test_gb28181_multi_output_identity()
                                      "y=0100001001\r\n";
 
     gb28181_service service(registry);
-    require(service.create_output(io.get_executor(), first->name(), "a", sdp) == gb28181_output_create_error::none,
+    require(service.create_output(io.get_executor(), first->name(), "a", false, sdp) == gb28181_output_create_error::none,
             "gb multi output first identity");
-    require(service.create_output(io.get_executor(), first->name(), "b", sdp) == gb28181_output_create_error::none,
+    require(service.create_output(io.get_executor(), first->name(), "b", false, sdp) == gb28181_output_create_error::none,
             "gb multi output second identity");
-    require(service.create_output(io.get_executor(), first->name(), "a", sdp) == gb28181_output_create_error::duplicate_output,
+    require(service.create_output(io.get_executor(), first->name(), "a", false, sdp) == gb28181_output_create_error::duplicate_output,
             "gb multi output duplicate identity");
-    require(service.create_output(io.get_executor(), second->name(), "a", sdp) == gb28181_output_create_error::none,
+    require(service.create_output(io.get_executor(), second->name(), "a", false, sdp) == gb28181_output_create_error::none,
             "gb multi output identity scoped by stream");
     require(service.remove_output(first->name(), "a"), "gb multi output remove first identity");
     require(service.remove_output(first->name(), "b"), "gb multi output remove second identity");
@@ -2864,6 +2866,118 @@ void require_http_session_released(const std::weak_ptr<http_session>& session, s
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     require(session.expired(), message);
+}
+
+void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
+                         stream_registry& registry,
+                         hls_service& hls,
+                         whep_service& whep,
+                         gb28181_service& gb28181,
+                         boost::beast::http::verb method,
+                         std::string_view target,
+                         std::string_view body,
+                         boost::beast::http::status expected,
+                         std::string_view message)
+{
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+
+    auto session = std::make_shared<http_session>(acceptor.accept(), registry, hls, whep, gb28181);
+    const std::weak_ptr<http_session> weak_session = session;
+    session->startup();
+    session.reset();
+
+    boost::beast::http::request<boost::beast::http::string_body> request(method, target, 11);
+    request.set(boost::beast::http::field::host, "127.0.0.1");
+    request.set(boost::beast::http::field::content_type, "application/sdp");
+    request.keep_alive(false);
+    request.body() = body;
+    request.prepare_payload();
+    boost::beast::http::write(client, request);
+
+    boost::beast::flat_buffer buffer;
+    boost::beast::http::response<boost::beast::http::string_body> response;
+    boost::beast::http::read(client, buffer, response);
+    require(response.result() == expected, message);
+
+    boost::system::error_code error;
+    client.close(error);
+    require_http_session_released(weak_session, message);
+}
+
+void test_gb28181_output_http_parameters()
+{
+    boost::asio::io_context io;
+    stream_registry registry;
+    hls_service hls(registry);
+    whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
+    gb28181_service gb28181(registry);
+
+    auto stream = std::make_shared<media_stream>("live/gb-output-http", io.get_executor());
+    require(stream->set_tracks({make_video_track()}), "gb output http tracks");
+    require(registry.add(stream), "gb output http source registry");
+
+    constexpr std::string_view udp_sdp = "v=0\r\n"
+                                         "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+                                         "s=Play\r\n"
+                                         "c=IN IP4 127.0.0.1\r\n"
+                                         "t=0 0\r\n"
+                                         "m=video 29020 RTP/AVP 96\r\n"
+                                         "a=rtpmap:96 PS/90000\r\n"
+                                         "a=recvonly\r\n"
+                                         "y=0100001002\r\n";
+    constexpr std::string_view tcp_sdp = "v=0\r\n"
+                                         "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+                                         "s=Play\r\n"
+                                         "c=IN IP4 127.0.0.1\r\n"
+                                         "t=0 0\r\n"
+                                         "m=video 29021 TCP/RTP/AVP 96\r\n"
+                                         "a=rtpmap:96 PS/90000\r\n"
+                                         "a=recvonly\r\n"
+                                         "a=setup:active\r\n"
+                                         "a=connection:new\r\n"
+                                         "y=0100001003\r\n";
+
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    auto work = boost::asio::make_work_guard(io);
+    std::jthread runner([&io]() { io.run(); });
+
+    const auto post = boost::beast::http::verb::post;
+    const auto delete_ = boost::beast::http::verb::delete_;
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb output http requires output id");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb output http rejects empty output id");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=a", udp_sdp,
+                        boost::beast::http::status::created, "gb output http default rtcp disabled");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=a", udp_sdp,
+                        boost::beast::http::status::conflict, "gb output http duplicate identity");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=b&rtcp=0", udp_sdp,
+                        boost::beast::http::status::created, "gb output http explicit rtcp disabled");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=c&rtcp=1", udp_sdp,
+                        boost::beast::http::status::created, "gb output http rtcp enabled");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=d&rtcp=", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb output http rejects empty rtcp");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=d&rtcp=2", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb output http rejects invalid rtcp");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/output/live/gb-output-http?output_id=d&rtcp=0&rtcp=1", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb output http rejects duplicate rtcp");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=d&rtcp=1", tcp_sdp,
+                        boost::beast::http::status::bad_request, "gb output http rejects tcp rtcp");
+    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/output/live/gb-output-http?output_id=c&rtcp=1", {},
+                        boost::beast::http::status::bad_request, "gb output http rejects delete rtcp");
+    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/output/live/gb-output-http?output_id=a", {},
+                        boost::beast::http::status::no_content, "gb output http deletes first identity");
+    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/output/live/gb-output-http?output_id=b", {},
+                        boost::beast::http::status::no_content, "gb output http deletes second identity");
+    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/output/live/gb-output-http?output_id=c", {},
+                        boost::beast::http::status::no_content, "gb output http deletes rtcp identity");
+
+    gb28181.shutdown();
+    work.reset();
+    runner.join();
 }
 
 void test_http_flv_client_disconnect()
@@ -8866,6 +8980,8 @@ int main()
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
     media_server::test_gb28181_multi_output_identity();
     std::cout << "[pass] gb28181_multi_output_identity\n";
+    media_server::test_gb28181_output_http_parameters();
+    std::cout << "[pass] gb28181_output_http_parameters\n";
     media_server::test_rtmp_server_shutdown_lifecycle();
     std::cout << "[pass] rtmp_server_shutdown_lifecycle\n";
     media_server::test_http_flv_client_disconnect();

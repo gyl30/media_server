@@ -44,6 +44,7 @@ class gb28181_service final
     [[nodiscard]] gb28181_output_create_error create_output(boost::asio::any_io_executor executor,
                                                             std::string stream_name,
                                                             std::string output_id,
+                                                            bool rtcp,
                                                             std::string_view sdp);
     [[nodiscard]] bool remove_output(std::string_view stream_name, std::string_view output_id);
     void shutdown();

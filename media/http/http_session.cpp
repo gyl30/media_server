@@ -263,15 +263,24 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
     const auto stream_name = join_segments(segments, 2, segments.size());
     std::string output_id;
     bool output_id_seen = false;
+    bool rtcp = false;
+    bool rtcp_seen = false;
     for (const auto parameter : target.params())
     {
-        if (parameter.key != "output_id" || output_id_seen || !parameter.has_value || parameter.value.empty())
+        if (parameter.key == "output_id" && !output_id_seen && parameter.has_value && !parameter.value.empty())
         {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
-            return;
+            output_id.assign(parameter.value.data(), parameter.value.size());
+            output_id_seen = true;
+            continue;
         }
-        output_id.assign(parameter.value.data(), parameter.value.size());
-        output_id_seen = true;
+        if (parameter.key == "rtcp" && !rtcp_seen && parameter.has_value && (parameter.value == "0" || parameter.value == "1"))
+        {
+            rtcp = parameter.value == "1";
+            rtcp_seen = true;
+            continue;
+        }
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
+        return;
     }
     if (!output_id_seen)
     {
@@ -288,7 +297,7 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
             return;
         }
 
-        switch (gb28181_.create_output(stream_.get_executor(), stream_name, output_id, request_.body()))
+        switch (gb28181_.create_output(stream_.get_executor(), stream_name, output_id, rtcp, request_.body()))
         {
             case gb28181_output_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
@@ -313,6 +322,11 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
 
     if (request_.method() == boost::beast::http::verb::delete_)
     {
+        if (rtcp_seen)
+        {
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
+            return;
+        }
         if (!gb28181_.remove_output(stream_name, output_id))
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "gb28181 output not found\n");
