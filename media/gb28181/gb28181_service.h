@@ -23,6 +23,16 @@ enum class gb28181_create_error
     internal_error,
 };
 
+enum class gb28181_output_create_error
+{
+    none,
+    duplicate_output,
+    stream_not_found,
+    unsupported_stream,
+    invalid_sdp,
+    internal_error,
+};
+
 class gb28181_service final
 {
    public:
@@ -31,6 +41,8 @@ class gb28181_service final
 
     [[nodiscard]] gb28181_create_error create(boost::asio::any_io_executor executor, std::string stream_name, std::string_view sdp);
     [[nodiscard]] bool remove(std::string_view stream_name);
+    [[nodiscard]] gb28181_output_create_error create_output(boost::asio::any_io_executor executor, std::string stream_name, std::string_view sdp);
+    [[nodiscard]] bool remove_output(std::string_view stream_name);
     void shutdown();
 
    private:
