@@ -1,7 +1,9 @@
 #include "media/gb28181/gb28181_service.h"
 
 #include "media/gb28181/gb28181_sdp.h"
+#include "media/gb28181/gb28181_output_media.h"
 #include "media/gb28181/gb28181_tcp_session.h"
+#include "media/gb28181/gb28181_udp_output_session.h"
 #include "media/gb28181/gb28181_udp_session.h"
 #include "media/net/io_context_pool.h"
 #include "media/net/tcp_connector.h"
@@ -37,6 +39,14 @@ struct session_entry
 {
     std::shared_ptr<generation_token> generation;
     session_resource resource;
+    bool closing{};
+};
+
+struct output_entry
+{
+    std::shared_ptr<generation_token> generation;
+    std::weak_ptr<gb28181_udp_output_session> session;
+    bool pending{true};
     bool closing{};
 };
 
@@ -87,6 +97,7 @@ struct gb28181_service::state
 {
     std::mutex mutex;
     std::map<std::string, session_entry, std::less<>> sessions;
+    std::map<std::string, output_entry, std::less<>> outputs;
     bool closed{};
 };
 
@@ -268,6 +279,106 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     return gb28181_create_error::none;
 }
 
+gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_executor executor,
+                                                              std::string stream_name,
+                                                              std::string_view sdp)
+{
+    if (stream_name.empty())
+    {
+        return gb28181_output_create_error::invalid_sdp;
+    }
+
+    auto description = parse_gb28181_sdp(sdp);
+    if (!description || description->transport != gb28181_transport::udp || description->address.is_unspecified())
+    {
+        return gb28181_output_create_error::invalid_sdp;
+    }
+
+    auto stream = registry_.find(stream_name);
+    if (!stream)
+    {
+        return gb28181_output_create_error::stream_not_found;
+    }
+    if (!gb28181_output_media::supported_tracks(stream->tracks()))
+    {
+        return gb28181_output_create_error::unsupported_stream;
+    }
+
+    auto generation = std::make_shared<generation_token>();
+    {
+        std::scoped_lock lock(state_->mutex);
+        if (state_->closed)
+        {
+            return gb28181_output_create_error::internal_error;
+        }
+        std::erase_if(state_->outputs, [](const auto& entry) { return !entry.second.pending && entry.second.session.expired(); });
+        if (!state_->outputs
+                 .emplace(stream_name, output_entry{.generation = generation, .session = {}, .pending = true, .closing = false})
+                 .second)
+        {
+            return gb28181_output_create_error::duplicate_output;
+        }
+    }
+
+    auto session = std::make_shared<gb28181_udp_output_session>(executor, std::move(stream), *description);
+    if (!session->startup())
+    {
+        std::scoped_lock lock(state_->mutex);
+        const auto iterator = state_->outputs.find(stream_name);
+        if (iterator != state_->outputs.end() && iterator->second.generation == generation)
+        {
+            state_->outputs.erase(iterator);
+        }
+        return gb28181_output_create_error::internal_error;
+    }
+
+    bool installed = false;
+    {
+        std::scoped_lock lock(state_->mutex);
+        const auto iterator = state_->outputs.find(stream_name);
+        if (!state_->closed && iterator != state_->outputs.end() && iterator->second.generation == generation && !iterator->second.closing)
+        {
+            iterator->second.session = session;
+            iterator->second.pending = false;
+            installed = true;
+        }
+    }
+    if (!installed)
+    {
+        session->shutdown();
+        return gb28181_output_create_error::internal_error;
+    }
+
+    spdlog::info("gb28181 output created {}", stream_name);
+    return gb28181_output_create_error::none;
+}
+
+bool gb28181_service::remove_output(std::string_view stream_name)
+{
+    std::shared_ptr<gb28181_udp_output_session> session;
+    {
+        std::scoped_lock lock(state_->mutex);
+        const auto iterator = state_->outputs.find(stream_name);
+        if (iterator == state_->outputs.end())
+        {
+            return false;
+        }
+        if (!iterator->second.pending && iterator->second.session.expired())
+        {
+            state_->outputs.erase(iterator);
+            return false;
+        }
+        iterator->second.closing = true;
+        session = iterator->second.session.lock();
+    }
+    if (session)
+    {
+        session->shutdown();
+    }
+    spdlog::info("gb28181 output removed {}", stream_name);
+    return true;
+}
+
 bool gb28181_service::remove(std::string_view stream_name)
 {
     session_resource resource;
@@ -294,6 +405,7 @@ bool gb28181_service::remove(std::string_view stream_name)
 void gb28181_service::shutdown()
 {
     std::map<std::string, session_entry, std::less<>> sessions;
+    std::map<std::string, output_entry, std::less<>> outputs;
     {
         std::scoped_lock lock(state_->mutex);
         if (state_->closed)
@@ -302,12 +414,22 @@ void gb28181_service::shutdown()
         }
         state_->closed = true;
         sessions = std::move(state_->sessions);
+        outputs = std::move(state_->outputs);
         state_->sessions.clear();
+        state_->outputs.clear();
     }
     for (const auto& [name, entry] : sessions)
     {
         static_cast<void>(name);
         shutdown_resource(entry.resource);
+    }
+    for (const auto& [name, entry] : outputs)
+    {
+        static_cast<void>(name);
+        if (const auto session = entry.session.lock())
+        {
+            session->shutdown();
+        }
     }
 }
 
