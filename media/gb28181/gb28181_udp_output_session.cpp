@@ -7,53 +7,119 @@
 
 #include <spdlog/spdlog.h>
 
+#include <array>
+#include <chrono>
 #include <utility>
+
+extern "C"
+{
+#include "rtp.h"
+}
 
 namespace media_server
 {
+namespace
+{
+constexpr int udp_port_pair_attempts = 32;
+}
 
 gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_executor executor,
                                                        std::shared_ptr<media_stream> stream,
-                                                       gb28181_description description)
-    : executor_(std::move(executor)),
+                                                       gb28181_description description,
+                                                       bool rtcp_enabled)
+    : executor_(executor),
       stream_(std::move(stream)),
       stream_name_(stream_ ? stream_->name() : std::string{}),
       description_(std::move(description)),
-      remote_endpoint_(description_.address, description_.rtp_port)
+      remote_rtp_endpoint_(description_.address, description_.rtp_port),
+      remote_rtcp_endpoint_(description_.address, description_.rtcp_port),
+      rtcp_timer_(std::move(executor)),
+      rtcp_enabled_(rtcp_enabled)
 {
 }
 
 bool gb28181_udp_output_session::startup()
 {
-    if (closed_ || socket_ || media_ || !stream_ || description_.transport != gb28181_transport::udp || description_.address.is_unspecified())
+    if (closed_ || rtp_socket_ || rtcp_socket_ || media_ || !stream_ || description_.transport != gb28181_transport::udp ||
+        description_.address.is_unspecified())
     {
         return false;
     }
 
     const auto self = shared_from_this();
-    auto socket = std::make_shared<udp_socket>(executor_);
     const auto bind_address = description_.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
                                                            : boost::asio::ip::address{boost::asio::ip::address_v6::any()};
-    if (!socket->startup(
-            bind_address,
-            [self](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
-            {
-                if (error)
+    const auto start_socket = [self, &bind_address](std::uint16_t port)
+    {
+        auto socket = std::make_shared<udp_socket>(self->executor_);
+        if (!socket->startup(
+                bind_address,
+                port,
+                [self](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
                 {
-                    self->shutdown();
-                }
-            },
-            [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
-            {
-                if (error)
+                    if (error)
+                    {
+                        self->shutdown();
+                    }
+                },
+                [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
                 {
-                    self->shutdown();
-                }
-            }))
+                    if (error)
+                    {
+                        self->shutdown();
+                    }
+                }))
+        {
+            return std::shared_ptr<udp_socket>{};
+        }
+        return socket;
+    };
+
+    for (int attempt = 0; attempt < udp_port_pair_attempts && (!rtp_socket_ || !rtcp_socket_); ++attempt)
+    {
+        auto first = start_socket(0);
+        if (!first)
+        {
+            break;
+        }
+        const auto first_port = first->local_port();
+        const auto second_port = static_cast<std::uint16_t>((first_port & 1U) == 0 ? first_port + 1U : first_port - 1U);
+        auto second = second_port == 0 ? std::shared_ptr<udp_socket>{} : start_socket(second_port);
+        if (!second)
+        {
+            first->shutdown();
+            continue;
+        }
+
+        if ((first_port & 1U) == 0)
+        {
+            rtp_socket_ = std::move(first);
+            rtcp_socket_ = std::move(second);
+        }
+        else
+        {
+            rtp_socket_ = std::move(second);
+            rtcp_socket_ = std::move(first);
+        }
+    }
+    if (!rtp_socket_ || !rtcp_socket_)
     {
         return false;
     }
-    socket_ = std::move(socket);
+
+    if (rtcp_enabled_)
+    {
+        rtp_event_t handler{};
+        rtcp_sender_ = rtp_create(&handler, nullptr, description_.ssrc, 0, 90'000, 2 * 1024 * 1024, 1);
+        if (rtcp_sender_ == nullptr)
+        {
+            rtp_socket_->shutdown();
+            rtcp_socket_->shutdown();
+            rtp_socket_.reset();
+            rtcp_socket_.reset();
+            return false;
+        }
+    }
 
     const auto weak = weak_from_this();
     media_ = std::make_shared<gb28181_output_media>(
@@ -78,16 +144,27 @@ bool gb28181_udp_output_session::startup()
     if (!media_->startup())
     {
         media_.reset();
-        socket_->shutdown();
-        socket_.reset();
+        rtp_socket_->shutdown();
+        rtcp_socket_->shutdown();
+        rtp_socket_.reset();
+        rtcp_socket_.reset();
+        if (rtcp_sender_ != nullptr)
+        {
+            rtp_destroy(rtcp_sender_);
+            rtcp_sender_ = nullptr;
+        }
         return false;
     }
 
-    spdlog::info("gb28181 udp output started stream {} local_port {} remote {}:{}",
+    spdlog::info("gb28181 udp output started stream {} local_rtp_port {} local_rtcp_port {} remote_rtp {}:{} remote_rtcp {}:{} rtcp {}",
                  stream_name_,
-                 socket_->local_port(),
+                 rtp_socket_->local_port(),
+                 rtcp_socket_->local_port(),
                  description_.address.to_string(),
-                 description_.rtp_port);
+                 description_.rtp_port,
+                 description_.address.to_string(),
+                 description_.rtcp_port,
+                 rtcp_enabled_);
     return true;
 }
 
@@ -99,10 +176,44 @@ void gb28181_udp_output_session::shutdown()
 
 void gb28181_udp_output_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (!closed_ && socket_)
+    if (closed_ || !rtp_socket_)
     {
-        socket_->send(std::move(packet), remote_endpoint_);
+        return;
     }
+    if (rtcp_sender_ != nullptr && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
+    {
+        shutdown();
+        return;
+    }
+
+    rtp_socket_->send(std::move(packet), remote_rtp_endpoint_);
+    if (rtcp_sender_ != nullptr && !rtcp_started_)
+    {
+        rtcp_started_ = true;
+        wait_rtcp();
+    }
+}
+
+void gb28181_udp_output_session::wait_rtcp()
+{
+    rtcp_timer_.expires_after(std::chrono::seconds(25));
+    const auto self = shared_from_this();
+    rtcp_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_ || self->rtcp_sender_ == nullptr || !self->rtcp_socket_)
+            {
+                return;
+            }
+
+            std::array<std::uint8_t, 1500> buffer{};
+            const auto bytes = rtp_rtcp_report(self->rtcp_sender_, buffer.data(), static_cast<int>(buffer.size()));
+            if (bytes > 0 && bytes <= static_cast<int>(buffer.size()))
+            {
+                self->rtcp_socket_->send(std::vector<std::uint8_t>(buffer.begin(), buffer.begin() + bytes), self->remote_rtcp_endpoint_);
+            }
+            self->wait_rtcp();
+        });
 }
 
 void gb28181_udp_output_session::safe_shutdown()
@@ -112,16 +223,28 @@ void gb28181_udp_output_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    rtcp_timer_.cancel();
     if (media_)
     {
         media_->shutdown();
         media_.reset();
     }
-    if (socket_)
+    if (rtp_socket_)
     {
-        socket_->shutdown();
-        socket_.reset();
+        rtp_socket_->shutdown();
+        rtp_socket_.reset();
     }
+    if (rtcp_socket_)
+    {
+        rtcp_socket_->shutdown();
+        rtcp_socket_.reset();
+    }
+    if (rtcp_sender_ != nullptr)
+    {
+        rtp_destroy(rtcp_sender_);
+        rtcp_sender_ = nullptr;
+    }
+    rtcp_started_ = false;
     stream_.reset();
     spdlog::debug("gb28181 udp output shutdown {}", stream_name_);
 }

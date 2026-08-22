@@ -6,6 +6,7 @@
 
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include <memory>
 #include <string>
@@ -22,22 +23,30 @@ class gb28181_udp_output_session final : public std::enable_shared_from_this<gb2
    public:
     gb28181_udp_output_session(boost::asio::any_io_executor executor,
                                std::shared_ptr<media_stream> stream,
-                               gb28181_description description);
+                               gb28181_description description,
+                               bool rtcp_enabled);
 
     [[nodiscard]] bool startup();
     void shutdown();
 
    private:
     void send_packet(std::vector<std::uint8_t> packet);
+    void wait_rtcp();
     void safe_shutdown();
 
     boost::asio::any_io_executor executor_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     gb28181_description description_;
-    boost::asio::ip::udp::endpoint remote_endpoint_;
-    std::shared_ptr<udp_socket> socket_;
+    boost::asio::ip::udp::endpoint remote_rtp_endpoint_;
+    boost::asio::ip::udp::endpoint remote_rtcp_endpoint_;
+    boost::asio::steady_timer rtcp_timer_;
+    std::shared_ptr<udp_socket> rtp_socket_;
+    std::shared_ptr<udp_socket> rtcp_socket_;
     std::shared_ptr<gb28181_output_media> media_;
+    void* rtcp_sender_{};
+    bool rtcp_enabled_{};
+    bool rtcp_started_{};
     bool closed_{};
 };
 
