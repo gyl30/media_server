@@ -2766,6 +2766,44 @@ void test_tcp_listener_shutdown_lifecycle()
     require(weak_listener.expired(), "tcp listener released after owner worker cleanup");
 }
 
+void test_gb28181_multi_output_identity()
+{
+    boost::asio::io_context io;
+    stream_registry registry;
+    auto first = std::make_shared<media_stream>("live/gb-output-first", io.get_executor());
+    auto second = std::make_shared<media_stream>("live/gb-output-second", io.get_executor());
+    require(first->set_tracks({make_video_track()}), "gb multi output first tracks");
+    require(second->set_tracks({make_video_track()}), "gb multi output second tracks");
+    require(registry.add(first) && registry.add(second), "gb multi output source registry");
+
+    constexpr std::string_view sdp = "v=0\r\n"
+                                     "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+                                     "s=Play\r\n"
+                                     "c=IN IP4 127.0.0.1\r\n"
+                                     "t=0 0\r\n"
+                                     "m=video 29000 RTP/AVP 96\r\n"
+                                     "a=rtpmap:96 PS/90000\r\n"
+                                     "a=recvonly\r\n"
+                                     "y=0100001001\r\n";
+
+    gb28181_service service(registry);
+    require(service.create_output(io.get_executor(), first->name(), "a", sdp) == gb28181_output_create_error::none,
+            "gb multi output first identity");
+    require(service.create_output(io.get_executor(), first->name(), "b", sdp) == gb28181_output_create_error::none,
+            "gb multi output second identity");
+    require(service.create_output(io.get_executor(), first->name(), "a", sdp) == gb28181_output_create_error::duplicate_output,
+            "gb multi output duplicate identity");
+    require(service.create_output(io.get_executor(), second->name(), "a", sdp) == gb28181_output_create_error::none,
+            "gb multi output identity scoped by stream");
+    require(service.remove_output(first->name(), "a"), "gb multi output remove first identity");
+    require(service.remove_output(first->name(), "b"), "gb multi output remove second identity");
+    require(service.remove_output(second->name(), "a"), "gb multi output remove other stream identity");
+    require(!service.remove_output(first->name(), "missing"), "gb multi output missing identity");
+
+    service.shutdown();
+    io.run();
+}
+
 void test_rtmp_server_shutdown_lifecycle()
 {
     io_context_pool workers(1);
@@ -8826,6 +8864,8 @@ int main()
     std::cout << "[pass] tcp_listener_dynamic_startup\n";
     media_server::test_tcp_listener_shutdown_lifecycle();
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
+    media_server::test_gb28181_multi_output_identity();
+    std::cout << "[pass] gb28181_multi_output_identity\n";
     media_server::test_rtmp_server_shutdown_lifecycle();
     std::cout << "[pass] rtmp_server_shutdown_lifecycle\n";
     media_server::test_http_flv_client_disconnect();
