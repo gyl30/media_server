@@ -15,9 +15,11 @@ namespace media_server
 gb28181_udp_session::gb28181_udp_session(stream_registry& registry,
                                          boost::asio::any_io_executor executor,
                                          std::string stream_name,
-                                         gb28181_description description)
+                                         gb28181_description description,
+                                         gb28181_udp_peer peer)
     : executor_(executor),
       description_(std::move(description)),
+      peer_(std::move(peer)),
       media_(registry, executor, std::move(stream_name), description_.payload_type, description_.ssrc),
       rtcp_timer_(std::move(executor))
 {
@@ -25,7 +27,7 @@ gb28181_udp_session::gb28181_udp_session(stream_registry& registry,
 
 bool gb28181_udp_session::startup()
 {
-    if (closed_ || rtp_socket_ || rtcp_socket_ || !media_.startup())
+    if (closed_ || rtp_socket_ || rtcp_socket_ || peer_.rtcp_port == 0 || !media_.startup())
     {
         return false;
     }
@@ -58,6 +60,13 @@ bool gb28181_udp_session::startup()
         return false;
     }
 
+    if (peer_.rtp && !rtp_socket->connect(*peer_.rtp))
+    {
+        rtp_socket->shutdown();
+        media_.shutdown();
+        return false;
+    }
+
     auto rtcp_socket = std::make_shared<udp_socket>(executor_);
     if (!rtcp_socket->startup(
             bind_address,
@@ -84,6 +93,20 @@ bool gb28181_udp_session::startup()
         return false;
     }
 
+    if (peer_.rtp)
+    {
+        const boost::asio::ip::udp::endpoint rtcp_endpoint{peer_.rtp->address(), peer_.rtcp_port};
+        if (!rtcp_socket->connect(rtcp_endpoint))
+        {
+            rtp_socket->shutdown();
+            rtcp_socket->shutdown();
+            media_.shutdown();
+            return false;
+        }
+        remote_rtp_endpoint_ = *peer_.rtp;
+        remote_rtcp_endpoint_ = rtcp_endpoint;
+    }
+
     rtp_socket_ = std::move(rtp_socket);
     rtcp_socket_ = std::move(rtcp_socket);
     wait_rtcp();
@@ -101,27 +124,37 @@ const std::string& gb28181_udp_session::stream_name() const noexcept { return me
 
 void gb28181_udp_session::on_rtp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
 {
-    static_cast<void>(endpoint);
     if (closed_)
     {
         return;
     }
-    if (!media_.input_rtp(data))
+
+    const auto result = media_.input_rtp(data);
+    if (result == gb28181_rtp_input_result::fatal)
     {
         shutdown();
+        return;
+    }
+    if (result == gb28181_rtp_input_result::accepted && !remote_rtp_endpoint_)
+    {
+        const boost::asio::ip::udp::endpoint rtcp_endpoint{endpoint.address(), peer_.rtcp_port};
+        if (!rtp_socket_ || !rtcp_socket_ || !rtp_socket_->connect(endpoint) || !rtcp_socket_->connect(rtcp_endpoint))
+        {
+            shutdown();
+            return;
+        }
+        remote_rtp_endpoint_ = endpoint;
+        remote_rtcp_endpoint_ = rtcp_endpoint;
     }
 }
 
-void gb28181_udp_session::on_rtcp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+void gb28181_udp_session::on_rtcp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint&)
 {
-    if (closed_)
+    if (closed_ || !remote_rtcp_endpoint_)
     {
         return;
     }
-    if (media_.input_rtcp(data) > 0)
-    {
-        remote_rtcp_endpoint_ = endpoint;
-    }
+    static_cast<void>(media_.input_rtcp(data));
 }
 
 void gb28181_udp_session::wait_rtcp()
@@ -168,6 +201,7 @@ void gb28181_udp_session::safe_shutdown()
         rtcp_socket_->shutdown();
         rtcp_socket_.reset();
     }
+    remote_rtp_endpoint_.reset();
     remote_rtcp_endpoint_.reset();
     spdlog::debug("gb28181 udp session shutdown {}", media_.stream_name());
 }

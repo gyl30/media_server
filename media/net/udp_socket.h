@@ -30,6 +30,7 @@ class udp_socket final : public std::enable_shared_from_this<udp_socket>
                                std::uint16_t port,
                                read_handler on_read,
                                write_error_handler on_write_error);
+    [[nodiscard]] bool connect(const boost::asio::ip::udp::endpoint& endpoint);
     void send(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint);
     void shutdown();
 

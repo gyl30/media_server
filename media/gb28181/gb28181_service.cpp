@@ -118,7 +118,11 @@ gb28181_service::gb28181_service(stream_registry& registry, io_context_pool* wor
 
 gb28181_service::~gb28181_service() { shutdown(); }
 
-gb28181_create_error gb28181_service::create(boost::asio::any_io_executor executor, std::string stream_name, std::string_view sdp)
+gb28181_create_error gb28181_service::create(boost::asio::any_io_executor executor,
+                                               std::string stream_name,
+                                               std::string_view sdp,
+                                               std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
+                                               std::optional<std::uint16_t> remote_rtcp_port)
 {
     if (stream_name.empty())
     {
@@ -127,6 +131,23 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
 
     auto description = parse_gb28181_sdp(sdp);
     if (!description)
+    {
+        return gb28181_create_error::invalid_sdp;
+    }
+    if (description->transport == gb28181_transport::udp)
+    {
+        if (!remote_rtcp_port || *remote_rtcp_port == 0)
+        {
+            return gb28181_create_error::invalid_sdp;
+        }
+        if (remote_rtp_endpoint &&
+            (remote_rtp_endpoint->port() == 0 || remote_rtp_endpoint->address().is_unspecified() ||
+             remote_rtp_endpoint->address().is_v4() != description->address.is_v4()))
+        {
+            return gb28181_create_error::invalid_sdp;
+        }
+    }
+    else if (remote_rtp_endpoint || remote_rtcp_port)
     {
         return gb28181_create_error::invalid_sdp;
     }
@@ -208,7 +229,12 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     session_resource resource;
     if (description->transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_session>(registry_, executor, stream_name, *description);
+        auto session = std::make_shared<gb28181_udp_session>(
+            registry_,
+            executor,
+            stream_name,
+            *description,
+            gb28181_udp_peer{.rtp = std::move(remote_rtp_endpoint), .rtcp_port = *remote_rtcp_port});
         if (!session->startup())
         {
             std::scoped_lock lock(state_->mutex);

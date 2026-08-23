@@ -4,8 +4,11 @@
 #include "media/core/stream_registry.h"
 
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/ip/udp.hpp>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -39,7 +42,11 @@ class gb28181_service final
     explicit gb28181_service(stream_registry& registry, io_context_pool* workers = nullptr);
     ~gb28181_service();
 
-    [[nodiscard]] gb28181_create_error create(boost::asio::any_io_executor executor, std::string stream_name, std::string_view sdp);
+    [[nodiscard]] gb28181_create_error create(boost::asio::any_io_executor executor,
+                                              std::string stream_name,
+                                              std::string_view sdp,
+                                              std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
+                                              std::optional<std::uint16_t> remote_rtcp_port);
     [[nodiscard]] bool remove(std::string_view stream_name);
     [[nodiscard]] gb28181_output_create_error create_output(boost::asio::any_io_executor executor,
                                                             std::string stream_name,
