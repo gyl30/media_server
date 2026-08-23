@@ -22,6 +22,13 @@ struct rtsp_demuxer_t;
 namespace media_server
 {
 
+enum class gb28181_rtp_input_result
+{
+    ignored,
+    accepted,
+    fatal,
+};
+
 class gb28181_input_media final
 {
    public:
@@ -33,7 +40,7 @@ class gb28181_input_media final
     ~gb28181_input_media();
 
     [[nodiscard]] bool startup();
-    [[nodiscard]] bool input_rtp(std::span<const std::uint8_t> data);
+    [[nodiscard]] gb28181_rtp_input_result input_rtp(std::span<const std::uint8_t> data);
     [[nodiscard]] int input_rtcp(std::span<const std::uint8_t> data);
     [[nodiscard]] int rtcp(std::span<std::uint8_t> buffer);
     void shutdown();

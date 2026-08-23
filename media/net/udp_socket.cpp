@@ -53,6 +53,18 @@ bool udp_socket::startup(boost::asio::ip::address bind_address,
     return true;
 }
 
+bool udp_socket::connect(const boost::asio::ip::udp::endpoint& endpoint)
+{
+    if (closed_ || !socket_.is_open())
+    {
+        return false;
+    }
+
+    boost::system::error_code error;
+    socket_.connect(endpoint, error);
+    return !error;
+}
+
 void udp_socket::send(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
 {
     if (closed_ || !socket_.is_open() || packet.empty())

@@ -2368,6 +2368,45 @@ void test_udp_socket_receive_and_send()
     io.run();
 }
 
+void test_udp_socket_connected_peer_filter()
+{
+    boost::asio::io_context io;
+    auto socket = std::make_shared<udp_socket>(io.get_executor());
+    boost::asio::ip::udp::socket first(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket second(io, {boost::asio::ip::address_v4::loopback(), 0});
+    int read_count = 0;
+
+    require(socket->startup(
+                boost::asio::ip::address_v4::any(),
+                [&](boost::system::error_code error,
+                    std::span<const std::uint8_t>,
+                    const boost::asio::ip::udp::endpoint& endpoint)
+                {
+                    require(!error, "udp connected peer receive");
+                    ++read_count;
+                    if (read_count == 1)
+                    {
+                        require(socket->connect(endpoint), "udp connected peer pin");
+                    }
+                },
+                {}),
+            "udp connected peer startup");
+
+    const boost::asio::ip::udp::endpoint target{boost::asio::ip::address_v4::loopback(), socket->local_port()};
+    first.send_to(boost::asio::buffer(std::array<std::uint8_t, 1>{0x01}), target);
+    io.run_for(std::chrono::milliseconds(50));
+
+    io.restart();
+    second.send_to(boost::asio::buffer(std::array<std::uint8_t, 1>{0x02}), target);
+    first.send_to(boost::asio::buffer(std::array<std::uint8_t, 1>{0x03}), target);
+    io.run_for(std::chrono::milliseconds(100));
+
+    require(read_count == 2, "udp connected peer rejects other source");
+    socket->shutdown();
+    io.restart();
+    io.run();
+}
+
 void test_udp_socket_multi_endpoint_queue()
 {
     boost::asio::io_context io;
@@ -2904,6 +2943,107 @@ void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
     boost::system::error_code error;
     client.close(error);
     require_http_session_released(weak_session, message);
+}
+
+void test_gb28181_input_http_parameters()
+{
+    boost::asio::io_context io;
+    stream_registry registry;
+    hls_service hls(registry);
+    whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
+    gb28181_service gb28181(registry);
+
+    boost::asio::ip::udp::socket local_rtp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket local_rtcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket remote_rtp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket remote_rtcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+    const auto local_rtp_port = local_rtp_probe.local_endpoint().port();
+    const auto local_rtcp_port = local_rtcp_probe.local_endpoint().port();
+    const auto remote_rtp_port = remote_rtp_probe.local_endpoint().port();
+    const auto remote_rtcp_port = remote_rtcp_probe.local_endpoint().port();
+    local_rtp_probe.close();
+    local_rtcp_probe.close();
+
+    const auto udp_sdp = "v=0\r\n"
+                         "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+                         "s=Play\r\n"
+                         "c=IN IP4 127.0.0.1\r\n"
+                         "t=0 0\r\n"
+                         "m=video " + std::to_string(local_rtp_port) + " RTP/AVP 96\r\n"
+                         "a=rtpmap:96 PS/90000\r\n"
+                         "a=rtcp:" + std::to_string(local_rtcp_port) + "\r\n"
+                         "a=sendonly\r\n"
+                         "y=0100001002\r\n";
+    constexpr std::string_view tcp_sdp = "v=0\r\n"
+                                         "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+                                         "s=Play\r\n"
+                                         "c=IN IP4 127.0.0.1\r\n"
+                                         "t=0 0\r\n"
+                                         "m=video 29021 TCP/RTP/AVP 96\r\n"
+                                         "a=rtpmap:96 PS/90000\r\n"
+                                         "a=sendonly\r\n"
+                                         "a=setup:passive\r\n"
+                                         "a=connection:new\r\n"
+                                         "y=0100001003\r\n";
+
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    auto work = boost::asio::make_work_guard(io);
+    std::jthread runner([&io]() { io.run(); });
+
+    const auto post = boost::beast::http::verb::post;
+    const auto delete_ = boost::beast::http::verb::delete_;
+    const auto rtcp_query = "?remote_rtcp_port=" + std::to_string(remote_rtcp_port);
+    const auto full_query = "?remote_rtp_address=127.0.0.1&remote_rtp_port=" + std::to_string(remote_rtp_port) +
+                            "&remote_rtcp_port=" + std::to_string(remote_rtcp_port);
+
+    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/live/gb-input-http", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http requires remote rtcp port");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects address without rtp port");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtp_port=" + std::to_string(remote_rtp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects rtp port without address");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtp_address=bad&remote_rtp_port=" + std::to_string(remote_rtp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects invalid address");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtp_port=0&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects zero rtp port");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtp_port=65536&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects oversized rtp port");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtcp_port=0", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects zero rtcp port");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtcp_port=abc", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects nonnumeric rtcp port");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtcp_port=" + std::to_string(remote_rtcp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects duplicate parameter");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http?remote_rtcp_port=" + std::to_string(remote_rtcp_port) + "&unknown=1", udp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects unknown parameter");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http" + rtcp_query, udp_sdp,
+                        boost::beast::http::status::created, "gb input http accepts first valid rtp discovery");
+    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/live/gb-input-http", {},
+                        boost::beast::http::status::no_content, "gb input http deletes discovery session");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http-fixed" + full_query, udp_sdp,
+                        boost::beast::http::status::created, "gb input http accepts fixed rtp peer");
+    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/live/gb-input-http-fixed?remote_rtcp_port=1", {},
+                        boost::beast::http::status::bad_request, "gb input http rejects delete peer parameters");
+    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/live/gb-input-http-fixed", {},
+                        boost::beast::http::status::no_content, "gb input http deletes fixed peer session");
+    require_http_status(acceptor, registry, hls, whep, gb28181, post,
+                        "/gb28181/live/gb-input-http-tcp?remote_rtcp_port=" + std::to_string(remote_rtcp_port), tcp_sdp,
+                        boost::beast::http::status::bad_request, "gb input http rejects udp peer parameters for tcp");
+
+    gb28181.shutdown();
+    work.reset();
+    runner.join();
 }
 
 void test_gb28181_output_http_parameters()
@@ -8962,6 +9102,8 @@ int main()
     std::cout << "[pass] tcp_connection_shutdown_discards_pending_writes\n";
     media_server::test_udp_socket_receive_and_send();
     std::cout << "[pass] udp_socket_receive_and_send\n";
+    media_server::test_udp_socket_connected_peer_filter();
+    std::cout << "[pass] udp_socket_connected_peer_filter\n";
     media_server::test_udp_socket_multi_endpoint_queue();
     std::cout << "[pass] udp_socket_multi_endpoint_queue\n";
     media_server::test_udp_socket_error_and_shutdown_lifecycle();
@@ -8980,6 +9122,8 @@ int main()
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
     media_server::test_gb28181_multi_output_identity();
     std::cout << "[pass] gb28181_multi_output_identity\n";
+    media_server::test_gb28181_input_http_parameters();
+    std::cout << "[pass] gb28181_input_http_parameters\n";
     media_server::test_gb28181_output_http_parameters();
     std::cout << "[pass] gb28181_output_http_parameters\n";
     media_server::test_rtmp_server_shutdown_lifecycle();
