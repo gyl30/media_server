@@ -78,7 +78,7 @@ void gb28181_tcp_session::on_read(std::span<const std::uint8_t> data)
         if (bytes != 0)
         {
             const std::span packet{input_buffer_.data() + offset, bytes};
-            if (!media_.input_rtp(packet))
+            if (media_.input_rtp(packet) == gb28181_rtp_input_result::fatal)
             {
                 shutdown();
                 return;

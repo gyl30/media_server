@@ -100,22 +100,26 @@ bool gb28181_input_media::startup()
     return true;
 }
 
-bool gb28181_input_media::input_rtp(std::span<const std::uint8_t> data)
+gb28181_rtp_input_result gb28181_input_media::input_rtp(std::span<const std::uint8_t> data)
 {
-    if (closed_ || demuxer_ == nullptr || data.size() < 12)
+    if (closed_)
     {
-        return !closed_;
+        return gb28181_rtp_input_result::fatal;
+    }
+    if (demuxer_ == nullptr || data.size() < 12)
+    {
+        return gb28181_rtp_input_result::ignored;
     }
 
     rtp_packet_t packet{};
     if (rtp_packet_deserialize(&packet, data.data(), static_cast<int>(data.size())) != 0 || packet.rtp.pt != payload_type_ ||
         packet.rtp.ssrc != expected_ssrc_)
     {
-        return true;
+        return gb28181_rtp_input_result::ignored;
     }
 
     static_cast<void>(rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size())));
-    return !fatal_codec_change_;
+    return fatal_codec_change_ ? gb28181_rtp_input_result::fatal : gb28181_rtp_input_result::accepted;
 }
 
 int gb28181_input_media::input_rtcp(std::span<const std::uint8_t> data)
