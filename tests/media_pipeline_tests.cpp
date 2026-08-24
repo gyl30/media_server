@@ -34,6 +34,7 @@
 #include "media/net/tcp_listener.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
+#include "media/rtsp/rtsp_uri.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
 #include "media/http/http_session.h"
@@ -4582,6 +4583,19 @@ void test_rtsp_input_independent_keepalive()
     socket.close(error);
     runner.join();
     require(!registry.find("relay/keepalive"), "rtsp keepalive pull closes");
+}
+
+void test_rtsp_uri_contract()
+{
+    require(rtsp_stream_name_from_uri("rtsp://127.0.0.1:8554/live/test") == "live/test", "rtsp uri absolute stream");
+    require(rtsp_stream_name_from_uri("/live/test/trackID=2") == "live/test", "rtsp uri track stream");
+    require(rtsp_stream_name_from_uri("rtsp://[").empty(), "rtsp uri invalid stream");
+
+    require(rtsp_track_id_from_uri("/live/test/trackID=0") == 0U, "rtsp uri zero track");
+    require(rtsp_track_id_from_uri("/live/test/trackID=2?transport=tcp") == 2U, "rtsp uri track query");
+    require(!rtsp_track_id_from_uri("/live/test").has_value(), "rtsp uri missing track");
+    require(!rtsp_track_id_from_uri("/live/test/trackID=2x").has_value(), "rtsp uri invalid track");
+    require(!rtsp_track_id_from_uri("/live/test/trackID=4294967296").has_value(), "rtsp uri overflow track");
 }
 
 void test_rtsp_publish_server_contract()
@@ -9370,6 +9384,8 @@ int main()
     std::cout << "[pass] rtsp_input_independent_keepalive\n";
     media_server::test_rtsp_client_rejects_empty_media_selection();
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
+    media_server::test_rtsp_uri_contract();
+    std::cout << "[pass] rtsp_uri_contract\n";
     media_server::test_rtsp_publish_server_contract();
     std::cout << "[pass] rtsp_publish_server_contract\n";
     media_server::test_rtsp_output_session_contract();

@@ -5,10 +5,9 @@
 #include <utility>
 #include <algorithm>
 
-#include <boost/url/parse.hpp>
-
 #include "media/codec/codec_utils.h"
 #include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_uri.h"
 #include "media/rtsp/rtsp_input_tcp_session.h"
 #include "media/rtsp/rtsp_input_udp_session.h"
 
@@ -161,7 +160,7 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
     }
 
     descriptions_.clear();
-    stream_name_ = stream_name_from_uri(uri);
+    stream_name_ = rtsp_stream_name_from_uri(uri);
     if (stream_name_.empty())
     {
         return rtsp_server_reply_announce(server, 400);
@@ -416,30 +415,6 @@ std::optional<media_track> rtsp_input_session::track_from_format(const rtsp_medi
                            .codec_config = {}};
     }
     return std::nullopt;
-}
-
-std::string rtsp_input_session::stream_name_from_uri(std::string_view uri)
-{
-    const auto parsed = boost::urls::parse_uri_reference(uri);
-    if (!parsed)
-    {
-        return {};
-    }
-    std::string result;
-    for (const auto segment : parsed->segments())
-    {
-        const std::string value(segment);
-        if (value.starts_with("trackID="))
-        {
-            break;
-        }
-        if (!result.empty())
-        {
-            result.push_back('/');
-        }
-        result.append(value);
-    }
-    return result;
 }
 
 }    // namespace media_server
