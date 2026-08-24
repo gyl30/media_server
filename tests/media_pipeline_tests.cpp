@@ -4592,6 +4592,18 @@ void test_rtsp_sdp_contract()
     require(!rtsp_sdp_iequals(nullptr, "h264"), "rtsp sdp encoding null");
     require(!rtsp_sdp_iequals("H265", "h264"), "rtsp sdp encoding mismatch");
 
+    require(rtsp_sdp_opus_channel_count(nullptr) == 1, "rtsp sdp opus default channels");
+    require(rtsp_sdp_opus_channel_count("111 minptime=10") == 1, "rtsp sdp opus missing stereo parameter");
+    require(rtsp_sdp_opus_channel_count("111 sprop-stereo=0") == 1, "rtsp sdp opus mono parameter");
+    require(rtsp_sdp_opus_channel_count("111 sprop-stereo=1") == 2, "rtsp sdp opus stereo parameter");
+    require(rtsp_sdp_opus_channel_count("111 MINPTIME=10;sPrOp-StErEo=1") == 2, "rtsp sdp opus parameter name case");
+    require(rtsp_sdp_opus_channel_count("111 minptime=10;sprop-stereo=1") == 2, "rtsp sdp opus compact parameter separator");
+    require(rtsp_sdp_opus_channel_count("111 minptime=10; sprop-stereo=1") == 2, "rtsp sdp opus space parameter separator");
+    require(rtsp_sdp_opus_channel_count("111 minptime=10;\tsprop-stereo=1") == 2, "rtsp sdp opus tab parameter separator");
+    require(rtsp_sdp_opus_channel_count("111 sprop-stereo=1; useinbandfec=1") == 2, "rtsp sdp opus stereo parameter first");
+    require(rtsp_sdp_opus_channel_count("111 useinbandfec=1; sprop-stereo=1") == 2, "rtsp sdp opus stereo parameter last");
+    require(!rtsp_sdp_opus_channel_count("111 sprop-stereo=2").has_value(), "rtsp sdp opus invalid stereo parameter");
+
     std::vector<std::uint8_t> config;
     require(rtsp_sdp_append_parameter_sets(config, "AQ=="), "rtsp sdp single parameter set");
     require(config == std::vector<std::uint8_t>({0x00, 0x00, 0x00, 0x01, 0x01}), "rtsp sdp single parameter set annex b");
@@ -4607,6 +4619,87 @@ void test_rtsp_sdp_contract()
 
     require(!rtsp_sdp_append_parameter_sets(config, "="), "rtsp sdp invalid base64");
     require(config.empty(), "rtsp sdp invalid base64 leaves config empty");
+}
+
+void test_rtsp_publish_opus_fmtp_whitespace()
+{
+    io_context_pool workers(1);
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::tcp::v4(), 0});
+    const auto port = probe.local_endpoint().port();
+    probe.close();
+    stream_registry registry;
+    auto server = std::make_shared<rtsp_server>(workers, registry, port);
+    require(!server->startup(), "rtsp opus whitespace server startup");
+    std::jthread runner([&workers]() { workers.run(); });
+
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect({boost::asio::ip::address_v4::loopback(), port});
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/opus-whitespace";
+    const auto video = base + "/trackID=0";
+    const auto audio = base + "/trackID=1";
+    const auto sdp = std::string("v=0\r\n") +
+                     "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                     "s=opus-whitespace\r\n"
+                     "c=IN IP4 127.0.0.1\r\n"
+                     "t=0 0\r\n"
+                     "m=video 0 RTP/AVP 96\r\n"
+                     "a=rtpmap:96 H264/90000\r\n"
+                     "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                     "a=control:" +
+                     video +
+                     "\r\n"
+                     "m=audio 0 RTP/AVP 111\r\n"
+                     "a=rtpmap:111 opus/48000/2\r\n"
+                     "a=fmtp:111 minptime=10; sprop-stereo=1; useinbandfec=1\r\n"
+                     "a=control:" +
+                     audio + "\r\n";
+    const auto request = [&](std::string value)
+    {
+        boost::asio::write(client, boost::asio::buffer(value));
+        return read_rtsp_headers(client);
+    };
+
+    require(request("ANNOUNCE " + base + " RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) +
+                    "\r\n\r\n" + sdp)
+                .starts_with("RTSP/1.0 200"),
+            "rtsp opus whitespace announce");
+    const auto video_setup = request("SETUP " + video + " RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
+    require(video_setup.starts_with("RTSP/1.0 200"), "rtsp opus whitespace video setup");
+    auto session = rtsp_header_value(video_setup, "Session:");
+    if (const auto separator = session.find(';'); separator != std::string::npos)
+    {
+        session.resize(separator);
+    }
+    require(!session.empty(), "rtsp opus whitespace session");
+    require(request("SETUP " + audio + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session +
+                    "\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp opus whitespace audio setup");
+    require(request("RECORD " + base + " RTSP/1.0\r\nCSeq: 4\r\nSession: " + session + "\r\n\r\n").starts_with("RTSP/1.0 200"),
+            "rtsp opus whitespace record");
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    std::shared_ptr<media_stream> stream;
+    while (!(stream = registry.find("live/opus-whitespace")) && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(stream != nullptr, "rtsp opus whitespace enters registry");
+    const auto tracks = stream->tracks();
+    require(tracks.size() == 2U, "rtsp opus whitespace track topology");
+    require(tracks[1].codec == codec_id::opus && tracks[1].channel_count == 2, "rtsp opus whitespace stereo track");
+
+    boost::system::error_code error;
+    client.close(error);
+    const auto close_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (registry.find("live/opus-whitespace") && std::chrono::steady_clock::now() < close_deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    server->shutdown();
+    workers.release_work();
+    runner.join();
 }
 
 void test_rtsp_uri_contract()
@@ -9410,6 +9503,8 @@ int main()
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
     media_server::test_rtsp_sdp_contract();
     std::cout << "[pass] rtsp_sdp_contract\n";
+    media_server::test_rtsp_publish_opus_fmtp_whitespace();
+    std::cout << "[pass] rtsp_publish_opus_fmtp_whitespace\n";
     media_server::test_rtsp_uri_contract();
     std::cout << "[pass] rtsp_uri_contract\n";
     media_server::test_rtsp_publish_server_contract();

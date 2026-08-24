@@ -28,60 +28,6 @@ namespace
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 
-std::optional<std::uint16_t> opus_channels(const char* fmtp)
-{
-    if (fmtp == nullptr)
-    {
-        return 1;
-    }
-    std::string_view parameters(fmtp);
-    if (const auto space = parameters.find(' '); space != std::string_view::npos)
-    {
-        parameters.remove_prefix(space + 1U);
-    }
-    while (!parameters.empty())
-    {
-        const auto separator = parameters.find(';');
-        auto parameter = parameters.substr(0, separator);
-        const auto equals = parameter.find('=');
-        if (equals != std::string_view::npos)
-        {
-            auto name = parameter.substr(0, equals);
-            auto value = parameter.substr(equals + 1U);
-            while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back())) != 0)
-            {
-                name.remove_suffix(1U);
-            }
-            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0)
-            {
-                value.remove_prefix(1U);
-            }
-            if (name.size() == std::string_view("sprop-stereo").size() &&
-                std::equal(name.begin(),
-                           name.end(),
-                           std::string_view("sprop-stereo").begin(),
-                           [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); }))
-            {
-                if (value == "0")
-                {
-                    return 1;
-                }
-                if (value == "1")
-                {
-                    return 2;
-                }
-                return std::nullopt;
-            }
-        }
-        if (separator == std::string_view::npos)
-        {
-            break;
-        }
-        parameters.remove_prefix(separator + 1U);
-    }
-    return 1;
-}
-
 std::uint32_t random_u32()
 {
     std::random_device device;
@@ -350,7 +296,7 @@ std::optional<media_track> rtsp_input_session::track_from_format(const rtsp_medi
     }
     else if (audio && rtsp_sdp_iequals(format.encoding, "opus") && format.rate == 48'000)
     {
-        if (const auto channels = opus_channels(format.fmtp))
+        if (const auto channels = rtsp_sdp_opus_channel_count(format.fmtp))
         {
             return media_track{.id = audio_track_id,
                                .kind = media_kind::audio,
