@@ -26,12 +26,6 @@ namespace media_server
 
 namespace
 {
-constexpr av1_encoding_parameters rtsp_av1_parameters{
-    .profile = 0,
-    .level_idx = 13,
-    .tier = 0,
-};
-
 std::uint32_t random_u32()
 {
     std::random_device device;
