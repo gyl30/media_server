@@ -30,16 +30,6 @@ constexpr av1_encoding_parameters rtsp_av1_parameters{
     .level_idx = 13,
     .tier = 0,
 };
-
-bool supported_track(const media_track& track)
-{
-    return (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
-           (track.kind == media_kind::audio && (track.codec == codec_id::aac ||
-                                                (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
-                                                 (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty()) ||
-                                                ((track.codec == codec_id::g711a || track.codec == codec_id::g711u) && track.clock_rate == 8'000 &&
-                                                 track.channel_count == 1 && track.codec_config.empty())));
-}
 }    // namespace
 
 rtsp_output_session::rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, stream_registry& registry, output_video_config video)
@@ -275,7 +265,7 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
     int next_payload_type = 96;
     for (const auto& track : snapshot)
     {
-        if (!supported_track(track))
+        if (!rtsp_output_track_supported(track))
         {
             continue;
         }
@@ -404,7 +394,7 @@ bool rtsp_output_session::description_current() const
     std::size_t supported_count = 0;
     for (const auto& track : current)
     {
-        if (!supported_track(track))
+        if (!rtsp_output_track_supported(track))
         {
             continue;
         }

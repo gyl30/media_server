@@ -37,16 +37,6 @@ std::uint32_t random_u32()
     std::random_device device;
     return (static_cast<std::uint32_t>(device()) << 16U) ^ static_cast<std::uint32_t>(device());
 }
-
-bool supported_track(const media_track& track)
-{
-    return (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
-           (track.kind == media_kind::audio && (track.codec == codec_id::aac ||
-                                                (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
-                                                 (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty()) ||
-                                                ((track.codec == codec_id::g711a || track.codec == codec_id::g711u) && track.clock_rate == 8'000 &&
-                                                 track.channel_count == 1 && track.codec_config.empty())));
-}
 }    // namespace
 
 rtsp_output_tcp_session::rtsp_output_tcp_session(std::weak_ptr<rtsp_server_connection> connection,
@@ -589,7 +579,7 @@ bool rtsp_output_tcp_session::description_current() const
     std::size_t supported_count = 0;
     for (const auto& track : current)
     {
-        if (!supported_track(track))
+        if (!rtsp_output_track_supported(track))
         {
             continue;
         }
