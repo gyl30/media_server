@@ -40,7 +40,6 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     void safe_shutdown();
 
     static std::optional<media_track> track_from_format(const rtsp_media_t& media, const rtsp_media_t::avformat_t& format);
-    static std::string stream_name_from_uri(std::string_view uri);
 
     std::weak_ptr<rtsp_server_connection> connection_;
     stream_registry& registry_;

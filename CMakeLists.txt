@@ -186,6 +186,7 @@ add_library(media_core STATIC
     media/rtmp/rtmp_output_session.cpp
     media/rtmp/rtmp_session.cpp
     media/rtmp/rtmp_server.cpp
+    media/rtsp/rtsp_uri.cpp
     media/rtsp/rtsp_pull_session.cpp
     media/rtsp/rtsp_input_session.cpp
     media/rtsp/rtsp_input_tcp_session.cpp
