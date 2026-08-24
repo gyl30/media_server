@@ -12,6 +12,7 @@
 
 #include "media/codec/codec_utils.h"
 #include "media/rtsp/rtsp_pull_session.h"
+#include "media/rtsp/rtsp_sdp.h"
 
 extern "C"
 {
@@ -33,52 +34,6 @@ namespace
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
-
-bool append_sdp_parameter_sets(std::vector<std::uint8_t>& config, std::string_view encoded)
-{
-    constexpr std::array<std::uint8_t, 4> start_code{0x00, 0x00, 0x00, 0x01};
-    while (!encoded.empty())
-    {
-        const auto comma = encoded.find(',');
-        const auto parameter_set = encoded.substr(0, comma);
-        if (parameter_set.empty())
-        {
-            return false;
-        }
-
-        std::vector<std::uint8_t> decoded((parameter_set.size() + 3U) / 4U * 3U);
-        const auto bytes = base64_decode(decoded.data(), parameter_set.data(), parameter_set.size());
-        if (bytes == 0)
-        {
-            return false;
-        }
-        decoded.resize(bytes);
-        config.insert(config.end(), start_code.begin(), start_code.end());
-        config.insert(config.end(), decoded.begin(), decoded.end());
-
-        if (comma == std::string_view::npos)
-        {
-            break;
-        }
-        encoded.remove_prefix(comma + 1U);
-    }
-    return !config.empty();
-}
-
-bool iequals(const char* value, std::string_view expected)
-{
-    if (value == nullptr)
-    {
-        return false;
-    }
-
-    const std::string_view actual(value);
-    return actual.size() == expected.size() &&
-           std::equal(actual.begin(),
-                      actual.end(),
-                      expected.begin(),
-                      [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
-}
 
 std::optional<std::uint16_t> opus_channel_count_from_fmtp(const char* fmtp)
 {
@@ -155,11 +110,11 @@ std::optional<codec_id> selected_g711_codec(rtsp_client_t* client, int media)
 
     const auto payload = rtsp_client_get_media_payload(client, media);
     const auto* encoding = rtsp_client_get_media_encoding(client, media);
-    if (payload == RTP_PAYLOAD_PCMA && (encoding == nullptr || *encoding == '\0' || iequals(encoding, "PCMA")))
+    if (payload == RTP_PAYLOAD_PCMA && (encoding == nullptr || *encoding == '\0' || rtsp_sdp_iequals(encoding, "PCMA")))
     {
         return codec_id::g711a;
     }
-    if (payload == RTP_PAYLOAD_PCMU && (encoding == nullptr || *encoding == '\0' || iequals(encoding, "PCMU")))
+    if (payload == RTP_PAYLOAD_PCMU && (encoding == nullptr || *encoding == '\0' || rtsp_sdp_iequals(encoding, "PCMU")))
     {
         return codec_id::g711u;
     }
@@ -170,9 +125,9 @@ bool should_setup_media(rtsp_client_t* client, int media)
 {
     const auto type = rtsp_client_get_media_type(client, media);
     const auto* encoding = rtsp_client_get_media_encoding(client, media);
-    const bool supported = (type == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H264") || iequals(encoding, "H265") || iequals(encoding, "HEVC"))) ||
-                           (type == SDP_M_MEDIA_AUDIO && (iequals(encoding, "MPEG4-GENERIC") ||
-                                                          (iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
+    const bool supported = (type == SDP_M_MEDIA_VIDEO && (rtsp_sdp_iequals(encoding, "H264") || rtsp_sdp_iequals(encoding, "H265") || rtsp_sdp_iequals(encoding, "HEVC"))) ||
+                           (type == SDP_M_MEDIA_AUDIO && (rtsp_sdp_iequals(encoding, "MPEG4-GENERIC") ||
+                                                          (rtsp_sdp_iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
                                                            opus_channel_count_from_fmtp(rtsp_client_get_media_fmtp(client, media)).has_value()) ||
                                                           selected_g711_codec(client, media).has_value()));
     if (!supported)
@@ -596,13 +551,13 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
         }
 
         std::optional<media_track> track;
-        if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_VIDEO && iequals(encoding, "H264"))
+        if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_VIDEO && rtsp_sdp_iequals(encoding, "H264"))
         {
             sdp_a_fmtp_h264_t parameters{};
             auto format = payload;
             std::vector<std::uint8_t> config;
             if (fmtp != nullptr && sdp_a_fmtp_h264(fmtp, &format, &parameters) == 0 &&
-                append_sdp_parameter_sets(config, parameters.sprop_parameter_sets) && !h264_annex_b_to_avcc(config).empty())
+                rtsp_sdp_append_parameter_sets(config, parameters.sprop_parameter_sets) && !h264_annex_b_to_avcc(config).empty())
             {
                 track = media_track{
                     .id = video_track_id,
@@ -614,13 +569,13 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
                 };
             }
         }
-        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H265") || iequals(encoding, "HEVC")))
+        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_VIDEO && (rtsp_sdp_iequals(encoding, "H265") || rtsp_sdp_iequals(encoding, "HEVC")))
         {
             sdp_a_fmtp_h265_t parameters{};
             auto format = payload;
             std::vector<std::uint8_t> config;
-            if (fmtp != nullptr && sdp_a_fmtp_h265(fmtp, &format, &parameters) == 0 && append_sdp_parameter_sets(config, parameters.sprop_vps) &&
-                append_sdp_parameter_sets(config, parameters.sprop_sps) && append_sdp_parameter_sets(config, parameters.sprop_pps) &&
+            if (fmtp != nullptr && sdp_a_fmtp_h265(fmtp, &format, &parameters) == 0 && rtsp_sdp_append_parameter_sets(config, parameters.sprop_vps) &&
+                rtsp_sdp_append_parameter_sets(config, parameters.sprop_sps) && rtsp_sdp_append_parameter_sets(config, parameters.sprop_pps) &&
                 !h265_annex_b_to_hvcc(config).empty())
             {
                 track = media_track{
@@ -633,7 +588,7 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
                 };
             }
         }
-        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO && iequals(encoding, "MPEG4-GENERIC"))
+        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO && rtsp_sdp_iequals(encoding, "MPEG4-GENERIC"))
         {
             sdp_a_fmtp_mpeg4_t parameters{};
             auto format = payload;
@@ -659,7 +614,7 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
                 }
             }
         }
-        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO && iequals(encoding, "opus") && rate == 48'000)
+        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO && rtsp_sdp_iequals(encoding, "opus") && rate == 48'000)
         {
             if (const auto channel_count = opus_channel_count_from_fmtp(fmtp))
             {

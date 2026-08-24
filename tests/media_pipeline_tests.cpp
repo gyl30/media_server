@@ -34,6 +34,7 @@
 #include "media/net/tcp_listener.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
+#include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
@@ -4583,6 +4584,29 @@ void test_rtsp_input_independent_keepalive()
     socket.close(error);
     runner.join();
     require(!registry.find("relay/keepalive"), "rtsp keepalive pull closes");
+}
+
+void test_rtsp_sdp_contract()
+{
+    require(rtsp_sdp_iequals("H264", "h264"), "rtsp sdp encoding case insensitive");
+    require(!rtsp_sdp_iequals(nullptr, "h264"), "rtsp sdp encoding null");
+    require(!rtsp_sdp_iequals("H265", "h264"), "rtsp sdp encoding mismatch");
+
+    std::vector<std::uint8_t> config;
+    require(rtsp_sdp_append_parameter_sets(config, "AQ=="), "rtsp sdp single parameter set");
+    require(config == std::vector<std::uint8_t>({0x00, 0x00, 0x00, 0x01, 0x01}), "rtsp sdp single parameter set annex b");
+
+    config.clear();
+    require(rtsp_sdp_append_parameter_sets(config, "AQ==,AgM="), "rtsp sdp multiple parameter sets");
+    require(config == std::vector<std::uint8_t>({0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03}),
+            "rtsp sdp multiple parameter sets annex b");
+
+    config.clear();
+    require(!rtsp_sdp_append_parameter_sets(config, ""), "rtsp sdp empty parameter set");
+    require(config.empty(), "rtsp sdp empty parameter set leaves config empty");
+
+    require(!rtsp_sdp_append_parameter_sets(config, "="), "rtsp sdp invalid base64");
+    require(config.empty(), "rtsp sdp invalid base64 leaves config empty");
 }
 
 void test_rtsp_uri_contract()
@@ -9384,6 +9408,8 @@ int main()
     std::cout << "[pass] rtsp_input_independent_keepalive\n";
     media_server::test_rtsp_client_rejects_empty_media_selection();
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
+    media_server::test_rtsp_sdp_contract();
+    std::cout << "[pass] rtsp_sdp_contract\n";
     media_server::test_rtsp_uri_contract();
     std::cout << "[pass] rtsp_uri_contract\n";
     media_server::test_rtsp_publish_server_contract();
