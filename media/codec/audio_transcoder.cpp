@@ -93,6 +93,112 @@ audio_transcoder::audio_transcoder() = default;
 
 audio_transcoder::~audio_transcoder() { shutdown(); }
 
+bool audio_transcoder::initialize_decoder(const audio_transcoder_config& config)
+{
+    const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_AAC);
+    if (decoder == nullptr)
+    {
+        spdlog::error("audio transcoder aac decoder not found");
+        return false;
+    }
+
+    state_->decoder = avcodec_alloc_context3(decoder);
+    if (state_->decoder == nullptr)
+    {
+        spdlog::error("audio transcoder decoder context allocate failed");
+        return false;
+    }
+
+    state_->decoder->sample_rate = static_cast<int>(config.input.sample_rate);
+    state_->decoder->pkt_timebase = AVRational{1, state_->decoder->sample_rate};
+    av_channel_layout_default(&state_->decoder->ch_layout, config.input.channel_count);
+    state_->decoder->extradata = static_cast<std::uint8_t*>(av_mallocz(config.input_codec_config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
+    if (state_->decoder->extradata == nullptr)
+    {
+        spdlog::error("audio transcoder decoder extradata allocate failed");
+        return false;
+    }
+    state_->decoder->extradata_size = static_cast<int>(config.input_codec_config.size());
+    std::memcpy(state_->decoder->extradata, config.input_codec_config.data(), config.input_codec_config.size());
+
+    int result = avcodec_open2(state_->decoder, decoder, nullptr);
+    if (result < 0)
+    {
+        spdlog::error("audio transcoder decoder open failed {}", ffmpeg_error(result));
+        return false;
+    }
+    return true;
+}
+
+bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
+{
+    const AVCodec* encoder = avcodec_find_encoder_by_name("libopus");
+    if (encoder == nullptr)
+    {
+        encoder = avcodec_find_encoder(AV_CODEC_ID_OPUS);
+    }
+    if (encoder == nullptr)
+    {
+        spdlog::error("audio transcoder opus encoder not found");
+        return false;
+    }
+
+    const void* sample_formats{};
+    int result = avcodec_get_supported_config(nullptr, encoder, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &sample_formats, nullptr);
+    if (result < 0 || sample_formats == nullptr)
+    {
+        spdlog::error("audio transcoder encoder sample formats query failed {}", ffmpeg_error(result));
+        return false;
+    }
+
+    state_->encoder = avcodec_alloc_context3(encoder);
+    if (state_->encoder == nullptr)
+    {
+        spdlog::error("audio transcoder encoder context allocate failed");
+        return false;
+    }
+
+    av_channel_layout_default(&state_->encoder->ch_layout, config.output.channel_count);
+    state_->encoder->sample_rate = static_cast<int>(config.output.sample_rate);
+    state_->encoder->sample_fmt = static_cast<const AVSampleFormat*>(sample_formats)[0];
+    state_->encoder->bit_rate = config.output_bit_rate;
+    state_->encoder->cutoff = config.output_cutoff;
+    state_->encoder->time_base = AVRational{1, state_->encoder->sample_rate};
+    state_->encoder->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
+
+    result = avcodec_open2(state_->encoder, encoder, nullptr);
+    if (result < 0)
+    {
+        spdlog::error("audio transcoder encoder open failed {}", ffmpeg_error(result));
+        return false;
+    }
+
+    state_->encoder_frame_samples = state_->encoder->frame_size;
+    if (state_->encoder_frame_samples <= 0 && (encoder->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE) == 0)
+    {
+        spdlog::error("audio transcoder encoder invalid frame size {}", state_->encoder_frame_samples);
+        return false;
+    }
+    return true;
+}
+
+bool audio_transcoder::allocate_buffers()
+{
+    state_->fifo =
+        av_audio_fifo_alloc(state_->encoder->sample_fmt, state_->encoder->ch_layout.nb_channels, std::max(state_->encoder_frame_samples, 1));
+    state_->decoded_frame = av_frame_alloc();
+    state_->encoded_frame = av_frame_alloc();
+    state_->input_packet = av_packet_alloc();
+    state_->output_packet = av_packet_alloc();
+    if (state_->fifo == nullptr || state_->decoded_frame == nullptr || state_->encoded_frame == nullptr || state_->input_packet == nullptr ||
+        state_->output_packet == nullptr)
+    {
+        spdlog::error("audio transcoder buffer allocate failed");
+        return false;
+    }
+    return true;
+}
+
 bool audio_transcoder::startup(const audio_transcoder_config& config)
 {
     shutdown();
@@ -117,107 +223,8 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
     }
 
     state_ = std::make_unique<state>();
-
-    const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_AAC);
-    if (decoder == nullptr)
+    if (!initialize_decoder(config) || !initialize_encoder(config) || !allocate_buffers())
     {
-        spdlog::error("audio transcoder aac decoder not found");
-        shutdown();
-        return false;
-    }
-
-    state_->decoder = avcodec_alloc_context3(decoder);
-    if (state_->decoder == nullptr)
-    {
-        spdlog::error("audio transcoder decoder context allocate failed");
-        shutdown();
-        return false;
-    }
-
-    state_->decoder->sample_rate = static_cast<int>(config.input.sample_rate);
-    state_->decoder->pkt_timebase = AVRational{1, state_->decoder->sample_rate};
-    av_channel_layout_default(&state_->decoder->ch_layout, config.input.channel_count);
-    state_->decoder->extradata = static_cast<std::uint8_t*>(av_mallocz(config.input_codec_config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
-    if (state_->decoder->extradata == nullptr)
-    {
-        spdlog::error("audio transcoder decoder extradata allocate failed");
-        shutdown();
-        return false;
-    }
-    state_->decoder->extradata_size = static_cast<int>(config.input_codec_config.size());
-    std::memcpy(state_->decoder->extradata, config.input_codec_config.data(), config.input_codec_config.size());
-
-    int result = avcodec_open2(state_->decoder, decoder, nullptr);
-    if (result < 0)
-    {
-        spdlog::error("audio transcoder decoder open failed {}", ffmpeg_error(result));
-        shutdown();
-        return false;
-    }
-
-    const AVCodec* encoder = avcodec_find_encoder_by_name("libopus");
-    if (encoder == nullptr)
-    {
-        encoder = avcodec_find_encoder(AV_CODEC_ID_OPUS);
-    }
-    if (encoder == nullptr)
-    {
-        spdlog::error("audio transcoder opus encoder not found");
-        shutdown();
-        return false;
-    }
-
-    const void* sample_formats{};
-    result = avcodec_get_supported_config(nullptr, encoder, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &sample_formats, nullptr);
-    if (result < 0 || sample_formats == nullptr)
-    {
-        spdlog::error("audio transcoder encoder sample formats query failed {}", ffmpeg_error(result));
-        shutdown();
-        return false;
-    }
-
-    state_->encoder = avcodec_alloc_context3(encoder);
-    if (state_->encoder == nullptr)
-    {
-        spdlog::error("audio transcoder encoder context allocate failed");
-        shutdown();
-        return false;
-    }
-
-    av_channel_layout_default(&state_->encoder->ch_layout, config.output.channel_count);
-    state_->encoder->sample_rate = static_cast<int>(config.output.sample_rate);
-    state_->encoder->sample_fmt = static_cast<const AVSampleFormat*>(sample_formats)[0];
-    state_->encoder->bit_rate = config.output_bit_rate;
-    state_->encoder->cutoff = config.output_cutoff;
-    state_->encoder->time_base = AVRational{1, state_->encoder->sample_rate};
-    state_->encoder->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
-
-    result = avcodec_open2(state_->encoder, encoder, nullptr);
-    if (result < 0)
-    {
-        spdlog::error("audio transcoder encoder open failed {}", ffmpeg_error(result));
-        shutdown();
-        return false;
-    }
-
-    state_->encoder_frame_samples = state_->encoder->frame_size;
-    if (state_->encoder_frame_samples <= 0 && (encoder->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE) == 0)
-    {
-        spdlog::error("audio transcoder encoder invalid frame size {}", state_->encoder_frame_samples);
-        shutdown();
-        return false;
-    }
-
-    state_->fifo =
-        av_audio_fifo_alloc(state_->encoder->sample_fmt, state_->encoder->ch_layout.nb_channels, std::max(state_->encoder_frame_samples, 1));
-    state_->decoded_frame = av_frame_alloc();
-    state_->encoded_frame = av_frame_alloc();
-    state_->input_packet = av_packet_alloc();
-    state_->output_packet = av_packet_alloc();
-    if (state_->fifo == nullptr || state_->decoded_frame == nullptr || state_->encoded_frame == nullptr || state_->input_packet == nullptr ||
-        state_->output_packet == nullptr)
-    {
-        spdlog::error("audio transcoder buffer allocate failed");
         shutdown();
         return false;
     }
@@ -229,7 +236,7 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
                   to_string(config.output.codec),
                   config.output.sample_rate,
                   config.output.channel_count,
-                  encoder->name,
+                  state_->encoder->codec->name,
                   state_->encoder_frame_samples,
                   state_->encoder->bit_rate,
                   state_->encoder->cutoff);
