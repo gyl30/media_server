@@ -1,4 +1,3 @@
-#include <array>
 #include <cctype>
 #include <random>
 #include <string>
@@ -7,6 +6,7 @@
 
 #include "media/codec/codec_utils.h"
 #include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
 #include "media/rtsp/rtsp_input_tcp_session.h"
 #include "media/rtsp/rtsp_input_udp_session.h"
@@ -27,49 +27,6 @@ namespace
 {
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
-
-bool iequals(const char* value, std::string_view expected)
-{
-    if (value == nullptr)
-    {
-        return false;
-    }
-    const std::string_view actual(value);
-    return actual.size() == expected.size() &&
-           std::equal(actual.begin(),
-                      actual.end(),
-                      expected.begin(),
-                      [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
-}
-
-bool append_sdp_parameter_sets(std::vector<std::uint8_t>& config, std::string_view encoded)
-{
-    constexpr std::array<std::uint8_t, 4> start_code{0, 0, 0, 1};
-    while (!encoded.empty())
-    {
-        const auto comma = encoded.find(',');
-        const auto value = encoded.substr(0, comma);
-        if (value.empty())
-        {
-            return false;
-        }
-        std::vector<std::uint8_t> decoded((value.size() + 3U) / 4U * 3U);
-        const auto bytes = base64_decode(decoded.data(), value.data(), value.size());
-        if (bytes == 0)
-        {
-            return false;
-        }
-        decoded.resize(bytes);
-        config.insert(config.end(), start_code.begin(), start_code.end());
-        config.insert(config.end(), decoded.begin(), decoded.end());
-        if (comma == std::string_view::npos)
-        {
-            break;
-        }
-        encoded.remove_prefix(comma + 1U);
-    }
-    return !config.empty();
-}
 
 std::optional<std::uint16_t> opus_channels(const char* fmtp)
 {
@@ -338,34 +295,34 @@ void rtsp_input_session::safe_shutdown()
 
 std::optional<media_track> rtsp_input_session::track_from_format(const rtsp_media_t& media, const rtsp_media_t::avformat_t& format)
 {
-    const auto video = iequals(media.media, "video");
-    const auto audio = iequals(media.media, "audio");
-    if (video && iequals(format.encoding, "H264"))
+    const auto video = rtsp_sdp_iequals(media.media, "video");
+    const auto audio = rtsp_sdp_iequals(media.media, "audio");
+    if (video && rtsp_sdp_iequals(format.encoding, "H264"))
     {
         sdp_a_fmtp_h264_t parameters{};
         auto payload = format.fmt;
         std::vector<std::uint8_t> config;
         if (format.fmtp != nullptr && sdp_a_fmtp_h264(format.fmtp, &payload, &parameters) == 0 &&
-            append_sdp_parameter_sets(config, parameters.sprop_parameter_sets) && !h264_annex_b_to_avcc(config).empty())
+            rtsp_sdp_append_parameter_sets(config, parameters.sprop_parameter_sets) && !h264_annex_b_to_avcc(config).empty())
         {
             return media_track{
                 .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
-    else if (video && (iequals(format.encoding, "H265") || iequals(format.encoding, "HEVC")))
+    else if (video && (rtsp_sdp_iequals(format.encoding, "H265") || rtsp_sdp_iequals(format.encoding, "HEVC")))
     {
         sdp_a_fmtp_h265_t parameters{};
         auto payload = format.fmt;
         std::vector<std::uint8_t> config;
         if (format.fmtp != nullptr && sdp_a_fmtp_h265(format.fmtp, &payload, &parameters) == 0 &&
-            append_sdp_parameter_sets(config, parameters.sprop_vps) && append_sdp_parameter_sets(config, parameters.sprop_sps) &&
-            append_sdp_parameter_sets(config, parameters.sprop_pps) && !h265_annex_b_to_hvcc(config).empty())
+            rtsp_sdp_append_parameter_sets(config, parameters.sprop_vps) && rtsp_sdp_append_parameter_sets(config, parameters.sprop_sps) &&
+            rtsp_sdp_append_parameter_sets(config, parameters.sprop_pps) && !h265_annex_b_to_hvcc(config).empty())
         {
             return media_track{
                 .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
-    else if (audio && iequals(format.encoding, "MPEG4-GENERIC"))
+    else if (audio && rtsp_sdp_iequals(format.encoding, "MPEG4-GENERIC"))
     {
         sdp_a_fmtp_mpeg4_t parameters{};
         auto payload = format.fmt;
@@ -391,7 +348,7 @@ std::optional<media_track> rtsp_input_session::track_from_format(const rtsp_medi
             }
         }
     }
-    else if (audio && iequals(format.encoding, "opus") && format.rate == 48'000)
+    else if (audio && rtsp_sdp_iequals(format.encoding, "opus") && format.rate == 48'000)
     {
         if (const auto channels = opus_channels(format.fmtp))
         {
@@ -404,8 +361,8 @@ std::optional<media_track> rtsp_input_session::track_from_format(const rtsp_medi
         }
     }
     else if (audio && format.rate == 8'000 &&
-             ((format.fmt == RTP_PAYLOAD_PCMA && (format.encoding[0] == '\0' || iequals(format.encoding, "PCMA"))) ||
-              (format.fmt == RTP_PAYLOAD_PCMU && (format.encoding[0] == '\0' || iequals(format.encoding, "PCMU")))))
+             ((format.fmt == RTP_PAYLOAD_PCMA && (format.encoding[0] == '\0' || rtsp_sdp_iequals(format.encoding, "PCMA"))) ||
+              (format.fmt == RTP_PAYLOAD_PCMU && (format.encoding[0] == '\0' || rtsp_sdp_iequals(format.encoding, "PCMU")))))
     {
         return media_track{.id = audio_track_id,
                            .kind = media_kind::audio,
