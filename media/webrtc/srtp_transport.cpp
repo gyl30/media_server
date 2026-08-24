@@ -1,14 +1,13 @@
-#include "media/webrtc/srtp_transport.h"
-
-#include <srtp2/srtp.h>
-
-#include <spdlog/spdlog.h>
-
+#include <mutex>
 #include <climits>
 #include <cstring>
-#include <mutex>
-#include <string_view>
 #include <utility>
+#include <string_view>
+
+#include <srtp2/srtp.h>
+#include <spdlog/spdlog.h>
+
+#include "media/webrtc/srtp_transport.h"
 
 namespace media_server
 {

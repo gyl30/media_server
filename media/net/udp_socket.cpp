@@ -1,9 +1,9 @@
-#include "media/net/udp_socket.h"
-
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/post.hpp>
-
 #include <utility>
+
+#include <boost/asio/post.hpp>
+#include <boost/asio/buffer.hpp>
+
+#include "media/net/udp_socket.h"
 
 namespace media_server
 {
@@ -15,10 +15,7 @@ bool udp_socket::startup(boost::asio::ip::address bind_address, read_handler on_
     return startup(std::move(bind_address), 0, std::move(on_read), std::move(on_write_error));
 }
 
-bool udp_socket::startup(boost::asio::ip::address bind_address,
-                         std::uint16_t port,
-                         read_handler on_read,
-                         write_error_handler on_write_error)
+bool udp_socket::startup(boost::asio::ip::address bind_address, std::uint16_t port, read_handler on_read, write_error_handler on_write_error)
 {
     if (closed_ || socket_.is_open())
     {

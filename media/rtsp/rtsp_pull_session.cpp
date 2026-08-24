@@ -1,30 +1,29 @@
-#include "media/rtsp/rtsp_pull_session.h"
+#include <cctype>
+#include <chrono>
+#include <utility>
+#include <optional>
+#include <algorithm>
+#include <string_view>
+
+#include <spdlog/spdlog.h>
+#include <boost/url/url.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/url/parse.hpp>
 
 #include "media/codec/codec_utils.h"
-#include <spdlog/spdlog.h>
+#include "media/rtsp/rtsp_pull_session.h"
 
 extern "C"
 {
-#include "avpacket.h"
+#include "sdp.h"
 #include "base64.h"
+#include "avpacket.h"
 #include "avstream.h"
+#include "sdp-a-fmtp.h"
+#include "rtp-profile.h"
 #include "rtsp-client.h"
 #include "rtsp-demuxer.h"
-#include "rtp-profile.h"
-#include "sdp-a-fmtp.h"
-#include "sdp.h"
 }
-
-#include <boost/asio/post.hpp>
-#include <boost/url/parse.hpp>
-#include <boost/url/url.hpp>
-
-#include <algorithm>
-#include <chrono>
-#include <cctype>
-#include <optional>
-#include <string_view>
-#include <utility>
 
 namespace media_server
 {
@@ -123,8 +122,7 @@ std::optional<std::uint16_t> opus_channel_count_from_fmtp(const char* fmtp)
                                       std::equal(name.begin(),
                                                  name.end(),
                                                  std::string_view("sprop-stereo").begin(),
-                                                 [](unsigned char left, unsigned char right)
-                                                 { return std::tolower(left) == std::tolower(right); });
+                                                 [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
             if (sprop_stereo)
             {
                 if (value == "0")
@@ -173,11 +171,10 @@ bool should_setup_media(rtsp_client_t* client, int media)
     const auto type = rtsp_client_get_media_type(client, media);
     const auto* encoding = rtsp_client_get_media_encoding(client, media);
     const bool supported = (type == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H264") || iequals(encoding, "H265") || iequals(encoding, "HEVC"))) ||
-                           (type == SDP_M_MEDIA_AUDIO &&
-                            (iequals(encoding, "MPEG4-GENERIC") ||
-                             (iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
-                              opus_channel_count_from_fmtp(rtsp_client_get_media_fmtp(client, media)).has_value()) ||
-                             selected_g711_codec(client, media).has_value()));
+                           (type == SDP_M_MEDIA_AUDIO && (iequals(encoding, "MPEG4-GENERIC") ||
+                                                          (iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
+                                                           opus_channel_count_from_fmtp(rtsp_client_get_media_fmtp(client, media)).has_value()) ||
+                                                          selected_g711_codec(client, media).has_value()));
     if (!supported)
     {
         return false;
@@ -196,11 +193,11 @@ bool should_setup_media(rtsp_client_t* client, int media)
 }    // namespace
 
 rtsp_pull_session::rtsp_pull_session(boost::asio::io_context& io,
-                                       stream_registry& registry,
-                                       std::string stream_name,
-                                       std::string url,
-                                       std::chrono::milliseconds establishment_timeout,
-                                       std::chrono::milliseconds initial_tracks_timeout)
+                                     stream_registry& registry,
+                                     std::string stream_name,
+                                     std::string url,
+                                     std::chrono::milliseconds establishment_timeout,
+                                     std::chrono::milliseconds initial_tracks_timeout)
     : io_(io),
       registry_(registry),
       stream_name_(std::move(stream_name)),
@@ -270,11 +267,11 @@ bool rtsp_pull_session::startup()
                                     return;
                                 }
                                 record_establishment_progress();
-                                boost::asio::async_connect(connect_socket_,
-                                                           endpoints,
-                                                           [this, self](const boost::system::error_code& connect_error,
-                                                                        const boost::asio::ip::tcp::endpoint&)
-                                                           { on_connect(connect_error, std::move(connect_socket_)); });
+                                boost::asio::async_connect(
+                                    connect_socket_,
+                                    endpoints,
+                                    [this, self](const boost::system::error_code& connect_error, const boost::asio::ip::tcp::endpoint&)
+                                    { on_connect(connect_error, std::move(connect_socket_)); });
                             });
     return true;
 }
@@ -285,10 +282,7 @@ void rtsp_pull_session::shutdown()
     boost::asio::post(io_, [self]() { self->safe_shutdown(); });
 }
 
-void rtsp_pull_session::record_establishment_progress()
-{
-    last_establishment_progress_ = std::chrono::steady_clock::now();
-}
+void rtsp_pull_session::record_establishment_progress() { last_establishment_progress_ = std::chrono::steady_clock::now(); }
 
 void rtsp_pull_session::wait_establishment_timeout()
 {
@@ -456,10 +450,7 @@ int rtsp_pull_session::setup_callback(void* param, int timeout, std::int64_t dur
     return static_cast<rtsp_pull_session*>(param)->on_setup(timeout, duration);
 }
 
-int rtsp_pull_session::play_callback(void*, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int)
-{
-    return 0;
-}
+int rtsp_pull_session::play_callback(void*, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int) { return 0; }
 
 int rtsp_pull_session::pause_callback(void*) { return 0; }
 
@@ -623,15 +614,14 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
                 };
             }
         }
-        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_VIDEO &&
-                 (iequals(encoding, "H265") || iequals(encoding, "HEVC")))
+        else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_VIDEO && (iequals(encoding, "H265") || iequals(encoding, "HEVC")))
         {
             sdp_a_fmtp_h265_t parameters{};
             auto format = payload;
             std::vector<std::uint8_t> config;
-            if (fmtp != nullptr && sdp_a_fmtp_h265(fmtp, &format, &parameters) == 0 &&
-                append_sdp_parameter_sets(config, parameters.sprop_vps) && append_sdp_parameter_sets(config, parameters.sprop_sps) &&
-                append_sdp_parameter_sets(config, parameters.sprop_pps) && !h265_annex_b_to_hvcc(config).empty())
+            if (fmtp != nullptr && sdp_a_fmtp_h265(fmtp, &format, &parameters) == 0 && append_sdp_parameter_sets(config, parameters.sprop_vps) &&
+                append_sdp_parameter_sets(config, parameters.sprop_sps) && append_sdp_parameter_sets(config, parameters.sprop_pps) &&
+                !h265_annex_b_to_hvcc(config).empty())
             {
                 track = media_track{
                     .id = video_track_id,
@@ -756,7 +746,6 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
     }
 
     static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
-
 }
 
 int rtsp_pull_session::on_packet(avpacket_t* packet)

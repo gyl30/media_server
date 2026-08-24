@@ -1,6 +1,6 @@
-#include "media/rtmp/rtmp_output_session.h"
-
 #include <utility>
+
+#include "media/rtmp/rtmp_output_session.h"
 
 namespace media_server
 {
@@ -10,10 +10,7 @@ rtmp_output_session::rtmp_output_session(boost::asio::any_io_executor executor,
                                          flv_output_muxer::output_handler output,
                                          output_video_config video,
                                          end_handler on_end)
-    : executor_(std::move(executor)),
-      stream_(std::move(stream)),
-      output_muxer_(std::move(output), video),
-      on_end_(std::move(on_end))
+    : executor_(std::move(executor)), stream_(std::move(stream)), output_muxer_(std::move(output), video), on_end_(std::move(on_end))
 {
 }
 
@@ -113,8 +110,7 @@ void rtmp_output_session::apply_tracks(const media_track_snapshot_ptr& tracks)
         for (const auto& track : tracks->tracks)
         {
             const auto current = reader_tracks_.find(track.id);
-            if (current != reader_tracks_.end() && track.kind == media_kind::video &&
-                current->second.config_version != track.config_version)
+            if (current != reader_tracks_.end() && track.kind == media_kind::video && current->second.config_version != track.config_version)
             {
                 video_changed = true;
             }

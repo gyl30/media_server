@@ -1,9 +1,8 @@
-#include "media/http/http_server.h"
-
-#include "media/http/http_session.h"
-
-#include <algorithm>
 #include <utility>
+#include <algorithm>
+
+#include "media/http/http_server.h"
+#include "media/http/http_session.h"
 
 namespace media_server
 {

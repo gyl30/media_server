@@ -1,32 +1,37 @@
 #ifndef MEDIA_HTTP_HTTP_SESSION_H
 #define MEDIA_HTTP_HTTP_SESSION_H
 
-#include "media/codec/output_video_config.h"
-#include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_service.h"
-#include "media/hls/hls_service.h"
-#include "media/http/http_flv_output.h"
-#include "media/webrtc/whep_service.h"
-
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/steady_timer.hpp>
-#include <boost/beast/core.hpp>
-#include <boost/beast/http.hpp>
-#include <boost/url/url_view.hpp>
-
 #include <array>
 #include <chrono>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
+
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/url/url_view.hpp>
+#include <boost/asio/steady_timer.hpp>
+
+#include "media/hls/hls_service.h"
+#include "media/webrtc/whep_service.h"
+#include "media/core/stream_registry.h"
+#include "media/http/http_flv_output.h"
+#include "media/gb28181/gb28181_service.h"
+#include "media/codec/output_video_config.h"
 
 namespace media_server
 {
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
-    http_session(boost::asio::ip::tcp::socket socket, stream_registry& registry, hls_service& hls, whep_service& whep, gb28181_service& gb28181, output_video_config video = {});
+    http_session(boost::asio::ip::tcp::socket socket,
+                 stream_registry& registry,
+                 hls_service& hls,
+                 whep_service& whep,
+                 gb28181_service& gb28181,
+                 output_video_config video = {});
 
     void startup();
     void shutdown();
@@ -46,10 +51,8 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void check_hls_playlist();
 
     void write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response);
-    void send_text_response(
-        boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
-    void send_whep_error_response(
-        boost::beast::http::status status, std::string body, int retry_after_seconds = 0, std::string_view allow = {});
+    void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
+    void send_whep_error_response(boost::beast::http::status status, std::string body, int retry_after_seconds = 0, std::string_view allow = {});
     void send_whep_options_response(bool session_resource);
     void send_whep_response(std::string session_id, std::string answer_sdp);
     void send_whep_empty_response(boost::beast::http::status status, std::string_view content_type = {});

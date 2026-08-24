@@ -1,15 +1,14 @@
 #ifndef MEDIA_WEBRTC_STUN_MESSAGE_H
 #define MEDIA_WEBRTC_STUN_MESSAGE_H
 
-#include <boost/asio/ip/udp.hpp>
-
+#include <span>
 #include <array>
-#include <cstddef>
+#include <vector>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string_view>
-#include <vector>
+
+#include <boost/asio/ip/udp.hpp>
 
 namespace media_server
 {

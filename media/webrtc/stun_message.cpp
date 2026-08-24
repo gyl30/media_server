@@ -1,18 +1,16 @@
-#include "media/webrtc/stun_message.h"
-
-#include <boost/crc.hpp>
-
-#include <spdlog/spdlog.h>
-
-#include <openssl/crypto.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-
-#include <algorithm>
 #include <array>
-#include <cstring>
 #include <limits>
 #include <vector>
+#include <cstddef>
+#include <algorithm>
+
+#include <boost/crc.hpp>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <spdlog/spdlog.h>
+#include <openssl/crypto.h>
+
+#include "media/webrtc/stun_message.h"
 
 namespace media_server
 {

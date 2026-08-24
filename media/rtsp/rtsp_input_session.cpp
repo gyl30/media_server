@@ -1,26 +1,25 @@
-#include "media/rtsp/rtsp_input_session.h"
-
-#include "media/codec/codec_utils.h"
-#include "media/rtsp/rtsp_input_tcp_session.h"
-#include "media/rtsp/rtsp_input_udp_session.h"
-
-extern "C"
-{
-#include "base64.h"
-#include "mpeg4-aac.h"
-#include "rtp-profile.h"
-#include "sdp-a-fmtp.h"
-#include "sdp.h"
-}
-
-#include <boost/url/parse.hpp>
-
-#include <algorithm>
 #include <array>
 #include <cctype>
 #include <random>
 #include <string>
 #include <utility>
+#include <algorithm>
+
+#include <boost/url/parse.hpp>
+
+#include "media/codec/codec_utils.h"
+#include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_input_tcp_session.h"
+#include "media/rtsp/rtsp_input_udp_session.h"
+
+extern "C"
+{
+#include "sdp.h"
+#include "base64.h"
+#include "mpeg4-aac.h"
+#include "sdp-a-fmtp.h"
+#include "rtp-profile.h"
+}
 
 namespace media_server
 {
@@ -249,11 +248,8 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
     return rtsp_server_reply_announce(server, 200);
 }
 
-int rtsp_input_session::on_setup(rtsp_server_t* server,
-                                 std::string_view uri,
-                                 std::string_view session,
-                                 const rtsp_header_transport_t transports[],
-                                 std::size_t count)
+int rtsp_input_session::on_setup(
+    rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     if (!announced_ || transports == nullptr || count == 0 || (!session.empty() && session != session_id_))
     {
@@ -282,8 +278,8 @@ int rtsp_input_session::on_setup(rtsp_server_t* server,
         const bool valid_interleaved = transports[index].interleaved1 >= 0 && transports[index].interleaved2 >= 0 &&
                                        transports[index].interleaved1 <= 255 && transports[index].interleaved2 <= 255 &&
                                        transports[index].interleaved1 != transports[index].interleaved2;
-        if ((tcp || udp) && transports[index].multicast == 0 &&
-            (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_RECORD) && (!tcp || valid_interleaved))
+        if ((tcp || udp) && transports[index].multicast == 0 && (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_RECORD) &&
+            (!tcp || valid_interleaved))
         {
             selected = &transports[index];
             break;
@@ -302,7 +298,8 @@ int rtsp_input_session::on_setup(rtsp_server_t* server,
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        auto child = std::make_shared<rtsp_input_tcp_session>(connection_, connection->executor(), registry_, stream_name_, session_id_, descriptions_);
+        auto child =
+            std::make_shared<rtsp_input_tcp_session>(connection_, connection->executor(), registry_, stream_name_, session_id_, descriptions_);
         return child->startup(server, uri, session, transports, count);
     }
 
@@ -352,7 +349,8 @@ std::optional<media_track> rtsp_input_session::track_from_format(const rtsp_medi
         if (format.fmtp != nullptr && sdp_a_fmtp_h264(format.fmtp, &payload, &parameters) == 0 &&
             append_sdp_parameter_sets(config, parameters.sprop_parameter_sets) && !h264_annex_b_to_avcc(config).empty())
         {
-            return media_track{.id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
+            return media_track{
+                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
     else if (video && (iequals(format.encoding, "H265") || iequals(format.encoding, "HEVC")))
@@ -364,7 +362,8 @@ std::optional<media_track> rtsp_input_session::track_from_format(const rtsp_medi
             append_sdp_parameter_sets(config, parameters.sprop_vps) && append_sdp_parameter_sets(config, parameters.sprop_sps) &&
             append_sdp_parameter_sets(config, parameters.sprop_pps) && !h265_annex_b_to_hvcc(config).empty())
         {
-            return media_track{.id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
+            return media_track{
+                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
     else if (audio && iequals(format.encoding, "MPEG4-GENERIC"))

@@ -1,11 +1,11 @@
 #ifndef MEDIA_CODEC_AUDIO_TRANSCODER_H
 #define MEDIA_CODEC_AUDIO_TRANSCODER_H
 
-#include "media/core/media_types.h"
-
-#include <cstdint>
 #include <memory>
 #include <vector>
+#include <cstdint>
+
+#include "media/core/media_types.h"
 
 namespace media_server
 {

@@ -1,15 +1,15 @@
 #ifndef MEDIA_RTMP_RTMP_SESSION_H
 #define MEDIA_RTMP_RTMP_SESSION_H
 
-#include "media/codec/output_video_config.h"
-#include "media/core/stream_registry.h"
-#include "media/net/tcp_connection.h"
-
 #include <chrono>
-#include <cstdint>
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <string_view>
+
+#include "media/net/tcp_connection.h"
+#include "media/core/stream_registry.h"
+#include "media/codec/output_video_config.h"
 
 struct rtmp_server_t;
 

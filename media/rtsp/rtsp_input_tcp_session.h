@@ -1,18 +1,18 @@
 #ifndef MEDIA_RTSP_RTSP_INPUT_TCP_SESSION_H
 #define MEDIA_RTSP_RTSP_INPUT_TCP_SESSION_H
 
+#include <span>
+#include <memory>
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <string_view>
+
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/any_io_executor.hpp>
+
 #include "media/rtsp/rtsp_input_media.h"
 #include "media/rtsp/rtsp_server_connection.h"
-
-#include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/steady_timer.hpp>
-
-#include <cstdint>
-#include <memory>
-#include <span>
-#include <string>
-#include <string_view>
-#include <vector>
 
 extern "C"
 {
@@ -33,11 +33,7 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
                            std::vector<rtsp_input_track_description> descriptions);
     ~rtsp_input_tcp_session();
 
-    int startup(rtsp_server_t* server,
-                std::string_view uri,
-                std::string_view session,
-                const rtsp_header_transport_t transports[],
-                std::size_t count);
+    int startup(rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     void shutdown();
 
    private:
@@ -51,11 +47,8 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
 
     [[nodiscard]] std::size_t on_read(std::span<const std::uint8_t> data);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
-    int on_setup(rtsp_server_t* server,
-                 std::string_view uri,
-                 std::string_view session,
-                 const rtsp_header_transport_t transports[],
-                 std::size_t count);
+    int on_setup(
+        rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_record(rtsp_server_t* server, std::string_view session);
     int on_teardown(rtsp_server_t* server, std::string_view session);
     void wait_rtcp();

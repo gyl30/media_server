@@ -1,16 +1,16 @@
 #ifndef MEDIA_GB28181_GB28181_SERVICE_H
 #define MEDIA_GB28181_GB28181_SERVICE_H
 
-#include "media/core/stream_registry.h"
-
-#include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/ip/udp.hpp>
-
-#include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
+#include <cstdint>
+#include <optional>
 #include <string_view>
+
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/any_io_executor.hpp>
+
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -48,11 +48,8 @@ class gb28181_service final
                                               std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
                                               std::optional<std::uint16_t> remote_rtcp_port);
     [[nodiscard]] bool remove(std::string_view stream_name);
-    [[nodiscard]] gb28181_output_create_error create_output(boost::asio::any_io_executor executor,
-                                                            std::string stream_name,
-                                                            std::string output_id,
-                                                            bool rtcp,
-                                                            std::string_view sdp);
+    [[nodiscard]] gb28181_output_create_error create_output(
+        boost::asio::any_io_executor executor, std::string stream_name, std::string output_id, bool rtcp, std::string_view sdp);
     [[nodiscard]] bool remove_output(std::string_view stream_name, std::string_view output_id);
     void shutdown();
 

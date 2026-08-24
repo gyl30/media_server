@@ -1,11 +1,11 @@
-#include "media/net/tcp_listener.h"
-
-#include <boost/asio/bind_executor.hpp>
-#include <boost/asio/dispatch.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/system/error_code.hpp>
-
 #include <utility>
+
+#include <boost/asio/post.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/asio/bind_executor.hpp>
+
+#include "media/net/tcp_listener.h"
 
 namespace media_server
 {
@@ -53,13 +53,12 @@ boost::system::error_code tcp_listener::startup(accept_handler handler, std::siz
     accept_limit_ = accept_limit;
     accepted_count_ = 0;
     const auto self = shared_from_this();
-    boost::asio::post(
-        acceptor_.get_executor(),
-        [self]()
-        {
-            self->accept_next();
-            self->wait_timeout();
-        });
+    boost::asio::post(acceptor_.get_executor(),
+                      [self]()
+                      {
+                          self->accept_next();
+                          self->wait_timeout();
+                      });
     return {};
 }
 
@@ -125,12 +124,8 @@ void tcp_listener::accept_next()
             }
             if (handler)
             {
-                boost::asio::dispatch(
-                    socket.get_executor(),
-                    [self, handler = std::move(handler), socket = std::move(socket)]() mutable
-                    {
-                        handler(std::move(socket));
-                    });
+                boost::asio::dispatch(socket.get_executor(),
+                                      [self, handler = std::move(handler), socket = std::move(socket)]() mutable { handler(std::move(socket)); });
             }
             return;
         }

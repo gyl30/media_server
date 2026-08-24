@@ -1,16 +1,16 @@
 #ifndef MEDIA_RTSP_RTSP_INPUT_MEDIA_H
 #define MEDIA_RTSP_RTSP_INPUT_MEDIA_H
 
-#include "media/core/stream_registry.h"
+#include <span>
+#include <memory>
+#include <string>
+#include <vector>
+#include <cstddef>
+#include <cstdint>
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <span>
-#include <string>
-#include <vector>
+#include "media/core/stream_registry.h"
 
 extern "C"
 {

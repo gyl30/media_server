@@ -1,6 +1,7 @@
-#include "media/http/http_flv_output.h"
-
+#include <span>
 #include <utility>
+
+#include "media/http/http_flv_output.h"
 
 namespace media_server
 {
@@ -81,9 +82,8 @@ bool http_flv_output::apply_tracks(const media_track_snapshot_ptr& tracks)
         has_audio = has_audio || track.kind == media_kind::audio;
         has_video = has_video || track.kind == media_kind::video;
         const auto current = reader_tracks_.find(track.id);
-        video_changed = video_changed ||
-                        (current != reader_tracks_.end() && track.kind == media_kind::video &&
-                         current->second.config_version != track.config_version);
+        video_changed = video_changed || (current != reader_tracks_.end() && track.kind == media_kind::video &&
+                                          current->second.config_version != track.config_version);
     }
 
     reader_tracks_.clear();

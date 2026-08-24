@@ -1,13 +1,12 @@
-#include "media/rtsp/rtsp_input_tcp_session.h"
-
-#include <spdlog/spdlog.h>
-
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
-#include <sstream>
 #include <utility>
+#include <algorithm>
+
+#include <spdlog/spdlog.h>
+
+#include "media/rtsp/rtsp_input_tcp_session.h"
 
 namespace media_server
 {
@@ -35,11 +34,8 @@ rtsp_input_tcp_session::~rtsp_input_tcp_session()
     }
 }
 
-int rtsp_input_tcp_session::startup(rtsp_server_t* server,
-                                    std::string_view uri,
-                                    std::string_view session,
-                                    const rtsp_header_transport_t transports[],
-                                    std::size_t count)
+int rtsp_input_tcp_session::startup(
+    rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     if (closed_ || !media_.startup())
     {
@@ -135,11 +131,8 @@ void rtsp_input_tcp_session::on_rtp(std::uint8_t channel, const void* data, std:
     }
 }
 
-int rtsp_input_tcp_session::on_setup(rtsp_server_t* server,
-                                     std::string_view uri,
-                                     std::string_view session,
-                                     const rtsp_header_transport_t transports[],
-                                     std::size_t count)
+int rtsp_input_tcp_session::on_setup(
+    rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     if (transports == nullptr || count == 0 || (!session.empty() && session != session_id_))
     {
@@ -147,7 +140,8 @@ int rtsp_input_tcp_session::on_setup(rtsp_server_t* server,
     }
 
     const auto& descriptions = media_.descriptions();
-    const auto description = std::find_if(descriptions.begin(), descriptions.end(), [uri](const rtsp_input_track_description& value) { return uri == value.uri; });
+    const auto description =
+        std::find_if(descriptions.begin(), descriptions.end(), [uri](const rtsp_input_track_description& value) { return uri == value.uri; });
     if (description == descriptions.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
@@ -189,7 +183,8 @@ int rtsp_input_tcp_session::on_setup(rtsp_server_t* server,
     state.rtp_channel = transport->interleaved1;
     state.rtcp_channel = transport->interleaved2;
     rtsp_server_set_session_timeout(server, 60);
-    const auto response = "RTP/AVP/TCP;unicast;interleaved=" + std::to_string(state.rtp_channel) + "-" + std::to_string(state.rtcp_channel) + ";mode=record";
+    const auto response =
+        "RTP/AVP/TCP;unicast;interleaved=" + std::to_string(state.rtp_channel) + "-" + std::to_string(state.rtcp_channel) + ";mode=record";
     return rtsp_server_reply_setup(server, 200, session_id_.c_str(), response.c_str());
 }
 

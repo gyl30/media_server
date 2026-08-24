@@ -1,18 +1,18 @@
 #ifndef MEDIA_CORE_MEDIA_STREAM_H
 #define MEDIA_CORE_MEDIA_STREAM_H
 
-#include "media/core/media_reader.h"
-#include "media/core/media_sink.h"
+#include <map>
+#include <deque>
+#include <atomic>
+#include <memory>
+#include <string>
+#include <vector>
+#include <optional>
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include <atomic>
-#include <deque>
-#include <map>
-#include <memory>
-#include <optional>
-#include <string>
-#include <vector>
+#include "media/core/media_sink.h"
+#include "media/core/media_reader.h"
 
 namespace media_server
 {
@@ -26,8 +26,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     [[nodiscard]] std::vector<media_track> tracks() const;
 
     void add_sink(const std::shared_ptr<media_sink>& sink);
-    [[nodiscard]] media_reader_handle add_reader(const std::shared_ptr<media_reader>& reader,
-                                                 boost::asio::any_io_executor executor);
+    [[nodiscard]] media_reader_handle add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::any_io_executor executor);
     // 仅用于发布完整初始轨道集合；只由 stream owner worker 调用。
     bool set_tracks(std::vector<media_track> tracks);
     // 仅在已有轨道实际配置变化时返回 true；只由 stream owner worker 调用。

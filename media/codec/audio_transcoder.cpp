@@ -1,28 +1,28 @@
-#include "media/codec/audio_transcoder.h"
+#include <span>
+#include <cerrno>
+#include <limits>
+#include <string>
+#include <cstring>
+#include <optional>
+#include <algorithm>
 
 #include <spdlog/spdlog.h>
 
+#include "media/codec/audio_transcoder.h"
+
 extern "C"
 {
-#include <libavcodec/avcodec.h>
-#include <libavutil/audio_fifo.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/error.h>
-#include <libavutil/frame.h>
-#include <libavutil/mathematics.h>
 #include <libavutil/mem.h>
 #include <libavutil/opt.h>
+#include <libavutil/error.h>
+#include <libavutil/frame.h>
+#include <libavcodec/avcodec.h>
 #include <libavutil/samplefmt.h>
+#include <libavutil/audio_fifo.h>
+#include <libavutil/mathematics.h>
+#include <libavutil/channel_layout.h>
 #include <libswresample/swresample.h>
 }
-
-#include <algorithm>
-#include <cerrno>
-#include <cstring>
-#include <limits>
-#include <optional>
-#include <span>
-#include <string>
 
 namespace media_server
 {
@@ -208,8 +208,8 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
         return false;
     }
 
-    state_->fifo = av_audio_fifo_alloc(
-        state_->encoder->sample_fmt, state_->encoder->ch_layout.nb_channels, std::max(state_->encoder_frame_samples, 1));
+    state_->fifo =
+        av_audio_fifo_alloc(state_->encoder->sample_fmt, state_->encoder->ch_layout.nb_channels, std::max(state_->encoder_frame_samples, 1));
     state_->decoded_frame = av_frame_alloc();
     state_->encoded_frame = av_frame_alloc();
     state_->input_packet = av_packet_alloc();
@@ -481,10 +481,8 @@ bool audio_transcoder::configure_resampler()
         return false;
     }
 
-    const int min_comp_result =
-        av_opt_set_double(state_->resampler, "min_comp", timestamp_compensation_threshold_seconds, 0);
-    const int min_hard_comp_result =
-        av_opt_set_double(state_->resampler, "min_hard_comp", timestamp_compensation_threshold_seconds, 0);
+    const int min_comp_result = av_opt_set_double(state_->resampler, "min_comp", timestamp_compensation_threshold_seconds, 0);
+    const int min_hard_comp_result = av_opt_set_double(state_->resampler, "min_hard_comp", timestamp_compensation_threshold_seconds, 0);
     if (min_comp_result < 0 || min_hard_comp_result < 0)
     {
         spdlog::error("audio transcoder resampler timestamp compensation configure failed");
@@ -526,8 +524,7 @@ bool audio_transcoder::resample_decoded()
     swr_next_pts(state_->resampler, resampler_pts);
 
     const auto delayed_samples = swr_get_delay(state_->resampler, frame.sample_rate);
-    const auto capacity = av_rescale_rnd(
-        delayed_samples + frame.nb_samples, state_->encoder->sample_rate, frame.sample_rate, AV_ROUND_UP);
+    const auto capacity = av_rescale_rnd(delayed_samples + frame.nb_samples, state_->encoder->sample_rate, frame.sample_rate, AV_ROUND_UP);
     if (capacity <= 0 || capacity > std::numeric_limits<int>::max())
     {
         return false;
@@ -707,20 +704,16 @@ bool audio_transcoder::receive_encoded(std::vector<media_frame>& output, bool dr
         }
 
         const auto pts_ns = state_->next_output_pts_ns;
-        state_->next_output_pts_ns += av_rescale_q(
-            sample_count, AVRational{1, state_->encoder->sample_rate}, AVRational{1, 1'000'000'000});
+        state_->next_output_pts_ns += av_rescale_q(sample_count, AVRational{1, state_->encoder->sample_rate}, AVRational{1, 1'000'000'000});
         output.push_back(media_frame{
             .track = state_->output_track,
             .dts_ns = pts_ns,
             .pts_ns = pts_ns,
             .key_frame = false,
-            .payload = std::make_shared<const std::vector<std::uint8_t>>(
-                state_->output_packet->data, state_->output_packet->data + state_->output_packet->size),
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(state_->output_packet->data,
+                                                                         state_->output_packet->data + state_->output_packet->size),
         });
-        spdlog::trace("audio transcoder packet encoded bytes {} samples {} pts_ns {}",
-                      state_->output_packet->size,
-                      sample_count,
-                      pts_ns);
+        spdlog::trace("audio transcoder packet encoded bytes {} samples {} pts_ns {}", state_->output_packet->size, sample_count, pts_ns);
     }
 }
 

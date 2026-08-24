@@ -1,11 +1,11 @@
 #ifndef MEDIA_RTSP_RTSP_OUTPUT_TRACK_H
 #define MEDIA_RTSP_RTSP_OUTPUT_TRACK_H
 
-#include "media/core/media_types.h"
-
-#include <cstdint>
 #include <string>
 #include <vector>
+#include <cstdint>
+
+#include "media/core/media_types.h"
 
 namespace media_server
 {
