@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <optional>
 
 #include "media/core/media_reader.h"
 #include "media/core/stream_registry.h"
@@ -72,8 +71,6 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     int on_muxer_packet(int pid, const void* data, int bytes);
     [[nodiscard]] bool description_current() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
-    [[nodiscard]] static std::string stream_name_from_uri(std::string_view uri);
-    [[nodiscard]] static std::optional<track_id> track_id_from_uri(std::string_view uri);
 
     std::weak_ptr<rtsp_server_connection> connection_;
     stream_registry& registry_;

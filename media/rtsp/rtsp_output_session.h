@@ -4,7 +4,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <optional>
 
 #include "media/core/stream_registry.h"
 #include "media/codec/video_transcoder.h"
@@ -39,8 +38,6 @@ class rtsp_output_session final : public std::enable_shared_from_this<rtsp_outpu
     int on_teardown(rtsp_server_t* server, std::string_view session);
     [[nodiscard]] int prepare_stream(std::string_view uri);
     [[nodiscard]] bool description_current() const;
-    [[nodiscard]] static std::string stream_name_from_uri(std::string_view uri);
-    [[nodiscard]] static std::optional<track_id> track_id_from_uri(std::string_view uri);
 
     std::weak_ptr<rtsp_server_connection> connection_;
     stream_registry& registry_;
