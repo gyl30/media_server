@@ -200,6 +200,162 @@ std::vector<std::uint8_t> xor_mapped_address(const boost::asio::ip::udp::endpoin
     return value;
 }
 
+struct stun_binding_attributes
+{
+    std::optional<std::string_view> username;
+    std::optional<std::size_t> message_integrity_offset;
+    std::optional<std::size_t> fingerprint_offset;
+    std::vector<std::uint16_t> unknown_required_attributes;
+    bool priority{};
+    bool ice_controlling{};
+    bool ice_controlled{};
+    bool use_candidate{};
+};
+
+std::optional<stun_binding_attributes> scan_stun_attributes(std::span<const std::uint8_t> packet)
+{
+    stun_binding_attributes result;
+    std::size_t offset = stun_header_size;
+    while (offset + 4U <= packet.size())
+    {
+        const auto type = read_u16(packet.data() + offset);
+        const auto length = static_cast<std::size_t>(read_u16(packet.data() + offset + 2U));
+        const auto value_offset = offset + 4U;
+        spdlog::trace("stun attribute type 0x{:04x} length {} offset {}", type, length, offset);
+
+        if (value_offset + length > packet.size())
+        {
+            spdlog::debug("stun reject attribute overflow type 0x{:04x} length {}", type, length);
+            return std::nullopt;
+        }
+
+        if (result.message_integrity_offset.has_value() && type != stun_attribute_fingerprint)
+        {
+            offset = value_offset + length;
+            offset += (4U - (offset % 4U)) % 4U;
+            continue;
+        }
+
+        if (type == stun_attribute_username)
+        {
+            if (result.username.has_value())
+            {
+                spdlog::debug("stun reject invalid username position");
+                return std::nullopt;
+            }
+            result.username = std::string_view(reinterpret_cast<const char*>(packet.data() + value_offset), length);
+            spdlog::trace("stun username {}", *result.username);
+        }
+        else if (type == stun_attribute_message_integrity)
+        {
+            if (length != stun_message_integrity_size || result.message_integrity_offset.has_value())
+            {
+                spdlog::debug("stun reject invalid message integrity attribute length {}", length);
+                return std::nullopt;
+            }
+            result.message_integrity_offset = offset;
+        }
+        else if (type == stun_attribute_priority)
+        {
+            if (length != 4U || result.priority)
+            {
+                spdlog::debug("stun reject invalid priority attribute length {}", length);
+                return std::nullopt;
+            }
+            result.priority = true;
+        }
+        else if (type == stun_attribute_use_candidate)
+        {
+            if (length != 0 || result.use_candidate)
+            {
+                spdlog::debug("stun reject invalid use candidate attribute length {}", length);
+                return std::nullopt;
+            }
+            result.use_candidate = true;
+        }
+        else if (type == stun_attribute_fingerprint)
+        {
+            if (length != 4U || result.fingerprint_offset.has_value())
+            {
+                spdlog::debug("stun reject invalid fingerprint attribute length {}", length);
+                return std::nullopt;
+            }
+            result.fingerprint_offset = offset;
+        }
+        else if (type == stun_attribute_ice_controlling)
+        {
+            if (length != 8U || result.ice_controlling)
+            {
+                spdlog::debug("stun reject invalid ice controlling attribute length {}", length);
+                return std::nullopt;
+            }
+            result.ice_controlling = true;
+        }
+        else if (type == stun_attribute_ice_controlled)
+        {
+            if (length != 8U || result.ice_controlled)
+            {
+                spdlog::debug("stun reject invalid ice controlled attribute length {}", length);
+                return std::nullopt;
+            }
+            result.ice_controlled = true;
+        }
+        else if (type < 0x8000U && !result.message_integrity_offset.has_value() && type != stun_attribute_error_code &&
+                 type != stun_attribute_unknown_attributes && type != stun_attribute_xor_mapped_address)
+        {
+            result.unknown_required_attributes.push_back(type);
+        }
+
+        offset = value_offset + length;
+        offset += (4U - (offset % 4U)) % 4U;
+    }
+
+    if (offset != packet.size())
+    {
+        spdlog::debug("stun reject trailing bytes offset {} size {}", offset, packet.size());
+        return std::nullopt;
+    }
+    return result;
+}
+
+bool validate_stun_binding_authentication(std::span<const std::uint8_t> packet,
+                                          const stun_binding_attributes& attributes,
+                                          std::string_view expected_username,
+                                          std::string_view password)
+{
+    if (!attributes.username.has_value())
+    {
+        spdlog::debug("stun reject missing username");
+        return false;
+    }
+    if (*attributes.username != expected_username)
+    {
+        spdlog::debug("stun reject username actual {} expected {}", *attributes.username, expected_username);
+        return false;
+    }
+    if (!attributes.message_integrity_offset.has_value())
+    {
+        spdlog::debug("stun reject missing message integrity");
+        return false;
+    }
+    if (!verify_message_integrity(packet, *attributes.message_integrity_offset, password))
+    {
+        spdlog::debug("stun reject message integrity failed");
+        return false;
+    }
+    if (!attributes.fingerprint_offset.has_value())
+    {
+        spdlog::debug("stun reject missing fingerprint");
+        return false;
+    }
+    if (*attributes.fingerprint_offset + 8U != packet.size() || !verify_fingerprint(packet, *attributes.fingerprint_offset))
+    {
+        spdlog::debug("stun reject fingerprint failed");
+        return false;
+    }
+    return true;
+}
+
 }    // namespace
 
 bool is_stun_message(std::span<const std::uint8_t> packet)
@@ -231,156 +387,22 @@ std::optional<stun_binding_request> parse_stun_binding_request(std::span<const s
         return std::nullopt;
     }
 
-    std::optional<std::string_view> username;
-    std::optional<std::size_t> message_integrity_offset;
-    std::optional<std::size_t> fingerprint_offset;
-    std::vector<std::uint16_t> unknown_required_attributes;
-    bool priority = false;
-    bool ice_controlling = false;
-    bool ice_controlled = false;
-    bool use_candidate = false;
-
-    std::size_t offset = stun_header_size;
-    while (offset + 4U <= packet.size())
+    auto attributes = scan_stun_attributes(packet);
+    if (!attributes || !validate_stun_binding_authentication(packet, *attributes, expected_username, password))
     {
-        const auto type = read_u16(packet.data() + offset);
-        const auto length = static_cast<std::size_t>(read_u16(packet.data() + offset + 2U));
-        const auto value_offset = offset + 4U;
-        spdlog::trace("stun attribute type 0x{:04x} length {} offset {}", type, length, offset);
-
-        if (value_offset + length > packet.size())
-        {
-            spdlog::debug("stun reject attribute overflow type 0x{:04x} length {}", type, length);
-            return std::nullopt;
-        }
-
-        if (message_integrity_offset.has_value() && type != stun_attribute_fingerprint)
-        {
-            offset = value_offset + length;
-            offset += (4U - (offset % 4U)) % 4U;
-            continue;
-        }
-
-        if (type == stun_attribute_username)
-        {
-            if (username.has_value())
-            {
-                spdlog::debug("stun reject invalid username position");
-                return std::nullopt;
-            }
-            username = std::string_view(reinterpret_cast<const char*>(packet.data() + value_offset), length);
-            spdlog::trace("stun username {}", *username);
-        }
-        else if (type == stun_attribute_message_integrity)
-        {
-            if (length != stun_message_integrity_size || message_integrity_offset.has_value())
-            {
-                spdlog::debug("stun reject invalid message integrity attribute length {}", length);
-                return std::nullopt;
-            }
-            message_integrity_offset = offset;
-        }
-        else if (type == stun_attribute_priority)
-        {
-            if (length != 4U || priority)
-            {
-                spdlog::debug("stun reject invalid priority attribute length {}", length);
-                return std::nullopt;
-            }
-            priority = true;
-        }
-        else if (type == stun_attribute_use_candidate)
-        {
-            if (length != 0 || use_candidate)
-            {
-                spdlog::debug("stun reject invalid use candidate attribute length {}", length);
-                return std::nullopt;
-            }
-            use_candidate = true;
-        }
-        else if (type == stun_attribute_fingerprint)
-        {
-            if (length != 4U || fingerprint_offset.has_value())
-            {
-                spdlog::debug("stun reject invalid fingerprint attribute length {}", length);
-                return std::nullopt;
-            }
-            fingerprint_offset = offset;
-        }
-        else if (type == stun_attribute_ice_controlling)
-        {
-            if (length != 8U || ice_controlling)
-            {
-                spdlog::debug("stun reject invalid ice controlling attribute length {}", length);
-                return std::nullopt;
-            }
-            ice_controlling = true;
-        }
-        else if (type == stun_attribute_ice_controlled)
-        {
-            if (length != 8U || ice_controlled)
-            {
-                spdlog::debug("stun reject invalid ice controlled attribute length {}", length);
-                return std::nullopt;
-            }
-            ice_controlled = true;
-        }
-        else if (type < 0x8000U && !message_integrity_offset.has_value() && type != stun_attribute_error_code &&
-                 type != stun_attribute_unknown_attributes && type != stun_attribute_xor_mapped_address)
-        {
-            unknown_required_attributes.push_back(type);
-        }
-
-        offset = value_offset + length;
-        offset += (4U - (offset % 4U)) % 4U;
-    }
-
-    if (offset != packet.size())
-    {
-        spdlog::debug("stun reject trailing bytes offset {} size {}", offset, packet.size());
-        return std::nullopt;
-    }
-    if (!username.has_value())
-    {
-        spdlog::debug("stun reject missing username");
-        return std::nullopt;
-    }
-    if (*username != expected_username)
-    {
-        spdlog::debug("stun reject username actual {} expected {}", *username, expected_username);
-        return std::nullopt;
-    }
-    if (!message_integrity_offset.has_value())
-    {
-        spdlog::debug("stun reject missing message integrity");
-        return std::nullopt;
-    }
-    if (!verify_message_integrity(packet, *message_integrity_offset, password))
-    {
-        spdlog::debug("stun reject message integrity failed");
-        return std::nullopt;
-    }
-    if (!fingerprint_offset.has_value())
-    {
-        spdlog::debug("stun reject missing fingerprint");
-        return std::nullopt;
-    }
-    if (*fingerprint_offset + 8U != packet.size() || !verify_fingerprint(packet, *fingerprint_offset))
-    {
-        spdlog::debug("stun reject fingerprint failed");
         return std::nullopt;
     }
 
     stun_binding_request request{
         .transaction_id = {},
-        .unknown_required_attributes = std::move(unknown_required_attributes),
-        .priority = priority,
-        .use_candidate = use_candidate,
-        .ice_controlling = ice_controlling,
-        .ice_controlled = ice_controlled,
+        .unknown_required_attributes = std::move(attributes->unknown_required_attributes),
+        .priority = attributes->priority,
+        .use_candidate = attributes->use_candidate,
+        .ice_controlling = attributes->ice_controlling,
+        .ice_controlled = attributes->ice_controlled,
     };
     std::copy_n(packet.data() + 8U, request.transaction_id.size(), request.transaction_id.begin());
-    spdlog::trace("stun binding request authenticated use_candidate {}", use_candidate);
+    spdlog::trace("stun binding request authenticated use_candidate {}", attributes->use_candidate);
     return request;
 }
 
