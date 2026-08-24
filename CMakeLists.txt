@@ -236,6 +236,10 @@ if(BUILD_TESTING)
     target_link_libraries(gb28181_udp_peer_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_udp_peer_tests COMMAND gb28181_udp_peer_tests)
 
+    add_executable(gb28181_service_identity_tests tests/gb28181_service_identity_tests.cpp)
+    target_link_libraries(gb28181_service_identity_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb28181_service_identity_tests COMMAND gb28181_service_identity_tests)
+
     add_executable(ireader_rtcp_tests tests/ireader_rtcp_tests.cpp)
     target_link_libraries(ireader_rtcp_tests PRIVATE ireader_media)
     add_test(NAME ireader_rtcp_tests COMMAND ireader_rtcp_tests)

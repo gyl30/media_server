@@ -40,7 +40,6 @@ struct session_entry
 {
     std::shared_ptr<generation_token> generation;
     session_resource resource;
-    bool closing{};
 };
 
 using output_resource = std::variant<std::monostate,
@@ -53,7 +52,6 @@ struct output_entry
 {
     std::shared_ptr<generation_token> generation;
     output_resource resource;
-    bool closing{};
 };
 
 using output_key = std::pair<std::string, std::string>;
@@ -169,7 +167,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
         }
         std::erase_if(state_->sessions, [](const auto& entry) { return resource_expired(entry.second.resource); });
         if (!state_->sessions
-                 .emplace(stream_name, session_entry{.generation = generation, .resource = std::monostate{}, .closing = false})
+                 .emplace(stream_name, session_entry{.generation = generation, .resource = std::monostate{}})
                  .second)
         {
             return gb28181_create_error::duplicate_stream;
@@ -188,7 +186,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
         {
             std::scoped_lock lock(shared_state->mutex);
             const auto iterator = shared_state->sessions.find(stream_name);
-            if (shared_state->closed || iterator == shared_state->sessions.end() || iterator->second.generation != generation || iterator->second.closing)
+            if (shared_state->closed || iterator == shared_state->sessions.end() || iterator->second.generation != generation)
             {
                 boost::system::error_code error;
                 socket.close(error);
@@ -214,7 +212,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
         {
             std::scoped_lock lock(shared_state->mutex);
             const auto iterator = shared_state->sessions.find(stream_name);
-            if (!shared_state->closed && iterator != shared_state->sessions.end() && iterator->second.generation == generation && !iterator->second.closing)
+            if (!shared_state->closed && iterator != shared_state->sessions.end() && iterator->second.generation == generation)
             {
                 iterator->second.resource = std::weak_ptr<gb28181_tcp_session>{session};
                 installed = true;
@@ -296,7 +294,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     {
         std::scoped_lock lock(state_->mutex);
         const auto iterator = state_->sessions.find(stream_name);
-        if (!state_->closed && iterator != state_->sessions.end() && iterator->second.generation == generation && !iterator->second.closing)
+        if (!state_->closed && iterator != state_->sessions.end() && iterator->second.generation == generation)
         {
             if (std::holds_alternative<std::monostate>(iterator->second.resource))
             {
@@ -360,7 +358,7 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
         }
         std::erase_if(state_->outputs, [](const auto& entry) { return resource_expired(entry.second.resource); });
         if (!state_->outputs
-                 .emplace(key, output_entry{.generation = generation, .resource = std::monostate{}, .closing = false})
+                 .emplace(key, output_entry{.generation = generation, .resource = std::monostate{}})
                  .second)
         {
             return gb28181_output_create_error::duplicate_output;
@@ -380,7 +378,7 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
         {
             std::scoped_lock lock(shared_state->mutex);
             const auto iterator = shared_state->outputs.find(key);
-            if (shared_state->closed || iterator == shared_state->outputs.end() || iterator->second.generation != generation || iterator->second.closing)
+            if (shared_state->closed || iterator == shared_state->outputs.end() || iterator->second.generation != generation)
             {
                 boost::system::error_code error;
                 socket.close(error);
@@ -420,7 +418,7 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
         {
             std::scoped_lock lock(shared_state->mutex);
             const auto iterator = shared_state->outputs.find(key);
-            if (!shared_state->closed && iterator != shared_state->outputs.end() && iterator->second.generation == generation && !iterator->second.closing)
+            if (!shared_state->closed && iterator != shared_state->outputs.end() && iterator->second.generation == generation)
             {
                 iterator->second.resource = std::weak_ptr<gb28181_tcp_output_session>{session};
                 installed = true;
@@ -497,7 +495,7 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
     {
         std::scoped_lock lock(state_->mutex);
         const auto iterator = state_->outputs.find(key);
-        if (!state_->closed && iterator != state_->outputs.end() && iterator->second.generation == generation && !iterator->second.closing)
+        if (!state_->closed && iterator != state_->outputs.end() && iterator->second.generation == generation)
         {
             if (std::holds_alternative<std::monostate>(iterator->second.resource))
             {
@@ -532,8 +530,8 @@ bool gb28181_service::remove_output(std::string_view stream_name, std::string_vi
             state_->outputs.erase(iterator);
             return false;
         }
-        iterator->second.closing = true;
         resource = iterator->second.resource;
+        state_->outputs.erase(iterator);
     }
     shutdown_resource(resource);
     spdlog::info("gb28181 output removed {} output {}", stream_name, output_id);
@@ -555,8 +553,8 @@ bool gb28181_service::remove(std::string_view stream_name)
             state_->sessions.erase(iterator);
             return false;
         }
-        iterator->second.closing = true;
         resource = iterator->second.resource;
+        state_->sessions.erase(iterator);
     }
     shutdown_resource(resource);
     spdlog::info("gb28181 session removed {}", stream_name);
