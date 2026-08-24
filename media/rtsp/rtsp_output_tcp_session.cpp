@@ -1,30 +1,28 @@
-#include "media/rtsp/rtsp_output_tcp_session.h"
-
-#include "media/codec/codec_utils.h"
+#include <array>
+#include <random>
+#include <cstdlib>
+#include <cstring>
+#include <sstream>
+#include <utility>
+#include <charconv>
+#include <optional>
+#include <algorithm>
+#include <arpa/inet.h>
 
 #include <spdlog/spdlog.h>
+#include <boost/url/parse.hpp>
+
+#include "media/codec/codec_utils.h"
+#include "media/rtsp/rtsp_output_tcp_session.h"
 
 extern "C"
 {
 #include "rtp-packet.h"
-#include "rtp-payload.h"
-#include "rtsp-header-transport.h"
 #include "rtsp-muxer.h"
+#include "rtp-payload.h"
 #include "rtsp-server.h"
+#include "rtsp-header-transport.h"
 }
-
-#include <arpa/inet.h>
-
-#include <algorithm>
-#include <array>
-#include <boost/url/parse.hpp>
-#include <charconv>
-#include <cstdlib>
-#include <cstring>
-#include <optional>
-#include <random>
-#include <sstream>
-#include <utility>
 
 namespace media_server
 {
@@ -46,12 +44,11 @@ std::uint32_t random_u32()
 bool supported_track(const media_track& track)
 {
     return (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
-           (track.kind == media_kind::audio &&
-            (track.codec == codec_id::aac ||
-             (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
-              (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty()) ||
-             ((track.codec == codec_id::g711a || track.codec == codec_id::g711u) && track.clock_rate == 8'000 && track.channel_count == 1 &&
-              track.codec_config.empty())));
+           (track.kind == media_kind::audio && (track.codec == codec_id::aac ||
+                                                (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
+                                                 (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty()) ||
+                                                ((track.codec == codec_id::g711a || track.codec == codec_id::g711u) && track.clock_rate == 8'000 &&
+                                                 track.channel_count == 1 && track.codec_config.empty())));
 }
 }    // namespace
 
@@ -85,11 +82,8 @@ rtsp_output_tcp_session::~rtsp_output_tcp_session()
     }
 }
 
-int rtsp_output_tcp_session::startup(rtsp_server_t* server,
-                                     std::string_view uri,
-                                     std::string_view session,
-                                     const rtsp_header_transport_t transports[],
-                                     std::size_t count)
+int rtsp_output_tcp_session::startup(
+    rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     if (closed_ || !create_muxer())
     {
@@ -121,11 +115,8 @@ int rtsp_output_tcp_session::startup(rtsp_server_t* server,
                                const rtsp_header_transport_t handler_transports[],
                                std::size_t handler_count)
     { return self->on_setup(handler_server, handler_uri, handler_session, handler_transports, handler_count); };
-    handler->on_play = [self](rtsp_server_t* handler_server,
-                              const char* handler_uri,
-                              const char* handler_session,
-                              const std::int64_t* npt,
-                              const double*)
+    handler->on_play =
+        [self](rtsp_server_t* handler_server, const char* handler_uri, const char* handler_session, const std::int64_t* npt, const double*)
     { return self->on_play(handler_server, handler_uri, handler_session, npt); };
     handler->on_teardown = [self](rtsp_server_t* handler_server, const char*, const char* handler_session)
     { return self->on_teardown(handler_server, handler_session); };
@@ -374,8 +365,8 @@ bool rtsp_output_tcp_session::create_muxer()
         {
             return false;
         }
-        const auto media_id = rtsp_muxer_add_media(
-            muxer_, payload_index, description.rtp_codec, description.extra.data(), static_cast<int>(description.extra.size()));
+        const auto media_id =
+            rtsp_muxer_add_media(muxer_, payload_index, description.rtp_codec, description.extra.data(), static_cast<int>(description.extra.size()));
         if (media_id < 0)
         {
             return false;
@@ -387,7 +378,6 @@ bool rtsp_output_tcp_session::create_muxer()
                                      .payload_index = payload_index,
                                      .media_id = media_id,
                                  });
-
     }
     return !tracks_.empty();
 }
@@ -416,11 +406,8 @@ bool rtsp_output_tcp_session::apply_tracks(const media_track_snapshot_ptr& track
     return true;
 }
 
-int rtsp_output_tcp_session::on_setup(rtsp_server_t* server,
-                                      std::string_view uri,
-                                      std::string_view session,
-                                      const rtsp_header_transport_t transports[],
-                                      std::size_t count)
+int rtsp_output_tcp_session::on_setup(
+    rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     if (playing_)
     {
@@ -473,7 +460,8 @@ int rtsp_output_tcp_session::on_setup(rtsp_server_t* server,
 
     if (iterator->second.setup)
     {
-        if (session == session_id_ && iterator->second.rtp_channel == selected->interleaved1 && iterator->second.rtcp_channel == selected->interleaved2)
+        if (session == session_id_ && iterator->second.rtp_channel == selected->interleaved1 &&
+            iterator->second.rtcp_channel == selected->interleaved2)
         {
             std::ostringstream transport;
             transport << "RTP/AVP/TCP;unicast;interleaved=" << selected->interleaved1 << '-' << selected->interleaved2;

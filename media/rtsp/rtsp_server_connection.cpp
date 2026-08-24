@@ -1,9 +1,9 @@
-#include "media/rtsp/rtsp_server_connection.h"
+#include <string>
+#include <utility>
 
 #include <boost/asio/post.hpp>
 
-#include <string>
-#include <utility>
+#include "media/rtsp/rtsp_server_connection.h"
 
 namespace media_server
 {
@@ -149,47 +149,41 @@ int rtsp_server_connection::setup_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     const auto handler = static_cast<rtsp_server_connection*>(param)->handler_;
-    return handler && handler->on_setup
-               ? handler->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count)
-               : rtsp_server_reply_setup(server, 501, nullptr, nullptr);
+    return handler && handler->on_setup ? handler->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count)
+                                        : rtsp_server_reply_setup(server, 501, nullptr, nullptr);
 }
 
 int rtsp_server_connection::play_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     const auto handler = static_cast<rtsp_server_connection*>(param)->handler_;
-    return handler && handler->on_play
-               ? handler->on_play(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale)
-               : rtsp_server_reply_play(server, 501, nullptr, nullptr, nullptr);
+    return handler && handler->on_play ? handler->on_play(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale)
+                                       : rtsp_server_reply_play(server, 501, nullptr, nullptr, nullptr);
 }
 
 int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server, const char* uri, const char* session)
 {
     const auto handler = static_cast<rtsp_server_connection*>(param)->handler_;
-    return handler && handler->on_teardown
-               ? handler->on_teardown(server, uri != nullptr ? uri : "", session != nullptr ? session : "")
-               : rtsp_server_reply_teardown(server, 501);
+    return handler && handler->on_teardown ? handler->on_teardown(server, uri != nullptr ? uri : "", session != nullptr ? session : "")
+                                           : rtsp_server_reply_teardown(server, 501);
 }
 
 int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server, const char* uri, const char* sdp, int length)
 {
     const auto handler = static_cast<rtsp_server_connection*>(param)->handler_;
-    return handler && handler->on_announce ? handler->on_announce(server, uri != nullptr ? uri : "", sdp, length) : rtsp_server_reply_announce(server, 501);
+    return handler && handler->on_announce ? handler->on_announce(server, uri != nullptr ? uri : "", sdp, length)
+                                           : rtsp_server_reply_announce(server, 501);
 }
 
 int rtsp_server_connection::record_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     const auto handler = static_cast<rtsp_server_connection*>(param)->handler_;
-    return handler && handler->on_record
-               ? handler->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale)
-               : rtsp_server_reply_record(server, 501, nullptr, nullptr);
+    return handler && handler->on_record ? handler->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale)
+                                         : rtsp_server_reply_record(server, 501, nullptr, nullptr);
 }
 
-int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*)
-{
-    return rtsp_server_reply_options(server, 200);
-}
+int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*) { return rtsp_server_reply_options(server, 200); }
 
 int rtsp_server_connection::get_parameter_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes)
@@ -225,7 +219,6 @@ void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
         remaining = remaining.subspan(consumed);
     }
 }
-
 
 void rtsp_server_connection::safe_shutdown()
 {

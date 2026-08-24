@@ -1,20 +1,19 @@
 #ifndef MEDIA_WEBRTC_DTLS_TRANSPORT_H
 #define MEDIA_WEBRTC_DTLS_TRANSPORT_H
 
-#include "media/webrtc/dtls_certificate.h"
+#include <span>
+#include <chrono>
+#include <memory>
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <optional>
+#include <functional>
+#include <string_view>
 
 #include <openssl/ssl.h>
 
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <optional>
-#include <span>
-#include <string>
-#include <string_view>
-#include <vector>
+#include "media/webrtc/dtls_certificate.h"
 
 namespace media_server
 {

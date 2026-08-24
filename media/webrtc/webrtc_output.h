@@ -1,17 +1,16 @@
 #ifndef MEDIA_WEBRTC_OUTPUT_H
 #define MEDIA_WEBRTC_OUTPUT_H
 
-#include "media/codec/audio_transcoder.h"
-#include "media/codec/video_transcoder.h"
-#include "media/core/media_types.h"
-
+#include <map>
+#include <span>
+#include <memory>
+#include <string>
 #include <cstdint>
 #include <functional>
-#include <map>
-#include <memory>
-#include <span>
-#include <string>
-#include <vector>
+
+#include "media/core/media_types.h"
+#include "media/codec/audio_transcoder.h"
+#include "media/codec/video_transcoder.h"
 
 struct rtsp_muxer_t;
 

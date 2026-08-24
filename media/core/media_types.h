@@ -1,10 +1,10 @@
 #ifndef MEDIA_CORE_MEDIA_TYPES_H
 #define MEDIA_CORE_MEDIA_TYPES_H
 
-#include <cstdint>
 #include <memory>
-#include <string_view>
 #include <vector>
+#include <cstdint>
+#include <string_view>
 
 namespace media_server
 {

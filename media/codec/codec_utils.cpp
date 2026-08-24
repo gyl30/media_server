@@ -1,3 +1,5 @@
+#include <array>
+
 #include "media/codec/codec_utils.h"
 
 extern "C"
@@ -6,8 +8,6 @@ extern "C"
 #include "mpeg4-avc.h"
 #include "mpeg4-hevc.h"
 }
-
-#include <array>
 
 namespace media_server
 {

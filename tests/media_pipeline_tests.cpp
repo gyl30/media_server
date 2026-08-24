@@ -1,92 +1,91 @@
-#include "media/codec/audio_transcoder.h"
-#include "media/codec/codec_utils.h"
-#include "media/codec/video_transcoder.h"
-#include "media/core/media_sink.h"
-#include "media/core/media_stream.h"
-#include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_service.h"
-#include "media/hls/hls_output.h"
-#include "media/hls/hls_service.h"
-#include "media/net/tcp_connection.h"
-#include "media/net/tcp_connector.h"
-#include "media/net/io_context_pool.h"
-#include "media/net/tcp_listener.h"
-#include "media/net/udp_socket.h"
-#include "media/rtmp/rtmp_server.h"
-#include "media/rtmp/rtmp_session.h"
-#include "media/rtsp/rtsp_pull_session.h"
-#include "media/rtsp/rtsp_output_session.h"
-#include "media/rtsp/rtsp_server.h"
-#include "media/http/http_flv_output.h"
-#include "media/http/http_session.h"
-#include "media/rtmp/rtmp_timestamp.h"
-#include "media/webrtc/webrtc_output.h"
-#include "media/webrtc/whep_service.h"
-
+#include <span>
+#include <array>
+#include <mutex>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <future>
+#include <limits>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <numeric>
+#include <iostream>
+#include <optional>
+#include <algorithm>
+#include <string_view>
+#include <condition_variable>
+
+#include <boost/asio/read.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/read_until.hpp>
+#include <boost/beast/http/read.hpp>
+#include <boost/beast/http/write.hpp>
+
+#include "media/hls/hls_output.h"
+#include "media/net/udp_socket.h"
+#include "media/core/media_sink.h"
+#include "media/hls/hls_service.h"
+#include "media/net/tcp_listener.h"
+#include "media/rtmp/rtmp_server.h"
+#include "media/rtsp/rtsp_server.h"
+#include "media/codec/codec_utils.h"
+#include "media/core/media_stream.h"
+#include "media/http/http_session.h"
+#include "media/net/tcp_connector.h"
+#include "media/rtmp/rtmp_session.h"
+#include "media/net/tcp_connection.h"
+#include "media/net/io_context_pool.h"
+#include "media/rtmp/rtmp_timestamp.h"
+#include "media/webrtc/whep_service.h"
+#include "media/core/stream_registry.h"
+#include "media/http/http_flv_output.h"
+#include "media/webrtc/webrtc_output.h"
+#include "media/codec/audio_transcoder.h"
+#include "media/codec/video_transcoder.h"
+#include "media/rtsp/rtsp_pull_session.h"
+#include "media/gb28181/gb28181_service.h"
+#include "media/rtsp/rtsp_output_session.h"
 
 extern "C"
 {
-#include "aom-av1.h"
-#include <libavcodec/avcodec.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/error.h>
-#include <libavutil/frame.h>
-#include <libavutil/mathematics.h>
-#include <libavutil/opt.h>
-
 #include "amf0.h"
 #include "avpbs.h"
-#include "flv-demuxer.h"
-#include "flv-header.h"
-#include "flv-muxer.h"
-#include "flv-parser.h"
-#include "flv-proto.h"
+#include "aom-av1.h"
 #include "mpeg-ts.h"
+#include "rtp-ext.h"
+#include "flv-muxer.h"
+#include "flv-proto.h"
+#include "opus-head.h"
+#include "flv-header.h"
+#include "flv-parser.h"
 #include "mov-buffer.h"
 #include "mov-format.h"
 #include "mov-reader.h"
-#include "opus-head.h"
-#include "rtmp-chunk-header.h"
-#include "rtmp-client.h"
-#include "rtmp-internal.h"
-#include "rtmp-msgtypeid.h"
-#include "rtp-ext.h"
 #include "rtp-packet.h"
+#include "rtsp-muxer.h"
+#include "flv-demuxer.h"
+#include "rtmp-client.h"
 #include "rtp-payload.h"
 #include "rtsp-client.h"
-#include "rtsp-demuxer.h"
-#include "rtsp-muxer.h"
-#include "rtsp-payloads.h"
 #include "sdp-payload.h"
+#include "rtsp-demuxer.h"
+#include <libavutil/opt.h>
+#include "rtmp-internal.h"
+#include "rtsp-payloads.h"
+#include "rtmp-msgtypeid.h"
+#include <libavutil/error.h>
+#include <libavutil/frame.h>
+#include "rtmp-chunk-header.h"
+#include <libavcodec/avcodec.h>
+#include <libavutil/mathematics.h>
+#include <libavutil/channel_layout.h>
 }
-
-#include <algorithm>
-#include <atomic>
-#include <boost/asio/read.hpp>
-#include <boost/asio/read_until.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/beast/http/read.hpp>
-#include <boost/beast/http/write.hpp>
-#include <array>
-#include <chrono>
-#include <condition_variable>
-#include <cerrno>
-#include <cstdint>
-#include <cstring>
-#include <cstdlib>
-#include <future>
-#include <iostream>
-#include <limits>
-#include <memory>
-#include <mutex>
-#include <numeric>
-#include <optional>
-#include <span>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <vector>
 
 namespace media_server
 {
@@ -119,13 +118,13 @@ encoded_video_fixture make_video_transcoder_fixture(codec_id codec, int requeste
     if (codec == codec_id::h265)
     {
         const std::array<std::vector<std::uint8_t>, frame_count> payloads{
-            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x28, 0x01, 0xac, 0x76, 0x23, 0xef, 0x90, 0x4d, 0x80,
-                                      0x71, 0x27, 0x9f, 0x74, 0xc1, 0x2d, 0x86, 0xe1, 0x55, 0x25, 0xeb, 0x9f, 0x73, 0xf8},
+            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x28, 0x01, 0xac, 0x76, 0x23, 0xef, 0x90, 0x4d, 0x80, 0x71,
+                                      0x27, 0x9f, 0x74, 0xc1, 0x2d, 0x86, 0xe1, 0x55, 0x25, 0xeb, 0x9f, 0x73, 0xf8},
             std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xd0, 0x11, 0x56, 0x20, 0xe4, 0x49, 0x2a, 0x44, 0x87,
                                       0x11, 0x8c, 0x7a, 0x46, 0x46, 0x4d, 0xdb, 0x7e, 0x49, 0x4c, 0xc8, 0x76, 0xb7, 0x8c},
             std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0xe0, 0x24, 0xbe, 0x08, 0x14, 0xc0, 0xd2, 0xa9},
-            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xd0, 0x21, 0xd5, 0x62, 0x0e, 0xc0, 0x26, 0xa0, 0x73,
-                                      0xc6, 0x35, 0x6e, 0xdd, 0x23, 0xc3, 0xc7, 0xd6, 0x1a, 0x00, 0xa3, 0x66, 0x30},
+            std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xd0, 0x21, 0xd5, 0x62, 0x0e, 0xc0, 0x26, 0xa0,
+                                      0x73, 0xc6, 0x35, 0x6e, 0xdd, 0x23, 0xc3, 0xc7, 0xd6, 0x1a, 0x00, 0xa3, 0x66, 0x30},
             std::vector<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0xe0, 0x66, 0xb5, 0xe0, 0x81, 0x44, 0xd2, 0xa9},
         };
         const std::array<std::int64_t, frame_count> dts{4'920'000'000, 4'960'000'000, 5'000'000'000, 5'040'000'000, 5'080'000'000};
@@ -134,12 +133,11 @@ encoded_video_fixture make_video_transcoder_fixture(codec_id codec, int requeste
             .codec = codec,
             .width = width,
             .height = height,
-            .codec_config = {0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03,
-                             0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x1e, 0x91, 0x30, 0x24, 0x00, 0x00,
-                             0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03,
-                             0x00, 0x00, 0x03, 0x00, 0x1e, 0xa0, 0x20, 0x83, 0x16, 0x59, 0x13, 0x4a, 0x4c, 0x2e, 0x68,
-                             0x08, 0x00, 0x00, 0x03, 0x00, 0x08, 0x00, 0x00, 0x03, 0x00, 0xc8, 0x40, 0x00, 0x00, 0x00,
-                             0x01, 0x44, 0x01, 0xc0, 0x73, 0xc0, 0x89},
+            .codec_config = {0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90,
+                             0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x1e, 0x91, 0x30, 0x24, 0x00, 0x00, 0x00, 0x01, 0x42, 0x01,
+                             0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x1e, 0xa0,
+                             0x20, 0x83, 0x16, 0x59, 0x13, 0x4a, 0x4c, 0x2e, 0x68, 0x08, 0x00, 0x00, 0x03, 0x00, 0x08, 0x00, 0x00,
+                             0x03, 0x00, 0xc8, 0x40, 0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xc0, 0x73, 0xc0, 0x89},
             .frames = {},
         };
         for (std::size_t index = 0; index < payloads.size(); ++index)
@@ -360,8 +358,7 @@ flv_demux_capture demux_http_flv(const http_flv_capture& output)
 
     flv_demux_capture capture;
     flv_parser_t parser{};
-    require(!data.empty() && flv_parser_input(&parser, data.data(), data.size(), &capture_flv_packet, &capture) == 0,
-            "http flv parser input");
+    require(!data.empty() && flv_parser_input(&parser, data.data(), data.size(), &capture_flv_packet, &capture) == 0, "http flv parser input");
     return capture;
 }
 
@@ -546,10 +543,7 @@ media_frame make_video_frame(std::int64_t pts_ns, bool key_frame, std::span<cons
     };
 }
 
-media_frame make_video_frame(std::int64_t pts_ns, bool key_frame)
-{
-    return make_video_frame(pts_ns, key_frame, h264_config);
-}
+media_frame make_video_frame(std::int64_t pts_ns, bool key_frame) { return make_video_frame(pts_ns, key_frame, h264_config); }
 
 media_frame make_large_video_frame(std::int64_t pts_ns)
 {
@@ -605,10 +599,7 @@ media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame, std::span<const
     };
 }
 
-media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame)
-{
-    return make_h265_frame(pts_ns, key_frame, h265_config);
-}
+media_frame make_h265_frame(std::int64_t pts_ns, bool key_frame) { return make_h265_frame(pts_ns, key_frame, h265_config); }
 
 media_frame make_audio_frame(std::int64_t pts_ns)
 {
@@ -918,10 +909,7 @@ class pull_test_reader final : public media_reader
     }
 
    private:
-    [[nodiscard]] bool interested(track_id id) const
-    {
-        return track_ids_.empty() || std::ranges::find(track_ids_, id) != track_ids_.end();
-    }
+    [[nodiscard]] bool interested(track_id id) const { return track_ids_.empty() || std::ranges::find(track_ids_, id) != track_ids_.end(); }
 
     bool apply_tracks(const media_track_snapshot_ptr& tracks)
     {
@@ -1260,9 +1248,11 @@ rtmp_status parse_rtmp_status(std::span<const std::uint8_t> payload)
 class rtmp_input_test_peer final
 {
    public:
-    explicit rtmp_input_test_peer(std::string stream_name,
-                                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000})
-        : work_(boost::asio::make_work_guard(io_)), acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_socket_(io_), stream_name_(std::move(stream_name))
+    explicit rtmp_input_test_peer(std::string stream_name, std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000})
+        : work_(boost::asio::make_work_guard(io_)),
+          acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}),
+          client_socket_(io_),
+          stream_name_(std::move(stream_name))
     {
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
@@ -1308,8 +1298,7 @@ class rtmp_input_test_peer final
         }
         current = AMFWriteObjectEnd(current, data.data() + data.size());
         require(current != nullptr, "rtmp input metadata encode");
-        require(rtmp_client_push_script(client_, data.data(), static_cast<std::size_t>(current - data.data()), 0) == 0,
-                "rtmp input push metadata");
+        require(rtmp_client_push_script(client_, data.data(), static_cast<std::size_t>(current - data.data()), 0) == 0, "rtmp input push metadata");
     }
 
     void push_video_config(media_track track)
@@ -1413,7 +1402,8 @@ class rtmp_input_test_peer final
         {
             const auto track = query_track(expected.id);
             if (track && track->kind == expected.kind && track->codec == expected.codec && track->clock_rate == expected.clock_rate &&
-                track->channel_count == expected.channel_count && track->codec_config == expected.codec_config && track->config_version == config_version)
+                track->channel_count == expected.channel_count && track->codec_config == expected.codec_config &&
+                track->config_version == config_version)
             {
                 return;
             }
@@ -1645,9 +1635,8 @@ class rtmp_output_test_peer final
     {
         std::promise<bool> promise;
         auto future = promise.get_future();
-        boost::asio::post(io_,
-                          [stream = stream_, track = std::move(track), &promise]() mutable
-                          { promise.set_value(stream->update_track(std::move(track))); });
+        boost::asio::post(
+            io_, [stream = stream_, track = std::move(track), &promise]() mutable { promise.set_value(stream->update_track(std::move(track))); });
         require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp output config reset");
     }
 
@@ -1737,10 +1726,7 @@ class rtmp_output_test_peer final
 
     static int media_callback(void*, const void*, std::size_t, std::uint32_t) { return 0; }
 
-    void receive_until_video_config()
-    {
-        receive_until_video_config(1);
-    }
+    void receive_until_video_config() { receive_until_video_config(1); }
 
     void receive_until_video_config(std::size_t count)
     {
@@ -2227,7 +2213,6 @@ void test_tcp_connector_shutdown_lifecycle()
     require(weak_connector.expired(), "tcp connector shutdown releases pending operations");
 }
 
-
 void test_tcp_connection_shutdown_lifecycle()
 {
     boost::asio::io_context io;
@@ -2238,9 +2223,8 @@ void test_tcp_connection_shutdown_lifecycle()
 
     int io_callback_count = 0;
     auto connection = std::make_shared<tcp_connection>(std::move(server));
-    connection->startup(
-        [&io_callback_count](boost::system::error_code, std::span<const std::uint8_t>) { ++io_callback_count; },
-        [&io_callback_count](boost::system::error_code, std::size_t) { ++io_callback_count; });
+    connection->startup([&io_callback_count](boost::system::error_code, std::span<const std::uint8_t>) { ++io_callback_count; },
+                        [&io_callback_count](boost::system::error_code, std::size_t) { ++io_callback_count; });
     const std::weak_ptr<tcp_connection> weak_connection = connection;
 
     connection->shutdown();
@@ -2266,8 +2250,7 @@ void test_tcp_connection_io_error_propagation()
         client.connect(acceptor.local_endpoint());
         auto connection = std::make_shared<tcp_connection>(acceptor.accept());
         boost::system::error_code read_error;
-        connection->startup(
-            [&read_error](boost::system::error_code error, std::span<const std::uint8_t>) { read_error = error; }, {});
+        connection->startup([&read_error](boost::system::error_code error, std::span<const std::uint8_t>) { read_error = error; }, {});
         client.close();
         io.run();
         require(static_cast<bool>(read_error), "tcp connection reports read error");
@@ -2330,17 +2313,14 @@ void test_udp_socket_receive_and_send()
     const std::vector<std::uint8_t> inbound{1, 2, 3, 4};
     const std::vector<std::uint8_t> outbound{5, 6, 7, 8};
 
-    require(socket->startup(
-                boost::asio::ip::address_v4::any(),
-                [&](boost::system::error_code error,
-                    std::span<const std::uint8_t> packet,
-                    const boost::asio::ip::udp::endpoint& endpoint)
-                {
-                    read_error = error;
-                    received.assign(packet.begin(), packet.end());
-                    source = endpoint;
-                },
-                {}),
+    require(socket->startup(boost::asio::ip::address_v4::any(),
+                            [&](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
+                            {
+                                read_error = error;
+                                received.assign(packet.begin(), packet.end());
+                                source = endpoint;
+                            },
+                            {}),
             "udp socket startup");
 
     std::array<std::uint8_t, 32> peer_buffer{};
@@ -2376,20 +2356,17 @@ void test_udp_socket_connected_peer_filter()
     boost::asio::ip::udp::socket second(io, {boost::asio::ip::address_v4::loopback(), 0});
     int read_count = 0;
 
-    require(socket->startup(
-                boost::asio::ip::address_v4::any(),
-                [&](boost::system::error_code error,
-                    std::span<const std::uint8_t>,
-                    const boost::asio::ip::udp::endpoint& endpoint)
-                {
-                    require(!error, "udp connected peer receive");
-                    ++read_count;
-                    if (read_count == 1)
-                    {
-                        require(socket->connect(endpoint), "udp connected peer pin");
-                    }
-                },
-                {}),
+    require(socket->startup(boost::asio::ip::address_v4::any(),
+                            [&](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint& endpoint)
+                            {
+                                require(!error, "udp connected peer receive");
+                                ++read_count;
+                                if (read_count == 1)
+                                {
+                                    require(socket->connect(endpoint), "udp connected peer pin");
+                                }
+                            },
+                            {}),
             "udp connected peer startup");
 
     const boost::asio::ip::udp::endpoint target{boost::asio::ip::address_v4::loopback(), socket->local_port()};
@@ -2430,7 +2407,8 @@ void test_udp_socket_multi_endpoint_queue()
                                  [&](boost::system::error_code error, std::size_t bytes)
                                  {
                                      require(!error, "udp first endpoint receive");
-                                     first_received.insert(first_received.end(), first_buffer.begin(), first_buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
+                                     first_received.insert(
+                                         first_received.end(), first_buffer.begin(), first_buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
                                      if (first_received.size() < 2)
                                      {
                                          receive_first();
@@ -2467,7 +2445,8 @@ void test_udp_socket_error_and_shutdown_lifecycle()
         boost::asio::io_context io;
         auto socket = std::make_shared<udp_socket>(io.get_executor());
         boost::system::error_code write_error;
-        require(socket->startup(boost::asio::ip::address_v4::any(), {},
+        require(socket->startup(boost::asio::ip::address_v4::any(),
+                                {},
                                 [&](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
                                 {
                                     write_error = error;
@@ -2486,8 +2465,7 @@ void test_udp_socket_error_and_shutdown_lifecycle()
         int write_error_callback_count = 0;
         require(socket->startup(
                     boost::asio::ip::address_v4::any(),
-                    [&](boost::system::error_code, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
-                    { ++read_callback_count; },
+                    [&](boost::system::error_code, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&) { ++read_callback_count; },
                     [&](boost::system::error_code, const boost::asio::ip::udp::endpoint&) { ++write_error_callback_count; }),
                 "udp shutdown startup");
         const std::weak_ptr<udp_socket> weak_socket = socket;
@@ -2581,9 +2559,8 @@ void test_tcp_listener_unlimited_accepts()
             "tcp listener unlimited startup");
 
     boost::asio::io_context client_io;
-    std::array<boost::asio::ip::tcp::socket, 3> clients{boost::asio::ip::tcp::socket(client_io),
-                                                        boost::asio::ip::tcp::socket(client_io),
-                                                        boost::asio::ip::tcp::socket(client_io)};
+    std::array<boost::asio::ip::tcp::socket, 3> clients{
+        boost::asio::ip::tcp::socket(client_io), boost::asio::ip::tcp::socket(client_io), boost::asio::ip::tcp::socket(client_io)};
     const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
     for (auto& client : clients)
     {
@@ -2705,20 +2682,19 @@ void test_tcp_listener_dynamic_startup()
                     accept_thread = std::this_thread::get_id();
                     ++accept_count;
                     auto server = std::make_shared<boost::asio::ip::tcp::socket>(std::move(socket));
-                    boost::asio::async_read(
-                        *server,
-                        boost::asio::buffer(server_received),
-                        [&, server](boost::system::error_code error, std::size_t)
-                        {
-                            server_read_error = error;
-                            if (!error)
-                            {
-                                boost::asio::async_write(
-                                    *server,
-                                    boost::asio::buffer(response),
-                                    [&, server](boost::system::error_code write_error, std::size_t) { server_write_error = write_error; });
-                            }
-                        });
+                    boost::asio::async_read(*server,
+                                            boost::asio::buffer(server_received),
+                                            [&, server](boost::system::error_code error, std::size_t)
+                                            {
+                                                server_read_error = error;
+                                                if (!error)
+                                                {
+                                                    boost::asio::async_write(*server,
+                                                                             boost::asio::buffer(response),
+                                                                             [&, server](boost::system::error_code write_error, std::size_t)
+                                                                             { server_write_error = write_error; });
+                                                }
+                                            });
                 },
                 1);
 
@@ -2728,50 +2704,47 @@ void test_tcp_listener_dynamic_startup()
                 return;
             }
 
-            boost::asio::post(
-                workers.context(0),
-                [&]()
-                {
-                    first->async_connect(
-                        endpoint,
-                        [&](boost::system::error_code error)
-                        {
-                            first_connect_error = error;
-                            if (error)
-                            {
-                                finish();
-                                return;
-                            }
-                            boost::asio::async_write(
-                                *first,
-                                boost::asio::buffer(request),
-                                [&](boost::system::error_code write_error, std::size_t)
-                                {
-                                    client_write_error = write_error;
-                                    if (write_error)
-                                    {
-                                        boost::system::error_code ignored;
-                                        first->close(ignored);
-                                        finish();
-                                        return;
-                                    }
-                                    boost::asio::async_read(
-                                        *first,
-                                        boost::asio::buffer(client_received),
-                                        [&](boost::system::error_code read_error, std::size_t)
-                                        {
-                                            client_read_error = read_error;
-                                            second->async_connect(
-                                                endpoint,
-                                                [&](boost::system::error_code second_error)
-                                                {
-                                                    second_connect_error = second_error;
-                                                    finish();
-                                                });
-                                        });
-                                });
-                        });
-                });
+            boost::asio::post(workers.context(0),
+                              [&]()
+                              {
+                                  first->async_connect(endpoint,
+                                                       [&](boost::system::error_code error)
+                                                       {
+                                                           first_connect_error = error;
+                                                           if (error)
+                                                           {
+                                                               finish();
+                                                               return;
+                                                           }
+                                                           boost::asio::async_write(*first,
+                                                                                    boost::asio::buffer(request),
+                                                                                    [&](boost::system::error_code write_error, std::size_t)
+                                                                                    {
+                                                                                        client_write_error = write_error;
+                                                                                        if (write_error)
+                                                                                        {
+                                                                                            boost::system::error_code ignored;
+                                                                                            first->close(ignored);
+                                                                                            finish();
+                                                                                            return;
+                                                                                        }
+                                                                                        boost::asio::async_read(
+                                                                                            *first,
+                                                                                            boost::asio::buffer(client_received),
+                                                                                            [&](boost::system::error_code read_error, std::size_t)
+                                                                                            {
+                                                                                                client_read_error = read_error;
+                                                                                                second->async_connect(
+                                                                                                    endpoint,
+                                                                                                    [&](boost::system::error_code second_error)
+                                                                                                    {
+                                                                                                        second_connect_error = second_error;
+                                                                                                        finish();
+                                                                                                    });
+                                                                                            });
+                                                                                    });
+                                                       });
+                              });
         });
 
     workers.run();
@@ -2817,15 +2790,16 @@ void test_gb28181_multi_output_identity()
     require(second->set_tracks({make_video_track()}), "gb multi output second tracks");
     require(registry.add(first) && registry.add(second), "gb multi output source registry");
 
-    constexpr std::string_view sdp = "v=0\r\n"
-                                     "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
-                                     "s=Play\r\n"
-                                     "c=IN IP4 127.0.0.1\r\n"
-                                     "t=0 0\r\n"
-                                     "m=video 29000 RTP/AVP 96\r\n"
-                                     "a=rtpmap:96 PS/90000\r\n"
-                                     "a=recvonly\r\n"
-                                     "y=0100001001\r\n";
+    constexpr std::string_view sdp =
+        "v=0\r\n"
+        "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+        "s=Play\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 29000 RTP/AVP 96\r\n"
+        "a=rtpmap:96 PS/90000\r\n"
+        "a=recvonly\r\n"
+        "y=0100001001\r\n";
 
     gb28181_service service(registry);
     require(service.create_output(io.get_executor(), first->name(), "a", false, sdp) == gb28181_output_create_error::none,
@@ -2964,27 +2938,33 @@ void test_gb28181_input_http_parameters()
     local_rtp_probe.close();
     local_rtcp_probe.close();
 
-    const auto udp_sdp = "v=0\r\n"
-                         "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
-                         "s=Play\r\n"
-                         "c=IN IP4 127.0.0.1\r\n"
-                         "t=0 0\r\n"
-                         "m=video " + std::to_string(local_rtp_port) + " RTP/AVP 96\r\n"
-                         "a=rtpmap:96 PS/90000\r\n"
-                         "a=rtcp:" + std::to_string(local_rtcp_port) + "\r\n"
-                         "a=sendonly\r\n"
-                         "y=0100001002\r\n";
-    constexpr std::string_view tcp_sdp = "v=0\r\n"
-                                         "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
-                                         "s=Play\r\n"
-                                         "c=IN IP4 127.0.0.1\r\n"
-                                         "t=0 0\r\n"
-                                         "m=video 29021 TCP/RTP/AVP 96\r\n"
-                                         "a=rtpmap:96 PS/90000\r\n"
-                                         "a=sendonly\r\n"
-                                         "a=setup:passive\r\n"
-                                         "a=connection:new\r\n"
-                                         "y=0100001003\r\n";
+    const auto udp_sdp =
+        "v=0\r\n"
+        "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+        "s=Play\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video " +
+        std::to_string(local_rtp_port) +
+        " RTP/AVP 96\r\n"
+        "a=rtpmap:96 PS/90000\r\n"
+        "a=rtcp:" +
+        std::to_string(local_rtcp_port) +
+        "\r\n"
+        "a=sendonly\r\n"
+        "y=0100001002\r\n";
+    constexpr std::string_view tcp_sdp =
+        "v=0\r\n"
+        "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+        "s=Play\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 29021 TCP/RTP/AVP 96\r\n"
+        "a=rtpmap:96 PS/90000\r\n"
+        "a=sendonly\r\n"
+        "a=setup:passive\r\n"
+        "a=connection:new\r\n"
+        "y=0100001003\r\n";
 
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
     auto work = boost::asio::make_work_guard(io);
@@ -2993,53 +2973,174 @@ void test_gb28181_input_http_parameters()
     const auto post = boost::beast::http::verb::post;
     const auto delete_ = boost::beast::http::verb::delete_;
     const auto rtcp_query = "?remote_rtcp_port=" + std::to_string(remote_rtcp_port);
-    const auto full_query = "?remote_rtp_address=127.0.0.1&remote_rtp_port=" + std::to_string(remote_rtp_port) +
-                            "&remote_rtcp_port=" + std::to_string(remote_rtcp_port);
+    const auto full_query =
+        "?remote_rtp_address=127.0.0.1&remote_rtp_port=" + std::to_string(remote_rtp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port);
 
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/live/gb-input-http", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http requires remote rtcp port");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects address without rtp port");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtp_port=" + std::to_string(remote_rtp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects rtp port without address");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtp_address=bad&remote_rtp_port=" + std::to_string(remote_rtp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects invalid address");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtp_port=0&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects zero rtp port");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtp_port=65536&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects oversized rtp port");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtcp_port=0", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects zero rtcp port");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtcp_port=abc", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects nonnumeric rtcp port");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtcp_port=" + std::to_string(remote_rtcp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port), udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects duplicate parameter");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http?remote_rtcp_port=" + std::to_string(remote_rtcp_port) + "&unknown=1", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects unknown parameter");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http" + rtcp_query, udp_sdp,
-                        boost::beast::http::status::created, "gb input http accepts first valid rtp discovery");
-    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/live/gb-input-http", {},
-                        boost::beast::http::status::no_content, "gb input http deletes discovery session");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http-fixed" + full_query, udp_sdp,
-                        boost::beast::http::status::created, "gb input http accepts fixed rtp peer");
-    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/live/gb-input-http-fixed?remote_rtcp_port=1", {},
-                        boost::beast::http::status::bad_request, "gb input http rejects delete peer parameters");
-    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/live/gb-input-http-fixed", {},
-                        boost::beast::http::status::no_content, "gb input http deletes fixed peer session");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/live/gb-input-http-tcp?remote_rtcp_port=" + std::to_string(remote_rtcp_port), tcp_sdp,
-                        boost::beast::http::status::bad_request, "gb input http rejects udp peer parameters for tcp");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb input http requires remote rtcp port");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtcp_port=" + std::to_string(remote_rtcp_port),
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb input http rejects address without rtp port");
+    require_http_status(
+        acceptor,
+        registry,
+        hls,
+        whep,
+        gb28181,
+        post,
+        "/gb28181/live/gb-input-http?remote_rtp_port=" + std::to_string(remote_rtp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port),
+        udp_sdp,
+        boost::beast::http::status::bad_request,
+        "gb input http rejects rtp port without address");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http?remote_rtp_address=bad&remote_rtp_port=" + std::to_string(remote_rtp_port) +
+                            "&remote_rtcp_port=" + std::to_string(remote_rtcp_port),
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb input http rejects invalid address");
+    require_http_status(
+        acceptor,
+        registry,
+        hls,
+        whep,
+        gb28181,
+        post,
+        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtp_port=0&remote_rtcp_port=" + std::to_string(remote_rtcp_port),
+        udp_sdp,
+        boost::beast::http::status::bad_request,
+        "gb input http rejects zero rtp port");
+    require_http_status(
+        acceptor,
+        registry,
+        hls,
+        whep,
+        gb28181,
+        post,
+        "/gb28181/live/gb-input-http?remote_rtp_address=127.0.0.1&remote_rtp_port=65536&remote_rtcp_port=" + std::to_string(remote_rtcp_port),
+        udp_sdp,
+        boost::beast::http::status::bad_request,
+        "gb input http rejects oversized rtp port");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http?remote_rtcp_port=0",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb input http rejects zero rtcp port");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http?remote_rtcp_port=abc",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb input http rejects nonnumeric rtcp port");
+    require_http_status(
+        acceptor,
+        registry,
+        hls,
+        whep,
+        gb28181,
+        post,
+        "/gb28181/live/gb-input-http?remote_rtcp_port=" + std::to_string(remote_rtcp_port) + "&remote_rtcp_port=" + std::to_string(remote_rtcp_port),
+        udp_sdp,
+        boost::beast::http::status::bad_request,
+        "gb input http rejects duplicate parameter");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http?remote_rtcp_port=" + std::to_string(remote_rtcp_port) + "&unknown=1",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb input http rejects unknown parameter");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http" + rtcp_query,
+                        udp_sdp,
+                        boost::beast::http::status::created,
+                        "gb input http accepts first valid rtp discovery");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        delete_,
+                        "/gb28181/live/gb-input-http",
+                        {},
+                        boost::beast::http::status::no_content,
+                        "gb input http deletes discovery session");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http-fixed" + full_query,
+                        udp_sdp,
+                        boost::beast::http::status::created,
+                        "gb input http accepts fixed rtp peer");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        delete_,
+                        "/gb28181/live/gb-input-http-fixed?remote_rtcp_port=1",
+                        {},
+                        boost::beast::http::status::bad_request,
+                        "gb input http rejects delete peer parameters");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        delete_,
+                        "/gb28181/live/gb-input-http-fixed",
+                        {},
+                        boost::beast::http::status::no_content,
+                        "gb input http deletes fixed peer session");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/live/gb-input-http-tcp?remote_rtcp_port=" + std::to_string(remote_rtcp_port),
+                        tcp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb input http rejects udp peer parameters for tcp");
 
     gb28181.shutdown();
     work.reset();
@@ -3058,26 +3159,28 @@ void test_gb28181_output_http_parameters()
     require(stream->set_tracks({make_video_track()}), "gb output http tracks");
     require(registry.add(stream), "gb output http source registry");
 
-    constexpr std::string_view udp_sdp = "v=0\r\n"
-                                         "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
-                                         "s=Play\r\n"
-                                         "c=IN IP4 127.0.0.1\r\n"
-                                         "t=0 0\r\n"
-                                         "m=video 29020 RTP/AVP 96\r\n"
-                                         "a=rtpmap:96 PS/90000\r\n"
-                                         "a=recvonly\r\n"
-                                         "y=0100001002\r\n";
-    constexpr std::string_view tcp_sdp = "v=0\r\n"
-                                         "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
-                                         "s=Play\r\n"
-                                         "c=IN IP4 127.0.0.1\r\n"
-                                         "t=0 0\r\n"
-                                         "m=video 29021 TCP/RTP/AVP 96\r\n"
-                                         "a=rtpmap:96 PS/90000\r\n"
-                                         "a=recvonly\r\n"
-                                         "a=setup:active\r\n"
-                                         "a=connection:new\r\n"
-                                         "y=0100001003\r\n";
+    constexpr std::string_view udp_sdp =
+        "v=0\r\n"
+        "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+        "s=Play\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 29020 RTP/AVP 96\r\n"
+        "a=rtpmap:96 PS/90000\r\n"
+        "a=recvonly\r\n"
+        "y=0100001002\r\n";
+    constexpr std::string_view tcp_sdp =
+        "v=0\r\n"
+        "o=34020000002000000001 0 0 IN IP4 127.0.0.1\r\n"
+        "s=Play\r\n"
+        "c=IN IP4 127.0.0.1\r\n"
+        "t=0 0\r\n"
+        "m=video 29021 TCP/RTP/AVP 96\r\n"
+        "a=rtpmap:96 PS/90000\r\n"
+        "a=recvonly\r\n"
+        "a=setup:active\r\n"
+        "a=connection:new\r\n"
+        "y=0100001003\r\n";
 
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
     auto work = boost::asio::make_work_guard(io);
@@ -3085,35 +3188,146 @@ void test_gb28181_output_http_parameters()
 
     const auto post = boost::beast::http::verb::post;
     const auto delete_ = boost::beast::http::verb::delete_;
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb output http requires output id");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb output http rejects empty output id");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=a", udp_sdp,
-                        boost::beast::http::status::created, "gb output http default rtcp disabled");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=a", udp_sdp,
-                        boost::beast::http::status::conflict, "gb output http duplicate identity");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=b&rtcp=0", udp_sdp,
-                        boost::beast::http::status::created, "gb output http explicit rtcp disabled");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=c&rtcp=1", udp_sdp,
-                        boost::beast::http::status::created, "gb output http rtcp enabled");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=d&rtcp=", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb output http rejects empty rtcp");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=d&rtcp=2", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb output http rejects invalid rtcp");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post,
-                        "/gb28181/output/live/gb-output-http?output_id=d&rtcp=0&rtcp=1", udp_sdp,
-                        boost::beast::http::status::bad_request, "gb output http rejects duplicate rtcp");
-    require_http_status(acceptor, registry, hls, whep, gb28181, post, "/gb28181/output/live/gb-output-http?output_id=d&rtcp=1", tcp_sdp,
-                        boost::beast::http::status::bad_request, "gb output http rejects tcp rtcp");
-    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/output/live/gb-output-http?output_id=c&rtcp=1", {},
-                        boost::beast::http::status::bad_request, "gb output http rejects delete rtcp");
-    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/output/live/gb-output-http?output_id=a", {},
-                        boost::beast::http::status::no_content, "gb output http deletes first identity");
-    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/output/live/gb-output-http?output_id=b", {},
-                        boost::beast::http::status::no_content, "gb output http deletes second identity");
-    require_http_status(acceptor, registry, hls, whep, gb28181, delete_, "/gb28181/output/live/gb-output-http?output_id=c", {},
-                        boost::beast::http::status::no_content, "gb output http deletes rtcp identity");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb output http requires output id");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb output http rejects empty output id");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=a",
+                        udp_sdp,
+                        boost::beast::http::status::created,
+                        "gb output http default rtcp disabled");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=a",
+                        udp_sdp,
+                        boost::beast::http::status::conflict,
+                        "gb output http duplicate identity");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=b&rtcp=0",
+                        udp_sdp,
+                        boost::beast::http::status::created,
+                        "gb output http explicit rtcp disabled");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=c&rtcp=1",
+                        udp_sdp,
+                        boost::beast::http::status::created,
+                        "gb output http rtcp enabled");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=d&rtcp=",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb output http rejects empty rtcp");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=d&rtcp=2",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb output http rejects invalid rtcp");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=d&rtcp=0&rtcp=1",
+                        udp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb output http rejects duplicate rtcp");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        post,
+                        "/gb28181/output/live/gb-output-http?output_id=d&rtcp=1",
+                        tcp_sdp,
+                        boost::beast::http::status::bad_request,
+                        "gb output http rejects tcp rtcp");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        delete_,
+                        "/gb28181/output/live/gb-output-http?output_id=c&rtcp=1",
+                        {},
+                        boost::beast::http::status::bad_request,
+                        "gb output http rejects delete rtcp");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        delete_,
+                        "/gb28181/output/live/gb-output-http?output_id=a",
+                        {},
+                        boost::beast::http::status::no_content,
+                        "gb output http deletes first identity");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        delete_,
+                        "/gb28181/output/live/gb-output-http?output_id=b",
+                        {},
+                        boost::beast::http::status::no_content,
+                        "gb output http deletes second identity");
+    require_http_status(acceptor,
+                        registry,
+                        hls,
+                        whep,
+                        gb28181,
+                        delete_,
+                        "/gb28181/output/live/gb-output-http?output_id=c",
+                        {},
+                        boost::beast::http::status::no_content,
+                        "gb output http deletes rtcp identity");
 
     gb28181.shutdown();
     work.reset();
@@ -3253,11 +3467,10 @@ void test_http_flv_batch_consumption_and_overrun()
     drain();
 
     require(capture.writes.size() == 1U && capture.writes.front().bootstrap, "http flv bootstrap is first logical write");
-    require(capture.writes.front().data.size() >= 9U &&
-                std::string_view(reinterpret_cast<const char*>(capture.writes.front().data.data()), 3) == "FLV",
-            "http flv bootstrap contains file header");
-    require((capture.writes.front().data[4] & 0x01U) != 0U && (capture.writes.front().data[4] & 0x04U) == 0U,
-            "http flv video-only header flags");
+    require(
+        capture.writes.front().data.size() >= 9U && std::string_view(reinterpret_cast<const char*>(capture.writes.front().data.data()), 3) == "FLV",
+        "http flv bootstrap contains file header");
+    require((capture.writes.front().data[4] & 0x01U) != 0U && (capture.writes.front().data[4] & 0x04U) == 0U, "http flv video-only header flags");
 
     stream->publish(make_video_frame(0, true));
     stream->publish(make_video_frame(40'000'000, false));
@@ -3433,8 +3646,7 @@ void test_http_flv_audio_video_order()
             codecs.push_back(packet.codec);
         }
     }
-    require(codecs == std::vector<int>{FLV_VIDEO_H264, FLV_AUDIO_AAC, FLV_VIDEO_H264, FLV_AUDIO_AAC},
-            "http flv preserves audio video frame order");
+    require(codecs == std::vector<int>{FLV_VIDEO_H264, FLV_AUDIO_AAC, FLV_VIDEO_H264, FLV_AUDIO_AAC}, "http flv preserves audio video frame order");
 }
 
 void test_http_flv_config_reset()
@@ -3465,7 +3677,6 @@ void test_http_flv_config_reset()
     require(capture.writes.size() == 2U && capture.writes.back().bootstrap && capture.writes.back().generation == 2,
             "http flv reset emits new generation bootstrap");
     require(capture.ends == 0U, "http flv same topology reset stays open");
-
 }
 
 void test_rtsp_pull_url_contract()
@@ -3535,8 +3746,7 @@ void test_rtsp_input_establishment_timeout()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/timeout";
-    auto pull = std::make_shared<rtsp_pull_session>(
-        client_io, registry, "relay/timeout", request_url, std::chrono::milliseconds(100));
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/timeout", request_url, std::chrono::milliseconds(100));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp establishment timeout pull startup");
     pull.reset();
@@ -3572,8 +3782,7 @@ void test_rtsp_input_establishment_progress_timeout()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-timeout";
-    auto pull = std::make_shared<rtsp_pull_session>(
-        client_io, registry, "relay/play-timeout", request_url, std::chrono::milliseconds(800));
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/play-timeout", request_url, std::chrono::milliseconds(800));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp establishment progress timeout pull startup");
     pull.reset();
@@ -4060,12 +4269,13 @@ void test_rtsp_input_rejects_mismatched_g711_rtpmap()
 
     const auto setup = read_rtsp_headers(socket);
     require(setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp mismatched g711 skips audio");
-    const auto setup_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(setup, "CSeq:") +
-                                "\r\nSession: g711-mismatch;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    const auto setup_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(setup, "CSeq:") +
+        "\r\nSession: g711-mismatch;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
     boost::asio::write(socket, boost::asio::buffer(setup_response));
     const auto play = read_rtsp_headers(socket);
-    const auto play_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") +
-                               "\r\nSession: g711-mismatch;timeout=60\r\nContent-Length: 0\r\n\r\n";
+    const auto play_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(play, "CSeq:") + "\r\nSession: g711-mismatch;timeout=60\r\nContent-Length: 0\r\n\r\n";
     boost::asio::write(socket, boost::asio::buffer(play_response));
 
     pull->shutdown();
@@ -4131,12 +4341,8 @@ void test_rtsp_input_uses_complete_sdp_topology_without_track_wait()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/topology";
-    auto pull = std::make_shared<rtsp_pull_session>(client_io,
-                                                     registry,
-                                                     "relay/topology",
-                                                     request_url,
-                                                     std::chrono::milliseconds(500),
-                                                     std::chrono::milliseconds(50));
+    auto pull = std::make_shared<rtsp_pull_session>(
+        client_io, registry, "relay/topology", request_url, std::chrono::milliseconds(500), std::chrono::milliseconds(50));
     require(pull->startup(), "rtsp topology pull startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -4190,8 +4396,8 @@ void test_rtsp_input_uses_complete_sdp_topology_without_track_wait()
     const auto video_payload = rtsp_muxer_add_payload(
         video_muxer, "RTP/AVP", 90'000, 96, "H264", 0, 0x12345678U, 0, h264_config.data(), static_cast<int>(h264_config.size()));
     require(video_payload >= 0, "rtsp topology video payload");
-    const auto video_media = rtsp_muxer_add_media(
-        video_muxer, video_payload, RTP_PAYLOAD_H264, h264_config.data(), static_cast<int>(h264_config.size()));
+    const auto video_media =
+        rtsp_muxer_add_media(video_muxer, video_payload, RTP_PAYLOAD_H264, h264_config.data(), static_cast<int>(h264_config.size()));
     require(video_media >= 0, "rtsp topology video media");
     const auto video = make_video_frame(0, true);
     require(rtsp_muxer_input(video_muxer, video_media, 0, 0, video.payload->data(), static_cast<int>(video.payload->size()), 1) == 0,
@@ -4232,12 +4438,8 @@ void test_rtsp_input_initial_tracks_timeout()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/initial-tracks-timeout";
-    auto pull = std::make_shared<rtsp_pull_session>(client_io,
-                                                     registry,
-                                                     "relay/initial-tracks-timeout",
-                                                     request_url,
-                                                     std::chrono::milliseconds(500),
-                                                     std::chrono::milliseconds(100));
+    auto pull = std::make_shared<rtsp_pull_session>(
+        client_io, registry, "relay/initial-tracks-timeout", request_url, std::chrono::milliseconds(500), std::chrono::milliseconds(100));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp initial tracks timeout pull startup");
     pull.reset();
@@ -4267,13 +4469,15 @@ void test_rtsp_input_initial_tracks_timeout()
     boost::asio::write(socket, boost::asio::buffer(describe_response));
 
     const auto video_setup = read_rtsp_headers(socket);
-    const auto video_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(video_setup, "CSeq:") +
-                                "\r\nSession: initial-tracks-timeout;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
+    const auto video_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(video_setup, "CSeq:") +
+        "\r\nSession: initial-tracks-timeout;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
     boost::asio::write(socket, boost::asio::buffer(video_response));
 
     const auto audio_setup = read_rtsp_headers(socket);
-    const auto audio_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(audio_setup, "CSeq:") +
-                                "\r\nSession: initial-tracks-timeout;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\nContent-Length: 0\r\n\r\n";
+    const auto audio_response =
+        "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(audio_setup, "CSeq:") +
+        "\r\nSession: initial-tracks-timeout;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\nContent-Length: 0\r\n\r\n";
     boost::asio::write(socket, boost::asio::buffer(audio_response));
 
     const auto play = read_rtsp_headers(socket);
@@ -4294,8 +4498,8 @@ void test_rtsp_input_initial_tracks_timeout()
     const auto video_payload = rtsp_muxer_add_payload(
         video_muxer, "RTP/AVP", 90'000, 96, "H264", 0, 0x12345678U, 0, h264_config.data(), static_cast<int>(h264_config.size()));
     require(video_payload >= 0, "rtsp initial tracks timeout video payload");
-    const auto video_media = rtsp_muxer_add_media(
-        video_muxer, video_payload, RTP_PAYLOAD_H264, h264_config.data(), static_cast<int>(h264_config.size()));
+    const auto video_media =
+        rtsp_muxer_add_media(video_muxer, video_payload, RTP_PAYLOAD_H264, h264_config.data(), static_cast<int>(h264_config.size()));
     require(video_media >= 0, "rtsp initial tracks timeout video media");
     const auto video = make_video_frame(0, true);
     require(rtsp_muxer_input(video_muxer, video_media, 0, 0, video.payload->data(), static_cast<int>(video.payload->size()), 1) == 0,
@@ -4329,8 +4533,7 @@ void test_rtsp_input_independent_keepalive()
     boost::asio::io_context client_io;
     stream_registry registry;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/keepalive";
-    auto pull = std::make_shared<rtsp_pull_session>(
-        client_io, registry, "relay/keepalive", request_url, std::chrono::milliseconds(750));
+    auto pull = std::make_shared<rtsp_pull_session>(client_io, registry, "relay/keepalive", request_url, std::chrono::milliseconds(750));
     require(pull->startup(), "rtsp keepalive pull startup");
     std::jthread runner([&client_io]() { client_io.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -4380,7 +4583,6 @@ void test_rtsp_input_independent_keepalive()
     runner.join();
     require(!registry.find("relay/keepalive"), "rtsp keepalive pull closes");
 }
-
 
 void test_rtsp_publish_server_contract()
 {
@@ -4449,8 +4651,7 @@ void test_rtsp_publish_server_contract()
     {
         boost::asio::ip::tcp::socket framing(client_io);
         framing.connect({boost::asio::ip::address_v4::loopback(), port});
-        boost::asio::write(framing,
-                           boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 4\r\n\r\nping"}));
+        boost::asio::write(framing, boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 4\r\n\r\nping"}));
         require(read_rtsp_headers(framing).starts_with("RTSP/1.0 200"), "rtsp publish pre role options body");
         boost::asio::write(framing, boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 2\r\n\r\n"}));
         require(read_rtsp_headers(framing).starts_with("RTSP/1.0 200"), "rtsp publish pre role options body framing");
@@ -4463,25 +4664,29 @@ void test_rtsp_publish_server_contract()
         const auto handoff_video = handoff_base + "/trackID=0";
         const auto handoff_audio = handoff_base + "/trackID=1";
         const auto handoff_sdp = std::string("v=0\r\n") +
-            "o=- 0 0 IN IP4 127.0.0.1\r\n"
-            "s=publish-handoff\r\n"
-            "c=IN IP4 127.0.0.1\r\n"
-            "t=0 0\r\n"
-            "m=video 0 RTP/AVP 96\r\n"
-            "a=rtpmap:96 H264/90000\r\n"
-            "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
-            "a=control:" + handoff_video + "\r\n"
-            "m=audio 0 RTP/AVP 8\r\n"
-            "a=control:" + handoff_audio + "\r\n";
-        boost::asio::write(handoff,
-                           boost::asio::buffer("ANNOUNCE " + handoff_base + " RTSP/1.0\r\nCSeq: 100\r\nContent-Type: application/sdp\r\nContent-Length: " +
-                                               std::to_string(handoff_sdp.size()) + "\r\n\r\n" + handoff_sdp));
+                                 "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                                 "s=publish-handoff\r\n"
+                                 "c=IN IP4 127.0.0.1\r\n"
+                                 "t=0 0\r\n"
+                                 "m=video 0 RTP/AVP 96\r\n"
+                                 "a=rtpmap:96 H264/90000\r\n"
+                                 "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                                 "a=control:" +
+                                 handoff_video +
+                                 "\r\n"
+                                 "m=audio 0 RTP/AVP 8\r\n"
+                                 "a=control:" +
+                                 handoff_audio + "\r\n";
+        boost::asio::write(
+            handoff,
+            boost::asio::buffer("ANNOUNCE " + handoff_base + " RTSP/1.0\r\nCSeq: 100\r\nContent-Type: application/sdp\r\nContent-Length: " +
+                                std::to_string(handoff_sdp.size()) + "\r\n\r\n" + handoff_sdp));
         require(read_rtsp_headers(handoff).starts_with("RTSP/1.0 200"), "rtsp publish handoff announce");
 
-        const auto first_setup = "SETUP " + handoff_video +
-            " RTSP/1.0\r\nCSeq: 101\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
-        const auto second_setup = "SETUP " + handoff_audio +
-            " RTSP/1.0\r\nCSeq: 102\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record\r\n\r\n";
+        const auto first_setup =
+            "SETUP " + handoff_video + " RTSP/1.0\r\nCSeq: 101\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
+        const auto second_setup =
+            "SETUP " + handoff_audio + " RTSP/1.0\r\nCSeq: 102\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record\r\n\r\n";
         boost::asio::write(handoff, boost::asio::buffer(first_setup + second_setup));
 
         std::string responses;
@@ -4519,16 +4724,19 @@ void test_rtsp_publish_server_contract()
         const auto video = mixed_base + "/trackID=0";
         const auto audio = mixed_base + "/trackID=1";
         const auto mixed_sdp = std::string("v=0\r\n") +
-            "o=- 0 0 IN IP4 127.0.0.1\r\n"
-            "s=publish-mixed\r\n"
-            "c=IN IP4 127.0.0.1\r\n"
-            "t=0 0\r\n"
-            "m=video 0 RTP/AVP 96\r\n"
-            "a=rtpmap:96 H264/90000\r\n"
-            "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
-            "a=control:" + video + "\r\n"
-            "m=audio 0 RTP/AVP 0\r\n"
-            "a=control:" + audio + "\r\n";
+                               "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                               "s=publish-mixed\r\n"
+                               "c=IN IP4 127.0.0.1\r\n"
+                               "t=0 0\r\n"
+                               "m=video 0 RTP/AVP 96\r\n"
+                               "a=rtpmap:96 H264/90000\r\n"
+                               "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                               "a=control:" +
+                               video +
+                               "\r\n"
+                               "m=audio 0 RTP/AVP 0\r\n"
+                               "a=control:" +
+                               audio + "\r\n";
         const auto mixed_request = [&](std::string value)
         {
             boost::asio::write(mixed, boost::asio::buffer(value));
@@ -4539,8 +4747,8 @@ void test_rtsp_publish_server_contract()
                     .starts_with("RTSP/1.0 200"),
                 "rtsp publish mixed transport announce");
 
-        const auto first_transport = udp_first ? "RTP/AVP;unicast;client_port=12000-12001;mode=record"
-                                               : "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record";
+        const auto first_transport =
+            udp_first ? "RTP/AVP;unicast;client_port=12000-12001;mode=record" : "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record";
         const auto first = mixed_request("SETUP " + video + " RTSP/1.0\r\nCSeq: 111\r\nTransport: " + first_transport + "\r\n\r\n");
         require(first.starts_with("RTSP/1.0 200"), "rtsp publish mixed transport first setup");
         auto mixed_session = rtsp_header_value(first, "Session:");
@@ -4548,37 +4756,40 @@ void test_rtsp_publish_server_contract()
         {
             mixed_session.resize(separator);
         }
-        const auto second_transport = udp_first ? "RTP/AVP/TCP;unicast;interleaved=2-3;mode=record"
-                                                : "RTP/AVP;unicast;client_port=12002-12003;mode=record";
-        const auto second = mixed_request("SETUP " + audio + " RTSP/1.0\r\nCSeq: 112\r\nSession: " + mixed_session + "\r\nTransport: " +
-                                          second_transport + "\r\n\r\n");
+        const auto second_transport =
+            udp_first ? "RTP/AVP/TCP;unicast;interleaved=2-3;mode=record" : "RTP/AVP;unicast;client_port=12002-12003;mode=record";
+        const auto second = mixed_request("SETUP " + audio + " RTSP/1.0\r\nCSeq: 112\r\nSession: " + mixed_session +
+                                          "\r\nTransport: " + second_transport + "\r\n\r\n");
         require(second.starts_with("RTSP/1.0 461"), "rtsp publish mixed transport rejected");
-        require(mixed_request("TEARDOWN " + mixed_base + " RTSP/1.0\r\nCSeq: 113\r\nSession: " + mixed_session + "\r\n\r\n")
-                    .starts_with("RTSP/1.0 200"),
-                "rtsp publish mixed transport teardown");
+        require(
+            mixed_request("TEARDOWN " + mixed_base + " RTSP/1.0\r\nCSeq: 113\r\nSession: " + mixed_session + "\r\n\r\n").starts_with("RTSP/1.0 200"),
+            "rtsp publish mixed transport teardown");
     };
     test_mixed_transport(false);
     test_mixed_transport(true);
 
     const auto sdp = std::string("v=0\r\n") +
-        "o=- 0 0 IN IP4 127.0.0.1\r\n"
-        "s=publish\r\n"
-        "c=IN IP4 127.0.0.1\r\n"
-        "t=0 0\r\n"
-        "m=application 0 RTP/AVP 110\r\n"
-        "a=rtpmap:110 unknown/90000\r\n"
-        "a=control:" + base + "/ignored\r\n" +
-        "m=video 0 RTP/AVP 96\r\n"
-        "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
-        "a=control:" + video_control + "\r\n";
-    const auto announce = request("ANNOUNCE " + base + " RTSP/1.0\r\nCSeq: 2\r\nContent-Type: application/sdp\r\nContent-Length: " +
-                                  std::to_string(sdp.size()) + "\r\n\r\n" + sdp);
+                     "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                     "s=publish\r\n"
+                     "c=IN IP4 127.0.0.1\r\n"
+                     "t=0 0\r\n"
+                     "m=application 0 RTP/AVP 110\r\n"
+                     "a=rtpmap:110 unknown/90000\r\n"
+                     "a=control:" +
+                     base + "/ignored\r\n" +
+                     "m=video 0 RTP/AVP 96\r\n"
+                     "a=rtpmap:96 H264/90000\r\n"
+                     "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                     "a=control:" +
+                     video_control + "\r\n";
+    const auto announce =
+        request("ANNOUNCE " + base + " RTSP/1.0\r\nCSeq: 2\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) +
+                "\r\n\r\n" + sdp);
     require(announce.starts_with("RTSP/1.0 200"), "rtsp publish announce with ignored media");
     require(!registry.find("live/publish"), "rtsp publish remains private after announce");
 
-    const auto setup = request("SETUP " + video_control +
-                               " RTSP/1.0\r\nCSeq: 3\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
+    const auto setup =
+        request("SETUP " + video_control + " RTSP/1.0\r\nCSeq: 3\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
     require(setup.starts_with("RTSP/1.0 200"), "rtsp publish setup selected original media");
     require(!registry.find("live/publish"), "rtsp publish remains private after setup");
     auto session = rtsp_header_value(setup, "Session:");
@@ -4609,9 +4820,8 @@ void test_rtsp_publish_server_contract()
         return read_rtsp_headers(setup_first);
     };
     const auto setup_first_video = base + "/trackID=" + std::to_string(tracks.front().id);
-    const auto setup_first_response =
-        setup_first_request("SETUP " + setup_first_video +
-                            " RTSP/1.0\r\nCSeq: 10\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=play\r\n\r\n");
+    const auto setup_first_response = setup_first_request(
+        "SETUP " + setup_first_video + " RTSP/1.0\r\nCSeq: 10\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=play\r\n\r\n");
     require(setup_first_response.starts_with("RTSP/1.0 200"), "rtsp playback setup first");
     auto setup_first_session = rtsp_header_value(setup_first_response, "Session:");
     if (const auto separator = setup_first_session.find(';'); separator != std::string::npos)
@@ -4619,12 +4829,11 @@ void test_rtsp_publish_server_contract()
         setup_first_session.resize(separator);
     }
     require(!setup_first_session.empty(), "rtsp playback setup first session");
-    require(setup_first_request("PLAY " + base + " RTSP/1.0\r\nCSeq: 11\r\nSession: " + setup_first_session + "\r\n\r\n")
-                .starts_with("RTSP/1.0 200"),
+    require(setup_first_request("PLAY " + base + " RTSP/1.0\r\nCSeq: 11\r\nSession: " + setup_first_session + "\r\n\r\n").starts_with("RTSP/1.0 200"),
             "rtsp playback setup first play");
-    require(setup_first_request("TEARDOWN " + base + " RTSP/1.0\r\nCSeq: 12\r\nSession: " + setup_first_session + "\r\n\r\n")
-                .starts_with("RTSP/1.0 200"),
-            "rtsp playback setup first teardown");
+    require(
+        setup_first_request("TEARDOWN " + base + " RTSP/1.0\r\nCSeq: 12\r\nSession: " + setup_first_session + "\r\n\r\n").starts_with("RTSP/1.0 200"),
+        "rtsp playback setup first teardown");
 
     boost::asio::ip::tcp::socket duplicate(client_io);
     duplicate.connect({boost::asio::ip::address_v4::loopback(), port});
@@ -4637,16 +4846,15 @@ void test_rtsp_publish_server_contract()
                               std::to_string(sdp.size()) + "\r\n\r\n" + sdp)
                 .starts_with("RTSP/1.0 200"),
             "rtsp duplicate publisher announce");
-    const auto duplicate_setup = duplicate_request("SETUP " + video_control +
-                                                   " RTSP/1.0\r\nCSeq: 21\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
+    const auto duplicate_setup =
+        duplicate_request("SETUP " + video_control + " RTSP/1.0\r\nCSeq: 21\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
     require(duplicate_setup.starts_with("RTSP/1.0 200"), "rtsp duplicate publisher setup");
     auto duplicate_session = rtsp_header_value(duplicate_setup, "Session:");
     if (const auto separator = duplicate_session.find(';'); separator != std::string::npos)
     {
         duplicate_session.resize(separator);
     }
-    const auto duplicate_record =
-        duplicate_request("RECORD " + base + " RTSP/1.0\r\nCSeq: 22\r\nSession: " + duplicate_session + "\r\n\r\n");
+    const auto duplicate_record = duplicate_request("RECORD " + base + " RTSP/1.0\r\nCSeq: 22\r\nSession: " + duplicate_session + "\r\n\r\n");
     require(duplicate_record.starts_with("RTSP/1.0 453"), "rtsp duplicate publisher loses first publication race");
     require(registry.find("live/publish") == stream, "rtsp duplicate publisher cleanup keeps winner");
     boost::system::error_code duplicate_error;
@@ -4720,16 +4928,15 @@ void test_rtsp_publish_server_contract()
                               std::to_string(sdp.size()) + "\r\n\r\n" + sdp)
                 .starts_with("RTSP/1.0 200"),
             "rtsp republish announce");
-    const auto republish_setup = republish_request("SETUP " + video_control +
-                                                   " RTSP/1.0\r\nCSeq: 31\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
+    const auto republish_setup =
+        republish_request("SETUP " + video_control + " RTSP/1.0\r\nCSeq: 31\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
     require(republish_setup.starts_with("RTSP/1.0 200"), "rtsp republish setup");
     auto republish_session = rtsp_header_value(republish_setup, "Session:");
     if (const auto separator = republish_session.find(';'); separator != std::string::npos)
     {
         republish_session.resize(separator);
     }
-    require(republish_request("RECORD " + base + " RTSP/1.0\r\nCSeq: 32\r\nSession: " + republish_session + "\r\n\r\n")
-                .starts_with("RTSP/1.0 200"),
+    require(republish_request("RECORD " + base + " RTSP/1.0\r\nCSeq: 32\r\nSession: " + republish_session + "\r\n\r\n").starts_with("RTSP/1.0 200"),
             "rtsp republish record");
     std::shared_ptr<media_stream> republished;
     const auto republish_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -4780,25 +4987,24 @@ void test_rtsp_publish_server_contract()
         }
     }
     const auto h265_sdp = std::string("v=0\r\n") +
-        "o=- 0 0 IN IP4 127.0.0.1\r\n"
-        "s=publish-h265\r\n"
-        "c=IN IP4 127.0.0.1\r\n"
-        "t=0 0\r\n" +
-        h265_media + "a=control:" + h265_video_control + "\r\n";
+                          "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                          "s=publish-h265\r\n"
+                          "c=IN IP4 127.0.0.1\r\n"
+                          "t=0 0\r\n" +
+                          h265_media + "a=control:" + h265_video_control + "\r\n";
     require(h265_request("ANNOUNCE " + h265_base + " RTSP/1.0\r\nCSeq: 40\r\nContent-Type: application/sdp\r\nContent-Length: " +
                          std::to_string(h265_sdp.size()) + "\r\n\r\n" + h265_sdp)
                 .starts_with("RTSP/1.0 200"),
             "rtsp publish h265 announce");
-    const auto h265_setup = h265_request("SETUP " + h265_video_control +
-                                         " RTSP/1.0\r\nCSeq: 41\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
+    const auto h265_setup =
+        h265_request("SETUP " + h265_video_control + " RTSP/1.0\r\nCSeq: 41\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
     require(h265_setup.starts_with("RTSP/1.0 200"), "rtsp publish h265 setup");
     auto h265_session = rtsp_header_value(h265_setup, "Session:");
     if (const auto separator = h265_session.find(';'); separator != std::string::npos)
     {
         h265_session.resize(separator);
     }
-    require(h265_request("RECORD " + h265_base + " RTSP/1.0\r\nCSeq: 42\r\nSession: " + h265_session + "\r\n\r\n")
-                .starts_with("RTSP/1.0 200"),
+    require(h265_request("RECORD " + h265_base + " RTSP/1.0\r\nCSeq: 42\r\nSession: " + h265_session + "\r\n\r\n").starts_with("RTSP/1.0 200"),
             "rtsp publish h265 record");
     std::shared_ptr<media_stream> h265_stream;
     const auto h265_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -4827,14 +5033,15 @@ void test_rtsp_publish_server_contract()
     };
 
     const auto udp_sdp = std::string("v=0\r\n") +
-        "o=- 0 0 IN IP4 127.0.0.1\r\n"
-        "s=publish-udp\r\n"
-        "c=IN IP4 127.0.0.1\r\n"
-        "t=0 0\r\n"
-        "m=video 0 RTP/AVP 96\r\n"
-        "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
-        "a=control:" + udp_video_control + "\r\n";
+                         "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                         "s=publish-udp\r\n"
+                         "c=IN IP4 127.0.0.1\r\n"
+                         "t=0 0\r\n"
+                         "m=video 0 RTP/AVP 96\r\n"
+                         "a=rtpmap:96 H264/90000\r\n"
+                         "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                         "a=control:" +
+                         udp_video_control + "\r\n";
     const auto udp_announce = udp_request("ANNOUNCE " + udp_base + " RTSP/1.0\r\nCSeq: 10\r\nContent-Type: application/sdp\r\nContent-Length: " +
                                           std::to_string(udp_sdp.size()) + "\r\n\r\n" + udp_sdp);
     require(udp_announce.starts_with("RTSP/1.0 200"), "rtsp publish udp announce");
@@ -4858,9 +5065,8 @@ void test_rtsp_publish_server_contract()
     const auto port_end = transport.find('-', port_begin);
     require(port_end != std::string::npos, "rtsp publish udp server rtp port delimiter");
     unsigned int server_rtp_port{};
-    const auto [port_pointer, port_error] = std::from_chars(transport.data() + static_cast<std::ptrdiff_t>(port_begin),
-                                                           transport.data() + static_cast<std::ptrdiff_t>(port_end),
-                                                           server_rtp_port);
+    const auto [port_pointer, port_error] = std::from_chars(
+        transport.data() + static_cast<std::ptrdiff_t>(port_begin), transport.data() + static_cast<std::ptrdiff_t>(port_end), server_rtp_port);
     require(port_error == std::errc{} && port_pointer == transport.data() + static_cast<std::ptrdiff_t>(port_end) && server_rtp_port <= 65'535U,
             "rtsp publish udp server rtp port parse");
 
@@ -4878,20 +5084,33 @@ void test_rtsp_publish_server_contract()
     require(udp_sink->wait_for_tracks(), "rtsp publish udp sink sees initial track");
 
     constexpr std::array<std::uint8_t, 17> udp_rtp_packet{
-        0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0,
+        0x80,
+        0xe0,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x12,
+        0x34,
+        0x56,
+        0x78,
+        0x65,
+        0x88,
+        0x84,
+        0x21,
+        0xa0,
     };
     boost::asio::ip::udp::socket wrong_udp(client_io, {boost::asio::ip::address_v4::loopback(), 0});
-    wrong_udp.send_to(boost::asio::buffer(udp_rtp_packet),
-                      {boost::asio::ip::address_v4::loopback(), static_cast<std::uint16_t>(server_rtp_port)});
+    wrong_udp.send_to(boost::asio::buffer(udp_rtp_packet), {boost::asio::ip::address_v4::loopback(), static_cast<std::uint16_t>(server_rtp_port)});
     require(!udp_sink->wait_for_frames(std::chrono::milliseconds(50)), "rtsp publish udp rejects wrong source port");
-    udp_rtp.send_to(boost::asio::buffer(udp_rtp_packet),
-                    {boost::asio::ip::address_v4::loopback(), static_cast<std::uint16_t>(server_rtp_port)});
+    udp_rtp.send_to(boost::asio::buffer(udp_rtp_packet), {boost::asio::ip::address_v4::loopback(), static_cast<std::uint16_t>(server_rtp_port)});
     auto next_udp_rtp_packet = udp_rtp_packet;
     next_udp_rtp_packet[3] = 0x02;
     next_udp_rtp_packet[6] = 0x0e;
     next_udp_rtp_packet[7] = 0x10;
-    udp_rtp.send_to(boost::asio::buffer(next_udp_rtp_packet),
-                    {boost::asio::ip::address_v4::loopback(), static_cast<std::uint16_t>(server_rtp_port)});
+    udp_rtp.send_to(boost::asio::buffer(next_udp_rtp_packet), {boost::asio::ip::address_v4::loopback(), static_cast<std::uint16_t>(server_rtp_port)});
     require(udp_sink->wait_for_frames(), "rtsp publish udp accepts negotiated endpoint");
 
     udp_control.close(error);
@@ -4958,11 +5177,8 @@ class rtsp_output_test_peer final
     {
         auto promise = std::make_shared<std::promise<bool>>();
         auto future = promise->get_future();
-        boost::asio::post(io_,
-                          [stream = stream_, track = std::move(track), promise]() mutable
-                          {
-                              promise->set_value(stream->update_track(std::move(track)));
-                          });
+        boost::asio::post(
+            io_, [stream = stream_, track = std::move(track), promise]() mutable { promise->set_value(stream->update_track(std::move(track))); });
         require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp output track update");
         return future.get();
     }
@@ -5064,11 +5280,11 @@ void test_rtsp_output_session_contract()
     rtsp_output_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
 
-    const auto options = peer.request("OPTIONS * RTSP/1.0\r\n"
-                                      "CSeq: 1\r\n\r\n");
+    const auto options = peer.request(
+        "OPTIONS * RTSP/1.0\r\n"
+        "CSeq: 1\r\n\r\n");
     require(options.starts_with("RTSP/1.0 200"), "rtsp output options");
-    require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,GET_PARAMETER",
-            "rtsp output advertised methods");
+    require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,GET_PARAMETER", "rtsp output advertised methods");
 
     const std::string parameter_body(70U * 1024U, 'x');
     const auto get_parameter = peer.request("GET_PARAMETER " + base +
@@ -5173,8 +5389,18 @@ void test_rtsp_output_session_contract()
     require(play.starts_with("RTSP/1.0 200"), "rtsp output play");
 
     constexpr std::array<std::uint8_t, 12> receiver_report{
-        0x24, 0x01, 0x00, 0x08,
-        0x80, 0xc9, 0x00, 0x01, 0x01, 0x02, 0x03, 0x04,
+        0x24,
+        0x01,
+        0x00,
+        0x08,
+        0x80,
+        0xc9,
+        0x00,
+        0x01,
+        0x01,
+        0x02,
+        0x03,
+        0x04,
     };
     peer.write(std::span(receiver_report).first(3));
     peer.write(std::span(receiver_report).subspan(3));
@@ -5259,8 +5485,7 @@ void test_rtsp_output_pull_media()
         }
         require(packet->channel == 0U, "rtsp pull setup video channel");
         rtp_packet_t decoded{};
-        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0,
-                "rtsp pull rtp packet");
+        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0, "rtsp pull rtp packet");
         ++rtp_packets;
         marker = decoded.rtp.m != 0;
     }
@@ -5323,8 +5548,7 @@ void test_rtsp_output_audio_video_order()
         }
         require(packet->channel == 0U || packet->channel == 2U, "rtsp av rtp channel");
         rtp_packet_t decoded{};
-        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0,
-                "rtsp av rtp packet");
+        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0, "rtsp av rtp packet");
         if (decoded.rtp.m != 0)
         {
             frame_channels.push_back(packet->channel);
@@ -5413,8 +5637,7 @@ void test_rtsp_output_av1()
         require(describe.find("m=video 0 RTP/AVP 96") != std::string::npos, "rtsp av1 dynamic payload type");
         require(describe.find("a=rtpmap:96 AV1/90000") != std::string::npos, "rtsp av1 rtpmap");
         require(describe.find("a=fmtp:96 profile=0;level-idx=13;tier=0") != std::string::npos, "rtsp av1 fmtp");
-        require(describe.find(input_codec == codec_id::h264 ? "H264/90000" : "H265/90000") == std::string::npos,
-                "rtsp av1 excludes source codec");
+        require(describe.find(input_codec == codec_id::h264 ? "H264/90000" : "H265/90000") == std::string::npos, "rtsp av1 excludes source codec");
 
         const auto setup = peer.request("SETUP " + base +
                                         "/trackID=1 RTSP/1.0\r\n"
@@ -5438,7 +5661,8 @@ void test_rtsp_output_av1()
         rtp_payload_t handler{
             .alloc = nullptr,
             .free = nullptr,
-            .packet = [](void* param, const void* packet, int bytes, std::uint32_t, int)
+            .packet =
+                [](void* param, const void* packet, int bytes, std::uint32_t, int)
             {
                 if (param == nullptr || packet == nullptr || bytes <= 0)
                 {
@@ -5449,8 +5673,8 @@ void test_rtsp_output_av1()
                 return 0;
             },
         };
-        const auto decoder = std::unique_ptr<void, decltype(&rtp_payload_decode_destroy)>(
-            rtp_payload_decode_create(96, "AV1", &handler, &capture), &rtp_payload_decode_destroy);
+        const auto decoder = std::unique_ptr<void, decltype(&rtp_payload_decode_destroy)>(rtp_payload_decode_create(96, "AV1", &handler, &capture),
+                                                                                          &rtp_payload_decode_destroy);
         require(decoder != nullptr, "rtsp av1 depacketizer create");
 
         for (const auto& frame : source.frames)
@@ -5481,8 +5705,7 @@ void test_rtsp_output_av1()
         aom_av1_t av1{};
         require(aom_av1_codec_configuration_record_init(&av1, capture.temporal_unit.data(), capture.temporal_unit.size()) == 0,
                 "rtsp av1 sequence header");
-        require(av1.seq_profile == 0 && av1.seq_level_idx_0 <= 13 && av1.seq_tier_0 == 0,
-                "rtsp av1 stream parameters match sdp");
+        require(av1.seq_profile == 0 && av1.seq_level_idx_0 <= 13 && av1.seq_tier_0 == 0, "rtsp av1 stream parameters match sdp");
     }
 }
 
@@ -5554,10 +5777,8 @@ void test_rtsp_output_g711_passthrough_case(codec_id codec)
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
     require(describe.starts_with("RTSP/1.0 200"), "rtsp g711 output describe");
-    require(describe.find("m=audio 0 RTP/AVP " + std::to_string(payload_type) + "\n") != std::string::npos,
-            "rtsp g711 output static payload type");
-    require(describe.find("a=rtpmap:" + std::to_string(payload_type)) == std::string::npos,
-            "rtsp g711 output does not require rtpmap");
+    require(describe.find("m=audio 0 RTP/AVP " + std::to_string(payload_type) + "\n") != std::string::npos, "rtsp g711 output static payload type");
+    require(describe.find("a=rtpmap:" + std::to_string(payload_type)) == std::string::npos, "rtsp g711 output does not require rtpmap");
 
     const auto setup = peer.request("SETUP " + base +
                                     "/trackID=2 RTSP/1.0\r\n"
@@ -5597,10 +5818,8 @@ void test_rtsp_output_g711_passthrough_case(codec_id codec)
         received_payloads.emplace_back(begin, begin + packet.payloadlen);
         packets.push_back(packet);
     }
-    require(received_payloads == std::vector<std::vector<std::uint8_t>>(payloads.begin(), payloads.end()),
-            "rtsp g711 output raw payload");
-    require(packets.size() == 2U && packets[1].rtp.timestamp - packets[0].rtp.timestamp == 160U,
-            "rtsp g711 output 20ms timestamp step");
+    require(received_payloads == std::vector<std::vector<std::uint8_t>>(payloads.begin(), payloads.end()), "rtsp g711 output raw payload");
+    require(packets.size() == 2U && packets[1].rtp.timestamp - packets[0].rtp.timestamp == 160U, "rtsp g711 output 20ms timestamp step");
 
     peer.publish(make_raw_audio_frame(60'000'001, std::vector<std::uint8_t>(160U, 0x33)));
     require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp g711 output rejects fractional millisecond");
@@ -5834,7 +6053,8 @@ void test_timebase_conversions()
 
 void test_rtmp_legacy_fourcc_connect_parse()
 {
-    const auto make_connect = [](std::span<const std::string_view> fourccs) {
+    const auto make_connect = [](std::span<const std::string_view> fourccs)
+    {
         std::array<std::uint8_t, 512> data{};
         auto* current = AMFWriteString(data.data(), data.data() + data.size(), "connect", 7);
         current = AMFWriteDouble(current, data.data() + data.size(), 1.0);
@@ -5858,11 +6078,13 @@ void test_rtmp_legacy_fourcc_connect_parse()
         return std::pair{data, static_cast<std::size_t>(current - data.data())};
     };
 
-    const auto parse_connect = [](const std::array<std::uint8_t, 512>& data, std::size_t bytes) {
+    const auto parse_connect = [](const std::array<std::uint8_t, 512>& data, std::size_t bytes)
+    {
         rtmp_connect_t connect{};
         rtmp_t rtmp{};
         rtmp.param = &connect;
-        rtmp.server.onconnect = [](void* param, int result, double transaction, const rtmp_connect_t* parsed) {
+        rtmp.server.onconnect = [](void* param, int result, double transaction, const rtmp_connect_t* parsed)
+        {
             if (result != 0 || transaction != 1.0 || parsed == nullptr)
             {
                 return -1;
@@ -5901,12 +6123,9 @@ void test_rtmp_timestamp_timeline()
     require(rtmp_timestamp_delta(1'040U, 1'000U) == 40, "rtmp signed positive composition offset");
 
     rtmp_timestamp_state mixed_state;
-    require(unwrap_rtmp_timestamp(near_wrap, mixed_state) == static_cast<std::int64_t>(near_wrap),
-            "rtmp mixed timeline video before wrap");
-    require(unwrap_rtmp_timestamp(5U, mixed_state) == static_cast<std::int64_t>(near_wrap) + 15,
-            "rtmp mixed timeline audio after wrap");
-    require(unwrap_rtmp_timestamp(std::numeric_limits<std::uint32_t>::max() - 4U, mixed_state) ==
-                static_cast<std::int64_t>(near_wrap) + 5,
+    require(unwrap_rtmp_timestamp(near_wrap, mixed_state) == static_cast<std::int64_t>(near_wrap), "rtmp mixed timeline video before wrap");
+    require(unwrap_rtmp_timestamp(5U, mixed_state) == static_cast<std::int64_t>(near_wrap) + 15, "rtmp mixed timeline audio after wrap");
+    require(unwrap_rtmp_timestamp(std::numeric_limits<std::uint32_t>::max() - 4U, mixed_state) == static_cast<std::int64_t>(near_wrap) + 5,
             "rtmp mixed timeline keeps cross track dts regression");
     require(unwrap_rtmp_timestamp(25U, mixed_state) == static_cast<std::int64_t>(near_wrap) + 35,
             "rtmp mixed timeline continues after cross track wrap");
@@ -5960,7 +6179,8 @@ void test_ireader_h266_avpacket_codec_identity()
         AVPACKET_CODEC_ID codec{AVCODEC_NONE};
     } captured;
 
-    const auto on_packet = [](void* param, avpacket_t* packet) -> int {
+    const auto on_packet = [](void* param, avpacket_t* packet) -> int
+    {
         if (packet != nullptr && packet->stream != nullptr)
         {
             static_cast<capture*>(param)->codec = packet->stream->codecid;
@@ -5969,31 +6189,16 @@ void test_ireader_h266_avpacket_codec_identity()
     };
 
     constexpr std::array<std::uint8_t, 23> config{
-        0xfe, 0x03, 0x8e, 0x00, 0x01, 0x00, 0x02, 0x00, 0x70, 0x8f, 0x00, 0x01,
-        0x00, 0x02, 0x00, 0x78, 0x90, 0x00, 0x01, 0x00, 0x02, 0x00, 0x80,
+        0xfe, 0x03, 0x8e, 0x00, 0x01, 0x00, 0x02, 0x00, 0x70, 0x8f, 0x00, 0x01, 0x00, 0x02, 0x00, 0x78, 0x90, 0x00, 0x01, 0x00, 0x02, 0x00, 0x80,
     };
     constexpr std::array<std::uint8_t, 8> frame{0x00, 0x00, 0x00, 0x01, 0x00, 0x38, 0x80, 0x00};
 
     auto* bitstream = avpbs_find(AVCODEC_VIDEO_H266);
     require(bitstream != nullptr, "ireader h266 bitstream helper");
 
-    void* context = bitstream->create(
-        7,
-        AVCODEC_VIDEO_H266,
-        config.data(),
-        static_cast<int>(config.size()),
-        on_packet,
-        &captured);
+    void* context = bitstream->create(7, AVCODEC_VIDEO_H266, config.data(), static_cast<int>(config.size()), on_packet, &captured);
     require(context != nullptr, "ireader h266 bitstream create");
-    require(
-        bitstream->input(
-            context,
-            1,
-            1,
-            frame.data(),
-            static_cast<int>(frame.size()),
-            AVPACKET_FLAG_KEY) == 0,
-        "ireader h266 bitstream input");
+    require(bitstream->input(context, 1, 1, frame.data(), static_cast<int>(frame.size()), AVPACKET_FLAG_KEY) == 0, "ireader h266 bitstream input");
     require(captured.codec == AVCODEC_VIDEO_H266, "ireader h266 codec identity");
     require(bitstream->destroy(&context) == 0, "ireader h266 bitstream destroy");
 }
@@ -6005,7 +6210,8 @@ void test_ireader_avs3_flv_mux_codec_identity()
         std::vector<std::uint8_t> first_video_tag;
     } captured;
 
-    const auto on_flv = [](void* param, int type, const void* data, std::size_t bytes, std::uint32_t) -> int {
+    const auto on_flv = [](void* param, int type, const void* data, std::size_t bytes, std::uint32_t) -> int
+    {
         auto& output = *static_cast<capture*>(param);
         if (type == FLV_TYPE_VIDEO && output.first_video_tag.empty())
         {
@@ -6016,7 +6222,18 @@ void test_ireader_avs3_flv_mux_codec_identity()
     };
 
     constexpr std::array<std::uint8_t, 12> frame{
-        0x00, 0x00, 0x01, 0xb0, 0x20, 0x44, 0x88, 0xf0, 0x00, 0x00, 0x01, 0xb3,
+        0x00,
+        0x00,
+        0x01,
+        0xb0,
+        0x20,
+        0x44,
+        0x88,
+        0xf0,
+        0x00,
+        0x00,
+        0x01,
+        0xb3,
     };
 
     auto* muxer = flv_muxer_create(on_flv, &captured);
@@ -6026,9 +6243,8 @@ void test_ireader_avs3_flv_mux_codec_identity()
 
     require(!captured.first_video_tag.empty(), "ireader avs3 sequence tag");
     flv_video_tag_header_t header{};
-    require(
-        flv_video_tag_header_read(&header, captured.first_video_tag.data(), captured.first_video_tag.size()) == 5,
-        "ireader avs3 sequence tag header");
+    require(flv_video_tag_header_read(&header, captured.first_video_tag.data(), captured.first_video_tag.size()) == 5,
+            "ireader avs3 sequence tag header");
     require(header.codecid == FLV_VIDEO_AVS3, "ireader avs3 codec identity");
     require(header.avpacket == FLV_SEQUENCE_HEADER, "ireader avs3 sequence header type");
 }
@@ -6036,7 +6252,11 @@ void test_ireader_avs3_flv_mux_codec_identity()
 void test_ireader_rejects_unknown_enhanced_audio_fourcc()
 {
     constexpr std::array<std::uint8_t, 5> tag{
-        static_cast<std::uint8_t>(FLV_AUDIO_FOURCC | FLV_AVPACKET), 'x', 'x', 'x', 'x',
+        static_cast<std::uint8_t>(FLV_AUDIO_FOURCC | FLV_AVPACKET),
+        'x',
+        'x',
+        'x',
+        'x',
     };
     flv_audio_tag_header_t header{};
     require(flv_audio_tag_header_read(&header, tag.data(), tag.size()) < 0, "ireader unknown enhanced audio fourcc");
@@ -6047,7 +6267,8 @@ void test_ireader_opus_flv_correctness()
     const std::vector<std::uint8_t> head{'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', 1, 2, 0, 0, 0x80, 0xbb, 0, 0, 0, 0, 0};
     std::vector<std::vector<std::uint8_t>> tags;
     auto* muxer = flv_muxer_create(
-        [](void* param, int type, const void* data, std::size_t bytes, std::uint32_t) {
+        [](void* param, int type, const void* data, std::size_t bytes, std::uint32_t)
+        {
             if (type == FLV_TYPE_AUDIO)
             {
                 const auto* begin = static_cast<const std::uint8_t*>(data);
@@ -6083,19 +6304,18 @@ void test_ireader_opus_flv_correctness()
     flv_muxer_destroy(muxer);
 
     flv_demux_capture capture;
-    const auto demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
-        flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
-    require(flv_demuxer_input(demuxer.get(), FLV_TYPE_AUDIO, tags.front().data(), tags.front().size(), 0) == 0,
-            "ireader valid opus head demux");
+    const auto demuxer =
+        std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+    require(flv_demuxer_input(demuxer.get(), FLV_TYPE_AUDIO, tags.front().data(), tags.front().size(), 0) == 0, "ireader valid opus head demux");
     auto invalid = tags.front();
     invalid.resize(6);
-    require(flv_demuxer_input(demuxer.get(), FLV_TYPE_AUDIO, invalid.data(), invalid.size(), 0) < 0,
-            "ireader invalid opus head rejected");
+    require(flv_demuxer_input(demuxer.get(), FLV_TYPE_AUDIO, invalid.data(), invalid.size(), 0) < 0, "ireader invalid opus head rejected");
 }
 
 void test_ireader_avpbs_opus_lifetime()
 {
-    const auto on_packet = [](void* param, avpacket_t*) -> int {
+    const auto on_packet = [](void* param, avpacket_t*) -> int
+    {
         ++*static_cast<int*>(param);
         return 0;
     };
@@ -6112,8 +6332,7 @@ void test_ireader_avpbs_opus_lifetime()
     std::array<std::uint8_t, 64> encoded{};
     const auto bytes = opus_head_save(&head, encoded.data(), encoded.size());
     require(bytes > 0, "ireader opus head encode");
-    require(bitstream->input(context, 0, 0, encoded.data(), bytes, 0) == 0 && packets == 0,
-            "ireader opus head only does not allocate media packet");
+    require(bitstream->input(context, 0, 0, encoded.data(), bytes, 0) == 0 && packets == 0, "ireader opus head only does not allocate media packet");
 
     const std::array<std::uint8_t, 9> malformed{'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', 0xff};
     require(bitstream->input(context, 0, 0, malformed.data(), malformed.size(), 0) < 0 && packets == 0,
@@ -6131,17 +6350,20 @@ void test_ireader_av1_packet_lifetime()
     } state;
 
     rtp_payload_t handler{};
-    handler.alloc = [](void* param, int bytes) -> void* {
+    handler.alloc = [](void* param, int bytes) -> void*
+    {
         auto& capture_state = *static_cast<capture*>(param);
         ++capture_state.allocations;
         return std::malloc(static_cast<std::size_t>(bytes));
     };
-    handler.free = [](void* param, void* packet) {
+    handler.free = [](void* param, void* packet)
+    {
         auto& capture_state = *static_cast<capture*>(param);
         ++capture_state.frees;
         std::free(packet);
     };
-    handler.packet = [](void* param, const void*, int, std::uint32_t, int) -> int {
+    handler.packet = [](void* param, const void*, int, std::uint32_t, int) -> int
+    {
         ++static_cast<capture*>(param)->packets;
         return 0;
     };
@@ -6180,14 +6402,16 @@ void test_ireader_av1_marker_boundary()
     rtp_payload_t handler{};
     handler.alloc = [](void*, int bytes) -> void* { return std::malloc(static_cast<std::size_t>(bytes)); };
     handler.free = [](void*, void* packet) { std::free(packet); };
-    handler.packet = [](void* param, const void* packet, int bytes, std::uint32_t, int) -> int {
+    handler.packet = [](void* param, const void* packet, int bytes, std::uint32_t, int) -> int
+    {
         auto& capture_state = *static_cast<capture*>(param);
         const auto* data = static_cast<const std::uint8_t*>(packet);
         capture_state.markers.push_back(bytes >= 2 && (data[1] & 0x80U) != 0);
         return 0;
     };
 
-    const auto encode = [&](const std::vector<std::uint8_t>& temporal_unit) {
+    const auto encode = [&](const std::vector<std::uint8_t>& temporal_unit)
+    {
         state.markers.clear();
         void* encoder = rtp_payload_encode_create(RTP_PAYLOAD_AV1, "AV1", 1, 2, &handler, &state);
         require(encoder != nullptr, "ireader av1 marker encoder create");
@@ -6228,8 +6452,13 @@ void test_flv_config_cache_lifecycle()
     std::optional<std::int32_t> video_composition_time;
     std::optional<std::uint32_t> video_timestamp;
     flv_output_muxer output(
-        [&capture, &demuxer, &video_sequence_headers, &audio_sequence_headers, &video_sequence_header_timestamps, &video_composition_time, &video_timestamp](
-            int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        [&capture,
+         &demuxer,
+         &video_sequence_headers,
+         &audio_sequence_headers,
+         &video_sequence_header_timestamps,
+         &video_composition_time,
+         &video_timestamp](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
             require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv config demuxer input");
             if (data.size() < 2U)
@@ -6323,17 +6552,14 @@ void test_flv_av1_transcode_round_trip()
     {
         const auto fixture = make_video_transcoder_fixture(codec);
         flv_demux_capture capture;
-        const auto demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
-            flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+        const auto demuxer =
+            std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
         require(demuxer != nullptr, "flv av1 demuxer create");
-        flv_output_muxer output(
-            [&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
-            {
-                require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 demux input");
-            },
-            output_video_config{
-                .codec = output_video_codec::av1,
-            });
+        flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+                                { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 demux input"); },
+                                output_video_config{
+                                    .codec = output_video_codec::av1,
+                                });
         output.on_track(media_track{
             .id = video_track_id,
             .kind = media_kind::video,
@@ -6388,16 +6614,17 @@ void test_flv_av1_transcode_round_trip()
             }
         }
 
-        require(std::ranges::none_of(capture.packets, [](const demuxed_packet& packet) {
-                    return packet.codec == FLV_VIDEO_AVCC || packet.codec == FLV_VIDEO_HVCC || packet.codec == FLV_VIDEO_H264 ||
-                        packet.codec == FLV_VIDEO_H265;
-                }),
+        require(std::ranges::none_of(capture.packets,
+                                     [](const demuxed_packet& packet)
+                                     {
+                                         return packet.codec == FLV_VIDEO_AVCC || packet.codec == FLV_VIDEO_HVCC || packet.codec == FLV_VIDEO_H264 ||
+                                                packet.codec == FLV_VIDEO_H265;
+                                     }),
                 "flv av1 generation excludes source video codec");
         const auto config = std::ranges::find_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AV1C; });
         require(config != capture.packets.end() && !config->payload.empty(), "flv av1 configuration record");
         const auto first_frame = std::ranges::find_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AV1; });
-        require(first_frame != capture.packets.end() && !first_frame->payload.empty() && (first_frame->flags & 1) != 0,
-                "flv av1 keyframe identity");
+        require(first_frame != capture.packets.end() && !first_frame->payload.empty() && (first_frame->flags & 1) != 0, "flv av1 keyframe identity");
         aom_av1_t av1{};
         require(aom_av1_codec_configuration_record_load(config->payload.data(), config->payload.size(), &av1) ==
                         static_cast<int>(config->payload.size()) &&
@@ -6416,12 +6643,12 @@ void test_flv_g711_round_trip()
     for (const auto codec : {codec_id::g711a, codec_id::g711u})
     {
         flv_demux_capture capture;
-        const auto demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
-            flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+        const auto demuxer =
+            std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
         require(demuxer != nullptr, "flv g711 demuxer create");
-        flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp) {
-            require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv g711 demux input");
-        });
+        flv_output_muxer output(
+            [&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+            { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv g711 demux input"); });
         output.on_track(make_g711_track(codec));
         const std::vector<std::uint8_t> payload(160, codec == codec_id::g711a ? 0xd5 : 0xff);
         output.on_frame(media_frame{
@@ -6432,8 +6659,7 @@ void test_flv_g711_round_trip()
             .payload = std::make_shared<const std::vector<std::uint8_t>>(payload),
         });
         require(capture.packets.size() == 1U, "flv g711 packet count");
-        require(capture.packets.front().codec == (codec == codec_id::g711a ? FLV_AUDIO_G711A : FLV_AUDIO_G711U),
-                "flv g711 codec identity");
+        require(capture.packets.front().codec == (codec == codec_id::g711a ? FLV_AUDIO_G711A : FLV_AUDIO_G711U), "flv g711 codec identity");
         require(capture.packets.front().pts == 40 && capture.packets.front().dts == 40 && capture.packets.front().payload == payload,
                 "flv g711 raw payload timestamp");
     }
@@ -6442,25 +6668,23 @@ void test_flv_g711_round_trip()
 void test_flv_opus_adapter_round_trip()
 {
     flv_demux_capture capture;
-    const auto demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
-        flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
-    flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp) {
-        require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv opus adapter demux");
-    });
+    const auto demuxer =
+        std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
+    flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+                            { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv opus adapter demux"); });
     output.on_track(make_opus_track(2));
     const std::vector<std::uint8_t> payload{0xf8, 0xff, 0xfe};
     output.on_frame(make_opus_frame(20'000'000, payload));
-    require(capture.packets.size() == 2U && capture.packets[0].codec == FLV_AUDIO_OPUS_HEAD &&
-                capture.packets[1].codec == FLV_AUDIO_OPUS && capture.packets[1].payload == payload && capture.packets[1].pts == 20,
+    require(capture.packets.size() == 2U && capture.packets[0].codec == FLV_AUDIO_OPUS_HEAD && capture.packets[1].codec == FLV_AUDIO_OPUS &&
+                capture.packets[1].payload == payload && capture.packets[1].pts == 20,
             "flv opus sequence then raw packet");
 
     flv_demux_capture av1_capture;
-    const auto av1_demuxer = std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(
-        flv_demuxer_create(&capture_flv_packet, &av1_capture), &flv_demuxer_destroy);
+    const auto av1_demuxer =
+        std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &av1_capture), &flv_demuxer_destroy);
     flv_output_muxer av1_output(
-        [&av1_demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp) {
-            require(flv_demuxer_input(av1_demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 opus adapter demux");
-        },
+        [&av1_demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        { require(flv_demuxer_input(av1_demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 opus adapter demux"); },
         output_video_config{
             .codec = output_video_codec::av1,
         });
@@ -6495,14 +6719,15 @@ void test_h265_output_paths()
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
     require(demuxer != nullptr, "flv h265 demuxer create");
     std::vector<std::uint32_t> hevc_sequence_header_timestamps;
-    flv_output_muxer flv([&demuxer, &hevc_sequence_header_timestamps](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
-                         {
-                             require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv h265 demuxer input");
-                             if (type == FLV_TYPE_VIDEO && data.size() >= 2U && (data[0] & 0x0fU) == FLV_VIDEO_H265 && data[1] == 0U)
-                             {
-                                 hevc_sequence_header_timestamps.push_back(timestamp);
-                             }
-                         });
+    flv_output_muxer flv(
+        [&demuxer, &hevc_sequence_header_timestamps](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        {
+            require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv h265 demuxer input");
+            if (type == FLV_TYPE_VIDEO && data.size() >= 2U && (data[0] & 0x0fU) == FLV_VIDEO_H265 && data[1] == 0U)
+            {
+                hevc_sequence_header_timestamps.push_back(timestamp);
+            }
+        });
     auto hevc_track = make_h265_track();
     hevc_track.config_version = 1;
     flv.on_track(hevc_track);
@@ -6515,8 +6740,7 @@ void test_h265_output_paths()
     flv.on_track(updated_hevc);
     require(hevc_sequence_header_timestamps.size() == 1U, "flv h265 config reset defers sequence header");
     flv.on_frame(make_h265_frame(1'000'000'000, true, h265_config_updated));
-    require(hevc_sequence_header_timestamps == std::vector<std::uint32_t>{0U, 1'000U},
-            "flv h265 config reset reprimes header at next media dts");
+    require(hevc_sequence_header_timestamps == std::vector<std::uint32_t>{0U, 1'000U}, "flv h265 config reset reprimes header at next media dts");
 
     require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_HVCC; }) == 2,
             "flv h265 config generations");
@@ -6590,7 +6814,8 @@ void test_ireader_negotiated_payload_mapping()
         std::vector<std::uint8_t> packet;
     } state;
 
-    const auto on_packet = [](void* param, int, const void* packet, int bytes, std::uint32_t, int) {
+    const auto on_packet = [](void* param, int, const void* packet, int bytes, std::uint32_t, int)
+    {
         auto& capture_state = *static_cast<capture*>(param);
         capture_state.packet.assign(static_cast<const std::uint8_t*>(packet), static_cast<const std::uint8_t*>(packet) + bytes);
         return 0;
@@ -6608,13 +6833,10 @@ void test_ireader_negotiated_payload_mapping()
     std::array<std::uint8_t, 4> av1_config{};
     require(aom_av1_codec_configuration_record_save(&av1, av1_config.data(), av1_config.size()) == static_cast<int>(av1_config.size()),
             "ireader negotiated payload av1 config");
-    require(rtsp_muxer_add_payload(
-                muxer, "RTP/AVP", 90'000, 45, "AV1", 0, 2, 0, av1_config.data(), static_cast<int>(av1_config.size())) >= 0,
+    require(rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 45, "AV1", 0, 2, 0, av1_config.data(), static_cast<int>(av1_config.size())) >= 0,
             "ireader negotiated payload av1 payload");
-    require(rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 64, "H264", 0, 2, 0, nullptr, 0) >= 0,
-            "ireader negotiated payload h264 payload");
-    require(rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 77, "H265", 0, 2, 0, nullptr, 0) >= 0,
-            "ireader negotiated payload h265 payload");
+    require(rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 64, "H264", 0, 2, 0, nullptr, 0) >= 0, "ireader negotiated payload h264 payload");
+    require(rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, 77, "H265", 0, 2, 0, nullptr, 0) >= 0, "ireader negotiated payload h265 payload");
     rtsp_muxer_destroy(muxer);
 
     muxer = rtsp_muxer_create(on_packet, &state);
@@ -6668,25 +6890,17 @@ void test_ireader_av1_sdp_payload_type()
     rtp_timeline_capture capture;
     auto* muxer = rtsp_muxer_create(&capture_rtp_timestamp, &capture);
     require(muxer != nullptr, "ireader av1 sdp muxer create");
-    const auto payload = rtsp_muxer_add_payload(muxer,
-                                                 "RTP/AVP",
-                                                 90'000,
-                                                 payload_type,
-                                                 "AV1",
-                                                 0,
-                                                 0x12345678U,
-                                                 0,
-                                                 config.data(),
-                                                 static_cast<int>(config.size()));
+    const auto payload =
+        rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, payload_type, "AV1", 0, 0x12345678U, 0, config.data(), static_cast<int>(config.size()));
     require(payload >= 0, "ireader av1 sdp add payload");
 
     std::uint16_t sequence{};
     std::uint32_t timestamp{};
     const char* media_text{};
     int media_text_size{};
-    require(rtsp_muxer_getinfo(muxer, payload, &sequence, &timestamp, &media_text, &media_text_size) == 0 && media_text != nullptr &&
-                media_text_size > 0,
-            "ireader av1 sdp getinfo");
+    require(
+        rtsp_muxer_getinfo(muxer, payload, &sequence, &timestamp, &media_text, &media_text_size) == 0 && media_text != nullptr && media_text_size > 0,
+        "ireader av1 sdp getinfo");
     const std::string_view sdp(media_text, static_cast<std::size_t>(media_text_size));
     require(sdp.contains("m=video 0 RTP/AVP 98\n"), "ireader av1 sdp media payload type");
     require(sdp.contains("a=rtpmap:98 AV1/90000\n"), "ireader av1 sdp rtpmap payload type");
@@ -6728,16 +6942,18 @@ void test_rtsp_aac_adts_round_trip()
 void test_audio_transcoder_aac_opus()
 {
     const audio_transcoder_config config{
-        .input = audio_transcoder_format{
-            .codec = codec_id::aac,
-            .sample_rate = 44'100,
-            .channel_count = 2,
-        },
-        .output = audio_transcoder_format{
-            .codec = codec_id::opus,
-            .sample_rate = 48'000,
-            .channel_count = 2,
-        },
+        .input =
+            audio_transcoder_format{
+                .codec = codec_id::aac,
+                .sample_rate = 44'100,
+                .channel_count = 2,
+            },
+        .output =
+            audio_transcoder_format{
+                .codec = codec_id::opus,
+                .sample_rate = 48'000,
+                .channel_count = 2,
+            },
         .input_codec_config = aac_asc,
         .output_bit_rate = 128'000,
         .output_cutoff = 20'000,
@@ -6750,14 +6966,15 @@ void test_audio_transcoder_aac_opus()
     std::int64_t pts_ns = 37'000'000;
     for (const auto& adts : valid_aac_adts_frames)
     {
-        require(transcoder.transcode(media_frame{
-                                         .track = audio_track_id,
-                                         .dts_ns = pts_ns,
-                                         .pts_ns = pts_ns,
-                                         .key_frame = false,
-                                         .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
-                                     },
-                                     output),
+        require(transcoder.transcode(
+                    media_frame{
+                        .track = audio_track_id,
+                        .dts_ns = pts_ns,
+                        .pts_ns = pts_ns,
+                        .key_frame = false,
+                        .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                    },
+                    output),
                 "audio transcoder continuous input");
         pts_ns += 23'219'954;
     }
@@ -6771,14 +6988,15 @@ void test_audio_transcoder_aac_opus()
     require(output.size() == flushed_packet_count, "audio transcoder repeated flush no duplicate");
 
     std::vector<media_frame> after_flush;
-    require(!transcoder.transcode(media_frame{
-                                      .track = audio_track_id,
-                                      .dts_ns = pts_ns,
-                                      .pts_ns = pts_ns,
-                                      .key_frame = false,
-                                      .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
-                                  },
-                                  after_flush),
+    require(!transcoder.transcode(
+                media_frame{
+                    .track = audio_track_id,
+                    .dts_ns = pts_ns,
+                    .pts_ns = pts_ns,
+                    .key_frame = false,
+                    .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
+                },
+                after_flush),
             "audio transcoder rejects input after flush");
     require(output.front().track == audio_track_id && output.front().pts_ns == 37'000'000, "audio transcoder output timeline origin");
     for (std::size_t index = 0; index < output.size(); ++index)
@@ -6831,8 +7049,8 @@ void test_audio_transcoder_aac_opus()
     }
     require(avcodec_send_packet(decoder_context, nullptr) == 0, "audio transcoder opus decoder flush");
     receive_decoded();
-    const auto minimum_output_samples = av_rescale_rnd(
-        static_cast<std::int64_t>(valid_aac_adts_frames.size()) * 1'024, 48'000, 44'100, AV_ROUND_DOWN);
+    const auto minimum_output_samples =
+        av_rescale_rnd(static_cast<std::int64_t>(valid_aac_adts_frames.size()) * 1'024, 48'000, 44'100, AV_ROUND_DOWN);
     require(decoded_samples >= minimum_output_samples, "audio transcoder flush preserves tail samples");
 
     av_frame_free(&decoded);
@@ -6841,39 +7059,42 @@ void test_audio_transcoder_aac_opus()
 
     transcoder.shutdown();
     transcoder.shutdown();
-    require(!transcoder.transcode(media_frame{
-                                      .track = audio_track_id,
-                                      .dts_ns = 0,
-                                      .pts_ns = 0,
-                                      .key_frame = false,
-                                      .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
-                                  },
-                                  after_flush),
+    require(!transcoder.transcode(
+                media_frame{
+                    .track = audio_track_id,
+                    .dts_ns = 0,
+                    .pts_ns = 0,
+                    .key_frame = false,
+                    .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
+                },
+                after_flush),
             "audio transcoder rejects input after shutdown");
 
     require(transcoder.startup(config), "audio transcoder restart");
     std::vector<media_frame> restarted_output;
-    require(!transcoder.transcode(media_frame{
-                                      .track = audio_track_id,
-                                      .dts_ns = 1'000'000'000,
-                                      .pts_ns = 1'000'000'000,
-                                      .key_frame = false,
-                                      .payload = std::make_shared<const std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{0, 1, 2}),
-                                  },
-                                  restarted_output),
+    require(!transcoder.transcode(
+                media_frame{
+                    .track = audio_track_id,
+                    .dts_ns = 1'000'000'000,
+                    .pts_ns = 1'000'000'000,
+                    .key_frame = false,
+                    .payload = std::make_shared<const std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{0, 1, 2}),
+                },
+                restarted_output),
             "audio transcoder rejects invalid first frame");
 
     pts_ns = 5'000'000'000;
     for (const auto& adts : valid_aac_adts_frames)
     {
-        require(transcoder.transcode(media_frame{
-                                         .track = audio_track_id,
-                                         .dts_ns = pts_ns,
-                                         .pts_ns = pts_ns,
-                                         .key_frame = false,
-                                         .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
-                                     },
-                                     restarted_output),
+        require(transcoder.transcode(
+                    media_frame{
+                        .track = audio_track_id,
+                        .dts_ns = pts_ns,
+                        .pts_ns = pts_ns,
+                        .key_frame = false,
+                        .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                    },
+                    restarted_output),
                 "audio transcoder input after restart");
         pts_ns += 23'219'954;
     }
@@ -6887,16 +7108,18 @@ void test_audio_transcoder_aac_opus()
 void test_audio_transcoder_timestamp_compensation()
 {
     const audio_transcoder_config config{
-        .input = audio_transcoder_format{
-            .codec = codec_id::aac,
-            .sample_rate = 44'100,
-            .channel_count = 2,
-        },
-        .output = audio_transcoder_format{
-            .codec = codec_id::opus,
-            .sample_rate = 48'000,
-            .channel_count = 2,
-        },
+        .input =
+            audio_transcoder_format{
+                .codec = codec_id::aac,
+                .sample_rate = 44'100,
+                .channel_count = 2,
+            },
+        .output =
+            audio_transcoder_format{
+                .codec = codec_id::opus,
+                .sample_rate = 48'000,
+                .channel_count = 2,
+            },
         .input_codec_config = aac_asc,
         .output_bit_rate = 128'000,
         .output_cutoff = 20'000,
@@ -6955,15 +7178,15 @@ void test_audio_transcoder_timestamp_compensation()
         std::vector<media_frame> output;
         for (std::size_t index = 0; index < timestamps.size(); ++index)
         {
-            require(transcoder.transcode(media_frame{
-                                             .track = audio_track_id,
-                                             .dts_ns = timestamps[index],
-                                             .pts_ns = timestamps[index],
-                                             .key_frame = false,
-                                             .payload = std::make_shared<const std::vector<std::uint8_t>>(
-                                                 valid_aac_adts_frames[index % valid_aac_adts_frames.size()]),
-                                         },
-                                         output),
+            require(transcoder.transcode(
+                        media_frame{
+                            .track = audio_track_id,
+                            .dts_ns = timestamps[index],
+                            .pts_ns = timestamps[index],
+                            .key_frame = false,
+                            .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames[index % valid_aac_adts_frames.size()]),
+                        },
+                        output),
                     "audio timestamp transcode");
         }
         require(transcoder.flush(output) && !output.empty(), "audio timestamp flush");
@@ -7101,12 +7324,11 @@ void validate_av1_transcoder_output(const encoded_video_fixture& source, const s
             {
                 break;
             }
-            require(result == 0 && decoded->width == source.width && decoded->height == source.height,
-                    "video transcoder av1 decoded dimensions");
+            require(result == 0 && decoded->width == source.width && decoded->height == source.height, "video transcoder av1 decoded dimensions");
             if (source.codec == codec_id::h264)
             {
                 color_signaling = decoded->color_range == AVCOL_RANGE_JPEG && decoded->color_primaries == AVCOL_PRI_BT709 &&
-                    decoded->color_trc == AVCOL_TRC_BT709 && decoded->colorspace == AVCOL_SPC_BT709;
+                                  decoded->color_trc == AVCOL_TRC_BT709 && decoded->colorspace == AVCOL_SPC_BT709;
                 for (int y = 0; y < decoded->height; ++y)
                 {
                     const auto* row = decoded->data[0] + y * decoded->linesize[0];
@@ -7138,12 +7360,11 @@ void validate_av1_transcoder_output(const encoded_video_fixture& source, const s
         {
             break;
         }
-        require(result == 0 && decoded->width == source.width && decoded->height == source.height,
-                "video transcoder av1 flush dimensions");
+        require(result == 0 && decoded->width == source.width && decoded->height == source.height, "video transcoder av1 flush dimensions");
         if (source.codec == codec_id::h264)
         {
             color_signaling = decoded->color_range == AVCOL_RANGE_JPEG && decoded->color_primaries == AVCOL_PRI_BT709 &&
-                decoded->color_trc == AVCOL_TRC_BT709 && decoded->colorspace == AVCOL_SPC_BT709;
+                              decoded->color_trc == AVCOL_TRC_BT709 && decoded->colorspace == AVCOL_SPC_BT709;
             for (int y = 0; y < decoded->height; ++y)
             {
                 const auto* row = decoded->data[0] + y * decoded->linesize[0];
@@ -7168,8 +7389,7 @@ void validate_av1_transcoder_output(const encoded_video_fixture& source, const s
     require(first_temporal_unit_sequence_header && frame_obu, "video transcoder av1 first temporal unit sequence and frame obu");
     require(source.codec != codec_id::h264 || color_signaling, "video transcoder av1 color signaling");
     require(source.codec != codec_id::h264 ||
-                (luma_sample_count > 0 && dark_luma_sum / (luma_sample_count / 2) <= 8 &&
-                 bright_luma_sum / (luma_sample_count / 2) >= 247),
+                (luma_sample_count > 0 && dark_luma_sum / (luma_sample_count / 2) <= 8 && bright_luma_sum / (luma_sample_count / 2) >= 247),
             "video transcoder av1 full range pixels");
     require(parsed_key, "video transcoder av1 packet key flag matches parser");
     require(decoded_frames == static_cast<int>(source.frames.size()), "video transcoder av1 decoded frame count");
@@ -7205,8 +7425,7 @@ void test_video_transcoder_h26x_av1()
         require(transcoder.flush(output) && output.size() == after_flush, "video transcoder repeated flush");
         require(!transcoder.transcode(source.frames.front(), output), "video transcoder rejects input after flush");
         require(std::ranges::any_of(output, [](const media_frame& frame) { return frame.key_frame; }), "video transcoder key packet");
-        require(output.front().pts_ns >= 5'000'000'000 && output.front().dts_ns >= 5'000'000'000,
-                "video transcoder nonzero timeline");
+        require(output.front().pts_ns >= 5'000'000'000 && output.front().dts_ns >= 5'000'000'000, "video transcoder nonzero timeline");
         for (std::size_t index = 1; index < output.size(); ++index)
         {
             require(output[index].pts_ns > output[index - 1].pts_ns, "video transcoder monotonic pts");
@@ -7230,8 +7449,7 @@ void test_video_transcoder_h26x_av1()
         auto bad = source.frames.front();
         bad.payload = std::make_shared<const std::vector<std::uint8_t>>(16U, 0xffU);
         std::vector<media_frame> rejected;
-        require(!malformed.transcode(bad, rejected) && malformed.flush(rejected) && rejected.empty(),
-                "video transcoder malformed annex-b rejected");
+        require(!malformed.transcode(bad, rejected) && malformed.flush(rejected) && rejected.empty(), "video transcoder malformed annex-b rejected");
 
         video_transcoder restarted;
         require(restarted.startup(config), "video transcoder new generation startup");
@@ -7240,8 +7458,7 @@ void test_video_transcoder_h26x_av1()
         {
             require(restarted.transcode(frame, restarted_output), "video transcoder new generation input");
         }
-        require(restarted.flush(restarted_output) && restarted_output.size() == source.frames.size(),
-                "video transcoder new generation output");
+        require(restarted.flush(restarted_output) && restarted_output.size() == source.frames.size(), "video transcoder new generation output");
         restarted.shutdown();
         restarted.shutdown();
 
@@ -7272,11 +7489,12 @@ void test_video_transcoder_h26x_av1()
                 .input_codec = codec_id::h264,
                 .output_codec = codec_id::av1,
                 .input_codec_config = source.codec_config,
-                .av1 = av1_encoding_parameters{
-                    .profile = 0,
-                    .level_idx = 13,
-                    .tier = 0,
-                },
+                .av1 =
+                    av1_encoding_parameters{
+                        .profile = 0,
+                        .level_idx = 13,
+                        .tier = 0,
+                    },
             }),
             "video transcoder av1 parameters startup");
     std::vector<media_frame> constrained_output;
@@ -7286,22 +7504,22 @@ void test_video_transcoder_h26x_av1()
     }
     require(constrained.flush(constrained_output) && !constrained_output.empty(), "video transcoder av1 parameters flush");
     aom_av1_t av1{};
-    require(aom_av1_codec_configuration_record_init(
-                &av1, constrained_output.front().payload->data(), constrained_output.front().payload->size()) == 0,
-            "video transcoder av1 parameters sequence header");
-    require(av1.seq_profile == 0 && av1.seq_level_idx_0 <= 13 && av1.seq_tier_0 == 0,
-            "video transcoder av1 parameters stream properties");
+    require(
+        aom_av1_codec_configuration_record_init(&av1, constrained_output.front().payload->data(), constrained_output.front().payload->size()) == 0,
+        "video transcoder av1 parameters sequence header");
+    require(av1.seq_profile == 0 && av1.seq_level_idx_0 <= 13 && av1.seq_tier_0 == 0, "video transcoder av1 parameters stream properties");
 
     video_transcoder unsupported_profile;
     require(!unsupported_profile.startup(video_transcoder_config{
                 .input_codec = codec_id::h264,
                 .output_codec = codec_id::av1,
                 .input_codec_config = source.codec_config,
-                .av1 = av1_encoding_parameters{
-                    .profile = 1,
-                    .level_idx = 13,
-                    .tier = 0,
-                },
+                .av1 =
+                    av1_encoding_parameters{
+                        .profile = 1,
+                        .level_idx = 13,
+                        .tier = 0,
+                    },
             }),
             "video transcoder av1 unsupported profile");
 
@@ -7414,94 +7632,94 @@ void test_media_stream_sink_lifecycle()
 void test_media_stream_sink_gop_replay()
 {
     boost::asio::io_context io;
-    boost::asio::post(io,
-                      [&]()
-                      {
-                          auto stream = std::make_shared<media_stream>("live/gop", io.get_executor());
-                          require(stream->set_tracks({make_video_track(), make_audio_track()}), "gop tracks");
-                          stream->publish(make_audio_frame(-20'000'000));
-                          stream->publish(make_video_frame(0, true));
-                          stream->publish(make_audio_frame(20'000'000));
-                          stream->publish(make_video_frame(40'000'000, false));
+    boost::asio::post(
+        io,
+        [&]()
+        {
+            auto stream = std::make_shared<media_stream>("live/gop", io.get_executor());
+            require(stream->set_tracks({make_video_track(), make_audio_track()}), "gop tracks");
+            stream->publish(make_audio_frame(-20'000'000));
+            stream->publish(make_video_frame(0, true));
+            stream->publish(make_audio_frame(20'000'000));
+            stream->publish(make_video_frame(40'000'000, false));
 
-                          auto sink = std::make_shared<counting_sink>();
-                          stream->add_sink(sink);
-                          require(sink->tracks == 2, "gop replays track configuration first");
-                          require(sink->received_frames ==
-                                      std::vector<std::pair<track_id, std::int64_t>>{
-                                          {video_track_id, 0},
-                                          {audio_track_id, 20'000'000},
-                                          {video_track_id, 40'000'000},
-                                  },
-                                  "gop replays frames from current key frame");
+            auto sink = std::make_shared<counting_sink>();
+            stream->add_sink(sink);
+            require(sink->tracks == 2, "gop replays track configuration first");
+            require(sink->received_frames ==
+                        std::vector<std::pair<track_id, std::int64_t>>{
+                            {video_track_id, 0},
+                            {audio_track_id, 20'000'000},
+                            {video_track_id, 40'000'000},
+                        },
+                    "gop replays frames from current key frame");
 
-                          auto latest_stream = std::make_shared<media_stream>("live/gop-latest", io.get_executor());
-                          require(latest_stream->set_tracks({make_video_track(), make_audio_track()}), "latest gop tracks");
-                          latest_stream->publish(make_video_frame(0, true));
-                          latest_stream->publish(make_video_frame(40'000'000, false));
-                          latest_stream->publish(make_video_frame(1'000'000'000, true));
-                          latest_stream->publish(make_audio_frame(1'020'000'000));
-                          latest_stream->publish(make_video_frame(1'040'000'000, false));
-                          auto latest_sink = std::make_shared<counting_sink>();
-                          latest_stream->add_sink(latest_sink);
-                          require(latest_sink->received_frames ==
-                                      std::vector<std::pair<track_id, std::int64_t>>{
-                                          {video_track_id, 1'000'000'000},
-                                          {audio_track_id, 1'020'000'000},
-                                          {video_track_id, 1'040'000'000},
-                                      },
-                                  "late sink receives only current gop");
+            auto latest_stream = std::make_shared<media_stream>("live/gop-latest", io.get_executor());
+            require(latest_stream->set_tracks({make_video_track(), make_audio_track()}), "latest gop tracks");
+            latest_stream->publish(make_video_frame(0, true));
+            latest_stream->publish(make_video_frame(40'000'000, false));
+            latest_stream->publish(make_video_frame(1'000'000'000, true));
+            latest_stream->publish(make_audio_frame(1'020'000'000));
+            latest_stream->publish(make_video_frame(1'040'000'000, false));
+            auto latest_sink = std::make_shared<counting_sink>();
+            latest_stream->add_sink(latest_sink);
+            require(latest_sink->received_frames ==
+                        std::vector<std::pair<track_id, std::int64_t>>{
+                            {video_track_id, 1'000'000'000},
+                            {audio_track_id, 1'020'000'000},
+                            {video_track_id, 1'040'000'000},
+                        },
+                    "late sink receives only current gop");
 
-                          auto blocked_stream = std::make_shared<media_stream>("live/gop-blocked", io.get_executor());
-                          require(blocked_stream->set_tracks({make_video_track(), make_audio_track()}), "blocked gop tracks");
-                          blocked_stream->publish(make_video_frame(0, true));
-                          blocked_stream->publish(make_audio_frame(20'000'000));
-                          blocked_stream->publish(make_video_frame(40'000'000, false));
-                          require(blocked_stream->update_track(make_audio_track(2)), "blocked gop audio config update");
-                          auto blocked_sink = std::make_shared<counting_sink>();
-                          blocked_stream->add_sink(blocked_sink);
-                          require(blocked_sink->frames == 0, "sink replay blocked after track config change");
+            auto blocked_stream = std::make_shared<media_stream>("live/gop-blocked", io.get_executor());
+            require(blocked_stream->set_tracks({make_video_track(), make_audio_track()}), "blocked gop tracks");
+            blocked_stream->publish(make_video_frame(0, true));
+            blocked_stream->publish(make_audio_frame(20'000'000));
+            blocked_stream->publish(make_video_frame(40'000'000, false));
+            require(blocked_stream->update_track(make_audio_track(2)), "blocked gop audio config update");
+            auto blocked_sink = std::make_shared<counting_sink>();
+            blocked_stream->add_sink(blocked_sink);
+            require(blocked_sink->frames == 0, "sink replay blocked after track config change");
 
-                          auto resumed_stream = std::make_shared<media_stream>("live/gop-resumed", io.get_executor());
-                          require(resumed_stream->set_tracks({make_video_track(), make_audio_track()}), "resumed gop tracks");
-                          resumed_stream->publish(make_video_frame(0, true));
-                          resumed_stream->publish(make_video_frame(40'000'000, false));
-                          require(resumed_stream->update_track(make_audio_track(2)), "resumed gop audio config update");
-                          resumed_stream->publish(make_video_frame(80'000'000, false));
-                          resumed_stream->publish(make_video_frame(2'000'000'000, true));
-                          resumed_stream->publish(make_audio_frame(2'020'000'000));
-                          resumed_stream->publish(make_video_frame(2'040'000'000, false));
-                          auto resumed_sink = std::make_shared<counting_sink>();
-                          resumed_stream->add_sink(resumed_sink);
-                          require(resumed_sink->received_frames ==
-                                      std::vector<std::pair<track_id, std::int64_t>>{
-                                          {video_track_id, 2'000'000'000},
-                                          {audio_track_id, 2'020'000'000},
-                                          {video_track_id, 2'040'000'000},
-                                      },
-                                  "sink replay resumes from next key frame after track config change");
+            auto resumed_stream = std::make_shared<media_stream>("live/gop-resumed", io.get_executor());
+            require(resumed_stream->set_tracks({make_video_track(), make_audio_track()}), "resumed gop tracks");
+            resumed_stream->publish(make_video_frame(0, true));
+            resumed_stream->publish(make_video_frame(40'000'000, false));
+            require(resumed_stream->update_track(make_audio_track(2)), "resumed gop audio config update");
+            resumed_stream->publish(make_video_frame(80'000'000, false));
+            resumed_stream->publish(make_video_frame(2'000'000'000, true));
+            resumed_stream->publish(make_audio_frame(2'020'000'000));
+            resumed_stream->publish(make_video_frame(2'040'000'000, false));
+            auto resumed_sink = std::make_shared<counting_sink>();
+            resumed_stream->add_sink(resumed_sink);
+            require(resumed_sink->received_frames ==
+                        std::vector<std::pair<track_id, std::int64_t>>{
+                            {video_track_id, 2'000'000'000},
+                            {audio_track_id, 2'020'000'000},
+                            {video_track_id, 2'040'000'000},
+                        },
+                    "sink replay resumes from next key frame after track config change");
 
-                          auto overflow_stream = std::make_shared<media_stream>("live/gop-overflow", io.get_executor());
-                          require(overflow_stream->set_tracks({make_video_track()}), "gop overflow track");
-                          overflow_stream->publish(make_video_frame(0, true));
-                          for (std::int64_t index = 1; index <= 2500; ++index)
-                          {
-                              overflow_stream->publish(make_video_frame(index, false));
-                          }
-                          auto overflow_sink = std::make_shared<counting_sink>();
-                          overflow_stream->add_sink(overflow_sink);
-                          require(overflow_sink->frames == 0, "gop overflow drops incomplete cache");
+            auto overflow_stream = std::make_shared<media_stream>("live/gop-overflow", io.get_executor());
+            require(overflow_stream->set_tracks({make_video_track()}), "gop overflow track");
+            overflow_stream->publish(make_video_frame(0, true));
+            for (std::int64_t index = 1; index <= 2500; ++index)
+            {
+                overflow_stream->publish(make_video_frame(index, false));
+            }
+            auto overflow_sink = std::make_shared<counting_sink>();
+            overflow_stream->add_sink(overflow_sink);
+            require(overflow_sink->frames == 0, "gop overflow drops incomplete cache");
 
-                          auto h265_stream = std::make_shared<media_stream>("live/gop-h265", io.get_executor());
-                          require(h265_stream->set_tracks({make_h265_track()}), "gop h265 track");
-                          h265_stream->publish(make_h265_frame(0, true));
-                          h265_stream->publish(make_h265_frame(40'000'000, false));
-                          auto h265_sink = std::make_shared<counting_sink>();
-                          h265_stream->add_sink(h265_sink);
-                          require(h265_sink->received_frames ==
-                                      std::vector<std::pair<track_id, std::int64_t>>{{video_track_id, 0}, {video_track_id, 40'000'000}},
-                                  "gop h265 replay");
-                      });
+            auto h265_stream = std::make_shared<media_stream>("live/gop-h265", io.get_executor());
+            require(h265_stream->set_tracks({make_h265_track()}), "gop h265 track");
+            h265_stream->publish(make_h265_frame(0, true));
+            h265_stream->publish(make_h265_frame(40'000'000, false));
+            auto h265_sink = std::make_shared<counting_sink>();
+            h265_stream->add_sink(h265_sink);
+            require(h265_sink->received_frames == std::vector<std::pair<track_id, std::int64_t>>{{video_track_id, 0}, {video_track_id, 40'000'000}},
+                    "gop h265 replay");
+        });
     io.run();
 }
 
@@ -7594,8 +7812,7 @@ void test_media_stream_pull_reader_overrun()
                     {1, 2'000'000'000},
                 },
             "fast pull reader receives every frame");
-    require(stalled->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 2'000'000'000}},
+    require(stalled->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 2'000'000'000}},
             "stalled pull reader resumes at latest key frame");
     require(fast->thread() == stalled->thread() && fast->thread() != owner_thread, "pull reader callbacks stay on reader worker");
 }
@@ -7643,16 +7860,14 @@ void test_media_stream_pull_reader_duplicate_read()
     drain(owner);
     require(reader->frames().empty(), "posted pull callback waits for reader executor");
     drain(reader_worker);
-    require(reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}},
+    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}},
             "duplicate pull requests produce one bounded batch");
     require(reader->batch_sizes() == std::vector<std::size_t>{3}, "duplicate pull requests keep one outstanding batch");
 
     reader->request();
     drain(owner);
     drain(reader_worker);
-    require(reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}},
+    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}},
             "next pull waits at live edge after batch completion");
 }
 
@@ -7739,8 +7954,7 @@ void test_media_stream_pull_reader_initial_cursor_starts_current_gop()
     drain(owner);
     drain(reader_worker);
 
-    require(reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 1'000'000'000}, {1, 1'040'000'000}},
+    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 1'000'000'000}, {1, 1'040'000'000}},
             "initial reader cursor starts at current gop instead of retained previous gop");
 }
 
@@ -7811,8 +8025,7 @@ void test_media_stream_pull_reader_previous_gop_continuity()
     overrun_reader->request();
     drain(owner);
     drain(reader_worker);
-    require(overrun_reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 2'000'000'000}},
+    require(overrun_reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 2'000'000'000}},
             "overrun reader resumes at current gop key frame");
 }
 
@@ -7833,10 +8046,7 @@ void test_media_stream_add_reader_after_end()
     auto reader = std::make_shared<pull_test_reader>(false, false);
     boost::asio::post(owner, [stream]() { stream->end(); });
     boost::asio::post(consumer_worker,
-                      [stream, reader, &reader_worker]()
-                      {
-                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
-                      });
+                      [stream, reader, &reader_worker]() { static_cast<void>(stream->add_reader(reader, reader_worker.get_executor())); });
 
     drain(consumer_worker);
     drain(owner);
@@ -7878,11 +8088,9 @@ void test_media_stream_pull_reader_track_snapshot_order()
     drain(owner);
     drain(reader_worker);
 
-    require(reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}},
+    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}},
             "pre-update batch remains valid before reader-local config change");
-    require(reader->track_versions() ==
-                std::vector<std::pair<std::uint64_t, std::uint64_t>>{{1, 1}, {2, 2}},
+    require(reader->track_versions() == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{1, 1}, {2, 2}},
             "track update advances reader-local generation in callback order");
     require(reader->ready_generations() == std::vector<std::uint64_t>{1, 2}, "track update publishes reader-local ready generation");
 
@@ -7890,8 +8098,7 @@ void test_media_stream_pull_reader_track_snapshot_order()
     boost::asio::post(owner, [stream]() { stream->publish(make_video_frame(1'000'000'000, true)); });
     drain(owner);
     drain(reader_worker);
-    require(reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {2, 1'000'000'000}},
+    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {2, 1'000'000'000}},
             "new generation receives its key frame");
 
     drain(owner);
@@ -7903,9 +8110,7 @@ void test_media_stream_pull_reader_track_snapshot_order()
                       });
     drain(owner);
     drain(reader_worker);
-    require(reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {2, 1'000'000'000}},
-            "end suppresses old posted batch");
+    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {2, 1'000'000'000}}, "end suppresses old posted batch");
     require(reader->ends() == 1 && reader->end_generation() == 3, "end is one terminal reader event");
 
     auto remove_stream = std::make_shared<media_stream>("live/pull-remove", owner.get_executor());
@@ -7980,25 +8185,19 @@ void test_media_stream_reader_track_interest()
                       });
     drain_all();
 
-    require(video_reader->ready_generations() == std::vector<std::uint64_t>{1},
-            "irrelevant track update keeps subset reader local generation");
-    require(video_reader->track_versions() ==
-                std::vector<std::pair<std::uint64_t, std::uint64_t>>{{1, 1}},
+    require(video_reader->ready_generations() == std::vector<std::uint64_t>{1}, "irrelevant track update keeps subset reader local generation");
+    require(video_reader->track_versions() == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{1, 1}},
             "subset reader receives only interested track config");
-    require(video_reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{
-                    {1, 0}, {1, 40'000'000}, {1, 80'000'000}, {1, 120'000'000}},
+    require(video_reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}, {1, 120'000'000}},
             "irrelevant track update preserves subset reader cursor");
 
-    require(full_reader->ready_generations() == std::vector<std::uint64_t>{1, 2},
-            "full reader advances local generation for audio config update");
+    require(full_reader->ready_generations() == std::vector<std::uint64_t>{1, 2}, "full reader advances local generation for audio config update");
     require(full_reader->frames() ==
                 std::vector<std::pair<std::uint64_t, std::int64_t>>{
                     {1, 0}, {1, 20'000'000}, {1, 40'000'000}, {2, 80'000'000}, {2, 100'000'000}, {2, 120'000'000}},
             "full reader filters stale audio and continues at current config");
     require(late_reader->frames() ==
-                std::vector<std::pair<std::uint64_t, std::int64_t>>{
-                    {1, 0}, {1, 40'000'000}, {1, 80'000'000}, {1, 100'000'000}, {1, 120'000'000}},
+                std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}, {1, 100'000'000}, {1, 120'000'000}},
             "new full reader skips history from obsolete track config");
 }
 
@@ -8040,8 +8239,7 @@ void test_media_stream_video_keyframe_barrier_is_sticky()
                           stream->publish(make_video_frame(40'000'000, false));
                       });
     drain_all();
-    const std::vector<std::pair<std::uint64_t, std::int64_t>> initial_frames{
-        {1, 0}, {1, 20'000'000}, {1, 40'000'000}};
+    const std::vector<std::pair<std::uint64_t, std::int64_t>> initial_frames{{1, 0}, {1, 20'000'000}, {1, 40'000'000}};
     require(reader->frames() == initial_frames, "sticky barrier initial media");
 
     boost::asio::post(owner,
@@ -8186,7 +8384,6 @@ void test_hls_output()
     reordered_video.on_end();
     const auto reordered_playlist = reordered_video.playlist("/hls/reordered");
     require(reordered_playlist.find("#EXTINF:0.080,") != std::string::npos, "hls final segment duration uses maximum presentation timestamp");
-
 }
 
 void test_hls_av1_fmp4_output()
@@ -8197,9 +8394,10 @@ void test_hls_av1_fmp4_output()
         hls_output output(hls_config{
             .target_duration_seconds = 1.0,
             .window_size = 4,
-            .video = output_video_config{
-                .codec = output_video_codec::av1,
-            },
+            .video =
+                output_video_config{
+                    .codec = output_video_codec::av1,
+                },
         });
         output.on_track(media_track{
             .id = video_track_id,
@@ -8242,7 +8440,8 @@ void test_hls_av1_fmp4_output()
         } memory{.data = *init};
         memory.data.insert(memory.data.end(), segment->begin(), segment->end());
         const mov_buffer_t buffer{
-            .read = [](void* param, void* data, std::uint64_t bytes) -> int {
+            .read = [](void* param, void* data, std::uint64_t bytes) -> int
+            {
                 auto& reader = *static_cast<memory_reader*>(param);
                 if (bytes > reader.data.size() - std::min(reader.position, reader.data.size()))
                 {
@@ -8253,7 +8452,8 @@ void test_hls_av1_fmp4_output()
                 return 0;
             },
             .write = nullptr,
-            .seek = [](void* param, std::int64_t offset) -> int {
+            .seek = [](void* param, std::int64_t offset) -> int
+            {
                 auto& reader = *static_cast<memory_reader*>(param);
                 const auto size = static_cast<std::int64_t>(reader.data.size());
                 const auto position = offset >= 0 ? offset : size + offset;
@@ -8264,9 +8464,7 @@ void test_hls_av1_fmp4_output()
                 reader.position = static_cast<std::size_t>(position);
                 return 0;
             },
-            .tell = [](void* param) -> std::int64_t {
-                return static_cast<std::int64_t>(static_cast<memory_reader*>(param)->position);
-            },
+            .tell = [](void* param) -> std::int64_t { return static_cast<std::int64_t>(static_cast<memory_reader*>(param)->position); },
         };
         auto reader = std::unique_ptr<mov_reader_t, decltype(&mov_reader_destroy)>(mov_reader_create(&buffer, &memory), &mov_reader_destroy);
         require(reader != nullptr, "hls av1 mov reader create");
@@ -8282,7 +8480,9 @@ void test_hls_av1_fmp4_output()
             std::vector<std::uint8_t> extra;
         } capture;
         mov_reader_trackinfo_t callbacks{
-            .onvideo = [](void* param, std::uint32_t track, std::uint8_t object, int width, int height, const void* extra, std::size_t bytes) {
+            .onvideo =
+                [](void* param, std::uint32_t track, std::uint8_t object, int width, int height, const void* extra, std::size_t bytes)
+            {
                 auto& value = *static_cast<track_capture*>(param);
                 value.video_track = track;
                 value.av1 = object == MOV_OBJECT_AV1;
@@ -8291,7 +8491,9 @@ void test_hls_av1_fmp4_output()
                 const auto* begin = static_cast<const std::uint8_t*>(extra);
                 value.extra.assign(begin, begin + bytes);
             },
-            .onaudio = [](void* param, std::uint32_t track, std::uint8_t object, int, int, int, const void*, std::size_t) {
+            .onaudio =
+                [](void* param, std::uint32_t track, std::uint8_t object, int, int, int, const void*, std::size_t)
+            {
                 auto& value = *static_cast<track_capture*>(param);
                 value.audio_track = track;
                 value.aac = object == MOV_OBJECT_AAC;
@@ -8299,8 +8501,9 @@ void test_hls_av1_fmp4_output()
             .onsubtitle = nullptr,
         };
         require(mov_reader_getinfo(reader.get(), &callbacks, &capture) == 0, "hls av1 mov track info");
-        require(capture.av1 && capture.video_track != 0U && capture.width == source.width && capture.height == source.height && !capture.extra.empty(),
-                "hls av1 mov video track");
+        require(
+            capture.av1 && capture.video_track != 0U && capture.width == source.width && capture.height == source.height && !capture.extra.empty(),
+            "hls av1 mov video track");
         require(input_codec != codec_id::h264 || (capture.aac && capture.audio_track != 0U), "hls av1 mov aac track");
         aom_av1_t av1{};
         require(aom_av1_codec_configuration_record_load(capture.extra.data(), capture.extra.size(), &av1) == static_cast<int>(capture.extra.size()) &&
@@ -8327,7 +8530,8 @@ void test_hls_av1_fmp4_output()
                 reader.get(),
                 sample_buffer.data(),
                 sample_buffer.size(),
-                [](void* param, std::uint32_t track, const void*, std::size_t bytes, std::int64_t, std::int64_t, int flags) {
+                [](void* param, std::uint32_t track, const void*, std::size_t bytes, std::int64_t, std::int64_t, int flags)
+                {
                     auto& value = *static_cast<sample_capture*>(param);
                     if (bytes == 0U)
                     {
@@ -8358,9 +8562,10 @@ void test_hls_av1_fmp4_output()
     hls_output reconfigured(hls_config{
         .target_duration_seconds = 1.0,
         .window_size = 4,
-        .video = output_video_config{
-            .codec = output_video_codec::av1,
-        },
+        .video =
+            output_video_config{
+                .codec = output_video_codec::av1,
+            },
     });
     media_track video_track{
         .id = video_track_id,
@@ -8559,8 +8764,7 @@ std::span<const std::uint8_t> require_rtp_mid(const std::vector<std::uint8_t>& p
     require(rtp_packet_deserialize(&parsed, packet.data(), static_cast<int>(packet.size())) == 0, "rtp mid deserialize");
     require(parsed.rtp.x == 1 && parsed.extension != nullptr && parsed.extlen > 0, "rtp mid extension present");
 
-    const auto extension =
-        std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(parsed.extension), static_cast<std::size_t>(parsed.extlen));
+    const auto extension = std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(parsed.extension), static_cast<std::size_t>(parsed.extlen));
     std::size_t offset = 0;
     std::size_t length = 0;
     int extension_id = 0;
@@ -8614,8 +8818,7 @@ std::uint32_t require_rtcp_sender_report(const std::vector<std::uint8_t>& packet
 void test_webrtc_rtp_packetizer()
 {
     std::vector<std::vector<std::uint8_t>> packets;
-    webrtc_output output(
-        webrtc_output_config{.video_payload_type = 102, .video_mid = "video", .video_mid_extension_id = 20, .rtcp_cname = {}},
+    webrtc_output output(webrtc_output_config{.video_payload_type = 102, .video_mid = "video", .video_mid_extension_id = 20, .rtcp_cname = {}},
                          [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
     output.on_track(make_video_track());
     require(output.valid(), "webrtc video output valid");
@@ -8668,8 +8871,7 @@ void test_webrtc_video_access_unit_marker()
         output.on_frame(frame);
 
         require(packets.size() >= 2U, "webrtc marker multiple nalu packets");
-        const auto marker_count =
-            std::count_if(packets.begin(), packets.end(), [](const auto& packet) { return (packet[1] & 0x80U) != 0; });
+        const auto marker_count = std::count_if(packets.begin(), packets.end(), [](const auto& packet) { return (packet[1] & 0x80U) != 0; });
         require(marker_count == 1 && (packets.back()[1] & 0x80U) != 0, "webrtc marker on access unit last packet");
     }
 }
@@ -8706,8 +8908,7 @@ void test_webrtc_av1_packetizer()
         require(std::ranges::all_of(packets, [](const auto& packet) { return packet.size() >= 12U && (packet[1] & 0x7fU) == 99U; }),
                 "webrtc av1 payload type");
         require(!require_rtp_mid(packets.front(), "video", 4).empty(), "webrtc av1 mid");
-        require(std::ranges::any_of(packets, [](const auto& packet) { return (packet[1] & 0x80U) != 0; }),
-                "webrtc av1 marker");
+        require(std::ranges::any_of(packets, [](const auto& packet) { return (packet[1] & 0x80U) != 0; }), "webrtc av1 marker");
     }
 }
 
@@ -8791,13 +8992,11 @@ void test_webrtc_opus_passthrough()
         require(std::ranges::equal(payload, payloads[index]), "webrtc opus passthrough raw payload");
         if (index > 0)
         {
-            require(rtp_timestamp(rtp_packets[index]) - rtp_timestamp(rtp_packets[index - 1U]) == 960U,
-                    "webrtc opus passthrough timestamp step");
+            require(rtp_timestamp(rtp_packets[index]) - rtp_timestamp(rtp_packets[index - 1U]) == 960U, "webrtc opus passthrough timestamp step");
         }
     }
     require(!rtcp_packets.empty(), "webrtc opus passthrough rtcp report");
-    require(require_rtcp_sender_report(rtcp_packets.back(), cname) == rtp_ssrc(rtp_packets.back()),
-            "webrtc opus passthrough rtcp sender state");
+    require(require_rtcp_sender_report(rtcp_packets.back(), cname) == rtp_ssrc(rtp_packets.back()), "webrtc opus passthrough rtcp sender state");
 
     const auto packet_count = rtp_packets.size();
     output.on_frame(make_opus_frame(60'000'001));
@@ -8900,8 +9099,8 @@ void test_webrtc_g711_passthrough()
 
 void test_webrtc_output_initialization_failure()
 {
-    webrtc_output invalid_video(
-        webrtc_output_config{.video_payload_type = 102, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}}, [](std::span<const std::uint8_t>) {});
+    webrtc_output invalid_video(webrtc_output_config{.video_payload_type = 102, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}},
+                                [](std::span<const std::uint8_t>) {});
     auto video = make_video_track();
     video.codec_config.clear();
     invalid_video.on_track(video);
@@ -8909,7 +9108,7 @@ void test_webrtc_output_initialization_failure()
 
     webrtc_output invalid_audio(
         webrtc_output_config{.audio_payload_type = 111, .opus_channel_count = 3, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
-                                [](std::span<const std::uint8_t>) {});
+        [](std::span<const std::uint8_t>) {});
     invalid_audio.on_track(make_audio_track());
     require(!invalid_audio.valid(), "webrtc invalid opus output rejected");
 
@@ -8926,7 +9125,8 @@ void test_webrtc_output_initialization_failure()
     require(!invalid_h264_payload.valid(), "webrtc rtcp mux h264 payload rejected");
 
     webrtc_output invalid_h265_payload(
-        webrtc_output_config{.video_codec = codec_id::h265, .video_payload_type = 72, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}},
+        webrtc_output_config{
+            .video_codec = codec_id::h265, .video_payload_type = 72, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
     invalid_h265_payload.on_track(make_h265_track());
     require(!invalid_h265_payload.valid(), "webrtc rtcp mux h265 payload rejected");

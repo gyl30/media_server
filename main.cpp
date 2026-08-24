@@ -1,28 +1,27 @@
-#include "media/codec/output_video_config.h"
-#include "media/core/log.h"
-#include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_service.h"
-#include "media/hls/hls_service.h"
-#include "media/http/http_server.h"
-#include "media/net/io_context_pool.h"
-#include "media/rtmp/rtmp_server.h"
-#include "media/rtsp/rtsp_pull_session.h"
-#include "media/rtsp/rtsp_server.h"
-#include "media/webrtc/whep_service.h"
-
-#include <boost/asio.hpp>
-
-#include <spdlog/spdlog.h>
-
-#include <algorithm>
-#include <charconv>
-#include <cstdint>
-#include <iostream>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <vector>
+#include <cstdint>
+#include <charconv>
+#include <iostream>
+#include <algorithm>
+#include <string_view>
+
+#include <boost/asio.hpp>
+#include <spdlog/spdlog.h>
+
+#include "media/core/log.h"
+#include "media/hls/hls_service.h"
+#include "media/http/http_server.h"
+#include "media/rtmp/rtmp_server.h"
+#include "media/rtsp/rtsp_server.h"
+#include "media/net/io_context_pool.h"
+#include "media/webrtc/whep_service.h"
+#include "media/core/stream_registry.h"
+#include "media/rtsp/rtsp_pull_session.h"
+#include "media/gb28181/gb28181_service.h"
+#include "media/codec/output_video_config.h"
 
 namespace
 {

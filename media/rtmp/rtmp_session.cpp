@@ -1,18 +1,17 @@
-#include "media/rtmp/rtmp_session.h"
+#include <utility>
 
+#include <spdlog/spdlog.h>
+#include <boost/asio/post.hpp>
+
+#include "media/rtmp/rtmp_session.h"
 #include "media/rtmp/rtmp_input_session.h"
 #include "media/rtmp/rtmp_output_session.h"
-#include <spdlog/spdlog.h>
 
 extern "C"
 {
 #include "flv-proto.h"
 #include "rtmp-server.h"
 }
-
-#include <boost/asio/post.hpp>
-
-#include <utility>
 
 namespace media_server
 {
@@ -21,10 +20,7 @@ rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection,
                            stream_registry& registry,
                            output_video_config video,
                            std::chrono::milliseconds initial_tracks_timeout)
-    : connection_(std::move(connection)),
-      registry_(registry),
-      initial_tracks_timeout_(initial_tracks_timeout),
-      video_config_(video)
+    : connection_(std::move(connection)), registry_(registry), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
 {
 }
 
@@ -57,9 +53,8 @@ void rtmp_session::startup()
     }
 
     const auto self = shared_from_this();
-    connection_->startup(
-        [self](boost::system::error_code error, std::span<const std::uint8_t> data) { self->on_tcp_read(error, data); },
-        [self](boost::system::error_code error, std::size_t write_size) { self->on_tcp_write(error, write_size); });
+    connection_->startup([self](boost::system::error_code error, std::span<const std::uint8_t> data) { self->on_tcp_read(error, data); },
+                         [self](boost::system::error_code error, std::size_t write_size) { self->on_tcp_write(error, write_size); });
 }
 
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
@@ -194,16 +189,16 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     stream_name_ = make_stream_name(app, stream);
     const std::weak_ptr<rtmp_session> weak = shared_from_this();
     auto input = std::make_shared<rtmp_input_session>(connection_->socket().get_executor(),
-                                                     registry_,
-                                                     stream_name_,
-                                                     initial_tracks_timeout_,
-                                                     [weak]()
-                                                     {
-                                                         if (const auto self = weak.lock())
-                                                         {
-                                                             self->shutdown();
-                                                         }
-                                                     });
+                                                      registry_,
+                                                      stream_name_,
+                                                      initial_tracks_timeout_,
+                                                      [weak]()
+                                                      {
+                                                          if (const auto self = weak.lock())
+                                                          {
+                                                              self->shutdown();
+                                                          }
+                                                      });
     if (!input->startup())
     {
         return -1;

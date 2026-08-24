@@ -1,13 +1,12 @@
-#include "media/rtsp/rtsp_server.h"
+#include <vector>
+#include <utility>
+#include <algorithm>
 
+#include "media/rtsp/rtsp_server.h"
 #include "media/net/tcp_connection.h"
 #include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
-
-#include <algorithm>
-#include <utility>
-#include <vector>
 
 namespace media_server
 {
@@ -88,11 +87,9 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
         current->set_handler(session->make_handler());
         return session->on_describe(server, uri != nullptr ? uri : "");
     };
-    handler->on_setup = [weak_owner, weak_connection](rtsp_server_t* server,
-                                                       const char* uri,
-                                                       const char* session,
-                                                       const rtsp_header_transport_t transports[],
-                                                       std::size_t count)
+    handler->on_setup =
+        [weak_owner, weak_connection](
+            rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
     {
         const auto owner = weak_owner.lock();
         const auto current = weak_connection.lock();
@@ -126,7 +123,8 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
         { return input->on_teardown(handler_server, handler_session); };
         input_handler->on_announce = [input](rtsp_server_t* handler_server, const char* handler_uri, const char* handler_sdp, int handler_length)
         { return input->on_announce(handler_server, handler_uri, handler_sdp, handler_length); };
-        input_handler->on_record = [input](rtsp_server_t* handler_server, const char*, const char* handler_session, const std::int64_t*, const double*)
+        input_handler->on_record =
+            [input](rtsp_server_t* handler_server, const char*, const char* handler_session, const std::int64_t*, const double*)
         { return input->on_record(handler_server, handler_session); };
         input_handler->on_get_parameter = [](rtsp_server_t* handler_server, const char*, const char*, const void*, int)
         { return rtsp_server_reply_get_parameter(handler_server, 200, nullptr, 0); };
@@ -137,9 +135,7 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
     handler->on_teardown = [](rtsp_server_t*, const char*, const char*) { return -1; };
     handler->on_record = [](rtsp_server_t*, const char*, const char*, const std::int64_t*, const double*) { return -1; };
     handler->on_get_parameter = [](rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
-    {
-        return bytes == 0 && (session == nullptr || session[0] == '\0') ? rtsp_server_reply_get_parameter(server, 200, nullptr, 0) : -1;
-    };
+    { return bytes == 0 && (session == nullptr || session[0] == '\0') ? rtsp_server_reply_get_parameter(server, 200, nullptr, 0) : -1; };
 
     if (!connection->startup(std::move(handler)))
     {

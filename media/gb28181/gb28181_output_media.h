@@ -1,16 +1,16 @@
 #ifndef MEDIA_GB28181_GB28181_OUTPUT_MEDIA_H
 #define MEDIA_GB28181_GB28181_OUTPUT_MEDIA_H
 
-#include "media/core/media_reader.h"
-#include "media/core/media_stream.h"
-
-#include <boost/asio/any_io_executor.hpp>
-
-#include <cstdint>
-#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
+#include <cstdint>
+#include <functional>
+
+#include <boost/asio/any_io_executor.hpp>
+
+#include "media/core/media_reader.h"
+#include "media/core/media_stream.h"
 
 struct rtsp_muxer_t;
 

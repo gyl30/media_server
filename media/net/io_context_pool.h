@@ -1,13 +1,12 @@
 #ifndef MEDIA_NET_IO_CONTEXT_POOL_H
 #define MEDIA_NET_IO_CONTEXT_POOL_H
 
+#include <memory>
+#include <vector>
+#include <cstddef>
+
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/executor_work_guard.hpp>
-
-#include <cstddef>
-#include <memory>
-#include <thread>
-#include <vector>
 
 namespace media_server
 {

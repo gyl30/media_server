@@ -1,17 +1,16 @@
-#include "media/rtsp/rtsp_input_media.h"
-
-#include "media/codec/codec_utils.h"
+#include <utility>
+#include <algorithm>
 
 #include <spdlog/spdlog.h>
+
+#include "media/codec/codec_utils.h"
+#include "media/rtsp/rtsp_input_media.h"
 
 extern "C"
 {
 #include "avpacket.h"
 #include "rtsp-demuxer.h"
 }
-
-#include <algorithm>
-#include <utility>
 
 namespace media_server
 {
@@ -21,7 +20,7 @@ namespace
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
-}
+}    // namespace
 
 rtsp_input_media::rtsp_input_media(stream_registry& registry,
                                    boost::asio::any_io_executor executor,
@@ -157,21 +156,21 @@ int rtsp_input_media::on_packet(avpacket_t* packet)
 
     const auto codecid = packet->stream->codecid;
     const bool video = codecid == AVCODEC_VIDEO_H264 || codecid == AVCODEC_VIDEO_H265;
-    const bool audio = codecid == AVCODEC_AUDIO_AAC || codecid == AVCODEC_AUDIO_OPUS || codecid == AVCODEC_AUDIO_G711A ||
-                       codecid == AVCODEC_AUDIO_G711U;
+    const bool audio =
+        codecid == AVCODEC_AUDIO_AAC || codecid == AVCODEC_AUDIO_OPUS || codecid == AVCODEC_AUDIO_G711A || codecid == AVCODEC_AUDIO_G711U;
     const auto id = video ? video_track_id : (audio ? audio_track_id : 0);
     if (id == 0)
     {
         return 0;
     }
-    const auto codec = codecid == AVCODEC_VIDEO_H264       ? codec_id::h264
-                       : codecid == AVCODEC_VIDEO_H265     ? codec_id::h265
-                       : codecid == AVCODEC_AUDIO_AAC      ? codec_id::aac
-                       : codecid == AVCODEC_AUDIO_OPUS     ? codec_id::opus
-                       : codecid == AVCODEC_AUDIO_G711A    ? codec_id::g711a
-                                                            : codec_id::g711u;
-    const auto state = std::find_if(descriptions_.begin(), descriptions_.end(), [codec](const rtsp_input_track_description& value)
-                                    { return value.track.codec == codec; });
+    const auto codec = codecid == AVCODEC_VIDEO_H264    ? codec_id::h264
+                       : codecid == AVCODEC_VIDEO_H265  ? codec_id::h265
+                       : codecid == AVCODEC_AUDIO_AAC   ? codec_id::aac
+                       : codecid == AVCODEC_AUDIO_OPUS  ? codec_id::opus
+                       : codecid == AVCODEC_AUDIO_G711A ? codec_id::g711a
+                                                        : codec_id::g711u;
+    const auto state = std::find_if(
+        descriptions_.begin(), descriptions_.end(), [codec](const rtsp_input_track_description& value) { return value.track.codec == codec; });
     if (state == descriptions_.end())
     {
         spdlog::warn("rtsp publish raw codec change {}", to_string(codec));
@@ -206,20 +205,22 @@ bool rtsp_input_media::update_track_from_packet(const avpacket_t& packet)
     std::optional<media_track> track;
     if (input.codecid == AVCODEC_VIDEO_H264 && input.extra != nullptr && input.bytes > 0)
     {
-        auto config = h264_avcc_to_annex_b(
-            std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+        auto config =
+            h264_avcc_to_annex_b(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         if (!config.empty())
         {
-            track = media_track{.id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
+            track = media_track{
+                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
     else if (input.codecid == AVCODEC_VIDEO_H265 && input.extra != nullptr && input.bytes > 0)
     {
-        auto config = h265_hvcc_to_annex_b(
-            std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+        auto config =
+            h265_hvcc_to_annex_b(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         if (!config.empty())
         {
-            track = media_track{.id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
+            track = media_track{
+                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
     else if (input.codecid == AVCODEC_AUDIO_AAC && input.extra != nullptr && input.bytes > 0 && input.sample_rate > 0 && input.channels > 0)
@@ -255,8 +256,8 @@ bool rtsp_input_media::update_track_from_packet(const avpacket_t& packet)
         return false;
     }
 
-    const auto state = std::find_if(descriptions_.begin(), descriptions_.end(), [track](const rtsp_input_track_description& value)
-                                    { return value.track.codec == track->codec; });
+    const auto state = std::find_if(
+        descriptions_.begin(), descriptions_.end(), [track](const rtsp_input_track_description& value) { return value.track.codec == track->codec; });
     if (state == descriptions_.end() || !stream_->update_track(*track))
     {
         return false;

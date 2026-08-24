@@ -1,8 +1,8 @@
-#include "media/webrtc/whep_service.h"
+#include <utility>
 
 #include <spdlog/spdlog.h>
 
-#include <utility>
+#include "media/webrtc/whep_service.h"
 
 namespace media_server
 {
@@ -70,7 +70,8 @@ whep_create_result whep_service::create(boost::asio::any_io_executor executor, s
         }
     }
 
-    auto session = std::make_shared<whep_session>(std::move(executor), stream, advertised_address_, certificate_, whep_session_timeouts{}, video_config_);
+    auto session =
+        std::make_shared<whep_session>(std::move(executor), stream, advertised_address_, certificate_, whep_session_timeouts{}, video_config_);
     switch (session->startup(std::move(*offer)))
     {
         case whep_session_startup_error::none:

@@ -1,16 +1,14 @@
-#include "media/webrtc/whep_session.h"
-
-#include "media/webrtc/stun_message.h"
-
-#include <spdlog/spdlog.h>
-
-#include <boost/asio/post.hpp>
+#include <vector>
+#include <cstddef>
+#include <utility>
+#include <algorithm>
 
 #include <openssl/rand.h>
+#include <spdlog/spdlog.h>
+#include <boost/asio/post.hpp>
 
-#include <algorithm>
-#include <utility>
-#include <vector>
+#include "media/webrtc/stun_message.h"
+#include "media/webrtc/whep_session.h"
 
 namespace media_server
 {
@@ -71,9 +69,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     udp_socket_ = std::make_shared<udp_socket>(executor_);
     if (!udp_socket_->startup(
             bind_address,
-            [weak](boost::system::error_code error,
-                   std::span<const std::uint8_t> packet,
-                   const boost::asio::ip::udp::endpoint& endpoint)
+            [weak](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
             {
                 if (const auto self = weak.lock())
                 {
@@ -166,7 +162,8 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     for (const auto& track : source_tracks)
     {
-        const bool negotiated_video = video_codec_ && track.kind == media_kind::video &&
+        const bool negotiated_video =
+            video_codec_ && track.kind == media_kind::video &&
             ((*video_codec_ == codec_id::av1 && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) || track.codec == *video_codec_);
         const bool negotiated_audio = audio_payload_type_ && audio_codec_ && track.kind == media_kind::audio && track.codec == *audio_codec_;
         if (negotiated_video || negotiated_audio)
@@ -177,15 +174,16 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     reader_ = stream_->add_reader(shared_from_this(), executor_);
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
-    spdlog::debug("webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
-                  id_,
-                  ice_ufrag_,
-                  remote_ice_ufrag_,
-                  video_payload_type_.value_or(-1),
-                  audio_payload_type_.value_or(-1),
-                  audio_channel_count_.value_or(0),
-                  audio_bitrate_.value_or(0),
-                  audio_max_playback_rate_.value_or(0));
+    spdlog::debug(
+        "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
+        id_,
+        ice_ufrag_,
+        remote_ice_ufrag_,
+        video_payload_type_.value_or(-1),
+        audio_payload_type_.value_or(-1),
+        audio_channel_count_.value_or(0),
+        audio_bitrate_.value_or(0),
+        audio_max_playback_rate_.value_or(0));
     startup_establishment_timeout();
     return whep_session_startup_error::none;
 }
@@ -342,9 +340,7 @@ bool whep_session::apply_tracks(const media_track_snapshot_ptr& tracks)
     return true;
 }
 
-void whep_session::on_udp_read(boost::system::error_code error,
-                               std::span<const std::uint8_t> packet,
-                               const boost::asio::ip::udp::endpoint& endpoint)
+void whep_session::on_udp_read(boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
     if (!started_)
     {
@@ -365,11 +361,7 @@ void whep_session::on_udp_write_error(boost::system::error_code error, const boo
     {
         return;
     }
-    spdlog::debug("webrtc udp send failed session {} remote {} {} error {}",
-                  id_,
-                  endpoint.address().to_string(),
-                  endpoint.port(),
-                  error.message());
+    spdlog::debug("webrtc udp send failed session {} remote {} {} error {}", id_, endpoint.address().to_string(), endpoint.port(), error.message());
     if (remote_endpoint_.has_value() && endpoint == *remote_endpoint_)
     {
         shutdown();

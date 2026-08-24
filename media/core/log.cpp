@@ -1,9 +1,9 @@
-#include "media/core/log.h"
+#include <cstdlib>
+#include <string_view>
 
 #include <spdlog/spdlog.h>
 
-#include <cstdlib>
-#include <string_view>
+#include "media/core/log.h"
 
 namespace media_server
 {

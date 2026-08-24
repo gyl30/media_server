@@ -1,27 +1,26 @@
+#include <array>
+#include <chrono>
+#include <memory>
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <iostream>
+#include <optional>
+#include <stdexcept>
+#include <string_view>
+
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/io_context.hpp>
+
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_udp_session.h"
 
 extern "C"
 {
-#include "rtp-profile.h"
 #include "rtsp-muxer.h"
+#include "rtp-profile.h"
 }
-
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/udp.hpp>
-
-#include <array>
-#include <chrono>
-#include <cstdint>
-#include <iostream>
-#include <memory>
-#include <optional>
-#include <span>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <vector>
 
 namespace media_server
 {
@@ -59,28 +58,23 @@ std::vector<std::vector<std::uint8_t>> make_ps_rtp(std::uint8_t payload_type, st
     };
     auto* muxer = rtsp_muxer_create(collect, &packets);
     require(muxer != nullptr, "gb peer ps muxer create");
-    const auto payload = rtsp_muxer_add_payload(
-        muxer, "RTP/AVP", 90'000, payload_type, "PS", 1, ssrc, 0, config.data(), static_cast<int>(config.size()));
+    const auto payload =
+        rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, payload_type, "PS", 1, ssrc, 0, config.data(), static_cast<int>(config.size()));
     require(payload >= 0, "gb peer ps payload");
-    const auto media = rtsp_muxer_add_media(
-        muxer, payload, RTP_PAYLOAD_H264, config.data(), static_cast<int>(config.size()));
+    const auto media = rtsp_muxer_add_media(muxer, payload, RTP_PAYLOAD_H264, config.data(), static_cast<int>(config.size()));
     require(media >= 0, "gb peer ps media");
 
     auto frame = config;
     const std::array<std::uint8_t, 9> idr{0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x21, 0xa0};
     frame.insert(frame.end(), idr.begin(), idr.end());
-    require(rtsp_muxer_input(muxer, media, 0, 0, frame.data(), static_cast<int>(frame.size()), 1) == 0,
-            "gb peer ps first frame");
+    require(rtsp_muxer_input(muxer, media, 0, 0, frame.data(), static_cast<int>(frame.size()), 1) == 0, "gb peer ps first frame");
     const std::array<std::uint8_t, 8> p_frame{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x11};
-    require(rtsp_muxer_input(muxer, media, 40, 40, p_frame.data(), static_cast<int>(p_frame.size()), 0) == 0,
-            "gb peer ps second frame");
+    require(rtsp_muxer_input(muxer, media, 40, 40, p_frame.data(), static_cast<int>(p_frame.size()), 0) == 0, "gb peer ps second frame");
     require(rtsp_muxer_destroy(muxer) == 0 && !packets.empty(), "gb peer ps packets");
     return packets;
 }
 
-void send_packets(boost::asio::ip::udp::socket& socket,
-                  std::uint16_t port,
-                  const std::vector<std::vector<std::uint8_t>>& packets)
+void send_packets(boost::asio::ip::udp::socket& socket, std::uint16_t port, const std::vector<std::vector<std::uint8_t>>& packets)
 {
     const boost::asio::ip::udp::endpoint target{boost::asio::ip::address_v4::loopback(), port};
     for (const auto& packet : packets)
@@ -155,13 +149,10 @@ void test_signaled_rtp_peer_is_pinned_before_first_packet()
 
     boost::asio::ip::udp::socket other_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
     constexpr std::array<std::uint8_t, 28> sender_report{
-        0x80, 0xc8, 0x00, 0x06, 0x12, 0x34, 0x56, 0x78,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
+        0x80, 0xc8, 0x00, 0x06, 0x12, 0x34, 0x56, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     };
-    other_rtcp.send_to(boost::asio::buffer(sender_report),
-                       {boost::asio::ip::address_v4::loopback(), local_rtcp_port});
+    other_rtcp.send_to(boost::asio::buffer(sender_report), {boost::asio::ip::address_v4::loopback(), local_rtcp_port});
 
     io.restart();
     io.run_for(std::chrono::milliseconds(4500));
@@ -206,7 +197,18 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
     require(session->startup(), "gb peer learned startup");
 
     constexpr std::array<std::uint8_t, 12> wrong_ssrc{
-        0x80, 0x60, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x87, 0x65, 0x43, 0x21,
+        0x80,
+        0x60,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x87,
+        0x65,
+        0x43,
+        0x21,
     };
     wrong.send_to(boost::asio::buffer(wrong_ssrc), {boost::asio::ip::address_v4::loopback(), local_rtp_port});
     io.run_for(std::chrono::milliseconds(50));

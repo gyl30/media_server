@@ -1,29 +1,28 @@
 #ifndef MEDIA_WEBRTC_WHEP_SESSION_H
 #define MEDIA_WEBRTC_WHEP_SESSION_H
 
-#include "media/codec/output_video_config.h"
-#include "media/core/media_reader.h"
-#include "media/core/media_stream.h"
-#include "media/net/udp_socket.h"
-#include "media/webrtc/dtls_certificate.h"
-#include "media/webrtc/dtls_transport.h"
-#include "media/webrtc/srtp_transport.h"
-#include "media/webrtc/webrtc_output.h"
-#include "media/webrtc/webrtc_sdp.h"
-
-#include <boost/asio/any_io_executor.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/steady_timer.hpp>
-
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <map>
-#include <memory>
-#include <optional>
 #include <span>
+#include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <optional>
+
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/any_io_executor.hpp>
+
+#include "media/net/udp_socket.h"
+#include "media/core/media_reader.h"
+#include "media/core/media_stream.h"
+#include "media/webrtc/webrtc_sdp.h"
+#include "media/webrtc/webrtc_output.h"
+#include "media/webrtc/dtls_transport.h"
+#include "media/webrtc/srtp_transport.h"
+#include "media/webrtc/dtls_certificate.h"
+#include "media/codec/output_video_config.h"
 
 namespace media_server
 {
@@ -67,9 +66,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
 
    private:
     void safe_shutdown();
-    void on_udp_read(boost::system::error_code error,
-                     std::span<const std::uint8_t> packet,
-                     const boost::asio::ip::udp::endpoint& endpoint);
+    void on_udp_read(boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void on_udp_write_error(boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);

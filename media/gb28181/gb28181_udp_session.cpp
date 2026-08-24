@@ -1,22 +1,18 @@
-#include "media/gb28181/gb28181_udp_session.h"
-
-#include <boost/asio/post.hpp>
-
-#include <spdlog/spdlog.h>
-
 #include <array>
 #include <chrono>
-#include <utility>
 #include <vector>
+#include <utility>
+
+#include <spdlog/spdlog.h>
+#include <boost/asio/post.hpp>
+
+#include "media/gb28181/gb28181_udp_session.h"
 
 namespace media_server
 {
 
-gb28181_udp_session::gb28181_udp_session(stream_registry& registry,
-                                         boost::asio::any_io_executor executor,
-                                         std::string stream_name,
-                                         gb28181_description description,
-                                         gb28181_udp_peer peer)
+gb28181_udp_session::gb28181_udp_session(
+    stream_registry& registry, boost::asio::any_io_executor executor, std::string stream_name, gb28181_description description, gb28181_udp_peer peer)
     : executor_(executor),
       description_(std::move(description)),
       peer_(std::move(peer)),
@@ -110,7 +106,8 @@ bool gb28181_udp_session::startup()
     rtp_socket_ = std::move(rtp_socket);
     rtcp_socket_ = std::move(rtcp_socket);
     wait_rtcp();
-    spdlog::info("gb28181 udp session started stream {} rtp_port {} rtcp_port {}", media_.stream_name(), description_.rtp_port, description_.rtcp_port);
+    spdlog::info(
+        "gb28181 udp session started stream {} rtp_port {} rtcp_port {}", media_.stream_name(), description_.rtp_port, description_.rtcp_port);
     return true;
 }
 

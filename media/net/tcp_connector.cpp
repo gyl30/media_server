@@ -1,9 +1,9 @@
-#include "media/net/tcp_connector.h"
-
-#include <boost/asio/error.hpp>
-#include <boost/asio/post.hpp>
-
 #include <utility>
+
+#include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
+
+#include "media/net/tcp_connector.h"
 
 namespace media_server
 {

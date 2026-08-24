@@ -1,13 +1,13 @@
 #ifndef MEDIA_CORE_STREAM_REGISTRY_H
 #define MEDIA_CORE_STREAM_REGISTRY_H
 
-#include "media/core/media_stream.h"
-
 #include <map>
-#include <memory>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <string_view>
+
+#include "media/core/media_stream.h"
 
 namespace media_server
 {

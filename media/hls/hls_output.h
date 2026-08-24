@@ -1,20 +1,20 @@
 #ifndef MEDIA_HLS_OUTPUT_H
 #define MEDIA_HLS_OUTPUT_H
 
-#include "media/codec/output_video_config.h"
-#include "media/codec/video_transcoder.h"
-#include "media/core/media_sink.h"
-
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <deque>
 #include <map>
-#include <memory>
+#include <deque>
 #include <mutex>
-#include <optional>
+#include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+
+#include "media/core/media_sink.h"
+#include "media/codec/video_transcoder.h"
+#include "media/codec/output_video_config.h"
 
 struct fmp4_writer_t;
 

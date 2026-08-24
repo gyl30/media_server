@@ -1,16 +1,17 @@
 #ifndef MEDIA_RTSP_RTSP_SERVER_H
 #define MEDIA_RTSP_RTSP_SERVER_H
 
-#include "media/codec/output_video_config.h"
-#include "media/core/stream_registry.h"
-#include "media/net/tcp_listener.h"
+#include <mutex>
+#include <memory>
+#include <vector>
+#include <cstdint>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <vector>
+
+#include "media/net/tcp_listener.h"
+#include "media/core/stream_registry.h"
+#include "media/codec/output_video_config.h"
 
 namespace media_server
 {

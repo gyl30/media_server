@@ -1,19 +1,19 @@
 #include <array>
 #include <chrono>
+#include <thread>
+#include <vector>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
-#include <thread>
-#include <vector>
 
 extern "C"
 {
+#include "rtp.h"
 #include "rtcp-header.h"
 #include "rtp-demuxer.h"
 #include "rtp-internal.h"
-#include "rtp.h"
 }
 
 namespace
@@ -37,8 +37,8 @@ void write_u32(std::uint8_t* data, std::uint32_t value)
 
 std::uint32_t read_u32(const std::uint8_t* data)
 {
-    return (static_cast<std::uint32_t>(data[0]) << 24U) | (static_cast<std::uint32_t>(data[1]) << 16U) |
-           (static_cast<std::uint32_t>(data[2]) << 8U) | static_cast<std::uint32_t>(data[3]);
+    return (static_cast<std::uint32_t>(data[0]) << 24U) | (static_cast<std::uint32_t>(data[1]) << 16U) | (static_cast<std::uint32_t>(data[2]) << 8U) |
+           static_cast<std::uint32_t>(data[3]);
 }
 
 struct rtcp_capture
@@ -119,8 +119,7 @@ void test_rtp_demuxer_receiver_report()
     require(rtp_demuxer_input(demuxer, rtp_packet.data(), static_cast<int>(rtp_packet.size())) == 0, "rtp demuxer input second rtp");
 
     std::array<std::uint8_t, 8> minimal_rr{0x80, RTCP_RR, 0x00, 0x01, 0x55, 0x66, 0x77, 0x88};
-    require(rtp_demuxer_input(demuxer, minimal_rr.data(), static_cast<int>(minimal_rr.size())) == RTCP_RR,
-            "rtp demuxer accepts eight byte rtcp");
+    require(rtp_demuxer_input(demuxer, minimal_rr.data(), static_cast<int>(minimal_rr.size())) == RTCP_RR, "rtp demuxer accepts eight byte rtcp");
 
     std::array<std::uint8_t, 28> sender_report{};
     sender_report[0] = 0x80;
@@ -129,8 +128,7 @@ void test_rtp_demuxer_receiver_report()
     write_u32(sender_report.data() + 4, 0x11223344U);
     write_u32(sender_report.data() + 8, 0x01020304U);
     write_u32(sender_report.data() + 12, 0x05060708U);
-    require(rtp_demuxer_input(demuxer, sender_report.data(), static_cast<int>(sender_report.size())) == RTCP_SR,
-            "rtp demuxer input sender report");
+    require(rtp_demuxer_input(demuxer, sender_report.data(), static_cast<int>(sender_report.size())) == RTCP_SR, "rtp demuxer input sender report");
 
     std::array<std::uint8_t, 1500> report{};
     int bytes = 0;
@@ -205,13 +203,12 @@ void test_rtp_sender_report_statistics()
     const auto second_ntp = (static_cast<std::uint64_t>(read_u32(second_report.data() + 8)) << 32U) | read_u32(second_report.data() + 12);
     require(second_ntp > first_ntp, "rtp sender report ntp progression");
     require(read_u32(second_report.data() + 16) > read_u32(first_report.data() + 16), "rtp sender report timestamp progression");
-    require(read_u32(second_report.data() + 20) == 2U && read_u32(second_report.data() + 24) == 300U,
-            "rtp sender report stable counters");
+    require(read_u32(second_report.data() + 20) == 2U && read_u32(second_report.data() + 24) == 300U, "rtp sender report stable counters");
 
     rtp_destroy(sender);
 }
 
-} // namespace
+}    // namespace
 
 int main()
 {
