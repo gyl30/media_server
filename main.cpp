@@ -53,6 +53,21 @@ bool parse_port(std::string_view text, std::uint16_t& value)
     return true;
 }
 
+bool parse_output_video_codec(std::string_view text, media_server::output_video_codec& codec)
+{
+    if (text == "passthrough")
+    {
+        codec = media_server::output_video_codec::passthrough;
+        return true;
+    }
+    if (text == "av1")
+    {
+        codec = media_server::output_video_codec::av1;
+        return true;
+    }
+    return false;
+}
+
 std::optional<options> parse_options(int argc, char** argv)
 {
     options result;
@@ -116,15 +131,7 @@ std::optional<options> parse_options(int argc, char** argv)
         }
         if (const auto value = read_value("--rtmp-video-codec"))
         {
-            if (*value == "passthrough")
-            {
-                result.rtmp_video.codec = media_server::output_video_codec::passthrough;
-            }
-            else if (*value == "av1")
-            {
-                result.rtmp_video.codec = media_server::output_video_codec::av1;
-            }
-            else
+            if (!parse_output_video_codec(*value, result.rtmp_video.codec))
             {
                 return std::nullopt;
             }
@@ -132,15 +139,7 @@ std::optional<options> parse_options(int argc, char** argv)
         }
         if (const auto value = read_value("--rtsp-video-codec"))
         {
-            if (*value == "passthrough")
-            {
-                result.rtsp_video.codec = media_server::output_video_codec::passthrough;
-            }
-            else if (*value == "av1")
-            {
-                result.rtsp_video.codec = media_server::output_video_codec::av1;
-            }
-            else
+            if (!parse_output_video_codec(*value, result.rtsp_video.codec))
             {
                 return std::nullopt;
             }
@@ -148,15 +147,7 @@ std::optional<options> parse_options(int argc, char** argv)
         }
         if (const auto value = read_value("--http-video-codec"))
         {
-            if (*value == "passthrough")
-            {
-                result.http_video.codec = media_server::output_video_codec::passthrough;
-            }
-            else if (*value == "av1")
-            {
-                result.http_video.codec = media_server::output_video_codec::av1;
-            }
-            else
+            if (!parse_output_video_codec(*value, result.http_video.codec))
             {
                 return std::nullopt;
             }
@@ -164,15 +155,7 @@ std::optional<options> parse_options(int argc, char** argv)
         }
         if (const auto value = read_value("--whep-video-codec"))
         {
-            if (*value == "passthrough")
-            {
-                result.whep_video.codec = media_server::output_video_codec::passthrough;
-            }
-            else if (*value == "av1")
-            {
-                result.whep_video.codec = media_server::output_video_codec::av1;
-            }
-            else
+            if (!parse_output_video_codec(*value, result.whep_video.codec))
             {
                 return std::nullopt;
             }
