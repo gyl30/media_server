@@ -166,64 +166,63 @@ int rtmp_input_session::demux_callback(void* param, int codec, const void* data,
         codec, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), pts, dts, flags);
 }
 
-int rtmp_input_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
+int rtmp_input_session::handle_video_config(int codec, std::span<const std::uint8_t> data)
 {
-    if (closed_ || !stream_)
+    const auto video_codec = codec == FLV_VIDEO_AVCC ? codec_id::h264 : codec_id::h265;
+    if (initial_video_track_ && initial_video_track_->codec != video_codec)
+    {
+        spdlog::warn("rtmp input video codec change {} {}", to_string(initial_video_track_->codec), to_string(video_codec));
+        return -1;
+    }
+
+    auto config = codec == FLV_VIDEO_AVCC ? h264_avcc_to_annex_b(data) : h265_hvcc_to_annex_b(data);
+    if (config.empty())
     {
         return -1;
     }
 
-    if (codec == FLV_VIDEO_AVCC || codec == FLV_VIDEO_HVCC)
+    media_track track{
+        .id = video_track_id,
+        .kind = media_kind::video,
+        .codec = video_codec,
+        .clock_rate = 90'000,
+        .channel_count = 0,
+        .codec_config = std::move(config),
+    };
+    if (!tracks_initialized_)
     {
-        const auto video_codec = codec == FLV_VIDEO_AVCC ? codec_id::h264 : codec_id::h265;
-        if (initial_video_track_ && initial_video_track_->codec != video_codec)
-        {
-            spdlog::warn("rtmp input video codec change {} {}", to_string(initial_video_track_->codec), to_string(video_codec));
-            return -1;
-        }
-
-        auto config = codec == FLV_VIDEO_AVCC ? h264_avcc_to_annex_b(data) : h265_hvcc_to_annex_b(data);
-        if (config.empty())
-        {
-            return -1;
-        }
-        media_track track{
-            .id = video_track_id,
-            .kind = media_kind::video,
-            .codec = video_codec,
-            .clock_rate = 90'000,
-            .channel_count = 0,
-            .codec_config = std::move(config),
-        };
-        if (!tracks_initialized_)
-        {
-            initial_video_track_ = std::move(track);
-            try_initialize_tracks();
-            return 0;
-        }
-        if (stream_->update_track(std::move(track)))
-        {
-            spdlog::info("rtmp input track video {}", to_string(video_codec));
-        }
+        initial_video_track_ = std::move(track);
+        try_initialize_tracks();
         return 0;
+    }
+    if (stream_->update_track(std::move(track)))
+    {
+        spdlog::info("rtmp input track video {}", to_string(video_codec));
+    }
+    return 0;
+}
+
+int rtmp_input_session::handle_audio_config(int codec, std::span<const std::uint8_t> data)
+{
+    if (metadata_received_ && !expected_audio_)
+    {
+        return -1;
+    }
+    const auto audio_codec = codec == FLV_AUDIO_ASC ? codec_id::aac : codec_id::opus;
+    if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
+    {
+        spdlog::warn("rtmp input audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
+        return -1;
     }
 
     if (codec == FLV_AUDIO_ASC)
     {
-        if (metadata_received_ && !expected_audio_)
-        {
-            return -1;
-        }
-        if (initial_audio_track_ && initial_audio_track_->codec != codec_id::aac)
-        {
-            spdlog::warn("rtmp input audio codec change {} aac", to_string(initial_audio_track_->codec));
-            return -1;
-        }
         const auto config = parse_aac_asc(data);
         if (!config)
         {
             return -1;
         }
+
         media_track track{
             .id = audio_track_id,
             .kind = media_kind::audio,
@@ -245,70 +244,59 @@ int rtmp_input_session::on_flv_demux(int codec, std::span<const std::uint8_t> da
         return 0;
     }
 
-    if (codec == FLV_AUDIO_OPUS_HEAD)
+    opus_head_t head{};
+    if (opus_head_load(data.data(), data.size(), &head) < 0 || (opus_head_channels(&head) != 1 && opus_head_channels(&head) != 2))
     {
-        if (metadata_received_ && !expected_audio_)
-        {
-            return -1;
-        }
-        if (initial_audio_track_ && initial_audio_track_->codec != codec_id::opus)
-        {
-            spdlog::warn("rtmp input audio codec change {} opus", to_string(initial_audio_track_->codec));
-            return -1;
-        }
-        opus_head_t head{};
-        if (opus_head_load(data.data(), data.size(), &head) < 0 || (opus_head_channels(&head) != 1 && opus_head_channels(&head) != 2))
-        {
-            return -1;
-        }
-        media_track track{
-            .id = audio_track_id,
-            .kind = media_kind::audio,
-            .codec = codec_id::opus,
-            .clock_rate = 48'000,
-            .channel_count = static_cast<std::uint16_t>(opus_head_channels(&head)),
-            .codec_config = {},
-        };
-        if (!tracks_initialized_)
-        {
-            initial_audio_track_ = std::move(track);
-            try_initialize_tracks();
-            return 0;
-        }
-        static_cast<void>(stream_->update_track(std::move(track)));
+        return -1;
+    }
+
+    media_track track{
+        .id = audio_track_id,
+        .kind = media_kind::audio,
+        .codec = codec_id::opus,
+        .clock_rate = 48'000,
+        .channel_count = static_cast<std::uint16_t>(opus_head_channels(&head)),
+        .codec_config = {},
+    };
+    if (!tracks_initialized_)
+    {
+        initial_audio_track_ = std::move(track);
+        try_initialize_tracks();
         return 0;
     }
+    static_cast<void>(stream_->update_track(std::move(track)));
+    return 0;
+}
 
-    if (codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
+int rtmp_input_session::initialize_g711_track(int codec)
+{
+    if (metadata_received_ && !expected_audio_)
     {
-        if (metadata_received_ && !expected_audio_)
+        return -1;
+    }
+    const auto audio_codec = codec == FLV_AUDIO_G711A ? codec_id::g711a : codec_id::g711u;
+    if (!tracks_initialized_)
+    {
+        if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
         {
+            spdlog::warn("rtmp input audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
             return -1;
         }
-        const auto audio_codec = codec == FLV_AUDIO_G711A ? codec_id::g711a : codec_id::g711u;
-        if (!tracks_initialized_)
-        {
-            if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
-            {
-                spdlog::warn("rtmp input audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
-                return -1;
-            }
-            initial_audio_track_ = media_track{
-                .id = audio_track_id,
-                .kind = media_kind::audio,
-                .codec = audio_codec,
-                .clock_rate = 8'000,
-                .channel_count = 1,
-                .codec_config = {},
-            };
-            try_initialize_tracks();
-            if (!tracks_initialized_)
-            {
-                return 0;
-            }
-        }
+        initial_audio_track_ = media_track{
+            .id = audio_track_id,
+            .kind = media_kind::audio,
+            .codec = audio_codec,
+            .clock_rate = 8'000,
+            .channel_count = 1,
+            .codec_config = {},
+        };
+        try_initialize_tracks();
     }
+    return 0;
+}
 
+int rtmp_input_session::publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
+{
     track_id id{};
     if (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265)
     {
@@ -357,6 +345,32 @@ int rtmp_input_session::on_flv_demux(int codec, std::span<const std::uint8_t> da
     };
     stream_->publish(std::move(frame));
     return 0;
+}
+
+int rtmp_input_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
+{
+    if (closed_ || !stream_)
+    {
+        return -1;
+    }
+
+    if (codec == FLV_VIDEO_AVCC || codec == FLV_VIDEO_HVCC)
+    {
+        return handle_video_config(codec, data);
+    }
+    if (codec == FLV_AUDIO_ASC || codec == FLV_AUDIO_OPUS_HEAD)
+    {
+        return handle_audio_config(codec, data);
+    }
+    if (codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
+    {
+        const auto result = initialize_g711_track(codec);
+        if (result != 0 || !tracks_initialized_)
+        {
+            return result;
+        }
+    }
+    return publish_media(codec, data, pts, dts, flags);
 }
 
 void rtmp_input_session::try_initialize_tracks()
