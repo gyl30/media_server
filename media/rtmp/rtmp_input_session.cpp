@@ -1,20 +1,20 @@
-#include "media/rtmp/rtmp_input_session.h"
+#include <array>
+#include <vector>
+#include <utility>
+#include <string_view>
+
+#include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
-#include <spdlog/spdlog.h>
+#include "media/rtmp/rtmp_input_session.h"
 
 extern "C"
 {
 #include "amf0.h"
-#include "flv-demuxer.h"
 #include "flv-proto.h"
 #include "opus-head.h"
+#include "flv-demuxer.h"
 }
-
-#include <array>
-#include <string_view>
-#include <utility>
-#include <vector>
 
 namespace media_server
 {
@@ -156,8 +156,7 @@ int rtmp_input_session::on_script(std::span<const std::uint8_t> data)
     return 0;
 }
 
-int rtmp_input_session::demux_callback(
-    void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
+int rtmp_input_session::demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
 {
     if (data == nullptr)
     {

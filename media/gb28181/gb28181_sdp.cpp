@@ -1,20 +1,20 @@
+#include <memory>
+#include <cstring>
+#include <utility>
+#include <charconv>
+
+#include <boost/asio/ip/address.hpp>
+#include <boost/algorithm/string/predicate.hpp>
+
 #include "media/gb28181/gb28181_sdp.h"
 
 extern "C"
 {
+#include "sdp.h"
+#include "sdp-options.h"
 #include "sdp-a-rtpmap.h"
 #include "sdp-a-webrtc.h"
-#include "sdp-options.h"
-#include "sdp.h"
 }
-
-#include <boost/algorithm/string/predicate.hpp>
-#include <boost/asio/ip/address.hpp>
-
-#include <charconv>
-#include <cstring>
-#include <memory>
-#include <utility>
 
 namespace media_server
 {
@@ -85,8 +85,7 @@ std::optional<std::uint8_t> find_ps_payload(sdp_t* sdp)
             },
             &lookup);
 
-        if (lookup.payload == payload && lookup.rate == 90'000 &&
-            (boost::iequals(lookup.encoding, "PS") || boost::iequals(lookup.encoding, "MP2P")))
+        if (lookup.payload == payload && lookup.rate == 90'000 && (boost::iequals(lookup.encoding, "PS") || boost::iequals(lookup.encoding, "MP2P")))
         {
             if (selected_payload != -1)
             {

@@ -1,11 +1,11 @@
-#include "media/webrtc/dtls_certificate.h"
+#include <array>
+#include <ctime>
+#include <cstdio>
+#include <utility>
 
 #include <openssl/ec.h>
 
-#include <array>
-#include <cstdio>
-#include <ctime>
-#include <utility>
+#include "media/webrtc/dtls_certificate.h"
 
 namespace media_server
 {

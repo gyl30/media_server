@@ -1,14 +1,43 @@
-#include "media/core/media_stream.h"
-#include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_service.h"
+#include <span>
+#include <array>
+#include <chrono>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
+#include <climits>
+#include <cstdlib>
+#include <utility>
+#include <iostream>
+#include <string_view>
+
+#include <srtp2/srtp.h>
+#include <boost/crc.hpp>
+#include <openssl/evp.h>
+#include <openssl/ssl.h>
+#include <openssl/hmac.h>
+#include <openssl/srtp.h>
+#include <boost/asio/write.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/beast/core/flat_buffer.hpp>
+#include <boost/asio/executor_work_guard.hpp>
+
 #include "media/hls/hls_service.h"
+#include "media/core/media_stream.h"
 #include "media/http/http_session.h"
-#include "media/webrtc/dtls_certificate.h"
-#include "media/webrtc/srtp_transport.h"
-#include "media/webrtc/stun_message.h"
 #include "media/webrtc/webrtc_sdp.h"
+#include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_service.h"
 #include "media/webrtc/whep_session.h"
+#include "media/core/stream_registry.h"
+#include "media/webrtc/srtp_transport.h"
+#include "media/gb28181/gb28181_service.h"
+#include "media/webrtc/dtls_certificate.h"
 
 extern "C"
 {
@@ -16,37 +45,6 @@ extern "C"
 #include "rtp-packet.h"
 #include "rtp-profile.h"
 }
-
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/executor_work_guard.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/ip/udp.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/beast/core/flat_buffer.hpp>
-#include <boost/beast/http.hpp>
-#include <boost/crc.hpp>
-
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/ssl.h>
-#include <openssl/srtp.h>
-#include <srtp2/srtp.h>
-
-#include <array>
-#include <chrono>
-#include <climits>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <memory>
-#include <span>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <utility>
-#include <vector>
 
 namespace media_server
 {
@@ -351,11 +349,12 @@ std::optional<test_srtp_keying_material> make_peer_srtp_material(SSL* ssl)
     const auto client_salt = server_key + static_cast<std::ptrdiff_t>(key_size);
     const auto server_salt = client_salt + static_cast<std::ptrdiff_t>(salt_size);
     return test_srtp_keying_material{
-        .outbound = dtls_srtp_keying_material{
-            .profile = std::string(name),
-            .server_write_key = std::vector<std::uint8_t>(client_key, server_key),
-            .server_write_salt = std::vector<std::uint8_t>(client_salt, server_salt),
-        },
+        .outbound =
+            dtls_srtp_keying_material{
+                .profile = std::string(name),
+                .server_write_key = std::vector<std::uint8_t>(client_key, server_key),
+                .server_write_salt = std::vector<std::uint8_t>(client_salt, server_salt),
+            },
         .inbound_key = std::vector<std::uint8_t>(server_key, client_salt),
         .inbound_salt = std::vector<std::uint8_t>(server_salt, material.end()),
     };
@@ -464,8 +463,7 @@ std::span<const std::uint8_t> require_rtp_mid(std::span<const std::uint8_t> pack
     require(rtp_packet_deserialize(&parsed, packet.data(), static_cast<int>(packet.size())) == 0, "srtp mid deserialize");
     require(parsed.rtp.x == 1 && parsed.extension != nullptr && parsed.extlen > 0, "srtp mid extension present");
 
-    const auto extension =
-        std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(parsed.extension), static_cast<std::size_t>(parsed.extlen));
+    const auto extension = std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(parsed.extension), static_cast<std::size_t>(parsed.extlen));
     std::size_t offset = 0;
     std::size_t length = 0;
     int extension_id = 0;
@@ -950,9 +948,7 @@ class whep_http_test_peer final
     std::jthread runner_;
 };
 
-void require_whep_options(const boost::beast::http::response<boost::beast::http::string_body>& response,
-                          std::string_view methods,
-                          bool accept_post)
+void require_whep_options(const boost::beast::http::response<boost::beast::http::string_body>& response, std::string_view methods, bool accept_post)
 {
     require(response.result() == boost::beast::http::status::ok, "whep options status");
     require(response["Access-Control-Allow-Origin"] == "*", "whep options allow origin");
@@ -984,8 +980,7 @@ void test_http_head_response_contract()
             "whep invalid resource head content type");
     require(whep_head[boost::beast::http::field::content_length] == whep_get[boost::beast::http::field::content_length],
             "whep invalid resource head content length");
-    require(whep_head[boost::beast::http::field::access_control_allow_origin] ==
-                whep_get[boost::beast::http::field::access_control_allow_origin],
+    require(whep_head[boost::beast::http::field::access_control_allow_origin] == whep_get[boost::beast::http::field::access_control_allow_origin],
             "whep invalid resource head allow origin");
     require(whep_head.body().empty(), "whep invalid resource head body");
 }
@@ -1027,9 +1022,9 @@ void test_whep_http_cors()
             "whep endpoint head content length");
     require(endpoint_head[boost::beast::http::field::cache_control] == endpoint_get[boost::beast::http::field::cache_control],
             "whep endpoint head cache control");
-    require(endpoint_head[boost::beast::http::field::access_control_allow_origin] ==
-                endpoint_get[boost::beast::http::field::access_control_allow_origin],
-            "whep endpoint head allow origin");
+    require(
+        endpoint_head[boost::beast::http::field::access_control_allow_origin] == endpoint_get[boost::beast::http::field::access_control_allow_origin],
+        "whep endpoint head allow origin");
     require(endpoint_head.body().empty(), "whep endpoint head body");
 
     const auto endpoint_delete = peer.remove("/whep/live/camera");
@@ -1048,9 +1043,9 @@ void test_whep_http_cors()
     require(missing_head.result() == missing_get.result(), "whep missing session head status");
     require(missing_head[boost::beast::http::field::cache_control] == missing_get[boost::beast::http::field::cache_control],
             "whep missing session head cache control");
-    require(missing_head[boost::beast::http::field::access_control_allow_origin] ==
-                missing_get[boost::beast::http::field::access_control_allow_origin],
-            "whep missing session head allow origin");
+    require(
+        missing_head[boost::beast::http::field::access_control_allow_origin] == missing_get[boost::beast::http::field::access_control_allow_origin],
+        "whep missing session head allow origin");
     require(missing_head.body().empty(), "whep missing session head body");
 
     const auto created = peer.post("/whep/live/camera");
@@ -1071,9 +1066,9 @@ void test_whep_http_cors()
     require(session_head.result() == session_get.result(), "whep session head status");
     require(session_head[boost::beast::http::field::cache_control] == session_get[boost::beast::http::field::cache_control],
             "whep session head cache control");
-    require(session_head[boost::beast::http::field::access_control_allow_origin] ==
-                session_get[boost::beast::http::field::access_control_allow_origin],
-            "whep session head allow origin");
+    require(
+        session_head[boost::beast::http::field::access_control_allow_origin] == session_get[boost::beast::http::field::access_control_allow_origin],
+        "whep session head allow origin");
     require(session_head.body().empty(), "whep session head body");
 
     const auto session_post = peer.post(location);
@@ -1091,9 +1086,9 @@ void test_whep_http_cors()
     require(removed_head.result() == removed_get.result(), "whep removed session head status");
     require(removed_head[boost::beast::http::field::cache_control] == removed_get[boost::beast::http::field::cache_control],
             "whep removed session head cache control");
-    require(removed_head[boost::beast::http::field::access_control_allow_origin] ==
-                removed_get[boost::beast::http::field::access_control_allow_origin],
-            "whep removed session head allow origin");
+    require(
+        removed_head[boost::beast::http::field::access_control_allow_origin] == removed_get[boost::beast::http::field::access_control_allow_origin],
+        "whep removed session head allow origin");
     require(removed_head.body().empty(), "whep removed session head body");
 
     const auto missing = peer.remove(location);
@@ -1156,12 +1151,9 @@ void test_webrtc_sdp_answer()
                 video_section.find("a=candidate:1 1 UDP 2130706431 127.0.0.1 40000 typ host\r\n") != std::string_view::npos &&
                 video_section.find("a=end-of-candidates\r\n") != std::string_view::npos,
             "webrtc bundle tagged transport attributes");
-    require(audio_section.find("a=bundle-only\r\n") == std::string_view::npos &&
-                audio_section.find("a=rtcp-mux\r\n") != std::string_view::npos &&
-                audio_section.find("a=ice-ufrag:") == std::string_view::npos &&
-                audio_section.find("a=ice-pwd:") == std::string_view::npos &&
-                audio_section.find("a=fingerprint:") == std::string_view::npos &&
-                audio_section.find("a=setup:") == std::string_view::npos &&
+    require(audio_section.find("a=bundle-only\r\n") == std::string_view::npos && audio_section.find("a=rtcp-mux\r\n") != std::string_view::npos &&
+                audio_section.find("a=ice-ufrag:") == std::string_view::npos && audio_section.find("a=ice-pwd:") == std::string_view::npos &&
+                audio_section.find("a=fingerprint:") == std::string_view::npos && audio_section.find("a=setup:") == std::string_view::npos &&
                 audio_section.find("a=candidate:") == std::string_view::npos &&
                 audio_section.find("a=end-of-candidates\r\n") == std::string_view::npos,
             "webrtc bundle secondary media repeats rtcp mux only");
@@ -1220,8 +1212,7 @@ void test_webrtc_av1_sdp_answer()
     const auto chrome = make_answer(make_av1_offer(webrtc_offer_sdp, 45, 46, "level-idx=5;profile=0;tier=0"));
     require(chrome.has_value(), "webrtc chrome av1 answer");
     require(chrome->video_codec == codec_id::av1 && chrome->video_payload_type == 45, "webrtc chrome av1 codec");
-    require(chrome->sdp.find("a=fmtp:45 level-idx=5;profile=0;tier=0\r\n") != std::string::npos,
-            "webrtc chrome av1 fmtp");
+    require(chrome->sdp.find("a=fmtp:45 level-idx=5;profile=0;tier=0\r\n") != std::string::npos, "webrtc chrome av1 fmtp");
 
     const auto profile1 = make_answer(make_av1_offer(webrtc_offer_sdp, 47, 48, "level-idx=5;profile=1;tier=0"));
     require(profile1.has_value() && profile1->video_codec == codec_id::av1, "webrtc av1 profile 1 receiver accepts profile 0 output");
@@ -1508,14 +1499,14 @@ void test_webrtc_single_media_per_kind()
     const auto later_tag_bundle = later_video_tag_sdp.find("a=group:BUNDLE 0 1 2 3\r\n");
     const auto later_tag_mid = later_video_tag_sdp.find("a=mid:2\r\n");
     require(later_tag_bundle != std::string::npos && later_tag_mid != std::string::npos, "webrtc later video tag source");
-    later_video_tag_sdp.replace(later_tag_bundle, std::string_view("a=group:BUNDLE 0 1 2 3\r\n").size(),
-                                "a=group:BUNDLE 2 0 1 3\r\n");
-    later_video_tag_sdp.insert(later_tag_mid + std::string_view("a=mid:2\r\n").size(),
-                               "a=ice-ufrag:remotevideo2\r\n"
-                               "a=ice-pwd:remotevideo2password123456\r\n"
-                               "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\n"
-                               "a=setup:actpass\r\n"
-                               "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n");
+    later_video_tag_sdp.replace(later_tag_bundle, std::string_view("a=group:BUNDLE 0 1 2 3\r\n").size(), "a=group:BUNDLE 2 0 1 3\r\n");
+    later_video_tag_sdp.insert(
+        later_tag_mid + std::string_view("a=mid:2\r\n").size(),
+        "a=ice-ufrag:remotevideo2\r\n"
+        "a=ice-pwd:remotevideo2password123456\r\n"
+        "a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r\n"
+        "a=setup:actpass\r\n"
+        "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n");
     const auto later_video_tag = parse_webrtc_offer(later_video_tag_sdp);
     require(later_video_tag.has_value(), "webrtc parse later video bundle tag");
     const auto later_video_tag_answer = make_webrtc_answer(*later_video_tag, {make_video_track(), make_audio_track()}, config);
@@ -1585,9 +1576,8 @@ void test_webrtc_opus_receive_limits()
     const std::string opus_fmtp = "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n";
     const auto fmtp_offset = limited_sdp.find(opus_fmtp);
     require(fmtp_offset != std::string::npos, "webrtc opus limit source");
-    limited_sdp.replace(fmtp_offset,
-                        opus_fmtp.size(),
-                        "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=32000;maxplaybackrate=16000\r\n");
+    limited_sdp.replace(
+        fmtp_offset, opus_fmtp.size(), "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=32000;maxplaybackrate=16000\r\n");
     const auto limited_offer = parse_webrtc_offer(limited_sdp);
     require(limited_offer.has_value(), "webrtc parse opus receiver limits");
     const auto limited_answer = make_webrtc_answer(*limited_offer, {make_audio_track()}, config);
@@ -1599,9 +1589,7 @@ void test_webrtc_opus_receive_limits()
     auto low_bitrate_sdp = make_audio_tag_offer(webrtc_offer_sdp);
     const auto low_bitrate_fmtp_offset = low_bitrate_sdp.find(opus_fmtp);
     require(low_bitrate_fmtp_offset != std::string::npos, "webrtc opus low bitrate source");
-    low_bitrate_sdp.replace(low_bitrate_fmtp_offset,
-                            opus_fmtp.size(),
-                            "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=5999\r\n");
+    low_bitrate_sdp.replace(low_bitrate_fmtp_offset, opus_fmtp.size(), "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=5999\r\n");
     const auto low_bitrate_offer = parse_webrtc_offer(low_bitrate_sdp);
     require(low_bitrate_offer.has_value(), "webrtc parse opus low receiver bitrate");
     const auto low_bitrate_answer = make_webrtc_answer(*low_bitrate_offer, {make_audio_track()}, config);
@@ -1638,16 +1626,13 @@ void test_webrtc_opus_source_negotiation()
     };
 
     const auto stereo = make_webrtc_answer(*offer, {make_video_track(), make_opus_track(2)}, config);
-    require(stereo.has_value() && stereo->audio_codec == codec_id::opus && stereo->audio_payload_type == 111 &&
-                stereo->audio_channel_count == 2,
+    require(stereo.has_value() && stereo->audio_codec == codec_id::opus && stereo->audio_payload_type == 111 && stereo->audio_channel_count == 2,
             "webrtc negotiate stereo opus source");
-    require(stereo->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos &&
-                stereo->sdp.find("sprop-stereo=1") != std::string::npos,
+    require(stereo->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos && stereo->sdp.find("sprop-stereo=1") != std::string::npos,
             "webrtc stereo opus source answer");
 
     const auto mono = make_webrtc_answer(*offer, {make_video_track(), make_opus_track(1)}, config);
-    require(mono.has_value() && mono->audio_codec == codec_id::opus && mono->audio_channel_count == 1,
-            "webrtc negotiate mono opus source");
+    require(mono.has_value() && mono->audio_codec == codec_id::opus && mono->audio_channel_count == 1, "webrtc negotiate mono opus source");
     require(mono->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos && mono->sdp.find("sprop-stereo=0") != std::string::npos,
             "webrtc mono opus keeps rfc mapping");
 
@@ -1677,8 +1662,7 @@ void test_webrtc_opus_source_negotiation()
         require(audio_mid != std::string::npos, "webrtc opus maxptime audio media");
         maxptime_sdp.insert(audio_mid, "a=maxptime:" + std::to_string(maxptime) + "\r\n");
         const auto maxptime_offer = parse_webrtc_offer(maxptime_sdp);
-        require(maxptime_offer.has_value() && maxptime_offer->media.back().max_packet_time_ms == maxptime,
-                "parse webrtc opus maxptime");
+        require(maxptime_offer.has_value() && maxptime_offer->media.back().max_packet_time_ms == maxptime, "parse webrtc opus maxptime");
         const auto incompatible_maxptime = make_webrtc_answer(*maxptime_offer, {make_video_track(), make_opus_track(2)}, config);
         require(incompatible_maxptime.has_value() && !incompatible_maxptime->audio_codec, "webrtc reject opus passthrough maxptime limit");
     }
@@ -1688,17 +1672,15 @@ void test_webrtc_opus_source_negotiation()
     require(audio_mid != std::string::npos, "webrtc opus maxptime 120 audio media");
     maxptime_sdp.insert(audio_mid, "a=maxptime:120\r\n");
     const auto maxptime_offer = parse_webrtc_offer(maxptime_sdp);
-    require(maxptime_offer.has_value() && maxptime_offer->media.back().max_packet_time_ms == 120,
-            "parse webrtc opus maxptime 120");
+    require(maxptime_offer.has_value() && maxptime_offer->media.back().max_packet_time_ms == 120, "parse webrtc opus maxptime 120");
     const auto compatible_maxptime = make_webrtc_answer(*maxptime_offer, {make_video_track(), make_opus_track(2)}, config);
-    require(compatible_maxptime.has_value() && compatible_maxptime->audio_codec == codec_id::opus,
-            "webrtc accept opus passthrough maxptime 120");
+    require(compatible_maxptime.has_value() && compatible_maxptime->audio_codec == codec_id::opus, "webrtc accept opus passthrough maxptime 120");
 
     const auto audio_rejected = [&offer, &config](media_track track)
     {
         const auto answer = make_webrtc_answer(*offer, {make_video_track(), std::move(track)}, config);
         return answer && !answer->audio_codec && !answer->audio_payload_type &&
-            answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 111 0 8\r\n") != std::string::npos;
+               answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 111 0 8\r\n") != std::string::npos;
     };
 
     auto invalid_rate = make_opus_track();
@@ -1944,8 +1926,8 @@ void test_webrtc_transport_contract()
     const auto rejected_audio_offer = parse_webrtc_offer(rejected_audio_sdp);
     require(rejected_audio_offer.has_value(), "webrtc parse rejected audio offer");
     const auto rejected_audio_answer = make_webrtc_answer(*rejected_audio_offer, tracks, config);
-    require(rejected_audio_answer.has_value() && rejected_audio_answer->transport_mid == "0" &&
-                rejected_audio_answer->video_payload_type == 102 && !rejected_audio_answer->audio_payload_type.has_value(),
+    require(rejected_audio_answer.has_value() && rejected_audio_answer->transport_mid == "0" && rejected_audio_answer->video_payload_type == 102 &&
+                !rejected_audio_answer->audio_payload_type.has_value(),
             "webrtc reject non tagged unsupported audio");
     require(rejected_audio_answer->sdp.find("a=group:BUNDLE 0\r\n") != std::string::npos &&
                 rejected_audio_answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 111 0 8\r\n") != std::string::npos,
@@ -2013,11 +1995,10 @@ void test_webrtc_transport_contract()
 
     auto mismatched_mid_extension_sdp = webrtc_offer_sdp;
     const auto first_mid_extension_offset = mismatched_mid_extension_sdp.find(mid_extension);
-    const auto second_mid_extension_offset =
-        mismatched_mid_extension_sdp.find(mid_extension, first_mid_extension_offset == std::string::npos ? 0 : first_mid_extension_offset + mid_extension.size());
+    const auto second_mid_extension_offset = mismatched_mid_extension_sdp.find(
+        mid_extension, first_mid_extension_offset == std::string::npos ? 0 : first_mid_extension_offset + mid_extension.size());
     require(first_mid_extension_offset != std::string::npos && second_mid_extension_offset != std::string::npos, "webrtc bundled mid extension ids");
-    mismatched_mid_extension_sdp.replace(second_mid_extension_offset, mid_extension.size(),
-                                         "a=extmap:5 urn:ietf:params:rtp-hdrext:sdes:mid\r\n");
+    mismatched_mid_extension_sdp.replace(second_mid_extension_offset, mid_extension.size(), "a=extmap:5 urn:ietf:params:rtp-hdrext:sdes:mid\r\n");
     const auto mismatched_mid_extension = parse_webrtc_offer(mismatched_mid_extension_sdp);
     require(mismatched_mid_extension.has_value(), "webrtc parse mismatched mid extension ids");
     const auto mismatched_mid_extension_answer = make_webrtc_answer(*mismatched_mid_extension, tracks, config);
@@ -2028,14 +2009,14 @@ void test_webrtc_transport_contract()
     auto reused_payload_type_sdp = webrtc_offer_sdp;
     const auto audio_media_offset = reused_payload_type_sdp.find("m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8\r\n");
     require(audio_media_offset != std::string::npos, "webrtc bundled payload type source");
-    reused_payload_type_sdp.replace(audio_media_offset, std::string_view("m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8\r\n").size(),
-                                    "m=audio 9 UDP/TLS/RTP/SAVPF 102 0 8\r\n");
+    reused_payload_type_sdp.replace(
+        audio_media_offset, std::string_view("m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8\r\n").size(), "m=audio 9 UDP/TLS/RTP/SAVPF 102 0 8\r\n");
     const auto opus_rtpmap_offset = reused_payload_type_sdp.find("a=rtpmap:111 opus/48000/2\r\n", audio_media_offset);
     const auto opus_fmtp_offset = reused_payload_type_sdp.find("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n", audio_media_offset);
     require(opus_rtpmap_offset != std::string::npos && opus_fmtp_offset != std::string::npos, "webrtc bundled opus payload source");
-    reused_payload_type_sdp.replace(opus_rtpmap_offset, std::string_view("a=rtpmap:111 opus/48000/2\r\n").size(),
-                                    "a=rtpmap:102 opus/48000/2\r\n");
-    reused_payload_type_sdp.replace(opus_fmtp_offset, std::string_view("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n").size(),
+    reused_payload_type_sdp.replace(opus_rtpmap_offset, std::string_view("a=rtpmap:111 opus/48000/2\r\n").size(), "a=rtpmap:102 opus/48000/2\r\n");
+    reused_payload_type_sdp.replace(opus_fmtp_offset,
+                                    std::string_view("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n").size(),
                                     "a=fmtp:102 minptime=10;useinbandfec=1;stereo=1\r\n");
     const auto reused_payload_type = parse_webrtc_offer(reused_payload_type_sdp);
     require(reused_payload_type.has_value(), "webrtc parse bundled reused payload type");
@@ -2070,7 +2051,10 @@ void test_whep_session_startup_errors()
     require(certificate != nullptr, "startup errors certificate");
 
     const auto make_session = [&](std::shared_ptr<media_stream> source, std::shared_ptr<dtls_certificate> session_certificate)
-    { return std::make_shared<whep_session>(io.get_executor(), std::move(source), boost::asio::ip::make_address("127.0.0.1"), std::move(session_certificate)); };
+    {
+        return std::make_shared<whep_session>(
+            io.get_executor(), std::move(source), boost::asio::ip::make_address("127.0.0.1"), std::move(session_certificate));
+    };
 
     auto invalid_offer = *offer;
     require(!invalid_offer.media.empty(), "startup errors media");
@@ -2090,7 +2074,6 @@ void test_whep_session_startup_errors()
             "startup errors rejected bundle tag");
 
     require(make_session(stream, nullptr)->startup(*offer) == whep_session_startup_error::internal_error, "startup errors internal error");
-
 }
 
 void test_whep_session_lifecycle()
@@ -2333,15 +2316,14 @@ void test_whep_establishment_timeout()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "establishment timeout certificate");
 
-    auto session = std::make_shared<whep_session>(
-        io.get_executor(),
-        stream,
-        boost::asio::ip::make_address("127.0.0.1"),
-        certificate,
-        whep_session_timeouts{
-            .establishment = std::chrono::milliseconds(20),
-            .ice_activity = std::chrono::seconds(1),
-        });
+    auto session = std::make_shared<whep_session>(io.get_executor(),
+                                                  stream,
+                                                  boost::asio::ip::make_address("127.0.0.1"),
+                                                  certificate,
+                                                  whep_session_timeouts{
+                                                      .establishment = std::chrono::milliseconds(20),
+                                                      .ice_activity = std::chrono::seconds(1),
+                                                  });
     require(session->startup(*offer) == whep_session_startup_error::none, "establishment timeout session startup");
     require(session->local_port() != 0, "establishment timeout socket open");
 
@@ -2367,15 +2349,14 @@ void test_whep_ice_activity_timeout()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "ice activity timeout certificate");
 
-    auto session = std::make_shared<whep_session>(
-        io.get_executor(),
-        stream,
-        boost::asio::ip::make_address("127.0.0.1"),
-        certificate,
-        whep_session_timeouts{
-            .establishment = std::chrono::seconds(1),
-            .ice_activity = std::chrono::milliseconds(80),
-        });
+    auto session = std::make_shared<whep_session>(io.get_executor(),
+                                                  stream,
+                                                  boost::asio::ip::make_address("127.0.0.1"),
+                                                  certificate,
+                                                  whep_session_timeouts{
+                                                      .establishment = std::chrono::seconds(1),
+                                                      .ice_activity = std::chrono::milliseconds(80),
+                                                  });
     require(session->startup(*offer) == whep_session_startup_error::none, "ice activity timeout session startup");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
@@ -2420,8 +2401,8 @@ void test_stun_ice_connectivity_check_contract()
     require(parsed.has_value() && parsed->priority && parsed->use_candidate && parsed->ice_controlling && !parsed->ice_controlled,
             "stun valid ice connectivity check");
 
-    const auto missing_priority =
-        parse_stun_binding_request(make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_priority), username, password);
+    const auto missing_priority = parse_stun_binding_request(
+        make_stun_request(username, password, transaction_id, false, stun_request_variant::missing_priority), username, password);
     require(missing_priority.has_value() && !missing_priority->priority, "stun parse missing priority");
 
     const auto missing_ice_controlling = parse_stun_binding_request(
@@ -2429,8 +2410,8 @@ void test_stun_ice_connectivity_check_contract()
     require(missing_ice_controlling.has_value() && !missing_ice_controlling->ice_controlling && !missing_ice_controlling->ice_controlled,
             "stun parse missing ice role");
 
-    const auto ice_controlled =
-        parse_stun_binding_request(make_stun_request(username, password, transaction_id, false, stun_request_variant::ice_controlled), username, password);
+    const auto ice_controlled = parse_stun_binding_request(
+        make_stun_request(username, password, transaction_id, false, stun_request_variant::ice_controlled), username, password);
     require(ice_controlled.has_value() && ice_controlled->ice_controlled && !ice_controlled->ice_controlling, "stun parse ice controlled peer");
 
     require(!parse_stun_binding_request(
@@ -2446,8 +2427,8 @@ void test_stun_ice_connectivity_check_contract()
     constexpr std::array<std::uint16_t, 2> required_attributes{0x1234, 0x2345};
     const auto unknown_required = parse_stun_binding_request(
         make_stun_request(username, password, transaction_id, false, stun_request_variant::valid, required_attributes), username, password);
-    require(unknown_required.has_value() && unknown_required->unknown_required_attributes ==
-                                                std::vector<std::uint16_t>(required_attributes.begin(), required_attributes.end()),
+    require(unknown_required.has_value() &&
+                unknown_required->unknown_required_attributes == std::vector<std::uint16_t>(required_attributes.begin(), required_attributes.end()),
             "stun collect unknown required attributes");
 
     constexpr std::array<std::uint16_t, 1> optional_attributes{0x9234};
@@ -2486,8 +2467,8 @@ void test_whep_stun_unknown_attribute_contract()
 
     constexpr std::array<std::uint16_t, 1> single_unknown{0x1234};
     const std::array<std::uint8_t, 12> single_id{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-    const auto single_response =
-        exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, single_id, true, stun_request_variant::valid, single_unknown));
+    const auto single_response = exchange_stun(
+        io, client, server_endpoint, make_stun_request(username, local_pwd, single_id, true, stun_request_variant::valid, single_unknown));
     require_stun_error(single_response, single_id, 420, single_unknown, local_pwd);
     require(!session->ice_connected(), "stun unknown does not nominate");
 
@@ -2500,16 +2481,17 @@ void test_whep_stun_unknown_attribute_contract()
     constexpr std::array<std::uint16_t, 1> optional_unknown{0x9234};
     const std::array<std::uint8_t, 12> optional_id{3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
     require_stun_success(
-        exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, optional_id, false, stun_request_variant::valid, optional_unknown)),
+        exchange_stun(
+            io, client, server_endpoint, make_stun_request(username, local_pwd, optional_id, false, stun_request_variant::valid, optional_unknown)),
         optional_id);
     require(!session->ice_connected(), "stun optional unknown does not nominate");
 
     const std::array<std::uint8_t, 12> role_conflict_id{4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
-    const auto role_conflict_response = exchange_stun(
-        io,
-        client,
-        server_endpoint,
-        make_stun_request(username, local_pwd, role_conflict_id, false, stun_request_variant::ice_controlled, single_unknown));
+    const auto role_conflict_response =
+        exchange_stun(io,
+                      client,
+                      server_endpoint,
+                      make_stun_request(username, local_pwd, role_conflict_id, false, stun_request_variant::ice_controlled, single_unknown));
     require_stun_error(role_conflict_response, role_conflict_id, 420, single_unknown, local_pwd);
 
     const std::array<std::uint8_t, 12> unauthenticated_id{5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5};
@@ -2550,14 +2532,17 @@ void test_whep_ice_lite()
     const auto username = local_ufrag + ":remotevideo";
 
     const std::array<std::uint8_t, 12> role_conflict_id{12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
-    const auto role_conflict_response =
-        exchange_stun(io, client, server_endpoint, make_stun_request(username, local_pwd, role_conflict_id, true, stun_request_variant::ice_controlled));
+    const auto role_conflict_response = exchange_stun(
+        io, client, server_endpoint, make_stun_request(username, local_pwd, role_conflict_id, true, stun_request_variant::ice_controlled));
     require_stun_error(role_conflict_response, role_conflict_id, 487, {}, local_pwd);
     require(!session->ice_connected(), "ice role conflict not nominated");
 
     const std::array<std::uint8_t, 12> after_integrity_id{1, 3, 5, 7, 9, 11, 2, 4, 6, 8, 10, 12};
-    const auto after_integrity_response = exchange_stun(
-        io, client, server_endpoint, make_stun_request(username, local_pwd, after_integrity_id, true, stun_request_variant::use_candidate_after_integrity));
+    const auto after_integrity_response =
+        exchange_stun(io,
+                      client,
+                      server_endpoint,
+                      make_stun_request(username, local_pwd, after_integrity_id, true, stun_request_variant::use_candidate_after_integrity));
     require_stun_success(after_integrity_response, after_integrity_id);
     require(!session->ice_connected(), "ice use candidate after message integrity ignored");
 
@@ -2672,8 +2657,9 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     require(session->dtls_connected(), "dtls server connected");
     require(std::string_view(SSL_get_cipher_name(client->ssl.get())) == "ECDHE-ECDSA-AES128-GCM-SHA256", "dtls mandatory webrtc cipher");
     const auto* selected_srtp_profile = SSL_get_selected_srtp_profile(client->ssl.get());
-    require(selected_srtp_profile != nullptr && selected_srtp_profile->name != nullptr && std::string_view(selected_srtp_profile->name) == srtp_profile,
-            "dtls srtp profile");
+    require(
+        selected_srtp_profile != nullptr && selected_srtp_profile->name != nullptr && std::string_view(selected_srtp_profile->name) == srtp_profile,
+        "dtls srtp profile");
     std::unique_ptr<X509, decltype(&X509_free)> peer_certificate(SSL_get1_peer_certificate(client->ssl.get()), &X509_free);
     require(peer_certificate != nullptr && X509_cmp(peer_certificate.get(), server_certificate->certificate()) == 0,
             "dtls server certificate matches answer");
@@ -2713,7 +2699,8 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     srtp_t peer_receiver{};
     require(srtp_create(&peer_receiver, &peer_receive_policy) == srtp_err_status_ok, "srtp peer receiver create");
 
-    const auto unprotect_server_packet = [peer_receiver](std::span<const std::uint8_t> packet) -> std::optional<test_srtp_packet> {
+    const auto unprotect_server_packet = [peer_receiver](std::span<const std::uint8_t> packet) -> std::optional<test_srtp_packet>
+    {
         if (packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
         {
             return std::nullopt;

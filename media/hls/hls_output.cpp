@@ -1,24 +1,24 @@
-#include "media/hls/hls_output.h"
+#include <cmath>
+#include <limits>
+#include <cstdlib>
+#include <cstring>
+#include <iomanip>
+#include <sstream>
+#include <algorithm>
 
-#include "media/codec/codec_utils.h"
 #include <spdlog/spdlog.h>
+
+#include "media/hls/hls_output.h"
+#include "media/codec/codec_utils.h"
 
 extern "C"
 {
 #include "aom-av1.h"
-#include "fmp4-writer.h"
 #include "mpeg-ts.h"
-#include "mpeg-proto.h"
 #include "mov-format.h"
+#include "mpeg-proto.h"
+#include "fmp4-writer.h"
 }
-
-#include <algorithm>
-#include <cmath>
-#include <cstdlib>
-#include <cstring>
-#include <iomanip>
-#include <limits>
-#include <sstream>
 
 namespace media_server
 {
@@ -335,9 +335,8 @@ int hls_output::mov_seek(void* param, std::int64_t offset)
 std::int64_t hls_output::mov_tell(void* param)
 {
     const auto* self = static_cast<hls_output*>(param);
-    return self->mov_position_ <= static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())
-        ? static_cast<std::int64_t>(self->mov_position_)
-        : -1;
+    return self->mov_position_ <= static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ? static_cast<std::int64_t>(self->mov_position_)
+                                                                                                     : -1;
 }
 
 void hls_output::reset_fmp4(bool clear_segments, bool clear_video_config)
@@ -437,8 +436,8 @@ bool hls_output::ensure_fmp4(const media_frame& frame)
         mov_target_ = nullptr;
         return false;
     }
-    fmp4_video_track_ = fmp4_writer_add_video(
-        fmp4_, MOV_OBJECT_AV1, fmp4_video_width_, fmp4_video_height_, fmp4_video_config_.data(), fmp4_video_config_.size());
+    fmp4_video_track_ =
+        fmp4_writer_add_video(fmp4_, MOV_OBJECT_AV1, fmp4_video_width_, fmp4_video_height_, fmp4_video_config_.data(), fmp4_video_config_.size());
     if (fmp4_video_track_ < 0)
     {
         reset_fmp4(false, false);
@@ -456,8 +455,8 @@ bool hls_output::ensure_fmp4(const media_frame& frame)
             reset_fmp4(false, false);
             return false;
         }
-        fmp4_audio_track_ = fmp4_writer_add_audio(fmp4_, MOV_OBJECT_AAC, track.channel_count, 16, static_cast<int>(track.clock_rate),
-                                                   track.codec_config.data(), track.codec_config.size());
+        fmp4_audio_track_ = fmp4_writer_add_audio(
+            fmp4_, MOV_OBJECT_AAC, track.channel_count, 16, static_cast<int>(track.clock_rate), track.codec_config.data(), track.codec_config.size());
         if (fmp4_audio_track_ < 0)
         {
             reset_fmp4(false, false);
@@ -652,7 +651,6 @@ void hls_output::finish_segment(std::int64_t end_pts_ns)
     {
         segments_.pop_front();
     }
-
 }
 
 int hls_output::add_track_to_muxer(const media_track& track)
@@ -667,12 +665,12 @@ int hls_output::add_track_to_muxer(const media_track& track)
             return mpeg_ts_add_stream(muxer_, PSI_STREAM_AAC, nullptr, 0);
         case codec_id::g711a:
             return track.clock_rate == 8'000 && track.channel_count == 1 && track.codec_config.empty()
-                ? mpeg_ts_add_stream(muxer_, PSI_STREAM_AUDIO_G711A, nullptr, 0)
-                : -1;
+                       ? mpeg_ts_add_stream(muxer_, PSI_STREAM_AUDIO_G711A, nullptr, 0)
+                       : -1;
         case codec_id::g711u:
             return track.clock_rate == 8'000 && track.channel_count == 1 && track.codec_config.empty()
-                ? mpeg_ts_add_stream(muxer_, PSI_STREAM_AUDIO_G711U, nullptr, 0)
-                : -1;
+                       ? mpeg_ts_add_stream(muxer_, PSI_STREAM_AUDIO_G711U, nullptr, 0)
+                       : -1;
         case codec_id::av1:
         case codec_id::opus:
             return -1;

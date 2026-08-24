@@ -1,11 +1,11 @@
 #ifndef MEDIA_WEBRTC_DTLS_CERTIFICATE_H
 #define MEDIA_WEBRTC_DTLS_CERTIFICATE_H
 
-#include <openssl/evp.h>
-#include <openssl/x509.h>
-
 #include <memory>
 #include <string>
+
+#include <openssl/evp.h>
+#include <openssl/x509.h>
 
 namespace media_server
 {

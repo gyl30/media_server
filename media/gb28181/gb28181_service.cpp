@@ -1,23 +1,22 @@
-#include "media/gb28181/gb28181_service.h"
-
-#include "media/gb28181/gb28181_sdp.h"
-#include "media/gb28181/gb28181_output_media.h"
-#include "media/gb28181/gb28181_tcp_output_session.h"
-#include "media/gb28181/gb28181_tcp_session.h"
-#include "media/gb28181/gb28181_udp_output_session.h"
-#include "media/gb28181/gb28181_udp_session.h"
-#include "media/net/io_context_pool.h"
-#include "media/net/tcp_connector.h"
-#include "media/net/tcp_listener.h"
+#include <map>
+#include <mutex>
+#include <chrono>
+#include <utility>
+#include <variant>
+#include <type_traits>
 
 #include <spdlog/spdlog.h>
 
-#include <chrono>
-#include <map>
-#include <mutex>
-#include <type_traits>
-#include <utility>
-#include <variant>
+#include "media/net/tcp_listener.h"
+#include "media/net/tcp_connector.h"
+#include "media/gb28181/gb28181_sdp.h"
+#include "media/net/io_context_pool.h"
+#include "media/gb28181/gb28181_service.h"
+#include "media/gb28181/gb28181_tcp_session.h"
+#include "media/gb28181/gb28181_udp_session.h"
+#include "media/gb28181/gb28181_output_media.h"
+#include "media/gb28181/gb28181_tcp_output_session.h"
+#include "media/gb28181/gb28181_udp_output_session.h"
 
 namespace media_server
 {
@@ -117,10 +116,10 @@ gb28181_service::gb28181_service(stream_registry& registry, io_context_pool* wor
 gb28181_service::~gb28181_service() { shutdown(); }
 
 gb28181_create_error gb28181_service::create(boost::asio::any_io_executor executor,
-                                               std::string stream_name,
-                                               std::string_view sdp,
-                                               std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
-                                               std::optional<std::uint16_t> remote_rtcp_port)
+                                             std::string stream_name,
+                                             std::string_view sdp,
+                                             std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
+                                             std::optional<std::uint16_t> remote_rtcp_port)
 {
     if (stream_name.empty())
     {
@@ -138,9 +137,8 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
         {
             return gb28181_create_error::invalid_sdp;
         }
-        if (remote_rtp_endpoint &&
-            (remote_rtp_endpoint->port() == 0 || remote_rtp_endpoint->address().is_unspecified() ||
-             remote_rtp_endpoint->address().is_v4() != description->address.is_v4()))
+        if (remote_rtp_endpoint && (remote_rtp_endpoint->port() == 0 || remote_rtp_endpoint->address().is_unspecified() ||
+                                    remote_rtp_endpoint->address().is_v4() != description->address.is_v4()))
         {
             return gb28181_create_error::invalid_sdp;
         }
@@ -166,16 +164,15 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
             return gb28181_create_error::internal_error;
         }
         std::erase_if(state_->sessions, [](const auto& entry) { return resource_expired(entry.second.resource); });
-        if (!state_->sessions
-                 .emplace(stream_name, session_entry{.generation = generation, .resource = std::monostate{}})
-                 .second)
+        if (!state_->sessions.emplace(stream_name, session_entry{.generation = generation, .resource = std::monostate{}}).second)
         {
             return gb28181_create_error::duplicate_stream;
         }
     }
 
     const std::weak_ptr<state> weak_state = state_;
-    auto start_tcp_session = [weak_state, registry = &registry_, stream_name, description = *description, generation](boost::asio::ip::tcp::socket socket) mutable
+    auto start_tcp_session =
+        [weak_state, registry = &registry_, stream_name, description = *description, generation](boost::asio::ip::tcp::socket socket) mutable
     {
         const auto shared_state = weak_state.lock();
         if (!shared_state)
@@ -194,8 +191,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
             }
         }
 
-        auto session = std::make_shared<gb28181_tcp_session>(
-            *registry, std::move(socket), stream_name, description.payload_type, description.ssrc);
+        auto session = std::make_shared<gb28181_tcp_session>(*registry, std::move(socket), stream_name, description.payload_type, description.ssrc);
         if (!session->startup())
         {
             session->shutdown();
@@ -228,11 +224,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     if (description->transport == gb28181_transport::udp)
     {
         auto session = std::make_shared<gb28181_udp_session>(
-            registry_,
-            executor,
-            stream_name,
-            *description,
-            gb28181_udp_peer{.rtp = std::move(remote_rtp_endpoint), .rtcp_port = *remote_rtcp_port});
+            registry_, executor, stream_name, *description, gb28181_udp_peer{.rtp = std::move(remote_rtp_endpoint), .rtcp_port = *remote_rtcp_port});
         if (!session->startup())
         {
             std::scoped_lock lock(state_->mutex);
@@ -248,29 +240,28 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     else if (description->transport == gb28181_transport::tcp_active)
     {
         auto connector = std::make_shared<tcp_connector>(executor);
-        connector->startup(
-            boost::asio::ip::tcp::endpoint{description->address, description->rtp_port},
-            tcp_establishment_timeout,
-            [weak_state, stream_name, generation, start_tcp_session = std::move(start_tcp_session)](boost::system::error_code error,
-                                                                                                     boost::asio::ip::tcp::socket socket) mutable
-            {
-                if (!error)
-                {
-                    start_tcp_session(std::move(socket));
-                    return;
-                }
+        connector->startup(boost::asio::ip::tcp::endpoint{description->address, description->rtp_port},
+                           tcp_establishment_timeout,
+                           [weak_state, stream_name, generation, start_tcp_session = std::move(start_tcp_session)](
+                               boost::system::error_code error, boost::asio::ip::tcp::socket socket) mutable
+                           {
+                               if (!error)
+                               {
+                                   start_tcp_session(std::move(socket));
+                                   return;
+                               }
 
-                if (const auto shared_state = weak_state.lock())
-                {
-                    std::scoped_lock lock(shared_state->mutex);
-                    const auto iterator = shared_state->sessions.find(stream_name);
-                    if (iterator != shared_state->sessions.end() && iterator->second.generation == generation)
-                    {
-                        shared_state->sessions.erase(iterator);
-                    }
-                }
-                spdlog::warn("gb28181 tcp connect failed stream {} error {}", stream_name, error.message());
-            });
+                               if (const auto shared_state = weak_state.lock())
+                               {
+                                   std::scoped_lock lock(shared_state->mutex);
+                                   const auto iterator = shared_state->sessions.find(stream_name);
+                                   if (iterator != shared_state->sessions.end() && iterator->second.generation == generation)
+                                   {
+                                       shared_state->sessions.erase(iterator);
+                                   }
+                               }
+                               spdlog::warn("gb28181 tcp connect failed stream {} error {}", stream_name, error.message());
+                           });
         resource = std::weak_ptr<tcp_connector>{connector};
     }
     else
@@ -313,11 +304,8 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     return gb28181_create_error::none;
 }
 
-gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_executor executor,
-                                                           std::string stream_name,
-                                                           std::string output_id,
-                                                           bool rtcp,
-                                                           std::string_view sdp)
+gb28181_output_create_error gb28181_service::create_output(
+    boost::asio::any_io_executor executor, std::string stream_name, std::string output_id, bool rtcp, std::string_view sdp)
 {
     if (stream_name.empty() || output_id.empty())
     {
@@ -357,9 +345,7 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
             return gb28181_output_create_error::internal_error;
         }
         std::erase_if(state_->outputs, [](const auto& entry) { return resource_expired(entry.second.resource); });
-        if (!state_->outputs
-                 .emplace(key, output_entry{.generation = generation, .resource = std::monostate{}})
-                 .second)
+        if (!state_->outputs.emplace(key, output_entry{.generation = generation, .resource = std::monostate{}}).second)
         {
             return gb28181_output_create_error::duplicate_output;
         }
@@ -367,7 +353,8 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
 
     const std::weak_ptr<state> weak_state = state_;
     const std::weak_ptr<media_stream> weak_stream = stream;
-    auto start_tcp_output = [weak_state, weak_stream, key, stream_name, description = *description, generation](boost::asio::ip::tcp::socket socket) mutable
+    auto start_tcp_output =
+        [weak_state, weak_stream, key, stream_name, description = *description, generation](boost::asio::ip::tcp::socket socket) mutable
     {
         const auto shared_state = weak_state.lock();
         if (!shared_state)
@@ -400,8 +387,7 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
             return;
         }
 
-        auto session = std::make_shared<gb28181_tcp_output_session>(
-            std::move(socket), source, description.payload_type, description.ssrc);
+        auto session = std::make_shared<gb28181_tcp_output_session>(std::move(socket), source, description.payload_type, description.ssrc);
         if (!session->startup())
         {
             session->shutdown();
@@ -449,29 +435,28 @@ gb28181_output_create_error gb28181_service::create_output(boost::asio::any_io_e
     else if (description->transport == gb28181_transport::tcp_active)
     {
         auto connector = std::make_shared<tcp_connector>(executor);
-        connector->startup(
-            boost::asio::ip::tcp::endpoint{description->address, description->rtp_port},
-            tcp_establishment_timeout,
-            [weak_state, key, generation, start_tcp_output = std::move(start_tcp_output)](boost::system::error_code error,
-                                                                                           boost::asio::ip::tcp::socket socket) mutable
-            {
-                if (!error)
-                {
-                    start_tcp_output(std::move(socket));
-                    return;
-                }
+        connector->startup(boost::asio::ip::tcp::endpoint{description->address, description->rtp_port},
+                           tcp_establishment_timeout,
+                           [weak_state, key, generation, start_tcp_output = std::move(start_tcp_output)](boost::system::error_code error,
+                                                                                                         boost::asio::ip::tcp::socket socket) mutable
+                           {
+                               if (!error)
+                               {
+                                   start_tcp_output(std::move(socket));
+                                   return;
+                               }
 
-                if (const auto shared_state = weak_state.lock())
-                {
-                    std::scoped_lock lock(shared_state->mutex);
-                    const auto iterator = shared_state->outputs.find(key);
-                    if (iterator != shared_state->outputs.end() && iterator->second.generation == generation)
-                    {
-                        shared_state->outputs.erase(iterator);
-                    }
-                }
-                spdlog::warn("gb28181 tcp output connect failed stream {} output {} error {}", key.first, key.second, error.message());
-            });
+                               if (const auto shared_state = weak_state.lock())
+                               {
+                                   std::scoped_lock lock(shared_state->mutex);
+                                   const auto iterator = shared_state->outputs.find(key);
+                                   if (iterator != shared_state->outputs.end() && iterator->second.generation == generation)
+                                   {
+                                       shared_state->outputs.erase(iterator);
+                                   }
+                               }
+                               spdlog::warn("gb28181 tcp output connect failed stream {} output {} error {}", key.first, key.second, error.message());
+                           });
         resource = std::weak_ptr<tcp_connector>{connector};
     }
     else

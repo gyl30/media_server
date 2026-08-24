@@ -1,8 +1,10 @@
-#include "media/gb28181/gb28181_input_media.h"
-
-#include "media/codec/codec_utils.h"
+#include <vector>
+#include <utility>
 
 #include <spdlog/spdlog.h>
+
+#include "media/codec/codec_utils.h"
+#include "media/gb28181/gb28181_input_media.h"
 
 extern "C"
 {
@@ -11,9 +13,6 @@ extern "C"
 #include "rtp-packet.h"
 #include "rtsp-demuxer.h"
 }
-
-#include <utility>
-#include <vector>
 
 namespace media_server
 {
@@ -65,11 +64,8 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 
 }    // namespace
 
-gb28181_input_media::gb28181_input_media(stream_registry& registry,
-                                         boost::asio::any_io_executor executor,
-                                         std::string stream_name,
-                                         std::uint8_t payload_type,
-                                         std::uint32_t expected_ssrc)
+gb28181_input_media::gb28181_input_media(
+    stream_registry& registry, boost::asio::any_io_executor executor, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
     : registry_(registry),
       executor_(std::move(executor)),
       stream_name_(std::move(stream_name)),
@@ -327,20 +323,22 @@ bool gb28181_input_media::update_track_from_packet(const avpacket_t& packet)
     std::optional<media_track> track;
     if (input.codecid == AVCODEC_VIDEO_H264 && input.extra != nullptr && input.bytes > 0)
     {
-        auto config = h264_avcc_to_annex_b(
-            std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+        auto config =
+            h264_avcc_to_annex_b(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         if (!config.empty())
         {
-            track = media_track{.id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
+            track = media_track{
+                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
     else if (input.codecid == AVCODEC_VIDEO_H265 && input.extra != nullptr && input.bytes > 0)
     {
-        auto config = h265_hvcc_to_annex_b(
-            std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+        auto config =
+            h265_hvcc_to_annex_b(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         if (!config.empty())
         {
-            track = media_track{.id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
+            track = media_track{
+                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
     else if (input.codecid == AVCODEC_AUDIO_AAC && input.extra != nullptr && input.bytes > 0 && input.sample_rate > 0 && input.channels > 0)
@@ -368,7 +366,8 @@ bool gb28181_input_media::update_track_from_packet(const avpacket_t& packet)
     {
         return false;
     }
-    const bool changed = current->clock_rate != track->clock_rate || current->channel_count != track->channel_count || current->codec_config != track->codec_config;
+    const bool changed =
+        current->clock_rate != track->clock_rate || current->channel_count != track->channel_count || current->codec_config != track->codec_config;
     if (!changed)
     {
         return false;

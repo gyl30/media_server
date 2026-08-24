@@ -1,6 +1,6 @@
-#include "media/hls/hls_service.h"
-
 #include <algorithm>
+
+#include "media/hls/hls_service.h"
 
 namespace media_server
 {

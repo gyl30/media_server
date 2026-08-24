@@ -1,11 +1,11 @@
-#include "media/net/tcp_connection.h"
+#include <chrono>
+#include <cstring>
+#include <utility>
 
 #include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
 
-#include <chrono>
-#include <cstring>
-#include <utility>
+#include "media/net/tcp_connection.h"
 
 namespace media_server
 {

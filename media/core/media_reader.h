@@ -1,12 +1,12 @@
 #ifndef MEDIA_CORE_MEDIA_READER_H
 #define MEDIA_CORE_MEDIA_READER_H
 
-#include "media/core/media_types.h"
-
-#include <cstdint>
 #include <memory>
-#include <optional>
 #include <vector>
+#include <cstdint>
+#include <optional>
+
+#include "media/core/media_types.h"
 
 namespace media_server
 {

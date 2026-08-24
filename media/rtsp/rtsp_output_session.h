@@ -1,16 +1,16 @@
 #ifndef MEDIA_RTSP_RTSP_OUTPUT_SESSION_H
 #define MEDIA_RTSP_RTSP_OUTPUT_SESSION_H
 
-#include "media/codec/output_video_config.h"
-#include "media/codec/video_transcoder.h"
-#include "media/core/stream_registry.h"
-#include "media/rtsp/rtsp_output_track.h"
-#include "media/rtsp/rtsp_server_connection.h"
-
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
+#include <optional>
+
+#include "media/core/stream_registry.h"
+#include "media/codec/video_transcoder.h"
+#include "media/rtsp/rtsp_output_track.h"
+#include "media/codec/output_video_config.h"
+#include "media/rtsp/rtsp_server_connection.h"
 
 struct rtsp_server_t;
 struct rtsp_header_transport_t;
@@ -33,11 +33,8 @@ class rtsp_output_session final : public std::enable_shared_from_this<rtsp_outpu
     [[nodiscard]] std::size_t on_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
     int on_describe(rtsp_server_t* server, std::string_view uri);
-    int on_setup(rtsp_server_t* server,
-                 std::string_view uri,
-                 std::string_view session,
-                 const rtsp_header_transport_t transports[],
-                 std::size_t count);
+    int on_setup(
+        rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt);
     int on_teardown(rtsp_server_t* server, std::string_view session);
     [[nodiscard]] int prepare_stream(std::string_view uri);

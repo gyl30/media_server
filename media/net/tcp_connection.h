@@ -1,15 +1,15 @@
 #ifndef MEDIA_NET_TCP_CONNECTION_H
 #define MEDIA_NET_TCP_CONNECTION_H
 
-#include <boost/asio.hpp>
-
-#include <array>
-#include <cstdint>
-#include <deque>
-#include <functional>
-#include <memory>
 #include <span>
+#include <array>
+#include <deque>
+#include <memory>
 #include <vector>
+#include <cstdint>
+#include <functional>
+
+#include <boost/asio.hpp>
 
 namespace media_server
 {

@@ -1,13 +1,13 @@
-#include "media/http/http_session.h"
-
-#include <boost/asio/post.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/beast/http/chunk_encode.hpp>
-#include <boost/url/parse.hpp>
-
-#include <charconv>
 #include <chrono>
 #include <utility>
+#include <charconv>
+
+#include <boost/asio/post.hpp>
+#include <boost/url/parse.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/beast/http/chunk_encode.hpp>
+
+#include "media/http/http_session.h"
 
 namespace media_server
 {
@@ -153,8 +153,7 @@ void http_session::handle_whep(const std::vector<std::string>& segments)
         return;
     }
 
-    const std::string_view allow =
-        session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS";
+    const std::string_view allow = session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS";
     // 本实现只支持一次完整 SDP POST/answer，不支持 PATCH/Trickle ICE。
     send_whep_error_response(boost::beast::http::status::method_not_allowed, "method not allowed\n", 0, allow);
 }
@@ -290,8 +289,7 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
         {
             remote_rtp_endpoint.emplace(*remote_rtp_address, *remote_rtp_port);
         }
-        switch (gb28181_.create(
-            stream_.get_executor(), stream_name, request_.body(), std::move(remote_rtp_endpoint), remote_rtcp_port))
+        switch (gb28181_.create(stream_.get_executor(), stream_name, request_.body(), std::move(remote_rtp_endpoint), remote_rtcp_port))
         {
             case gb28181_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
@@ -622,8 +620,7 @@ void http_session::write_string_response(std::shared_ptr<boost::beast::http::res
                                     });
 }
 
-void http_session::send_text_response(
-    boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow)
+void http_session::send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
@@ -639,8 +636,7 @@ void http_session::send_text_response(
     write_string_response(std::move(response));
 }
 
-void http_session::send_whep_error_response(
-    boost::beast::http::status status, std::string body, int retry_after_seconds, std::string_view allow)
+void http_session::send_whep_error_response(boost::beast::http::status status, std::string body, int retry_after_seconds, std::string_view allow)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");

@@ -1,15 +1,15 @@
 #ifndef MEDIA_GB28181_GB28181_INPUT_MEDIA_H
 #define MEDIA_GB28181_GB28181_INPUT_MEDIA_H
 
-#include "media/core/stream_registry.h"
+#include <span>
+#include <memory>
+#include <string>
+#include <cstdint>
+#include <optional>
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include <cstdint>
-#include <memory>
-#include <optional>
-#include <span>
-#include <string>
+#include "media/core/stream_registry.h"
 
 extern "C"
 {

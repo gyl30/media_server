@@ -1,17 +1,17 @@
 #ifndef MEDIA_HLS_SERVICE_H
 #define MEDIA_HLS_SERVICE_H
 
-#include "media/core/stream_registry.h"
-#include "media/hls/hls_output.h"
-
-#include <chrono>
 #include <map>
-#include <memory>
 #include <mutex>
-#include <optional>
+#include <chrono>
+#include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
+#include <optional>
+#include <string_view>
+
+#include "media/hls/hls_output.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {

@@ -1,12 +1,12 @@
 #ifndef MEDIA_CODEC_CODEC_UTILS_H
 #define MEDIA_CODEC_CODEC_UTILS_H
 
-#include "media/core/media_types.h"
-
-#include <cstdint>
-#include <optional>
 #include <span>
 #include <vector>
+#include <cstdint>
+#include <optional>
+
+#include "media/core/media_types.h"
 
 namespace media_server
 {

@@ -1,15 +1,15 @@
 #ifndef MEDIA_RTSP_RTSP_SERVER_CONNECTION_H
 #define MEDIA_RTSP_RTSP_SERVER_CONNECTION_H
 
-#include "media/net/tcp_connection.h"
+#include <span>
+#include <memory>
+#include <string>
+#include <cstdint>
+#include <functional>
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <span>
-#include <string>
+#include "media/net/tcp_connection.h"
 
 extern "C"
 {
@@ -52,15 +52,13 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     static int describe_callback(void* param, rtsp_server_t* server, const char* uri);
     static int setup_callback(
         void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count);
-    static int play_callback(
-        void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale);
+    static int play_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale);
     static int teardown_callback(void* param, rtsp_server_t* server, const char* uri, const char* session);
     static int announce_callback(void* param, rtsp_server_t* server, const char* uri, const char* sdp, int length);
     static int record_callback(
         void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale);
     static int options_callback(void* param, rtsp_server_t* server, const char* uri);
-    static int get_parameter_callback(
-        void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
+    static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
 
     void on_tcp_read(std::span<const std::uint8_t> data);
     void safe_shutdown();

@@ -1,10 +1,10 @@
-#include "media/core/media_stream.h"
-
-#include <boost/asio/dispatch.hpp>
-#include <boost/asio/post.hpp>
-
-#include <algorithm>
 #include <utility>
+#include <algorithm>
+
+#include <boost/asio/post.hpp>
+#include <boost/asio/dispatch.hpp>
+
+#include "media/core/media_stream.h"
 
 namespace media_server
 {
@@ -25,11 +25,8 @@ namespace
 constexpr std::size_t max_gop_frames = 2500;
 constexpr std::size_t max_read_batch_entries = 128;
 
-void release_read_outstanding(const std::shared_ptr<media_reader_state>& state)
-{
-    state->read_outstanding.store(false, std::memory_order_release);
-}
-}
+void release_read_outstanding(const std::shared_ptr<media_reader_state>& state) { state->read_outstanding.store(false, std::memory_order_release); }
+}    // namespace
 
 media_reader_handle::media_reader_handle(std::weak_ptr<media_stream> stream, std::shared_ptr<media_reader_state> state)
     : stream_(std::move(stream)), state_(std::move(state))
@@ -102,8 +99,7 @@ void media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
     boost::asio::dispatch(owner_executor_, [self, sink]() { self->add_sink_on_owner(sink); });
 }
 
-media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader,
-                                             boost::asio::any_io_executor executor)
+media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::any_io_executor executor)
 {
     const auto self = weak_from_this().lock();
     if (!reader || !executor || !self)

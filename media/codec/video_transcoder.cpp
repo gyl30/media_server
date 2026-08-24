@@ -1,24 +1,24 @@
-#include "media/codec/video_transcoder.h"
+#include <cerrno>
+#include <limits>
+#include <string>
+#include <cstring>
+#include <algorithm>
 
 #include <spdlog/spdlog.h>
 
+#include "media/codec/video_transcoder.h"
+
 extern "C"
 {
-#include <libavcodec/avcodec.h>
+#include <libavutil/mem.h>
+#include <libavutil/opt.h>
 #include <libavutil/dict.h>
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
-#include <libavutil/mem.h>
-#include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
+#include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
 }
-
-#include <algorithm>
-#include <cerrno>
-#include <cstring>
-#include <limits>
-#include <string>
 
 namespace media_server
 {
@@ -37,10 +37,7 @@ std::string ffmpeg_error(int error)
     return buffer;
 }
 
-AVCodecID ffmpeg_codec(codec_id codec)
-{
-    return codec == codec_id::h264 ? AV_CODEC_ID_H264 : AV_CODEC_ID_HEVC;
-}
+AVCodecID ffmpeg_codec(codec_id codec) { return codec == codec_id::h264 ? AV_CODEC_ID_H264 : AV_CODEC_ID_HEVC; }
 
 }    // namespace
 
@@ -74,9 +71,9 @@ bool video_transcoder::startup(const video_transcoder_config& config)
     shutdown();
 
     const bool annex_b_config = config.input_codec_config.size() >= 4 && config.input_codec_config[0] == 0 && config.input_codec_config[1] == 0 &&
-        ((config.input_codec_config[2] == 1) || (config.input_codec_config[2] == 0 && config.input_codec_config[3] == 1));
-    if ((config.input_codec != codec_id::h264 && config.input_codec != codec_id::h265) || config.output_codec != codec_id::av1 ||
-        !annex_b_config || config.input_codec_config.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+                                ((config.input_codec_config[2] == 1) || (config.input_codec_config[2] == 0 && config.input_codec_config[3] == 1));
+    if ((config.input_codec != codec_id::h264 && config.input_codec != codec_id::h265) || config.output_codec != codec_id::av1 || !annex_b_config ||
+        config.input_codec_config.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
         (config.av1 && (config.av1->profile != 0 || config.av1->tier != 0)))
     {
         spdlog::error("video transcoder invalid config input {} output {} config_bytes {}",
@@ -178,10 +175,10 @@ void video_transcoder::shutdown()
 bool video_transcoder::transcode(const media_frame& input, std::vector<media_frame>& output)
 {
     const bool annex_b_payload = input.payload && input.payload->size() >= 4 && (*input.payload)[0] == 0 && (*input.payload)[1] == 0 &&
-        (((*input.payload)[2] == 1) || ((*input.payload)[2] == 0 && (*input.payload)[3] == 1));
+                                 (((*input.payload)[2] == 1) || ((*input.payload)[2] == 0 && (*input.payload)[3] == 1));
     if (!state_ || state_->input_ended || !input.payload || input.payload->empty() || input.pts_ns == AV_NOPTS_VALUE ||
-        input.dts_ns == AV_NOPTS_VALUE || input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
-        !annex_b_payload || (state_->timeline_started && input.track != state_->output_track))
+        input.dts_ns == AV_NOPTS_VALUE || input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) || !annex_b_payload ||
+        (state_->timeline_started && input.track != state_->output_track))
     {
         return false;
     }
@@ -377,7 +374,8 @@ bool video_transcoder::startup_encoder()
     }
     SwsContext* scaler{};
     AVFrame* converted_frame{};
-    const auto cleanup = [&]() {
+    const auto cleanup = [&]()
+    {
         if (converted_frame != nullptr)
         {
             av_frame_free(&converted_frame);
@@ -399,9 +397,8 @@ bool video_transcoder::startup_encoder()
     }
     encoder_context->framerate = state_->decoder->framerate;
     // libaom 的 presentation time 为 32 位，不能直接使用核心层的纳秒时间基。
-    encoder_context->time_base = encoder_context->framerate.num > 0 && encoder_context->framerate.den > 0
-        ? av_inv_q(encoder_context->framerate)
-        : AVRational{1, 1'000};
+    encoder_context->time_base =
+        encoder_context->framerate.num > 0 && encoder_context->framerate.den > 0 ? av_inv_q(encoder_context->framerate) : AVRational{1, 1'000};
     encoder_context->color_range = state_->decoded_frame->color_range;
     encoder_context->color_primaries = state_->decoded_frame->color_primaries;
     encoder_context->color_trc = state_->decoded_frame->color_trc;
@@ -413,8 +410,7 @@ bool video_transcoder::startup_encoder()
     {
         const auto level_idx = std::to_string(state_->av1->level_idx);
         if (av_dict_set(&aom_parameters, "target-seq-level-idx", level_idx.c_str(), 0) < 0 ||
-            av_dict_set(&aom_parameters, "set-tier-mask", "0", 0) < 0 ||
-            av_dict_set(&aom_parameters, "strict-level-conformance", "1", 0) < 0)
+            av_dict_set(&aom_parameters, "set-tier-mask", "0", 0) < 0 || av_dict_set(&aom_parameters, "strict-level-conformance", "1", 0) < 0)
         {
             av_dict_free(&aom_parameters);
             cleanup();
@@ -422,10 +418,9 @@ bool video_transcoder::startup_encoder()
             return false;
         }
     }
-    const bool options_failed = av_opt_set(encoder_context->priv_data, "usage", "realtime", 0) < 0 ||
-        av_opt_set_int(encoder_context->priv_data, "cpu-used", 8, 0) < 0 ||
-        av_opt_set_int(encoder_context->priv_data, "lag-in-frames", 0, 0) < 0 ||
-        av_opt_set_int(encoder_context->priv_data, "crf", 32, 0) < 0 ||
+    const bool options_failed =
+        av_opt_set(encoder_context->priv_data, "usage", "realtime", 0) < 0 || av_opt_set_int(encoder_context->priv_data, "cpu-used", 8, 0) < 0 ||
+        av_opt_set_int(encoder_context->priv_data, "lag-in-frames", 0, 0) < 0 || av_opt_set_int(encoder_context->priv_data, "crf", 32, 0) < 0 ||
         (aom_parameters != nullptr && av_opt_set_dict_val(encoder_context->priv_data, "aom-params", aom_parameters, 0) < 0);
     av_dict_free(&aom_parameters);
     if (options_failed)
@@ -448,17 +443,17 @@ bool video_transcoder::startup_encoder()
         AVPixelFormat scaler_input_format = decoded_format;
         switch (scaler_input_format)
         {
-        case AV_PIX_FMT_YUVJ420P:
-            scaler_input_format = AV_PIX_FMT_YUV420P;
-            break;
-        case AV_PIX_FMT_YUVJ422P:
-            scaler_input_format = AV_PIX_FMT_YUV422P;
-            break;
-        case AV_PIX_FMT_YUVJ444P:
-            scaler_input_format = AV_PIX_FMT_YUV444P;
-            break;
-        default:
-            break;
+            case AV_PIX_FMT_YUVJ420P:
+                scaler_input_format = AV_PIX_FMT_YUV420P;
+                break;
+            case AV_PIX_FMT_YUVJ422P:
+                scaler_input_format = AV_PIX_FMT_YUV422P;
+                break;
+            case AV_PIX_FMT_YUVJ444P:
+                scaler_input_format = AV_PIX_FMT_YUV444P;
+                break;
+            default:
+                break;
         }
         const int full_range = state_->decoded_frame->color_range == AVCOL_RANGE_JPEG ? 1 : 0;
         scaler = sws_alloc_context();
@@ -482,33 +477,27 @@ bool video_transcoder::startup_encoder()
         int sws_colorspace = SWS_CS_DEFAULT;
         switch (state_->decoded_frame->colorspace)
         {
-        case AVCOL_SPC_BT709:
-            sws_colorspace = SWS_CS_ITU709;
-            break;
-        case AVCOL_SPC_FCC:
-            sws_colorspace = SWS_CS_FCC;
-            break;
-        case AVCOL_SPC_BT470BG:
-        case AVCOL_SPC_SMPTE170M:
-            sws_colorspace = SWS_CS_SMPTE170M;
-            break;
-        case AVCOL_SPC_SMPTE240M:
-            sws_colorspace = SWS_CS_SMPTE240M;
-            break;
-        case AVCOL_SPC_BT2020_NCL:
-            sws_colorspace = SWS_CS_BT2020;
-            break;
-        default:
-            break;
+            case AVCOL_SPC_BT709:
+                sws_colorspace = SWS_CS_ITU709;
+                break;
+            case AVCOL_SPC_FCC:
+                sws_colorspace = SWS_CS_FCC;
+                break;
+            case AVCOL_SPC_BT470BG:
+            case AVCOL_SPC_SMPTE170M:
+                sws_colorspace = SWS_CS_SMPTE170M;
+                break;
+            case AVCOL_SPC_SMPTE240M:
+                sws_colorspace = SWS_CS_SMPTE240M;
+                break;
+            case AVCOL_SPC_BT2020_NCL:
+                sws_colorspace = SWS_CS_BT2020;
+                break;
+            default:
+                break;
         }
-        const int colorspace_result = sws_setColorspaceDetails(scaler,
-                                                               sws_getCoefficients(sws_colorspace),
-                                                               full_range,
-                                                               sws_getCoefficients(sws_colorspace),
-                                                               full_range,
-                                                               0,
-                                                               1 << 16,
-                                                               1 << 16);
+        const int colorspace_result = sws_setColorspaceDetails(
+            scaler, sws_getCoefficients(sws_colorspace), full_range, sws_getCoefficients(sws_colorspace), full_range, 0, 1 << 16, 1 << 16);
         if (colorspace_result < 0)
         {
             cleanup();
@@ -640,8 +629,8 @@ bool video_transcoder::receive_encoded(std::vector<media_frame>& output, bool dr
             .dts_ns = av_rescale_q(state_->output_packet->dts, state_->encoder->time_base, nanoseconds_time_base),
             .pts_ns = av_rescale_q(state_->output_packet->pts, state_->encoder->time_base, nanoseconds_time_base),
             .key_frame = (state_->output_packet->flags & AV_PKT_FLAG_KEY) != 0,
-            .payload = std::make_shared<const std::vector<std::uint8_t>>(
-                state_->output_packet->data, state_->output_packet->data + state_->output_packet->size),
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(state_->output_packet->data,
+                                                                         state_->output_packet->data + state_->output_packet->size),
         });
         spdlog::trace("video transcoder packet encoded bytes {} pts {} dts {} key {}",
                       state_->output_packet->size,

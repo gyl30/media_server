@@ -1,19 +1,17 @@
-#include "media/gb28181/gb28181_output_media.h"
-
-#include "media/codec/codec_utils.h"
-
-#include <boost/asio/post.hpp>
+#include <random>
+#include <utility>
 
 #include <spdlog/spdlog.h>
+#include <boost/asio/post.hpp>
+
+#include "media/codec/codec_utils.h"
+#include "media/gb28181/gb28181_output_media.h"
 
 extern "C"
 {
-#include "rtp-profile.h"
 #include "rtsp-muxer.h"
+#include "rtp-profile.h"
 }
-
-#include <random>
-#include <utility>
 
 namespace media_server
 {
@@ -226,16 +224,8 @@ bool gb28181_output_media::create_muxer(const std::vector<media_track>& tracks)
     }
 
     std::random_device device;
-    const auto payload = rtsp_muxer_add_payload(muxer_,
-                                                "RTP/AVP",
-                                                90'000,
-                                                payload_type_,
-                                                "PS",
-                                                static_cast<std::uint16_t>(device()),
-                                                ssrc_,
-                                                0,
-                                                nullptr,
-                                                0);
+    const auto payload =
+        rtsp_muxer_add_payload(muxer_, "RTP/AVP", 90'000, payload_type_, "PS", static_cast<std::uint16_t>(device()), ssrc_, 0, nullptr, 0);
     if (payload < 0)
     {
         return false;
@@ -266,8 +256,7 @@ bool gb28181_output_media::create_muxer(const std::vector<media_track>& tracks)
                 return false;
         }
 
-        const auto media = rtsp_muxer_add_media(
-            muxer_, payload, codec, track.codec_config.data(), static_cast<int>(track.codec_config.size()));
+        const auto media = rtsp_muxer_add_media(muxer_, payload, codec, track.codec_config.data(), static_cast<int>(track.codec_config.size()));
         if (media < 0)
         {
             return false;

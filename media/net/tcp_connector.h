@@ -1,14 +1,14 @@
 #ifndef MEDIA_NET_TCP_CONNECTOR_H
 #define MEDIA_NET_TCP_CONNECTOR_H
 
-#include <boost/asio/any_io_executor.hpp>
+#include <chrono>
+#include <memory>
+#include <functional>
+
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
-
-#include <chrono>
-#include <functional>
-#include <memory>
+#include <boost/asio/any_io_executor.hpp>
 
 namespace media_server
 {
