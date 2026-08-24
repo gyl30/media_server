@@ -40,6 +40,9 @@ class audio_transcoder final
    private:
     struct state;
 
+    bool initialize_decoder(const audio_transcoder_config& config);
+    bool initialize_encoder(const audio_transcoder_config& config);
+    bool allocate_buffers();
     bool receive_decoded(std::vector<media_frame>& output, bool draining);
     bool configure_resampler();
     bool resample_decoded();
