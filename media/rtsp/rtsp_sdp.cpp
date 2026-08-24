@@ -1,5 +1,6 @@
 #include <array>
 #include <cctype>
+#include <optional>
 #include <algorithm>
 
 #include "media/rtsp/rtsp_sdp.h"
@@ -25,6 +26,72 @@ bool rtsp_sdp_iequals(const char* value, std::string_view expected)
                       actual.end(),
                       expected.begin(),
                       [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
+}
+
+std::optional<std::uint16_t> rtsp_sdp_opus_channel_count(const char* fmtp)
+{
+    if (fmtp == nullptr)
+    {
+        return 1;
+    }
+
+    std::string_view parameters(fmtp);
+    if (const auto space = parameters.find(' '); space != std::string_view::npos)
+    {
+        parameters.remove_prefix(space + 1U);
+    }
+
+    while (!parameters.empty())
+    {
+        const auto separator = parameters.find(';');
+        auto parameter = parameters.substr(0, separator);
+        const auto first = parameter.find_first_not_of(" \t");
+        if (first != std::string_view::npos)
+        {
+            parameter.remove_prefix(first);
+            const auto last = parameter.find_last_not_of(" \t");
+            parameter = parameter.substr(0, last + 1U);
+        }
+
+        const auto equals = parameter.find('=');
+        if (equals != std::string_view::npos)
+        {
+            auto name = parameter.substr(0, equals);
+            auto value = parameter.substr(equals + 1U);
+            while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back())) != 0)
+            {
+                name.remove_suffix(1U);
+            }
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0)
+            {
+                value.remove_prefix(1U);
+            }
+            const bool sprop_stereo = name.size() == std::string_view("sprop-stereo").size() &&
+                                      std::equal(name.begin(),
+                                                 name.end(),
+                                                 std::string_view("sprop-stereo").begin(),
+                                                 [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
+            if (sprop_stereo)
+            {
+                if (value == "0")
+                {
+                    return 1;
+                }
+                if (value == "1")
+                {
+                    return 2;
+                }
+                return std::nullopt;
+            }
+        }
+
+        if (separator == std::string_view::npos)
+        {
+            break;
+        }
+        parameters.remove_prefix(separator + 1U);
+    }
+    return 1;
 }
 
 bool rtsp_sdp_append_parameter_sets(std::vector<std::uint8_t>& config, std::string_view encoded)
