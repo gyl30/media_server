@@ -220,8 +220,16 @@ target_link_libraries(media_core PUBLIC
     ${MEDIA_SERVER_BOOST_LIBS}
 )
 
-add_executable(media_server main.cpp)
-target_link_libraries(media_server PRIVATE media_core media_server_link_options)
+add_executable(media_server
+    main.cpp
+    config.cpp
+    service.cpp
+)
+target_link_libraries(media_server PRIVATE
+    media_core
+    media_server_link_options
+    ${MEDIA_SERVER_BOOST_PROGRAM_OPTIONS_LIB}
+)
 
 if(BUILD_TESTING)
     add_test(NAME media_server_help COMMAND media_server --help)
@@ -229,6 +237,23 @@ if(BUILD_TESTING)
     set_tests_properties(media_server_invalid_config PROPERTIES WILL_FAIL TRUE)
     add_test(NAME media_server_invalid_threads COMMAND media_server --threads 0)
     set_tests_properties(media_server_invalid_threads PROPERTIES WILL_FAIL TRUE)
+
+    add_executable(config_tests
+        tests/config_tests.cpp
+        config.cpp
+    )
+    target_include_directories(config_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(config_tests PRIVATE
+        media_server_build_options
+        media_server_link_options
+        Threads::Threads
+        ${MEDIA_SERVER_BOOST_PROGRAM_OPTIONS_LIB}
+    )
+    add_test(NAME config_tests COMMAND config_tests)
+
+    add_executable(service_tests tests/service_tests.cpp service.cpp)
+    target_link_libraries(service_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME service_tests COMMAND service_tests)
 
     add_executable(media_pipeline_tests tests/media_pipeline_tests.cpp)
     target_link_libraries(media_pipeline_tests PRIVATE media_core media_server_link_options)
