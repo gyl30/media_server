@@ -24,6 +24,30 @@ namespace media_server
 
 service::service(config cfg) : config_(std::move(cfg)) {}
 
+service::~service() = default;
+
+void service::stop()
+{
+    for (const auto& pull : pulls_)
+    {
+        if (const auto session = pull.lock())
+        {
+            session->shutdown();
+        }
+    }
+    pulls_.clear();
+
+    http_->shutdown();
+    http_.reset();
+    whep_->shutdown();
+    gb28181_->shutdown();
+    rtsp_->shutdown();
+    rtsp_.reset();
+    rtmp_->shutdown();
+    rtmp_.reset();
+    workers_->release_work();
+}
+
 int service::run()
 {
     configure_log_level();
@@ -36,47 +60,47 @@ int service::run()
         return 1;
     }
 
-    io_context_pool workers(config_.threads);
-    auto& control_io = workers.context(0);
-    stream_registry registry;
-    hls_service hls(registry, hls_config{.video = config_.http_video});
-    whep_service whep(registry, webrtc_address, config_.whep_video);
-    gb28181_service gb28181(registry, &workers);
-    if (!whep.ready())
+    workers_ = std::make_unique<io_context_pool>(config_.threads);
+    auto& control_io = workers_->context(0);
+    registry_ = std::make_unique<stream_registry>();
+    hls_ = std::make_unique<hls_service>(*registry_, hls_config{.video = config_.http_video});
+    whep_ = std::make_unique<whep_service>(*registry_, webrtc_address, config_.whep_video);
+    gb28181_ = std::make_unique<gb28181_service>(*registry_, workers_.get());
+    if (!whep_->ready())
     {
         spdlog::error("dtls certificate create failed");
         return 2;
     }
-    auto rtmp = std::make_shared<rtmp_server>(workers, registry, config_.rtmp_port, config_.rtmp_video);
-    auto rtsp = std::make_shared<rtsp_server>(workers, registry, config_.rtsp_port, config_.rtsp_video);
-    auto http = std::make_shared<http_server>(workers, registry, hls, whep, gb28181, config_.http_port, config_.http_video);
+    rtmp_ = std::make_shared<rtmp_server>(*workers_, *registry_, config_.rtmp_port, config_.rtmp_video);
+    rtsp_ = std::make_shared<rtsp_server>(*workers_, *registry_, config_.rtsp_port, config_.rtsp_video);
+    http_ = std::make_shared<http_server>(
+        *workers_, *registry_, *hls_, *whep_, *gb28181_, config_.http_port, config_.http_video);
 
-    if (const auto error = rtmp->startup())
+    if (const auto error = rtmp_->startup())
     {
         spdlog::error("rtmp listen failed port {} error {}", config_.rtmp_port, error.message());
         return 2;
     }
-    if (const auto error = rtsp->startup())
+    if (const auto error = rtsp_->startup())
     {
         spdlog::error("rtsp listen failed port {} error {}", config_.rtsp_port, error.message());
         return 2;
     }
-    if (const auto error = http->startup())
+    if (const auto error = http_->startup())
     {
         spdlog::error("http listen failed port {} error {}", config_.http_port, error.message());
         return 2;
     }
 
-    std::vector<std::weak_ptr<rtsp_pull_session>> pulls;
     for (const auto& [name, url] : config_.rtsp_pulls)
     {
-        auto pull = std::make_shared<rtsp_pull_session>(workers.next(), registry, name, url);
+        auto pull = std::make_shared<rtsp_pull_session>(workers_->next(), *registry_, name, url);
         if (!pull->startup())
         {
             spdlog::error("rtsp pull startup failed stream {}", name);
             return 2;
         }
-        pulls.push_back(std::move(pull));
+        pulls_.push_back(std::move(pull));
     }
 
     spdlog::info("rtmp listen {}", config_.rtmp_port);
@@ -90,30 +114,10 @@ int service::run()
     spdlog::info("gb28181 path gb28181/app/stream");
 
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
-    signals.async_wait(
-        [&](const boost::system::error_code&, int)
-        {
-            for (const auto& pull : pulls)
-            {
-                if (const auto session = pull.lock())
-                {
-                    session->shutdown();
-                }
-            }
-            pulls.clear();
-            http->shutdown();
-            http.reset();
-            whep.shutdown();
-            gb28181.shutdown();
-            rtsp->shutdown();
-            rtsp.reset();
-            rtmp->shutdown();
-            rtmp.reset();
-            workers.release_work();
-        });
+    signals.async_wait([this](const boost::system::error_code&, int) { stop(); });
 
-    spdlog::info("worker threads {}", workers.size());
-    workers.run();
+    spdlog::info("worker threads {}", workers_->size());
+    workers_->run();
     return 0;
 }
 
