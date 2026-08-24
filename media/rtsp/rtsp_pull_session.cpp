@@ -35,72 +35,6 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 
-std::optional<std::uint16_t> opus_channel_count_from_fmtp(const char* fmtp)
-{
-    if (fmtp == nullptr)
-    {
-        return 1;
-    }
-
-    std::string_view parameters(fmtp);
-    if (const auto space = parameters.find(' '); space != std::string_view::npos)
-    {
-        parameters.remove_prefix(space + 1U);
-    }
-
-    while (!parameters.empty())
-    {
-        const auto separator = parameters.find(';');
-        auto parameter = parameters.substr(0, separator);
-        const auto first = parameter.find_first_not_of(" \t");
-        if (first != std::string_view::npos)
-        {
-            parameter.remove_prefix(first);
-            const auto last = parameter.find_last_not_of(" \t");
-            parameter = parameter.substr(0, last + 1U);
-        }
-
-        const auto equals = parameter.find('=');
-        if (equals != std::string_view::npos)
-        {
-            auto name = parameter.substr(0, equals);
-            auto value = parameter.substr(equals + 1U);
-            while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back())) != 0)
-            {
-                name.remove_suffix(1U);
-            }
-            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0)
-            {
-                value.remove_prefix(1U);
-            }
-            const bool sprop_stereo = name.size() == std::string_view("sprop-stereo").size() &&
-                                      std::equal(name.begin(),
-                                                 name.end(),
-                                                 std::string_view("sprop-stereo").begin(),
-                                                 [](unsigned char left, unsigned char right) { return std::tolower(left) == std::tolower(right); });
-            if (sprop_stereo)
-            {
-                if (value == "0")
-                {
-                    return 1;
-                }
-                if (value == "1")
-                {
-                    return 2;
-                }
-                return std::nullopt;
-            }
-        }
-
-        if (separator == std::string_view::npos)
-        {
-            break;
-        }
-        parameters.remove_prefix(separator + 1U);
-    }
-    return 1;
-}
-
 std::optional<codec_id> selected_g711_codec(rtsp_client_t* client, int media)
 {
     if (rtsp_client_get_media_type(client, media) != SDP_M_MEDIA_AUDIO || rtsp_client_get_media_rate(client, media) != 8'000)
@@ -128,7 +62,7 @@ bool should_setup_media(rtsp_client_t* client, int media)
     const bool supported = (type == SDP_M_MEDIA_VIDEO && (rtsp_sdp_iequals(encoding, "H264") || rtsp_sdp_iequals(encoding, "H265") || rtsp_sdp_iequals(encoding, "HEVC"))) ||
                            (type == SDP_M_MEDIA_AUDIO && (rtsp_sdp_iequals(encoding, "MPEG4-GENERIC") ||
                                                           (rtsp_sdp_iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
-                                                           opus_channel_count_from_fmtp(rtsp_client_get_media_fmtp(client, media)).has_value()) ||
+                                                           rtsp_sdp_opus_channel_count(rtsp_client_get_media_fmtp(client, media)).has_value()) ||
                                                           selected_g711_codec(client, media).has_value()));
     if (!supported)
     {
@@ -616,7 +550,7 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
         }
         else if (rtsp_client_get_media_type(client_, media) == SDP_M_MEDIA_AUDIO && rtsp_sdp_iequals(encoding, "opus") && rate == 48'000)
         {
-            if (const auto channel_count = opus_channel_count_from_fmtp(fmtp))
+            if (const auto channel_count = rtsp_sdp_opus_channel_count(fmtp))
             {
                 track = media_track{
                     .id = audio_track_id,
