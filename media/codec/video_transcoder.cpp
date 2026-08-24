@@ -37,8 +37,6 @@ std::string ffmpeg_error(int error)
     return buffer;
 }
 
-AVCodecID ffmpeg_codec(codec_id codec) { return codec == codec_id::h264 ? AV_CODEC_ID_H264 : AV_CODEC_ID_HEVC; }
-
 }    // namespace
 
 struct video_transcoder::state
@@ -83,7 +81,7 @@ bool video_transcoder::startup(const video_transcoder_config& config)
         return false;
     }
 
-    const AVCodec* decoder = avcodec_find_decoder(ffmpeg_codec(config.input_codec));
+    const AVCodec* decoder = avcodec_find_decoder(config.input_codec == codec_id::h264 ? AV_CODEC_ID_H264 : AV_CODEC_ID_HEVC);
     if (decoder == nullptr)
     {
         spdlog::error("video transcoder decoder not found codec {}", to_string(config.input_codec));
