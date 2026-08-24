@@ -594,29 +594,24 @@ std::string build_answer_sdp(const webrtc_offer& offer,
     return answer.str();
 }
 
-}    // namespace
-
-std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
+struct sdp_session_attributes
 {
-    if (text.empty() || text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-    {
-        return std::nullopt;
-    }
+    const char* ice_ufrag{};
+    const char* ice_pwd{};
+    const char* fingerprint{};
+    const char* setup{};
+};
 
-    sdp_ptr sdp(sdp_parse(text.data(), static_cast<int>(text.size())));
-    if (!sdp)
-    {
-        return std::nullopt;
-    }
-
-    webrtc_offer result;
+std::optional<std::vector<std::string>> parse_bundle_mids(sdp_t* sdp)
+{
+    std::vector<std::string> bundle_mids;
     bool bundle_found = false;
-    const auto attribute_count = sdp_attribute_count(sdp.get());
+    const auto attribute_count = sdp_attribute_count(sdp);
     for (int index = 0; index < attribute_count; ++index)
     {
         const char* name = nullptr;
         const char* value = nullptr;
-        if (sdp_attribute_get(sdp.get(), index, &name, &value) != 0 || name == nullptr || value == nullptr || std::string_view(name) != "group")
+        if (sdp_attribute_get(sdp, index, &name, &value) != 0 || name == nullptr || value == nullptr || std::string_view(name) != "group")
         {
             continue;
         }
@@ -633,14 +628,139 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
         bundle_found = true;
         for (std::size_t field = 1; field < fields.size(); ++field)
         {
-            result.bundle_mids.emplace_back(fields[field]);
+            bundle_mids.emplace_back(fields[field]);
+        }
+    }
+    return bundle_mids;
+}
+
+std::optional<webrtc_media_offer> parse_media_offer(sdp_t* sdp, int index, const sdp_session_attributes& session)
+{
+    const char* type = sdp_media_type(sdp, index);
+    const char* protocol = sdp_media_proto(sdp, index);
+    const char* mid = sdp_media_attribute_find(sdp, index, "mid");
+    if (type == nullptr || protocol == nullptr || mid == nullptr || *mid == '\0' || std::char_traits<char>::length(mid) > max_mid_size)
+    {
+        return std::nullopt;
+    }
+    int port = 0;
+    if (sdp_media_port(sdp, index, &port, 1) != 1)
+    {
+        return std::nullopt;
+    }
+
+    webrtc_media_offer media{
+        .type = type,
+        .port = port,
+        .protocol = protocol,
+        .mid = mid,
+        .direction = direction(sdp_media_mode(sdp, index)),
+        .setup = attribute(sdp, index, "setup", session.setup),
+        .ice_ufrag = attribute(sdp, index, "ice-ufrag", session.ice_ufrag),
+        .ice_pwd = attribute(sdp, index, "ice-pwd", session.ice_pwd),
+        .fingerprint = attribute(sdp, index, "fingerprint", session.fingerprint),
+        .rtcp_mux = sdp_media_attribute_find(sdp, index, "rtcp-mux") != nullptr,
+        .bundle_only = sdp_media_attribute_find(sdp, index, "bundle-only") != nullptr,
+        .mid_extension_id = std::nullopt,
+        .max_packet_time_ms = std::nullopt,
+        .formats = {},
+        .payload_types = {},
+        .codecs = {},
+    };
+
+    if (const char* maxptime = sdp_media_attribute_find(sdp, index, "maxptime"); maxptime != nullptr)
+    {
+        int value = 0;
+        const std::string_view maxptime_text(maxptime);
+        const auto [pointer, error] = std::from_chars(maxptime_text.data(), maxptime_text.data() + maxptime_text.size(), value);
+        if (error == std::errc{} && pointer == maxptime_text.data() + maxptime_text.size() && value > 0)
+        {
+            media.max_packet_time_ms = value;
         }
     }
 
-    const char* session_ice_ufrag = sdp_attribute_find(sdp.get(), "ice-ufrag");
-    const char* session_ice_pwd = sdp_attribute_find(sdp.get(), "ice-pwd");
-    const char* session_fingerprint = sdp_attribute_find(sdp.get(), "fingerprint");
-    const char* session_setup = sdp_attribute_find(sdp.get(), "setup");
+    const auto format_count = sdp_media_formats(sdp, index, nullptr, 0);
+    if (format_count <= 0)
+    {
+        return std::nullopt;
+    }
+    media.formats.reserve(static_cast<std::size_t>(format_count));
+    for (int format = 0; format < format_count; ++format)
+    {
+        const char* value = sdp_media_format(sdp, index, format);
+        if (value == nullptr || *value == '\0')
+        {
+            return std::nullopt;
+        }
+        media.formats.emplace_back(value);
+    }
+    media.payload_types.resize(static_cast<std::size_t>(format_count));
+    static_cast<void>(sdp_media_formats(sdp, index, media.payload_types.data(), format_count));
+
+    static_cast<void>(sdp_media_attribute_list(sdp, index, "rtpmap", &on_rtpmap, &media));
+    static_cast<void>(sdp_media_attribute_list(sdp, index, "fmtp", &on_fmtp, &media));
+    static_cast<void>(sdp_media_attribute_list(sdp, index, "extmap", &on_extmap, &media));
+    for (const auto payload_type : media.payload_types)
+    {
+        if ((payload_type == RTP_PAYLOAD_PCMU || payload_type == RTP_PAYLOAD_PCMA) &&
+            std::none_of(media.codecs.begin(),
+                         media.codecs.end(),
+                         [payload_type](const webrtc_codec_offer& codec) { return codec.payload_type == payload_type; }))
+        {
+            media.codecs.push_back(webrtc_codec_offer{
+                .payload_type = payload_type,
+                .encoding_name = payload_type == RTP_PAYLOAD_PCMU ? "PCMU" : "PCMA",
+                .clock_rate = 8'000,
+                .channel_count = 1,
+                .format_parameters = {},
+            });
+        }
+    }
+    return media;
+}
+
+bool valid_bundle_mids(const webrtc_offer& offer)
+{
+    for (const auto& mid : offer.bundle_mids)
+    {
+        if (std::count(offer.bundle_mids.begin(), offer.bundle_mids.end(), mid) != 1 ||
+            std::none_of(offer.media.begin(), offer.media.end(), [&mid](const webrtc_media_offer& media) { return media.mid == mid; }))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+}    // namespace
+
+std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
+{
+    if (text.empty() || text.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return std::nullopt;
+    }
+
+    sdp_ptr sdp(sdp_parse(text.data(), static_cast<int>(text.size())));
+    if (!sdp)
+    {
+        return std::nullopt;
+    }
+
+    const auto bundle_mids = parse_bundle_mids(sdp.get());
+    if (!bundle_mids)
+    {
+        return std::nullopt;
+    }
+
+    webrtc_offer result;
+    result.bundle_mids = std::move(*bundle_mids);
+    const sdp_session_attributes session{
+        .ice_ufrag = sdp_attribute_find(sdp.get(), "ice-ufrag"),
+        .ice_pwd = sdp_attribute_find(sdp.get(), "ice-pwd"),
+        .fingerprint = sdp_attribute_find(sdp.get(), "fingerprint"),
+        .setup = sdp_attribute_find(sdp.get(), "setup"),
+    };
 
     const auto media_count = sdp_media_count(sdp.get());
     if (media_count <= 0)
@@ -650,100 +770,22 @@ std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
 
     for (int index = 0; index < media_count; ++index)
     {
-        const char* type = sdp_media_type(sdp.get(), index);
-        const char* protocol = sdp_media_proto(sdp.get(), index);
-        const char* mid = sdp_media_attribute_find(sdp.get(), index, "mid");
-        if (type == nullptr || protocol == nullptr || mid == nullptr || *mid == '\0' || std::char_traits<char>::length(mid) > max_mid_size)
+        const auto media = parse_media_offer(sdp.get(), index, session);
+        if (!media)
         {
             return std::nullopt;
         }
-        int port = 0;
-        if (sdp_media_port(sdp.get(), index, &port, 1) != 1)
+        if (std::any_of(
+                result.media.begin(), result.media.end(), [&media](const webrtc_media_offer& existing) { return existing.mid == media->mid; }))
         {
             return std::nullopt;
         }
-
-        webrtc_media_offer media{
-            .type = type,
-            .port = port,
-            .protocol = protocol,
-            .mid = mid,
-            .direction = direction(sdp_media_mode(sdp.get(), index)),
-            .setup = attribute(sdp.get(), index, "setup", session_setup),
-            .ice_ufrag = attribute(sdp.get(), index, "ice-ufrag", session_ice_ufrag),
-            .ice_pwd = attribute(sdp.get(), index, "ice-pwd", session_ice_pwd),
-            .fingerprint = attribute(sdp.get(), index, "fingerprint", session_fingerprint),
-            .rtcp_mux = sdp_media_attribute_find(sdp.get(), index, "rtcp-mux") != nullptr,
-            .bundle_only = sdp_media_attribute_find(sdp.get(), index, "bundle-only") != nullptr,
-            .mid_extension_id = std::nullopt,
-            .max_packet_time_ms = std::nullopt,
-            .formats = {},
-            .payload_types = {},
-            .codecs = {},
-        };
-
-        if (const char* maxptime = sdp_media_attribute_find(sdp.get(), index, "maxptime"); maxptime != nullptr)
-        {
-            int value = 0;
-            const std::string_view maxptime_text(maxptime);
-            const auto [pointer, error] = std::from_chars(maxptime_text.data(), maxptime_text.data() + maxptime_text.size(), value);
-            if (error == std::errc{} && pointer == maxptime_text.data() + maxptime_text.size() && value > 0)
-            {
-                media.max_packet_time_ms = value;
-            }
-        }
-
-        const auto format_count = sdp_media_formats(sdp.get(), index, nullptr, 0);
-        if (format_count <= 0)
-        {
-            return std::nullopt;
-        }
-        media.formats.reserve(static_cast<std::size_t>(format_count));
-        for (int format = 0; format < format_count; ++format)
-        {
-            const char* value = sdp_media_format(sdp.get(), index, format);
-            if (value == nullptr || *value == '\0')
-            {
-                return std::nullopt;
-            }
-            media.formats.emplace_back(value);
-        }
-        media.payload_types.resize(static_cast<std::size_t>(format_count));
-        static_cast<void>(sdp_media_formats(sdp.get(), index, media.payload_types.data(), format_count));
-
-        static_cast<void>(sdp_media_attribute_list(sdp.get(), index, "rtpmap", &on_rtpmap, &media));
-        static_cast<void>(sdp_media_attribute_list(sdp.get(), index, "fmtp", &on_fmtp, &media));
-        static_cast<void>(sdp_media_attribute_list(sdp.get(), index, "extmap", &on_extmap, &media));
-        for (const auto payload_type : media.payload_types)
-        {
-            if ((payload_type == RTP_PAYLOAD_PCMU || payload_type == RTP_PAYLOAD_PCMA) &&
-                std::none_of(media.codecs.begin(),
-                             media.codecs.end(),
-                             [payload_type](const webrtc_codec_offer& codec) { return codec.payload_type == payload_type; }))
-            {
-                media.codecs.push_back(webrtc_codec_offer{
-                    .payload_type = payload_type,
-                    .encoding_name = payload_type == RTP_PAYLOAD_PCMU ? "PCMU" : "PCMA",
-                    .clock_rate = 8'000,
-                    .channel_count = 1,
-                    .format_parameters = {},
-                });
-            }
-        }
-        if (std::any_of(result.media.begin(), result.media.end(), [&media](const webrtc_media_offer& existing) { return existing.mid == media.mid; }))
-        {
-            return std::nullopt;
-        }
-        result.media.push_back(std::move(media));
+        result.media.push_back(std::move(*media));
     }
 
-    for (const auto& mid : result.bundle_mids)
+    if (!valid_bundle_mids(result))
     {
-        if (std::count(result.bundle_mids.begin(), result.bundle_mids.end(), mid) != 1 ||
-            std::none_of(result.media.begin(), result.media.end(), [&mid](const webrtc_media_offer& media) { return media.mid == mid; }))
-        {
-            return std::nullopt;
-        }
+        return std::nullopt;
     }
 
     return result;
