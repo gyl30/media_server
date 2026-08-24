@@ -44,6 +44,10 @@ class rtmp_input_session final : public std::enable_shared_from_this<rtmp_input_
     static int demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags);
 
     int on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
+    int handle_video_config(int codec, std::span<const std::uint8_t> data);
+    int handle_audio_config(int codec, std::span<const std::uint8_t> data);
+    int initialize_g711_track(int codec);
+    int publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     void try_initialize_tracks();
 
     stream_registry& registry_;
