@@ -11,6 +11,7 @@
 
 #include "media/http/http_session.h"
 #include "media/gb28181/gb28181_types.h"
+#include "media/hls/hls.h"
 #include "media/core/stream_registry.h"
 
 namespace media_server
@@ -259,15 +260,13 @@ std::optional<gb28181_output_parameters> parse_gb28181_output_parameters(const b
 }    // namespace
 
 http_session::http_session(boost::asio::ip::tcp::socket socket,
-                           hls_service& hls,
+                           const config& config,
                            whep_service& whep,
-                           gb28181_service& gb28181,
-                           output_video_config video)
+                           gb28181_service& gb28181)
     : stream_(std::move(socket)),
-      hls_(hls),
+      config_(config),
       whep_(whep),
       gb28181_(gb28181),
-      video_config_(video),
       hls_wait_timer_(stream_.get_executor())
 {
 }
@@ -675,7 +674,7 @@ void http_session::handle_hls(const boost::urls::url_view& target)
 
     if (file == "index.m3u8")
     {
-        const auto count = hls_.segment_count(stream_name);
+        const auto count = hls::segment_count(stream_name, config_);
         if (!count)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");
@@ -687,7 +686,7 @@ void http_session::handle_hls(const boost::urls::url_view& target)
             return;
         }
 
-        const auto playlist = hls_.playlist(stream_name);
+        const auto playlist = hls::playlist(stream_name, config_);
         if (!playlist)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");
@@ -699,7 +698,7 @@ void http_session::handle_hls(const boost::urls::url_view& target)
 
     if (file == "init.mp4")
     {
-        const auto init = hls_.init_segment(stream_name);
+        const auto init = hls::init_segment(stream_name, config_);
         if (!init)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "init segment not found\n");
@@ -711,7 +710,7 @@ void http_session::handle_hls(const boost::urls::url_view& target)
 
     const bool transport_stream = file.ends_with(".ts");
     const bool fragmented_mp4 = file.ends_with(".m4s");
-    const bool fmp4_mode = video_config_.codec == output_video_codec::av1;
+    const bool fmp4_mode = config_.http_video.codec == output_video_codec::av1;
     if ((!transport_stream && !fragmented_mp4) || (transport_stream && fmp4_mode) || (fragmented_mp4 && !fmp4_mode))
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
@@ -728,7 +727,7 @@ void http_session::handle_hls(const boost::urls::url_view& target)
         return;
     }
 
-    const auto segment = hls_.segment(stream_name, sequence);
+    const auto segment = hls::segment(stream_name, sequence, config_);
     if (!segment)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "segment not found\n");
@@ -751,7 +750,7 @@ void http_session::check_hls_playlist()
         return;
     }
 
-    const auto count = hls_.segment_count(hls_wait_stream_name_);
+    const auto count = hls::segment_count(hls_wait_stream_name_, config_);
     if (!count)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");
@@ -760,7 +759,7 @@ void http_session::check_hls_playlist()
 
     if (*count > 0)
     {
-        const auto playlist = hls_.playlist(hls_wait_stream_name_);
+        const auto playlist = hls::playlist(hls_wait_stream_name_, config_);
         if (!playlist)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");
@@ -978,7 +977,7 @@ void http_session::startup_flv(std::shared_ptr<media_stream> media_stream)
                 self->shutdown();
             }
         },
-        video_config_);
+        config_.http_video);
 
     flv_reader_ = media_stream->add_reader(flv_output_, stream_.get_executor());
     read_flv_client();

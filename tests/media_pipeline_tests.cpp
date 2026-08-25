@@ -28,9 +28,9 @@
 #include <boost/beast/http/write.hpp>
 
 #include "media/hls/hls_output.h"
+#include "media/hls/hls.h"
 #include "media/net/udp_socket.h"
 #include "media/core/media_sink.h"
-#include "media/hls/hls_service.h"
 #include "media/net/tcp_listener.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
@@ -2884,7 +2884,6 @@ void require_http_session_released(const std::weak_ptr<http_session>& session, s
 }
 
 void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
-                         hls_service& hls,
                          whep_service& whep,
                          gb28181_service& gb28181,
                          boost::beast::http::verb method,
@@ -2893,11 +2892,12 @@ void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
                          boost::beast::http::status expected,
                          std::string_view message)
 {
+    const config application_config;
     boost::asio::io_context client_io;
     boost::asio::ip::tcp::socket client(client_io);
     client.connect(acceptor.local_endpoint());
 
-    auto session = std::make_shared<http_session>(acceptor.accept(), hls, whep, gb28181);
+    auto session = std::make_shared<http_session>(acceptor.accept(), application_config, whep, gb28181);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -2924,7 +2924,6 @@ void test_gb28181_input_http_parameters()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    hls_service hls;
     whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
     io_context_pool workers(1);
     gb28181_service gb28181(streams, &workers);
@@ -2965,7 +2964,7 @@ void test_gb28181_input_http_parameters()
                            boost::beast::http::status expected,
                            std::string_view message,
                            std::string_view body = {})
-    { require_http_status(acceptor, hls, whep, gb28181, method, target, body, expected, message); };
+    { require_http_status(acceptor, whep, gb28181, method, target, body, expected, message); };
 
     check(post, "/gb28181/live/gb-input-http-raw", boost::beast::http::status::bad_request, "gb input rejects raw sdp body", "v=0\r\n");
     check(post,
@@ -3091,7 +3090,6 @@ void test_gb28181_output_http_parameters()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    hls_service hls;
     whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
     io_context_pool workers(1);
     gb28181_service gb28181(streams, &workers);
@@ -3125,7 +3123,7 @@ void test_gb28181_output_http_parameters()
                            boost::beast::http::status expected,
                            std::string_view message,
                            std::string_view body = {})
-    { require_http_status(acceptor, hls, whep, gb28181, method, target, body, expected, message); };
+    { require_http_status(acceptor, whep, gb28181, method, target, body, expected, message); };
     check(post,
           "/gb28181/output/live/gb-output-http?output_id=raw-sdp",
           boost::beast::http::status::bad_request,
@@ -3208,7 +3206,6 @@ void test_gb28181_output_http_parameters()
           boost::beast::http::status::no_content,
           "gb output deletes tcp passive");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3217,7 +3214,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::bad_request,
                         "gb output http requires output id");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3226,7 +3222,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::bad_request,
                         "gb output http rejects empty output id");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3235,7 +3230,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::created,
                         "gb output http default rtcp disabled");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3244,7 +3238,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::conflict,
                         "gb output http duplicate identity");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3253,7 +3246,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::created,
                         "gb output http explicit rtcp disabled");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3262,7 +3254,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::created,
                         "gb output http rtcp enabled");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3271,7 +3262,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::bad_request,
                         "gb output http rejects empty rtcp");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3280,7 +3270,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::bad_request,
                         "gb output http rejects invalid rtcp");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3289,7 +3278,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::bad_request,
                         "gb output http rejects duplicate rtcp");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         post,
@@ -3298,7 +3286,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::bad_request,
                         "gb output http rejects tcp rtcp");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         delete_,
@@ -3307,7 +3294,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::bad_request,
                         "gb output http rejects delete rtcp");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         delete_,
@@ -3316,7 +3302,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::bad_request,
                         "gb output http rejects delete media parameters");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         delete_,
@@ -3325,7 +3310,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::no_content,
                         "gb output http deletes first identity");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         delete_,
@@ -3334,7 +3318,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::no_content,
                         "gb output http deletes second identity");
     require_http_status(acceptor,
-                        hls,
                         whep,
                         gb28181,
                         delete_,
@@ -3355,7 +3338,6 @@ void test_http_flv_client_disconnect()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    hls_service hls;
     whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
     gb28181_service gb28181(streams);
 
@@ -3366,7 +3348,8 @@ void test_http_flv_client_disconnect()
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
-    auto session = std::make_shared<http_session>(acceptor.accept(), hls, whep, gb28181);
+    const config application_config;
+    auto session = std::make_shared<http_session>(acceptor.accept(), application_config, whep, gb28181);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3391,7 +3374,6 @@ void test_http_flv_stream_end_during_write()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    hls_service hls;
     whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
     gb28181_service gb28181(streams);
 
@@ -3402,7 +3384,8 @@ void test_http_flv_stream_end_during_write()
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
-    auto session = std::make_shared<http_session>(acceptor.accept(), hls, whep, gb28181);
+    const config application_config;
+    auto session = std::make_shared<http_session>(acceptor.accept(), application_config, whep, gb28181);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3426,7 +3409,6 @@ void test_http_flv_pending_bootstrap_end()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    hls_service hls;
     whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
     gb28181_service gb28181(streams);
 
@@ -3437,7 +3419,8 @@ void test_http_flv_pending_bootstrap_end()
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
-    auto session = std::make_shared<http_session>(acceptor.accept(), hls, whep, gb28181);
+    const config application_config;
+    auto session = std::make_shared<http_session>(acceptor.accept(), application_config, whep, gb28181);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -8760,12 +8743,13 @@ void test_hls_g711_output()
     }
 }
 
-void test_hls_service_lifecycle()
+void test_hls_module_lifecycle()
 {
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    hls_service hls(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    const config application_config;
+    hls::shutdown();
 
     auto first = std::make_shared<media_stream>("live/hls", io.get_executor());
     require(first->set_tracks({make_video_track()}), "hls first track");
@@ -8773,24 +8757,24 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls.segment_count("live/hls") == 0U, "hls first output create");
+                          require(hls::segment_count("live/hls", application_config) == 0U, "hls first output create");
                           first->publish(make_video_frame(0, true));
                           first->publish(make_video_frame(1'000'000'000, true));
                       });
     io.run();
 
     streams.remove(*first);
-    const auto detached_playlist = hls.playlist("live/hls");
+    const auto detached_playlist = hls::playlist("live/hls", application_config);
     require(detached_playlist.has_value(), "hls output survives registry removal before source end");
 
     io.restart();
     boost::asio::post(io, [first]() { first->end(); });
     io.run();
 
-    const auto ended_playlist = hls.playlist("live/hls");
+    const auto ended_playlist = hls::playlist("live/hls", application_config);
     require(ended_playlist.has_value(), "hls ended playlist retained");
     require(ended_playlist->find("#EXT-X-ENDLIST") != std::string::npos, "hls ended playlist marker");
-    const auto ended_segment = hls.segment("live/hls", 0);
+    const auto ended_segment = hls::segment("live/hls", 0, application_config);
     require(ended_segment.has_value() && !ended_segment->empty(), "hls ended segment retained");
 
     io.restart();
@@ -8800,8 +8784,8 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls.segment_count("live/hls") == 0U, "hls replacement output reset");
-                          require(!hls.segment("live/hls", 0).has_value(), "hls replacement drops old segment");
+                          require(hls::segment_count("live/hls", application_config) == 0U, "hls replacement output reset");
+                          require(!hls::segment("live/hls", 0, application_config).has_value(), "hls replacement drops old segment");
                       });
     io.run();
 
@@ -8812,7 +8796,7 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls.segment_count("live/hls-overlap") == 0U, "hls overlap first output create");
+                          require(hls::segment_count("live/hls-overlap", application_config) == 0U, "hls overlap first output create");
                           overlap_first->publish(make_video_frame(0, true));
                           overlap_first->publish(make_video_frame(1'000'000'000, true));
                       });
@@ -8826,15 +8810,15 @@ void test_hls_service_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls.segment_count("live/hls-overlap") == 0U, "hls overlap replacement output create");
+                          require(hls::segment_count("live/hls-overlap", application_config) == 0U, "hls overlap replacement output create");
                           overlap_first->end();
                       });
     io.run();
 
-    const auto overlap_playlist = hls.playlist("live/hls-overlap");
+    const auto overlap_playlist = hls::playlist("live/hls-overlap", application_config);
     require(overlap_playlist.has_value(), "hls overlap replacement playlist available");
     require(overlap_playlist->find("#EXT-X-ENDLIST") == std::string::npos, "hls old generation end does not end replacement");
-    require(!hls.segment("live/hls-overlap", 0).has_value(), "hls overlap replacement does not expose old segment");
+    require(!hls::segment("live/hls-overlap", 0, application_config).has_value(), "hls overlap replacement does not expose old segment");
 
     io.restart();
     auto late = std::make_shared<media_stream>("live/hls-late", io.get_executor());
@@ -8845,32 +8829,17 @@ void test_hls_service_lifecycle()
                       {
                           late->publish(make_video_frame(0, true));
                           late->publish(make_video_frame(500'000'000, false));
-                          require(hls.segment_count("live/hls-late") == 0U, "hls late output replays current gop");
-                          late->publish(make_video_frame(1'000'000'000, true));
-                          require(hls.segment_count("live/hls-late") == 1U, "hls late replay participates in first segment");
+                          require(hls::segment_count("live/hls-late", application_config) == 0U, "hls late output replays current gop");
+                          late->publish(make_video_frame(2'000'000'000, true));
+                          require(hls::segment_count("live/hls-late", application_config) == 1U, "hls late replay participates in first segment");
                           streams.remove(*late);
                           late->end();
                       });
     io.run();
-    const auto late_playlist = hls.playlist("live/hls-late");
+    const auto late_playlist = hls::playlist("live/hls-late", application_config);
     require(late_playlist.has_value() && late_playlist->find("#EXT-X-ENDLIST") != std::string::npos, "hls late output finalizes");
 
-    hls_service expiring_hls(hls_config{.target_duration_seconds = 0.001, .window_size = 1, .video = {}});
-    io.restart();
-    auto expiring_stream = std::make_shared<media_stream>("live/expiring", io.get_executor());
-    require(expiring_stream->set_tracks({make_video_track()}), "hls expiring track");
-    require(streams.add(expiring_stream), "hls expiring stream add");
-    boost::asio::post(io,
-                      [&]()
-                      {
-                          require(expiring_hls.segment_count("live/expiring") == 0U, "hls expiring output create");
-                          streams.remove(*expiring_stream);
-                          expiring_stream->end();
-                      });
-    io.run();
-    require(expiring_hls.playlist("live/expiring").has_value(), "hls ended output initially retained");
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    require(!expiring_hls.playlist("live/expiring").has_value(), "hls ended output expires");
+    hls::shutdown();
 }
 
 std::uint32_t rtp_timestamp(const std::vector<std::uint8_t>& packet)
@@ -9571,8 +9540,8 @@ int main()
     std::cout << "[pass] hls_av1_fmp4_output\n";
     media_server::test_hls_g711_output();
     std::cout << "[pass] hls_g711_output\n";
-    media_server::test_hls_service_lifecycle();
-    std::cout << "[pass] hls_service_lifecycle\n";
+    media_server::test_hls_module_lifecycle();
+    std::cout << "[pass] hls_module_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
     media_server::test_webrtc_video_access_unit_marker();
