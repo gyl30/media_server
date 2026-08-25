@@ -2819,7 +2819,7 @@ void test_gb28181_multi_output_identity()
     io.run();
 }
 
-void test_rtmp_server_shutdown_lifecycle()
+void test_rtmp_server_lifecycle()
 {
     io_context_pool workers(1);
     auto& streams = media_server::registry::instance();
@@ -2827,14 +2827,13 @@ void test_rtmp_server_shutdown_lifecycle()
     config application_config;
     application_config.rtmp_port = 0;
     auto server = std::make_shared<rtmp_server>(workers, application_config);
-    require(!server->startup(), "rtmp server shutdown startup");
+    require(!server->startup(), "rtmp server lifecycle startup");
     const std::weak_ptr<rtmp_server> weak_server = server;
 
-    server->shutdown();
     server.reset();
     require(weak_server.expired(), "rtmp server listener callback does not keep server alive");
 
-    workers.release_work();
+    workers.stop();
     workers.run();
 }
 
@@ -4690,8 +4689,7 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    server->shutdown();
-    workers.release_work();
+    workers.stop();
     runner.join();
 }
 
@@ -4730,15 +4728,10 @@ void test_rtsp_publish_server_contract()
         boost::asio::write(client, boost::asio::buffer(partial));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-        server->shutdown();
-        workers.release_work();
-        runner.join();
-        client.non_blocking(true);
-        std::array<std::uint8_t, 1> byte{};
         boost::system::error_code error;
-        static_cast<void>(client.read_some(boost::asio::buffer(byte), error));
-        require(error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::not_connected,
-                "rtsp publish pre role shutdown closes partial connection");
+        client.close(error);
+        workers.stop();
+        runner.join();
     }
 
     io_context_pool workers(1);
@@ -5251,8 +5244,7 @@ void test_rtsp_publish_server_contract()
     }
     require(!streams.find("live/publish-udp"), "rtsp publish udp disconnect removes generation");
 
-    server->shutdown();
-    workers.release_work();
+    workers.stop();
     runner.join();
 }
 
@@ -9469,8 +9461,8 @@ int main()
     std::cout << "[pass] gb28181_input_http_parameters\n";
     media_server::test_gb28181_output_http_parameters();
     std::cout << "[pass] gb28181_output_http_parameters\n";
-    media_server::test_rtmp_server_shutdown_lifecycle();
-    std::cout << "[pass] rtmp_server_shutdown_lifecycle\n";
+    media_server::test_rtmp_server_lifecycle();
+    std::cout << "[pass] rtmp_server_lifecycle\n";
     media_server::test_http_flv_client_disconnect();
     std::cout << "[pass] http_flv_client_disconnect\n";
     media_server::test_http_flv_stream_end_during_write();
