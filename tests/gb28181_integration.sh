@@ -61,18 +61,35 @@ wait_probe_streams() {
     return 1
 }
 
-post_sdp() {
+post_gb28181_input() {
     local name="$1"
-    local path="$2"
-    local sdp_file="$3"
+    local target="$2"
+    local query="$3"
     local response="$work_dir/${name}.response"
     local code
 
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
-        -H 'Content-Type: application/sdp' --data-binary "@$sdp_file" \
-        "http://127.0.0.1:${http_port}${path}")"
+        "http://127.0.0.1:${http_port}/gb28181/${target}?${query}")"
     if [[ "$code" != "201" ]]; then
-        echo "POST $path returned $code" >&2
+        echo "POST /gb28181/${target} returned $code" >&2
+        cat "$response" >&2 || true
+        cat "$work_dir/server.log" >&2 2>/dev/null || true
+        return 1
+    fi
+}
+
+post_gb28181_output() {
+    local name="$1"
+    local source="$2"
+    local output_id="$3"
+    local query="$4"
+    local response="$work_dir/${name}.response"
+    local code
+
+    code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
+        "http://127.0.0.1:${http_port}/gb28181/output/${source}?output_id=${output_id}&${query}")"
+    if [[ "$code" != "201" ]]; then
+        echo "POST /gb28181/output/${source} returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
@@ -95,37 +112,6 @@ delete_session() {
     fi
 }
 
-write_udp_input_sdp() {
-    local file="$1"
-    local rtp_port="$2"
-    local rtcp_port="$3"
-    local ssrc="$4"
-    printf 'v=0\r\no=34020000002000000001 0 0 IN IP4 127.0.0.1\r\ns=Play\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video %s RTP/AVP 96\r\na=rtpmap:96 PS/90000\r\na=rtcp:%s\r\na=sendonly\r\ny=%s\r\n' \
-        "$rtp_port" "$rtcp_port" "$ssrc" >"$file"
-}
-
-write_udp_output_sdp() {
-    local file="$1"
-    local rtp_port="$2"
-    local ssrc="$3"
-    local rtcp_port="${4:-}"
-    printf 'v=0\r\no=34020000002000000001 0 0 IN IP4 127.0.0.1\r\ns=Play\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video %s RTP/AVP 96\r\na=rtpmap:96 PS/90000\r\n' "$rtp_port" >"$file"
-    if [[ -n "$rtcp_port" ]]; then
-        printf 'a=rtcp:%s\r\n' "$rtcp_port" >>"$file"
-    fi
-    printf 'a=recvonly\r\ny=%s\r\n' "$ssrc" >>"$file"
-}
-
-write_tcp_sdp() {
-    local file="$1"
-    local port="$2"
-    local ssrc="$3"
-    local direction="$4"
-    local setup="$5"
-    printf 'v=0\r\no=34020000002000000001 0 0 IN IP4 127.0.0.1\r\ns=Play\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video %s TCP/RTP/AVP 96\r\na=rtpmap:96 PS/90000\r\na=%s\r\na=setup:%s\r\na=connection:new\r\ny=%s\r\n' \
-        "$port" "$direction" "$setup" "$ssrc" >"$file"
-}
-
 run_udp_case() {
     local name="$1"
     local source="$2"
@@ -136,14 +122,11 @@ run_udp_case() {
     local rtcp_port="$7"
     local ssrc="$8"
     local output_id="$9"
-    local input_sdp="$work_dir/${name}_input.sdp"
-    local output_sdp="$work_dir/${name}_output.sdp"
+    local input_query="transport=udp&address=127.0.0.1&rtp_port=${rtp_port}&rtcp_port=${rtcp_port}&payload_type=96&ssrc=${ssrc}&remote_rtcp_port=${remote_rtcp_sink_port}"
+    local output_query="transport=udp&address=127.0.0.1&rtp_port=${rtp_port}&rtcp_port=${rtcp_port}&payload_type=96&ssrc=${ssrc}"
 
-    write_udp_input_sdp "$input_sdp" "$rtp_port" "$rtcp_port" "$ssrc"
-    write_udp_output_sdp "$output_sdp" "$rtp_port" "$ssrc"
-
-    post_sdp "${name}_input_post" "/gb28181/${target}?remote_rtcp_port=${remote_rtcp_sink_port}" "$input_sdp"
-    post_sdp "${name}_output_post" "/gb28181/output/${source}?output_id=${output_id}" "$output_sdp"
+    post_gb28181_input "${name}_input_post" "$target" "$input_query"
+    post_gb28181_output "${name}_output_post" "$source" "$output_id" "$output_query"
 
     wait_probe_streams "$work_dir/${name}_probe.txt" "$video_codec" "$audio_codec" \
         "rtsp://127.0.0.1:${rtsp_port}/${target}"
@@ -161,19 +144,19 @@ run_tcp_case() {
     local ssrc="$5"
     local output_id="$6"
     local mode="$7"
-    local input_sdp="$work_dir/${name}_input.sdp"
-    local output_sdp="$work_dir/${name}_output.sdp"
+    local input_query
+    local output_query
 
     if [[ "$mode" == "output-active" ]]; then
-        write_tcp_sdp "$input_sdp" "$port" "$ssrc" sendonly passive
-        write_tcp_sdp "$output_sdp" "$port" "$ssrc" recvonly active
-        post_sdp "${name}_input_post" "/gb28181/${target}" "$input_sdp"
-        post_sdp "${name}_output_post" "/gb28181/output/${source}?output_id=${output_id}" "$output_sdp"
+        input_query="transport=tcp_passive&address=0.0.0.0&rtp_port=${port}&payload_type=96&ssrc=${ssrc}"
+        output_query="transport=tcp_active&address=127.0.0.1&rtp_port=${port}&payload_type=96&ssrc=${ssrc}"
+        post_gb28181_input "${name}_input_post" "$target" "$input_query"
+        post_gb28181_output "${name}_output_post" "$source" "$output_id" "$output_query"
     else
-        write_tcp_sdp "$input_sdp" "$port" "$ssrc" sendonly active
-        write_tcp_sdp "$output_sdp" "$port" "$ssrc" recvonly passive
-        post_sdp "${name}_output_post" "/gb28181/output/${source}?output_id=${output_id}" "$output_sdp"
-        post_sdp "${name}_input_post" "/gb28181/${target}" "$input_sdp"
+        input_query="transport=tcp_active&address=127.0.0.1&rtp_port=${port}&payload_type=96&ssrc=${ssrc}"
+        output_query="transport=tcp_passive&address=0.0.0.0&rtp_port=${port}&payload_type=96&ssrc=${ssrc}"
+        post_gb28181_output "${name}_output_post" "$source" "$output_id" "$output_query"
+        post_gb28181_input "${name}_input_post" "$target" "$input_query"
     fi
 
     wait_probe_streams "$work_dir/${name}_probe.txt" h264 aac \
@@ -303,14 +286,10 @@ rtcp_relay_pid=$!
 sleep 0.2
 kill -0 "$rtcp_relay_pid"
 
-rtcp_input_sdp="$work_dir/rtcp_input.sdp"
-rtcp_output_sdp="$work_dir/rtcp_output.sdp"
-write_udp_input_sdp "$rtcp_input_sdp" "$rtcp_input_rtp_port" "$rtcp_input_rtcp_port" 0100002006
-write_udp_output_sdp "$rtcp_output_sdp" "$rtcp_relay_rtp_port" 0100002006 "$rtcp_relay_rtcp_port"
-post_sdp rtcp_input_post \
-    "/gb28181/relay/gb-udp-rtcp?remote_rtp_address=127.0.0.1&remote_rtp_port=${rtcp_relay_rtp_port}&remote_rtcp_port=${rtcp_relay_rtcp_port}" \
-    "$rtcp_input_sdp"
-post_sdp rtcp_output_post "/gb28181/output/live/gb-h264-aac?output_id=udp-rtcp&rtcp=1" "$rtcp_output_sdp"
+post_gb28181_input rtcp_input_post relay/gb-udp-rtcp \
+    "transport=udp&address=127.0.0.1&rtp_port=${rtcp_input_rtp_port}&rtcp_port=${rtcp_input_rtcp_port}&payload_type=96&ssrc=0100002006&remote_rtp_address=127.0.0.1&remote_rtp_port=${rtcp_relay_rtp_port}&remote_rtcp_port=${rtcp_relay_rtcp_port}"
+post_gb28181_output rtcp_output_post live/gb-h264-aac udp-rtcp \
+    "transport=udp&address=127.0.0.1&rtp_port=${rtcp_relay_rtp_port}&rtcp_port=${rtcp_relay_rtcp_port}&payload_type=96&ssrc=0100002006&rtcp=1"
 wait_probe_streams "$work_dir/rtcp_probe.txt" h264 aac \
     "rtsp://127.0.0.1:${rtsp_port}/relay/gb-udp-rtcp"
 
