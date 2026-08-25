@@ -38,7 +38,6 @@
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/srtp_transport.h"
-#include "media/gb28181/gb28181.h"
 #include "media/net/io_context_pool.h"
 #include "media/webrtc/dtls_certificate.h"
 

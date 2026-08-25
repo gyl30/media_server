@@ -9,7 +9,6 @@
 
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181.h"
 #include "media/http/gb28181_http.h"
 
 namespace media_server

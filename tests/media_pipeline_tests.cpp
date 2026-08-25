@@ -51,7 +51,7 @@
 #include "media/codec/audio_transcoder.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_pull_session.h"
-#include "media/gb28181/gb28181.h"
+#include "media/http/gb28181_http.h"
 #include "media/rtsp/rtsp_output_session.h"
 
 extern "C"
@@ -2136,15 +2136,15 @@ void test_tcp_connector_successful_connect()
             require(!error, "tcp connector server accept");
             server.emplace(std::move(socket));
         });
-    auto connector = std::make_shared<tcp_connector>(io.get_executor());
-    connector->startup(endpoint,
-                       std::chrono::seconds(2),
-                       [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
-                       {
-                           ++completion_count;
-                           require(!error, "tcp connector connect success");
-                           client.emplace(std::move(socket));
-                       });
+    auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(2));
+    require(!connector->startup(
+                [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+                {
+                    ++completion_count;
+                    require(!error, "tcp connector connect success");
+                    client.emplace(std::move(socket));
+                }),
+            "tcp connector startup");
     io.run();
 
     require(completion_count == 1, "tcp connector success completes once");
@@ -2172,15 +2172,15 @@ void test_tcp_connector_connection_refused()
     boost::system::error_code connect_error;
     const auto started_at = std::chrono::steady_clock::now();
 
-    auto connector = std::make_shared<tcp_connector>(io.get_executor());
-    connector->startup(endpoint,
-                       std::chrono::seconds(5),
-                       [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
-                       {
-                           ++completion_count;
-                           connect_error = error;
-                           require(!socket.is_open(), "tcp connector closes refused socket");
-                       });
+    auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(5));
+    require(!connector->startup(
+                [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+                {
+                    ++completion_count;
+                    connect_error = error;
+                    require(!socket.is_open(), "tcp connector closes refused socket");
+                }),
+            "tcp connector startup");
     io.run();
 
     require(completion_count == 1, "tcp connector refusal completes once");
@@ -2195,15 +2195,15 @@ void test_tcp_connector_shutdown_lifecycle()
     const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port());
     int completion_count = 0;
     boost::system::error_code completion_error;
-    auto connector = std::make_shared<tcp_connector>(io.get_executor());
+    auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(5));
     const std::weak_ptr<tcp_connector> weak_connector = connector;
-    connector->startup(endpoint,
-                       std::chrono::seconds(5),
-                       [&](boost::system::error_code error, boost::asio::ip::tcp::socket)
-                       {
-                           ++completion_count;
-                           completion_error = error;
-                       });
+    require(!connector->startup(
+                [&](boost::system::error_code error, boost::asio::ip::tcp::socket)
+                {
+                    ++completion_count;
+                    completion_error = error;
+                }),
+            "tcp connector startup");
     connector->shutdown();
     connector->shutdown();
     connector->shutdown();
@@ -2802,34 +2802,40 @@ void test_gb28181_multi_output_identity()
                                           .payload_type = 96,
                                           .ssrc = 100'001'001U};
 
-    require(gb28181::create_output(io, gb28181_output_config{.stream_name = first->name(),
-                                                             .output_id = "a",
-                                                             .description = description,
-                                                             .rtcp = false}) ==
-                0,
+    const gb28181_http_request request{boost::beast::http::verb::post, "/play/gb28181/create", 11};
+
+    require(handle_gb28181_output_create(request, io, gb28181_output_config{.stream_name = first->name(),
+                                                                              .output_id = "a",
+                                                                              .description = description,
+                                                                              .rtcp = false})
+                    .result() == boost::beast::http::status::created,
             "gb multi output first identity");
-    require(gb28181::create_output(io, gb28181_output_config{.stream_name = first->name(),
-                                                             .output_id = "b",
-                                                             .description = description,
-                                                             .rtcp = false}) ==
-                0,
+    require(handle_gb28181_output_create(request, io, gb28181_output_config{.stream_name = first->name(),
+                                                                              .output_id = "b",
+                                                                              .description = description,
+                                                                              .rtcp = false})
+                    .result() == boost::beast::http::status::created,
             "gb multi output second identity");
-    require(gb28181::create_output(io, gb28181_output_config{.stream_name = first->name(),
-                                                             .output_id = "a",
-                                                             .description = description,
-                                                             .rtcp = false}) ==
-                -1,
+    require(handle_gb28181_output_create(request, io, gb28181_output_config{.stream_name = first->name(),
+                                                                              .output_id = "a",
+                                                                              .description = description,
+                                                                              .rtcp = false})
+                    .result() == boost::beast::http::status::internal_server_error,
             "gb multi output duplicate identity");
-    require(gb28181::create_output(io, gb28181_output_config{.stream_name = second->name(),
-                                                             .output_id = "a",
-                                                             .description = description,
-                                                             .rtcp = false}) ==
-                0,
+    require(handle_gb28181_output_create(request, io, gb28181_output_config{.stream_name = second->name(),
+                                                                              .output_id = "a",
+                                                                              .description = description,
+                                                                              .rtcp = false})
+                    .result() == boost::beast::http::status::created,
             "gb multi output identity scoped by stream");
-    require(gb28181::remove_output(first->name(), "a") == 0, "gb multi output remove first identity");
-    require(gb28181::remove_output(first->name(), "b") == 0, "gb multi output remove second identity");
-    require(gb28181::remove_output(second->name(), "a") == 0, "gb multi output remove other stream identity");
-    require(gb28181::remove_output(first->name(), "missing") != 0, "gb multi output missing identity");
+    require(handle_gb28181_output_delete(request, first->name(), "a").result() == boost::beast::http::status::ok,
+            "gb multi output remove first identity");
+    require(handle_gb28181_output_delete(request, first->name(), "b").result() == boost::beast::http::status::ok,
+            "gb multi output remove second identity");
+    require(handle_gb28181_output_delete(request, second->name(), "a").result() == boost::beast::http::status::ok,
+            "gb multi output remove other stream identity");
+    require(handle_gb28181_output_delete(request, first->name(), "missing").result() == boost::beast::http::status::internal_server_error,
+            "gb multi output missing identity");
 
     io.run();
 }

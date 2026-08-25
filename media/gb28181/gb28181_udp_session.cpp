@@ -7,6 +7,7 @@
 #include <boost/asio/post.hpp>
 
 #include "media/gb28181/gb28181_udp_session.h"
+#include "media/gb28181/gb28181_session_registry.h"
 
 namespace media_server
 {
@@ -23,32 +24,39 @@ gb28181_udp_session::gb28181_udp_session(
 
 bool gb28181_udp_session::startup()
 {
-    if (closed_ || rtp_socket_ || rtcp_socket_ || peer_.rtcp_port == 0 || !media_.startup())
+    if (closed_ || description_.transport != gb28181_transport::udp || rtp_socket_ || rtcp_socket_ || peer_.rtcp_port == 0 ||
+        !media_.startup())
     {
         return false;
     }
 
-    const auto self = shared_from_this();
+    const auto weak = weak_from_this();
     const auto bind_address = description_.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
                                                            : boost::asio::ip::address{boost::asio::ip::address_v6::any()};
     auto rtp_socket = std::make_shared<udp_socket>(executor_);
     if (!rtp_socket->startup(
             bind_address,
             description_.rtp_port,
-            [self](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+            [weak](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
             {
-                if (error)
+                if (const auto self = weak.lock())
                 {
-                    self->shutdown();
-                    return;
+                    if (error)
+                    {
+                        self->shutdown();
+                        return;
+                    }
+                    self->on_rtp(data, endpoint);
                 }
-                self->on_rtp(data, endpoint);
             },
-            [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+            [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
             {
                 if (error)
                 {
-                    self->shutdown();
+                    if (const auto self = weak.lock())
+                    {
+                        self->shutdown();
+                    }
                 }
             }))
     {
@@ -67,20 +75,26 @@ bool gb28181_udp_session::startup()
     if (!rtcp_socket->startup(
             bind_address,
             description_.rtcp_port,
-            [self](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+            [weak](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
             {
-                if (error)
+                if (const auto self = weak.lock())
                 {
-                    self->shutdown();
-                    return;
+                    if (error)
+                    {
+                        self->shutdown();
+                        return;
+                    }
+                    self->on_rtcp(data, endpoint);
                 }
-                self->on_rtcp(data, endpoint);
             },
-            [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+            [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
             {
                 if (error)
                 {
-                    self->shutdown();
+                    if (const auto self = weak.lock())
+                    {
+                        self->shutdown();
+                    }
                 }
             }))
     {
@@ -157,11 +171,12 @@ void gb28181_udp_session::on_rtcp(std::span<const std::uint8_t> data, const boos
 void gb28181_udp_session::wait_rtcp()
 {
     rtcp_timer_.expires_after(std::chrono::seconds(1));
-    const auto self = shared_from_this();
+    const auto weak = weak_from_this();
     rtcp_timer_.async_wait(
-        [self](const boost::system::error_code& error)
+        [weak](const boost::system::error_code& error)
         {
-            if (error || self->closed_)
+            const auto self = weak.lock();
+            if (!self || error || self->closed_)
             {
                 return;
             }
@@ -186,6 +201,7 @@ void gb28181_udp_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    gb28181_session_registry::instance().remove_input(stream_name(), *this);
     rtcp_timer_.cancel();
     media_.shutdown();
     if (rtp_socket_)
