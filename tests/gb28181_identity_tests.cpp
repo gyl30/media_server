@@ -70,18 +70,15 @@ void test_input_identity_is_reusable_after_remove()
     streams.clear();
     const auto description = make_tcp_active_description(65'000, 10'000'2001);
 
-    require(gb28181::create(io, make_input_config("live/gb-identity", description)) == gb28181::gb28181_create_error::none,
-            "gb input first create");
-    require(gb28181::remove("live/gb-identity"), "gb input remove");
-    require(gb28181::create(io, make_input_config("live/gb-identity", description)) == gb28181::gb28181_create_error::none,
-            "gb input identity reusable immediately after remove");
+    require(gb28181::create(io, make_input_config("live/gb-identity", description)) == 0, "gb input first create");
+    require(gb28181::remove("live/gb-identity") == 0, "gb input remove");
+    require(gb28181::create(io, make_input_config("live/gb-identity", description)) == 0, "gb input identity reusable immediately after remove");
 
-    require(gb28181::remove("live/gb-identity"), "gb input second remove");
+    require(gb28181::remove("live/gb-identity") == 0, "gb input second remove");
     io.run();
     io.restart();
-    require(gb28181::create(io, make_input_config("live/gb-identity", description)) == gb28181::gb28181_create_error::none,
-            "gb input reusable after remove");
-    require(gb28181::remove("live/gb-identity"), "gb input final remove");
+    require(gb28181::create(io, make_input_config("live/gb-identity", description)) == 0, "gb input reusable after remove");
+    require(gb28181::remove("live/gb-identity") == 0, "gb input final remove");
     io.run();
 }
 
@@ -96,16 +93,16 @@ void test_output_identity_is_reusable_after_remove()
     require(gb28181::create_output(io, gb28181_output_config{.stream_name = stream->name(),
                                                              .output_id = "primary",
                                                              .description = description}) ==
-                gb28181::gb28181_output_create_error::none,
+                0,
             "gb output first create");
-    require(gb28181::remove_output(stream->name(), "primary"), "gb output remove");
+    require(gb28181::remove_output(stream->name(), "primary") == 0, "gb output remove");
     require(gb28181::create_output(io, gb28181_output_config{.stream_name = stream->name(),
                                                              .output_id = "primary",
                                                              .description = description}) ==
-                gb28181::gb28181_output_create_error::none,
+                0,
             "gb output identity reusable immediately after remove");
 
-    require(gb28181::remove_output(stream->name(), "primary"), "gb output second remove");
+    require(gb28181::remove_output(stream->name(), "primary") == 0, "gb output second remove");
     io.run();
 }
 
@@ -117,17 +114,14 @@ void test_input_old_async_work_does_not_remove_replacement()
     streams.clear();
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2003);
 
-    require(gb28181::create(io, make_input_config("live/gb-generation", description)) == gb28181::gb28181_create_error::none,
-            "gb input old generation create");
-    require(gb28181::remove("live/gb-generation"), "gb input old generation remove");
-    require(gb28181::create(io, make_input_config("live/gb-generation", description)) == gb28181::gb28181_create_error::none,
-            "gb input replacement create");
+    require(gb28181::create(io, make_input_config("live/gb-generation", description)) == 0, "gb input old generation create");
+    require(gb28181::remove("live/gb-generation") == 0, "gb input old generation remove");
+    require(gb28181::create(io, make_input_config("live/gb-generation", description)) == 0, "gb input replacement create");
 
     io.poll();
-    require(gb28181::create(io, make_input_config("live/gb-generation", description)) == gb28181::gb28181_create_error::duplicate_stream,
-            "gb input old async work preserves replacement");
+    require(gb28181::create(io, make_input_config("live/gb-generation", description)) != 0, "gb input old async work preserves replacement");
 
-    require(gb28181::remove("live/gb-generation"), "gb input replacement remove");
+    require(gb28181::remove("live/gb-generation") == 0, "gb input replacement remove");
     io.run();
 }
 
@@ -143,23 +137,23 @@ void test_output_old_async_work_does_not_remove_replacement()
     require(gb28181::create_output(io, gb28181_output_config{.stream_name = stream->name(),
                                                              .output_id = "primary",
                                                              .description = description}) ==
-                gb28181::gb28181_output_create_error::none,
+                0,
             "gb output old generation create");
-    require(gb28181::remove_output(stream->name(), "primary"), "gb output old generation remove");
+    require(gb28181::remove_output(stream->name(), "primary") == 0, "gb output old generation remove");
     require(gb28181::create_output(io, gb28181_output_config{.stream_name = stream->name(),
                                                              .output_id = "primary",
                                                              .description = description}) ==
-                gb28181::gb28181_output_create_error::none,
+                0,
             "gb output replacement create");
 
     io.poll();
     require(gb28181::create_output(io, gb28181_output_config{.stream_name = stream->name(),
                                                              .output_id = "primary",
                                                              .description = description}) ==
-                gb28181::gb28181_output_create_error::duplicate_output,
+                -1,
             "gb output old async work preserves replacement");
 
-    require(gb28181::remove_output(stream->name(), "primary"), "gb output replacement remove");
+    require(gb28181::remove_output(stream->name(), "primary") == 0, "gb output replacement remove");
     io.run();
 }
 

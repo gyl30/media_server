@@ -102,42 +102,17 @@ boost::asio::ip::address bind_address(const boost::asio::ip::address& address)
 
 }    // namespace
 
-gb28181_create_error create(boost::asio::io_context& owner, gb28181_input_config config)
+int create(boost::asio::io_context& owner, gb28181_input_config config)
 {
     auto stream_name = std::move(config.stream_name);
     auto description = std::move(config.description);
     auto remote_rtp_endpoint = std::move(config.remote_rtp_endpoint);
     auto remote_rtcp_port = config.remote_rtcp_port;
 
-    if (stream_name.empty() || description.rtp_port == 0 || description.payload_type > 127 ||
-        (description.transport != gb28181_transport::udp && description.transport != gb28181_transport::tcp_active &&
-         description.transport != gb28181_transport::tcp_passive))
-    {
-        return gb28181_create_error::invalid_configuration;
-    }
-    if (description.transport == gb28181_transport::udp)
-    {
-        if (description.rtcp_port == 0 || description.rtcp_port == description.rtp_port || !remote_rtcp_port || *remote_rtcp_port == 0)
-        {
-            return gb28181_create_error::invalid_configuration;
-        }
-        if (remote_rtp_endpoint && (remote_rtp_endpoint->port() == 0 || remote_rtp_endpoint->address().is_unspecified() ||
-                                    remote_rtp_endpoint->address().is_v4() != description.address.is_v4()))
-        {
-            return gb28181_create_error::invalid_configuration;
-        }
-    }
-    else if (description.rtcp_port != 0 || remote_rtp_endpoint || remote_rtcp_port)
-    {
-        return gb28181_create_error::invalid_configuration;
-    }
-    if (description.transport == gb28181_transport::tcp_active && description.address.is_unspecified())
-    {
-        return gb28181_create_error::invalid_configuration;
-    }
     if (registry::instance().find(stream_name))
     {
-        return gb28181_create_error::stream_conflict;
+        spdlog::error("gb28181 stream conflict {}", stream_name);
+        return -1;
     }
 
     auto generation = std::make_shared<generation_token>();
@@ -146,7 +121,8 @@ gb28181_create_error create(boost::asio::io_context& owner, gb28181_input_config
         std::erase_if(sessions, [](const auto& entry) { return resource_expired(entry.second.resource); });
         if (!sessions.emplace(stream_name, session_entry{.generation = generation, .resource = std::monostate{}}).second)
         {
-            return gb28181_create_error::duplicate_stream;
+            spdlog::error("gb28181 duplicate stream {}", stream_name);
+            return -1;
         }
     }
 
@@ -206,7 +182,8 @@ gb28181_create_error create(boost::asio::io_context& owner, gb28181_input_config
             {
                 sessions.erase(iterator);
             }
-            return gb28181_create_error::internal_error;
+            spdlog::error("gb28181 udp session startup failed stream {}", stream_name);
+            return -1;
         }
         resource = std::weak_ptr<gb28181_udp_session>{session};
     }
@@ -248,7 +225,8 @@ gb28181_create_error create(boost::asio::io_context& owner, gb28181_input_config
             {
                 sessions.erase(iterator);
             }
-            return gb28181_create_error::internal_error;
+            spdlog::error("gb28181 tcp listener startup failed stream {}", stream_name);
+            return -1;
         }
         resource = std::weak_ptr<tcp_acceptor>{listener};
     }
@@ -269,51 +247,31 @@ gb28181_create_error create(boost::asio::io_context& owner, gb28181_input_config
     if (!installed)
     {
         shutdown_resource(resource);
-        return gb28181_create_error::internal_error;
+        spdlog::error("gb28181 session resource install failed stream {}", stream_name);
+        return -1;
     }
 
     spdlog::info("gb28181 session created {}", stream_name);
-    return gb28181_create_error::none;
+    return 0;
 }
 
-gb28181_output_create_error create_output(boost::asio::io_context& owner, gb28181_output_config config)
+int create_output(boost::asio::io_context& owner, gb28181_output_config config)
 {
     auto stream_name = std::move(config.stream_name);
     auto output_id = std::move(config.output_id);
     auto description = std::move(config.description);
     const auto rtcp = config.rtcp;
 
-    if (stream_name.empty() || output_id.empty() || description.rtp_port == 0 || description.payload_type > 127 ||
-        (description.transport != gb28181_transport::udp && description.transport != gb28181_transport::tcp_active &&
-         description.transport != gb28181_transport::tcp_passive))
-    {
-        return gb28181_output_create_error::invalid_configuration;
-    }
-    if (description.transport == gb28181_transport::udp &&
-        (description.address.is_unspecified() || description.rtcp_port == 0 || description.rtcp_port == description.rtp_port))
-    {
-        return gb28181_output_create_error::invalid_configuration;
-    }
-    if (description.transport != gb28181_transport::udp && description.rtcp_port != 0)
-    {
-        return gb28181_output_create_error::invalid_configuration;
-    }
-    if (rtcp && description.transport != gb28181_transport::udp)
-    {
-        return gb28181_output_create_error::invalid_configuration;
-    }
-    if (description.transport == gb28181_transport::tcp_active && description.address.is_unspecified())
-    {
-        return gb28181_output_create_error::invalid_configuration;
-    }
     auto stream = registry::instance().find(stream_name);
     if (!stream)
     {
-        return gb28181_output_create_error::stream_not_found;
+        spdlog::error("gb28181 output source stream not found {} output {}", stream_name, output_id);
+        return -1;
     }
     if (!gb28181_output_media::supported_tracks(stream->tracks()))
     {
-        return gb28181_output_create_error::unsupported_stream;
+        spdlog::error("gb28181 output source stream unsupported {} output {}", stream_name, output_id);
+        return -1;
     }
 
     const output_key key{stream_name, output_id};
@@ -323,7 +281,8 @@ gb28181_output_create_error create_output(boost::asio::io_context& owner, gb2818
         std::erase_if(outputs, [](const auto& entry) { return resource_expired(entry.second.resource); });
         if (!outputs.emplace(key, output_entry{.generation = generation, .resource = std::monostate{}}).second)
         {
-            return gb28181_output_create_error::duplicate_output;
+            spdlog::error("gb28181 duplicate output stream {} output {}", stream_name, output_id);
+            return -1;
         }
     }
 
@@ -397,7 +356,8 @@ gb28181_output_create_error create_output(boost::asio::io_context& owner, gb2818
             {
                 outputs.erase(iterator);
             }
-            return gb28181_output_create_error::internal_error;
+            spdlog::error("gb28181 udp output startup failed stream {} output {}", stream_name, output_id);
+            return -1;
         }
         resource = std::weak_ptr<gb28181_udp_output_session>{session};
     }
@@ -439,7 +399,8 @@ gb28181_output_create_error create_output(boost::asio::io_context& owner, gb2818
             {
                 outputs.erase(iterator);
             }
-            return gb28181_output_create_error::internal_error;
+            spdlog::error("gb28181 tcp output listener startup failed stream {} output {}", stream_name, output_id);
+            return -1;
         }
         resource = std::weak_ptr<tcp_acceptor>{listener};
     }
@@ -460,14 +421,15 @@ gb28181_output_create_error create_output(boost::asio::io_context& owner, gb2818
     if (!installed)
     {
         shutdown_resource(resource);
-        return gb28181_output_create_error::internal_error;
+        spdlog::error("gb28181 output resource install failed stream {} output {}", stream_name, output_id);
+        return -1;
     }
 
     spdlog::info("gb28181 output created {} output {}", stream_name, output_id);
-    return gb28181_output_create_error::none;
+    return 0;
 }
 
-bool remove_output(std::string_view stream_name, std::string_view output_id)
+int remove_output(std::string_view stream_name, std::string_view output_id)
 {
     const output_key key{std::string{stream_name}, std::string{output_id}};
     output_resource resource;
@@ -476,22 +438,24 @@ bool remove_output(std::string_view stream_name, std::string_view output_id)
         const auto iterator = outputs.find(key);
         if (iterator == outputs.end())
         {
-            return false;
+            spdlog::error("gb28181 output not found stream {} output {}", stream_name, output_id);
+            return -1;
         }
         if (resource_expired(iterator->second.resource))
         {
             outputs.erase(iterator);
-            return false;
+            spdlog::error("gb28181 output resource expired stream {} output {}", stream_name, output_id);
+            return -1;
         }
         resource = iterator->second.resource;
         outputs.erase(iterator);
     }
     shutdown_resource(resource);
     spdlog::info("gb28181 output removed {} output {}", stream_name, output_id);
-    return true;
+    return 0;
 }
 
-bool remove(std::string_view stream_name)
+int remove(std::string_view stream_name)
 {
     session_resource resource;
     {
@@ -499,19 +463,21 @@ bool remove(std::string_view stream_name)
         const auto iterator = sessions.find(stream_name);
         if (iterator == sessions.end())
         {
-            return false;
+            spdlog::error("gb28181 stream not found {}", stream_name);
+            return -1;
         }
         if (resource_expired(iterator->second.resource))
         {
             sessions.erase(iterator);
-            return false;
+            spdlog::error("gb28181 stream resource expired {}", stream_name);
+            return -1;
         }
         resource = iterator->second.resource;
         sessions.erase(iterator);
     }
     shutdown_resource(resource);
     spdlog::info("gb28181 session removed {}", stream_name);
-    return true;
+    return 0;
 }
 
 }    // namespace media_server::gb28181

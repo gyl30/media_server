@@ -231,12 +231,17 @@ std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view 
 
     if (*transport == gb28181_transport::udp)
     {
-        if (!rtcp_port || !remote_rtcp_port || remote_rtp_address.has_value() != remote_rtp_port.has_value())
+        if (!rtcp_port || *rtcp_port == *rtp_port || !remote_rtcp_port || remote_rtp_address.has_value() != remote_rtp_port.has_value())
         {
             return std::nullopt;
         }
     }
     else if (rtcp_port || remote_rtp_address || remote_rtp_port || remote_rtcp_port)
+    {
+        return std::nullopt;
+    }
+
+    if (*transport == gb28181_transport::tcp_active && address->is_unspecified())
     {
         return std::nullopt;
     }
@@ -288,12 +293,17 @@ std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_vie
     }
     if (*transport == gb28181_transport::udp)
     {
-        if (!rtcp_port || address->is_unspecified())
+        if (!rtcp_port || *rtcp_port == *rtp_port || address->is_unspecified())
         {
             return std::nullopt;
         }
     }
     else if (rtcp_port || rtcp)
+    {
+        return std::nullopt;
+    }
+
+    if (*transport == gb28181_transport::tcp_active && address->is_unspecified())
     {
         return std::nullopt;
     }

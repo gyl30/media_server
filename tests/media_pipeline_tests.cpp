@@ -2806,30 +2806,30 @@ void test_gb28181_multi_output_identity()
                                                              .output_id = "a",
                                                              .description = description,
                                                              .rtcp = false}) ==
-                gb28181::gb28181_output_create_error::none,
+                0,
             "gb multi output first identity");
     require(gb28181::create_output(io, gb28181_output_config{.stream_name = first->name(),
                                                              .output_id = "b",
                                                              .description = description,
                                                              .rtcp = false}) ==
-                gb28181::gb28181_output_create_error::none,
+                0,
             "gb multi output second identity");
     require(gb28181::create_output(io, gb28181_output_config{.stream_name = first->name(),
                                                              .output_id = "a",
                                                              .description = description,
                                                              .rtcp = false}) ==
-                gb28181::gb28181_output_create_error::duplicate_output,
+                -1,
             "gb multi output duplicate identity");
     require(gb28181::create_output(io, gb28181_output_config{.stream_name = second->name(),
                                                              .output_id = "a",
                                                              .description = description,
                                                              .rtcp = false}) ==
-                gb28181::gb28181_output_create_error::none,
+                0,
             "gb multi output identity scoped by stream");
-    require(gb28181::remove_output(first->name(), "a"), "gb multi output remove first identity");
-    require(gb28181::remove_output(first->name(), "b"), "gb multi output remove second identity");
-    require(gb28181::remove_output(second->name(), "a"), "gb multi output remove other stream identity");
-    require(!gb28181::remove_output(first->name(), "missing"), "gb multi output missing identity");
+    require(gb28181::remove_output(first->name(), "a") == 0, "gb multi output remove first identity");
+    require(gb28181::remove_output(first->name(), "b") == 0, "gb multi output remove second identity");
+    require(gb28181::remove_output(second->name(), "a") == 0, "gb multi output remove other stream identity");
+    require(gb28181::remove_output(first->name(), "missing") != 0, "gb multi output missing identity");
 
     io.run();
 }
@@ -3021,10 +3021,10 @@ void test_gb28181_input_http_parameters()
     check(post, "/gb28181/input/create", boost::beast::http::status::bad_request, "gb input remote family mismatch", udp_body().substr(0, udp_body().size() - 1) + ",\"remote_rtp_address\":\"::1\",\"remote_rtp_port\":31998}");
     check(post, "/gb28181/input/create", boost::beast::http::status::bad_request, "gb input tcp rejects rtcp", tcp_active_body.substr(0, tcp_active_body.size() - 1) + ",\"rtcp_port\":31001}");
     check(post, "/gb28181/input/create", boost::beast::http::status::bad_request, "gb input tcp rejects remote peer", tcp_active_body.substr(0, tcp_active_body.size() - 1) + ",\"remote_rtcp_port\":31999}");
-    check(post, "/gb28181/input/create", boost::beast::http::status::bad_request, "gb input equal rtp rtcp port", "{\"stream_name\":\"equal-ports\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":31000,\"rtcp_port\":31000,\"payload_type\":96,\"ssrc\":100001016,\"remote_rtcp_port\":31999}", "{\"error\":\"invalid_configuration\"}");
+    check(post, "/gb28181/input/create", boost::beast::http::status::bad_request, "gb input equal rtp rtcp port", "{\"stream_name\":\"equal-ports\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":31000,\"rtcp_port\":31000,\"payload_type\":96,\"ssrc\":100001016,\"remote_rtcp_port\":31999}");
 
     check(post, "/gb28181/input/create", boost::beast::http::status::created, "gb input accepts learned RTP peer", udp_body(), "{\"result\":\"ok\"}");
-    check(post, "/gb28181/input/create", boost::beast::http::status::conflict, "gb input duplicate stream", udp_body(), "{\"error\":\"duplicate_stream\"}");
+    check(post, "/gb28181/input/create", boost::beast::http::status::internal_server_error, "gb input duplicate stream", udp_body(), "{\"error\":\"operation_failed\"}");
     check(post, "/gb28181/input/delete", boost::beast::http::status::ok, "gb input deletes learned peer", "{\"stream_name\":\"live/gb-input-http\"}", "{\"result\":\"ok\"}");
     check(post, "/gb28181/input/delete", boost::beast::http::status::bad_request, "gb input delete rejects extra field", "{\"stream_name\":\"live/gb-input-http\",\"transport\":\"udp\"}");
     check(post, "/gb28181/input/create", boost::beast::http::status::created, "gb input accepts fixed RTP peer", fixed_udp_body(), "{\"result\":\"ok\"}");
@@ -3033,7 +3033,7 @@ void test_gb28181_input_http_parameters()
     check(post, "/gb28181/input/delete", boost::beast::http::status::ok, "gb input deletes tcp active", "{\"stream_name\":\"live/gb-input-http-active\"}", "{\"result\":\"ok\"}");
     check(post, "/gb28181/input/create", boost::beast::http::status::created, "gb input tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
     check(post, "/gb28181/input/delete", boost::beast::http::status::ok, "gb input deletes tcp passive", "{\"stream_name\":\"live/gb-input-http-passive\"}", "{\"result\":\"ok\"}");
-    check(post, "/gb28181/input/delete", boost::beast::http::status::not_found, "gb input missing stream", "{\"stream_name\":\"live/gb-input-http\"}", "{\"error\":\"stream_not_found\"}");
+    check(post, "/gb28181/input/delete", boost::beast::http::status::internal_server_error, "gb input missing stream", "{\"stream_name\":\"live/gb-input-http\"}", "{\"error\":\"operation_failed\"}");
 
     work.reset();
     runner.join();
@@ -3091,7 +3091,7 @@ void test_gb28181_output_http_parameters()
     check(post, "/gb28181/output/create", boost::beast::http::status::bad_request, "gb output tcp rtcp port is invalid", tcp_active_body.substr(0, tcp_active_body.size() - 1) + ",\"rtcp_port\":29021}");
 
     check(post, "/gb28181/output/create", boost::beast::http::status::created, "gb output udp default rtcp", udp_body, "{\"result\":\"ok\"}");
-    check(post, "/gb28181/output/create", boost::beast::http::status::conflict, "gb output duplicate identity", udp_body, "{\"error\":\"duplicate_output\"}");
+    check(post, "/gb28181/output/create", boost::beast::http::status::internal_server_error, "gb output duplicate identity", udp_body, "{\"error\":\"operation_failed\"}");
     check(post, "/gb28181/output/create", boost::beast::http::status::created, "gb output udp rtcp", "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"udp-rtcp\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":29020,\"rtcp_port\":29021,\"payload_type\":96,\"ssrc\":100001002,\"rtcp\":true}", "{\"result\":\"ok\"}");
     check(post, "/gb28181/output/delete", boost::beast::http::status::bad_request, "gb output delete rejects extra field", "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"udp-rtcp\",\"rtcp\":true}");
     check(post, "/gb28181/output/delete", boost::beast::http::status::ok, "gb output deletes udp default", "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"udp-default\"}", "{\"result\":\"ok\"}");
@@ -3100,7 +3100,7 @@ void test_gb28181_output_http_parameters()
     check(post, "/gb28181/output/delete", boost::beast::http::status::ok, "gb output deletes tcp active", "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-active\"}", "{\"result\":\"ok\"}");
     check(post, "/gb28181/output/create", boost::beast::http::status::created, "gb output tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
     check(post, "/gb28181/output/delete", boost::beast::http::status::ok, "gb output deletes tcp passive", "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-passive\"}", "{\"result\":\"ok\"}");
-    check(post, "/gb28181/output/delete", boost::beast::http::status::not_found, "gb output missing identity", "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"missing\"}", "{\"error\":\"output_not_found\"}");
+    check(post, "/gb28181/output/delete", boost::beast::http::status::internal_server_error, "gb output missing identity", "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"missing\"}", "{\"error\":\"operation_failed\"}");
 
     work.reset();
     runner.join();

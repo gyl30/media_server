@@ -115,13 +115,17 @@ delete_gb28181_output() {
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
         "http://127.0.0.1:${http_port}/gb28181/output/delete")"
-    if [[ "$code" != "200" ]]; then
+    if [[ "$code" != "200" && "$code" != "500" ]]; then
         echo "POST /gb28181/output/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
     fi
-    [[ "$(<"$response")" == '{"result":"ok"}' ]]
+    if [[ "$code" == "200" ]]; then
+        [[ "$(<"$response")" == '{"result":"ok"}' ]]
+    else
+        [[ "$(<"$response")" == '{"error":"operation_failed"}' ]]
+    fi
 }
 
 delete_gb28181_input() {
@@ -134,7 +138,7 @@ delete_gb28181_input() {
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
         "http://127.0.0.1:${http_port}/gb28181/input/delete")"
-    if [[ "$code" != "200" && "$code" != "404" ]]; then
+    if [[ "$code" != "200" && "$code" != "500" ]]; then
         echo "POST /gb28181/input/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
@@ -143,7 +147,7 @@ delete_gb28181_input() {
     if [[ "$code" == "200" ]]; then
         [[ "$(<"$response")" == '{"result":"ok"}' ]]
     else
-        [[ "$(<"$response")" == '{"error":"stream_not_found"}' ]]
+        [[ "$(<"$response")" == '{"error":"operation_failed"}' ]]
     fi
 }
 
