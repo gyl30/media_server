@@ -90,7 +90,7 @@ void test_ps_fixture_creates_stream()
     streams.clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    gb28181_input_media media(streams, io.get_executor(), "live/gb-peer-fixture", payload_type, ssrc);
+    gb28181_input_media media(io.get_executor(), "live/gb-peer-fixture", payload_type, ssrc);
     require(media.startup(), "gb peer fixture media startup");
     const auto packets = make_ps_rtp(payload_type, ssrc);
     for (const auto& packet : packets)
@@ -131,7 +131,7 @@ void test_signaled_rtp_peer_is_pinned_before_first_packet()
         .rtp = allowed.local_endpoint(),
         .rtcp_port = remote_rtcp.local_endpoint().port(),
     };
-    auto session = std::make_shared<gb28181_udp_session>(streams, io.get_executor(), "live/gb-peer-signaled", description, peer);
+    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/gb-peer-signaled", description, peer);
     require(session->startup(), "gb peer signaled startup");
 
     const auto packets = make_ps_rtp(payload_type, ssrc);
@@ -196,7 +196,7 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
         .rtp = std::nullopt,
         .rtcp_port = remote_rtcp.local_endpoint().port(),
     };
-    auto session = std::make_shared<gb28181_udp_session>(streams, io.get_executor(), "live/gb-peer-learned", description, peer);
+    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/gb-peer-learned", description, peer);
     require(session->startup(), "gb peer learned startup");
 
     constexpr std::array<std::uint8_t, 12> wrong_ssrc{

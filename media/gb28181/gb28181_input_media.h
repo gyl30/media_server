@@ -32,8 +32,7 @@ enum class gb28181_rtp_input_result
 class gb28181_input_media final
 {
    public:
-    gb28181_input_media(stream_registry& registry_ref,
-                        boost::asio::any_io_executor executor,
+    gb28181_input_media(boost::asio::any_io_executor executor,
                         std::string stream_name,
                         std::uint8_t payload_type,
                         std::uint32_t expected_ssrc);
@@ -64,7 +63,6 @@ class gb28181_input_media final
     bool update_track_from_packet(const avpacket_t& packet);
     bool try_start_recording();
 
-    stream_registry& registry_;
     boost::asio::any_io_executor executor_;
     std::string stream_name_;
     std::uint8_t payload_type_{};
