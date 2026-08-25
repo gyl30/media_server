@@ -22,7 +22,7 @@ gb28181_http_response make_json_response(const gb28181_http_request& request,
     {
         response.set(boost::beast::http::field::allow, allow);
     }
-    response.keep_alive(request.keep_alive());
+    response.keep_alive(false);
     response.body() = boost::json::serialize(body);
     response.prepare_payload();
     return response;
