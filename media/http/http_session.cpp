@@ -1,6 +1,7 @@
 #include <chrono>
 #include <utility>
 #include <charconv>
+#include <optional>
 
 #include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
@@ -15,6 +16,111 @@ namespace
 {
 
 constexpr int whep_retry_after_seconds = 1;
+
+struct gb28181_input_parameters
+{
+    std::optional<boost::asio::ip::address> remote_rtp_address;
+    std::optional<std::uint16_t> remote_rtp_port;
+    std::optional<std::uint16_t> remote_rtcp_port;
+};
+
+std::optional<gb28181_input_parameters> parse_gb28181_input_parameters(const boost::urls::url_view& target)
+{
+    const auto parse_port = [](std::string_view value) -> std::optional<std::uint16_t>
+    {
+        std::uint32_t port{};
+        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), port);
+        if (error != std::errc{} || end != value.data() + value.size() || port == 0 || port > 65'535)
+        {
+            return std::nullopt;
+        }
+        return static_cast<std::uint16_t>(port);
+    };
+
+    gb28181_input_parameters parameters;
+    for (const auto parameter : target.params())
+    {
+        if (parameter.key == "remote_rtp_address")
+        {
+            if (parameters.remote_rtp_address || !parameter.has_value || parameter.value.empty())
+            {
+                return std::nullopt;
+            }
+            boost::system::error_code error;
+            auto address = boost::asio::ip::make_address(parameter.value, error);
+            if (error || address.is_unspecified())
+            {
+                return std::nullopt;
+            }
+            parameters.remote_rtp_address = std::move(address);
+            continue;
+        }
+
+        if (parameter.key == "remote_rtp_port")
+        {
+            if (parameters.remote_rtp_port || !parameter.has_value)
+            {
+                return std::nullopt;
+            }
+            parameters.remote_rtp_port = parse_port(parameter.value);
+            if (!parameters.remote_rtp_port)
+            {
+                return std::nullopt;
+            }
+            continue;
+        }
+        if (parameter.key == "remote_rtcp_port")
+        {
+            if (parameters.remote_rtcp_port || !parameter.has_value)
+            {
+                return std::nullopt;
+            }
+            parameters.remote_rtcp_port = parse_port(parameter.value);
+            if (!parameters.remote_rtcp_port)
+            {
+                return std::nullopt;
+            }
+            continue;
+        }
+
+        return std::nullopt;
+    }
+    return parameters;
+}
+
+struct gb28181_output_parameters
+{
+    std::optional<std::string> output_id;
+    std::optional<bool> rtcp;
+};
+
+std::optional<gb28181_output_parameters> parse_gb28181_output_parameters(const boost::urls::url_view& target)
+{
+    gb28181_output_parameters parameters;
+    for (const auto parameter : target.params())
+    {
+        if (parameter.key == "output_id")
+        {
+            if (parameters.output_id || !parameter.has_value || parameter.value.empty())
+            {
+                return std::nullopt;
+            }
+            parameters.output_id.emplace(parameter.value.data(), parameter.value.size());
+            continue;
+        }
+        if (parameter.key == "rtcp")
+        {
+            if (parameters.rtcp || !parameter.has_value || (parameter.value != "0" && parameter.value != "1"))
+            {
+                return std::nullopt;
+            }
+            parameters.rtcp = parameter.value == "1";
+            continue;
+        }
+        return std::nullopt;
+    }
+    return parameters;
+}
 
 }    // namespace
 
@@ -210,68 +316,16 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
     }
 
     const auto stream_name = join_segments(segments, 1, segments.size());
-    std::optional<boost::asio::ip::address> remote_rtp_address;
-    std::optional<std::uint16_t> remote_rtp_port;
-    std::optional<std::uint16_t> remote_rtcp_port;
-    bool remote_rtp_address_seen = false;
-    bool remote_rtp_port_seen = false;
-    bool remote_rtcp_port_seen = false;
-    const auto parse_port = [](std::string_view value) -> std::optional<std::uint16_t>
+    const auto parameters = parse_gb28181_input_parameters(target);
+    if (!parameters)
     {
-        std::uint32_t port{};
-        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), port);
-        if (error != std::errc{} || end != value.data() + value.size() || port == 0 || port > 65'535)
-        {
-            return std::nullopt;
-        }
-        return static_cast<std::uint16_t>(port);
-    };
-    for (const auto parameter : target.params())
-    {
-        if (parameter.key == "remote_rtp_address" && !remote_rtp_address_seen && parameter.has_value && !parameter.value.empty())
-        {
-            boost::system::error_code error;
-            auto address = boost::asio::ip::make_address(parameter.value, error);
-            if (error || address.is_unspecified())
-            {
-                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
-                return;
-            }
-            remote_rtp_address = std::move(address);
-            remote_rtp_address_seen = true;
-            continue;
-        }
-
-        if (parameter.key == "remote_rtp_port" && !remote_rtp_port_seen && parameter.has_value)
-        {
-            remote_rtp_port = parse_port(parameter.value);
-            if (!remote_rtp_port)
-            {
-                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
-                return;
-            }
-            remote_rtp_port_seen = true;
-            continue;
-        }
-        if (parameter.key == "remote_rtcp_port" && !remote_rtcp_port_seen && parameter.has_value)
-        {
-            remote_rtcp_port = parse_port(parameter.value);
-            if (!remote_rtcp_port)
-            {
-                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
-                return;
-            }
-            remote_rtcp_port_seen = true;
-            continue;
-        }
-
         send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
         return;
     }
 
     if (request_.method() == boost::beast::http::verb::post)
     {
-        if (remote_rtp_address_seen != remote_rtp_port_seen)
+        if (parameters->remote_rtp_address.has_value() != parameters->remote_rtp_port.has_value())
         {
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
             return;
@@ -285,11 +339,11 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
         }
 
         std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint;
-        if (remote_rtp_address)
+        if (parameters->remote_rtp_address)
         {
-            remote_rtp_endpoint.emplace(*remote_rtp_address, *remote_rtp_port);
+            remote_rtp_endpoint.emplace(*parameters->remote_rtp_address, *parameters->remote_rtp_port);
         }
-        switch (gb28181_.create(stream_.get_executor(), stream_name, request_.body(), std::move(remote_rtp_endpoint), remote_rtcp_port))
+        switch (gb28181_.create(stream_.get_executor(), stream_name, request_.body(), std::move(remote_rtp_endpoint), parameters->remote_rtcp_port))
         {
             case gb28181_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
@@ -309,7 +363,7 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
 
     if (request_.method() == boost::beast::http::verb::delete_)
     {
-        if (remote_rtp_address_seen || remote_rtp_port_seen || remote_rtcp_port_seen)
+        if (parameters->remote_rtp_address || parameters->remote_rtp_port || parameters->remote_rtcp_port)
         {
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
             return;
@@ -335,28 +389,13 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
     }
 
     const auto stream_name = join_segments(segments, 2, segments.size());
-    std::string output_id;
-    bool output_id_seen = false;
-    bool rtcp = false;
-    bool rtcp_seen = false;
-    for (const auto parameter : target.params())
+    const auto parameters = parse_gb28181_output_parameters(target);
+    if (!parameters)
     {
-        if (parameter.key == "output_id" && !output_id_seen && parameter.has_value && !parameter.value.empty())
-        {
-            output_id.assign(parameter.value.data(), parameter.value.size());
-            output_id_seen = true;
-            continue;
-        }
-        if (parameter.key == "rtcp" && !rtcp_seen && parameter.has_value && (parameter.value == "0" || parameter.value == "1"))
-        {
-            rtcp = parameter.value == "1";
-            rtcp_seen = true;
-            continue;
-        }
         send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
         return;
     }
-    if (!output_id_seen)
+    if (!parameters->output_id)
     {
         send_text_response(boost::beast::http::status::bad_request, "text/plain", "output_id is required\n");
         return;
@@ -371,7 +410,7 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
             return;
         }
 
-        switch (gb28181_.create_output(stream_.get_executor(), stream_name, output_id, rtcp, request_.body()))
+        switch (gb28181_.create_output(stream_.get_executor(), stream_name, *parameters->output_id, parameters->rtcp.value_or(false), request_.body()))
         {
             case gb28181_output_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
@@ -396,12 +435,12 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
 
     if (request_.method() == boost::beast::http::verb::delete_)
     {
-        if (rtcp_seen)
+        if (parameters->rtcp)
         {
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
             return;
         }
-        if (!gb28181_.remove_output(stream_name, output_id))
+        if (!gb28181_.remove_output(stream_name, *parameters->output_id))
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "gb28181 output not found\n");
             return;
