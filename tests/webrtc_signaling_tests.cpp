@@ -26,10 +26,12 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/asio/executor_work_guard.hpp>
+#include <boost/url/parse.hpp>
 
 #include "media/hls/hls.h"
 #include "media/core/media_stream.h"
 #include "media/http/http_session.h"
+#include "media/http/whep_http.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep.h"
@@ -1000,6 +1002,19 @@ void test_http_method_contract()
     require(hls_head.result() == boost::beast::http::status::method_not_allowed, "http hls head status");
     require(hls_head[boost::beast::http::field::allow] == "GET", "http hls head allow");
     require(hls_head.body().empty(), "http hls head body");
+}
+
+void test_whep_http_namespace_dispatch()
+{
+    boost::asio::io_context io;
+    config application_config;
+
+    whep_http_request request{boost::beast::http::verb::get, "/play/whep/live/camera", 11};
+    const auto target = boost::urls::parse_origin_form(request.target());
+    require(target.has_value(), "whep request target");
+
+    const auto response = handle_whep_request(request, io.get_executor(), *target, application_config);
+    require(response.result() == boost::beast::http::status::ok, "whep namespace dispatch status");
 }
 
 void test_whep_http_cors()
@@ -2911,6 +2926,8 @@ int main()
     std::cout << "[pass] http_head_response_contract\n";
     media_server::test_http_method_contract();
     std::cout << "[pass] http_method_contract\n";
+    media_server::test_whep_http_namespace_dispatch();
+    std::cout << "[pass] whep_http_namespace_dispatch\n";
     media_server::test_whep_http_cors();
     std::cout << "[pass] whep_http_cors\n";
     media_server::test_whep_multi_session_isolation();

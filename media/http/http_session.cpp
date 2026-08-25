@@ -68,28 +68,38 @@ void http_session::handle_request()
         return;
     }
 
-    const auto segments = path_segments(*parsed);
-    if (segments.empty())
+    const auto encoded_path = parsed->encoded_path();
+    const std::string_view path(encoded_path.data(), encoded_path.size());
+    if (path == "/")
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
         return;
     }
-
-    const auto all_segments = std::span<const std::string>(segments);
-    if (segments.front() == "gb28181")
+    if (path == "/gb28181" || path.starts_with("/gb28181/"))
     {
-        handle_gb28181_input(*parsed, all_segments.subspan(1));
+        write_response(media_server::handle_gb28181_input_request(request_, workers_.next(), *parsed));
         return;
     }
-    if (segments.size() >= 2 && segments[0] == "play" && segments[1] == "gb28181")
+    if (path == "/play/gb28181" || path.starts_with("/play/gb28181/"))
     {
-        handle_gb28181_output(*parsed, all_segments.subspan(2));
+        write_response(media_server::handle_gb28181_output_request(request_, workers_.next(), *parsed));
+        return;
+    }
+    if (path == "/play/whep" || path.starts_with("/play/whep/"))
+    {
+        write_response(media_server::handle_whep_request(request_, stream_.get_executor(), *parsed, config_));
+        return;
+    }
+    if (path == "/play/hls" || path.starts_with("/play/hls/"))
+    {
+        handle_hls(*parsed);
         return;
     }
 
-    if (segments.size() >= 2 && segments[0] == "play" && segments[1] == "whep")
+    const auto decoded_path = parsed->path();
+    if (decoded_path.ends_with(".flv"))
     {
-        handle_whep(all_segments.subspan(2));
+        handle_flv(*parsed);
         return;
     }
 
@@ -99,38 +109,17 @@ void http_session::handle_request()
         return;
     }
 
-    if (segments.size() >= 2 && segments[0] == "play" && segments[1] == "hls")
-    {
-        handle_hls(all_segments.subspan(2));
-        return;
-    }
-
-    if (segments.back().ends_with(".flv"))
-    {
-        handle_flv(*parsed);
-        return;
-    }
-
     send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
-}
-
-void http_session::handle_whep(std::span<const std::string> segments)
-{
-    write_response(media_server::handle_whep_request(request_, stream_.get_executor(), segments, config_));
-}
-
-void http_session::handle_gb28181_input(const boost::urls::url_view& target, std::span<const std::string> segments)
-{
-    write_response(media_server::handle_gb28181_input_request(request_, workers_.next(), target, segments));
-}
-
-void http_session::handle_gb28181_output(const boost::urls::url_view& target, std::span<const std::string> segments)
-{
-    write_response(media_server::handle_gb28181_output_request(request_, workers_.next(), target, segments));
 }
 
 void http_session::handle_flv(const boost::urls::url_view& target)
 {
+    if (request_.method() != boost::beast::http::verb::get)
+    {
+        send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "GET");
+        return;
+    }
+
     auto segments = path_segments(target);
     if (segments.empty() || !segments.back().ends_with(".flv"))
     {
@@ -174,8 +163,21 @@ void http_session::handle_flv(const boost::urls::url_view& target)
         });
 }
 
-void http_session::handle_hls(std::span<const std::string> segments)
+void http_session::handle_hls(const boost::urls::url_view& target)
 {
+    if (request_.method() != boost::beast::http::verb::get)
+    {
+        send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "GET");
+        return;
+    }
+
+    const auto path = path_segments(target);
+    if (path.size() < 2 || path[0] != "play" || path[1] != "hls")
+    {
+        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
+        return;
+    }
+    const auto segments = std::span<const std::string>(path).subspan(2);
     if (segments.size() < 2)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");

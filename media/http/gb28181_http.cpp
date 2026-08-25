@@ -1,5 +1,7 @@
 #include <optional>
+#include <span>
 #include <utility>
+#include <vector>
 
 #include <boost/json.hpp>
 
@@ -11,6 +13,16 @@ namespace media_server
 {
 namespace
 {
+
+std::vector<std::string> path_segments(const boost::urls::url_view& target)
+{
+    std::vector<std::string> result;
+    for (const auto segment : target.segments())
+    {
+        result.emplace_back(segment);
+    }
+    return result;
+}
 
 std::optional<gb28181_http_response> validate_request(const gb28181_http_request& request,
                                                       const boost::urls::url_view& target,
@@ -73,9 +85,14 @@ gb28181_http_response make_operation_failed_response(const gb28181_http_request&
 
 gb28181_http_response handle_gb28181_input_request(const gb28181_http_request& request,
                                                    boost::asio::io_context& owner,
-                                                   const boost::urls::url_view& target,
-                                                   std::span<const std::string> segments)
+                                                   const boost::urls::url_view& target)
 {
+    const auto path = path_segments(target);
+    if (path.empty() || path.front() != "gb28181")
+    {
+        return make_gb28181_error_response(request, boost::beast::http::status::not_found, "not_found");
+    }
+    const auto segments = std::span<const std::string>(path).subspan(1);
     if (const auto error = validate_request(request, target, segments))
     {
         return *error;
@@ -100,9 +117,14 @@ gb28181_http_response handle_gb28181_input_request(const gb28181_http_request& r
 
 gb28181_http_response handle_gb28181_output_request(const gb28181_http_request& request,
                                                     boost::asio::io_context& owner,
-                                                    const boost::urls::url_view& target,
-                                                    std::span<const std::string> segments)
+                                                    const boost::urls::url_view& target)
 {
+    const auto path = path_segments(target);
+    if (path.size() < 2 || path[0] != "play" || path[1] != "gb28181")
+    {
+        return make_gb28181_error_response(request, boost::beast::http::status::not_found, "not_found");
+    }
+    const auto segments = std::span<const std::string>(path).subspan(2);
     if (const auto error = validate_request(request, target, segments))
     {
         return *error;

@@ -1,12 +1,12 @@
 #ifndef MEDIA_HTTP_WHEP_HTTP_H
 #define MEDIA_HTTP_WHEP_HTTP_H
 
-#include <span>
 #include <string>
 #include <string_view>
 
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/url/url_view.hpp>
 
 #include "config.h"
 
@@ -23,7 +23,7 @@ using whep_http_string_response = boost::beast::http::response<boost::beast::htt
                                                                  std::string_view allow = {});
 [[nodiscard]] whep_http_string_response handle_whep_request(const whep_http_request& request,
                                                             boost::asio::any_io_executor executor,
-                                                            std::span<const std::string> segments,
+                                                            const boost::urls::url_view& target,
                                                             const config& application_config);
 [[nodiscard]] whep_http_string_response handle_whep_options(const whep_http_request& request, bool session_resource);
 [[nodiscard]] whep_http_string_response handle_whep_endpoint_get(const whep_http_request& request);
