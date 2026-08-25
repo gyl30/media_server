@@ -11,7 +11,7 @@
 #include "media/core/log.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_service.h"
-#include "media/hls/hls_service.h"
+#include "media/hls/hls.h"
 #include "media/http/http_server.h"
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_server.h"
@@ -62,7 +62,6 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_io = workers_->context(0);
-    hls_ = std::make_unique<hls_service>(hls_config{.video = config_.http_video});
     whep_ = std::make_unique<whep_service>(registry::instance(), webrtc_address, config_.whep_video);
     gb28181_ = std::make_unique<gb28181_service>(registry::instance(), workers_.get());
     if (!whep_->ready())
@@ -72,8 +71,7 @@ int service::run()
     }
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_.rtmp_port, config_.rtmp_video);
     rtsp_ = std::make_shared<rtsp_server>(*workers_, config_.rtsp_port, config_.rtsp_video);
-    http_ = std::make_shared<http_server>(
-        *workers_, *hls_, *whep_, *gb28181_, config_.http_port, config_.http_video);
+    http_ = std::make_shared<http_server>(*workers_, config_, *whep_, *gb28181_);
 
     if (const auto error = rtmp_->startup())
     {
@@ -117,6 +115,8 @@ int service::run()
 
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
+    hls::shutdown();
+    registry::instance().clear();
     return 0;
 }
 

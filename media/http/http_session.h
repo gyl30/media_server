@@ -14,11 +14,10 @@
 #include <boost/url/url_view.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include "media/hls/hls_service.h"
+#include "config.h"
 #include "media/webrtc/whep_service.h"
 #include "media/http/http_flv_output.h"
 #include "media/gb28181/gb28181_service.h"
-#include "media/codec/output_video_config.h"
 
 namespace media_server
 {
@@ -26,10 +25,9 @@ class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
     http_session(boost::asio::ip::tcp::socket socket,
-                 hls_service& hls,
+                 const config& config,
                  whep_service& whep,
-                 gb28181_service& gb28181,
-                 output_video_config video = {});
+                 gb28181_service& gb28181);
 
     void startup();
     void shutdown();
@@ -69,10 +67,9 @@ class http_session final : public std::enable_shared_from_this<http_session>
     boost::beast::tcp_stream stream_;
     boost::beast::flat_buffer buffer_;
     boost::beast::http::request<boost::beast::http::string_body> request_;
-    hls_service& hls_;
+    const config& config_;
     whep_service& whep_;
     gb28181_service& gb28181_;
-    output_video_config video_config_;
     boost::asio::steady_timer hls_wait_timer_;
     std::chrono::steady_clock::time_point hls_wait_deadline_{};
     std::string hls_wait_stream_name_;
