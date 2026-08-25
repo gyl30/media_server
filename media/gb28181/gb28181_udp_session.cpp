@@ -12,11 +12,11 @@ namespace media_server
 {
 
 gb28181_udp_session::gb28181_udp_session(
-    stream_registry& registry, boost::asio::any_io_executor executor, std::string stream_name, gb28181_description description, gb28181_udp_peer peer)
+    stream_registry& registry_ref, boost::asio::any_io_executor executor, std::string stream_name, gb28181_description description, gb28181_udp_peer peer)
     : executor_(executor),
       description_(std::move(description)),
       peer_(std::move(peer)),
-      media_(registry, executor, std::move(stream_name), description_.payload_type, description_.ssrc),
+      media_(registry_ref, executor, std::move(stream_name), description_.payload_type, description_.ssrc),
       rtcp_timer_(std::move(executor))
 {
 }

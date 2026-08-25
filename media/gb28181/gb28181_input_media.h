@@ -32,7 +32,7 @@ enum class gb28181_rtp_input_result
 class gb28181_input_media final
 {
    public:
-    gb28181_input_media(stream_registry& registry,
+    gb28181_input_media(stream_registry& registry_ref,
                         boost::asio::any_io_executor executor,
                         std::string stream_name,
                         std::uint8_t payload_type,

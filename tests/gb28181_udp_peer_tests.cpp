@@ -86,24 +86,26 @@ void send_packets(boost::asio::ip::udp::socket& socket, std::uint16_t port, cons
 void test_ps_fixture_creates_stream()
 {
     boost::asio::io_context io;
-    stream_registry registry;
+    auto& streams = media_server::registry::instance();
+    streams.clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    gb28181_input_media media(registry, io.get_executor(), "live/gb-peer-fixture", payload_type, ssrc);
+    gb28181_input_media media(streams, io.get_executor(), "live/gb-peer-fixture", payload_type, ssrc);
     require(media.startup(), "gb peer fixture media startup");
     const auto packets = make_ps_rtp(payload_type, ssrc);
     for (const auto& packet : packets)
     {
         require(media.input_rtp(packet) == gb28181_rtp_input_result::accepted, "gb peer fixture packet accepted");
     }
-    require(registry.find("live/gb-peer-fixture") != nullptr, "gb peer fixture creates stream");
+    require(streams.find("live/gb-peer-fixture") != nullptr, "gb peer fixture creates stream");
     media.shutdown();
 }
 
 void test_signaled_rtp_peer_is_pinned_before_first_packet()
 {
     boost::asio::io_context io;
-    stream_registry registry;
+    auto& streams = media_server::registry::instance();
+    streams.clear();
     boost::asio::ip::udp::socket allowed(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket blocked(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket remote_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -129,23 +131,23 @@ void test_signaled_rtp_peer_is_pinned_before_first_packet()
         .rtp = allowed.local_endpoint(),
         .rtcp_port = remote_rtcp.local_endpoint().port(),
     };
-    auto session = std::make_shared<gb28181_udp_session>(registry, io.get_executor(), "live/gb-peer-signaled", description, peer);
+    auto session = std::make_shared<gb28181_udp_session>(streams, io.get_executor(), "live/gb-peer-signaled", description, peer);
     require(session->startup(), "gb peer signaled startup");
 
     const auto packets = make_ps_rtp(payload_type, ssrc);
     send_packets(blocked, local_rtp_port, packets);
     io.run_for(std::chrono::milliseconds(200));
-    require(!registry.find("live/gb-peer-signaled"), "gb peer signaled rejects other first source");
+    require(!streams.find("live/gb-peer-signaled"), "gb peer signaled rejects other first source");
 
     io.restart();
     send_packets(allowed, local_rtp_port, packets);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while (!registry.find("live/gb-peer-signaled") && std::chrono::steady_clock::now() < deadline)
+    while (!streams.find("live/gb-peer-signaled") && std::chrono::steady_clock::now() < deadline)
     {
         io.run_for(std::chrono::milliseconds(20));
         io.restart();
     }
-    require(registry.find("live/gb-peer-signaled") != nullptr, "gb peer signaled accepts configured source");
+    require(streams.find("live/gb-peer-signaled") != nullptr, "gb peer signaled accepts configured source");
 
     boost::asio::ip::udp::socket other_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
     constexpr std::array<std::uint8_t, 28> sender_report{
@@ -167,7 +169,8 @@ void test_signaled_rtp_peer_is_pinned_before_first_packet()
 void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
 {
     boost::asio::io_context io;
-    stream_registry registry;
+    auto& streams = media_server::registry::instance();
+    streams.clear();
     boost::asio::ip::udp::socket expected(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket wrong(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket remote_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -193,7 +196,7 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
         .rtp = std::nullopt,
         .rtcp_port = remote_rtcp.local_endpoint().port(),
     };
-    auto session = std::make_shared<gb28181_udp_session>(registry, io.get_executor(), "live/gb-peer-learned", description, peer);
+    auto session = std::make_shared<gb28181_udp_session>(streams, io.get_executor(), "live/gb-peer-learned", description, peer);
     require(session->startup(), "gb peer learned startup");
 
     constexpr std::array<std::uint8_t, 12> wrong_ssrc{
@@ -217,12 +220,12 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
     const auto packets = make_ps_rtp(payload_type, ssrc);
     send_packets(expected, local_rtp_port, packets);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while (!registry.find("live/gb-peer-learned") && std::chrono::steady_clock::now() < deadline)
+    while (!streams.find("live/gb-peer-learned") && std::chrono::steady_clock::now() < deadline)
     {
         io.run_for(std::chrono::milliseconds(20));
         io.restart();
     }
-    require(registry.find("live/gb-peer-learned") != nullptr, "gb peer learned ignores invalid first source and accepts first valid source");
+    require(streams.find("live/gb-peer-learned") != nullptr, "gb peer learned ignores invalid first source and accepts first valid source");
 
     session->shutdown();
     io.run();

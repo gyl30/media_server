@@ -11,6 +11,7 @@
 
 #include "media/codec/codec_utils.h"
 #include "media/rtsp/rtsp_pull_session.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_sdp.h"
 
 extern "C"
@@ -79,13 +80,11 @@ bool should_setup_media(rtsp_client_t* client, int media)
 }    // namespace
 
 rtsp_pull_session::rtsp_pull_session(boost::asio::io_context& io,
-                                     stream_registry& registry,
                                      std::string stream_name,
                                      std::string url,
                                      std::chrono::milliseconds establishment_timeout,
                                      std::chrono::milliseconds initial_tracks_timeout)
     : io_(io),
-      registry_(registry),
       stream_name_(std::move(stream_name)),
       url_(std::move(url)),
       resolver_(io),
@@ -260,7 +259,7 @@ void rtsp_pull_session::safe_shutdown()
     closed_ = true;
     if (stream_)
     {
-        registry_.remove(*stream_);
+        registry::instance().remove(*stream_);
         stream_->end();
         stream_.reset();
     }
@@ -724,7 +723,7 @@ bool rtsp_pull_session::try_initialize_tracks()
     {
         return false;
     }
-    if (!registry_.add(stream_))
+    if (!registry::instance().add(stream_))
     {
         spdlog::warn("rtsp input duplicate stream {}", stream_name_);
         shutdown();

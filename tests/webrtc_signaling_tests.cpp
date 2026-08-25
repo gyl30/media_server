@@ -833,14 +833,15 @@ class whep_http_test_peer final
    public:
     whep_http_test_peer()
         : work_(boost::asio::make_work_guard(io_)),
-          hls_(registry_),
-          whep_(registry_, boost::asio::ip::make_address("127.0.0.1")),
-          gb28181_(registry_),
+          hls_(),
+          whep_(streams_, boost::asio::ip::make_address("127.0.0.1")),
+          gb28181_(streams_),
           acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
     {
+        streams_.clear();
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
         require(stream_->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
-        require(registry_.add(stream_), "whep http registry add");
+        require(streams_.add(stream_), "whep http registry add");
         require(whep_.ready(), "whep http service ready");
         runner_ = std::jthread([this]() { io_.run(); });
     }
@@ -903,7 +904,7 @@ class whep_http_test_peer final
         boost::asio::ip::tcp::socket client(client_io_);
         client.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto session = std::make_shared<http_session>(std::move(server_socket), registry_, hls_, whep_, gb28181_);
+        auto session = std::make_shared<http_session>(std::move(server_socket), hls_, whep_, gb28181_);
         session->startup();
 
         const bool head = request.method() == boost::beast::http::verb::head;
@@ -938,7 +939,7 @@ class whep_http_test_peer final
 
     boost::asio::io_context io_;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
-    stream_registry registry_;
+    stream_registry& streams_ = registry::instance();
     hls_service hls_;
     whep_service whep_;
     gb28181_service gb28181_;
@@ -2079,12 +2080,13 @@ void test_whep_session_startup_errors()
 void test_whep_session_lifecycle()
 {
     boost::asio::io_context io;
-    stream_registry registry;
+    auto& streams = registry::instance();
+    streams.clear();
     auto stream = std::make_shared<media_stream>("live/test", io.get_executor());
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
-    require(registry.add(stream), "whep registry add");
+    require(streams.add(stream), "whep registry add");
 
-    whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
+    whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
     require(whep.ready(), "whep certificate ready");
 
     auto missing_ice_offer = webrtc_offer_sdp;
@@ -2113,14 +2115,14 @@ void test_whep_session_lifecycle()
     const auto third = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
     require(third.error == whep_create_error::none, "whep recreate viewer");
 
-    registry.remove(*stream);
+    streams.remove(*stream);
     stream->end();
     drain_io(io);
     require(!whep.remove(third.session_id), "whep source end releases session");
 
     auto replacement = std::make_shared<media_stream>("live/test", io.get_executor());
     require(replacement->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
-    require(registry.add(replacement), "whep replacement registry add");
+    require(streams.add(replacement), "whep replacement registry add");
 
     const auto replacement_session = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
     require(replacement_session.error == whep_create_error::none, "whep create after republish");
@@ -2142,12 +2144,13 @@ void test_whep_session_lifecycle()
 void test_whep_opus_source_session_lifecycle()
 {
     boost::asio::io_context io;
-    stream_registry registry;
+    auto& streams = registry::instance();
+    streams.clear();
     auto stream = std::make_shared<media_stream>("live/opus", io.get_executor());
     require(stream->set_tracks({make_video_track(), make_opus_track(1)}), "whep opus source tracks");
-    require(registry.add(stream), "whep opus source registry add");
+    require(streams.add(stream), "whep opus source registry add");
 
-    whep_service whep(registry, boost::asio::ip::make_address("127.0.0.1"));
+    whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
     require(whep.ready(), "whep opus source service ready");
     auto compatible_sdp = webrtc_offer_sdp;
     const auto fmtp = compatible_sdp.find("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n");

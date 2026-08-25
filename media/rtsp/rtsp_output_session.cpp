@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 #include "media/codec/codec_utils.h"
 #include "media/codec/video_transcoder.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/rtsp/rtsp_uri.h"
 #include "media/rtsp/rtsp_output_tcp_session.h"
@@ -138,8 +139,8 @@ std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_
 }
 }    // namespace
 
-rtsp_output_session::rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, stream_registry& registry, output_video_config video)
-    : connection_(std::move(connection)), registry_(registry), video_config_(video)
+rtsp_output_session::rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, output_video_config video)
+    : connection_(std::move(connection)), video_config_(video)
 {
 }
 
@@ -300,7 +301,7 @@ int rtsp_output_session::on_setup(
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
-    const auto current_stream = registry_.find(stream_name_);
+    const auto current_stream = registry::instance().find(stream_name_);
     if (!stream_ || !current_stream)
     {
         return rtsp_server_reply_setup(server, 503, nullptr, nullptr);
@@ -335,7 +336,7 @@ int rtsp_output_session::on_setup(
         return -1;
     }
     auto child =
-        std::make_shared<rtsp_output_tcp_session>(connection_, registry_, stream_, stream_name_, tracks_, video_transcoder_, video_track_id_);
+        std::make_shared<rtsp_output_tcp_session>(connection_, stream_, stream_name_, tracks_, video_transcoder_, video_track_id_);
     return child->startup(server, uri, session, transports, count);
 }
 
@@ -358,7 +359,7 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
     stream_.reset();
 
     stream_name_ = rtsp_stream_name_from_uri(uri);
-    auto stream = registry_.find(stream_name_);
+    auto stream = registry::instance().find(stream_name_);
     if (!stream)
     {
         return 404;

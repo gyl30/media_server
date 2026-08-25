@@ -9,7 +9,6 @@
 #include <optional>
 #include <string_view>
 
-#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_input_media.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
@@ -24,7 +23,7 @@ namespace media_server
 class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_session>
 {
    public:
-    rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection, stream_registry& registry);
+    explicit rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection);
 
     void shutdown();
 
@@ -40,7 +39,6 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     void safe_shutdown();
 
     std::weak_ptr<rtsp_server_connection> connection_;
-    stream_registry& registry_;
     std::vector<rtsp_input_track_description> descriptions_;
     std::string stream_name_;
     std::string session_id_;

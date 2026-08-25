@@ -7,8 +7,8 @@
 namespace media_server
 {
 
-whep_service::whep_service(stream_registry& registry, boost::asio::ip::address advertised_address, output_video_config video)
-    : registry_(registry), advertised_address_(std::move(advertised_address)), video_config_(video), certificate_(dtls_certificate::create())
+whep_service::whep_service(stream_registry& registry_ref, boost::asio::ip::address advertised_address, output_video_config video)
+    : registry_(registry_ref), advertised_address_(std::move(advertised_address)), video_config_(video), certificate_(dtls_certificate::create())
 {
 }
 

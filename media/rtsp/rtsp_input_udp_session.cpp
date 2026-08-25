@@ -12,12 +12,11 @@ namespace media_server
 
 rtsp_input_udp_session::rtsp_input_udp_session(std::weak_ptr<rtsp_server_connection> connection,
                                                boost::asio::any_io_executor executor,
-                                               stream_registry& registry,
                                                std::string stream_name,
                                                std::string session_id,
                                                std::vector<rtsp_input_track_description> descriptions)
     : connection_(std::move(connection)),
-      media_(registry, executor, std::move(stream_name), session_id, std::move(descriptions)),
+      media_(executor, std::move(stream_name), session_id, std::move(descriptions)),
       session_id_(std::move(session_id)),
       tracks_(media_.descriptions().size()),
       rtcp_timer_(std::move(executor))

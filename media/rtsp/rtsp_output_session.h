@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 
-#include "media/core/stream_registry.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_output_track.h"
 #include "media/codec/output_video_config.h"
@@ -20,7 +19,7 @@ namespace media_server
 class rtsp_output_session final : public std::enable_shared_from_this<rtsp_output_session>
 {
    public:
-    rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, stream_registry& registry, output_video_config video = {});
+    rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, output_video_config video = {});
 
     void startup();
     void shutdown();
@@ -40,7 +39,6 @@ class rtsp_output_session final : public std::enable_shared_from_this<rtsp_outpu
     [[nodiscard]] bool description_current() const;
 
     std::weak_ptr<rtsp_server_connection> connection_;
-    stream_registry& registry_;
     output_video_config video_config_;
     std::shared_ptr<media_stream> stream_;
     std::vector<rtsp_output_track_description> tracks_;

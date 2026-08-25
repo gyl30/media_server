@@ -11,7 +11,7 @@
 #include <boost/asio.hpp>
 
 #include "media/net/tcp_connection.h"
-#include "media/core/stream_registry.h"
+#include "media/core/media_stream.h"
 
 extern "C"
 {
@@ -30,7 +30,6 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
 {
    public:
     rtsp_pull_session(boost::asio::io_context& io,
-                      stream_registry& registry,
                       std::string stream_name,
                       std::string url,
                       std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
@@ -77,7 +76,6 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     [[nodiscard]] bool try_initialize_tracks();
 
     boost::asio::io_context& io_;
-    stream_registry& registry_;
     std::string stream_name_;
     std::string url_;
     std::string username_;

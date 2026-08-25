@@ -65,8 +65,8 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 }    // namespace
 
 gb28181_input_media::gb28181_input_media(
-    stream_registry& registry, boost::asio::any_io_executor executor, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
-    : registry_(registry),
+    stream_registry& registry_ref, boost::asio::any_io_executor executor, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
+    : registry_(registry_ref),
       executor_(std::move(executor)),
       stream_name_(std::move(stream_name)),
       payload_type_(payload_type),
