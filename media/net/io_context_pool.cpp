@@ -23,9 +23,8 @@ boost::asio::io_context& io_context_pool::context(std::size_t index) noexcept { 
 
 boost::asio::io_context& io_context_pool::next() noexcept
 {
-    auto& io = *contexts_[next_];
-    next_ = (next_ + 1U) % contexts_.size();
-    return io;
+    const auto index = next_.fetch_add(1U, std::memory_order_relaxed) % contexts_.size();
+    return *contexts_[index];
 }
 
 void io_context_pool::release_work()
