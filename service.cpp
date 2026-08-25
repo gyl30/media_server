@@ -1,7 +1,6 @@
 #include <csignal>
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
@@ -10,14 +9,12 @@
 
 #include "media/core/log.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181.h"
 #include "media/hls/hls.h"
 #include "media/http/http_server.h"
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_server.h"
-#include "media/webrtc/whep.h"
 
 namespace media_server
 {
@@ -28,24 +25,7 @@ service::~service() = default;
 
 void service::stop()
 {
-    for (const auto& pull : pulls_)
-    {
-        if (const auto session = pull.lock())
-        {
-            session->shutdown();
-        }
-    }
-    pulls_.clear();
-
-    http_->shutdown();
-    http_.reset();
-    whep::shutdown();
-    gb28181::shutdown();
-    rtsp_->shutdown();
-    rtsp_.reset();
-    rtmp_->shutdown();
-    rtmp_.reset();
-    workers_->release_work();
+    workers_->stop();
 }
 
 int service::run()
@@ -90,7 +70,6 @@ int service::run()
             spdlog::error("rtsp pull startup failed stream {}", name);
             return 2;
         }
-        pulls_.push_back(std::move(pull));
     }
 
     spdlog::info("rtmp listen {}", config_.rtmp_port);

@@ -8403,6 +8403,27 @@ void test_io_context_pool_concurrent_next()
     require(!invalid_context.load(std::memory_order_relaxed), "io context pool concurrent next");
 }
 
+void test_io_context_pool_stop()
+{
+    io_context_pool workers(2);
+    std::promise<void> finished;
+    auto future = finished.get_future();
+    std::jthread runner(
+        [&workers, &finished]
+        {
+            workers.run();
+            finished.set_value();
+        });
+    boost::asio::post(workers.context(0), [&workers]() { workers.stop(); });
+
+    const bool stopped = future.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+    if (!stopped)
+    {
+        workers.stop();
+    }
+    require(stopped, "io context pool stop");
+}
+
 void test_stream_registry_generation_lifecycle()
 {
     boost::asio::io_context io;
@@ -9546,6 +9567,8 @@ int main()
     std::cout << "[pass] media_stream_video_keyframe_barrier_is_sticky\n";
     media_server::test_io_context_pool_concurrent_next();
     std::cout << "[pass] io_context_pool_concurrent_next\n";
+    media_server::test_io_context_pool_stop();
+    std::cout << "[pass] io_context_pool_stop\n";
     media_server::test_stream_registry_generation_lifecycle();
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_output();
