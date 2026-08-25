@@ -26,7 +26,7 @@ void require(bool condition, std::string_view message)
 
 gb28181_http_request request()
 {
-    gb28181_http_request value{boost::beast::http::verb::post, "/gb28181/input/create", 11};
+    gb28181_http_request value{boost::beast::http::verb::post, "/gb28181/create", 11};
     value.keep_alive(true);
     return value;
 }

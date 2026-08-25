@@ -8,7 +8,6 @@
 #include <boost/url/parse.hpp>
 
 #include "media/http/gb28181_http.h"
-#include "media/http/gb28181_json.h"
 #include "media/http/http_session.h"
 #include "media/hls/hls.h"
 #include "media/core/stream_registry.h"
@@ -76,14 +75,21 @@ void http_session::handle_request()
         return;
     }
 
-    if (segments.front() == "whep")
-    {
-        handle_whep(segments);
-        return;
-    }
+    const auto all_segments = std::span<const std::string>(segments);
     if (segments.front() == "gb28181")
     {
-        handle_gb28181(*parsed, segments);
+        handle_gb28181_input(*parsed, all_segments.subspan(1));
+        return;
+    }
+    if (segments.size() >= 2 && segments[0] == "play" && segments[1] == "gb28181")
+    {
+        handle_gb28181_output(*parsed, all_segments.subspan(2));
+        return;
+    }
+
+    if (segments.size() >= 2 && segments[0] == "play" && segments[1] == "whep")
+    {
+        handle_whep(all_segments.subspan(2));
         return;
     }
 
@@ -93,9 +99,9 @@ void http_session::handle_request()
         return;
     }
 
-    if (segments.front() == "hls")
+    if (segments.size() >= 2 && segments[0] == "play" && segments[1] == "hls")
     {
-        handle_hls(*parsed);
+        handle_hls(all_segments.subspan(2));
         return;
     }
 
@@ -108,10 +114,10 @@ void http_session::handle_request()
     send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
 }
 
-void http_session::handle_whep(const std::vector<std::string>& segments)
+void http_session::handle_whep(std::span<const std::string> segments)
 {
-    const bool session_resource = segments.size() == 3 && segments[1] == "session";
-    const bool endpoint_resource = segments.size() >= 2 && segments[1] != "session";
+    const bool session_resource = segments.size() == 2 && segments[0] == "session";
+    const bool endpoint_resource = !segments.empty() && segments[0] != "session";
     if (!session_resource && !endpoint_resource)
     {
         write_response(make_whep_error_response(request_, boost::beast::http::status::not_found, "not found\n"));
@@ -127,7 +133,7 @@ void http_session::handle_whep(const std::vector<std::string>& segments)
     {
         if (session_resource)
         {
-            write_response(handle_whep_session_get(request_, segments[2]));
+            write_response(handle_whep_session_get(request_, segments[1]));
             return;
         }
         write_response(handle_whep_endpoint_get(request_));
@@ -149,7 +155,7 @@ void http_session::handle_whep(const std::vector<std::string>& segments)
     write_response(make_whep_error_response(request_, boost::beast::http::status::method_not_allowed, "method not allowed\n", 0, allow));
 }
 
-void http_session::handle_whep_post(const std::vector<std::string>& segments)
+void http_session::handle_whep_post(std::span<const std::string> segments)
 {
     const auto content_type = request_[boost::beast::http::field::content_type];
     if (!boost::beast::iequals(content_type, "application/sdp"))
@@ -158,102 +164,23 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
         return;
     }
 
-    const auto stream_name = join_segments(segments, 1, segments.size());
+    const auto stream_name = join_segments(segments, 0, segments.size());
     write_response(media_server::handle_whep_post(request_, stream_.get_executor(), stream_name, config_));
 }
 
-void http_session::handle_whep_delete(const std::vector<std::string>& segments)
+void http_session::handle_whep_delete(std::span<const std::string> segments)
 {
-    write_response(media_server::handle_whep_delete(request_, segments[2]));
+    write_response(media_server::handle_whep_delete(request_, segments[1]));
 }
 
-void http_session::handle_gb28181(const boost::urls::url_view& target, const std::vector<std::string>& segments)
+void http_session::handle_gb28181_input(const boost::urls::url_view& target, std::span<const std::string> segments)
 {
-    const bool input_create = segments.size() == 3 && segments[1] == "input" && segments[2] == "create";
-    const bool input_delete = segments.size() == 3 && segments[1] == "input" && segments[2] == "delete";
-    const bool output_create = segments.size() == 3 && segments[1] == "output" && segments[2] == "create";
-    const bool output_delete = segments.size() == 3 && segments[1] == "output" && segments[2] == "delete";
-    if (!input_create && !input_delete && !output_create && !output_delete)
-    {
-        write_response(make_gb28181_error_response(request_, boost::beast::http::status::not_found, "not_found"));
-        return;
-    }
-    if (!target.params().empty())
-    {
-        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
-        return;
-    }
-    if (request_.method() != boost::beast::http::verb::post)
-    {
-        write_response(make_gb28181_error_response(request_, boost::beast::http::status::method_not_allowed, "method_not_allowed", "POST"));
-        return;
-    }
-    const auto content_type = request_[boost::beast::http::field::content_type];
-    if (!boost::beast::iequals(content_type, "application/json"))
-    {
-        write_response(make_gb28181_error_response(request_, boost::beast::http::status::unsupported_media_type, "unsupported_media_type"));
-        return;
-    }
-    if (input_create)
-    {
-        handle_gb28181_input_create();
-    }
-    else if (input_delete)
-    {
-        handle_gb28181_input_delete();
-    }
-    else if (output_create)
-    {
-        handle_gb28181_output_create();
-    }
-    else
-    {
-        handle_gb28181_output_delete();
-    }
+    write_response(media_server::handle_gb28181_input_request(request_, workers_.next(), target, segments));
 }
 
-void http_session::handle_gb28181_input_create()
+void http_session::handle_gb28181_output(const boost::urls::url_view& target, std::span<const std::string> segments)
 {
-    auto config = parse_gb28181_input_config(request_.body());
-    if (!config)
-    {
-        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
-        return;
-    }
-    write_response(media_server::handle_gb28181_input_create(request_, workers_.next(), std::move(*config)));
-}
-
-void http_session::handle_gb28181_input_delete()
-{
-    const auto stream_name = parse_gb28181_input_delete(request_.body());
-    if (!stream_name)
-    {
-        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
-        return;
-    }
-    write_response(media_server::handle_gb28181_input_delete(request_, *stream_name));
-}
-
-void http_session::handle_gb28181_output_create()
-{
-    auto config = parse_gb28181_output_config(request_.body());
-    if (!config)
-    {
-        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
-        return;
-    }
-    write_response(media_server::handle_gb28181_output_create(request_, workers_.next(), std::move(*config)));
-}
-
-void http_session::handle_gb28181_output_delete()
-{
-    const auto identity = parse_gb28181_output_delete(request_.body());
-    if (!identity)
-    {
-        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
-        return;
-    }
-    write_response(media_server::handle_gb28181_output_delete(request_, identity->first, identity->second));
+    write_response(media_server::handle_gb28181_output_request(request_, workers_.next(), target, segments));
 }
 
 void http_session::handle_flv(const boost::urls::url_view& target)
@@ -301,17 +228,16 @@ void http_session::handle_flv(const boost::urls::url_view& target)
         });
 }
 
-void http_session::handle_hls(const boost::urls::url_view& target)
+void http_session::handle_hls(std::span<const std::string> segments)
 {
-    const auto segments = path_segments(target);
-    if (segments.size() < 3 || segments.front() != "hls")
+    if (segments.size() < 2)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
         return;
     }
 
     const auto& file = segments.back();
-    const auto stream_name = join_segments(segments, 1, segments.size() - 1);
+    const auto stream_name = join_segments(segments, 0, segments.size() - 1);
     if (stream_name.empty())
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
@@ -686,7 +612,7 @@ std::vector<std::string> http_session::path_segments(const boost::urls::url_view
     return result;
 }
 
-std::string http_session::join_segments(const std::vector<std::string>& segments, std::size_t begin, std::size_t end)
+std::string http_session::join_segments(std::span<const std::string> segments, std::size_t begin, std::size_t end)
 {
     if (begin >= end || end > segments.size())
     {
