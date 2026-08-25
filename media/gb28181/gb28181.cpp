@@ -7,17 +7,16 @@
 
 #include <spdlog/spdlog.h>
 
-#include "media/net/tcp_listener.h"
+#include "media/net/tcp_acceptor.h"
 #include "media/net/tcp_connector.h"
-#include "media/net/io_context_pool.h"
-#include "media/gb28181/gb28181_service.h"
+#include "media/gb28181/gb28181.h"
 #include "media/gb28181/gb28181_tcp_session.h"
 #include "media/gb28181/gb28181_udp_session.h"
 #include "media/gb28181/gb28181_output_media.h"
 #include "media/gb28181/gb28181_tcp_output_session.h"
 #include "media/gb28181/gb28181_udp_output_session.h"
 
-namespace media_server
+namespace media_server::gb28181
 {
 namespace
 {
@@ -32,7 +31,7 @@ using session_resource = std::variant<std::monostate,
                                       std::weak_ptr<gb28181_udp_session>,
                                       std::weak_ptr<gb28181_tcp_session>,
                                       std::weak_ptr<tcp_connector>,
-                                      std::weak_ptr<tcp_listener>>;
+                                      std::weak_ptr<tcp_acceptor>>;
 
 struct session_entry
 {
@@ -44,7 +43,7 @@ using output_resource = std::variant<std::monostate,
                                      std::weak_ptr<gb28181_udp_output_session>,
                                      std::weak_ptr<gb28181_tcp_output_session>,
                                      std::weak_ptr<tcp_connector>,
-                                     std::weak_ptr<tcp_listener>>;
+                                     std::weak_ptr<tcp_acceptor>>;
 
 struct output_entry
 {
@@ -99,26 +98,27 @@ boost::asio::ip::address bind_address(const boost::asio::ip::address& address)
 
 }    // namespace
 
-struct gb28181_service::state
+namespace
+{
+struct state
 {
     std::mutex mutex;
     std::map<std::string, session_entry, std::less<>> sessions;
     std::map<output_key, output_entry> outputs;
-    bool closed{};
 };
 
-gb28181_service::gb28181_service(stream_registry& registry_ref, io_context_pool* workers)
-    : registry_(registry_ref), workers_(workers), state_(std::make_shared<state>())
+std::shared_ptr<state> runtime()
 {
+    static auto value = std::make_shared<state>();
+    return value;
 }
+}    // namespace
 
-gb28181_service::~gb28181_service() { shutdown(); }
-
-gb28181_create_error gb28181_service::create(boost::asio::any_io_executor executor,
-                                             std::string stream_name,
-                                             gb28181_description description,
-                                             std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
-                                             std::optional<std::uint16_t> remote_rtcp_port)
+gb28181_create_error create(boost::asio::io_context& owner,
+                            std::string stream_name,
+                            gb28181_description description,
+                            std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
+                            std::optional<std::uint16_t> remote_rtcp_port)
 {
     if (stream_name.empty() || description.rtp_port == 0 || description.payload_type > 127 ||
         (description.transport != gb28181_transport::udp && description.transport != gb28181_transport::tcp_active &&
@@ -146,32 +146,25 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     {
         return gb28181_create_error::invalid_configuration;
     }
-    if (description.transport == gb28181_transport::tcp_passive && workers_ == nullptr)
-    {
-        return gb28181_create_error::internal_error;
-    }
-    if (registry_.find(stream_name))
+    if (registry::instance().find(stream_name))
     {
         return gb28181_create_error::stream_conflict;
     }
 
+    auto current = runtime();
     auto generation = std::make_shared<generation_token>();
     {
-        std::scoped_lock lock(state_->mutex);
-        if (state_->closed)
-        {
-            return gb28181_create_error::internal_error;
-        }
-        std::erase_if(state_->sessions, [](const auto& entry) { return resource_expired(entry.second.resource); });
-        if (!state_->sessions.emplace(stream_name, session_entry{.generation = generation, .resource = std::monostate{}}).second)
+        std::scoped_lock lock(current->mutex);
+        std::erase_if(current->sessions, [](const auto& entry) { return resource_expired(entry.second.resource); });
+        if (!current->sessions.emplace(stream_name, session_entry{.generation = generation, .resource = std::monostate{}}).second)
         {
             return gb28181_create_error::duplicate_stream;
         }
     }
 
-    const std::weak_ptr<state> weak_state = state_;
+    const std::weak_ptr<state> weak_state = current;
     auto start_tcp_session =
-        [weak_state, registry = &registry_, stream_name, description, generation](boost::asio::ip::tcp::socket socket) mutable
+        [weak_state, stream_name, description, generation](boost::asio::ip::tcp::socket socket) mutable
     {
         const auto shared_state = weak_state.lock();
         if (!shared_state)
@@ -182,7 +175,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
         {
             std::scoped_lock lock(shared_state->mutex);
             const auto iterator = shared_state->sessions.find(stream_name);
-            if (shared_state->closed || iterator == shared_state->sessions.end() || iterator->second.generation != generation)
+            if (iterator == shared_state->sessions.end() || iterator->second.generation != generation)
             {
                 boost::system::error_code error;
                 socket.close(error);
@@ -190,7 +183,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
             }
         }
 
-        auto session = std::make_shared<gb28181_tcp_session>(*registry, std::move(socket), stream_name, description.payload_type, description.ssrc);
+        auto session = std::make_shared<gb28181_tcp_session>(std::move(socket), stream_name, description.payload_type, description.ssrc);
         if (!session->startup())
         {
             session->shutdown();
@@ -207,7 +200,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
         {
             std::scoped_lock lock(shared_state->mutex);
             const auto iterator = shared_state->sessions.find(stream_name);
-            if (!shared_state->closed && iterator != shared_state->sessions.end() && iterator->second.generation == generation)
+            if (iterator != shared_state->sessions.end() && iterator->second.generation == generation)
             {
                 iterator->second.resource = std::weak_ptr<gb28181_tcp_session>{session};
                 installed = true;
@@ -223,14 +216,14 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     if (description.transport == gb28181_transport::udp)
     {
         auto session = std::make_shared<gb28181_udp_session>(
-            registry_, executor, stream_name, description, gb28181_udp_peer{.rtp = std::move(remote_rtp_endpoint), .rtcp_port = *remote_rtcp_port});
+            owner.get_executor(), stream_name, description, gb28181_udp_peer{.rtp = std::move(remote_rtp_endpoint), .rtcp_port = *remote_rtcp_port});
         if (!session->startup())
         {
-            std::scoped_lock lock(state_->mutex);
-            const auto iterator = state_->sessions.find(stream_name);
-            if (iterator != state_->sessions.end() && iterator->second.generation == generation)
+            std::scoped_lock lock(current->mutex);
+            const auto iterator = current->sessions.find(stream_name);
+            if (iterator != current->sessions.end() && iterator->second.generation == generation)
             {
-                state_->sessions.erase(iterator);
+                current->sessions.erase(iterator);
             }
             return gb28181_create_error::internal_error;
         }
@@ -238,7 +231,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     }
     else if (description.transport == gb28181_transport::tcp_active)
     {
-        auto connector = std::make_shared<tcp_connector>(executor);
+        auto connector = std::make_shared<tcp_connector>(owner.get_executor());
         connector->startup(boost::asio::ip::tcp::endpoint{description.address, description.rtp_port},
                            tcp_establishment_timeout,
                            [weak_state, stream_name, generation, start_tcp_session = std::move(start_tcp_session)](
@@ -265,26 +258,26 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     }
     else
     {
-        auto listener = std::make_shared<tcp_listener>(*workers_, description.rtp_port, bind_address(description.address));
-        const auto error = listener->startup(std::move(start_tcp_session), 1, tcp_establishment_timeout);
+        auto listener = std::make_shared<tcp_acceptor>(owner.get_executor(), description.rtp_port, bind_address(description.address));
+        const auto error = listener->startup(std::move(start_tcp_session), tcp_establishment_timeout);
         if (error)
         {
-            std::scoped_lock lock(state_->mutex);
-            const auto iterator = state_->sessions.find(stream_name);
-            if (iterator != state_->sessions.end() && iterator->second.generation == generation)
+            std::scoped_lock lock(current->mutex);
+            const auto iterator = current->sessions.find(stream_name);
+            if (iterator != current->sessions.end() && iterator->second.generation == generation)
             {
-                state_->sessions.erase(iterator);
+                current->sessions.erase(iterator);
             }
             return gb28181_create_error::internal_error;
         }
-        resource = std::weak_ptr<tcp_listener>{listener};
+        resource = std::weak_ptr<tcp_acceptor>{listener};
     }
 
     bool installed = false;
     {
-        std::scoped_lock lock(state_->mutex);
-        const auto iterator = state_->sessions.find(stream_name);
-        if (!state_->closed && iterator != state_->sessions.end() && iterator->second.generation == generation)
+        std::scoped_lock lock(current->mutex);
+        const auto iterator = current->sessions.find(stream_name);
+        if (iterator != current->sessions.end() && iterator->second.generation == generation)
         {
             if (std::holds_alternative<std::monostate>(iterator->second.resource))
             {
@@ -303,8 +296,11 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     return gb28181_create_error::none;
 }
 
-gb28181_output_create_error gb28181_service::create_output(
-    boost::asio::any_io_executor executor, std::string stream_name, std::string output_id, bool rtcp, gb28181_description description)
+gb28181_output_create_error create_output(boost::asio::io_context& owner,
+                                          std::string stream_name,
+                                          std::string output_id,
+                                          bool rtcp,
+                                          gb28181_description description)
 {
     if (stream_name.empty() || output_id.empty() || description.rtp_port == 0 || description.payload_type > 127 ||
         (description.transport != gb28181_transport::udp && description.transport != gb28181_transport::tcp_active &&
@@ -329,12 +325,7 @@ gb28181_output_create_error gb28181_service::create_output(
     {
         return gb28181_output_create_error::invalid_configuration;
     }
-    if (description.transport == gb28181_transport::tcp_passive && workers_ == nullptr)
-    {
-        return gb28181_output_create_error::internal_error;
-    }
-
-    auto stream = registry_.find(stream_name);
+    auto stream = registry::instance().find(stream_name);
     if (!stream)
     {
         return gb28181_output_create_error::stream_not_found;
@@ -345,21 +336,18 @@ gb28181_output_create_error gb28181_service::create_output(
     }
 
     const output_key key{stream_name, output_id};
+    auto current = runtime();
     auto generation = std::make_shared<generation_token>();
     {
-        std::scoped_lock lock(state_->mutex);
-        if (state_->closed)
-        {
-            return gb28181_output_create_error::internal_error;
-        }
-        std::erase_if(state_->outputs, [](const auto& entry) { return resource_expired(entry.second.resource); });
-        if (!state_->outputs.emplace(key, output_entry{.generation = generation, .resource = std::monostate{}}).second)
+        std::scoped_lock lock(current->mutex);
+        std::erase_if(current->outputs, [](const auto& entry) { return resource_expired(entry.second.resource); });
+        if (!current->outputs.emplace(key, output_entry{.generation = generation, .resource = std::monostate{}}).second)
         {
             return gb28181_output_create_error::duplicate_output;
         }
     }
 
-    const std::weak_ptr<state> weak_state = state_;
+    const std::weak_ptr<state> weak_state = current;
     const std::weak_ptr<media_stream> weak_stream = stream;
     auto start_tcp_output =
         [weak_state, weak_stream, key, stream_name, description, generation](boost::asio::ip::tcp::socket socket) mutable
@@ -373,7 +361,7 @@ gb28181_output_create_error gb28181_service::create_output(
         {
             std::scoped_lock lock(shared_state->mutex);
             const auto iterator = shared_state->outputs.find(key);
-            if (shared_state->closed || iterator == shared_state->outputs.end() || iterator->second.generation != generation)
+            if (iterator == shared_state->outputs.end() || iterator->second.generation != generation)
             {
                 boost::system::error_code error;
                 socket.close(error);
@@ -412,7 +400,7 @@ gb28181_output_create_error gb28181_service::create_output(
         {
             std::scoped_lock lock(shared_state->mutex);
             const auto iterator = shared_state->outputs.find(key);
-            if (!shared_state->closed && iterator != shared_state->outputs.end() && iterator->second.generation == generation)
+            if (iterator != shared_state->outputs.end() && iterator->second.generation == generation)
             {
                 iterator->second.resource = std::weak_ptr<gb28181_tcp_output_session>{session};
                 installed = true;
@@ -427,14 +415,14 @@ gb28181_output_create_error gb28181_service::create_output(
     output_resource resource;
     if (description.transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_output_session>(executor, std::move(stream), description, rtcp);
+        auto session = std::make_shared<gb28181_udp_output_session>(owner.get_executor(), std::move(stream), description, rtcp);
         if (!session->startup())
         {
-            std::scoped_lock lock(state_->mutex);
-            const auto iterator = state_->outputs.find(key);
-            if (iterator != state_->outputs.end() && iterator->second.generation == generation)
+            std::scoped_lock lock(current->mutex);
+            const auto iterator = current->outputs.find(key);
+            if (iterator != current->outputs.end() && iterator->second.generation == generation)
             {
-                state_->outputs.erase(iterator);
+                current->outputs.erase(iterator);
             }
             return gb28181_output_create_error::internal_error;
         }
@@ -442,7 +430,7 @@ gb28181_output_create_error gb28181_service::create_output(
     }
     else if (description.transport == gb28181_transport::tcp_active)
     {
-        auto connector = std::make_shared<tcp_connector>(executor);
+        auto connector = std::make_shared<tcp_connector>(owner.get_executor());
         connector->startup(boost::asio::ip::tcp::endpoint{description.address, description.rtp_port},
                            tcp_establishment_timeout,
                            [weak_state, key, generation, start_tcp_output = std::move(start_tcp_output)](boost::system::error_code error,
@@ -469,26 +457,26 @@ gb28181_output_create_error gb28181_service::create_output(
     }
     else
     {
-        auto listener = std::make_shared<tcp_listener>(*workers_, description.rtp_port, bind_address(description.address));
-        const auto error = listener->startup(std::move(start_tcp_output), 1, tcp_establishment_timeout);
+        auto listener = std::make_shared<tcp_acceptor>(owner.get_executor(), description.rtp_port, bind_address(description.address));
+        const auto error = listener->startup(std::move(start_tcp_output), tcp_establishment_timeout);
         if (error)
         {
-            std::scoped_lock lock(state_->mutex);
-            const auto iterator = state_->outputs.find(key);
-            if (iterator != state_->outputs.end() && iterator->second.generation == generation)
+            std::scoped_lock lock(current->mutex);
+            const auto iterator = current->outputs.find(key);
+            if (iterator != current->outputs.end() && iterator->second.generation == generation)
             {
-                state_->outputs.erase(iterator);
+                current->outputs.erase(iterator);
             }
             return gb28181_output_create_error::internal_error;
         }
-        resource = std::weak_ptr<tcp_listener>{listener};
+        resource = std::weak_ptr<tcp_acceptor>{listener};
     }
 
     bool installed = false;
     {
-        std::scoped_lock lock(state_->mutex);
-        const auto iterator = state_->outputs.find(key);
-        if (!state_->closed && iterator != state_->outputs.end() && iterator->second.generation == generation)
+        std::scoped_lock lock(current->mutex);
+        const auto iterator = current->outputs.find(key);
+        if (iterator != current->outputs.end() && iterator->second.generation == generation)
         {
             if (std::holds_alternative<std::monostate>(iterator->second.resource))
             {
@@ -507,68 +495,66 @@ gb28181_output_create_error gb28181_service::create_output(
     return gb28181_output_create_error::none;
 }
 
-bool gb28181_service::remove_output(std::string_view stream_name, std::string_view output_id)
+bool remove_output(std::string_view stream_name, std::string_view output_id)
 {
+    auto state = runtime();
     const output_key key{std::string{stream_name}, std::string{output_id}};
     output_resource resource;
     {
-        std::scoped_lock lock(state_->mutex);
-        const auto iterator = state_->outputs.find(key);
-        if (iterator == state_->outputs.end())
+        std::scoped_lock lock(state->mutex);
+        const auto iterator = state->outputs.find(key);
+        if (iterator == state->outputs.end())
         {
             return false;
         }
         if (resource_expired(iterator->second.resource))
         {
-            state_->outputs.erase(iterator);
+            state->outputs.erase(iterator);
             return false;
         }
         resource = iterator->second.resource;
-        state_->outputs.erase(iterator);
+        state->outputs.erase(iterator);
     }
     shutdown_resource(resource);
     spdlog::info("gb28181 output removed {} output {}", stream_name, output_id);
     return true;
 }
 
-bool gb28181_service::remove(std::string_view stream_name)
+bool remove(std::string_view stream_name)
 {
+    auto state = runtime();
     session_resource resource;
     {
-        std::scoped_lock lock(state_->mutex);
-        const auto iterator = state_->sessions.find(stream_name);
-        if (iterator == state_->sessions.end())
+        std::scoped_lock lock(state->mutex);
+        const auto iterator = state->sessions.find(stream_name);
+        if (iterator == state->sessions.end())
         {
             return false;
         }
         if (resource_expired(iterator->second.resource))
         {
-            state_->sessions.erase(iterator);
+            state->sessions.erase(iterator);
             return false;
         }
         resource = iterator->second.resource;
-        state_->sessions.erase(iterator);
+        state->sessions.erase(iterator);
     }
     shutdown_resource(resource);
     spdlog::info("gb28181 session removed {}", stream_name);
     return true;
 }
 
-void gb28181_service::shutdown()
+void shutdown()
 {
+    auto state = runtime();
     std::map<std::string, session_entry, std::less<>> sessions;
     std::map<output_key, output_entry> outputs;
     {
-        std::scoped_lock lock(state_->mutex);
-        if (state_->closed)
-        {
-            return;
-        }
-        state_->closed = true;
-        sessions = std::move(state_->sessions);
-        outputs = std::move(state_->outputs);
-        state_->sessions.clear();
-        state_->outputs.clear();
+        std::scoped_lock lock(state->mutex);
+        sessions = std::move(state->sessions);
+        outputs = std::move(state->outputs);
+        state->sessions.clear();
+        state->outputs.clear();
     }
     for (const auto& [name, entry] : sessions)
     {
@@ -582,4 +568,4 @@ void gb28181_service::shutdown()
     }
 }
 
-}    // namespace media_server
+}    // namespace media_server::gb28181

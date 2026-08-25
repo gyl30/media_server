@@ -9,7 +9,7 @@
 
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_service.h"
+#include "media/gb28181/gb28181.h"
 
 namespace media_server
 {
@@ -59,16 +59,21 @@ void test_input_identity_is_reusable_immediately_after_remove()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    gb28181_service service(streams);
+    gb28181::shutdown();
     const auto description = make_tcp_active_description(65'000, 10'000'2001);
 
-    require(service.create(io.get_executor(), "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181_create_error::none,
+    require(gb28181::create(io, "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
             "gb input first create");
-    require(service.remove("live/gb-identity"), "gb input remove");
-    require(service.create(io.get_executor(), "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181_create_error::none,
+    require(gb28181::remove("live/gb-identity"), "gb input remove");
+    require(gb28181::create(io, "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
             "gb input identity reusable immediately after remove");
 
-    service.shutdown();
+    gb28181::shutdown();
+    io.run();
+    io.restart();
+    require(gb28181::create(io, "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
+            "gb input module reusable after shutdown");
+    gb28181::shutdown();
     io.run();
 }
 
@@ -78,16 +83,16 @@ void test_output_identity_is_reusable_immediately_after_remove()
     auto& streams = media_server::registry::instance();
     streams.clear();
     const auto stream = add_video_stream(streams, io, "live/gb-output-identity");
-    gb28181_service service(streams);
+    gb28181::shutdown();
     const auto description = make_tcp_active_description(65'000, 10'000'2002);
 
-    require(service.create_output(io.get_executor(), stream->name(), "primary", false, description) == gb28181_output_create_error::none,
+    require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::none,
             "gb output first create");
-    require(service.remove_output(stream->name(), "primary"), "gb output remove");
-    require(service.create_output(io.get_executor(), stream->name(), "primary", false, description) == gb28181_output_create_error::none,
+    require(gb28181::remove_output(stream->name(), "primary"), "gb output remove");
+    require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::none,
             "gb output identity reusable immediately after remove");
 
-    service.shutdown();
+    gb28181::shutdown();
     io.run();
 }
 
@@ -97,20 +102,20 @@ void test_input_old_async_work_does_not_remove_replacement()
     boost::asio::ip::tcp::acceptor peer(io, {boost::asio::ip::tcp::v4(), 0});
     auto& streams = media_server::registry::instance();
     streams.clear();
-    gb28181_service service(streams);
+    gb28181::shutdown();
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2003);
 
-    require(service.create(io.get_executor(), "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181_create_error::none,
+    require(gb28181::create(io, "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
             "gb input old generation create");
-    require(service.remove("live/gb-generation"), "gb input old generation remove");
-    require(service.create(io.get_executor(), "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181_create_error::none,
+    require(gb28181::remove("live/gb-generation"), "gb input old generation remove");
+    require(gb28181::create(io, "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
             "gb input replacement create");
 
     io.poll();
-    require(service.create(io.get_executor(), "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181_create_error::duplicate_stream,
+    require(gb28181::create(io, "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::duplicate_stream,
             "gb input old async work preserves replacement");
 
-    service.shutdown();
+    gb28181::shutdown();
     io.run();
 }
 
@@ -121,20 +126,20 @@ void test_output_old_async_work_does_not_remove_replacement()
     auto& streams = media_server::registry::instance();
     streams.clear();
     const auto stream = add_video_stream(streams, io, "live/gb-output-generation");
-    gb28181_service service(streams);
+    gb28181::shutdown();
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2004);
 
-    require(service.create_output(io.get_executor(), stream->name(), "primary", false, description) == gb28181_output_create_error::none,
+    require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::none,
             "gb output old generation create");
-    require(service.remove_output(stream->name(), "primary"), "gb output old generation remove");
-    require(service.create_output(io.get_executor(), stream->name(), "primary", false, description) == gb28181_output_create_error::none,
+    require(gb28181::remove_output(stream->name(), "primary"), "gb output old generation remove");
+    require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::none,
             "gb output replacement create");
 
     io.poll();
-    require(service.create_output(io.get_executor(), stream->name(), "primary", false, description) == gb28181_output_create_error::duplicate_output,
+    require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::duplicate_output,
             "gb output old async work preserves replacement");
 
-    service.shutdown();
+    gb28181::shutdown();
     io.run();
 }
 

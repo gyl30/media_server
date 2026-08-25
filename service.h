@@ -9,7 +9,6 @@
 namespace media_server
 {
 
-class gb28181_service;
 class http_server;
 class io_context_pool;
 class rtmp_server;
@@ -29,7 +28,6 @@ private:
 
     config config_;
     std::unique_ptr<io_context_pool> workers_;
-    std::unique_ptr<gb28181_service> gb28181_;
     std::shared_ptr<rtmp_server> rtmp_;
     std::shared_ptr<rtsp_server> rtsp_;
     std::shared_ptr<http_server> http_;

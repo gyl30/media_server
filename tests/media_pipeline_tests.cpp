@@ -51,7 +51,7 @@
 #include "media/codec/audio_transcoder.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_pull_session.h"
-#include "media/gb28181/gb28181_service.h"
+#include "media/gb28181/gb28181.h"
 #include "media/rtsp/rtsp_output_session.h"
 
 extern "C"
@@ -2802,21 +2802,20 @@ void test_gb28181_multi_output_identity()
                                           .payload_type = 96,
                                           .ssrc = 100'001'001U};
 
-    gb28181_service service(streams);
-    require(service.create_output(io.get_executor(), first->name(), "a", false, description) == gb28181_output_create_error::none,
+    require(gb28181::create_output(io, first->name(), "a", false, description) == gb28181::gb28181_output_create_error::none,
             "gb multi output first identity");
-    require(service.create_output(io.get_executor(), first->name(), "b", false, description) == gb28181_output_create_error::none,
+    require(gb28181::create_output(io, first->name(), "b", false, description) == gb28181::gb28181_output_create_error::none,
             "gb multi output second identity");
-    require(service.create_output(io.get_executor(), first->name(), "a", false, description) == gb28181_output_create_error::duplicate_output,
+    require(gb28181::create_output(io, first->name(), "a", false, description) == gb28181::gb28181_output_create_error::duplicate_output,
             "gb multi output duplicate identity");
-    require(service.create_output(io.get_executor(), second->name(), "a", false, description) == gb28181_output_create_error::none,
+    require(gb28181::create_output(io, second->name(), "a", false, description) == gb28181::gb28181_output_create_error::none,
             "gb multi output identity scoped by stream");
-    require(service.remove_output(first->name(), "a"), "gb multi output remove first identity");
-    require(service.remove_output(first->name(), "b"), "gb multi output remove second identity");
-    require(service.remove_output(second->name(), "a"), "gb multi output remove other stream identity");
-    require(!service.remove_output(first->name(), "missing"), "gb multi output missing identity");
+    require(gb28181::remove_output(first->name(), "a"), "gb multi output remove first identity");
+    require(gb28181::remove_output(first->name(), "b"), "gb multi output remove second identity");
+    require(gb28181::remove_output(second->name(), "a"), "gb multi output remove other stream identity");
+    require(!gb28181::remove_output(first->name(), "missing"), "gb multi output missing identity");
 
-    service.shutdown();
+    gb28181::shutdown();
     io.run();
 }
 
@@ -2884,7 +2883,7 @@ void require_http_session_released(const std::weak_ptr<http_session>& session, s
 }
 
 void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
-                         gb28181_service& gb28181,
+                         io_context_pool& workers,
                          boost::beast::http::verb method,
                          std::string_view target,
                          std::string_view body,
@@ -2896,7 +2895,7 @@ void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
     boost::asio::ip::tcp::socket client(client_io);
     client.connect(acceptor.local_endpoint());
 
-    auto session = std::make_shared<http_session>(acceptor.accept(), application_config, gb28181);
+    auto session = std::make_shared<http_session>(acceptor.accept(), workers, application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -2924,7 +2923,6 @@ void test_gb28181_input_http_parameters()
     auto& streams = media_server::registry::instance();
     streams.clear();
     io_context_pool workers(1);
-    gb28181_service gb28181(streams, &workers);
 
     boost::asio::ip::udp::socket local_rtp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket local_rtcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -2962,7 +2960,7 @@ void test_gb28181_input_http_parameters()
                            boost::beast::http::status expected,
                            std::string_view message,
                            std::string_view body = {})
-    { require_http_status(acceptor, gb28181, method, target, body, expected, message); };
+    { require_http_status(acceptor, workers, method, target, body, expected, message); };
 
     check(post, "/gb28181/live/gb-input-http-raw", boost::beast::http::status::bad_request, "gb input rejects raw sdp body", "v=0\r\n");
     check(post,
@@ -3076,7 +3074,7 @@ void test_gb28181_input_http_parameters()
           "gb input delete rejects peer parameters");
     check(delete_, "/gb28181/live/gb-input-http-fixed", boost::beast::http::status::no_content, "gb input deletes fixed peer session");
 
-    gb28181.shutdown();
+    gb28181::shutdown();
     work.reset();
     runner.join();
     workers.release_work();
@@ -3089,7 +3087,6 @@ void test_gb28181_output_http_parameters()
     auto& streams = media_server::registry::instance();
     streams.clear();
     io_context_pool workers(1);
-    gb28181_service gb28181(streams, &workers);
 
     auto stream = std::make_shared<media_stream>("live/gb-output-http", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "gb output http tracks");
@@ -3120,7 +3117,7 @@ void test_gb28181_output_http_parameters()
                            boost::beast::http::status expected,
                            std::string_view message,
                            std::string_view body = {})
-    { require_http_status(acceptor, gb28181, method, target, body, expected, message); };
+    { require_http_status(acceptor, workers, method, target, body, expected, message); };
     check(post,
           "/gb28181/output/live/gb-output-http?output_id=raw-sdp",
           boost::beast::http::status::bad_request,
@@ -3203,112 +3200,112 @@ void test_gb28181_output_http_parameters()
           boost::beast::http::status::no_content,
           "gb output deletes tcp passive");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?" + udp_query.substr(1),
                         empty_body,
                         boost::beast::http::status::bad_request,
                         "gb output http requires output id");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=&" + udp_query.substr(1),
                         empty_body,
                         boost::beast::http::status::bad_request,
                         "gb output http rejects empty output id");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=a" + udp_query,
                         empty_body,
                         boost::beast::http::status::created,
                         "gb output http default rtcp disabled");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=a" + udp_query,
                         empty_body,
                         boost::beast::http::status::conflict,
                         "gb output http duplicate identity");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=b&rtcp=0" + udp_query,
                         empty_body,
                         boost::beast::http::status::created,
                         "gb output http explicit rtcp disabled");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=c&rtcp=1" + udp_query,
                         empty_body,
                         boost::beast::http::status::created,
                         "gb output http rtcp enabled");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=d&rtcp=" + udp_query,
                         empty_body,
                         boost::beast::http::status::bad_request,
                         "gb output http rejects empty rtcp");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=d&rtcp=2" + udp_query,
                         empty_body,
                         boost::beast::http::status::bad_request,
                         "gb output http rejects invalid rtcp");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=d&rtcp=0&rtcp=1" + udp_query,
                         empty_body,
                         boost::beast::http::status::bad_request,
                         "gb output http rejects duplicate rtcp");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         post,
                         "/gb28181/output/live/gb-output-http?output_id=d&rtcp=1" + tcp_active_query,
                         empty_body,
                         boost::beast::http::status::bad_request,
                         "gb output http rejects tcp rtcp");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         delete_,
                         "/gb28181/output/live/gb-output-http?output_id=c&rtcp=1",
                         {},
                         boost::beast::http::status::bad_request,
                         "gb output http rejects delete rtcp");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         delete_,
                         "/gb28181/output/live/gb-output-http?output_id=c&transport=udp",
                         {},
                         boost::beast::http::status::bad_request,
                         "gb output http rejects delete media parameters");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         delete_,
                         "/gb28181/output/live/gb-output-http?output_id=a",
                         {},
                         boost::beast::http::status::no_content,
                         "gb output http deletes first identity");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         delete_,
                         "/gb28181/output/live/gb-output-http?output_id=b",
                         {},
                         boost::beast::http::status::no_content,
                         "gb output http deletes second identity");
     require_http_status(acceptor,
-                        gb28181,
+                        workers,
                         delete_,
                         "/gb28181/output/live/gb-output-http?output_id=c",
                         {},
                         boost::beast::http::status::no_content,
                         "gb output http deletes rtcp identity");
 
-    gb28181.shutdown();
+    gb28181::shutdown();
     work.reset();
     runner.join();
     workers.release_work();
@@ -3320,7 +3317,7 @@ void test_http_flv_client_disconnect()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    gb28181_service gb28181(streams);
+    io_context_pool workers(1);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-disconnect", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv disconnect track");
@@ -3330,7 +3327,7 @@ void test_http_flv_client_disconnect()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(acceptor.accept(), application_config, gb28181);
+    auto session = std::make_shared<http_session>(acceptor.accept(), workers, application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3355,7 +3352,7 @@ void test_http_flv_stream_end_during_write()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    gb28181_service gb28181(streams);
+    io_context_pool workers(1);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-end-write", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv end write track");
@@ -3365,7 +3362,7 @@ void test_http_flv_stream_end_during_write()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(acceptor.accept(), application_config, gb28181);
+    auto session = std::make_shared<http_session>(acceptor.accept(), workers, application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3389,7 +3386,7 @@ void test_http_flv_pending_bootstrap_end()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    gb28181_service gb28181(streams);
+    io_context_pool workers(1);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-pending-end", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv pending end track");
@@ -3399,7 +3396,7 @@ void test_http_flv_pending_bootstrap_end()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(acceptor.accept(), application_config, gb28181);
+    auto session = std::make_shared<http_session>(acceptor.accept(), workers, application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();

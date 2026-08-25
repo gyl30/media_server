@@ -11,9 +11,11 @@
 
 #include "media/http/http_session.h"
 #include "media/gb28181/gb28181_types.h"
+#include "media/gb28181/gb28181.h"
 #include "media/hls/hls.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/whep.h"
+#include "media/net/io_context_pool.h"
 
 namespace media_server
 {
@@ -261,11 +263,11 @@ std::optional<gb28181_output_parameters> parse_gb28181_output_parameters(const b
 }    // namespace
 
 http_session::http_session(boost::asio::ip::tcp::socket socket,
-                           const config& config,
-                           gb28181_service& gb28181)
+                           io_context_pool& workers,
+                           const config& config)
     : stream_(std::move(socket)),
+      workers_(workers),
       config_(config),
-      gb28181_(gb28181),
       hls_wait_timer_(stream_.get_executor())
 {
 }
@@ -484,19 +486,19 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
         {
             remote_rtp_endpoint.emplace(*parameters->remote_rtp_address, *parameters->remote_rtp_port);
         }
-        switch (gb28181_.create(stream_.get_executor(), stream_name, *description, std::move(remote_rtp_endpoint), parameters->remote_rtcp_port))
+        switch (gb28181::create(workers_.next(), stream_name, *description, std::move(remote_rtp_endpoint), parameters->remote_rtcp_port))
         {
-            case gb28181_create_error::none:
+            case gb28181::gb28181_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
                 return;
-            case gb28181_create_error::duplicate_stream:
-            case gb28181_create_error::stream_conflict:
+            case gb28181::gb28181_create_error::duplicate_stream:
+            case gb28181::gb28181_create_error::stream_conflict:
                 send_text_response(boost::beast::http::status::conflict, "text/plain", "stream already exists\n");
                 return;
-            case gb28181_create_error::invalid_configuration:
+            case gb28181::gb28181_create_error::invalid_configuration:
                 send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
                 return;
-            case gb28181_create_error::internal_error:
+            case gb28181::gb28181_create_error::internal_error:
                 send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "gb28181 session create failed\n");
                 return;
         }
@@ -511,7 +513,7 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
             return;
         }
-        if (!gb28181_.remove(stream_name))
+        if (!gb28181::remove(stream_name))
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "gb28181 session not found\n");
             return;
@@ -566,24 +568,24 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
             return;
         }
 
-        switch (gb28181_.create_output(stream_.get_executor(), stream_name, *parameters->output_id, parameters->rtcp.value_or(false), *description))
+        switch (gb28181::create_output(workers_.next(), stream_name, *parameters->output_id, parameters->rtcp.value_or(false), *description))
         {
-            case gb28181_output_create_error::none:
+            case gb28181::gb28181_output_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
                 return;
-            case gb28181_output_create_error::duplicate_output:
+            case gb28181::gb28181_output_create_error::duplicate_output:
                 send_text_response(boost::beast::http::status::conflict, "text/plain", "gb28181 output already exists\n");
                 return;
-            case gb28181_output_create_error::stream_not_found:
+            case gb28181::gb28181_output_create_error::stream_not_found:
                 send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");
                 return;
-            case gb28181_output_create_error::unsupported_stream:
+            case gb28181::gb28181_output_create_error::unsupported_stream:
                 send_text_response(boost::beast::http::status::conflict, "text/plain", "stream codecs not supported by gb28181 output\n");
                 return;
-            case gb28181_output_create_error::invalid_configuration:
+            case gb28181::gb28181_output_create_error::invalid_configuration:
                 send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
                 return;
-            case gb28181_output_create_error::internal_error:
+            case gb28181::gb28181_output_create_error::internal_error:
                 send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "gb28181 output create failed\n");
                 return;
         }
@@ -597,7 +599,7 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
             return;
         }
-        if (!gb28181_.remove_output(stream_name, *parameters->output_id))
+        if (!gb28181::remove_output(stream_name, *parameters->output_id))
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "gb28181 output not found\n");
             return;

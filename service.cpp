@@ -10,7 +10,7 @@
 
 #include "media/core/log.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_service.h"
+#include "media/gb28181/gb28181.h"
 #include "media/hls/hls.h"
 #include "media/http/http_server.h"
 #include "media/net/io_context_pool.h"
@@ -40,7 +40,7 @@ void service::stop()
     http_->shutdown();
     http_.reset();
     whep::shutdown();
-    gb28181_->shutdown();
+    gb28181::shutdown();
     rtsp_->shutdown();
     rtsp_.reset();
     rtmp_->shutdown();
@@ -62,10 +62,9 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_io = workers_->context(0);
-    gb28181_ = std::make_unique<gb28181_service>(registry::instance(), workers_.get());
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_.rtmp_port, config_.rtmp_video);
     rtsp_ = std::make_shared<rtsp_server>(*workers_, config_.rtsp_port, config_.rtsp_video);
-    http_ = std::make_shared<http_server>(*workers_, config_, *gb28181_);
+    http_ = std::make_shared<http_server>(*workers_, config_);
 
     if (const auto error = rtmp_->startup())
     {

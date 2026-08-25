@@ -159,6 +159,7 @@ add_library(media_core STATIC
     media/net/tcp_connection.cpp
     media/net/tcp_connector.cpp
     media/net/tcp_listener.cpp
+    media/net/tcp_acceptor.cpp
     media/net/udp_socket.cpp
     media/flv/flv_output_muxer.cpp
     media/hls/hls_output.cpp
@@ -172,7 +173,7 @@ add_library(media_core STATIC
     media/gb28181/gb28181_udp_output_session.cpp
     media/gb28181/gb28181_tcp_output_session.cpp
     media/gb28181/gb28181_tcp_session.cpp
-    media/gb28181/gb28181_service.cpp
+    media/gb28181/gb28181.cpp
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
     media/webrtc/stun_message.cpp

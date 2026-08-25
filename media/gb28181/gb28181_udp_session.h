@@ -27,8 +27,7 @@ struct gb28181_udp_peer
 class gb28181_udp_session final : public std::enable_shared_from_this<gb28181_udp_session>
 {
    public:
-    gb28181_udp_session(stream_registry& registry_ref,
-                        boost::asio::any_io_executor executor,
+    gb28181_udp_session(boost::asio::any_io_executor executor,
                         std::string stream_name,
                         gb28181_description description,
                         gb28181_udp_peer peer);
