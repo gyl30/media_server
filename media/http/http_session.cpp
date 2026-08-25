@@ -1,6 +1,7 @@
 #include <chrono>
 #include <utility>
 #include <charconv>
+#include <limits>
 #include <optional>
 
 #include <boost/asio/post.hpp>
@@ -9,6 +10,7 @@
 #include <boost/beast/http/chunk_encode.hpp>
 
 #include "media/http/http_session.h"
+#include "media/gb28181/gb28181_types.h"
 
 namespace media_server
 {
@@ -17,29 +19,167 @@ namespace
 
 constexpr int whep_retry_after_seconds = 1;
 
+struct gb28181_media_parameters
+{
+    std::optional<gb28181_transport> transport;
+    std::optional<boost::asio::ip::address> address;
+    std::optional<std::uint16_t> rtp_port;
+    std::optional<std::uint16_t> rtcp_port;
+    std::optional<std::uint8_t> payload_type;
+    std::optional<std::uint32_t> ssrc;
+};
+
 struct gb28181_input_parameters
 {
     std::optional<boost::asio::ip::address> remote_rtp_address;
     std::optional<std::uint16_t> remote_rtp_port;
     std::optional<std::uint16_t> remote_rtcp_port;
+    gb28181_media_parameters media;
 };
+
+struct gb28181_output_parameters
+{
+    std::optional<std::string> output_id;
+    std::optional<bool> rtcp;
+    gb28181_media_parameters media;
+};
+
+std::optional<std::uint64_t> parse_gb28181_unsigned(std::string_view value, std::uint64_t maximum)
+{
+    std::uint64_t parsed{};
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (error != std::errc{} || end != value.data() + value.size() || parsed > maximum)
+    {
+        return std::nullopt;
+    }
+    return parsed;
+}
+
+std::optional<gb28181_transport> parse_gb28181_transport(std::string_view value)
+{
+    if (value == "udp")
+    {
+        return gb28181_transport::udp;
+    }
+    if (value == "tcp_active")
+    {
+        return gb28181_transport::tcp_active;
+    }
+    if (value == "tcp_passive")
+    {
+        return gb28181_transport::tcp_passive;
+    }
+    return std::nullopt;
+}
+
+bool is_gb28181_media_parameter(std::string_view key)
+{
+    return key == "transport" || key == "address" || key == "rtp_port" || key == "rtcp_port" || key == "payload_type" || key == "ssrc";
+}
+
+bool parse_gb28181_media_parameter(std::string_view key, bool has_value, std::string_view value, gb28181_media_parameters& parameters)
+{
+    if (!has_value)
+    {
+        return false;
+    }
+    if (key == "transport")
+    {
+        if (parameters.transport)
+        {
+            return false;
+        }
+        parameters.transport = parse_gb28181_transport(value);
+        return parameters.transport.has_value();
+    }
+    if (key == "address")
+    {
+        if (parameters.address || value.empty())
+        {
+            return false;
+        }
+        boost::system::error_code error;
+        auto address = boost::asio::ip::make_address(value, error);
+        if (error)
+        {
+            return false;
+        }
+        parameters.address = std::move(address);
+        return true;
+    }
+    if (key == "rtp_port" || key == "rtcp_port")
+    {
+        const auto parsed = parse_gb28181_unsigned(value, 65'535);
+        if (!parsed || *parsed == 0)
+        {
+            return false;
+        }
+        auto& port = key == "rtp_port" ? parameters.rtp_port : parameters.rtcp_port;
+        if (port)
+        {
+            return false;
+        }
+        port = static_cast<std::uint16_t>(*parsed);
+        return true;
+    }
+    if (key == "payload_type")
+    {
+        if (parameters.payload_type)
+        {
+            return false;
+        }
+        const auto parsed = parse_gb28181_unsigned(value, 127);
+        if (!parsed)
+        {
+            return false;
+        }
+        parameters.payload_type = static_cast<std::uint8_t>(*parsed);
+        return true;
+    }
+    if (key == "ssrc")
+    {
+        if (parameters.ssrc)
+        {
+            return false;
+        }
+        const auto parsed = parse_gb28181_unsigned(value, std::numeric_limits<std::uint32_t>::max());
+        if (!parsed)
+        {
+            return false;
+        }
+        parameters.ssrc = static_cast<std::uint32_t>(*parsed);
+        return true;
+    }
+    return false;
+}
+
+std::optional<gb28181_description> make_gb28181_description(const gb28181_media_parameters& parameters)
+{
+    if (!parameters.transport || !parameters.address || !parameters.rtp_port || !parameters.payload_type || !parameters.ssrc)
+    {
+        return std::nullopt;
+    }
+    return gb28181_description{.transport = *parameters.transport,
+                               .address = *parameters.address,
+                               .rtp_port = *parameters.rtp_port,
+                               .rtcp_port = parameters.rtcp_port.value_or(0),
+                               .payload_type = *parameters.payload_type,
+                               .ssrc = *parameters.ssrc};
+}
 
 std::optional<gb28181_input_parameters> parse_gb28181_input_parameters(const boost::urls::url_view& target)
 {
-    const auto parse_port = [](std::string_view value) -> std::optional<std::uint16_t>
-    {
-        std::uint32_t port{};
-        const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), port);
-        if (error != std::errc{} || end != value.data() + value.size() || port == 0 || port > 65'535)
-        {
-            return std::nullopt;
-        }
-        return static_cast<std::uint16_t>(port);
-    };
-
     gb28181_input_parameters parameters;
     for (const auto parameter : target.params())
     {
+        if (is_gb28181_media_parameter(parameter.key))
+        {
+            if (!parse_gb28181_media_parameter(parameter.key, parameter.has_value, parameter.value, parameters.media))
+            {
+                return std::nullopt;
+            }
+            continue;
+        }
         if (parameter.key == "remote_rtp_address")
         {
             if (parameters.remote_rtp_address || !parameter.has_value || parameter.value.empty())
@@ -55,50 +195,43 @@ std::optional<gb28181_input_parameters> parse_gb28181_input_parameters(const boo
             parameters.remote_rtp_address = std::move(address);
             continue;
         }
-
-        if (parameter.key == "remote_rtp_port")
+        if (parameter.key == "remote_rtp_port" || parameter.key == "remote_rtcp_port")
         {
-            if (parameters.remote_rtp_port || !parameter.has_value)
+            if (!parameter.has_value)
             {
                 return std::nullopt;
             }
-            parameters.remote_rtp_port = parse_port(parameter.value);
-            if (!parameters.remote_rtp_port)
+            const auto parsed = parse_gb28181_unsigned(parameter.value, 65'535);
+            if (!parsed || *parsed == 0)
             {
                 return std::nullopt;
             }
+            auto& port = parameter.key == "remote_rtp_port" ? parameters.remote_rtp_port : parameters.remote_rtcp_port;
+            if (port)
+            {
+                return std::nullopt;
+            }
+            port = static_cast<std::uint16_t>(*parsed);
             continue;
         }
-        if (parameter.key == "remote_rtcp_port")
-        {
-            if (parameters.remote_rtcp_port || !parameter.has_value)
-            {
-                return std::nullopt;
-            }
-            parameters.remote_rtcp_port = parse_port(parameter.value);
-            if (!parameters.remote_rtcp_port)
-            {
-                return std::nullopt;
-            }
-            continue;
-        }
-
         return std::nullopt;
     }
     return parameters;
 }
-
-struct gb28181_output_parameters
-{
-    std::optional<std::string> output_id;
-    std::optional<bool> rtcp;
-};
 
 std::optional<gb28181_output_parameters> parse_gb28181_output_parameters(const boost::urls::url_view& target)
 {
     gb28181_output_parameters parameters;
     for (const auto parameter : target.params())
     {
+        if (is_gb28181_media_parameter(parameter.key))
+        {
+            if (!parse_gb28181_media_parameter(parameter.key, parameter.has_value, parameter.value, parameters.media))
+            {
+                return std::nullopt;
+            }
+            continue;
+        }
         if (parameter.key == "output_id")
         {
             if (parameters.output_id || !parameter.has_value || parameter.value.empty())
@@ -330,20 +463,31 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
             return;
         }
-
-        const auto content_type = request_[boost::beast::http::field::content_type];
-        if (!boost::beast::iequals(content_type, "application/sdp"))
+        const auto description = make_gb28181_description(parameters->media);
+        if (!description || !parameters->media.transport)
         {
-            send_text_response(boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
             return;
         }
-
+        if (*parameters->media.transport == gb28181_transport::udp)
+        {
+            if (!parameters->media.rtcp_port || !parameters->remote_rtcp_port)
+            {
+                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
+                return;
+            }
+        }
+        else if (parameters->media.rtcp_port || parameters->remote_rtp_address || parameters->remote_rtp_port || parameters->remote_rtcp_port)
+        {
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
+            return;
+        }
         std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint;
         if (parameters->remote_rtp_address)
         {
             remote_rtp_endpoint.emplace(*parameters->remote_rtp_address, *parameters->remote_rtp_port);
         }
-        switch (gb28181_.create(stream_.get_executor(), stream_name, request_.body(), std::move(remote_rtp_endpoint), parameters->remote_rtcp_port))
+        switch (gb28181_.create(stream_.get_executor(), stream_name, *description, std::move(remote_rtp_endpoint), parameters->remote_rtcp_port))
         {
             case gb28181_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
@@ -352,7 +496,7 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
             case gb28181_create_error::stream_conflict:
                 send_text_response(boost::beast::http::status::conflict, "text/plain", "stream already exists\n");
                 return;
-            case gb28181_create_error::invalid_sdp:
+            case gb28181_create_error::invalid_configuration:
                 send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
                 return;
             case gb28181_create_error::internal_error:
@@ -363,7 +507,9 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
 
     if (request_.method() == boost::beast::http::verb::delete_)
     {
-        if (parameters->remote_rtp_address || parameters->remote_rtp_port || parameters->remote_rtcp_port)
+        if (parameters->remote_rtp_address || parameters->remote_rtp_port || parameters->remote_rtcp_port ||
+            parameters->media.transport || parameters->media.address || parameters->media.rtp_port ||
+            parameters->media.rtcp_port || parameters->media.payload_type || parameters->media.ssrc)
         {
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
             return;
@@ -403,14 +549,27 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
 
     if (request_.method() == boost::beast::http::verb::post)
     {
-        const auto content_type = request_[boost::beast::http::field::content_type];
-        if (!boost::beast::iequals(content_type, "application/sdp"))
+        const auto description = make_gb28181_description(parameters->media);
+        if (!description || !parameters->media.transport)
         {
-            send_text_response(boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
+            return;
+        }
+        if (*parameters->media.transport == gb28181_transport::udp)
+        {
+            if (!parameters->media.rtcp_port)
+            {
+                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
+                return;
+            }
+        }
+        else if (parameters->media.rtcp_port || parameters->rtcp.value_or(false))
+        {
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
             return;
         }
 
-        switch (gb28181_.create_output(stream_.get_executor(), stream_name, *parameters->output_id, parameters->rtcp.value_or(false), request_.body()))
+        switch (gb28181_.create_output(stream_.get_executor(), stream_name, *parameters->output_id, parameters->rtcp.value_or(false), *description))
         {
             case gb28181_output_create_error::none:
                 send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
@@ -424,8 +583,8 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
             case gb28181_output_create_error::unsupported_stream:
                 send_text_response(boost::beast::http::status::conflict, "text/plain", "stream codecs not supported by gb28181 output\n");
                 return;
-            case gb28181_output_create_error::invalid_sdp:
-                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid or unsupported gb28181 output sdp\n");
+            case gb28181_output_create_error::invalid_configuration:
+                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
                 return;
             case gb28181_output_create_error::internal_error:
                 send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "gb28181 output create failed\n");
@@ -435,7 +594,8 @@ void http_session::handle_gb28181_output(const boost::urls::url_view& target, co
 
     if (request_.method() == boost::beast::http::verb::delete_)
     {
-        if (parameters->rtcp)
+        if (parameters->rtcp || parameters->media.transport || parameters->media.address || parameters->media.rtp_port ||
+            parameters->media.rtcp_port || parameters->media.payload_type || parameters->media.ssrc)
         {
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
             return;

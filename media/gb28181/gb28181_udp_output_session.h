@@ -11,7 +11,7 @@
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/core/media_stream.h"
-#include "media/gb28181/gb28181_sdp.h"
+#include "media/gb28181/gb28181_types.h"
 
 namespace media_server
 {

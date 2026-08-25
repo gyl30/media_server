@@ -9,7 +9,6 @@
 
 #include "media/net/tcp_listener.h"
 #include "media/net/tcp_connector.h"
-#include "media/gb28181/gb28181_sdp.h"
 #include "media/net/io_context_pool.h"
 #include "media/gb28181/gb28181_service.h"
 #include "media/gb28181/gb28181_tcp_session.h"
@@ -117,37 +116,37 @@ gb28181_service::~gb28181_service() { shutdown(); }
 
 gb28181_create_error gb28181_service::create(boost::asio::any_io_executor executor,
                                              std::string stream_name,
-                                             std::string_view sdp,
+                                             gb28181_description description,
                                              std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
                                              std::optional<std::uint16_t> remote_rtcp_port)
 {
-    if (stream_name.empty())
+    if (stream_name.empty() || description.rtp_port == 0 || description.payload_type > 127 ||
+        (description.transport != gb28181_transport::udp && description.transport != gb28181_transport::tcp_active &&
+         description.transport != gb28181_transport::tcp_passive))
     {
-        return gb28181_create_error::invalid_sdp;
+        return gb28181_create_error::invalid_configuration;
     }
-
-    auto description = parse_gb28181_sdp(sdp);
-    if (!description)
+    if (description.transport == gb28181_transport::udp)
     {
-        return gb28181_create_error::invalid_sdp;
-    }
-    if (description->transport == gb28181_transport::udp)
-    {
-        if (!remote_rtcp_port || *remote_rtcp_port == 0)
+        if (description.rtcp_port == 0 || description.rtcp_port == description.rtp_port || !remote_rtcp_port || *remote_rtcp_port == 0)
         {
-            return gb28181_create_error::invalid_sdp;
+            return gb28181_create_error::invalid_configuration;
         }
         if (remote_rtp_endpoint && (remote_rtp_endpoint->port() == 0 || remote_rtp_endpoint->address().is_unspecified() ||
-                                    remote_rtp_endpoint->address().is_v4() != description->address.is_v4()))
+                                    remote_rtp_endpoint->address().is_v4() != description.address.is_v4()))
         {
-            return gb28181_create_error::invalid_sdp;
+            return gb28181_create_error::invalid_configuration;
         }
     }
-    else if (remote_rtp_endpoint || remote_rtcp_port)
+    else if (description.rtcp_port != 0 || remote_rtp_endpoint || remote_rtcp_port)
     {
-        return gb28181_create_error::invalid_sdp;
+        return gb28181_create_error::invalid_configuration;
     }
-    if (description->transport == gb28181_transport::tcp_passive && workers_ == nullptr)
+    if (description.transport == gb28181_transport::tcp_active && description.address.is_unspecified())
+    {
+        return gb28181_create_error::invalid_configuration;
+    }
+    if (description.transport == gb28181_transport::tcp_passive && workers_ == nullptr)
     {
         return gb28181_create_error::internal_error;
     }
@@ -172,7 +171,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
 
     const std::weak_ptr<state> weak_state = state_;
     auto start_tcp_session =
-        [weak_state, registry = &registry_, stream_name, description = *description, generation](boost::asio::ip::tcp::socket socket) mutable
+        [weak_state, registry = &registry_, stream_name, description, generation](boost::asio::ip::tcp::socket socket) mutable
     {
         const auto shared_state = weak_state.lock();
         if (!shared_state)
@@ -221,10 +220,10 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     };
 
     session_resource resource;
-    if (description->transport == gb28181_transport::udp)
+    if (description.transport == gb28181_transport::udp)
     {
         auto session = std::make_shared<gb28181_udp_session>(
-            registry_, executor, stream_name, *description, gb28181_udp_peer{.rtp = std::move(remote_rtp_endpoint), .rtcp_port = *remote_rtcp_port});
+            registry_, executor, stream_name, description, gb28181_udp_peer{.rtp = std::move(remote_rtp_endpoint), .rtcp_port = *remote_rtcp_port});
         if (!session->startup())
         {
             std::scoped_lock lock(state_->mutex);
@@ -237,10 +236,10 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
         }
         resource = std::weak_ptr<gb28181_udp_session>{session};
     }
-    else if (description->transport == gb28181_transport::tcp_active)
+    else if (description.transport == gb28181_transport::tcp_active)
     {
         auto connector = std::make_shared<tcp_connector>(executor);
-        connector->startup(boost::asio::ip::tcp::endpoint{description->address, description->rtp_port},
+        connector->startup(boost::asio::ip::tcp::endpoint{description.address, description.rtp_port},
                            tcp_establishment_timeout,
                            [weak_state, stream_name, generation, start_tcp_session = std::move(start_tcp_session)](
                                boost::system::error_code error, boost::asio::ip::tcp::socket socket) mutable
@@ -266,7 +265,7 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
     }
     else
     {
-        auto listener = std::make_shared<tcp_listener>(*workers_, description->rtp_port, bind_address(description->address));
+        auto listener = std::make_shared<tcp_listener>(*workers_, description.rtp_port, bind_address(description.address));
         const auto error = listener->startup(std::move(start_tcp_session), 1, tcp_establishment_timeout);
         if (error)
         {
@@ -305,23 +304,32 @@ gb28181_create_error gb28181_service::create(boost::asio::any_io_executor execut
 }
 
 gb28181_output_create_error gb28181_service::create_output(
-    boost::asio::any_io_executor executor, std::string stream_name, std::string output_id, bool rtcp, std::string_view sdp)
+    boost::asio::any_io_executor executor, std::string stream_name, std::string output_id, bool rtcp, gb28181_description description)
 {
-    if (stream_name.empty() || output_id.empty())
+    if (stream_name.empty() || output_id.empty() || description.rtp_port == 0 || description.payload_type > 127 ||
+        (description.transport != gb28181_transport::udp && description.transport != gb28181_transport::tcp_active &&
+         description.transport != gb28181_transport::tcp_passive))
     {
-        return gb28181_output_create_error::invalid_sdp;
+        return gb28181_output_create_error::invalid_configuration;
     }
-
-    auto description = parse_gb28181_sdp(sdp);
-    if (!description || (description->transport == gb28181_transport::udp && description->address.is_unspecified()))
+    if (description.transport == gb28181_transport::udp &&
+        (description.address.is_unspecified() || description.rtcp_port == 0 || description.rtcp_port == description.rtp_port))
     {
-        return gb28181_output_create_error::invalid_sdp;
+        return gb28181_output_create_error::invalid_configuration;
     }
-    if (rtcp && description->transport != gb28181_transport::udp)
+    if (description.transport != gb28181_transport::udp && description.rtcp_port != 0)
     {
-        return gb28181_output_create_error::invalid_sdp;
+        return gb28181_output_create_error::invalid_configuration;
     }
-    if (description->transport == gb28181_transport::tcp_passive && workers_ == nullptr)
+    if (rtcp && description.transport != gb28181_transport::udp)
+    {
+        return gb28181_output_create_error::invalid_configuration;
+    }
+    if (description.transport == gb28181_transport::tcp_active && description.address.is_unspecified())
+    {
+        return gb28181_output_create_error::invalid_configuration;
+    }
+    if (description.transport == gb28181_transport::tcp_passive && workers_ == nullptr)
     {
         return gb28181_output_create_error::internal_error;
     }
@@ -354,7 +362,7 @@ gb28181_output_create_error gb28181_service::create_output(
     const std::weak_ptr<state> weak_state = state_;
     const std::weak_ptr<media_stream> weak_stream = stream;
     auto start_tcp_output =
-        [weak_state, weak_stream, key, stream_name, description = *description, generation](boost::asio::ip::tcp::socket socket) mutable
+        [weak_state, weak_stream, key, stream_name, description, generation](boost::asio::ip::tcp::socket socket) mutable
     {
         const auto shared_state = weak_state.lock();
         if (!shared_state)
@@ -417,9 +425,9 @@ gb28181_output_create_error gb28181_service::create_output(
     };
 
     output_resource resource;
-    if (description->transport == gb28181_transport::udp)
+    if (description.transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_output_session>(executor, std::move(stream), *description, rtcp);
+        auto session = std::make_shared<gb28181_udp_output_session>(executor, std::move(stream), description, rtcp);
         if (!session->startup())
         {
             std::scoped_lock lock(state_->mutex);
@@ -432,10 +440,10 @@ gb28181_output_create_error gb28181_service::create_output(
         }
         resource = std::weak_ptr<gb28181_udp_output_session>{session};
     }
-    else if (description->transport == gb28181_transport::tcp_active)
+    else if (description.transport == gb28181_transport::tcp_active)
     {
         auto connector = std::make_shared<tcp_connector>(executor);
-        connector->startup(boost::asio::ip::tcp::endpoint{description->address, description->rtp_port},
+        connector->startup(boost::asio::ip::tcp::endpoint{description.address, description.rtp_port},
                            tcp_establishment_timeout,
                            [weak_state, key, generation, start_tcp_output = std::move(start_tcp_output)](boost::system::error_code error,
                                                                                                          boost::asio::ip::tcp::socket socket) mutable
@@ -461,7 +469,7 @@ gb28181_output_create_error gb28181_service::create_output(
     }
     else
     {
-        auto listener = std::make_shared<tcp_listener>(*workers_, description->rtp_port, bind_address(description->address));
+        auto listener = std::make_shared<tcp_listener>(*workers_, description.rtp_port, bind_address(description.address));
         const auto error = listener->startup(std::move(start_tcp_output), 1, tcp_establishment_timeout);
         if (error)
         {

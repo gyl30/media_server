@@ -1,9 +1,7 @@
-#ifndef MEDIA_GB28181_GB28181_SDP_H
-#define MEDIA_GB28181_GB28181_SDP_H
+#ifndef MEDIA_GB28181_GB28181_TYPES_H
+#define MEDIA_GB28181_GB28181_TYPES_H
 
 #include <cstdint>
-#include <optional>
-#include <string_view>
 
 #include <boost/asio/ip/address.hpp>
 
@@ -26,8 +24,6 @@ struct gb28181_description
     std::uint8_t payload_type{};
     std::uint32_t ssrc{};
 };
-
-[[nodiscard]] std::optional<gb28181_description> parse_gb28181_sdp(std::string_view text);
 
 }    // namespace media_server
 
