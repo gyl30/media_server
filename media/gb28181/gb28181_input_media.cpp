@@ -5,6 +5,7 @@
 
 #include "media/codec/codec_utils.h"
 #include "media/gb28181/gb28181_input_media.h"
+#include "media/core/stream_registry.h"
 
 extern "C"
 {
@@ -65,9 +66,8 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 }    // namespace
 
 gb28181_input_media::gb28181_input_media(
-    stream_registry& registry_ref, boost::asio::any_io_executor executor, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
-    : registry_(registry_ref),
-      executor_(std::move(executor)),
+    boost::asio::any_io_executor executor, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
+    : executor_(std::move(executor)),
       stream_name_(std::move(stream_name)),
       payload_type_(payload_type),
       expected_ssrc_(expected_ssrc)
@@ -145,7 +145,7 @@ void gb28181_input_media::shutdown()
     closed_ = true;
     if (stream_)
     {
-        registry_.remove(*stream_);
+        registry::instance().remove(*stream_);
         stream_->end();
         stream_.reset();
     }
@@ -397,7 +397,7 @@ bool gb28181_input_media::try_start_recording()
     {
         tracks.push_back(*audio_track_);
     }
-    if (!stream_->set_tracks(std::move(tracks)) || !registry_.add(stream_))
+    if (!stream_->set_tracks(std::move(tracks)) || !registry::instance().add(stream_))
     {
         spdlog::warn("gb28181 stream register failed {}", stream_name_);
         fatal_codec_change_ = true;

@@ -7,9 +7,8 @@
 namespace media_server
 {
 http_server::http_server(io_context_pool& workers,
-                         const config& config,
-                         gb28181_service& gb28181)
-    : config_(config), gb28181_(gb28181), listener_(std::make_shared<tcp_listener>(workers, config.http_port))
+                         const config& config)
+    : workers_(workers), config_(config), listener_(std::make_shared<tcp_listener>(workers, config.http_port))
 {
 }
 
@@ -58,7 +57,7 @@ void http_server::on_accept(boost::asio::ip::tcp::socket socket)
         socket.close(error);
         return;
     }
-    auto session = std::make_shared<http_session>(std::move(socket), config_, gb28181_);
+    auto session = std::make_shared<http_session>(std::move(socket), workers_, config_);
     std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
     sessions_.emplace_back(session);
     session->startup();

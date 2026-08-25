@@ -18,8 +18,7 @@ namespace media_server
 class gb28181_tcp_session final : public std::enable_shared_from_this<gb28181_tcp_session>
 {
    public:
-    gb28181_tcp_session(stream_registry& registry_ref,
-                        boost::asio::ip::tcp::socket socket,
+    gb28181_tcp_session(boost::asio::ip::tcp::socket socket,
                         std::string stream_name,
                         std::uint8_t payload_type,
                         std::uint32_t expected_ssrc);

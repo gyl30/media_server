@@ -36,7 +36,8 @@
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/srtp_transport.h"
-#include "media/gb28181/gb28181_service.h"
+#include "media/gb28181/gb28181.h"
+#include "media/net/io_context_pool.h"
 #include "media/webrtc/dtls_certificate.h"
 
 extern "C"
@@ -833,7 +834,7 @@ class whep_http_test_peer final
    public:
     whep_http_test_peer()
         : work_(boost::asio::make_work_guard(io_)),
-          gb28181_(streams_),
+          workers_(1),
           acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
     {
         whep::shutdown();
@@ -850,7 +851,7 @@ class whep_http_test_peer final
                           [this]()
                           {
                               whep::shutdown();
-                              gb28181_.shutdown();
+                              gb28181::shutdown();
                               work_.reset();
         });
         runner_.join();
@@ -903,7 +904,7 @@ class whep_http_test_peer final
         boost::asio::ip::tcp::socket client(client_io_);
         client.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto session = std::make_shared<http_session>(std::move(server_socket), config_, gb28181_);
+        auto session = std::make_shared<http_session>(std::move(server_socket), workers_, config_);
         session->startup();
 
         const bool head = request.method() == boost::beast::http::verb::head;
@@ -940,7 +941,7 @@ class whep_http_test_peer final
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
     config config_;
     stream_registry& streams_ = registry::instance();
-    gb28181_service gb28181_;
+    io_context_pool workers_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::io_context client_io_;
     std::shared_ptr<media_stream> stream_;

@@ -16,16 +16,17 @@
 
 #include "config.h"
 #include "media/http/http_flv_output.h"
-#include "media/gb28181/gb28181_service.h"
 
 namespace media_server
 {
+class io_context_pool;
+
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
     http_session(boost::asio::ip::tcp::socket socket,
-                 const config& config,
-                 gb28181_service& gb28181);
+                 io_context_pool& workers,
+                 const config& config);
 
     void startup();
     void shutdown();
@@ -65,8 +66,8 @@ class http_session final : public std::enable_shared_from_this<http_session>
     boost::beast::tcp_stream stream_;
     boost::beast::flat_buffer buffer_;
     boost::beast::http::request<boost::beast::http::string_body> request_;
+    io_context_pool& workers_;
     const config& config_;
-    gb28181_service& gb28181_;
     boost::asio::steady_timer hls_wait_timer_;
     std::chrono::steady_clock::time_point hls_wait_deadline_{};
     std::string hls_wait_stream_name_;
