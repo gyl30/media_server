@@ -54,12 +54,11 @@ std::shared_ptr<media_stream> add_video_stream(boost::asio::io_context& io, std:
     return stream;
 }
 
-void test_input_identity_is_reusable_immediately_after_remove()
+void test_input_identity_is_reusable_after_remove()
 {
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    gb28181::shutdown();
     const auto description = make_tcp_active_description(65'000, 10'000'2001);
 
     require(gb28181::create(io, "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
@@ -68,22 +67,21 @@ void test_input_identity_is_reusable_immediately_after_remove()
     require(gb28181::create(io, "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
             "gb input identity reusable immediately after remove");
 
-    gb28181::shutdown();
+    require(gb28181::remove("live/gb-identity"), "gb input second remove");
     io.run();
     io.restart();
     require(gb28181::create(io, "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
-            "gb input module reusable after shutdown");
-    gb28181::shutdown();
+            "gb input reusable after remove");
+    require(gb28181::remove("live/gb-identity"), "gb input final remove");
     io.run();
 }
 
-void test_output_identity_is_reusable_immediately_after_remove()
+void test_output_identity_is_reusable_after_remove()
 {
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
     const auto stream = add_video_stream(io, "live/gb-output-identity");
-    gb28181::shutdown();
     const auto description = make_tcp_active_description(65'000, 10'000'2002);
 
     require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::none,
@@ -92,7 +90,7 @@ void test_output_identity_is_reusable_immediately_after_remove()
     require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::none,
             "gb output identity reusable immediately after remove");
 
-    gb28181::shutdown();
+    require(gb28181::remove_output(stream->name(), "primary"), "gb output second remove");
     io.run();
 }
 
@@ -102,7 +100,6 @@ void test_input_old_async_work_does_not_remove_replacement()
     boost::asio::ip::tcp::acceptor peer(io, {boost::asio::ip::tcp::v4(), 0});
     auto& streams = media_server::registry::instance();
     streams.clear();
-    gb28181::shutdown();
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2003);
 
     require(gb28181::create(io, "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::none,
@@ -115,7 +112,7 @@ void test_input_old_async_work_does_not_remove_replacement()
     require(gb28181::create(io, "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181::gb28181_create_error::duplicate_stream,
             "gb input old async work preserves replacement");
 
-    gb28181::shutdown();
+    require(gb28181::remove("live/gb-generation"), "gb input replacement remove");
     io.run();
 }
 
@@ -126,7 +123,6 @@ void test_output_old_async_work_does_not_remove_replacement()
     auto& streams = media_server::registry::instance();
     streams.clear();
     const auto stream = add_video_stream(io, "live/gb-output-generation");
-    gb28181::shutdown();
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2004);
 
     require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::none,
@@ -139,7 +135,7 @@ void test_output_old_async_work_does_not_remove_replacement()
     require(gb28181::create_output(io, stream->name(), "primary", false, description) == gb28181::gb28181_output_create_error::duplicate_output,
             "gb output old async work preserves replacement");
 
-    gb28181::shutdown();
+    require(gb28181::remove_output(stream->name(), "primary"), "gb output replacement remove");
     io.run();
 }
 
@@ -163,8 +159,8 @@ int main()
         }
     };
 
-    run("input_identity_is_reusable_immediately_after_remove", media_server::test_input_identity_is_reusable_immediately_after_remove);
-    run("output_identity_is_reusable_immediately_after_remove", media_server::test_output_identity_is_reusable_immediately_after_remove);
+    run("input_identity_is_reusable_after_remove", media_server::test_input_identity_is_reusable_after_remove);
+    run("output_identity_is_reusable_after_remove", media_server::test_output_identity_is_reusable_after_remove);
     run("input_old_async_work_does_not_remove_replacement", media_server::test_input_old_async_work_does_not_remove_replacement);
     run("output_old_async_work_does_not_remove_replacement", media_server::test_output_old_async_work_does_not_remove_replacement);
     return failures == 0 ? 0 : 1;
