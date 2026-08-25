@@ -8375,6 +8375,34 @@ void test_media_stream_video_keyframe_barrier_is_sticky()
             "current video keyframe releases sticky barrier");
 }
 
+void test_io_context_pool_concurrent_next()
+{
+    io_context_pool workers(2);
+    const auto* first = &workers.context(0);
+    const auto* second = &workers.context(1);
+    std::atomic_bool invalid_context{};
+    constexpr std::size_t caller_count = 8;
+    std::vector<std::jthread> callers;
+    callers.reserve(caller_count);
+    for (std::size_t index = 0; index < caller_count; ++index)
+    {
+        callers.emplace_back(
+            [&workers, first, second, &invalid_context]
+            {
+                for (std::size_t iteration = 0; iteration < 10'000; ++iteration)
+                {
+                    const auto* selected = &workers.next();
+                    if (selected != first && selected != second)
+                    {
+                        invalid_context.store(true, std::memory_order_relaxed);
+                    }
+                }
+            });
+    }
+    callers.clear();
+    require(!invalid_context.load(std::memory_order_relaxed), "io context pool concurrent next");
+}
+
 void test_stream_registry_generation_lifecycle()
 {
     boost::asio::io_context io;
@@ -9516,6 +9544,8 @@ int main()
     std::cout << "[pass] media_stream_reader_track_interest\n";
     media_server::test_media_stream_video_keyframe_barrier_is_sticky();
     std::cout << "[pass] media_stream_video_keyframe_barrier_is_sticky\n";
+    media_server::test_io_context_pool_concurrent_next();
+    std::cout << "[pass] io_context_pool_concurrent_next\n";
     media_server::test_stream_registry_generation_lifecycle();
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_output();
