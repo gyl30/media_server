@@ -1,4 +1,6 @@
+#include <span>
 #include <utility>
+#include <vector>
 
 #include "media/http/whep_http.h"
 #include "media/webrtc/whep.h"
@@ -147,9 +149,19 @@ whep_http_string_response handle_whep_delete(const whep_http_request& request, s
 
 whep_http_string_response handle_whep_request(const whep_http_request& request,
                                               boost::asio::any_io_executor executor,
-                                              std::span<const std::string> segments,
+                                              const boost::urls::url_view& target,
                                               const config& application_config)
 {
+    std::vector<std::string> path;
+    for (const auto segment : target.segments())
+    {
+        path.emplace_back(segment);
+    }
+    if (path.size() < 2 || path[0] != "play" || path[1] != "whep")
+    {
+        return make_whep_error_response(request, boost::beast::http::status::not_found, "not found\n");
+    }
+    const auto segments = std::span<const std::string>(path).subspan(2);
     const bool session_resource = segments.size() == 2 && segments[0] == "session";
     const bool endpoint_resource = !segments.empty() && segments[0] != "session";
     if (!session_resource && !endpoint_resource)

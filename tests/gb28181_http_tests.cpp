@@ -5,6 +5,7 @@
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/url/parse.hpp>
 
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
@@ -142,6 +143,25 @@ void test_output_handlers()
     registry::instance().clear();
 }
 
+void test_request_namespace_dispatch()
+{
+    boost::asio::io_context io;
+
+    auto input_request = request();
+    input_request.target("/gb28181/missing");
+    const auto input_target = boost::urls::parse_origin_form(input_request.target());
+    require(input_target.has_value(), "input request target");
+    const auto input_response = handle_gb28181_input_request(input_request, io, *input_target);
+    require_json_response(input_response, boost::beast::http::status::not_found, R"({"error":"not_found"})", "input request route");
+
+    auto output_request = request();
+    output_request.target("/play/gb28181/missing");
+    const auto output_target = boost::urls::parse_origin_form(output_request.target());
+    require(output_target.has_value(), "output request target");
+    const auto output_response = handle_gb28181_output_request(output_request, io, *output_target);
+    require_json_response(output_response, boost::beast::http::status::not_found, R"({"error":"not_found"})", "output request route");
+}
+
 }    // namespace
 }    // namespace media_server
 
@@ -151,6 +171,7 @@ int main()
     {
         media_server::test_input_handlers();
         media_server::test_output_handlers();
+        media_server::test_request_namespace_dispatch();
         std::cout << "[pass] gb28181_http_handlers\n";
         return 0;
     }
