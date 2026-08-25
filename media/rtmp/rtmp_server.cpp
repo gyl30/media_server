@@ -8,8 +8,8 @@
 namespace media_server
 {
 
-rtmp_server::rtmp_server(io_context_pool& workers, std::uint16_t port, output_video_config video)
-    : video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
+rtmp_server::rtmp_server(io_context_pool& workers, const config& config)
+    : config_(config), listener_(std::make_shared<tcp_listener>(workers, config.rtmp_port))
 {
 }
 
@@ -59,7 +59,7 @@ void rtmp_server::on_accept(boost::asio::ip::tcp::socket socket)
         return;
     }
     auto connection = std::make_shared<tcp_connection>(std::move(socket));
-    auto session = std::make_shared<rtmp_session>(std::move(connection), video_config_);
+    auto session = std::make_shared<rtmp_session>(std::move(connection), config_.rtmp_video);
     std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
     sessions_.emplace_back(session);
     session->startup();
