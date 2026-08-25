@@ -837,7 +837,6 @@ class whep_http_test_peer final
           workers_(1),
           acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
     {
-        whep::shutdown();
         streams_.clear();
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
         require(stream_->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
@@ -850,8 +849,6 @@ class whep_http_test_peer final
         boost::asio::post(io_,
                           [this]()
                           {
-                              whep::shutdown();
-                              gb28181::shutdown();
                               work_.reset();
         });
         runner_.join();
@@ -2086,8 +2083,6 @@ void test_whep_session_lifecycle()
     require(streams.add(stream), "whep registry add");
 
     const config application_config;
-    whep::shutdown();
-
     auto missing_ice_offer = webrtc_offer_sdp;
     const std::string video_ice_ufrag = "a=ice-ufrag:remotevideo\r\n";
     const auto video_ice_offset = missing_ice_offer.find(video_ice_ufrag);
@@ -2139,7 +2134,6 @@ void test_whep_session_lifecycle()
     require(updated_session.error == whep::create_error::none, "whep create after config change");
     require(whep::remove(updated_session.session_id), "whep remove updated session");
     drain_io(io);
-    whep::shutdown();
 }
 
 void test_whep_opus_source_session_lifecycle()
@@ -2152,7 +2146,6 @@ void test_whep_opus_source_session_lifecycle()
     require(streams.add(stream), "whep opus source registry add");
 
     const config application_config;
-    whep::shutdown();
     auto compatible_sdp = webrtc_offer_sdp;
     const auto fmtp = compatible_sdp.find("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n");
     require(fmtp != std::string::npos, "whep opus source compatible fmtp");
@@ -2168,7 +2161,6 @@ void test_whep_opus_source_session_lifecycle()
     require(stream->update_track(std::move(changed)), "whep opus source track update");
     drain_io(io);
     require(!whep::remove(session.session_id), "whep opus source negotiated track lifecycle");
-    whep::shutdown();
 }
 
 void test_whep_negotiated_track_lifecycle()

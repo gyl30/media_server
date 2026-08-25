@@ -33,7 +33,6 @@ struct create_result
                                    const config& application_config);
 [[nodiscard]] bool contains(std::string_view session_id);
 [[nodiscard]] bool remove(std::string_view session_id);
-void shutdown();
 
 }    // namespace media_server::whep
 
