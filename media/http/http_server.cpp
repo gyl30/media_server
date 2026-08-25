@@ -7,13 +7,12 @@
 namespace media_server
 {
 http_server::http_server(io_context_pool& workers,
-                         stream_registry& registry,
                          hls_service& hls,
                          whep_service& whep,
                          gb28181_service& gb28181,
                          std::uint16_t port,
                          output_video_config video)
-    : registry_(registry), hls_(hls), whep_(whep), gb28181_(gb28181), video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
+    : hls_(hls), whep_(whep), gb28181_(gb28181), video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
 {
 }
 
@@ -62,7 +61,7 @@ void http_server::on_accept(boost::asio::ip::tcp::socket socket)
         socket.close(error);
         return;
     }
-    auto session = std::make_shared<http_session>(std::move(socket), registry_, hls_, whep_, gb28181_, video_config_);
+    auto session = std::make_shared<http_session>(std::move(socket), hls_, whep_, gb28181_, video_config_);
     std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
     sessions_.emplace_back(session);
     session->startup();

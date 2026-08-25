@@ -9,6 +9,7 @@
 
 #include <spdlog/spdlog.h>
 #include "media/codec/codec_utils.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_output_tcp_session.h"
 #include "media/rtsp/rtsp_uri.h"
 
@@ -34,14 +35,12 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_output_tcp_session::rtsp_output_tcp_session(std::weak_ptr<rtsp_server_connection> connection,
-                                                 stream_registry& registry,
                                                  std::shared_ptr<media_stream> stream,
                                                  std::string stream_name,
                                                  std::vector<rtsp_output_track_description> tracks,
                                                  std::shared_ptr<video_transcoder> video_transcoder,
                                                  track_id video_track_id)
     : connection_(std::move(connection)),
-      registry_(registry),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
       descriptions_(std::move(tracks)),
@@ -409,7 +408,7 @@ int rtsp_output_tcp_session::on_setup(
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
-    const auto current_stream = registry_.find(stream_name_);
+    const auto current_stream = registry::instance().find(stream_name_);
     if (!stream_ || !current_stream)
     {
         return rtsp_server_reply_setup(server, 503, nullptr, nullptr);
@@ -479,7 +478,7 @@ int rtsp_output_tcp_session::on_play(rtsp_server_t* server, std::string_view uri
     {
         return rtsp_server_reply_play(server, 454, nullptr, nullptr, nullptr);
     }
-    const auto current_stream = registry_.find(stream_name_);
+    const auto current_stream = registry::instance().find(stream_name_);
     if (!stream_ || !current_stream)
     {
         return rtsp_server_reply_play(server, 503, nullptr, nullptr, nullptr);

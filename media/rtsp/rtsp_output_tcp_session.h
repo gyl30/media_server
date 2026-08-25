@@ -8,7 +8,6 @@
 #include <cstdint>
 
 #include "media/core/media_reader.h"
-#include "media/core/stream_registry.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_output_track.h"
 #include "media/rtsp/rtsp_server_connection.h"
@@ -29,7 +28,6 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
 {
    public:
     rtsp_output_tcp_session(std::weak_ptr<rtsp_server_connection> connection,
-                            stream_registry& registry,
                             std::shared_ptr<media_stream> stream,
                             std::string stream_name,
                             std::vector<rtsp_output_track_description> tracks,
@@ -73,7 +71,6 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
     std::weak_ptr<rtsp_server_connection> connection_;
-    stream_registry& registry_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     std::vector<rtsp_output_track_description> descriptions_;

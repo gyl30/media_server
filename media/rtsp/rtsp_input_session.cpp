@@ -29,8 +29,7 @@ std::uint32_t random_u32()
 
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection, stream_registry& registry)
-    : connection_(std::move(connection)), registry_(registry)
+rtsp_input_session::rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection) : connection_(std::move(connection))
 {
 }
 
@@ -195,11 +194,11 @@ int rtsp_input_session::on_setup(
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
         auto child =
-            std::make_shared<rtsp_input_tcp_session>(connection_, connection->executor(), registry_, stream_name_, session_id_, descriptions_);
+            std::make_shared<rtsp_input_tcp_session>(connection_, connection->executor(), stream_name_, session_id_, descriptions_);
         return child->startup(server, uri, session, transports, count);
     }
 
-    auto child = std::make_shared<rtsp_input_udp_session>(connection_, connection->executor(), registry_, stream_name_, session_id_, descriptions_);
+    auto child = std::make_shared<rtsp_input_udp_session>(connection_, connection->executor(), stream_name_, session_id_, descriptions_);
     return child->startup(server, uri, session, transports, count);
 }
 

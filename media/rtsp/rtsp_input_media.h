@@ -10,7 +10,7 @@
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include "media/core/stream_registry.h"
+#include "media/core/media_stream.h"
 
 extern "C"
 {
@@ -36,8 +36,7 @@ struct rtsp_input_track_description
 class rtsp_input_media final
 {
    public:
-    rtsp_input_media(stream_registry& registry,
-                     boost::asio::any_io_executor executor,
+    rtsp_input_media(boost::asio::any_io_executor executor,
                      std::string stream_name,
                      std::string rtcp_cname,
                      std::vector<rtsp_input_track_description> descriptions);
@@ -57,7 +56,6 @@ class rtsp_input_media final
     int on_packet(avpacket_t* packet);
     bool update_track_from_packet(const avpacket_t& packet);
 
-    stream_registry& registry_;
     boost::asio::any_io_executor executor_;
     std::string stream_name_;
     std::string rtcp_cname_;

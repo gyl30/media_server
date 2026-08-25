@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
+#include "media/core/stream_registry.h"
 #include "media/rtmp/rtmp_input_session.h"
 
 extern "C"
@@ -26,12 +27,10 @@ constexpr track_id audio_track_id = 2;
 }    // namespace
 
 rtmp_input_session::rtmp_input_session(boost::asio::any_io_executor executor,
-                                       stream_registry& registry,
                                        std::string stream_name,
                                        std::chrono::milliseconds initial_tracks_timeout,
                                        shutdown_handler on_shutdown)
-    : registry_(registry),
-      initial_tracks_timer_(executor),
+    : initial_tracks_timer_(executor),
       initial_tracks_timeout_(initial_tracks_timeout),
       stream_name_(std::move(stream_name)),
       stream_(std::make_shared<media_stream>(stream_name_, executor)),
@@ -80,7 +79,7 @@ void rtmp_input_session::shutdown()
     initial_tracks_timer_.cancel();
     if (stream_)
     {
-        registry_.remove(*stream_);
+        registry::instance().remove(*stream_);
         stream_->end();
         stream_.reset();
     }
@@ -397,7 +396,7 @@ void rtmp_input_session::try_initialize_tracks()
     {
         return;
     }
-    if (!registry_.add(stream_))
+    if (!registry::instance().add(stream_))
     {
         spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
         on_shutdown_();

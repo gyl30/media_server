@@ -40,7 +40,7 @@ enum class gb28181_output_create_error
 class gb28181_service final
 {
    public:
-    explicit gb28181_service(stream_registry& registry, io_context_pool* workers = nullptr);
+    explicit gb28181_service(stream_registry& registry_ref, io_context_pool* workers = nullptr);
     ~gb28181_service();
 
     [[nodiscard]] gb28181_create_error create(boost::asio::any_io_executor executor,

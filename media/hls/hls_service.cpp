@@ -5,7 +5,7 @@
 namespace media_server
 {
 
-hls_service::hls_service(stream_registry& registry, hls_config config) : registry_(registry), config_(config) {}
+hls_service::hls_service(hls_config config) : registry_(registry::instance()), config_(config) {}
 
 std::optional<std::string> hls_service::playlist(std::string_view stream_name)
 {

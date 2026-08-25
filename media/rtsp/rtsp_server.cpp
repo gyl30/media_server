@@ -11,8 +11,8 @@
 namespace media_server
 {
 
-rtsp_server::rtsp_server(io_context_pool& workers, stream_registry& registry, std::uint16_t port, output_video_config video)
-    : registry_(registry), video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
+rtsp_server::rtsp_server(io_context_pool& workers, std::uint16_t port, output_video_config video)
+    : video_config_(video), listener_(std::make_shared<tcp_listener>(workers, port))
 {
 }
 
@@ -83,7 +83,7 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
         {
             return -1;
         }
-        auto session = std::make_shared<rtsp_output_session>(current, owner->registry_, owner->video_config_);
+        auto session = std::make_shared<rtsp_output_session>(current, owner->video_config_);
         current->set_handler(session->make_handler());
         return session->on_describe(server, uri != nullptr ? uri : "");
     };
@@ -97,7 +97,7 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
         {
             return -1;
         }
-        auto output = std::make_shared<rtsp_output_session>(current, owner->registry_, owner->video_config_);
+        auto output = std::make_shared<rtsp_output_session>(current, owner->video_config_);
         current->set_handler(output->make_handler());
         return output->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
     };
@@ -109,7 +109,7 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
         {
             return -1;
         }
-        auto input = std::make_shared<rtsp_input_session>(current, owner->registry_);
+        auto input = std::make_shared<rtsp_input_session>(current);
         auto input_handler = std::make_shared<rtsp_server_connection_handler>();
         input_handler->on_read = [input](std::span<const std::uint8_t> data) { return input->on_read(data); };
         input_handler->on_shutdown = [input]() { input->safe_shutdown(); };
