@@ -32,7 +32,7 @@
 #include "media/http/http_session.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/stun_message.h"
-#include "media/webrtc/whep_service.h"
+#include "media/webrtc/whep.h"
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/srtp_transport.h"
@@ -833,15 +833,14 @@ class whep_http_test_peer final
    public:
     whep_http_test_peer()
         : work_(boost::asio::make_work_guard(io_)),
-          whep_(streams_, boost::asio::ip::make_address("127.0.0.1")),
           gb28181_(streams_),
           acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
     {
+        whep::shutdown();
         streams_.clear();
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
         require(stream_->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
         require(streams_.add(stream_), "whep http registry add");
-        require(whep_.ready(), "whep http service ready");
         runner_ = std::jthread([this]() { io_.run(); });
     }
 
@@ -850,7 +849,7 @@ class whep_http_test_peer final
         boost::asio::post(io_,
                           [this]()
                           {
-                              whep_.shutdown();
+                              whep::shutdown();
                               gb28181_.shutdown();
                               work_.reset();
         });
@@ -904,7 +903,7 @@ class whep_http_test_peer final
         boost::asio::ip::tcp::socket client(client_io_);
         client.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto session = std::make_shared<http_session>(std::move(server_socket), config_, whep_, gb28181_);
+        auto session = std::make_shared<http_session>(std::move(server_socket), config_, gb28181_);
         session->startup();
 
         const bool head = request.method() == boost::beast::http::verb::head;
@@ -941,7 +940,6 @@ class whep_http_test_peer final
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
     config config_;
     stream_registry& streams_ = registry::instance();
-    whep_service whep_;
     gb28181_service gb28181_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::io_context client_io_;
@@ -2086,59 +2084,61 @@ void test_whep_session_lifecycle()
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(streams.add(stream), "whep registry add");
 
-    whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
-    require(whep.ready(), "whep certificate ready");
+    const config application_config;
+    whep::shutdown();
 
     auto missing_ice_offer = webrtc_offer_sdp;
     const std::string video_ice_ufrag = "a=ice-ufrag:remotevideo\r\n";
     const auto video_ice_offset = missing_ice_offer.find(video_ice_ufrag);
     require(video_ice_offset != std::string::npos, "whep invalid offer ice attribute");
     missing_ice_offer.erase(video_ice_offset, video_ice_ufrag.size());
-    require(whep.create(io.get_executor(), "live/test", missing_ice_offer).error == whep_create_error::invalid_offer, "whep semantic invalid offer");
+    require(whep::create(io.get_executor(), "live/test", missing_ice_offer, application_config).error == whep::create_error::invalid_offer, "whep semantic invalid offer");
 
-    const auto first = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
-    const auto second = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
-    require(first.error == whep_create_error::none && second.error == whep_create_error::none, "whep create multiple sessions");
+    const auto first = whep::create(io.get_executor(), "live/test", webrtc_offer_sdp, application_config);
+    const auto second = whep::create(io.get_executor(), "live/test", webrtc_offer_sdp, application_config);
+    require(first.error == whep::create_error::none && second.error == whep::create_error::none, "whep create multiple sessions");
     require(!first.session_id.empty() && !second.session_id.empty(), "whep session ids");
     require(first.session_id != second.session_id, "whep unique session ids");
     require(first.answer_sdp.find("a=ice-lite\r\n") != std::string::npos, "whep answer sdp");
     require(first.answer_sdp.find("a=candidate:1 1 UDP 2130706431 127.0.0.1 ") != std::string::npos, "whep host candidate");
     require(sdp_attribute(first.answer_sdp, "ice-ufrag") != sdp_attribute(second.answer_sdp, "ice-ufrag"), "whep unique ice ufrag");
     require(sdp_attribute(first.answer_sdp, "ice-pwd") != sdp_attribute(second.answer_sdp, "ice-pwd"), "whep unique ice password");
+    require(sdp_attribute(first.answer_sdp, "fingerprint") != sdp_attribute(second.answer_sdp, "fingerprint"), "whep unique dtls fingerprint");
 
-    require(whep.remove(first.session_id), "whep remove first session");
+    require(whep::remove(first.session_id), "whep remove first session");
     drain_io(io);
-    require(!whep.remove(first.session_id), "whep remove first once");
-    require(whep.remove(second.session_id), "whep remove second session");
+    require(!whep::remove(first.session_id), "whep remove first once");
+    require(whep::remove(second.session_id), "whep remove second session");
     drain_io(io);
 
-    const auto third = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
-    require(third.error == whep_create_error::none, "whep recreate viewer");
+    const auto third = whep::create(io.get_executor(), "live/test", webrtc_offer_sdp, application_config);
+    require(third.error == whep::create_error::none, "whep recreate viewer");
 
     streams.remove(*stream);
     stream->end();
     drain_io(io);
-    require(!whep.remove(third.session_id), "whep source end releases session");
+    require(!whep::remove(third.session_id), "whep source end releases session");
 
     auto replacement = std::make_shared<media_stream>("live/test", io.get_executor());
     require(replacement->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(streams.add(replacement), "whep replacement registry add");
 
-    const auto replacement_session = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
-    require(replacement_session.error == whep_create_error::none, "whep create after republish");
+    const auto replacement_session = whep::create(io.get_executor(), "live/test", webrtc_offer_sdp, application_config);
+    require(replacement_session.error == whep::create_error::none, "whep create after republish");
     require(replacement_session.session_id != third.session_id, "whep republish new session id");
 
     auto updated_video = make_video_track();
     updated_video.codec_config.push_back(0x01);
     require(replacement->update_track(std::move(updated_video)), "whep source config update");
     drain_io(io);
-    require(!whep.contains(replacement_session.session_id), "whep source config change releases session resource");
-    require(!whep.remove(replacement_session.session_id), "whep source config change releases session");
+    require(!whep::contains(replacement_session.session_id), "whep source config change releases session resource");
+    require(!whep::remove(replacement_session.session_id), "whep source config change releases session");
 
-    const auto updated_session = whep.create(io.get_executor(), "live/test", webrtc_offer_sdp);
-    require(updated_session.error == whep_create_error::none, "whep create after config change");
-    require(whep.remove(updated_session.session_id), "whep remove updated session");
+    const auto updated_session = whep::create(io.get_executor(), "live/test", webrtc_offer_sdp, application_config);
+    require(updated_session.error == whep::create_error::none, "whep create after config change");
+    require(whep::remove(updated_session.session_id), "whep remove updated session");
     drain_io(io);
+    whep::shutdown();
 }
 
 void test_whep_opus_source_session_lifecycle()
@@ -2150,23 +2150,24 @@ void test_whep_opus_source_session_lifecycle()
     require(stream->set_tracks({make_video_track(), make_opus_track(1)}), "whep opus source tracks");
     require(streams.add(stream), "whep opus source registry add");
 
-    whep_service whep(streams, boost::asio::ip::make_address("127.0.0.1"));
-    require(whep.ready(), "whep opus source service ready");
+    const config application_config;
+    whep::shutdown();
     auto compatible_sdp = webrtc_offer_sdp;
     const auto fmtp = compatible_sdp.find("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n");
     require(fmtp != std::string::npos, "whep opus source compatible fmtp");
     compatible_sdp.replace(fmtp,
                            std::string_view("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n").size(),
                            "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=510000\r\n");
-    const auto session = whep.create(io.get_executor(), "live/opus", compatible_sdp);
-    require(session.error == whep_create_error::none && session.answer_sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos &&
+    const auto session = whep::create(io.get_executor(), "live/opus", compatible_sdp, application_config);
+    require(session.error == whep::create_error::none && session.answer_sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos &&
                 session.answer_sdp.find("sprop-stereo=0") != std::string::npos,
             "whep opus source session answer");
 
     auto changed = make_opus_track(2);
     require(stream->update_track(std::move(changed)), "whep opus source track update");
     drain_io(io);
-    require(!whep.remove(session.session_id), "whep opus source negotiated track lifecycle");
+    require(!whep::remove(session.session_id), "whep opus source negotiated track lifecycle");
+    whep::shutdown();
 }
 
 void test_whep_negotiated_track_lifecycle()
