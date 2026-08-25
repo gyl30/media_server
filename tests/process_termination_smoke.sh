@@ -8,13 +8,12 @@ server_bin="$(realpath "$server_bin")"
 
 http_port=18090
 main_pid=""
-client_pid=""
 
 cleanup()
 {
     set +e
-    [[ -n "$client_pid" ]] && kill "$client_pid" 2>/dev/null
-    [[ -n "$client_pid" ]] && wait "$client_pid" 2>/dev/null
+    exec 3>&- 2>/dev/null || true
+    exec 3<&- 2>/dev/null || true
     [[ -n "$main_pid" ]] && kill "$main_pid" 2>/dev/null
     [[ -n "$main_pid" ]] && wait "$main_pid" 2>/dev/null
 }
@@ -24,8 +23,10 @@ trap cleanup EXIT
     >"$work_dir/server.log" 2>&1 &
 main_pid=$!
 
+ready=0
 for _ in $(seq 1 100); do
-    if curl -fsS "http://127.0.0.1:${http_port}/" >/dev/null 2>&1; then
+    if curl --connect-timeout 1 --max-time 2 -sS -o /dev/null "http://127.0.0.1:${http_port}/"; then
+        ready=1
         break
     fi
     if ! kill -0 "$main_pid" 2>/dev/null; then
@@ -35,12 +36,14 @@ for _ in $(seq 1 100); do
     sleep 0.1
 done
 
-kill -0 "$main_pid"
+if [[ "$ready" -ne 1 ]]; then
+    echo "http server did not become ready" >&2
+    cat "$work_dir/server.log" >&2 || true
+    exit 1
+fi
 
-curl --no-buffer --max-time 30 -sS "http://127.0.0.1:${http_port}/live/process-termination.flv" \
-    >"$work_dir/client.out" 2>&1 &
-client_pid=$!
-sleep 0.2
+exec 3<>"/dev/tcp/127.0.0.1/${http_port}"
+printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n' >&3
 
 kill -TERM "$main_pid"
 for _ in $(seq 1 100); do
