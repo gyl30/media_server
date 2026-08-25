@@ -46,11 +46,11 @@ media_track make_video_track()
     };
 }
 
-std::shared_ptr<media_stream> add_video_stream(stream_registry& streams, boost::asio::io_context& io, std::string name)
+std::shared_ptr<media_stream> add_video_stream(boost::asio::io_context& io, std::string name)
 {
     auto stream = std::make_shared<media_stream>(std::move(name), io.get_executor());
     require(stream->set_tracks({make_video_track()}), "gb output tracks");
-    require(streams.add(stream), "gb output registry");
+    require(registry::instance().add(stream), "gb output registry");
     return stream;
 }
 
@@ -82,7 +82,7 @@ void test_output_identity_is_reusable_immediately_after_remove()
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    const auto stream = add_video_stream(streams, io, "live/gb-output-identity");
+    const auto stream = add_video_stream(io, "live/gb-output-identity");
     gb28181::shutdown();
     const auto description = make_tcp_active_description(65'000, 10'000'2002);
 
@@ -125,7 +125,7 @@ void test_output_old_async_work_does_not_remove_replacement()
     boost::asio::ip::tcp::acceptor peer(io, {boost::asio::ip::tcp::v4(), 0});
     auto& streams = media_server::registry::instance();
     streams.clear();
-    const auto stream = add_video_stream(streams, io, "live/gb-output-generation");
+    const auto stream = add_video_stream(io, "live/gb-output-generation");
     gb28181::shutdown();
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2004);
 
