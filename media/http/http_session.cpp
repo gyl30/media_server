@@ -12,15 +12,13 @@
 #include "media/http/http_session.h"
 #include "media/hls/hls.h"
 #include "media/core/stream_registry.h"
-#include "media/webrtc/whep.h"
+#include "media/http/whep_http.h"
 #include "media/net/io_context_pool.h"
 
 namespace media_server
 {
 namespace
 {
-
-constexpr int whep_retry_after_seconds = 1;
 
 }    // namespace
 
@@ -116,30 +114,23 @@ void http_session::handle_whep(const std::vector<std::string>& segments)
     const bool endpoint_resource = segments.size() >= 2 && segments[1] != "session";
     if (!session_resource && !endpoint_resource)
     {
-        send_whep_error_response(boost::beast::http::status::not_found, "not found\n");
+        write_response(make_whep_error_response(request_, boost::beast::http::status::not_found, "not found\n"));
         return;
     }
 
     if (request_.method() == boost::beast::http::verb::options)
     {
-        send_whep_options_response(session_resource);
+        write_response(handle_whep_options(request_, session_resource));
         return;
     }
     if (request_.method() == boost::beast::http::verb::get || request_.method() == boost::beast::http::verb::head)
     {
-        if (session_resource && !whep::contains(segments[2]))
+        if (session_resource)
         {
-            send_whep_empty_response(boost::beast::http::status::not_found);
+            write_response(handle_whep_session_get(request_, segments[2]));
             return;
         }
-        if (endpoint_resource)
-        {
-            send_whep_empty_response(boost::beast::http::status::ok, "application/sdp");
-        }
-        else
-        {
-            send_whep_empty_response(boost::beast::http::status::no_content);
-        }
+        write_response(handle_whep_endpoint_get(request_));
         return;
     }
     if (request_.method() == boost::beast::http::verb::post && endpoint_resource)
@@ -155,7 +146,7 @@ void http_session::handle_whep(const std::vector<std::string>& segments)
 
     const std::string_view allow = session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS";
     // 本实现只支持一次完整 SDP POST/answer，不支持 PATCH/Trickle ICE。
-    send_whep_error_response(boost::beast::http::status::method_not_allowed, "method not allowed\n", 0, allow);
+    write_response(make_whep_error_response(request_, boost::beast::http::status::method_not_allowed, "method not allowed\n", 0, allow));
 }
 
 void http_session::handle_whep_post(const std::vector<std::string>& segments)
@@ -163,37 +154,17 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
     const auto content_type = request_[boost::beast::http::field::content_type];
     if (!boost::beast::iequals(content_type, "application/sdp"))
     {
-        send_whep_error_response(boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n");
+        write_response(make_whep_error_response(request_, boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n"));
         return;
     }
 
     const auto stream_name = join_segments(segments, 1, segments.size());
-    auto result = whep::create(stream_.get_executor(), stream_name, request_.body(), config_);
-    switch (result.error)
-    {
-        case whep::create_error::none:
-            send_whep_response(std::move(result.session_id), std::move(result.answer_sdp));
-            return;
-        case whep::create_error::stream_not_found:
-            send_whep_error_response(boost::beast::http::status::conflict, "stream not found\n", whep_retry_after_seconds);
-            return;
-        case whep::create_error::invalid_offer:
-            send_whep_error_response(boost::beast::http::status::bad_request, "invalid or unsupported sdp offer\n");
-            return;
-        case whep::create_error::internal_error:
-            send_whep_error_response(boost::beast::http::status::internal_server_error, "whep session create failed\n");
-            return;
-    }
+    write_response(media_server::handle_whep_post(request_, stream_.get_executor(), stream_name, config_));
 }
 
 void http_session::handle_whep_delete(const std::vector<std::string>& segments)
 {
-    if (!whep::remove(segments[2]))
-    {
-        send_whep_error_response(boost::beast::http::status::not_found, "whep session not found\n");
-        return;
-    }
-    send_whep_empty_response(boost::beast::http::status::no_content);
+    write_response(media_server::handle_whep_delete(request_, segments[2]));
 }
 
 void http_session::handle_gb28181(const boost::urls::url_view& target, const std::vector<std::string>& segments)
@@ -467,6 +438,22 @@ void http_session::write_response(boost::beast::http::response<boost::beast::htt
     write_string_response(std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(std::move(response)));
 }
 
+void http_session::write_response(boost::beast::http::response<boost::beast::http::empty_body> response)
+{
+    const auto shared_response = std::make_shared<boost::beast::http::response<boost::beast::http::empty_body>>(std::move(response));
+    const auto self = shared_from_this();
+    boost::beast::http::async_write(
+        stream_,
+        *shared_response,
+        [self, shared_response](boost::system::error_code error, std::size_t bytes)
+        {
+            static_cast<void>(shared_response);
+            static_cast<void>(error);
+            static_cast<void>(bytes);
+            self->shutdown();
+        });
+}
+
 void http_session::write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
 {
     const auto self = shared_from_this();
@@ -511,106 +498,6 @@ void http_session::send_text_response(boost::beast::http::status status, std::st
     response->prepare_payload();
 
     write_string_response(std::move(response));
-}
-
-void http_session::send_whep_error_response(boost::beast::http::status status, std::string body, int retry_after_seconds, std::string_view allow)
-{
-    auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::content_type, "text/plain");
-    response->set(boost::beast::http::field::access_control_allow_origin, "*");
-    if (retry_after_seconds > 0)
-    {
-        response->set(boost::beast::http::field::retry_after, std::to_string(retry_after_seconds));
-    }
-    if (!allow.empty())
-    {
-        response->set(boost::beast::http::field::allow, allow);
-    }
-    response->keep_alive(false);
-    response->body() = std::move(body);
-    response->prepare_payload();
-
-    write_string_response(std::move(response));
-}
-
-void http_session::send_whep_options_response(bool session_resource)
-{
-    auto response =
-        std::make_shared<boost::beast::http::response<boost::beast::http::empty_body>>(boost::beast::http::status::ok, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::access_control_allow_origin, "*");
-    response->set(boost::beast::http::field::access_control_allow_methods,
-                  session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS");
-    response->set(boost::beast::http::field::access_control_allow_headers, "Content-Type");
-    if (!session_resource)
-    {
-        response->set("Accept-Post", "application/sdp");
-    }
-    response->keep_alive(false);
-    response->content_length(0);
-
-    const auto self = shared_from_this();
-    boost::beast::http::async_write(stream_,
-                                    *response,
-                                    [self, response](boost::system::error_code error, std::size_t bytes)
-                                    {
-                                        static_cast<void>(response);
-                                        static_cast<void>(error);
-                                        static_cast<void>(bytes);
-                                        self->shutdown();
-                                    });
-}
-
-void http_session::send_whep_response(std::string session_id, std::string answer_sdp)
-{
-    auto response =
-        std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(boost::beast::http::status::created, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::content_type, "application/sdp");
-    response->set(boost::beast::http::field::location, "/whep/session/" + session_id);
-    response->set(boost::beast::http::field::cache_control, "no-store");
-    response->set(boost::beast::http::field::access_control_allow_origin, "*");
-    response->set(boost::beast::http::field::access_control_expose_headers, "Location");
-    response->keep_alive(false);
-    response->body() = std::move(answer_sdp);
-    response->prepare_payload();
-
-    const auto self = shared_from_this();
-    boost::beast::http::async_write(stream_,
-                                    *response,
-                                    [self, response](boost::system::error_code error, std::size_t bytes)
-                                    {
-                                        static_cast<void>(response);
-                                        static_cast<void>(error);
-                                        static_cast<void>(bytes);
-                                        self->shutdown();
-                                    });
-}
-
-void http_session::send_whep_empty_response(boost::beast::http::status status, std::string_view content_type)
-{
-    auto response = std::make_shared<boost::beast::http::response<boost::beast::http::empty_body>>(status, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::cache_control, "no-store");
-    response->set(boost::beast::http::field::access_control_allow_origin, "*");
-    if (!content_type.empty())
-    {
-        response->set(boost::beast::http::field::content_type, content_type);
-        response->content_length(0);
-    }
-    response->keep_alive(false);
-
-    const auto self = shared_from_this();
-    boost::beast::http::async_write(stream_,
-                                    *response,
-                                    [self, response](boost::system::error_code error, std::size_t bytes)
-                                    {
-                                        static_cast<void>(response);
-                                        static_cast<void>(error);
-                                        static_cast<void>(bytes);
-                                        self->shutdown();
-                                    });
 }
 
 void http_session::send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body)

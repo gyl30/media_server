@@ -49,12 +49,9 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void check_hls_playlist();
 
     void write_response(boost::beast::http::response<boost::beast::http::string_body> response);
+    void write_response(boost::beast::http::response<boost::beast::http::empty_body> response);
     void write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response);
     void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
-    void send_whep_error_response(boost::beast::http::status status, std::string body, int retry_after_seconds = 0, std::string_view allow = {});
-    void send_whep_options_response(bool session_resource);
-    void send_whep_response(std::string session_id, std::string answer_sdp);
-    void send_whep_empty_response(boost::beast::http::status status, std::string_view content_type = {});
     void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
     void startup_flv(std::shared_ptr<media_stream> stream);
     void read_flv_client();
