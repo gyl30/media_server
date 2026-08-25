@@ -10,6 +10,7 @@
 #include "media/core/log.h"
 #include "media/core/stream_registry.h"
 #include "media/hls/hls.h"
+#include "media/gb28181/gb28181_session_registry.h"
 #include "media/http/http_server.h"
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_server.h"
@@ -87,6 +88,7 @@ int service::run()
 
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
+    gb28181_session_registry::instance().clear();
     hls::shutdown();
     registry::instance().clear();
     return 0;

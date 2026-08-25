@@ -5,58 +5,117 @@
 #include <boost/asio/post.hpp>
 
 #include "media/gb28181/gb28181_tcp_session.h"
+#include "media/gb28181/gb28181_session_registry.h"
 
 namespace media_server
 {
 gb28181_tcp_session::gb28181_tcp_session(
-    boost::asio::ip::tcp::socket socket, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
-    : executor_(socket.get_executor()),
-      media_(executor_, std::move(stream_name), payload_type, expected_ssrc),
-      connection_(std::make_shared<tcp_connection>(std::move(socket)))
+    boost::asio::any_io_executor executor,
+    std::shared_ptr<tcp_socket_source> socket_source,
+    std::string stream_name,
+    std::uint8_t payload_type,
+    std::uint32_t expected_ssrc)
+    : executor_(std::move(executor)),
+      socket_source_(std::move(socket_source)),
+      stream_name_(std::move(stream_name)),
+      media_(executor_, stream_name_, payload_type, expected_ssrc)
 {
 }
 
 bool gb28181_tcp_session::startup()
 {
-    if (closed_ || !connection_ || !media_.startup())
+    if (closed_ || shutdown_requested_.load() || !socket_source_)
     {
         return false;
     }
 
-    input_buffer_.reserve(64 * 1024);
-    const auto self = shared_from_this();
-    connection_->startup(
-        [self](boost::system::error_code error, std::span<const std::uint8_t> data)
+    const auto weak = weak_from_this();
+    const auto error = socket_source_->startup(
+        [weak](boost::system::error_code source_error, boost::asio::ip::tcp::socket socket) mutable
         {
-            if (error)
+            if (const auto self = weak.lock())
             {
-                self->shutdown();
+                self->on_socket(source_error, std::move(socket));
                 return;
             }
-            self->on_read(data);
-        },
-        [self](boost::system::error_code error, std::size_t)
-        {
-            if (error)
-            {
-                self->shutdown();
-            }
+            boost::system::error_code ignored;
+            socket.close(ignored);
         });
-    spdlog::info("gb28181 tcp session started stream {}", media_.stream_name());
+    if (error)
+    {
+        spdlog::error("gb28181 tcp source startup failed stream {} error {}", stream_name_, error.message());
+        return false;
+    }
     return true;
 }
 
 void gb28181_tcp_session::shutdown()
 {
+    if (shutdown_requested_.exchange(true))
+    {
+        return;
+    }
     const auto self = shared_from_this();
     boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
 }
 
-const std::string& gb28181_tcp_session::stream_name() const noexcept { return media_.stream_name(); }
+const std::string& gb28181_tcp_session::stream_name() const noexcept { return stream_name_; }
+
+void gb28181_tcp_session::on_socket(boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+{
+    if (error)
+    {
+        spdlog::warn("gb28181 tcp source failed stream {} error {}", stream_name_, error.message());
+        shutdown();
+        return;
+    }
+    if (shutdown_requested_.load() || closed_)
+    {
+        boost::system::error_code ignored;
+        socket.close(ignored);
+        return;
+    }
+
+    socket_source_.reset();
+    if (!media_.startup())
+    {
+        spdlog::error("gb28181 tcp input media startup failed stream {}", stream_name_);
+        shutdown();
+        return;
+    }
+
+    connection_ = std::make_shared<tcp_connection>(std::move(socket));
+    input_buffer_.reserve(64 * 1024);
+    const auto weak = weak_from_this();
+    connection_->startup(
+        [weak](boost::system::error_code connection_error, std::span<const std::uint8_t> data)
+        {
+            if (const auto self = weak.lock())
+            {
+                if (connection_error)
+                {
+                    self->shutdown();
+                    return;
+                }
+                self->on_read(data);
+            }
+        },
+        [weak](boost::system::error_code connection_error, std::size_t)
+        {
+            if (connection_error)
+            {
+                if (const auto self = weak.lock())
+                {
+                    self->shutdown();
+                }
+            }
+        });
+    spdlog::info("gb28181 tcp session started stream {}", stream_name_);
+}
 
 void gb28181_tcp_session::on_read(std::span<const std::uint8_t> data)
 {
-    if (closed_ || data.empty())
+    if (closed_ || shutdown_requested_.load() || data.empty())
     {
         return;
     }
@@ -100,6 +159,12 @@ void gb28181_tcp_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    gb28181_session_registry::instance().remove_input(stream_name_, *this);
+    if (socket_source_)
+    {
+        socket_source_->shutdown();
+        socket_source_.reset();
+    }
     media_.shutdown();
     if (connection_)
     {
@@ -107,7 +172,7 @@ void gb28181_tcp_session::safe_shutdown()
         connection_.reset();
     }
     input_buffer_.clear();
-    spdlog::debug("gb28181 tcp session shutdown {}", media_.stream_name());
+    spdlog::debug("gb28181 tcp session shutdown {}", stream_name_);
 }
 
 }    // namespace media_server

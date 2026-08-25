@@ -176,7 +176,7 @@ add_library(media_core STATIC
     media/gb28181/gb28181_udp_output_session.cpp
     media/gb28181/gb28181_tcp_output_session.cpp
     media/gb28181/gb28181_tcp_session.cpp
-    media/gb28181/gb28181.cpp
+    media/gb28181/gb28181_session_registry.cpp
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
     media/webrtc/stun_message.cpp
@@ -277,6 +277,10 @@ if(BUILD_TESTING)
     add_executable(gb28181_http_tests tests/gb28181_http_tests.cpp)
     target_link_libraries(gb28181_http_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_http_tests COMMAND gb28181_http_tests)
+
+    add_executable(gb28181_tcp_source_tests tests/gb28181_tcp_source_tests.cpp)
+    target_link_libraries(gb28181_tcp_source_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb28181_tcp_source_tests COMMAND gb28181_tcp_source_tests)
 
     add_executable(ireader_rtcp_tests tests/ireader_rtcp_tests.cpp)
     target_link_libraries(ireader_rtcp_tests PRIVATE ireader_media)

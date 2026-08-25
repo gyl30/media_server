@@ -7,6 +7,7 @@
 
 #include "media/net/udp_socket.h"
 #include "media/gb28181/gb28181_output_media.h"
+#include "media/gb28181/gb28181_session_registry.h"
 #include "media/gb28181/gb28181_udp_output_session.h"
 
 extern "C"
@@ -24,10 +25,12 @@ constexpr int udp_port_pair_attempts = 32;
 gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_executor executor,
                                                        std::shared_ptr<media_stream> stream,
                                                        gb28181_description description,
+                                                       std::string output_id,
                                                        bool rtcp_enabled)
     : executor_(executor),
       stream_(std::move(stream)),
       stream_name_(stream_ ? stream_->name() : std::string{}),
+      output_id_(std::move(output_id)),
       description_(std::move(description)),
       remote_rtp_endpoint_(description_.address, description_.rtp_port),
       remote_rtcp_endpoint_(description_.address, description_.rtcp_port),
@@ -39,25 +42,31 @@ gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_execu
 std::optional<gb28181_udp_output_session::udp_socket_pair> gb28181_udp_output_session::prepare_udp_sockets(
     boost::asio::ip::address bind_address)
 {
-    const auto self = shared_from_this();
-    const auto start_socket = [self, &bind_address](std::uint16_t port)
+    const auto weak = weak_from_this();
+    const auto start_socket = [weak, executor = executor_, &bind_address](std::uint16_t port)
     {
-        auto socket = std::make_shared<udp_socket>(self->executor_);
+        auto socket = std::make_shared<udp_socket>(executor);
         if (!socket->startup(
                 bind_address,
                 port,
-                [self](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+                [weak](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
                 {
                     if (error)
                     {
-                        self->shutdown();
+                        if (const auto self = weak.lock())
+                        {
+                            self->shutdown();
+                        }
                     }
                 },
-                [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+                [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
                 {
                     if (error)
                     {
-                        self->shutdown();
+                        if (const auto self = weak.lock())
+                        {
+                            self->shutdown();
+                        }
                     }
                 }))
         {
@@ -199,11 +208,12 @@ void gb28181_udp_output_session::send_packet(std::vector<std::uint8_t> packet)
 void gb28181_udp_output_session::wait_rtcp()
 {
     rtcp_timer_.expires_after(std::chrono::seconds(25));
-    const auto self = shared_from_this();
+    const auto weak = weak_from_this();
     rtcp_timer_.async_wait(
-        [self](const boost::system::error_code& error)
+        [weak](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || self->rtcp_sender_ == nullptr || !self->rtcp_socket_)
+            const auto self = weak.lock();
+            if (!self || error || self->closed_ || self->rtcp_sender_ == nullptr || !self->rtcp_socket_)
             {
                 return;
             }
@@ -225,6 +235,7 @@ void gb28181_udp_output_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    gb28181_session_registry::instance().remove_output(stream_name_, output_id_, *this);
     rtcp_timer_.cancel();
     if (media_)
     {
@@ -248,7 +259,7 @@ void gb28181_udp_output_session::safe_shutdown()
     }
     rtcp_started_ = false;
     stream_.reset();
-    spdlog::debug("gb28181 udp output shutdown {}", stream_name_);
+    spdlog::debug("gb28181 udp output shutdown {} output {}", stream_name_, output_id_);
 }
 
 }    // namespace media_server
