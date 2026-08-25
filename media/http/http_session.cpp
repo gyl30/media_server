@@ -1,16 +1,15 @@
 #include <chrono>
 #include <utility>
 #include <charconv>
-#include <limits>
-#include <optional>
 
 #include <boost/asio/post.hpp>
-#include <boost/url/parse.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
+#include <boost/json.hpp>
+#include <boost/url/parse.hpp>
 
+#include "media/http/gb28181_json.h"
 #include "media/http/http_session.h"
-#include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181.h"
 #include "media/hls/hls.h"
 #include "media/core/stream_registry.h"
@@ -23,242 +22,6 @@ namespace
 {
 
 constexpr int whep_retry_after_seconds = 1;
-
-struct gb28181_media_parameters
-{
-    std::optional<gb28181_transport> transport;
-    std::optional<boost::asio::ip::address> address;
-    std::optional<std::uint16_t> rtp_port;
-    std::optional<std::uint16_t> rtcp_port;
-    std::optional<std::uint8_t> payload_type;
-    std::optional<std::uint32_t> ssrc;
-};
-
-struct gb28181_input_parameters
-{
-    std::optional<boost::asio::ip::address> remote_rtp_address;
-    std::optional<std::uint16_t> remote_rtp_port;
-    std::optional<std::uint16_t> remote_rtcp_port;
-    gb28181_media_parameters media;
-};
-
-struct gb28181_output_parameters
-{
-    std::optional<std::string> output_id;
-    std::optional<bool> rtcp;
-    gb28181_media_parameters media;
-};
-
-std::optional<std::uint64_t> parse_gb28181_unsigned(std::string_view value, std::uint64_t maximum)
-{
-    std::uint64_t parsed{};
-    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
-    if (error != std::errc{} || end != value.data() + value.size() || parsed > maximum)
-    {
-        return std::nullopt;
-    }
-    return parsed;
-}
-
-std::optional<gb28181_transport> parse_gb28181_transport(std::string_view value)
-{
-    if (value == "udp")
-    {
-        return gb28181_transport::udp;
-    }
-    if (value == "tcp_active")
-    {
-        return gb28181_transport::tcp_active;
-    }
-    if (value == "tcp_passive")
-    {
-        return gb28181_transport::tcp_passive;
-    }
-    return std::nullopt;
-}
-
-bool is_gb28181_media_parameter(std::string_view key)
-{
-    return key == "transport" || key == "address" || key == "rtp_port" || key == "rtcp_port" || key == "payload_type" || key == "ssrc";
-}
-
-bool parse_gb28181_media_parameter(std::string_view key, bool has_value, std::string_view value, gb28181_media_parameters& parameters)
-{
-    if (!has_value)
-    {
-        return false;
-    }
-    if (key == "transport")
-    {
-        if (parameters.transport)
-        {
-            return false;
-        }
-        parameters.transport = parse_gb28181_transport(value);
-        return parameters.transport.has_value();
-    }
-    if (key == "address")
-    {
-        if (parameters.address || value.empty())
-        {
-            return false;
-        }
-        boost::system::error_code error;
-        auto address = boost::asio::ip::make_address(value, error);
-        if (error)
-        {
-            return false;
-        }
-        parameters.address = std::move(address);
-        return true;
-    }
-    if (key == "rtp_port" || key == "rtcp_port")
-    {
-        const auto parsed = parse_gb28181_unsigned(value, 65'535);
-        if (!parsed || *parsed == 0)
-        {
-            return false;
-        }
-        auto& port = key == "rtp_port" ? parameters.rtp_port : parameters.rtcp_port;
-        if (port)
-        {
-            return false;
-        }
-        port = static_cast<std::uint16_t>(*parsed);
-        return true;
-    }
-    if (key == "payload_type")
-    {
-        if (parameters.payload_type)
-        {
-            return false;
-        }
-        const auto parsed = parse_gb28181_unsigned(value, 127);
-        if (!parsed)
-        {
-            return false;
-        }
-        parameters.payload_type = static_cast<std::uint8_t>(*parsed);
-        return true;
-    }
-    if (key == "ssrc")
-    {
-        if (parameters.ssrc)
-        {
-            return false;
-        }
-        const auto parsed = parse_gb28181_unsigned(value, std::numeric_limits<std::uint32_t>::max());
-        if (!parsed)
-        {
-            return false;
-        }
-        parameters.ssrc = static_cast<std::uint32_t>(*parsed);
-        return true;
-    }
-    return false;
-}
-
-std::optional<gb28181_description> make_gb28181_description(const gb28181_media_parameters& parameters)
-{
-    if (!parameters.transport || !parameters.address || !parameters.rtp_port || !parameters.payload_type || !parameters.ssrc)
-    {
-        return std::nullopt;
-    }
-    return gb28181_description{.transport = *parameters.transport,
-                               .address = *parameters.address,
-                               .rtp_port = *parameters.rtp_port,
-                               .rtcp_port = parameters.rtcp_port.value_or(0),
-                               .payload_type = *parameters.payload_type,
-                               .ssrc = *parameters.ssrc};
-}
-
-std::optional<gb28181_input_parameters> parse_gb28181_input_parameters(const boost::urls::url_view& target)
-{
-    gb28181_input_parameters parameters;
-    for (const auto parameter : target.params())
-    {
-        if (is_gb28181_media_parameter(parameter.key))
-        {
-            if (!parse_gb28181_media_parameter(parameter.key, parameter.has_value, parameter.value, parameters.media))
-            {
-                return std::nullopt;
-            }
-            continue;
-        }
-        if (parameter.key == "remote_rtp_address")
-        {
-            if (parameters.remote_rtp_address || !parameter.has_value || parameter.value.empty())
-            {
-                return std::nullopt;
-            }
-            boost::system::error_code error;
-            auto address = boost::asio::ip::make_address(parameter.value, error);
-            if (error || address.is_unspecified())
-            {
-                return std::nullopt;
-            }
-            parameters.remote_rtp_address = std::move(address);
-            continue;
-        }
-        if (parameter.key == "remote_rtp_port" || parameter.key == "remote_rtcp_port")
-        {
-            if (!parameter.has_value)
-            {
-                return std::nullopt;
-            }
-            const auto parsed = parse_gb28181_unsigned(parameter.value, 65'535);
-            if (!parsed || *parsed == 0)
-            {
-                return std::nullopt;
-            }
-            auto& port = parameter.key == "remote_rtp_port" ? parameters.remote_rtp_port : parameters.remote_rtcp_port;
-            if (port)
-            {
-                return std::nullopt;
-            }
-            port = static_cast<std::uint16_t>(*parsed);
-            continue;
-        }
-        return std::nullopt;
-    }
-    return parameters;
-}
-
-std::optional<gb28181_output_parameters> parse_gb28181_output_parameters(const boost::urls::url_view& target)
-{
-    gb28181_output_parameters parameters;
-    for (const auto parameter : target.params())
-    {
-        if (is_gb28181_media_parameter(parameter.key))
-        {
-            if (!parse_gb28181_media_parameter(parameter.key, parameter.has_value, parameter.value, parameters.media))
-            {
-                return std::nullopt;
-            }
-            continue;
-        }
-        if (parameter.key == "output_id")
-        {
-            if (parameters.output_id || !parameter.has_value || parameter.value.empty())
-            {
-                return std::nullopt;
-            }
-            parameters.output_id.emplace(parameter.value.data(), parameter.value.size());
-            continue;
-        }
-        if (parameter.key == "rtcp")
-        {
-            if (parameters.rtcp || !parameter.has_value || (parameter.value != "0" && parameter.value != "1"))
-            {
-                return std::nullopt;
-            }
-            parameters.rtcp = parameter.value == "1";
-            continue;
-        }
-        return std::nullopt;
-    }
-    return parameters;
-}
 
 }    // namespace
 
@@ -436,179 +199,138 @@ void http_session::handle_whep_delete(const std::vector<std::string>& segments)
 
 void http_session::handle_gb28181(const boost::urls::url_view& target, const std::vector<std::string>& segments)
 {
-    if (segments.size() >= 2 && segments[1] == "output")
+    const bool input_create = segments.size() == 3 && segments[1] == "input" && segments[2] == "create";
+    const bool input_delete = segments.size() == 3 && segments[1] == "input" && segments[2] == "delete";
+    const bool output_create = segments.size() == 3 && segments[1] == "output" && segments[2] == "create";
+    const bool output_delete = segments.size() == 3 && segments[1] == "output" && segments[2] == "delete";
+    if (!input_create && !input_delete && !output_create && !output_delete)
     {
-        handle_gb28181_output(target, segments);
+        send_gb28181_error(boost::beast::http::status::not_found, "not_found");
         return;
     }
-    if (segments.size() < 2)
+    if (!target.params().empty())
     {
-        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
+        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
         return;
     }
-
-    const auto stream_name = join_segments(segments, 1, segments.size());
-    const auto parameters = parse_gb28181_input_parameters(target);
-    if (!parameters)
+    if (request_.method() != boost::beast::http::verb::post)
     {
-        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
+        send_gb28181_error(boost::beast::http::status::method_not_allowed, "method_not_allowed", "POST");
         return;
     }
-
-    if (request_.method() == boost::beast::http::verb::post)
+    const auto content_type = request_[boost::beast::http::field::content_type];
+    if (!boost::beast::iequals(content_type, "application/json"))
     {
-        if (parameters->remote_rtp_address.has_value() != parameters->remote_rtp_port.has_value())
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
-            return;
-        }
-        const auto description = make_gb28181_description(parameters->media);
-        if (!description || !parameters->media.transport)
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
-            return;
-        }
-        if (*parameters->media.transport == gb28181_transport::udp)
-        {
-            if (!parameters->media.rtcp_port || !parameters->remote_rtcp_port)
-            {
-                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
-                return;
-            }
-        }
-        else if (parameters->media.rtcp_port || parameters->remote_rtp_address || parameters->remote_rtp_port || parameters->remote_rtcp_port)
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
-            return;
-        }
-        std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint;
-        if (parameters->remote_rtp_address)
-        {
-            remote_rtp_endpoint.emplace(*parameters->remote_rtp_address, *parameters->remote_rtp_port);
-        }
-        switch (gb28181::create(workers_.next(), stream_name, *description, std::move(remote_rtp_endpoint), parameters->remote_rtcp_port))
-        {
-            case gb28181::gb28181_create_error::none:
-                send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
-                return;
-            case gb28181::gb28181_create_error::duplicate_stream:
-            case gb28181::gb28181_create_error::stream_conflict:
-                send_text_response(boost::beast::http::status::conflict, "text/plain", "stream already exists\n");
-                return;
-            case gb28181::gb28181_create_error::invalid_configuration:
-                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input configuration\n");
-                return;
-            case gb28181::gb28181_create_error::internal_error:
-                send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "gb28181 session create failed\n");
-                return;
-        }
-    }
-
-    if (request_.method() == boost::beast::http::verb::delete_)
-    {
-        if (parameters->remote_rtp_address || parameters->remote_rtp_port || parameters->remote_rtcp_port ||
-            parameters->media.transport || parameters->media.address || parameters->media.rtp_port ||
-            parameters->media.rtcp_port || parameters->media.payload_type || parameters->media.ssrc)
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 input parameters\n");
-            return;
-        }
-        if (!gb28181::remove(stream_name))
-        {
-            send_text_response(boost::beast::http::status::not_found, "text/plain", "gb28181 session not found\n");
-            return;
-        }
-        send_text_response(boost::beast::http::status::no_content, "text/plain", {});
+        send_gb28181_error(boost::beast::http::status::unsupported_media_type, "unsupported_media_type");
         return;
     }
-
-    send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "POST, DELETE");
+    if (input_create)
+    {
+        handle_gb28181_input_create();
+    }
+    else if (input_delete)
+    {
+        handle_gb28181_input_delete();
+    }
+    else if (output_create)
+    {
+        handle_gb28181_output_create();
+    }
+    else
+    {
+        handle_gb28181_output_delete();
+    }
 }
 
-void http_session::handle_gb28181_output(const boost::urls::url_view& target, const std::vector<std::string>& segments)
+void http_session::handle_gb28181_input_create()
 {
-    if (segments.size() < 3)
+    auto config = parse_gb28181_input_config(request_.body());
+    if (!config)
     {
-        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
+        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
         return;
     }
-
-    const auto stream_name = join_segments(segments, 2, segments.size());
-    const auto parameters = parse_gb28181_output_parameters(target);
-    if (!parameters)
+    switch (gb28181::create(workers_.next(), std::move(*config)))
     {
-        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
+        case gb28181::gb28181_create_error::none:
+            send_gb28181_success(boost::beast::http::status::created);
+            return;
+        case gb28181::gb28181_create_error::duplicate_stream:
+            send_gb28181_error(boost::beast::http::status::conflict, "duplicate_stream");
+            return;
+        case gb28181::gb28181_create_error::stream_conflict:
+            send_gb28181_error(boost::beast::http::status::conflict, "stream_conflict");
+            return;
+        case gb28181::gb28181_create_error::invalid_configuration:
+            send_gb28181_error(boost::beast::http::status::bad_request, "invalid_configuration");
+            return;
+        case gb28181::gb28181_create_error::internal_error:
+            send_gb28181_error(boost::beast::http::status::internal_server_error, "internal_error");
+            return;
+    }
+}
+
+void http_session::handle_gb28181_input_delete()
+{
+    const auto stream_name = parse_gb28181_input_delete(request_.body());
+    if (!stream_name)
+    {
+        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
         return;
     }
-    if (!parameters->output_id)
+    if (!gb28181::remove(*stream_name))
     {
-        send_text_response(boost::beast::http::status::bad_request, "text/plain", "output_id is required\n");
+        send_gb28181_error(boost::beast::http::status::not_found, "stream_not_found");
         return;
     }
+    send_gb28181_success(boost::beast::http::status::ok);
+}
 
-    if (request_.method() == boost::beast::http::verb::post)
+void http_session::handle_gb28181_output_create()
+{
+    auto config = parse_gb28181_output_config(request_.body());
+    if (!config)
     {
-        const auto description = make_gb28181_description(parameters->media);
-        if (!description || !parameters->media.transport)
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
-            return;
-        }
-        if (*parameters->media.transport == gb28181_transport::udp)
-        {
-            if (!parameters->media.rtcp_port)
-            {
-                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
-                return;
-            }
-        }
-        else if (parameters->media.rtcp_port || parameters->rtcp.value_or(false))
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
-            return;
-        }
-
-        switch (gb28181::create_output(workers_.next(), stream_name, *parameters->output_id, parameters->rtcp.value_or(false), *description))
-        {
-            case gb28181::gb28181_output_create_error::none:
-                send_text_response(boost::beast::http::status::created, "text/plain", "created\n");
-                return;
-            case gb28181::gb28181_output_create_error::duplicate_output:
-                send_text_response(boost::beast::http::status::conflict, "text/plain", "gb28181 output already exists\n");
-                return;
-            case gb28181::gb28181_output_create_error::stream_not_found:
-                send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");
-                return;
-            case gb28181::gb28181_output_create_error::unsupported_stream:
-                send_text_response(boost::beast::http::status::conflict, "text/plain", "stream codecs not supported by gb28181 output\n");
-                return;
-            case gb28181::gb28181_output_create_error::invalid_configuration:
-                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output configuration\n");
-                return;
-            case gb28181::gb28181_output_create_error::internal_error:
-                send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "gb28181 output create failed\n");
-                return;
-        }
-    }
-
-    if (request_.method() == boost::beast::http::verb::delete_)
-    {
-        if (parameters->rtcp || parameters->media.transport || parameters->media.address || parameters->media.rtp_port ||
-            parameters->media.rtcp_port || parameters->media.payload_type || parameters->media.ssrc)
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid gb28181 output parameters\n");
-            return;
-        }
-        if (!gb28181::remove_output(stream_name, *parameters->output_id))
-        {
-            send_text_response(boost::beast::http::status::not_found, "text/plain", "gb28181 output not found\n");
-            return;
-        }
-        send_text_response(boost::beast::http::status::no_content, "text/plain", {});
+        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
         return;
     }
+    switch (gb28181::create_output(workers_.next(), std::move(*config)))
+    {
+        case gb28181::gb28181_output_create_error::none:
+            send_gb28181_success(boost::beast::http::status::created);
+            return;
+        case gb28181::gb28181_output_create_error::duplicate_output:
+            send_gb28181_error(boost::beast::http::status::conflict, "duplicate_output");
+            return;
+        case gb28181::gb28181_output_create_error::stream_not_found:
+            send_gb28181_error(boost::beast::http::status::not_found, "stream_not_found");
+            return;
+        case gb28181::gb28181_output_create_error::unsupported_stream:
+            send_gb28181_error(boost::beast::http::status::conflict, "unsupported_stream");
+            return;
+        case gb28181::gb28181_output_create_error::invalid_configuration:
+            send_gb28181_error(boost::beast::http::status::bad_request, "invalid_configuration");
+            return;
+        case gb28181::gb28181_output_create_error::internal_error:
+            send_gb28181_error(boost::beast::http::status::internal_server_error, "internal_error");
+            return;
+    }
+}
 
-    send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "POST, DELETE");
+void http_session::handle_gb28181_output_delete()
+{
+    const auto identity = parse_gb28181_output_delete(request_.body());
+    if (!identity)
+    {
+        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
+        return;
+    }
+    if (!gb28181::remove_output(identity->first, identity->second))
+    {
+        send_gb28181_error(boost::beast::http::status::not_found, "output_not_found");
+        return;
+    }
+    send_gb28181_success(boost::beast::http::status::ok);
 }
 
 void http_session::handle_flv(const boost::urls::url_view& target)
@@ -832,6 +554,35 @@ void http_session::send_text_response(boost::beast::http::status status, std::st
     response->prepare_payload();
 
     write_string_response(std::move(response));
+}
+
+void http_session::send_gb28181_json_response(boost::beast::http::status status, std::string body, std::string_view allow)
+{
+    auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
+    response->set(boost::beast::http::field::server, "media_server");
+    response->set(boost::beast::http::field::content_type, "application/json");
+    if (!allow.empty())
+    {
+        response->set(boost::beast::http::field::allow, allow);
+    }
+    response->keep_alive(false);
+    response->body() = std::move(body);
+    response->prepare_payload();
+    write_string_response(std::move(response));
+}
+
+void http_session::send_gb28181_success(boost::beast::http::status status)
+{
+    boost::json::object body;
+    body["result"] = "ok";
+    send_gb28181_json_response(status, boost::json::serialize(body));
+}
+
+void http_session::send_gb28181_error(boost::beast::http::status status, std::string_view error, std::string_view allow)
+{
+    boost::json::object body;
+    body["error"] = error;
+    send_gb28181_json_response(status, boost::json::serialize(body), allow);
 }
 
 void http_session::send_whep_error_response(boost::beast::http::status status, std::string body, int retry_after_seconds, std::string_view allow)
