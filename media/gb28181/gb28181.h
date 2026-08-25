@@ -1,10 +1,10 @@
 #ifndef MEDIA_GB28181_GB28181_H
 #define MEDIA_GB28181_GB28181_H
 
-#include <string>
-#include <string_view>
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <string_view>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -33,17 +33,9 @@ enum class gb28181_output_create_error
     internal_error,
 };
 
-[[nodiscard]] gb28181_create_error create(boost::asio::io_context& owner,
-                                          std::string stream_name,
-                                          gb28181_description description,
-                                          std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
-                                          std::optional<std::uint16_t> remote_rtcp_port);
+[[nodiscard]] gb28181_create_error create(boost::asio::io_context& owner, gb28181_input_config config);
 [[nodiscard]] bool remove(std::string_view stream_name);
-[[nodiscard]] gb28181_output_create_error create_output(boost::asio::io_context& owner,
-                                                         std::string stream_name,
-                                                         std::string output_id,
-                                                         bool rtcp,
-                                                         gb28181_description description);
+[[nodiscard]] gb28181_output_create_error create_output(boost::asio::io_context& owner, gb28181_output_config config);
 [[nodiscard]] bool remove_output(std::string_view stream_name, std::string_view output_id);
 
 }    // namespace media_server::gb28181

@@ -102,12 +102,13 @@ boost::asio::ip::address bind_address(const boost::asio::ip::address& address)
 
 }    // namespace
 
-gb28181_create_error create(boost::asio::io_context& owner,
-                            std::string stream_name,
-                            gb28181_description description,
-                            std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint,
-                            std::optional<std::uint16_t> remote_rtcp_port)
+gb28181_create_error create(boost::asio::io_context& owner, gb28181_input_config config)
 {
+    auto stream_name = std::move(config.stream_name);
+    auto description = std::move(config.description);
+    auto remote_rtp_endpoint = std::move(config.remote_rtp_endpoint);
+    auto remote_rtcp_port = config.remote_rtcp_port;
+
     if (stream_name.empty() || description.rtp_port == 0 || description.payload_type > 127 ||
         (description.transport != gb28181_transport::udp && description.transport != gb28181_transport::tcp_active &&
          description.transport != gb28181_transport::tcp_passive))
@@ -275,12 +276,13 @@ gb28181_create_error create(boost::asio::io_context& owner,
     return gb28181_create_error::none;
 }
 
-gb28181_output_create_error create_output(boost::asio::io_context& owner,
-                                          std::string stream_name,
-                                          std::string output_id,
-                                          bool rtcp,
-                                          gb28181_description description)
+gb28181_output_create_error create_output(boost::asio::io_context& owner, gb28181_output_config config)
 {
+    auto stream_name = std::move(config.stream_name);
+    auto output_id = std::move(config.output_id);
+    auto description = std::move(config.description);
+    const auto rtcp = config.rtcp;
+
     if (stream_name.empty() || output_id.empty() || description.rtp_port == 0 || description.payload_type > 127 ||
         (description.transport != gb28181_transport::udp && description.transport != gb28181_transport::tcp_active &&
          description.transport != gb28181_transport::tcp_passive))
