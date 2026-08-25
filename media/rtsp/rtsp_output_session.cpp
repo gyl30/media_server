@@ -2,6 +2,7 @@
 #include <memory>
 #include <sstream>
 #include <utility>
+#include <optional>
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
@@ -30,6 +31,111 @@ constexpr av1_encoding_parameters rtsp_av1_parameters{
     .level_idx = 13,
     .tier = 0,
 };
+
+struct prepared_rtsp_output_track
+{
+    rtsp_output_track_description description;
+    std::shared_ptr<video_transcoder> transcoder;
+};
+
+std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_track& track,
+                                                                     output_video_codec video_codec,
+                                                                     int& next_payload_type)
+{
+    prepared_rtsp_output_track prepared;
+    prepared.description.track = track;
+    if (track.kind == media_kind::video && video_codec == output_video_codec::av1)
+    {
+        aom_av1_t av1{};
+        av1.marker = 1;
+        av1.version = 1;
+        av1.seq_profile = rtsp_av1_parameters.profile;
+        av1.seq_level_idx_0 = rtsp_av1_parameters.level_idx;
+        av1.seq_tier_0 = rtsp_av1_parameters.tier;
+        av1.chroma_subsampling_x = 1;
+        av1.chroma_subsampling_y = 1;
+        std::array<std::uint8_t, 4> config{};
+        if (aom_av1_codec_configuration_record_save(&av1, config.data(), config.size()) != static_cast<int>(config.size()))
+        {
+            return std::nullopt;
+        }
+        prepared.description.extra.assign(config.begin(), config.end());
+        prepared.description.encoding = "AV1";
+        prepared.description.rtp_codec = RTP_PAYLOAD_AV1;
+        prepared.description.frequency = 90'000;
+        prepared.description.payload_type = next_payload_type++;
+
+        auto transcoder = std::make_shared<video_transcoder>();
+        if (!transcoder->startup(video_transcoder_config{
+                .input_codec = track.codec,
+                .output_codec = codec_id::av1,
+                .input_codec_config = track.codec_config,
+                .av1 = rtsp_av1_parameters,
+            }))
+        {
+            return std::nullopt;
+        }
+        prepared.transcoder = std::move(transcoder);
+    }
+    else if (track.codec == codec_id::h264)
+    {
+        prepared.description.extra = h264_annex_b_to_avcc(track.codec_config);
+        if (prepared.description.extra.empty())
+        {
+            return std::nullopt;
+        }
+        prepared.description.encoding = "H264";
+        prepared.description.rtp_codec = RTP_PAYLOAD_H264;
+        prepared.description.frequency = 90'000;
+        prepared.description.payload_type = next_payload_type++;
+    }
+    else if (track.codec == codec_id::h265)
+    {
+        prepared.description.extra = h265_annex_b_to_hvcc(track.codec_config);
+        if (prepared.description.extra.empty())
+        {
+            return std::nullopt;
+        }
+        prepared.description.encoding = "H265";
+        prepared.description.rtp_codec = RTP_PAYLOAD_H265;
+        prepared.description.frequency = 90'000;
+        prepared.description.payload_type = next_payload_type++;
+    }
+    else if (track.codec == codec_id::aac)
+    {
+        prepared.description.extra = track.codec_config;
+        if (prepared.description.extra.empty() || track.clock_rate == 0)
+        {
+            return std::nullopt;
+        }
+        prepared.description.encoding = "MPEG4-GENERIC";
+        prepared.description.rtp_codec = RTP_PAYLOAD_MP4A;
+        prepared.description.frequency = static_cast<int>(track.clock_rate);
+        prepared.description.payload_type = next_payload_type++;
+    }
+    else if (track.codec == codec_id::opus)
+    {
+        prepared.description.encoding = "opus";
+        prepared.description.rtp_codec = RTP_PAYLOAD_OPUS;
+        prepared.description.frequency = 48'000;
+        prepared.description.payload_type = next_payload_type++;
+    }
+    else if (track.codec == codec_id::g711a)
+    {
+        prepared.description.encoding = "PCMA";
+        prepared.description.rtp_codec = RTP_PAYLOAD_PCMA;
+        prepared.description.frequency = 8'000;
+        prepared.description.payload_type = RTP_PAYLOAD_PCMA;
+    }
+    else if (track.codec == codec_id::g711u)
+    {
+        prepared.description.encoding = "PCMU";
+        prepared.description.rtp_codec = RTP_PAYLOAD_PCMU;
+        prepared.description.frequency = 8'000;
+        prepared.description.payload_type = RTP_PAYLOAD_PCMU;
+    }
+    return prepared;
+}
 }    // namespace
 
 rtsp_output_session::rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, stream_registry& registry, output_video_config video)
@@ -270,105 +376,18 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
             continue;
         }
 
-        rtsp_output_track_description description;
-        description.track = track;
-        if (track.kind == media_kind::video && video_config_.codec == output_video_codec::av1)
+        auto prepared = prepare_rtsp_output_track(track, video_config_.codec, next_payload_type);
+        if (!prepared)
         {
-            aom_av1_t av1{};
-            av1.marker = 1;
-            av1.version = 1;
-            av1.seq_profile = rtsp_av1_parameters.profile;
-            av1.seq_level_idx_0 = rtsp_av1_parameters.level_idx;
-            av1.seq_tier_0 = rtsp_av1_parameters.tier;
-            av1.chroma_subsampling_x = 1;
-            av1.chroma_subsampling_y = 1;
-            std::array<std::uint8_t, 4> config{};
-            if (aom_av1_codec_configuration_record_save(&av1, config.data(), config.size()) != static_cast<int>(config.size()))
-            {
-                return 415;
-            }
-            description.extra.assign(config.begin(), config.end());
-            description.encoding = "AV1";
-            description.rtp_codec = RTP_PAYLOAD_AV1;
-            description.frequency = 90'000;
-            description.payload_type = next_payload_type++;
+            return 415;
+        }
 
-            auto transcoder = std::make_shared<video_transcoder>();
-            if (!transcoder->startup(video_transcoder_config{
-                    .input_codec = track.codec,
-                    .output_codec = codec_id::av1,
-                    .input_codec_config = track.codec_config,
-                    .av1 = rtsp_av1_parameters,
-                }))
-            {
-                return 415;
-            }
+        if (prepared->transcoder)
+        {
             video_track_id = track.id;
-            prepared_transcoder = std::move(transcoder);
+            prepared_transcoder = std::move(prepared->transcoder);
         }
-        else if (track.codec == codec_id::h264)
-        {
-            description.extra = h264_annex_b_to_avcc(track.codec_config);
-            if (description.extra.empty())
-            {
-                return 415;
-            }
-            description.encoding = "H264";
-            description.rtp_codec = RTP_PAYLOAD_H264;
-            description.frequency = 90'000;
-            description.payload_type = next_payload_type++;
-        }
-        else if (track.codec == codec_id::h265)
-        {
-            description.extra = h265_annex_b_to_hvcc(track.codec_config);
-            if (description.extra.empty())
-            {
-                return 415;
-            }
-            description.encoding = "H265";
-            description.rtp_codec = RTP_PAYLOAD_H265;
-            description.frequency = 90'000;
-            description.payload_type = next_payload_type++;
-        }
-        else if (track.codec == codec_id::aac)
-        {
-            description.extra = track.codec_config;
-            if (description.extra.empty() || track.clock_rate == 0)
-            {
-                return 415;
-            }
-            description.encoding = "MPEG4-GENERIC";
-            description.rtp_codec = RTP_PAYLOAD_MP4A;
-            description.frequency = static_cast<int>(track.clock_rate);
-            description.payload_type = next_payload_type++;
-        }
-        else if (track.codec == codec_id::opus)
-        {
-            description.encoding = "opus";
-            description.rtp_codec = RTP_PAYLOAD_OPUS;
-            description.frequency = 48'000;
-            description.payload_type = next_payload_type++;
-        }
-        else if (track.codec == codec_id::g711a)
-        {
-            description.encoding = "PCMA";
-            description.rtp_codec = RTP_PAYLOAD_PCMA;
-            description.frequency = 8'000;
-            description.payload_type = RTP_PAYLOAD_PCMA;
-        }
-        else if (track.codec == codec_id::g711u)
-        {
-            description.encoding = "PCMU";
-            description.rtp_codec = RTP_PAYLOAD_PCMU;
-            description.frequency = 8'000;
-            description.payload_type = RTP_PAYLOAD_PCMU;
-        }
-        else
-        {
-            continue;
-        }
-
-        descriptions.emplace_back(std::move(description));
+        descriptions.emplace_back(std::move(prepared->description));
     }
 
     if (descriptions.empty())
