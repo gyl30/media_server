@@ -45,7 +45,6 @@ enum class gb28181_output_create_error
                                                          bool rtcp,
                                                          gb28181_description description);
 [[nodiscard]] bool remove_output(std::string_view stream_name, std::string_view output_id);
-void shutdown();
 
 }    // namespace media_server::gb28181
 

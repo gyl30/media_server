@@ -2815,7 +2815,6 @@ void test_gb28181_multi_output_identity()
     require(gb28181::remove_output(second->name(), "a"), "gb multi output remove other stream identity");
     require(!gb28181::remove_output(first->name(), "missing"), "gb multi output missing identity");
 
-    gb28181::shutdown();
     io.run();
 }
 
@@ -3075,7 +3074,6 @@ void test_gb28181_input_http_parameters()
           "gb input delete rejects peer parameters");
     check(delete_, "/gb28181/live/gb-input-http-fixed", boost::beast::http::status::no_content, "gb input deletes fixed peer session");
 
-    gb28181::shutdown();
     work.reset();
     runner.join();
     workers.release_work();
@@ -3306,7 +3304,6 @@ void test_gb28181_output_http_parameters()
                         boost::beast::http::status::no_content,
                         "gb output http deletes rtcp identity");
 
-    gb28181::shutdown();
     work.reset();
     runner.join();
     workers.release_work();

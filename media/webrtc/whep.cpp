@@ -172,23 +172,4 @@ bool remove(std::string_view session_id)
     return true;
 }
 
-void shutdown()
-{
-    std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions;
-    {
-        auto& current = runtime();
-        std::scoped_lock lock(current.mutex);
-        sessions = std::move(current.sessions);
-        current.sessions.clear();
-    }
-    for (const auto& [id, weak_session] : sessions)
-    {
-        static_cast<void>(id);
-        if (const auto session = weak_session.lock())
-        {
-            session->shutdown();
-        }
-    }
-}
-
 }    // namespace media_server::whep
