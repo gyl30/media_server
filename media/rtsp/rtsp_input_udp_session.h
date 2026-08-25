@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 #include <boost/asio/ip/udp.hpp>
@@ -42,11 +43,18 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
         boost::asio::ip::udp::endpoint rtcp_endpoint;
     };
 
+    struct udp_socket_pair
+    {
+        std::shared_ptr<udp_socket> rtp;
+        std::shared_ptr<udp_socket> rtcp;
+    };
+
     [[nodiscard]] std::size_t on_read(std::span<const std::uint8_t> data);
     void on_rtp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
     void on_rtcp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
     int on_setup(
         rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
+    [[nodiscard]] std::optional<udp_socket_pair> prepare_udp_sockets(std::size_t track_index, boost::asio::any_io_executor executor);
     int on_record(rtsp_server_t* server, std::string_view session);
     int on_teardown(rtsp_server_t* server, std::string_view session);
     void wait_rtcp();
