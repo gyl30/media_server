@@ -2824,7 +2824,9 @@ void test_rtmp_server_shutdown_lifecycle()
     io_context_pool workers(1);
     auto& streams = media_server::registry::instance();
     streams.clear();
-    auto server = std::make_shared<rtmp_server>(workers, 0);
+    config application_config;
+    application_config.rtmp_port = 0;
+    auto server = std::make_shared<rtmp_server>(workers, application_config);
     require(!server->startup(), "rtmp server shutdown startup");
     const std::weak_ptr<rtmp_server> weak_server = server;
 
@@ -4617,7 +4619,9 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     probe.close();
     auto& streams = media_server::registry::instance();
     streams.clear();
-    auto server = std::make_shared<rtsp_server>(workers, port);
+    config application_config;
+    application_config.rtsp_port = port;
+    auto server = std::make_shared<rtsp_server>(workers, application_config);
     require(!server->startup(), "rtsp opus whitespace server startup");
     std::jthread runner([&workers]() { workers.run(); });
 
@@ -4713,7 +4717,9 @@ void test_rtsp_publish_server_contract()
         probe.close();
         auto& streams = media_server::registry::instance();
         streams.clear();
-        auto server = std::make_shared<rtsp_server>(workers, port);
+        config application_config;
+        application_config.rtsp_port = port;
+        auto server = std::make_shared<rtsp_server>(workers, application_config);
         require(!server->startup(), "rtsp publish pre role server startup");
         std::jthread runner([&workers]() { workers.run(); });
 
@@ -4741,7 +4747,9 @@ void test_rtsp_publish_server_contract()
     probe.close();
     auto& streams = media_server::registry::instance();
     streams.clear();
-    auto server = std::make_shared<rtsp_server>(workers, port);
+    config application_config;
+    application_config.rtsp_port = port;
+    auto server = std::make_shared<rtsp_server>(workers, application_config);
     require(!server->startup(), "rtsp publish server startup");
     std::jthread runner([&workers]() { workers.run(); });
 
