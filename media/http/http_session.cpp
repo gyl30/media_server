@@ -5,12 +5,11 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
-#include <boost/json.hpp>
 #include <boost/url/parse.hpp>
 
+#include "media/http/gb28181_http.h"
 #include "media/http/gb28181_json.h"
 #include "media/http/http_session.h"
-#include "media/gb28181/gb28181.h"
 #include "media/hls/hls.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/whep.h"
@@ -205,23 +204,23 @@ void http_session::handle_gb28181(const boost::urls::url_view& target, const std
     const bool output_delete = segments.size() == 3 && segments[1] == "output" && segments[2] == "delete";
     if (!input_create && !input_delete && !output_create && !output_delete)
     {
-        send_gb28181_error(boost::beast::http::status::not_found, "not_found");
+        write_response(make_gb28181_error_response(request_, boost::beast::http::status::not_found, "not_found"));
         return;
     }
     if (!target.params().empty())
     {
-        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
+        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
         return;
     }
     if (request_.method() != boost::beast::http::verb::post)
     {
-        send_gb28181_error(boost::beast::http::status::method_not_allowed, "method_not_allowed", "POST");
+        write_response(make_gb28181_error_response(request_, boost::beast::http::status::method_not_allowed, "method_not_allowed", "POST"));
         return;
     }
     const auto content_type = request_[boost::beast::http::field::content_type];
     if (!boost::beast::iequals(content_type, "application/json"))
     {
-        send_gb28181_error(boost::beast::http::status::unsupported_media_type, "unsupported_media_type");
+        write_response(make_gb28181_error_response(request_, boost::beast::http::status::unsupported_media_type, "unsupported_media_type"));
         return;
     }
     if (input_create)
@@ -247,27 +246,10 @@ void http_session::handle_gb28181_input_create()
     auto config = parse_gb28181_input_config(request_.body());
     if (!config)
     {
-        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
+        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
         return;
     }
-    switch (gb28181::create(workers_.next(), std::move(*config)))
-    {
-        case gb28181::gb28181_create_error::none:
-            send_gb28181_success(boost::beast::http::status::created);
-            return;
-        case gb28181::gb28181_create_error::duplicate_stream:
-            send_gb28181_error(boost::beast::http::status::conflict, "duplicate_stream");
-            return;
-        case gb28181::gb28181_create_error::stream_conflict:
-            send_gb28181_error(boost::beast::http::status::conflict, "stream_conflict");
-            return;
-        case gb28181::gb28181_create_error::invalid_configuration:
-            send_gb28181_error(boost::beast::http::status::bad_request, "invalid_configuration");
-            return;
-        case gb28181::gb28181_create_error::internal_error:
-            send_gb28181_error(boost::beast::http::status::internal_server_error, "internal_error");
-            return;
-    }
+    write_response(media_server::handle_gb28181_input_create(request_, workers_.next(), std::move(*config)));
 }
 
 void http_session::handle_gb28181_input_delete()
@@ -275,15 +257,10 @@ void http_session::handle_gb28181_input_delete()
     const auto stream_name = parse_gb28181_input_delete(request_.body());
     if (!stream_name)
     {
-        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
+        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
         return;
     }
-    if (!gb28181::remove(*stream_name))
-    {
-        send_gb28181_error(boost::beast::http::status::not_found, "stream_not_found");
-        return;
-    }
-    send_gb28181_success(boost::beast::http::status::ok);
+    write_response(media_server::handle_gb28181_input_delete(request_, *stream_name));
 }
 
 void http_session::handle_gb28181_output_create()
@@ -291,30 +268,10 @@ void http_session::handle_gb28181_output_create()
     auto config = parse_gb28181_output_config(request_.body());
     if (!config)
     {
-        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
+        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
         return;
     }
-    switch (gb28181::create_output(workers_.next(), std::move(*config)))
-    {
-        case gb28181::gb28181_output_create_error::none:
-            send_gb28181_success(boost::beast::http::status::created);
-            return;
-        case gb28181::gb28181_output_create_error::duplicate_output:
-            send_gb28181_error(boost::beast::http::status::conflict, "duplicate_output");
-            return;
-        case gb28181::gb28181_output_create_error::stream_not_found:
-            send_gb28181_error(boost::beast::http::status::not_found, "stream_not_found");
-            return;
-        case gb28181::gb28181_output_create_error::unsupported_stream:
-            send_gb28181_error(boost::beast::http::status::conflict, "unsupported_stream");
-            return;
-        case gb28181::gb28181_output_create_error::invalid_configuration:
-            send_gb28181_error(boost::beast::http::status::bad_request, "invalid_configuration");
-            return;
-        case gb28181::gb28181_output_create_error::internal_error:
-            send_gb28181_error(boost::beast::http::status::internal_server_error, "internal_error");
-            return;
-    }
+    write_response(media_server::handle_gb28181_output_create(request_, workers_.next(), std::move(*config)));
 }
 
 void http_session::handle_gb28181_output_delete()
@@ -322,15 +279,10 @@ void http_session::handle_gb28181_output_delete()
     const auto identity = parse_gb28181_output_delete(request_.body());
     if (!identity)
     {
-        send_gb28181_error(boost::beast::http::status::bad_request, "invalid_request");
+        write_response(make_gb28181_error_response(request_, boost::beast::http::status::bad_request, "invalid_request"));
         return;
     }
-    if (!gb28181::remove_output(identity->first, identity->second))
-    {
-        send_gb28181_error(boost::beast::http::status::not_found, "output_not_found");
-        return;
-    }
-    send_gb28181_success(boost::beast::http::status::ok);
+    write_response(media_server::handle_gb28181_output_delete(request_, identity->first, identity->second));
 }
 
 void http_session::handle_flv(const boost::urls::url_view& target)
@@ -510,6 +462,11 @@ void http_session::check_hls_playlist()
         });
 }
 
+void http_session::write_response(boost::beast::http::response<boost::beast::http::string_body> response)
+{
+    write_string_response(std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(std::move(response)));
+}
+
 void http_session::write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
 {
     const auto self = shared_from_this();
@@ -554,35 +511,6 @@ void http_session::send_text_response(boost::beast::http::status status, std::st
     response->prepare_payload();
 
     write_string_response(std::move(response));
-}
-
-void http_session::send_gb28181_json_response(boost::beast::http::status status, std::string body, std::string_view allow)
-{
-    auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::content_type, "application/json");
-    if (!allow.empty())
-    {
-        response->set(boost::beast::http::field::allow, allow);
-    }
-    response->keep_alive(false);
-    response->body() = std::move(body);
-    response->prepare_payload();
-    write_string_response(std::move(response));
-}
-
-void http_session::send_gb28181_success(boost::beast::http::status status)
-{
-    boost::json::object body;
-    body["result"] = "ok";
-    send_gb28181_json_response(status, boost::json::serialize(body));
-}
-
-void http_session::send_gb28181_error(boost::beast::http::status status, std::string_view error, std::string_view allow)
-{
-    boost::json::object body;
-    body["error"] = error;
-    send_gb28181_json_response(status, boost::json::serialize(body), allow);
 }
 
 void http_session::send_whep_error_response(boost::beast::http::status status, std::string body, int retry_after_seconds, std::string_view allow)
