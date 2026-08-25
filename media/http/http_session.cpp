@@ -13,6 +13,7 @@
 #include "media/gb28181/gb28181_types.h"
 #include "media/hls/hls.h"
 #include "media/core/stream_registry.h"
+#include "media/webrtc/whep.h"
 
 namespace media_server
 {
@@ -261,11 +262,9 @@ std::optional<gb28181_output_parameters> parse_gb28181_output_parameters(const b
 
 http_session::http_session(boost::asio::ip::tcp::socket socket,
                            const config& config,
-                           whep_service& whep,
                            gb28181_service& gb28181)
     : stream_(std::move(socket)),
       config_(config),
-      whep_(whep),
       gb28181_(gb28181),
       hls_wait_timer_(stream_.get_executor())
 {
@@ -364,7 +363,7 @@ void http_session::handle_whep(const std::vector<std::string>& segments)
     }
     if (request_.method() == boost::beast::http::verb::get || request_.method() == boost::beast::http::verb::head)
     {
-        if (session_resource && !whep_.contains(segments[2]))
+        if (session_resource && !whep::contains(segments[2]))
         {
             send_whep_empty_response(boost::beast::http::status::not_found);
             return;
@@ -405,19 +404,19 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
     }
 
     const auto stream_name = join_segments(segments, 1, segments.size());
-    auto result = whep_.create(stream_.get_executor(), stream_name, request_.body());
+    auto result = whep::create(stream_.get_executor(), stream_name, request_.body(), config_);
     switch (result.error)
     {
-        case whep_create_error::none:
+        case whep::create_error::none:
             send_whep_response(std::move(result.session_id), std::move(result.answer_sdp));
             return;
-        case whep_create_error::stream_not_found:
+        case whep::create_error::stream_not_found:
             send_whep_error_response(boost::beast::http::status::conflict, "stream not found\n", whep_retry_after_seconds);
             return;
-        case whep_create_error::invalid_offer:
+        case whep::create_error::invalid_offer:
             send_whep_error_response(boost::beast::http::status::bad_request, "invalid or unsupported sdp offer\n");
             return;
-        case whep_create_error::internal_error:
+        case whep::create_error::internal_error:
             send_whep_error_response(boost::beast::http::status::internal_server_error, "whep session create failed\n");
             return;
     }
@@ -425,7 +424,7 @@ void http_session::handle_whep_post(const std::vector<std::string>& segments)
 
 void http_session::handle_whep_delete(const std::vector<std::string>& segments)
 {
-    if (!whep_.remove(segments[2]))
+    if (!whep::remove(segments[2]))
     {
         send_whep_error_response(boost::beast::http::status::not_found, "whep session not found\n");
         return;

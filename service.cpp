@@ -17,7 +17,7 @@
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_server.h"
-#include "media/webrtc/whep_service.h"
+#include "media/webrtc/whep.h"
 
 namespace media_server
 {
@@ -39,7 +39,7 @@ void service::stop()
 
     http_->shutdown();
     http_.reset();
-    whep_->shutdown();
+    whep::shutdown();
     gb28181_->shutdown();
     rtsp_->shutdown();
     rtsp_.reset();
@@ -53,7 +53,7 @@ int service::run()
     configure_log_level();
 
     boost::system::error_code address_error;
-    const auto webrtc_address = boost::asio::ip::make_address(config_.webrtc_address, address_error);
+    static_cast<void>(boost::asio::ip::make_address(config_.webrtc_address, address_error));
     if (address_error)
     {
         spdlog::error("invalid webrtc address {}", config_.webrtc_address);
@@ -62,16 +62,10 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_io = workers_->context(0);
-    whep_ = std::make_unique<whep_service>(registry::instance(), webrtc_address, config_.whep_video);
     gb28181_ = std::make_unique<gb28181_service>(registry::instance(), workers_.get());
-    if (!whep_->ready())
-    {
-        spdlog::error("dtls certificate create failed");
-        return 2;
-    }
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_.rtmp_port, config_.rtmp_video);
     rtsp_ = std::make_shared<rtsp_server>(*workers_, config_.rtsp_port, config_.rtsp_video);
-    http_ = std::make_shared<http_server>(*workers_, config_, *whep_, *gb28181_);
+    http_ = std::make_shared<http_server>(*workers_, config_, *gb28181_);
 
     if (const auto error = rtmp_->startup())
     {

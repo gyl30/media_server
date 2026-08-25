@@ -11,7 +11,6 @@
 
 #include "config.h"
 #include "media/net/tcp_listener.h"
-#include "media/webrtc/whep_service.h"
 #include "media/gb28181/gb28181_service.h"
 
 namespace media_server
@@ -23,7 +22,6 @@ class http_server final : public std::enable_shared_from_this<http_server>
    public:
     http_server(io_context_pool& workers,
                 const config& config,
-                whep_service& whep,
                 gb28181_service& gb28181);
 
     [[nodiscard]] boost::system::error_code startup();
@@ -33,7 +31,6 @@ class http_server final : public std::enable_shared_from_this<http_server>
     void on_accept(boost::asio::ip::tcp::socket socket);
 
     const config& config_;
-    whep_service& whep_;
     gb28181_service& gb28181_;
     std::shared_ptr<tcp_listener> listener_;
     std::mutex sessions_mutex_;
