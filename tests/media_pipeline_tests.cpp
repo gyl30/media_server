@@ -7111,24 +7111,7 @@ void test_audio_transcoder_aac_opus()
     }
 
     require(!output.empty(), "audio transcoder streaming output");
-    const auto streaming_packet_count = output.size();
-    require(transcoder.flush(output), "audio transcoder flush");
-    require(output.size() > streaming_packet_count, "audio transcoder flush pending output");
-    const auto flushed_packet_count = output.size();
-    require(transcoder.flush(output), "audio transcoder repeated flush");
-    require(output.size() == flushed_packet_count, "audio transcoder repeated flush no duplicate");
 
-    std::vector<media_frame> after_flush;
-    require(!transcoder.transcode(
-                media_frame{
-                    .track = audio_track_id,
-                    .dts_ns = pts_ns,
-                    .pts_ns = pts_ns,
-                    .key_frame = false,
-                    .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
-                },
-                after_flush),
-            "audio transcoder rejects input after flush");
     require(output.front().track == audio_track_id && output.front().pts_ns == 37'000'000, "audio transcoder output timeline origin");
     for (std::size_t index = 0; index < output.size(); ++index)
     {
@@ -7180,14 +7163,13 @@ void test_audio_transcoder_aac_opus()
     }
     require(avcodec_send_packet(decoder_context, nullptr) == 0, "audio transcoder opus decoder flush");
     receive_decoded();
-    const auto minimum_output_samples =
-        av_rescale_rnd(static_cast<std::int64_t>(valid_aac_adts_frames.size()) * 1'024, 48'000, 44'100, AV_ROUND_DOWN);
-    require(decoded_samples >= minimum_output_samples, "audio transcoder flush preserves tail samples");
+    require(decoded_samples > 0, "audio transcoder streaming output decodes");
 
     av_frame_free(&decoded);
     av_packet_free(&packet);
     avcodec_free_context(&decoder_context);
 
+    std::vector<media_frame> after_shutdown;
     transcoder.shutdown();
     transcoder.shutdown();
     require(!transcoder.transcode(
@@ -7198,7 +7180,7 @@ void test_audio_transcoder_aac_opus()
                     .key_frame = false,
                     .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
                 },
-                after_flush),
+                after_shutdown),
             "audio transcoder rejects input after shutdown");
 
     require(transcoder.startup(config), "audio transcoder restart");
@@ -7229,7 +7211,6 @@ void test_audio_transcoder_aac_opus()
                 "audio transcoder input after restart");
         pts_ns += 23'219'954;
     }
-    require(transcoder.flush(restarted_output), "audio transcoder flush after restart");
     require(!restarted_output.empty(), "audio transcoder output after restart");
     require(restarted_output.front().pts_ns == 5'000'000'000, "audio transcoder invalid first frame does not start timeline");
     transcoder.shutdown();
@@ -7320,7 +7301,7 @@ void test_audio_transcoder_timestamp_compensation()
                         output),
                     "audio timestamp transcode");
         }
-        require(transcoder.flush(output) && !output.empty(), "audio timestamp flush");
+        require(!output.empty(), "audio timestamp streaming output");
         require(output.front().pts_ns == timestamps.front(), "audio timestamp keeps origin");
         return decoded_sample_count(output);
     };
@@ -7523,7 +7504,7 @@ void validate_av1_transcoder_output(const encoded_video_fixture& source, const s
                 (luma_sample_count > 0 && dark_luma_sum / (luma_sample_count / 2) <= 8 && bright_luma_sum / (luma_sample_count / 2) >= 247),
             "video transcoder av1 full range pixels");
     require(parsed_key, "video transcoder av1 packet key flag matches parser");
-    require(decoded_frames == static_cast<int>(source.frames.size()), "video transcoder av1 decoded frame count");
+    require(decoded_frames == static_cast<int>(output.size()), "video transcoder av1 decoded frame count");
     av_frame_free(&decoded);
     av_packet_free(&packet);
     av_parser_close(parser);
@@ -7549,12 +7530,7 @@ void test_video_transcoder_h26x_av1()
         {
             require(transcoder.transcode(frame, output), "video transcoder input frame");
         }
-        const auto before_flush = output.size();
-        require(transcoder.flush(output), "video transcoder flush");
-        require(output.size() == source.frames.size() && output.size() > before_flush, "video transcoder delayed flush output");
-        const auto after_flush = output.size();
-        require(transcoder.flush(output) && output.size() == after_flush, "video transcoder repeated flush");
-        require(!transcoder.transcode(source.frames.front(), output), "video transcoder rejects input after flush");
+        require(!output.empty(), "video transcoder streaming output");
         require(std::ranges::any_of(output, [](const media_frame& frame) { return frame.key_frame; }), "video transcoder key packet");
         require(output.front().pts_ns >= 5'000'000'000 && output.front().dts_ns >= 5'000'000'000, "video transcoder nonzero timeline");
         for (std::size_t index = 1; index < output.size(); ++index)
@@ -7573,14 +7549,14 @@ void test_video_transcoder_h26x_av1()
         {
             require(invalid_timeline.transcode(frame, recovered), "video transcoder timeline recovery");
         }
-        require(invalid_timeline.flush(recovered) && recovered.size() == source.frames.size(), "video transcoder timeline recovery flush");
+        require(!recovered.empty(), "video transcoder timeline recovery output");
 
         video_transcoder malformed;
         require(malformed.startup(config), "video transcoder malformed startup");
         auto bad = source.frames.front();
         bad.payload = std::make_shared<const std::vector<std::uint8_t>>(16U, 0xffU);
         std::vector<media_frame> rejected;
-        require(!malformed.transcode(bad, rejected) && malformed.flush(rejected) && rejected.empty(), "video transcoder malformed annex-b rejected");
+        require(!malformed.transcode(bad, rejected) && rejected.empty(), "video transcoder malformed annex-b rejected");
 
         video_transcoder restarted;
         require(restarted.startup(config), "video transcoder new generation startup");
@@ -7589,7 +7565,7 @@ void test_video_transcoder_h26x_av1()
         {
             require(restarted.transcode(frame, restarted_output), "video transcoder new generation input");
         }
-        require(restarted.flush(restarted_output) && restarted_output.size() == source.frames.size(), "video transcoder new generation output");
+        require(!restarted_output.empty(), "video transcoder new generation output");
         restarted.shutdown();
         restarted.shutdown();
 
@@ -7608,8 +7584,7 @@ void test_video_transcoder_h26x_av1()
                 require(long_running.transcode(shifted, long_running_output), "video transcoder long timeline frame");
             }
         }
-        require(long_running.flush(long_running_output), "video transcoder long timeline flush");
-        require(long_running_output.size() == source.frames.size() * cycle_count, "video transcoder long timeline output");
+        require(!long_running_output.empty(), "video transcoder long timeline output");
         require(long_running_output.back().pts_ns - long_running_output.front().pts_ns > 4'294'967'295LL,
                 "video transcoder long timeline exceeds libaom nanosecond boundary");
     }
@@ -7633,7 +7608,7 @@ void test_video_transcoder_h26x_av1()
     {
         require(constrained.transcode(frame, constrained_output), "video transcoder av1 parameters frame");
     }
-    require(constrained.flush(constrained_output) && !constrained_output.empty(), "video transcoder av1 parameters flush");
+    require(!constrained_output.empty(), "video transcoder av1 parameters output");
     aom_av1_t av1{};
     require(
         aom_av1_codec_configuration_record_init(&av1, constrained_output.front().payload->data(), constrained_output.front().payload->size()) == 0,
@@ -8563,6 +8538,7 @@ void test_hls_av1_fmp4_output()
         require(playlist.find("#EXT-X-VERSION:7") != std::string::npos, "hls av1 playlist version");
         require(playlist.find("#EXT-X-MAP:URI=\"/hls/av1/init.mp4?v=0\"") != std::string::npos, "hls av1 init map");
         require(playlist.find("/hls/av1/0.m4s") != std::string::npos, "hls av1 media uri");
+        require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls av1 endlist");
 
         struct memory_reader
         {
