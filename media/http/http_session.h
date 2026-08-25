@@ -37,10 +37,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void on_request(boost::system::error_code error, std::size_t bytes);
     void handle_request();
     void handle_flv(const boost::urls::url_view& target);
-    void handle_hls(std::span<const std::string> segments);
-    void handle_whep(std::span<const std::string> segments);
-    void handle_gb28181_input(const boost::urls::url_view& target, std::span<const std::string> segments);
-    void handle_gb28181_output(const boost::urls::url_view& target, std::span<const std::string> segments);
+    void handle_hls(const boost::urls::url_view& target);
     void wait_hls_playlist(std::string stream_name);
     void check_hls_playlist();
 
