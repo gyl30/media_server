@@ -162,7 +162,7 @@ add_library(media_core STATIC
     media/net/udp_socket.cpp
     media/flv/flv_output_muxer.cpp
     media/hls/hls_output.cpp
-    media/hls/hls_service.cpp
+    media/hls/hls.cpp
     media/http/http_flv_output.cpp
     media/http/http_session.cpp
     media/http/http_server.cpp
