@@ -116,61 +116,7 @@ void http_session::handle_request()
 
 void http_session::handle_whep(std::span<const std::string> segments)
 {
-    const bool session_resource = segments.size() == 2 && segments[0] == "session";
-    const bool endpoint_resource = !segments.empty() && segments[0] != "session";
-    if (!session_resource && !endpoint_resource)
-    {
-        write_response(make_whep_error_response(request_, boost::beast::http::status::not_found, "not found\n"));
-        return;
-    }
-
-    if (request_.method() == boost::beast::http::verb::options)
-    {
-        write_response(handle_whep_options(request_, session_resource));
-        return;
-    }
-    if (request_.method() == boost::beast::http::verb::get || request_.method() == boost::beast::http::verb::head)
-    {
-        if (session_resource)
-        {
-            write_response(handle_whep_session_get(request_, segments[1]));
-            return;
-        }
-        write_response(handle_whep_endpoint_get(request_));
-        return;
-    }
-    if (request_.method() == boost::beast::http::verb::post && endpoint_resource)
-    {
-        handle_whep_post(segments);
-        return;
-    }
-    if (request_.method() == boost::beast::http::verb::delete_ && session_resource)
-    {
-        handle_whep_delete(segments);
-        return;
-    }
-
-    const std::string_view allow = session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS";
-    // 本实现只支持一次完整 SDP POST/answer，不支持 PATCH/Trickle ICE。
-    write_response(make_whep_error_response(request_, boost::beast::http::status::method_not_allowed, "method not allowed\n", 0, allow));
-}
-
-void http_session::handle_whep_post(std::span<const std::string> segments)
-{
-    const auto content_type = request_[boost::beast::http::field::content_type];
-    if (!boost::beast::iequals(content_type, "application/sdp"))
-    {
-        write_response(make_whep_error_response(request_, boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n"));
-        return;
-    }
-
-    const auto stream_name = join_segments(segments, 0, segments.size());
-    write_response(media_server::handle_whep_post(request_, stream_.get_executor(), stream_name, config_));
-}
-
-void http_session::handle_whep_delete(std::span<const std::string> segments)
-{
-    write_response(media_server::handle_whep_delete(request_, segments[1]));
+    write_response(media_server::handle_whep_request(request_, stream_.get_executor(), segments, config_));
 }
 
 void http_session::handle_gb28181_input(const boost::urls::url_view& target, std::span<const std::string> segments)
@@ -362,22 +308,6 @@ void http_session::check_hls_playlist()
 void http_session::write_response(boost::beast::http::response<boost::beast::http::string_body> response)
 {
     write_string_response(std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(std::move(response)));
-}
-
-void http_session::write_response(boost::beast::http::response<boost::beast::http::empty_body> response)
-{
-    const auto shared_response = std::make_shared<boost::beast::http::response<boost::beast::http::empty_body>>(std::move(response));
-    const auto self = shared_from_this();
-    boost::beast::http::async_write(
-        stream_,
-        *shared_response,
-        [self, shared_response](boost::system::error_code error, std::size_t bytes)
-        {
-            static_cast<void>(shared_response);
-            static_cast<void>(error);
-            static_cast<void>(bytes);
-            self->shutdown();
-        });
 }
 
 void http_session::write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
