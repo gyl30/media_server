@@ -179,7 +179,7 @@ add_library(media_core STATIC
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
     media/webrtc/whep_session.cpp
-    media/webrtc/whep_service.cpp
+    media/webrtc/whep.cpp
     media/webrtc/webrtc_output.cpp
     media/rtmp/rtmp_input_session.cpp
     media/rtmp/rtmp_output_session.cpp
