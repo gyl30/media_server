@@ -35,7 +35,6 @@ class audio_transcoder final
     bool startup(const audio_transcoder_config& config);
     void shutdown();
     bool transcode(const media_frame& input, std::vector<media_frame>& output);
-    bool flush(std::vector<media_frame>& output);
 
    private:
     struct state;
@@ -43,14 +42,14 @@ class audio_transcoder final
     bool initialize_decoder(const audio_transcoder_config& config);
     bool initialize_encoder(const audio_transcoder_config& config);
     bool allocate_buffers();
-    bool receive_decoded(std::vector<media_frame>& output, bool draining);
+    bool receive_decoded(std::vector<media_frame>& output);
     bool configure_resampler();
     bool resample_decoded();
     int convert_samples(const std::uint8_t* const* input, int input_samples, int output_capacity);
     bool encode_available(std::vector<media_frame>& output);
     bool encode_fifo_frame(int sample_count, std::vector<media_frame>& output);
     bool prepare_encoded_frame(int sample_count);
-    bool receive_encoded(std::vector<media_frame>& output, bool draining);
+    bool receive_encoded(std::vector<media_frame>& output);
 
     std::unique_ptr<state> state_;
 };

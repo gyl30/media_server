@@ -85,8 +85,6 @@ struct audio_transcoder::state
     int encoder_frame_samples{};
     int encoded_frame_capacity{};
     bool timeline_started{};
-    bool input_ended{};
-    bool flushed{};
 };
 
 audio_transcoder::audio_transcoder() = default;
@@ -287,7 +285,7 @@ void audio_transcoder::shutdown()
 
 bool audio_transcoder::transcode(const media_frame& input, std::vector<media_frame>& output)
 {
-    if (!state_ || state_->input_ended || !input.payload || input.payload->empty() ||
+    if (!state_ || !input.payload || input.payload->empty() ||
         input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
         return false;
@@ -314,7 +312,7 @@ bool audio_transcoder::transcode(const media_frame& input, std::vector<media_fra
     result = avcodec_send_packet(state_->decoder, state_->input_packet);
     if (result == AVERROR(EAGAIN))
     {
-        if (!receive_decoded(output, false))
+        if (!receive_decoded(output))
         {
             return false;
         }
@@ -331,110 +329,10 @@ bool audio_transcoder::transcode(const media_frame& input, std::vector<media_fra
         state_->output_track = input.track;
         state_->timeline_started = true;
     }
-    return receive_decoded(output, false);
+    return receive_decoded(output);
 }
 
-bool audio_transcoder::flush(std::vector<media_frame>& output)
-{
-    if (!state_)
-    {
-        return false;
-    }
-    if (state_->flushed)
-    {
-        return true;
-    }
-    state_->input_ended = true;
-
-    int result = avcodec_send_packet(state_->decoder, nullptr);
-    if (result == AVERROR(EAGAIN))
-    {
-        if (!receive_decoded(output, false))
-        {
-            return false;
-        }
-        result = avcodec_send_packet(state_->decoder, nullptr);
-    }
-    if (result < 0 && result != AVERROR_EOF)
-    {
-        spdlog::error("audio transcoder decoder flush send failed {}", ffmpeg_error(result));
-        return false;
-    }
-    if (result >= 0 && !receive_decoded(output, true))
-    {
-        return false;
-    }
-
-    if (state_->resampler != nullptr)
-    {
-        while (true)
-        {
-            const int capacity = swr_get_out_samples(state_->resampler, 0);
-            if (capacity < 0)
-            {
-                spdlog::error("audio transcoder resampler flush capacity failed {}", ffmpeg_error(capacity));
-                return false;
-            }
-            if (capacity == 0)
-            {
-                break;
-            }
-
-            const int converted = convert_samples(nullptr, 0, capacity);
-            if (converted < 0)
-            {
-                return false;
-            }
-            if (converted == 0)
-            {
-                break;
-            }
-        }
-    }
-
-    if (!encode_available(output))
-    {
-        return false;
-    }
-
-    const int remaining = av_audio_fifo_size(state_->fifo);
-    if (remaining > 0)
-    {
-        if (state_->encoder_frame_samples > 0 && (state_->encoder->codec->capabilities & AV_CODEC_CAP_SMALL_LAST_FRAME) == 0)
-        {
-            spdlog::error("audio transcoder encoder rejects small last frame samples {}", remaining);
-            return false;
-        }
-        if (!encode_fifo_frame(remaining, output))
-        {
-            return false;
-        }
-    }
-
-    result = avcodec_send_frame(state_->encoder, nullptr);
-    if (result == AVERROR(EAGAIN))
-    {
-        if (!receive_encoded(output, false))
-        {
-            return false;
-        }
-        result = avcodec_send_frame(state_->encoder, nullptr);
-    }
-    if (result < 0 && result != AVERROR_EOF)
-    {
-        spdlog::error("audio transcoder encoder flush send failed {}", ffmpeg_error(result));
-        return false;
-    }
-    if (result >= 0 && !receive_encoded(output, true))
-    {
-        return false;
-    }
-
-    state_->flushed = true;
-    return true;
-}
-
-bool audio_transcoder::receive_decoded(std::vector<media_frame>& output, bool draining)
+bool audio_transcoder::receive_decoded(std::vector<media_frame>& output)
 {
     while (true)
     {
@@ -442,7 +340,7 @@ bool audio_transcoder::receive_decoded(std::vector<media_frame>& output, bool dr
         const int result = avcodec_receive_frame(state_->decoder, state_->decoded_frame);
         if (result == AVERROR(EAGAIN))
         {
-            return !draining;
+            return true;
         }
         if (result == AVERROR_EOF)
         {
@@ -632,7 +530,7 @@ bool audio_transcoder::encode_fifo_frame(int sample_count, std::vector<media_fra
     int result = avcodec_send_frame(state_->encoder, state_->encoded_frame);
     if (result == AVERROR(EAGAIN))
     {
-        if (!receive_encoded(output, false))
+        if (!receive_encoded(output))
         {
             return false;
         }
@@ -643,7 +541,7 @@ bool audio_transcoder::encode_fifo_frame(int sample_count, std::vector<media_fra
         spdlog::debug("audio transcoder encode send failed {}", ffmpeg_error(result));
         return false;
     }
-    return receive_encoded(output, false);
+    return receive_encoded(output);
 }
 
 bool audio_transcoder::prepare_encoded_frame(int sample_count)
@@ -676,7 +574,7 @@ bool audio_transcoder::prepare_encoded_frame(int sample_count)
     return true;
 }
 
-bool audio_transcoder::receive_encoded(std::vector<media_frame>& output, bool draining)
+bool audio_transcoder::receive_encoded(std::vector<media_frame>& output)
 {
     while (true)
     {
@@ -684,7 +582,7 @@ bool audio_transcoder::receive_encoded(std::vector<media_frame>& output, bool dr
         const int result = avcodec_receive_packet(state_->encoder, state_->output_packet);
         if (result == AVERROR(EAGAIN))
         {
-            return !draining;
+            return true;
         }
         if (result == AVERROR_EOF)
         {

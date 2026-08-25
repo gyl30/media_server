@@ -165,21 +165,6 @@ void hls_output::on_end()
     }
     if (video_config_.codec == output_video_codec::av1)
     {
-        if (video_transcoder_)
-        {
-            std::vector<media_frame> output;
-            if (!video_transcoder_->flush(output))
-            {
-                spdlog::error("hls av1 transcoder flush failed");
-            }
-            else
-            {
-                for (const auto& frame : output)
-                {
-                    write_av1_frame(frame);
-                }
-            }
-        }
         if (fmp4_ != nullptr && segment_start_pts_ns_)
         {
             finish_fmp4_segment(segment_max_pts_ns_);
