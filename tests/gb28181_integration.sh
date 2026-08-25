@@ -19,11 +19,10 @@ rtcp_relay_pid=""
 
 cleanup() {
     set +e
-    [[ -n "$publish_pid" ]] && kill "$publish_pid" 2>/dev/null
+    stop_publisher
     [[ -n "$rtcp_relay_pid" ]] && kill "$rtcp_relay_pid" 2>/dev/null
     [[ -n "$rtcp_sink_pid" ]] && kill "$rtcp_sink_pid" 2>/dev/null
     [[ -n "$main_pid" ]] && kill "$main_pid" 2>/dev/null
-    [[ -n "$publish_pid" ]] && wait "$publish_pid" 2>/dev/null
     [[ -n "$rtcp_relay_pid" ]] && wait "$rtcp_relay_pid" 2>/dev/null
     [[ -n "$rtcp_sink_pid" ]] && wait "$rtcp_sink_pid" 2>/dev/null
     [[ -n "$main_pid" ]] && wait "$main_pid" 2>/dev/null
@@ -32,7 +31,14 @@ trap cleanup EXIT
 
 stop_publisher() {
     if [[ -n "$publish_pid" ]]; then
-        kill "$publish_pid" 2>/dev/null || true
+        kill -INT "$publish_pid" 2>/dev/null || true
+        for _ in $(seq 1 50); do
+            if ! kill -0 "$publish_pid" 2>/dev/null; then
+                break
+            fi
+            sleep 0.1
+        done
+        kill -KILL "$publish_pid" 2>/dev/null || true
         wait "$publish_pid" 2>/dev/null || true
         publish_pid=""
     fi
