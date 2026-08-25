@@ -10,18 +10,20 @@
 #include <boost/system/error_code.hpp>
 #include <boost/asio/any_io_executor.hpp>
 
+#include "media/net/tcp_socket_source.h"
+
 namespace media_server
 {
 
-class tcp_connector final : public std::enable_shared_from_this<tcp_connector>
+class tcp_connector final : public tcp_socket_source, public std::enable_shared_from_this<tcp_connector>
 {
    public:
-    using connect_handler = std::function<void(boost::system::error_code, boost::asio::ip::tcp::socket)>;
+    tcp_connector(boost::asio::any_io_executor executor,
+                  boost::asio::ip::tcp::endpoint endpoint,
+                  std::chrono::milliseconds timeout);
 
-    explicit tcp_connector(boost::asio::any_io_executor executor);
-
-    void startup(boost::asio::ip::tcp::endpoint endpoint, std::chrono::milliseconds timeout, connect_handler handler);
-    void shutdown();
+    [[nodiscard]] boost::system::error_code startup(socket_handler handler) override;
+    void shutdown() override;
 
    private:
     void complete(boost::system::error_code error);
@@ -29,7 +31,10 @@ class tcp_connector final : public std::enable_shared_from_this<tcp_connector>
 
     boost::asio::ip::tcp::socket socket_;
     boost::asio::steady_timer timer_;
-    connect_handler handler_;
+    boost::asio::ip::tcp::endpoint endpoint_;
+    std::chrono::milliseconds timeout_{};
+    socket_handler handler_;
+    bool started_{};
     bool completed_{};
 };
 

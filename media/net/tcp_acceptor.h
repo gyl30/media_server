@@ -11,29 +11,36 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 
+#include "media/net/tcp_socket_source.h"
+
 namespace media_server
 {
 
-class tcp_acceptor final : public std::enable_shared_from_this<tcp_acceptor>
+class tcp_acceptor final : public tcp_socket_source, public std::enable_shared_from_this<tcp_acceptor>
 {
    public:
-    using accept_handler = std::function<void(boost::asio::ip::tcp::socket)>;
+    tcp_acceptor(boost::asio::any_io_executor executor,
+                 std::uint16_t port,
+                 boost::asio::ip::address bind_address,
+                 std::chrono::milliseconds timeout);
 
-    tcp_acceptor(boost::asio::any_io_executor executor, std::uint16_t port, boost::asio::ip::address bind_address);
-
-    [[nodiscard]] boost::system::error_code startup(accept_handler handler, std::chrono::milliseconds timeout = {});
-    void shutdown();
+    [[nodiscard]] boost::system::error_code startup(socket_handler handler) override;
+    void shutdown() override;
 
    private:
     void accept_next();
+    void complete(boost::system::error_code error);
+    void complete(boost::system::error_code error, boost::asio::ip::tcp::socket socket);
     void safe_shutdown();
 
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::steady_timer timer_;
     boost::asio::ip::address bind_address_;
     std::uint16_t port_{};
-    accept_handler handler_;
+    std::chrono::milliseconds timeout_{};
+    socket_handler handler_;
     bool started_{};
+    bool completed_{};
 };
 
 }    // namespace media_server

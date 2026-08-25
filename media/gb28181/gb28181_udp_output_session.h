@@ -12,6 +12,7 @@
 
 #include "media/core/media_stream.h"
 #include "media/gb28181/gb28181_types.h"
+#include "media/gb28181/gb28181_session.h"
 
 namespace media_server
 {
@@ -19,16 +20,18 @@ namespace media_server
 class gb28181_output_media;
 class udp_socket;
 
-class gb28181_udp_output_session final : public std::enable_shared_from_this<gb28181_udp_output_session>
+class gb28181_udp_output_session final : public gb28181_session,
+                                         public std::enable_shared_from_this<gb28181_udp_output_session>
 {
    public:
     gb28181_udp_output_session(boost::asio::any_io_executor executor,
                                std::shared_ptr<media_stream> stream,
                                gb28181_description description,
+                               std::string output_id,
                                bool rtcp_enabled);
 
     [[nodiscard]] bool startup();
-    void shutdown();
+    void shutdown() override;
 
    private:
     struct udp_socket_pair
@@ -45,6 +48,7 @@ class gb28181_udp_output_session final : public std::enable_shared_from_this<gb2
     boost::asio::any_io_executor executor_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
+    std::string output_id_;
     gb28181_description description_;
     boost::asio::ip::udp::endpoint remote_rtp_endpoint_;
     boost::asio::ip::udp::endpoint remote_rtcp_endpoint_;

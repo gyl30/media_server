@@ -8,23 +8,38 @@
 namespace media_server
 {
 
-tcp_connector::tcp_connector(boost::asio::any_io_executor executor) : socket_(executor), timer_(std::move(executor)) {}
-
-void tcp_connector::startup(boost::asio::ip::tcp::endpoint endpoint, std::chrono::milliseconds timeout, connect_handler handler)
+tcp_connector::tcp_connector(boost::asio::any_io_executor executor,
+                             boost::asio::ip::tcp::endpoint endpoint,
+                             std::chrono::milliseconds timeout)
+    : socket_(executor), timer_(socket_.get_executor()), endpoint_(std::move(endpoint)), timeout_(timeout)
 {
+}
+
+boost::system::error_code tcp_connector::startup(socket_handler handler)
+{
+    if (started_)
+    {
+        return boost::asio::error::already_started;
+    }
+
+    started_ = true;
     handler_ = std::move(handler);
 
-    timer_.expires_after(timeout);
     const auto self = shared_from_this();
-    timer_.async_wait(
-        [self](const boost::system::error_code& error)
-        {
-            if (!error)
+    if (timeout_ > std::chrono::milliseconds::zero())
+    {
+        timer_.expires_after(timeout_);
+        timer_.async_wait(
+            [self](const boost::system::error_code& error)
             {
-                self->complete(boost::asio::error::make_error_code(boost::asio::error::timed_out));
-            }
-        });
-    socket_.async_connect(std::move(endpoint), [self](const boost::system::error_code& error) { self->complete(error); });
+                if (!error)
+                {
+                    self->complete(boost::asio::error::make_error_code(boost::asio::error::timed_out));
+                }
+            });
+    }
+    socket_.async_connect(endpoint_, [self](const boost::system::error_code& error) { self->complete(error); });
+    return {};
 }
 
 void tcp_connector::shutdown()
