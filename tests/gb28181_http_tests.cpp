@@ -38,7 +38,7 @@ void require_json_response(const gb28181_http_response& response,
 {
     require(response.result() == status, message);
     require(response.version() == 11, message);
-    require(response.keep_alive(), message);
+    require(!response.keep_alive(), message);
     require(response[boost::beast::http::field::content_type] == "application/json", message);
     require(response.body() == body, message);
 }
