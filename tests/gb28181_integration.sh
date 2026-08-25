@@ -69,52 +69,81 @@ wait_probe_streams() {
 
 post_gb28181_input() {
     local name="$1"
-    local target="$2"
-    local query="$3"
+    local body="$2"
     local response="$work_dir/${name}.response"
     local code
 
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
-        "http://127.0.0.1:${http_port}/gb28181/${target}?${query}")"
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "http://127.0.0.1:${http_port}/gb28181/input/create")"
     if [[ "$code" != "201" ]]; then
-        echo "POST /gb28181/${target} returned $code" >&2
+        echo "POST /gb28181/input/create returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
     fi
+    [[ "$(<"$response")" == '{"result":"ok"}' ]]
 }
 
 post_gb28181_output() {
     local name="$1"
-    local source="$2"
-    local output_id="$3"
-    local query="$4"
+    local body="$2"
     local response="$work_dir/${name}.response"
     local code
 
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
-        "http://127.0.0.1:${http_port}/gb28181/output/${source}?output_id=${output_id}&${query}")"
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "http://127.0.0.1:${http_port}/gb28181/output/create")"
     if [[ "$code" != "201" ]]; then
-        echo "POST /gb28181/output/${source} returned $code" >&2
+        echo "POST /gb28181/output/create returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
     fi
+    [[ "$(<"$response")" == '{"result":"ok"}' ]]
 }
 
-delete_session() {
+delete_gb28181_output() {
     local name="$1"
-    local path="$2"
+    local body="$2"
     local response="$work_dir/${name}.response"
     local code
 
-    code="$(curl -sS -o "$response" -w '%{http_code}' -X DELETE \
-        "http://127.0.0.1:${http_port}${path}")"
-    if [[ "$code" != "204" ]]; then
-        echo "DELETE $path returned $code" >&2
+    code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "http://127.0.0.1:${http_port}/gb28181/output/delete")"
+    if [[ "$code" != "200" ]]; then
+        echo "POST /gb28181/output/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
+    fi
+    [[ "$(<"$response")" == '{"result":"ok"}' ]]
+}
+
+delete_gb28181_input() {
+    local name="$1"
+    local body="$2"
+    local response="$work_dir/${name}.response"
+    local code
+
+    code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "http://127.0.0.1:${http_port}/gb28181/input/delete")"
+    if [[ "$code" != "200" && "$code" != "404" ]]; then
+        echo "POST /gb28181/input/delete returned $code" >&2
+        cat "$response" >&2 || true
+        cat "$work_dir/server.log" >&2 2>/dev/null || true
+        return 1
+    fi
+    if [[ "$code" == "200" ]]; then
+        [[ "$(<"$response")" == '{"result":"ok"}' ]]
+    else
+        [[ "$(<"$response")" == '{"error":"stream_not_found"}' ]]
     fi
 }
 
@@ -128,17 +157,21 @@ run_udp_case() {
     local rtcp_port="$7"
     local ssrc="$8"
     local output_id="$9"
-    local input_query="transport=udp&address=127.0.0.1&rtp_port=${rtp_port}&rtcp_port=${rtcp_port}&payload_type=96&ssrc=${ssrc}&remote_rtcp_port=${remote_rtcp_sink_port}"
-    local output_query="transport=udp&address=127.0.0.1&rtp_port=${rtp_port}&rtcp_port=${rtcp_port}&payload_type=96&ssrc=${ssrc}"
+    local input_body
+    local output_body
+    input_body="$(printf '{\"stream_name\":\"%s\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":%s,\"rtcp_port\":%s,\"payload_type\":96,\"ssrc\":%s,\"remote_rtcp_port\":%s}' \
+        "$target" "$rtp_port" "$rtcp_port" "$ssrc" "$remote_rtcp_sink_port")"
+    output_body="$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":%s,\"rtcp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' \
+        "$source" "$output_id" "$rtp_port" "$rtcp_port" "$ssrc")"
 
-    post_gb28181_input "${name}_input_post" "$target" "$input_query"
-    post_gb28181_output "${name}_output_post" "$source" "$output_id" "$output_query"
+    post_gb28181_input "${name}_input_post" "$input_body"
+    post_gb28181_output "${name}_output_post" "$output_body"
 
     wait_probe_streams "$work_dir/${name}_probe.txt" "$video_codec" "$audio_codec" \
         "rtsp://127.0.0.1:${rtsp_port}/${target}"
 
-    delete_session "${name}_output_delete" "/gb28181/output/${source}?output_id=${output_id}"
-    delete_session "${name}_input_delete" "/gb28181/${target}"
+    delete_gb28181_output "${name}_output_delete" "$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\"}' "$source" "$output_id")"
+    delete_gb28181_input "${name}_input_delete" "$(printf '{\"stream_name\":\"%s\"}' "$target")"
     kill -0 "$main_pid"
 }
 
@@ -150,42 +183,26 @@ run_tcp_case() {
     local ssrc="$5"
     local output_id="$6"
     local mode="$7"
-    local input_query
-    local output_query
+    local input_body
+    local output_body
 
     if [[ "$mode" == "output-active" ]]; then
-        input_query="transport=tcp_passive&address=0.0.0.0&rtp_port=${port}&payload_type=96&ssrc=${ssrc}"
-        output_query="transport=tcp_active&address=127.0.0.1&rtp_port=${port}&payload_type=96&ssrc=${ssrc}"
-        post_gb28181_input "${name}_input_post" "$target" "$input_query"
-        post_gb28181_output "${name}_output_post" "$source" "$output_id" "$output_query"
+        input_body="$(printf '{\"stream_name\":\"%s\",\"transport\":\"tcp_passive\",\"address\":\"0.0.0.0\",\"rtp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' "$target" "$port" "$ssrc")"
+        output_body="$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' "$source" "$output_id" "$port" "$ssrc")"
+        post_gb28181_input "${name}_input_post" "$input_body"
+        post_gb28181_output "${name}_output_post" "$output_body"
     else
-        input_query="transport=tcp_active&address=127.0.0.1&rtp_port=${port}&payload_type=96&ssrc=${ssrc}"
-        output_query="transport=tcp_passive&address=0.0.0.0&rtp_port=${port}&payload_type=96&ssrc=${ssrc}"
-        post_gb28181_output "${name}_output_post" "$source" "$output_id" "$output_query"
-        post_gb28181_input "${name}_input_post" "$target" "$input_query"
+        input_body="$(printf '{\"stream_name\":\"%s\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' "$target" "$port" "$ssrc")"
+        output_body="$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\",\"transport\":\"tcp_passive\",\"address\":\"0.0.0.0\",\"rtp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' "$source" "$output_id" "$port" "$ssrc")"
+        post_gb28181_output "${name}_output_post" "$output_body"
+        post_gb28181_input "${name}_input_post" "$input_body"
     fi
 
     wait_probe_streams "$work_dir/${name}_probe.txt" h264 aac \
         "rtsp://127.0.0.1:${rtsp_port}/${target}"
 
-    delete_session "${name}_output_delete" "/gb28181/output/${source}?output_id=${output_id}"
-
-    local input_delete_response="$work_dir/${name}_input_delete.response"
-    local input_delete_code
-    input_delete_code="$(curl -sS -o "$input_delete_response" -w '%{http_code}' -X DELETE \
-        "http://127.0.0.1:${http_port}/gb28181/${target}")"
-    if [[ "$input_delete_code" != "204" && "$input_delete_code" != "404" ]]; then
-        echo "DELETE /gb28181/${target} returned $input_delete_code" >&2
-        cat "$input_delete_response" >&2 || true
-        cat "$work_dir/server.log" >&2 2>/dev/null || true
-        return 1
-    fi
-    if [[ "$input_delete_code" == "404" ]] && ! grep -qx 'gb28181 session not found' "$input_delete_response"; then
-        echo "DELETE /gb28181/${target} returned unexpected 404 response" >&2
-        cat "$input_delete_response" >&2 || true
-        cat "$work_dir/server.log" >&2 2>/dev/null || true
-        return 1
-    fi
+    delete_gb28181_output "${name}_output_delete" "$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\"}' "$source" "$output_id")"
+    delete_gb28181_input "${name}_input_delete" "$(printf '{\"stream_name\":\"%s\"}' "$target")"
     kill -0 "$main_pid"
 }
 
@@ -220,9 +237,9 @@ publish_pid=$!
 wait_probe_streams "$work_dir/source_h264_aac.txt" h264 aac \
     "rtsp://127.0.0.1:${rtsp_port}/live/gb-h264-aac"
 
-run_udp_case udp_h264_aac live/gb-h264-aac relay/gb-udp-h264-aac h264 aac 31000 31001 0100002001 udp-h264-aac
-run_tcp_case tcp_output_active live/gb-h264-aac relay/gb-tcp-output-active 31100 0100002004 tcp-output-active output-active
-run_tcp_case tcp_output_passive live/gb-h264-aac relay/gb-tcp-output-passive 31110 0100002005 tcp-output-passive output-passive
+run_udp_case udp_h264_aac live/gb-h264-aac relay/gb-udp-h264-aac h264 aac 31000 31001 100002001 udp-h264-aac
+run_tcp_case tcp_output_active live/gb-h264-aac relay/gb-tcp-output-active 31100 100002004 tcp-output-active output-active
+run_tcp_case tcp_output_passive live/gb-h264-aac relay/gb-tcp-output-passive 31110 100002005 tcp-output-passive output-passive
 
 # RTCP relay 保持 output/input 对端身份独立，同时保留真实 RTP 数据路径。
 rtcp_relay_rtp_port=31200
@@ -292,10 +309,10 @@ rtcp_relay_pid=$!
 sleep 0.2
 kill -0 "$rtcp_relay_pid"
 
-post_gb28181_input rtcp_input_post relay/gb-udp-rtcp \
-    "transport=udp&address=127.0.0.1&rtp_port=${rtcp_input_rtp_port}&rtcp_port=${rtcp_input_rtcp_port}&payload_type=96&ssrc=0100002006&remote_rtp_address=127.0.0.1&remote_rtp_port=${rtcp_relay_rtp_port}&remote_rtcp_port=${rtcp_relay_rtcp_port}"
-post_gb28181_output rtcp_output_post live/gb-h264-aac udp-rtcp \
-    "transport=udp&address=127.0.0.1&rtp_port=${rtcp_relay_rtp_port}&rtcp_port=${rtcp_relay_rtcp_port}&payload_type=96&ssrc=0100002006&rtcp=1"
+post_gb28181_input rtcp_input_post "$(printf '{\"stream_name\":\"relay/gb-udp-rtcp\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":%s,\"rtcp_port\":%s,\"payload_type\":96,\"ssrc\":100002006,\"remote_rtp_address\":\"127.0.0.1\",\"remote_rtp_port\":%s,\"remote_rtcp_port\":%s}' \
+    "$rtcp_input_rtp_port" "$rtcp_input_rtcp_port" "$rtcp_relay_rtp_port" "$rtcp_relay_rtcp_port")"
+post_gb28181_output rtcp_output_post "$(printf '{\"stream_name\":\"live/gb-h264-aac\",\"output_id\":\"udp-rtcp\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":%s,\"rtcp_port\":%s,\"payload_type\":96,\"ssrc\":100002006,\"rtcp\":true}' \
+    "$rtcp_relay_rtp_port" "$rtcp_relay_rtcp_port")"
 wait_probe_streams "$work_dir/rtcp_probe.txt" h264 aac \
     "rtsp://127.0.0.1:${rtsp_port}/relay/gb-udp-rtcp"
 
@@ -312,8 +329,8 @@ grep -qx 'sr' "$rtcp_status"
 grep -qx 'rr' "$rtcp_status"
 [[ -s "$rtcp_sr_packet" ]]
 [[ -s "$rtcp_rr_packet" ]]
-delete_session rtcp_output_delete "/gb28181/output/live/gb-h264-aac?output_id=udp-rtcp"
-delete_session rtcp_input_delete "/gb28181/relay/gb-udp-rtcp"
+delete_gb28181_output rtcp_output_delete '{"stream_name":"live/gb-h264-aac","output_id":"udp-rtcp"}'
+delete_gb28181_input rtcp_input_delete '{"stream_name":"relay/gb-udp-rtcp"}'
 kill -0 "$main_pid"
 stop_publisher
 
@@ -330,7 +347,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
 publish_pid=$!
 wait_probe_streams "$work_dir/source_h265_g711a.txt" hevc pcm_alaw \
     "rtsp://127.0.0.1:${rtsp_port}/live/gb-h265-g711a"
-run_udp_case udp_h265_g711a live/gb-h265-g711a relay/gb-udp-h265-g711a hevc pcm_alaw 31010 31011 0100002002 udp-h265-g711a
+run_udp_case udp_h265_g711a live/gb-h265-g711a relay/gb-udp-h265-g711a hevc pcm_alaw 31010 31011 100002002 udp-h265-g711a
 stop_publisher
 
 ffmpeg -nostdin -hide_banner -loglevel error -re \
@@ -345,7 +362,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
 publish_pid=$!
 wait_probe_streams "$work_dir/source_h264_g711u.txt" h264 pcm_mulaw \
     "rtsp://127.0.0.1:${rtsp_port}/live/gb-h264-g711u"
-run_udp_case udp_h264_g711u live/gb-h264-g711u relay/gb-udp-h264-g711u h264 pcm_mulaw 31020 31021 0100002003 udp-h264-g711u
+run_udp_case udp_h264_g711u live/gb-h264-g711u relay/gb-udp-h264-g711u h264 pcm_mulaw 31020 31021 100002003 udp-h264-g711u
 stop_publisher
 
 kill -0 "$main_pid"
