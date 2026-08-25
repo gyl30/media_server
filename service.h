@@ -16,7 +16,6 @@ class io_context_pool;
 class rtmp_server;
 class rtsp_pull_session;
 class rtsp_server;
-class stream_registry;
 class whep_service;
 
 class service
@@ -32,7 +31,6 @@ private:
 
     config config_;
     std::unique_ptr<io_context_pool> workers_;
-    std::unique_ptr<stream_registry> registry_;
     std::unique_ptr<hls_service> hls_;
     std::unique_ptr<whep_service> whep_;
     std::unique_ptr<gb28181_service> gb28181_;

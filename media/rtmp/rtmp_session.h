@@ -8,7 +8,6 @@
 #include <string_view>
 
 #include "media/net/tcp_connection.h"
-#include "media/core/stream_registry.h"
 #include "media/codec/output_video_config.h"
 
 struct rtmp_server_t;
@@ -23,7 +22,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 {
    public:
     rtmp_session(std::shared_ptr<tcp_connection> connection,
-                 stream_registry& registry,
                  output_video_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
     ~rtmp_session();
@@ -50,7 +48,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     std::shared_ptr<tcp_connection> connection_;
-    stream_registry& registry_;
     std::chrono::milliseconds initial_tracks_timeout_;
     output_video_config video_config_;
     rtmp_server_t* server_{};

@@ -62,19 +62,18 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_io = workers_->context(0);
-    registry_ = std::make_unique<stream_registry>();
-    hls_ = std::make_unique<hls_service>(*registry_, hls_config{.video = config_.http_video});
-    whep_ = std::make_unique<whep_service>(*registry_, webrtc_address, config_.whep_video);
-    gb28181_ = std::make_unique<gb28181_service>(*registry_, workers_.get());
+    hls_ = std::make_unique<hls_service>(hls_config{.video = config_.http_video});
+    whep_ = std::make_unique<whep_service>(registry::instance(), webrtc_address, config_.whep_video);
+    gb28181_ = std::make_unique<gb28181_service>(registry::instance(), workers_.get());
     if (!whep_->ready())
     {
         spdlog::error("dtls certificate create failed");
         return 2;
     }
-    rtmp_ = std::make_shared<rtmp_server>(*workers_, *registry_, config_.rtmp_port, config_.rtmp_video);
-    rtsp_ = std::make_shared<rtsp_server>(*workers_, *registry_, config_.rtsp_port, config_.rtsp_video);
+    rtmp_ = std::make_shared<rtmp_server>(*workers_, config_.rtmp_port, config_.rtmp_video);
+    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_.rtsp_port, config_.rtsp_video);
     http_ = std::make_shared<http_server>(
-        *workers_, *registry_, *hls_, *whep_, *gb28181_, config_.http_port, config_.http_video);
+        *workers_, *hls_, *whep_, *gb28181_, config_.http_port, config_.http_video);
 
     if (const auto error = rtmp_->startup())
     {
@@ -94,7 +93,7 @@ int service::run()
 
     for (const auto& [name, url] : config_.rtsp_pulls)
     {
-        auto pull = std::make_shared<rtsp_pull_session>(workers_->next(), *registry_, name, url);
+        auto pull = std::make_shared<rtsp_pull_session>(workers_->next(), name, url);
         if (!pull->startup())
         {
             spdlog::error("rtsp pull startup failed stream {}", name);

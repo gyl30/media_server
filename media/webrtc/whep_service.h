@@ -36,7 +36,7 @@ struct whep_create_result
 class whep_service final
 {
    public:
-    whep_service(stream_registry& registry, boost::asio::ip::address advertised_address, output_video_config video = {});
+    whep_service(stream_registry& registry_ref, boost::asio::ip::address advertised_address, output_video_config video = {});
     ~whep_service();
 
     [[nodiscard]] bool ready() const noexcept;

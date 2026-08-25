@@ -4,6 +4,7 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_input_media.h"
 
 extern "C"
@@ -22,13 +23,11 @@ constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
-rtsp_input_media::rtsp_input_media(stream_registry& registry,
-                                   boost::asio::any_io_executor executor,
+rtsp_input_media::rtsp_input_media(boost::asio::any_io_executor executor,
                                    std::string stream_name,
                                    std::string rtcp_cname,
                                    std::vector<rtsp_input_track_description> descriptions)
-    : registry_(registry),
-      executor_(std::move(executor)),
+    : executor_(std::move(executor)),
       stream_name_(std::move(stream_name)),
       rtcp_cname_(std::move(rtcp_cname)),
       descriptions_(std::move(descriptions))
@@ -85,7 +84,7 @@ bool rtsp_input_media::start_recording()
         tracks.push_back(description.track);
     }
     std::ranges::sort(tracks, [](const media_track& left, const media_track& right) { return left.id < right.id; });
-    if (!stream_->set_tracks(std::move(tracks)) || !registry_.add(stream_))
+    if (!stream_->set_tracks(std::move(tracks)) || !registry::instance().add(stream_))
     {
         return false;
     }
@@ -125,7 +124,7 @@ void rtsp_input_media::shutdown()
     closed_ = true;
     if (stream_)
     {
-        registry_.remove(*stream_);
+        registry::instance().remove(*stream_);
         stream_->end();
         stream_.reset();
     }

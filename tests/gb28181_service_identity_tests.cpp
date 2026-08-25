@@ -46,19 +46,20 @@ media_track make_video_track()
     };
 }
 
-std::shared_ptr<media_stream> add_video_stream(stream_registry& registry, boost::asio::io_context& io, std::string name)
+std::shared_ptr<media_stream> add_video_stream(stream_registry& streams, boost::asio::io_context& io, std::string name)
 {
     auto stream = std::make_shared<media_stream>(std::move(name), io.get_executor());
     require(stream->set_tracks({make_video_track()}), "gb output tracks");
-    require(registry.add(stream), "gb output registry");
+    require(streams.add(stream), "gb output registry");
     return stream;
 }
 
 void test_input_identity_is_reusable_immediately_after_remove()
 {
     boost::asio::io_context io;
-    stream_registry registry;
-    gb28181_service service(registry);
+    auto& streams = media_server::registry::instance();
+    streams.clear();
+    gb28181_service service(streams);
     const auto description = make_tcp_active_description(65'000, 10'000'2001);
 
     require(service.create(io.get_executor(), "live/gb-identity", description, std::nullopt, std::nullopt) == gb28181_create_error::none,
@@ -74,9 +75,10 @@ void test_input_identity_is_reusable_immediately_after_remove()
 void test_output_identity_is_reusable_immediately_after_remove()
 {
     boost::asio::io_context io;
-    stream_registry registry;
-    const auto stream = add_video_stream(registry, io, "live/gb-output-identity");
-    gb28181_service service(registry);
+    auto& streams = media_server::registry::instance();
+    streams.clear();
+    const auto stream = add_video_stream(streams, io, "live/gb-output-identity");
+    gb28181_service service(streams);
     const auto description = make_tcp_active_description(65'000, 10'000'2002);
 
     require(service.create_output(io.get_executor(), stream->name(), "primary", false, description) == gb28181_output_create_error::none,
@@ -93,8 +95,9 @@ void test_input_old_async_work_does_not_remove_replacement()
 {
     boost::asio::io_context io;
     boost::asio::ip::tcp::acceptor peer(io, {boost::asio::ip::tcp::v4(), 0});
-    stream_registry registry;
-    gb28181_service service(registry);
+    auto& streams = media_server::registry::instance();
+    streams.clear();
+    gb28181_service service(streams);
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2003);
 
     require(service.create(io.get_executor(), "live/gb-generation", description, std::nullopt, std::nullopt) == gb28181_create_error::none,
@@ -115,9 +118,10 @@ void test_output_old_async_work_does_not_remove_replacement()
 {
     boost::asio::io_context io;
     boost::asio::ip::tcp::acceptor peer(io, {boost::asio::ip::tcp::v4(), 0});
-    stream_registry registry;
-    const auto stream = add_video_stream(registry, io, "live/gb-output-generation");
-    gb28181_service service(registry);
+    auto& streams = media_server::registry::instance();
+    streams.clear();
+    const auto stream = add_video_stream(streams, io, "live/gb-output-generation");
+    gb28181_service service(streams);
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2004);
 
     require(service.create_output(io.get_executor(), stream->name(), "primary", false, description) == gb28181_output_create_error::none,

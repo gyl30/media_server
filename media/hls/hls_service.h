@@ -19,7 +19,7 @@ namespace media_server
 class hls_service final
 {
    public:
-    explicit hls_service(stream_registry& registry, hls_config config = {});
+    explicit hls_service(hls_config config = {});
 
     [[nodiscard]] std::optional<std::string> playlist(std::string_view stream_name);
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> init_segment(std::string_view stream_name);

@@ -31,4 +31,10 @@ std::shared_ptr<media_stream> stream_registry::find(std::string_view name) const
     return iterator == streams_.end() ? nullptr : iterator->second;
 }
 
+void stream_registry::clear()
+{
+    std::scoped_lock lock(mutex_);
+    streams_.clear();
+}
+
 }    // namespace media_server

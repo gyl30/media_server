@@ -6,6 +6,7 @@
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtmp/rtmp_input_session.h"
 #include "media/rtmp/rtmp_output_session.h"
+#include "media/core/stream_registry.h"
 
 extern "C"
 {
@@ -17,10 +18,9 @@ namespace media_server
 {
 
 rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection,
-                           stream_registry& registry,
                            output_video_config video,
                            std::chrono::milliseconds initial_tracks_timeout)
-    : connection_(std::move(connection)), registry_(registry), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
+    : connection_(std::move(connection)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
 {
 }
 
@@ -118,7 +118,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     }
 
     stream_name_ = make_stream_name(app, stream);
-    auto media = registry_.find(stream_name_);
+    auto media = registry::instance().find(stream_name_);
     if (!media)
     {
         spdlog::warn("rtmp play stream not found {}", stream_name_);
@@ -189,7 +189,6 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     stream_name_ = make_stream_name(app, stream);
     const std::weak_ptr<rtmp_session> weak = shared_from_this();
     auto input = std::make_shared<rtmp_input_session>(connection_->socket().get_executor(),
-                                                      registry_,
                                                       stream_name_,
                                                       initial_tracks_timeout_,
                                                       [weak]()

@@ -107,8 +107,8 @@ struct gb28181_service::state
     bool closed{};
 };
 
-gb28181_service::gb28181_service(stream_registry& registry, io_context_pool* workers)
-    : registry_(registry), workers_(workers), state_(std::make_shared<state>())
+gb28181_service::gb28181_service(stream_registry& registry_ref, io_context_pool* workers)
+    : registry_(registry_ref), workers_(workers), state_(std::make_shared<state>())
 {
 }
 

@@ -11,6 +11,7 @@
 
 #include "media/http/http_session.h"
 #include "media/gb28181/gb28181_types.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -258,13 +259,11 @@ std::optional<gb28181_output_parameters> parse_gb28181_output_parameters(const b
 }    // namespace
 
 http_session::http_session(boost::asio::ip::tcp::socket socket,
-                           stream_registry& registry,
                            hls_service& hls,
                            whep_service& whep,
                            gb28181_service& gb28181,
                            output_video_config video)
     : stream_(std::move(socket)),
-      registry_(registry),
       hls_(hls),
       whep_(whep),
       gb28181_(gb28181),
@@ -623,7 +622,7 @@ void http_session::handle_flv(const boost::urls::url_view& target)
 
     segments.back().resize(segments.back().size() - 4);
     const auto stream_name = join_segments(segments, 0, segments.size());
-    auto media_stream = registry_.find(stream_name);
+    auto media_stream = registry::instance().find(stream_name);
     if (!media_stream)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");

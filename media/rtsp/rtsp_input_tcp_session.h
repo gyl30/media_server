@@ -27,7 +27,6 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
    public:
     rtsp_input_tcp_session(std::weak_ptr<rtsp_server_connection> connection,
                            boost::asio::any_io_executor executor,
-                           stream_registry& registry,
                            std::string stream_name,
                            std::string session_id,
                            std::vector<rtsp_input_track_description> descriptions);
