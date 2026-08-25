@@ -76,9 +76,9 @@ post_gb28181_input() {
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
-        "http://127.0.0.1:${http_port}/gb28181/input/create")"
+        "http://127.0.0.1:${http_port}/gb28181/create")"
     if [[ "$code" != "201" ]]; then
-        echo "POST /gb28181/input/create returned $code" >&2
+        echo "POST /gb28181/create returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
@@ -95,9 +95,9 @@ post_gb28181_output() {
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
-        "http://127.0.0.1:${http_port}/gb28181/output/create")"
+        "http://127.0.0.1:${http_port}/play/gb28181/create")"
     if [[ "$code" != "201" ]]; then
-        echo "POST /gb28181/output/create returned $code" >&2
+        echo "POST /play/gb28181/create returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
@@ -114,9 +114,9 @@ delete_gb28181_output() {
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
-        "http://127.0.0.1:${http_port}/gb28181/output/delete")"
+        "http://127.0.0.1:${http_port}/play/gb28181/delete")"
     if [[ "$code" != "200" && "$code" != "500" ]]; then
-        echo "POST /gb28181/output/delete returned $code" >&2
+        echo "POST /play/gb28181/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
@@ -137,9 +137,9 @@ delete_gb28181_input() {
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
-        "http://127.0.0.1:${http_port}/gb28181/input/delete")"
+        "http://127.0.0.1:${http_port}/gb28181/delete")"
     if [[ "$code" != "200" && "$code" != "500" ]]; then
-        echo "POST /gb28181/input/delete returned $code" >&2
+        echo "POST /gb28181/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
