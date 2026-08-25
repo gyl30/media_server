@@ -10,6 +10,20 @@ namespace
 
 constexpr int whep_retry_after_seconds = 1;
 
+std::string join_segments(std::span<const std::string> segments)
+{
+    std::string result;
+    for (const auto& segment : segments)
+    {
+        if (!result.empty())
+        {
+            result.push_back('/');
+        }
+        result.append(segment);
+    }
+    return result;
+}
+
 whep_http_string_response make_string_response(const whep_http_request& request,
                                                boost::beast::http::status status,
                                                std::string_view content_type,
@@ -35,11 +49,11 @@ whep_http_string_response make_string_response(const whep_http_request& request,
     return response;
 }
 
-whep_http_empty_response make_empty_response(const whep_http_request& request,
-                                             boost::beast::http::status status,
-                                             std::string_view content_type = {})
+whep_http_string_response make_empty_response(const whep_http_request& request,
+                                              boost::beast::http::status status,
+                                              std::string_view content_type = {})
 {
-    whep_http_empty_response response{status, request.version()};
+    whep_http_string_response response{status, request.version()};
     response.set(boost::beast::http::field::server, "media_server");
     response.set(boost::beast::http::field::cache_control, "no-store");
     response.set(boost::beast::http::field::access_control_allow_origin, "*");
@@ -48,7 +62,7 @@ whep_http_empty_response make_empty_response(const whep_http_request& request,
         response.set(boost::beast::http::field::content_type, content_type);
     }
     response.keep_alive(false);
-    response.content_length(0);
+    response.prepare_payload();
     return response;
 }
 
@@ -63,7 +77,7 @@ whep_http_string_response make_whep_error_response(const whep_http_request& requ
     return make_string_response(request, status, "text/plain", std::move(body), allow, retry_after_seconds);
 }
 
-whep_http_empty_response handle_whep_options(const whep_http_request& request, bool session_resource)
+whep_http_string_response handle_whep_options(const whep_http_request& request, bool session_resource)
 {
     auto response = make_empty_response(request, boost::beast::http::status::ok);
     response.erase(boost::beast::http::field::cache_control);
@@ -77,12 +91,12 @@ whep_http_empty_response handle_whep_options(const whep_http_request& request, b
     return response;
 }
 
-whep_http_empty_response handle_whep_endpoint_get(const whep_http_request& request)
+whep_http_string_response handle_whep_endpoint_get(const whep_http_request& request)
 {
     return make_empty_response(request, boost::beast::http::status::ok, "application/sdp");
 }
 
-whep_http_empty_response handle_whep_session_get(const whep_http_request& request, std::string_view session_id)
+whep_http_string_response handle_whep_session_get(const whep_http_request& request, std::string_view session_id)
 {
     if (!whep::contains(session_id))
     {
@@ -122,13 +136,57 @@ whep_http_string_response handle_whep_post(const whep_http_request& request,
     return make_string_response(request, boost::beast::http::status::internal_server_error, "text/plain", "whep session create failed\n");
 }
 
-whep_http_empty_response handle_whep_delete(const whep_http_request& request, std::string_view session_id)
+whep_http_string_response handle_whep_delete(const whep_http_request& request, std::string_view session_id)
 {
     if (!whep::remove(session_id))
     {
         return make_empty_response(request, boost::beast::http::status::not_found);
     }
     return make_empty_response(request, boost::beast::http::status::no_content);
+}
+
+whep_http_string_response handle_whep_request(const whep_http_request& request,
+                                              boost::asio::any_io_executor executor,
+                                              std::span<const std::string> segments,
+                                              const config& application_config)
+{
+    const bool session_resource = segments.size() == 2 && segments[0] == "session";
+    const bool endpoint_resource = !segments.empty() && segments[0] != "session";
+    if (!session_resource && !endpoint_resource)
+    {
+        return make_whep_error_response(request, boost::beast::http::status::not_found, "not found\n");
+    }
+
+    if (request.method() == boost::beast::http::verb::options)
+    {
+        return handle_whep_options(request, session_resource);
+    }
+    if (request.method() == boost::beast::http::verb::get || request.method() == boost::beast::http::verb::head)
+    {
+        if (session_resource)
+        {
+            return handle_whep_session_get(request, segments[1]);
+        }
+        return handle_whep_endpoint_get(request);
+    }
+    if (request.method() == boost::beast::http::verb::post && endpoint_resource)
+    {
+        const auto content_type = request[boost::beast::http::field::content_type];
+        if (!boost::beast::iequals(content_type, "application/sdp"))
+        {
+            return make_whep_error_response(
+                request, boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n");
+        }
+        return handle_whep_post(request, std::move(executor), join_segments(segments), application_config);
+    }
+    if (request.method() == boost::beast::http::verb::delete_ && session_resource)
+    {
+        return handle_whep_delete(request, segments[1]);
+    }
+
+    const std::string_view allow = session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS";
+    // 本实现只支持一次完整 SDP POST/answer，不支持 PATCH/Trickle ICE。
+    return make_whep_error_response(request, boost::beast::http::status::method_not_allowed, "method not allowed\n", 0, allow);
 }
 
 }    // namespace media_server

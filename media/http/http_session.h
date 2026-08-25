@@ -41,13 +41,10 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void handle_whep(std::span<const std::string> segments);
     void handle_gb28181_input(const boost::urls::url_view& target, std::span<const std::string> segments);
     void handle_gb28181_output(const boost::urls::url_view& target, std::span<const std::string> segments);
-    void handle_whep_post(std::span<const std::string> segments);
-    void handle_whep_delete(std::span<const std::string> segments);
     void wait_hls_playlist(std::string stream_name);
     void check_hls_playlist();
 
     void write_response(boost::beast::http::response<boost::beast::http::string_body> response);
-    void write_response(boost::beast::http::response<boost::beast::http::empty_body> response);
     void write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response);
     void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
     void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
