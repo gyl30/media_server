@@ -39,8 +39,6 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     int on_teardown(rtsp_server_t* server, std::string_view session);
     void safe_shutdown();
 
-    static std::optional<media_track> track_from_format(const rtsp_media_t& media, const rtsp_media_t::avformat_t& format);
-
     std::weak_ptr<rtsp_server_connection> connection_;
     stream_registry& registry_;
     std::vector<rtsp_input_track_description> descriptions_;
