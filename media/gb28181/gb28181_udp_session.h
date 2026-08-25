@@ -12,7 +12,7 @@
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/udp_socket.h"
-#include "media/gb28181/gb28181_sdp.h"
+#include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_input_media.h"
 
 namespace media_server

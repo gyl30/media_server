@@ -166,7 +166,6 @@ add_library(media_core STATIC
     media/http/http_flv_output.cpp
     media/http/http_session.cpp
     media/http/http_server.cpp
-    media/gb28181/gb28181_sdp.cpp
     media/gb28181/gb28181_input_media.cpp
     media/gb28181/gb28181_output_media.cpp
     media/gb28181/gb28181_udp_session.cpp
