@@ -36,17 +36,10 @@ gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_execu
 {
 }
 
-bool gb28181_udp_output_session::startup()
+std::optional<gb28181_udp_output_session::udp_socket_pair> gb28181_udp_output_session::prepare_udp_sockets(
+    boost::asio::ip::address bind_address)
 {
-    if (closed_ || rtp_socket_ || rtcp_socket_ || media_ || !stream_ || description_.transport != gb28181_transport::udp ||
-        description_.address.is_unspecified())
-    {
-        return false;
-    }
-
     const auto self = shared_from_this();
-    const auto bind_address = description_.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
-                                                           : boost::asio::ip::address{boost::asio::ip::address_v6::any()};
     const auto start_socket = [self, &bind_address](std::uint16_t port)
     {
         auto socket = std::make_shared<udp_socket>(self->executor_);
@@ -73,7 +66,7 @@ bool gb28181_udp_output_session::startup()
         return socket;
     };
 
-    for (int attempt = 0; attempt < udp_port_pair_attempts && (!rtp_socket_ || !rtcp_socket_); ++attempt)
+    for (int attempt = 0; attempt < udp_port_pair_attempts; ++attempt)
     {
         auto first = start_socket(0);
         if (!first)
@@ -91,19 +84,30 @@ bool gb28181_udp_output_session::startup()
 
         if ((first_port & 1U) == 0)
         {
-            rtp_socket_ = std::move(first);
-            rtcp_socket_ = std::move(second);
+            return udp_socket_pair{.rtp = std::move(first), .rtcp = std::move(second)};
         }
-        else
-        {
-            rtp_socket_ = std::move(second);
-            rtcp_socket_ = std::move(first);
-        }
+        return udp_socket_pair{.rtp = std::move(second), .rtcp = std::move(first)};
     }
-    if (!rtp_socket_ || !rtcp_socket_)
+    return std::nullopt;
+}
+
+bool gb28181_udp_output_session::startup()
+{
+    if (closed_ || rtp_socket_ || rtcp_socket_ || media_ || !stream_ || description_.transport != gb28181_transport::udp ||
+        description_.address.is_unspecified())
     {
         return false;
     }
+
+    const auto bind_address = description_.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
+                                                           : boost::asio::ip::address{boost::asio::ip::address_v6::any()};
+    auto sockets = prepare_udp_sockets(bind_address);
+    if (!sockets)
+    {
+        return false;
+    }
+    rtp_socket_ = std::move(sockets->rtp);
+    rtcp_socket_ = std::move(sockets->rtcp);
 
     if (rtcp_enabled_)
     {

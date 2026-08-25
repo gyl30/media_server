@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <optional>
 
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -30,6 +31,13 @@ class gb28181_udp_output_session final : public std::enable_shared_from_this<gb2
     void shutdown();
 
    private:
+    struct udp_socket_pair
+    {
+        std::shared_ptr<udp_socket> rtp;
+        std::shared_ptr<udp_socket> rtcp;
+    };
+
+    [[nodiscard]] std::optional<udp_socket_pair> prepare_udp_sockets(boost::asio::ip::address bind_address);
     void send_packet(std::vector<std::uint8_t> packet);
     void wait_rtcp();
     void safe_shutdown();
