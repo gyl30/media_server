@@ -969,9 +969,9 @@ void test_http_head_response_contract()
             "http text head content length");
     require(text_head.body().empty(), "http text head body");
 
-    const auto whep_get = peer.request(boost::beast::http::verb::get, "/whep");
+    const auto whep_get = peer.request(boost::beast::http::verb::get, "/play/whep");
     require(whep_get.result() == boost::beast::http::status::not_found && whep_get.body() == "not found\n", "whep invalid resource get");
-    const auto whep_head = peer.request(boost::beast::http::verb::head, "/whep");
+    const auto whep_head = peer.request(boost::beast::http::verb::head, "/play/whep");
     require(whep_head.result() == whep_get.result(), "whep invalid resource head status");
     require(whep_head[boost::beast::http::field::content_type] == whep_get[boost::beast::http::field::content_type],
             "whep invalid resource head content type");
@@ -986,15 +986,17 @@ void test_http_method_contract()
 {
     whep_http_test_peer peer;
 
-    const auto hls_post = peer.request(boost::beast::http::verb::post, "/hls/live/camera/index.m3u8");
+    const auto hls_post = peer.request(boost::beast::http::verb::post, "/play/hls/live/camera/index.m3u8");
     require(hls_post.result() == boost::beast::http::status::method_not_allowed, "http hls post status");
     require(hls_post[boost::beast::http::field::allow] == "GET", "http hls post allow");
+    const auto old_hls = peer.request(boost::beast::http::verb::get, "/hls/live/camera/index.m3u8");
+    require(old_hls.result() == boost::beast::http::status::not_found, "http old hls route status");
 
     const auto flv_post = peer.request(boost::beast::http::verb::post, "/live/camera.flv");
     require(flv_post.result() == boost::beast::http::status::method_not_allowed, "http flv post status");
     require(flv_post[boost::beast::http::field::allow] == "GET", "http flv post allow");
 
-    const auto hls_head = peer.request(boost::beast::http::verb::head, "/hls/live/camera/index.m3u8");
+    const auto hls_head = peer.request(boost::beast::http::verb::head, "/play/hls/live/camera/index.m3u8");
     require(hls_head.result() == boost::beast::http::status::method_not_allowed, "http hls head status");
     require(hls_head[boost::beast::http::field::allow] == "GET", "http hls head allow");
     require(hls_head.body().empty(), "http hls head body");
@@ -1003,15 +1005,17 @@ void test_http_method_contract()
 void test_whep_http_cors()
 {
     whep_http_test_peer peer;
-    require_whep_options(peer.options("/whep/live/camera", "POST"), "GET, HEAD, POST, OPTIONS", true);
+    const auto old_endpoint = peer.request(boost::beast::http::verb::get, "/whep/live/camera");
+    require(old_endpoint.result() == boost::beast::http::status::not_found, "whep old route status");
+    require_whep_options(peer.options("/play/whep/live/camera", "POST"), "GET, HEAD, POST, OPTIONS", true);
 
-    const auto endpoint_get = peer.request(boost::beast::http::verb::get, "/whep/live/camera");
+    const auto endpoint_get = peer.request(boost::beast::http::verb::get, "/play/whep/live/camera");
     require(endpoint_get.result() == boost::beast::http::status::ok, "whep endpoint get status");
     require(endpoint_get[boost::beast::http::field::content_type] == "application/sdp", "whep endpoint get content type");
     require(endpoint_get[boost::beast::http::field::content_length] == "0", "whep endpoint get content length");
     require(endpoint_get.body().empty(), "whep endpoint get body");
 
-    const auto endpoint_head = peer.request(boost::beast::http::verb::head, "/whep/live/camera");
+    const auto endpoint_head = peer.request(boost::beast::http::verb::head, "/play/whep/live/camera");
     require(endpoint_head.result() == endpoint_get.result(), "whep endpoint head status");
     require(endpoint_head[boost::beast::http::field::content_type] == endpoint_get[boost::beast::http::field::content_type],
             "whep endpoint head content type");
@@ -1024,19 +1028,19 @@ void test_whep_http_cors()
         "whep endpoint head allow origin");
     require(endpoint_head.body().empty(), "whep endpoint head body");
 
-    const auto endpoint_delete = peer.remove("/whep/live/camera");
+    const auto endpoint_delete = peer.remove("/play/whep/live/camera");
     require(endpoint_delete.result() == boost::beast::http::status::method_not_allowed, "whep endpoint delete status");
     require(endpoint_delete[boost::beast::http::field::allow] == "GET, HEAD, POST, OPTIONS", "whep endpoint delete allow");
 
-    const auto unavailable = peer.post("/whep/live/missing");
+    const auto unavailable = peer.post("/play/whep/live/missing");
     require(unavailable.result() == boost::beast::http::status::conflict, "whep unavailable stream status");
     require(unavailable[boost::beast::http::field::retry_after] == "1", "whep unavailable stream retry after");
     require(unavailable["Access-Control-Allow-Origin"] == "*", "whep unavailable stream allow origin");
 
-    const auto missing_get = peer.request(boost::beast::http::verb::get, "/whep/session/missing");
+    const auto missing_get = peer.request(boost::beast::http::verb::get, "/play/whep/session/missing");
     require(missing_get.result() == boost::beast::http::status::not_found && missing_get.body().empty(), "whep missing session get");
 
-    const auto missing_head = peer.request(boost::beast::http::verb::head, "/whep/session/missing");
+    const auto missing_head = peer.request(boost::beast::http::verb::head, "/play/whep/session/missing");
     require(missing_head.result() == missing_get.result(), "whep missing session head status");
     require(missing_head[boost::beast::http::field::cache_control] == missing_get[boost::beast::http::field::cache_control],
             "whep missing session head cache control");
@@ -1045,13 +1049,13 @@ void test_whep_http_cors()
         "whep missing session head allow origin");
     require(missing_head.body().empty(), "whep missing session head body");
 
-    const auto created = peer.post("/whep/live/camera");
+    const auto created = peer.post("/play/whep/live/camera");
     require(created.result() == boost::beast::http::status::created, "whep cors create status");
     require(created["Access-Control-Allow-Origin"] == "*", "whep create allow origin");
     require(created["Access-Control-Expose-Headers"] == "Location", "whep create expose location");
     require(created[boost::beast::http::field::content_type] == "application/sdp", "whep create content type");
     const auto location = std::string(created[boost::beast::http::field::location]);
-    require(location.starts_with("/whep/session/"), "whep create location");
+    require(location.starts_with("/play/whep/session/"), "whep create location");
     require(created.body().starts_with("v=0\r\n"), "whep create answer");
 
     require_whep_options(peer.options(location, "DELETE"), "GET, HEAD, DELETE, OPTIONS", false);

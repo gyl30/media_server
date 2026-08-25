@@ -102,7 +102,7 @@ whep_http_string_response handle_whep_post(const whep_http_request& request,
         case whep::create_error::none:
         {
             auto response = make_string_response(request, boost::beast::http::status::created, "application/sdp", std::move(result.answer_sdp));
-            response.set(boost::beast::http::field::location, "/whep/session/" + result.session_id);
+            response.set(boost::beast::http::field::location, "/play/whep/session/" + result.session_id);
             response.set(boost::beast::http::field::cache_control, "no-store");
             response.set(boost::beast::http::field::access_control_expose_headers, "Location");
             return response;
