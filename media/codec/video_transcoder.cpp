@@ -267,8 +267,6 @@ struct video_transcoder::state
     AVPixelFormat decoded_format{AV_PIX_FMT_NONE};
     AVPixelFormat encoder_format{AV_PIX_FMT_NONE};
     bool timeline_started{};
-    bool input_ended{};
-    bool flushed{};
 };
 
 video_transcoder::video_transcoder() = default;
@@ -385,7 +383,7 @@ bool video_transcoder::transcode(const media_frame& input, std::vector<media_fra
 {
     const bool annex_b_payload = input.payload && input.payload->size() >= 4 && (*input.payload)[0] == 0 && (*input.payload)[1] == 0 &&
                                  (((*input.payload)[2] == 1) || ((*input.payload)[2] == 0 && (*input.payload)[3] == 1));
-    if (!state_ || state_->input_ended || !input.payload || input.payload->empty() || input.pts_ns == AV_NOPTS_VALUE ||
+    if (!state_ || !input.payload || input.payload->empty() || input.pts_ns == AV_NOPTS_VALUE ||
         input.dts_ns == AV_NOPTS_VALUE || input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) || !annex_b_payload ||
         (state_->timeline_started && input.track != state_->output_track))
     {
@@ -406,7 +404,7 @@ bool video_transcoder::transcode(const media_frame& input, std::vector<media_fra
     result = avcodec_send_packet(state_->decoder, state_->input_packet);
     if (result == AVERROR(EAGAIN))
     {
-        if (!receive_decoded(output, false))
+        if (!receive_decoded(output))
         {
             return false;
         }
@@ -422,67 +420,10 @@ bool video_transcoder::transcode(const media_frame& input, std::vector<media_fra
         state_->output_track = input.track;
         state_->timeline_started = true;
     }
-    return receive_decoded(output, false);
+    return receive_decoded(output);
 }
 
-bool video_transcoder::flush(std::vector<media_frame>& output)
-{
-    if (!state_)
-    {
-        return false;
-    }
-    if (state_->flushed)
-    {
-        return true;
-    }
-    state_->input_ended = true;
-
-    int result = avcodec_send_packet(state_->decoder, nullptr);
-    if (result == AVERROR(EAGAIN))
-    {
-        if (!receive_decoded(output, false))
-        {
-            return false;
-        }
-        result = avcodec_send_packet(state_->decoder, nullptr);
-    }
-    if (result < 0 && result != AVERROR_EOF)
-    {
-        spdlog::error("video transcoder decoder flush failed {}", ffmpeg_error(result));
-        return false;
-    }
-    if (result >= 0 && !receive_decoded(output, true))
-    {
-        return false;
-    }
-
-    if (state_->encoder != nullptr)
-    {
-        result = avcodec_send_frame(state_->encoder, nullptr);
-        if (result == AVERROR(EAGAIN))
-        {
-            if (!receive_encoded(output, false))
-            {
-                return false;
-            }
-            result = avcodec_send_frame(state_->encoder, nullptr);
-        }
-        if (result < 0 && result != AVERROR_EOF)
-        {
-            spdlog::error("video transcoder encoder flush failed {}", ffmpeg_error(result));
-            return false;
-        }
-        if (result >= 0 && !receive_encoded(output, true))
-        {
-            return false;
-        }
-    }
-
-    state_->flushed = true;
-    return true;
-}
-
-bool video_transcoder::receive_decoded(std::vector<media_frame>& output, bool draining)
+bool video_transcoder::receive_decoded(std::vector<media_frame>& output)
 {
     while (true)
     {
@@ -490,7 +431,7 @@ bool video_transcoder::receive_decoded(std::vector<media_frame>& output, bool dr
         const int result = avcodec_receive_frame(state_->decoder, state_->decoded_frame);
         if (result == AVERROR(EAGAIN))
         {
-            return !draining;
+            return true;
         }
         if (result == AVERROR_EOF)
         {
@@ -616,7 +557,7 @@ bool video_transcoder::encode_decoded(std::vector<media_frame>& output)
     int result = avcodec_send_frame(state_->encoder, frame);
     if (result == AVERROR(EAGAIN))
     {
-        if (!receive_encoded(output, false))
+        if (!receive_encoded(output))
         {
             return false;
         }
@@ -627,10 +568,10 @@ bool video_transcoder::encode_decoded(std::vector<media_frame>& output)
         spdlog::debug("video transcoder encode frame failed {}", ffmpeg_error(result));
         return false;
     }
-    return receive_encoded(output, false);
+    return receive_encoded(output);
 }
 
-bool video_transcoder::receive_encoded(std::vector<media_frame>& output, bool draining)
+bool video_transcoder::receive_encoded(std::vector<media_frame>& output)
 {
     while (true)
     {
@@ -638,7 +579,7 @@ bool video_transcoder::receive_encoded(std::vector<media_frame>& output, bool dr
         const int result = avcodec_receive_packet(state_->encoder, state_->output_packet);
         if (result == AVERROR(EAGAIN))
         {
-            return !draining;
+            return true;
         }
         if (result == AVERROR_EOF)
         {
