@@ -1,5 +1,4 @@
 #include <utility>
-#include <algorithm>
 
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtmp/rtmp_session.h"
@@ -26,42 +25,10 @@ boost::system::error_code rtmp_server::startup()
         });
 }
 
-void rtmp_server::shutdown()
-{
-    std::vector<std::weak_ptr<rtmp_session>> sessions;
-    {
-        std::scoped_lock lock(sessions_mutex_);
-        if (closed_)
-        {
-            return;
-        }
-        closed_ = true;
-        sessions = std::move(sessions_);
-        sessions_.clear();
-    }
-    listener_->shutdown();
-    for (const auto& weak_session : sessions)
-    {
-        if (const auto session = weak_session.lock())
-        {
-            session->shutdown();
-        }
-    }
-}
-
 void rtmp_server::on_accept(boost::asio::ip::tcp::socket socket)
 {
-    std::scoped_lock lock(sessions_mutex_);
-    if (closed_)
-    {
-        boost::system::error_code error;
-        socket.close(error);
-        return;
-    }
     auto connection = std::make_shared<tcp_connection>(std::move(socket));
     auto session = std::make_shared<rtmp_session>(std::move(connection), config_.rtmp_video);
-    std::erase_if(sessions_, [](const auto& value) { return value.expired(); });
-    sessions_.emplace_back(session);
     session->startup();
 }
 
