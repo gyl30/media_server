@@ -2,7 +2,6 @@
 #define MEDIA_SERVER_SERVICE_H
 
 #include <memory>
-#include <vector>
 
 #include "config.h"
 
@@ -12,7 +11,6 @@ namespace media_server
 class http_server;
 class io_context_pool;
 class rtmp_server;
-class rtsp_pull_session;
 class rtsp_server;
 
 class service
@@ -31,7 +29,6 @@ private:
     std::shared_ptr<rtmp_server> rtmp_;
     std::shared_ptr<rtsp_server> rtsp_;
     std::shared_ptr<http_server> http_;
-    std::vector<std::weak_ptr<rtsp_pull_session>> pulls_;
 };
 
 }    // namespace media_server

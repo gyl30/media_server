@@ -21,6 +21,7 @@ class io_context_pool final
     [[nodiscard]] boost::asio::io_context& context(std::size_t index) noexcept;
     [[nodiscard]] boost::asio::io_context& next() noexcept;
 
+    void stop();
     void release_work();
     void run();
 
