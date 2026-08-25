@@ -101,35 +101,21 @@ std::optional<std::uint8_t> find_ps_payload(sdp_t* sdp)
     return static_cast<std::uint8_t>(selected_payload);
 }
 
-}    // namespace
-
-std::optional<gb28181_description> parse_gb28181_sdp(std::string_view text)
+std::optional<gb28181_description> parse_gb28181_common_description(sdp_t* sdp)
 {
-    if (text.empty())
-    {
-        return std::nullopt;
-    }
-
-    sdp_ptr sdp(sdp_parse(text.data(), static_cast<int>(text.size())), &sdp_destroy);
-    if (!sdp || sdp_media_count(sdp.get()) != 1 || std::strcmp(sdp_media_type(sdp.get(), 0), "video") != 0)
-    {
-        return std::nullopt;
-    }
-
-    const auto proto = sdp_option_proto_from(sdp_media_proto(sdp.get(), 0));
-    if (proto != SDP_M_PROTO_RTP_AVP && proto != SDP_M_PROTO_RTP_AVP_TCP)
+    if (sdp_media_count(sdp) != 1 || std::strcmp(sdp_media_type(sdp, 0), "video") != 0)
     {
         return std::nullopt;
     }
 
     int ports[2]{};
-    if (sdp_media_port(sdp.get(), 0, ports, 2) != 1 || ports[0] <= 0 || ports[0] > 65'535)
+    if (sdp_media_port(sdp, 0, ports, 2) != 1 || ports[0] <= 0 || ports[0] > 65'535)
     {
         return std::nullopt;
     }
 
     char address_text[64]{};
-    if (sdp_media_get_connection_address(sdp.get(), 0, address_text, sizeof(address_text)) != 0)
+    if (sdp_media_get_connection_address(sdp, 0, address_text, sizeof(address_text)) != 0)
     {
         return std::nullopt;
     }
@@ -140,64 +126,70 @@ std::optional<gb28181_description> parse_gb28181_sdp(std::string_view text)
         return std::nullopt;
     }
 
-    const auto payload_type = find_ps_payload(sdp.get());
+    const auto payload_type = find_ps_payload(sdp);
     if (!payload_type)
     {
         return std::nullopt;
     }
 
-    auto ssrc = parse_ssrc(sdp_media_attribute_find(sdp.get(), 0, "ssrc"));
+    auto ssrc = parse_ssrc(sdp_media_attribute_find(sdp, 0, "ssrc"));
     if (!ssrc)
     {
-        ssrc = parse_ssrc(sdp_attribute_find(sdp.get(), "ssrc"));
+        ssrc = parse_ssrc(sdp_attribute_find(sdp, "ssrc"));
     }
     if (!ssrc)
     {
         return std::nullopt;
     }
 
-    if (proto == SDP_M_PROTO_RTP_AVP_TCP)
-    {
-        const auto* setup_text = sdp_media_attribute_find(sdp.get(), 0, "setup");
-        if (setup_text == nullptr)
-        {
-            setup_text = sdp_attribute_find(sdp.get(), "setup");
-        }
-        const auto setup = sdp_option_setup_from(setup_text);
-        if (setup != SDP_A_SETUP_ACTIVE && setup != SDP_A_SETUP_PASSIVE)
-        {
-            return std::nullopt;
-        }
-        auto* connection = sdp_media_attribute_find(sdp.get(), 0, "connection");
-        if (connection == nullptr)
-        {
-            connection = sdp_attribute_find(sdp.get(), "connection");
-        }
-        if (connection != nullptr && !boost::iequals(connection, "new"))
-        {
-            return std::nullopt;
-        }
-        if (setup == SDP_A_SETUP_ACTIVE && address.is_unspecified())
-        {
-            return std::nullopt;
-        }
+    return gb28181_description{
+        .address = std::move(address),
+        .rtp_port = static_cast<std::uint16_t>(ports[0]),
+        .payload_type = *payload_type,
+        .ssrc = *ssrc,
+    };
+}
 
-        return gb28181_description{
-            .transport = setup == SDP_A_SETUP_ACTIVE ? gb28181_transport::tcp_active : gb28181_transport::tcp_passive,
-            .address = std::move(address),
-            .rtp_port = static_cast<std::uint16_t>(ports[0]),
-            .payload_type = *payload_type,
-            .ssrc = *ssrc,
-        };
+std::optional<gb28181_description> parse_gb28181_tcp_transport(sdp_t* sdp, gb28181_description description)
+{
+    const auto* setup_text = sdp_media_attribute_find(sdp, 0, "setup");
+    if (setup_text == nullptr)
+    {
+        setup_text = sdp_attribute_find(sdp, "setup");
+    }
+    const auto setup = sdp_option_setup_from(setup_text);
+    if (setup != SDP_A_SETUP_ACTIVE && setup != SDP_A_SETUP_PASSIVE)
+    {
+        return std::nullopt;
     }
 
-    if (sdp_media_attribute_find(sdp.get(), 0, "rtcp-mux") != nullptr)
+    auto* connection = sdp_media_attribute_find(sdp, 0, "connection");
+    if (connection == nullptr)
+    {
+        connection = sdp_attribute_find(sdp, "connection");
+    }
+    if (connection != nullptr && !boost::iequals(connection, "new"))
+    {
+        return std::nullopt;
+    }
+    if (setup == SDP_A_SETUP_ACTIVE && description.address.is_unspecified())
+    {
+        return std::nullopt;
+    }
+
+    description.transport = setup == SDP_A_SETUP_ACTIVE ? gb28181_transport::tcp_active : gb28181_transport::tcp_passive;
+    return description;
+}
+
+std::optional<gb28181_description> parse_gb28181_udp_transport(sdp_t* sdp, gb28181_description description)
+{
+    if (sdp_media_attribute_find(sdp, 0, "rtcp-mux") != nullptr)
     {
         return std::nullopt;
     }
 
     std::uint16_t rtcp_port{};
-    if (const auto* rtcp = sdp_media_attribute_find(sdp.get(), 0, "rtcp"))
+    if (const auto* rtcp = sdp_media_attribute_find(sdp, 0, "rtcp"))
     {
         sdp_address_t rtcp_address{};
         if (sdp_a_rtcp(rtcp, static_cast<int>(std::strlen(rtcp)), &rtcp_address) != 0 || rtcp_address.port[0] <= 0 || rtcp_address.port[0] > 65'535)
@@ -208,25 +200,52 @@ std::optional<gb28181_description> parse_gb28181_sdp(std::string_view text)
     }
     else
     {
-        if (ports[0] == 65'535)
+        if (description.rtp_port == 65'535)
         {
             return std::nullopt;
         }
-        rtcp_port = static_cast<std::uint16_t>(ports[0] + 1);
+        rtcp_port = static_cast<std::uint16_t>(description.rtp_port + 1);
     }
-    if (rtcp_port == static_cast<std::uint16_t>(ports[0]))
+    if (rtcp_port == description.rtp_port)
     {
         return std::nullopt;
     }
 
-    return gb28181_description{
-        .transport = gb28181_transport::udp,
-        .address = std::move(address),
-        .rtp_port = static_cast<std::uint16_t>(ports[0]),
-        .rtcp_port = rtcp_port,
-        .payload_type = *payload_type,
-        .ssrc = *ssrc,
-    };
+    description.rtcp_port = rtcp_port;
+    return description;
+}
+
+}    // namespace
+
+std::optional<gb28181_description> parse_gb28181_sdp(std::string_view text)
+{
+    if (text.empty())
+    {
+        return std::nullopt;
+    }
+
+    sdp_ptr sdp(sdp_parse(text.data(), static_cast<int>(text.size())), &sdp_destroy);
+    if (!sdp)
+    {
+        return std::nullopt;
+    }
+
+    auto description = parse_gb28181_common_description(sdp.get());
+    if (!description)
+    {
+        return std::nullopt;
+    }
+
+    const auto proto = sdp_option_proto_from(sdp_media_proto(sdp.get(), 0));
+    if (proto != SDP_M_PROTO_RTP_AVP && proto != SDP_M_PROTO_RTP_AVP_TCP)
+    {
+        return std::nullopt;
+    }
+    if (proto == SDP_M_PROTO_RTP_AVP_TCP)
+    {
+        return parse_gb28181_tcp_transport(sdp.get(), std::move(*description));
+    }
+    return parse_gb28181_udp_transport(sdp.get(), std::move(*description));
 }
 
 }    // namespace media_server
