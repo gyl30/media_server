@@ -165,6 +165,7 @@ add_library(media_core STATIC
     media/hls/hls_output.cpp
     media/hls/hls.cpp
     media/http/http_flv_output.cpp
+    media/http/gb28181_json.cpp
     media/http/http_session.cpp
     media/http/http_server.cpp
     media/gb28181/gb28181_input_media.cpp
@@ -266,6 +267,10 @@ if(BUILD_TESTING)
     add_executable(gb28181_identity_tests tests/gb28181_identity_tests.cpp)
     target_link_libraries(gb28181_identity_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_identity_tests COMMAND gb28181_identity_tests)
+
+    add_executable(gb28181_json_tests tests/gb28181_json_tests.cpp)
+    target_link_libraries(gb28181_json_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb28181_json_tests COMMAND gb28181_json_tests)
 
     add_executable(ireader_rtcp_tests tests/ireader_rtcp_tests.cpp)
     target_link_libraries(ireader_rtcp_tests PRIVATE ireader_media)
