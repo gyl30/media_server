@@ -8325,7 +8325,7 @@ void test_hls_output()
     reordered.dts_ns = 80'000'000;
     reordered_video.on_frame(std::move(reordered));
     reordered_video.on_end();
-    const auto reordered_playlist = reordered_video.playlist("/hls/reordered");
+    const auto reordered_playlist = reordered_video.playlist("/play/hls/reordered");
     require(reordered_playlist.find("#EXTINF:0.080,") != std::string::npos, "hls final segment duration uses maximum presentation timestamp");
 }
 
@@ -8371,10 +8371,10 @@ void test_hls_av1_fmp4_output()
         const auto segment = output.segment(0);
         require(init.has_value() && !init->empty(), "hls av1 init segment");
         require(segment.has_value() && !segment->empty(), "hls av1 media segment");
-        const auto playlist = output.playlist("/hls/av1");
+    const auto playlist = output.playlist("/play/hls/av1");
         require(playlist.find("#EXT-X-VERSION:7") != std::string::npos, "hls av1 playlist version");
-        require(playlist.find("#EXT-X-MAP:URI=\"/hls/av1/init.mp4?v=0\"") != std::string::npos, "hls av1 init map");
-        require(playlist.find("/hls/av1/0.m4s") != std::string::npos, "hls av1 media uri");
+        require(playlist.find("#EXT-X-MAP:URI=\"/play/hls/av1/init.mp4?v=0\"") != std::string::npos, "hls av1 init map");
+        require(playlist.find("/play/hls/av1/0.m4s") != std::string::npos, "hls av1 media uri");
         require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls av1 endlist");
 
         struct memory_reader
@@ -8534,9 +8534,9 @@ void test_hls_av1_fmp4_output()
         reconfigured.on_frame(std::move(frame));
     }
     reconfigured.on_end();
-    const auto reconfigured_playlist = reconfigured.playlist("/hls/av1-reconfigured");
-    require(reconfigured_playlist.find("#EXT-X-MAP:URI=\"/hls/av1-reconfigured/init.mp4?v=1\"") != std::string::npos &&
-                reconfigured_playlist.find("/hls/av1-reconfigured/1.m4s") != std::string::npos,
+    const auto reconfigured_playlist = reconfigured.playlist("/play/hls/av1-reconfigured");
+    require(reconfigured_playlist.find("#EXT-X-MAP:URI=\"/play/hls/av1-reconfigured/init.mp4?v=1\"") != std::string::npos &&
+                reconfigured_playlist.find("/play/hls/av1-reconfigured/1.m4s") != std::string::npos,
             "hls av1 config change versions init segment uri");
 }
 

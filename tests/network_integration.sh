@@ -126,7 +126,7 @@ probe_streams "$work_dir/rtmp_from_rtmp.txt" 'rtmp://127.0.0.1:19350/live/test'
 probe_streams "$work_dir/http_flv_from_rtmp.txt" 'http://127.0.0.1:18080/live/test.flv'
 
 # 首次请求建立共享 HLS 输出；等待自然关键帧完成切片。
-probe_hls_ts hls_from_rtmp 'http://127.0.0.1:18080/hls/live/test'
+probe_hls_ts hls_from_rtmp 'http://127.0.0.1:18080/play/hls/live/test'
 
 "$server_bin" --rtmp-port 19351 --rtsp-port 18555 --http-port 18081 \
     --rtsp-pull 'relay/test=rtsp://127.0.0.1:18554/live/test' \
@@ -141,7 +141,7 @@ probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp 'rtsp://127.0.0
 probe_streams "$work_dir/rtmp_from_rtsp.txt" 'rtmp://127.0.0.1:19351/relay/test'
 probe_streams "$work_dir/http_flv_from_rtsp.txt" 'http://127.0.0.1:18081/relay/test.flv'
 
-probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/hls/relay/test'
+probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/play/hls/relay/test'
 
 # RTSP push TCP/UDP 使用独立 stream，验证推流输入可被现有四种非 WebRTC 输出消费。
 for transport in tcp udp; do
@@ -161,7 +161,7 @@ for transport in tcp udp; do
         "rtsp://127.0.0.1:18554/live/$stream_name"
     probe_streams "$work_dir/rtsp_push_${transport}_rtmp.txt" "rtmp://127.0.0.1:19350/live/$stream_name"
     probe_streams "$work_dir/rtsp_push_${transport}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
-    probe_hls_ts "rtsp_push_${transport}_hls" "http://127.0.0.1:18080/hls/live/$stream_name"
+    probe_hls_ts "rtsp_push_${transport}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
 
     kill "$rtsp_publish_pid" 2>/dev/null || true
     wait "$rtsp_publish_pid" 2>/dev/null || true
@@ -240,15 +240,15 @@ if grep -q 'codec_name=' "$work_dir/rtmp_av1_without_capability.txt"; then
     exit 1
 fi
 wait_probe_streams "$work_dir/http_flv_av1.txt" av1 aac 'http://127.0.0.1:18082/live/av1.flv'
-wait_probe_streams "$work_dir/hls_av1.txt" av1 aac 'http://127.0.0.1:18082/hls/live/av1/index.m3u8'
+wait_probe_streams "$work_dir/hls_av1.txt" av1 aac 'http://127.0.0.1:18082/play/hls/live/av1/index.m3u8'
 
-curl -fsS 'http://127.0.0.1:18082/hls/live/av1/index.m3u8' >"$work_dir/hls_av1.m3u8"
+curl -fsS 'http://127.0.0.1:18082/play/hls/live/av1/index.m3u8' >"$work_dir/hls_av1.m3u8"
 av1_init_uri="$(sed -n 's/^#EXT-X-MAP:URI="\(\.\/init\.mp4?v=[0-9][0-9]*\)"$/\1/p' "$work_dir/hls_av1.m3u8" | head -1)"
 [[ -n "$av1_init_uri" ]]
 av1_segment="$(grep -E '^[^#].*\.m4s$' "$work_dir/hls_av1.m3u8" | head -1 | sed 's#^\./##')"
 [[ -n "$av1_segment" ]]
-curl -fsS "http://127.0.0.1:18082/hls/live/av1/${av1_init_uri#./}" >"$work_dir/hls_av1_init.mp4"
-curl -fsS "http://127.0.0.1:18082/hls/live/av1/$av1_segment" >"$work_dir/hls_av1_segment.m4s"
+curl -fsS "http://127.0.0.1:18082/play/hls/live/av1/${av1_init_uri#./}" >"$work_dir/hls_av1_init.mp4"
+curl -fsS "http://127.0.0.1:18082/play/hls/live/av1/$av1_segment" >"$work_dir/hls_av1_segment.m4s"
 [[ -s "$work_dir/hls_av1_init.mp4" ]]
 [[ -s "$work_dir/hls_av1_segment.m4s" ]]
 
