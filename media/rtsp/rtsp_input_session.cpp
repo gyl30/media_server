@@ -1,10 +1,7 @@
-#include <cctype>
 #include <random>
 #include <string>
 #include <utility>
-#include <algorithm>
 
-#include "media/codec/codec_utils.h"
 #include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
@@ -13,10 +10,6 @@
 
 extern "C"
 {
-#include "sdp.h"
-#include "base64.h"
-#include "mpeg4-aac.h"
-#include "sdp-a-fmtp.h"
 #include "rtp-profile.h"
 }
 
@@ -105,7 +98,8 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
                     format.rate = profile->frequency;
                 }
             }
-            auto track = track_from_format(description, format);
+            const auto id = rtsp_sdp_iequals(description.media, "video") ? video_track_id : audio_track_id;
+            auto track = rtsp_sdp_track_from_format(description.media, format.fmt, format.rate, format.encoding, format.fmtp, id);
             if (!track)
             {
                 continue;
@@ -237,87 +231,6 @@ void rtsp_input_session::safe_shutdown()
     }
     closed_ = true;
     descriptions_.clear();
-}
-
-std::optional<media_track> rtsp_input_session::track_from_format(const rtsp_media_t& media, const rtsp_media_t::avformat_t& format)
-{
-    const auto video = rtsp_sdp_iequals(media.media, "video");
-    const auto audio = rtsp_sdp_iequals(media.media, "audio");
-    if (video && rtsp_sdp_iequals(format.encoding, "H264"))
-    {
-        sdp_a_fmtp_h264_t parameters{};
-        auto payload = format.fmt;
-        std::vector<std::uint8_t> config;
-        if (format.fmtp != nullptr && sdp_a_fmtp_h264(format.fmtp, &payload, &parameters) == 0 &&
-            rtsp_sdp_append_parameter_sets(config, parameters.sprop_parameter_sets) && !h264_annex_b_to_avcc(config).empty())
-        {
-            return media_track{
-                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
-        }
-    }
-    else if (video && (rtsp_sdp_iequals(format.encoding, "H265") || rtsp_sdp_iequals(format.encoding, "HEVC")))
-    {
-        sdp_a_fmtp_h265_t parameters{};
-        auto payload = format.fmt;
-        std::vector<std::uint8_t> config;
-        if (format.fmtp != nullptr && sdp_a_fmtp_h265(format.fmtp, &payload, &parameters) == 0 &&
-            rtsp_sdp_append_parameter_sets(config, parameters.sprop_vps) && rtsp_sdp_append_parameter_sets(config, parameters.sprop_sps) &&
-            rtsp_sdp_append_parameter_sets(config, parameters.sprop_pps) && !h265_annex_b_to_hvcc(config).empty())
-        {
-            return media_track{
-                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
-        }
-    }
-    else if (audio && rtsp_sdp_iequals(format.encoding, "MPEG4-GENERIC"))
-    {
-        sdp_a_fmtp_mpeg4_t parameters{};
-        auto payload = format.fmt;
-        if (format.fmtp != nullptr && sdp_a_fmtp_mpeg4(format.fmtp, &payload, &parameters) == 0)
-        {
-            const std::string_view encoded(parameters.config);
-            if (!encoded.empty() && encoded.size() % 2U == 0U &&
-                std::all_of(encoded.begin(), encoded.end(), [](char value) { return std::isxdigit(static_cast<unsigned char>(value)) != 0; }))
-            {
-                std::vector<std::uint8_t> config(encoded.size() / 2U);
-                if (base16_decode(config.data(), encoded.data(), encoded.size()) > 0)
-                {
-                    if (const auto aac = parse_aac_asc(config))
-                    {
-                        return media_track{.id = audio_track_id,
-                                           .kind = media_kind::audio,
-                                           .codec = codec_id::aac,
-                                           .clock_rate = aac->sample_rate,
-                                           .channel_count = aac->channel_count,
-                                           .codec_config = std::move(config)};
-                    }
-                }
-            }
-        }
-    }
-    else if (audio && rtsp_sdp_iequals(format.encoding, "opus") && format.rate == 48'000)
-    {
-        if (const auto channels = rtsp_sdp_opus_channel_count(format.fmtp))
-        {
-            return media_track{.id = audio_track_id,
-                               .kind = media_kind::audio,
-                               .codec = codec_id::opus,
-                               .clock_rate = 48'000,
-                               .channel_count = *channels,
-                               .codec_config = {}};
-        }
-    }
-    else if (audio && format.rate == 8'000 &&
-             ((format.fmt == RTP_PAYLOAD_PCMA && (format.encoding[0] == '\0' || rtsp_sdp_iequals(format.encoding, "PCMA"))) ||
-              (format.fmt == RTP_PAYLOAD_PCMU && (format.encoding[0] == '\0' || rtsp_sdp_iequals(format.encoding, "PCMU")))))
-    {
-        return media_track{.id = audio_track_id,
-                           .kind = media_kind::audio,
-                           .codec = format.fmt == RTP_PAYLOAD_PCMA ? codec_id::g711a : codec_id::g711u,
-                           .clock_rate = 8'000,
-                           .channel_count = 1,
-                           .codec_config = {}};
-    }
-    return std::nullopt;
 }
 
 }    // namespace media_server
