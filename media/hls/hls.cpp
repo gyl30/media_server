@@ -1,13 +1,13 @@
-#include <algorithm>
-#include <chrono>
 #include <map>
-#include <memory>
 #include <mutex>
+#include <chrono>
+#include <memory>
 #include <string>
+#include <algorithm>
 
-#include "media/core/stream_registry.h"
 #include "media/hls/hls.h"
 #include "media/hls/hls_output.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server::hls
 {
@@ -32,10 +32,7 @@ state& runtime()
     return value;
 }
 
-hls_config output_config(const config& application_config)
-{
-    return hls_config{.video = application_config.http_video};
-}
+hls_config output_config(const config& application_config) { return hls_config{.video = application_config.http_video}; }
 
 std::chrono::steady_clock::duration ended_retention()
 {
@@ -87,6 +84,7 @@ std::shared_ptr<hls_output> get_or_create(std::string_view stream_name, const co
         {
             return existing->second.output;
         }
+        existing->second.output->on_end();
         current.outputs.erase(existing);
     }
 
@@ -110,9 +108,7 @@ std::optional<std::vector<std::uint8_t>> init_segment(std::string_view stream_na
     return output ? output->init_segment() : std::nullopt;
 }
 
-std::optional<std::vector<std::uint8_t>> segment(std::string_view stream_name,
-                                                 std::uint64_t sequence,
-                                                 const config& application_config)
+std::optional<std::vector<std::uint8_t>> segment(std::string_view stream_name, std::uint64_t sequence, const config& application_config)
 {
     const auto output = get_or_create(stream_name, application_config);
     return output ? output->segment(sequence) : std::nullopt;
@@ -128,6 +124,11 @@ void shutdown()
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
+    for (auto& [stream_name, value] : current.outputs)
+    {
+        static_cast<void>(stream_name);
+        value.output->on_end();
+    }
     current.outputs.clear();
 }
 

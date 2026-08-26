@@ -22,11 +22,21 @@ flv_output_muxer::flv_output_muxer(output_handler handler, output_video_config v
     }
 }
 
-flv_output_muxer::~flv_output_muxer()
+flv_output_muxer::~flv_output_muxer() = default;
+
+void flv_output_muxer::shutdown()
 {
+    if (video_transcoder_)
+    {
+        video_transcoder_->shutdown();
+        video_transcoder_.reset();
+    }
+    video_track_id_ = 0;
+    tracks_.clear();
     if (muxer_ != nullptr)
     {
         flv_muxer_destroy(muxer_);
+        muxer_ = nullptr;
     }
 }
 
@@ -189,7 +199,11 @@ void flv_output_muxer::on_frame(const media_frame& frame)
 
 void flv_output_muxer::startup_video_transcoder(const media_track& track)
 {
-    video_transcoder_.reset();
+    if (video_transcoder_)
+    {
+        video_transcoder_->shutdown();
+        video_transcoder_.reset();
+    }
     video_track_id_ = 0;
     if (track.codec != codec_id::h264 && track.codec != codec_id::h265)
     {

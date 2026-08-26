@@ -128,6 +128,7 @@ void gb28181_tcp_output_session::on_socket(boost::system::error_code error, boos
         });
     if (!media_->startup())
     {
+        media_->shutdown();
         media_.reset();
         connection_->shutdown();
         connection_.reset();

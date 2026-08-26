@@ -27,14 +27,11 @@ rtsp_input_media::rtsp_input_media(boost::asio::any_io_executor executor,
                                    std::string stream_name,
                                    std::string rtcp_cname,
                                    std::vector<rtsp_input_track_description> descriptions)
-    : executor_(std::move(executor)),
-      stream_name_(std::move(stream_name)),
-      rtcp_cname_(std::move(rtcp_cname)),
-      descriptions_(std::move(descriptions))
+    : executor_(std::move(executor)), stream_name_(std::move(stream_name)), rtcp_cname_(std::move(rtcp_cname)), descriptions_(std::move(descriptions))
 {
 }
 
-rtsp_input_media::~rtsp_input_media() { shutdown(); }
+rtsp_input_media::~rtsp_input_media() = default;
 
 bool rtsp_input_media::startup()
 {

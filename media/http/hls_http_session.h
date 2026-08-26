@@ -29,7 +29,6 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
 
    private:
     void handle_request();
-    void wait_playlist(std::string stream_name);
     void check_playlist();
     void write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response);
     void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});

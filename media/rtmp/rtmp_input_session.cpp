@@ -38,13 +38,7 @@ rtmp_input_session::rtmp_input_session(boost::asio::any_io_executor executor,
 {
 }
 
-rtmp_input_session::~rtmp_input_session()
-{
-    if (demuxer_ != nullptr)
-    {
-        flv_demuxer_destroy(demuxer_);
-    }
-}
+rtmp_input_session::~rtmp_input_session() = default;
 
 bool rtmp_input_session::startup()
 {

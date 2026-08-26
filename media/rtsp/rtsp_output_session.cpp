@@ -6,11 +6,12 @@
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
-#include "media/codec/codec_utils.h"
-#include "media/codec/video_transcoder.h"
-#include "media/core/stream_registry.h"
-#include "media/rtsp/rtsp_output_session.h"
+
 #include "media/rtsp/rtsp_uri.h"
+#include "media/codec/codec_utils.h"
+#include "media/core/stream_registry.h"
+#include "media/codec/video_transcoder.h"
+#include "media/rtsp/rtsp_output_session.h"
 #include "media/rtsp/rtsp_output_tcp_session.h"
 
 extern "C"
@@ -36,12 +37,10 @@ constexpr av1_encoding_parameters rtsp_av1_parameters{
 struct prepared_rtsp_output_track
 {
     rtsp_output_track_description description;
-    std::shared_ptr<video_transcoder> transcoder;
+    std::unique_ptr<video_transcoder> transcoder;
 };
 
-std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_track& track,
-                                                                     output_video_codec video_codec,
-                                                                     int& next_payload_type)
+std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_track& track, output_video_codec video_codec, int& next_payload_type)
 {
     prepared_rtsp_output_track prepared;
     prepared.description.track = track;
@@ -66,7 +65,7 @@ std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_
         prepared.description.frequency = 90'000;
         prepared.description.payload_type = next_payload_type++;
 
-        auto transcoder = std::make_shared<video_transcoder>();
+        auto transcoder = std::make_unique<video_transcoder>();
         if (!transcoder->startup(video_transcoder_config{
                 .input_codec = track.codec,
                 .output_codec = codec_id::av1,
@@ -197,7 +196,11 @@ void rtsp_output_session::safe_shutdown()
     }
     closed_ = true;
     tracks_.clear();
-    video_transcoder_.reset();
+    if (video_transcoder_)
+    {
+        video_transcoder_->shutdown();
+        video_transcoder_.reset();
+    }
     video_track_id_ = 0;
     stream_.reset();
 }
@@ -217,7 +220,11 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
     if (!muxer)
     {
         tracks_.clear();
-        video_transcoder_.reset();
+        if (video_transcoder_)
+        {
+            video_transcoder_->shutdown();
+            video_transcoder_.reset();
+        }
         video_track_id_ = 0;
         stream_.reset();
         return rtsp_server_reply_describe(server, 500, "");
@@ -241,7 +248,11 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
                 muxer.get(), payload_index, description.rtp_codec, description.extra.data(), static_cast<int>(description.extra.size())) < 0)
         {
             tracks_.clear();
-            video_transcoder_.reset();
+            if (video_transcoder_)
+            {
+                video_transcoder_->shutdown();
+                video_transcoder_.reset();
+            }
             video_track_id_ = 0;
             stream_.reset();
             return rtsp_server_reply_describe(server, 415, "");
@@ -254,7 +265,11 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
         if (rtsp_muxer_getinfo(muxer.get(), payload_index, &sequence, &timestamp, &media_text, &media_text_size) != 0)
         {
             tracks_.clear();
-            video_transcoder_.reset();
+            if (video_transcoder_)
+            {
+                video_transcoder_->shutdown();
+                video_transcoder_.reset();
+            }
             video_track_id_ = 0;
             stream_.reset();
             return rtsp_server_reply_describe(server, 415, "");
@@ -266,6 +281,7 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
     const auto connection = connection_.lock();
     if (!connection)
     {
+        safe_shutdown();
         return -1;
     }
     std::ostringstream sdp;
@@ -333,11 +349,11 @@ int rtsp_output_session::on_setup(
     const auto connection = connection_.lock();
     if (!connection)
     {
+        safe_shutdown();
         return -1;
     }
-    auto child =
-        std::make_shared<rtsp_output_tcp_session>(connection_, stream_, stream_name_, tracks_, video_transcoder_, video_track_id_);
-    return child->startup(server, uri, session, transports, count);
+    auto child = std::make_shared<rtsp_output_tcp_session>(connection_, stream_, stream_name_, tracks_, video_track_id_);
+    return child->startup(server, uri, session, transports, count, video_transcoder_);
 }
 
 int rtsp_output_session::on_play(rtsp_server_t* server, std::string_view uri, std::string_view, const std::int64_t*)
@@ -354,7 +370,11 @@ int rtsp_output_session::on_teardown(rtsp_server_t* server, std::string_view) { 
 int rtsp_output_session::prepare_stream(std::string_view uri)
 {
     tracks_.clear();
-    video_transcoder_.reset();
+    if (video_transcoder_)
+    {
+        video_transcoder_->shutdown();
+        video_transcoder_.reset();
+    }
     video_track_id_ = 0;
     stream_.reset();
 
@@ -367,7 +387,7 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
     const auto snapshot = stream->tracks();
 
     std::vector<rtsp_output_track_description> descriptions;
-    std::shared_ptr<video_transcoder> prepared_transcoder;
+    std::unique_ptr<video_transcoder> prepared_transcoder;
     track_id video_track_id{};
     int next_payload_type = 96;
     for (const auto& track : snapshot)
@@ -380,11 +400,19 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
         auto prepared = prepare_rtsp_output_track(track, video_config_.codec, next_payload_type);
         if (!prepared)
         {
+            if (prepared_transcoder)
+            {
+                prepared_transcoder->shutdown();
+            }
             return 415;
         }
 
         if (prepared->transcoder)
         {
+            if (prepared_transcoder)
+            {
+                prepared_transcoder->shutdown();
+            }
             video_track_id = track.id;
             prepared_transcoder = std::move(prepared->transcoder);
         }

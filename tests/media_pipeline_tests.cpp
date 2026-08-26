@@ -1217,6 +1217,7 @@ std::vector<std::uint8_t> make_rtmp_video_sequence_header(media_track track)
         });
     muxer.on_track(track);
     require(!packet.empty(), "rtmp video sequence header");
+    muxer.shutdown();
     return packet;
 }
 
@@ -1327,6 +1328,7 @@ class rtmp_input_test_peer final
         packet.clear();
         muxer.on_frame(codec == codec_id::h264 ? make_video_frame(0, true) : make_h265_frame(0, true));
         require(!packet.empty(), "rtmp input raw video packet");
+        muxer.shutdown();
         require(rtmp_client_push_video(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push raw video");
     }
 
@@ -1350,6 +1352,7 @@ class rtmp_input_test_peer final
             });
         muxer.on_track(make_opus_track(channel_count));
         require(!packet.empty(), "rtmp input opus config");
+        muxer.shutdown();
         require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push opus config");
     }
 
@@ -1368,6 +1371,7 @@ class rtmp_input_test_peer final
         packet.clear();
         muxer.on_frame(make_opus_frame(static_cast<std::int64_t>(timestamp) * 1'000'000, std::move(payload)));
         require(!packet.empty(), "rtmp input raw opus packet");
+        muxer.shutdown();
         require(rtmp_client_push_audio(client_, packet.data(), packet.size(), timestamp) == 0, "rtmp input push raw opus");
     }
 
@@ -1391,6 +1395,7 @@ class rtmp_input_test_peer final
             .payload = std::make_shared<const std::vector<std::uint8_t>>(160U, codec == codec_id::g711a ? 0xd5U : 0xffU),
         });
         require(!packet.empty(), "rtmp input g711 packet");
+        muxer.shutdown();
         require(rtmp_client_push_audio(client_, packet.data(), packet.size(), timestamp) == 0, "rtmp input push g711");
     }
 
@@ -3479,6 +3484,7 @@ void test_http_flv_batch_consumption_and_overrun()
     }
     require(video_pts == std::vector<std::int64_t>{0, 40, 3'000},
             "http flv retains one bounded batch and resyncs only when requesting the next batch");
+    output->shutdown();
 }
 
 void test_http_flv_h265_pull()
@@ -3513,6 +3519,7 @@ void test_http_flv_h265_pull()
             "http flv h265 config packet");
     const auto media = std::ranges::find_if(decoded.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_H265; });
     require(media != decoded.packets.end() && media->flags == 1 && media->pts == 0 && !media->payload.empty(), "http flv h265 key frame");
+    output->shutdown();
 }
 
 void test_http_flv_fast_and_slow_readers()
@@ -3573,6 +3580,8 @@ void test_http_flv_fast_and_slow_readers()
         slow_packets.packets.rbegin(), slow_packets.packets.rend(), [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_H264; });
     require(slow_video != slow_packets.packets.rend() && slow_video->pts == 2'000 && slow_video->flags == 1,
             "slow http flv reader resumes at latest key frame");
+    fast->shutdown();
+    slow->shutdown();
 }
 
 void test_http_flv_audio_video_order()
@@ -3619,6 +3628,7 @@ void test_http_flv_audio_video_order()
         }
     }
     require(codecs == std::vector<int>{FLV_VIDEO_H264, FLV_AUDIO_AAC, FLV_VIDEO_H264, FLV_AUDIO_AAC}, "http flv preserves audio video frame order");
+    output->shutdown();
 }
 
 void test_http_flv_config_reset()
@@ -3649,6 +3659,7 @@ void test_http_flv_config_reset()
     require(capture.writes.size() == 2U && capture.writes.back().bootstrap && capture.writes.back().generation == 2,
             "http flv reset emits new generation bootstrap");
     require(capture.ends == 0U, "http flv same topology reset stays open");
+    output->shutdown();
 }
 
 void test_rtsp_pull_url_contract()
@@ -5448,6 +5459,27 @@ void test_rtsp_output_session_contract()
                                               "Transport: RTP/AVP/TCP;multicast;interleaved=0-1;mode=play\r\n\r\n");
     require(multicast_setup.starts_with("RTSP/1.0 461"), "rtsp output setup multicast unsupported");
 
+    const auto invalid_channel_setup = peer.request("SETUP " + base +
+                                                    "/trackID=1 RTSP/1.0\r\n"
+                                                    "CSeq: 63\r\n"
+                                                    "Transport: RTP/AVP/TCP;unicast;interleaved=300-301\r\n\r\n");
+    require(invalid_channel_setup.starts_with("RTSP/1.0 461"), "rtsp output invalid channel setup rejected");
+
+    auto updated_video = make_video_track();
+    updated_video.codec_config = h264_config_updated;
+    require(peer.update_track(std::move(updated_video)), "rtsp output update after rejected setup");
+    const auto stale_setup = peer.request("SETUP " + base +
+                                          "/trackID=1 RTSP/1.0\r\n"
+                                          "CSeq: 64\r\n"
+                                          "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    require(stale_setup.starts_with("RTSP/1.0 455"), "rtsp output rejected setup keeps describe snapshot");
+
+    const auto refreshed_describe = peer.request("DESCRIBE " + base +
+                                                 " RTSP/1.0\r\n"
+                                                 "CSeq: 65\r\n"
+                                                 "Accept: application/sdp\r\n\r\n");
+    require(refreshed_describe.starts_with("RTSP/1.0 200"), "rtsp output refresh describe after track update");
+
     const auto video_setup = peer.request("SETUP " + base +
                                           "/trackID=1 RTSP/1.0\r\n"
                                           "CSeq: 7\r\n"
@@ -5755,16 +5787,22 @@ void test_rtsp_output_av1()
         require(describe.find("a=fmtp:96 profile=0;level-idx=13;tier=0") != std::string::npos, "rtsp av1 fmtp");
         require(describe.find(input_codec == codec_id::h264 ? "H264/90000" : "H265/90000") == std::string::npos, "rtsp av1 excludes source codec");
 
+        const auto rejected_setup = peer.request("SETUP " + base +
+                                                 "/trackID=1 RTSP/1.0\r\n"
+                                                 "CSeq: 2\r\n"
+                                                 "Transport: RTP/AVP/TCP;unicast;interleaved=300-301\r\n\r\n");
+        require(rejected_setup.starts_with("RTSP/1.0 461"), "rtsp av1 rejected setup keeps transcoder");
+
         const auto setup = peer.request("SETUP " + base +
                                         "/trackID=1 RTSP/1.0\r\n"
-                                        "CSeq: 2\r\n"
+                                        "CSeq: 3\r\n"
                                         "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
-        require(setup.starts_with("RTSP/1.0 200"), "rtsp av1 setup");
+        require(setup.starts_with("RTSP/1.0 200"), "rtsp av1 setup after rejection");
         const auto session = rtsp_header_value(setup, "Session:");
         require(!session.empty(), "rtsp av1 session");
         require(peer.request("PLAY " + base +
                              " RTSP/1.0\r\n"
-                             "CSeq: 3\r\n"
+                             "CSeq: 4\r\n"
                              "Session: " +
                              session + "\r\n\r\n")
                     .starts_with("RTSP/1.0 200"),
@@ -6660,6 +6698,7 @@ void test_flv_config_cache_lifecycle()
     require(first_avcc != capture.packets.end() && h264_avcc_to_annex_b(first_avcc->payload) == h264_config, "flv initial h264 config content");
     require(last_avcc != capture.packets.rend() && h264_avcc_to_annex_b(last_avcc->payload) == h264_config_updated,
             "flv updated h264 config content");
+    output.shutdown();
 }
 
 void test_flv_av1_transcode_round_trip()
@@ -6751,6 +6790,7 @@ void test_flv_av1_transcode_round_trip()
                     sequence.seq_profile == av1.seq_profile && sequence.seq_level_idx_0 == av1.seq_level_idx_0 &&
                     sequence.seq_tier_0 == av1.seq_tier_0,
                 "flv av1 configuration record parses stream properties");
+        output.shutdown();
     }
 }
 
@@ -6778,6 +6818,7 @@ void test_flv_g711_round_trip()
         require(capture.packets.front().codec == (codec == codec_id::g711a ? FLV_AUDIO_G711A : FLV_AUDIO_G711U), "flv g711 codec identity");
         require(capture.packets.front().pts == 40 && capture.packets.front().dts == 40 && capture.packets.front().payload == payload,
                 "flv g711 raw payload timestamp");
+        output.shutdown();
     }
 }
 
@@ -6826,6 +6867,8 @@ void test_flv_opus_adapter_round_trip()
                 opus_head_load(av1_capture.packets[2].payload.data(), av1_capture.packets[2].payload.size(), &second_head) > 0 &&
                 first_head.channels == 1 && second_head.channels == 2,
             "flv av1 opus config generation channels");
+    av1_output.shutdown();
+    output.shutdown();
 }
 
 void test_h265_output_paths()
@@ -6901,6 +6944,8 @@ void test_h265_output_paths()
     webrtc.on_frame(make_h265_frame(0, true));
     require(!packets.empty() && packets.front().size() >= 12U, "webrtc h265 rtp packet");
     require((packets.front()[1] & 0x7fU) == 103U, "webrtc h265 payload type");
+    webrtc.shutdown();
+    flv.shutdown();
 }
 
 void test_rtsp_muxer_zero_origin_timeline()
@@ -7288,7 +7333,9 @@ void test_audio_transcoder_timestamp_compensation()
         }
         require(!output.empty(), "audio timestamp streaming output");
         require(output.front().pts_ns == timestamps.front(), "audio timestamp keeps origin");
-        return decoded_sample_count(output);
+        const auto samples = decoded_sample_count(output);
+        transcoder.shutdown();
+        return samples;
     };
 
     constexpr AVRational nanoseconds_time_base{1, 1'000'000'000};
@@ -7572,6 +7619,10 @@ void test_video_transcoder_h26x_av1()
         require(!long_running_output.empty(), "video transcoder long timeline output");
         require(long_running_output.back().pts_ns - long_running_output.front().pts_ns > 4'294'967'295LL,
                 "video transcoder long timeline exceeds libaom nanosecond boundary");
+        long_running.shutdown();
+        malformed.shutdown();
+        invalid_timeline.shutdown();
+        transcoder.shutdown();
     }
 
     const auto source = make_video_transcoder_fixture(codec_id::h264);
@@ -7599,6 +7650,7 @@ void test_video_transcoder_h26x_av1()
         aom_av1_codec_configuration_record_init(&av1, constrained_output.front().payload->data(), constrained_output.front().payload->size()) == 0,
         "video transcoder av1 parameters sequence header");
     require(av1.seq_profile == 0 && av1.seq_level_idx_0 <= 13 && av1.seq_tier_0 == 0, "video transcoder av1 parameters stream properties");
+    constrained.shutdown();
 
     video_transcoder unsupported_profile;
     require(!unsupported_profile.startup(video_transcoder_config{
@@ -8964,6 +9016,7 @@ void test_webrtc_rtp_packetizer()
     output.on_frame(make_video_frame(40'000'000, false));
     require(packets.size() > first_frame_packet_count, "webrtc second h264 frame packetized");
     require(rtp_timestamp(packets.back()) - first_timestamp == 3'600U, "h264 rtp timestamp step");
+    output.shutdown();
 }
 
 void test_webrtc_video_access_unit_marker()
@@ -9001,6 +9054,7 @@ void test_webrtc_video_access_unit_marker()
         require(packets.size() >= 2U, "webrtc marker multiple nalu packets");
         const auto marker_count = std::count_if(packets.begin(), packets.end(), [](const auto& packet) { return (packet[1] & 0x80U) != 0; });
         require(marker_count == 1 && (packets.back()[1] & 0x80U) != 0, "webrtc marker on access unit last packet");
+        output.shutdown();
     }
 }
 
@@ -9037,6 +9091,7 @@ void test_webrtc_av1_packetizer()
                 "webrtc av1 payload type");
         require(!require_rtp_mid(packets.front(), "video", 4).empty(), "webrtc av1 mid");
         require(std::ranges::any_of(packets, [](const auto& packet) { return (packet[1] & 0x80U) != 0; }), "webrtc av1 marker");
+        output.shutdown();
     }
 }
 
@@ -9079,6 +9134,7 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
     {
         require(rtp_timestamp(packets[1]) - rtp_timestamp(packets[0]) == 960U, "opus rtp timestamp step");
     }
+    output.shutdown();
 }
 
 void test_webrtc_opus_passthrough()
@@ -9141,6 +9197,7 @@ void test_webrtc_opus_passthrough()
 
     output.on_frame(make_opus_frame(100'000'000, std::vector<std::uint8_t>(payload_capacity + 1U, 0x66)));
     require(rtp_packets.size() == packet_count + 1U, "webrtc opus passthrough rejects oversized packet");
+    output.shutdown();
 }
 
 void test_webrtc_g711_passthrough_case(codec_id codec)
@@ -9217,6 +9274,7 @@ void test_webrtc_g711_passthrough_case(codec_id codec)
         .payload = std::make_shared<const std::vector<std::uint8_t>>(capacity + 1U, 0x66),
     });
     require(packets.size() == packet_count + 1U, "webrtc g711 rejects oversized packet");
+    output.shutdown();
 }
 
 void test_webrtc_g711_passthrough()
@@ -9331,6 +9389,7 @@ void test_webrtc_rtcp_sender()
     }
     require(video_report, "rtcp video sender report");
     require(audio_report, "rtcp audio sender report");
+    output.shutdown();
 }
 
 void test_webrtc_opus_packetizer()

@@ -153,6 +153,7 @@ bool gb28181_udp_output_session::startup()
         });
     if (!media_->startup())
     {
+        media_->shutdown();
         media_.reset();
         rtp_socket_->shutdown();
         rtcp_socket_->shutdown();

@@ -45,13 +45,7 @@ webrtc_output::webrtc_output(webrtc_output_config config, packet_handler rtp_han
 {
 }
 
-webrtc_output::~webrtc_output()
-{
-    if (muxer_ != nullptr)
-    {
-        rtsp_muxer_destroy(muxer_);
-    }
-}
+webrtc_output::~webrtc_output() = default;
 
 void webrtc_output::on_track(const media_track& track)
 {
@@ -89,10 +83,23 @@ void webrtc_output::on_track(const media_track& track)
 
     if (negotiated && !added)
     {
-        tracks_.clear();
+        shutdown();
+    }
+}
+
+void webrtc_output::shutdown()
+{
+    while (!tracks_.empty())
+    {
+        remove_track(tracks_.begin()->first);
+    }
+    if (muxer_ != nullptr)
+    {
         rtsp_muxer_destroy(muxer_);
         muxer_ = nullptr;
     }
+    rtp_handler_ = {};
+    rtcp_handler_ = {};
 }
 
 bool webrtc_output::valid() const noexcept { return muxer_ != nullptr; }
@@ -220,15 +227,16 @@ bool webrtc_output::add_h264_track(const media_track& track)
         return false;
     }
 
-    tracks_.insert_or_assign(track.id,
-                             track_state{
-                                 .codec = track.codec,
-                                 .transcoder = {},
-                                 .video_transcoder_ = {},
-                                 .media_id = media_id,
-                                 .payload_id = payload_index,
-                                 .waiting_key_frame = true,
-                             });
+    remove_track(track.id);
+    tracks_.emplace(track.id,
+                    track_state{
+                        .codec = track.codec,
+                        .transcoder = {},
+                        .video_transcoder_ = {},
+                        .media_id = media_id,
+                        .payload_id = payload_index,
+                        .waiting_key_frame = true,
+                    });
     spdlog::debug("webrtc h264 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
@@ -265,15 +273,16 @@ bool webrtc_output::add_h265_track(const media_track& track)
         return false;
     }
 
-    tracks_.insert_or_assign(track.id,
-                             track_state{
-                                 .codec = track.codec,
-                                 .transcoder = {},
-                                 .video_transcoder_ = {},
-                                 .media_id = media_id,
-                                 .payload_id = payload_index,
-                                 .waiting_key_frame = true,
-                             });
+    remove_track(track.id);
+    tracks_.emplace(track.id,
+                    track_state{
+                        .codec = track.codec,
+                        .transcoder = {},
+                        .video_transcoder_ = {},
+                        .media_id = media_id,
+                        .payload_id = payload_index,
+                        .waiting_key_frame = true,
+                    });
     spdlog::debug("webrtc h265 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
@@ -310,6 +319,7 @@ bool webrtc_output::add_av1_track(const media_track& track)
     if (aom_av1_codec_configuration_record_save(&av1, configuration_record.data(), configuration_record.size()) !=
         static_cast<int>(configuration_record.size()))
     {
+        transcoder->shutdown();
         return false;
     }
 
@@ -326,10 +336,12 @@ bool webrtc_output::add_av1_track(const media_track& track)
     if (payload_index < 0)
     {
         spdlog::error("webrtc add av1 payload failed");
+        transcoder->shutdown();
         return false;
     }
     if (!configure_rtcp(payload_index))
     {
+        transcoder->shutdown();
         return false;
     }
 
@@ -338,18 +350,20 @@ bool webrtc_output::add_av1_track(const media_track& track)
     if (media_id < 0)
     {
         spdlog::error("webrtc add av1 media failed");
+        transcoder->shutdown();
         return false;
     }
 
-    tracks_.insert_or_assign(track.id,
-                             track_state{
-                                 .codec = codec_id::av1,
-                                 .transcoder = {},
-                                 .video_transcoder_ = std::move(transcoder),
-                                 .media_id = media_id,
-                                 .payload_id = payload_index,
-                                 .waiting_key_frame = true,
-                             });
+    remove_track(track.id);
+    tracks_.emplace(track.id,
+                    track_state{
+                        .codec = codec_id::av1,
+                        .transcoder = {},
+                        .video_transcoder_ = std::move(transcoder),
+                        .media_id = media_id,
+                        .payload_id = payload_index,
+                        .waiting_key_frame = true,
+                    });
     spdlog::debug("webrtc av1 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
@@ -437,10 +451,18 @@ bool webrtc_output::add_audio_track(const media_track& track)
     if (payload_index < 0)
     {
         spdlog::error("webrtc add audio payload failed");
+        if (transcoder)
+        {
+            transcoder->shutdown();
+        }
         return false;
     }
     if (!configure_rtcp(payload_index))
     {
+        if (transcoder)
+        {
+            transcoder->shutdown();
+        }
         return false;
     }
 
@@ -448,10 +470,15 @@ bool webrtc_output::add_audio_track(const media_track& track)
     if (media_id < 0)
     {
         spdlog::error("webrtc add audio media failed");
+        if (transcoder)
+        {
+            transcoder->shutdown();
+        }
         return false;
     }
 
-    tracks_.insert_or_assign(
+    remove_track(track.id);
+    tracks_.emplace(
         track.id,
         track_state{
             .codec = track.codec,
@@ -465,6 +492,24 @@ bool webrtc_output::add_audio_track(const media_track& track)
     spdlog::debug(
         "webrtc audio output track ready id {} codec {} pt {} clock {}", track.id, to_string(track.codec), config_.audio_payload_type, clock_rate);
     return true;
+}
+
+void webrtc_output::remove_track(track_id id)
+{
+    const auto iterator = tracks_.find(id);
+    if (iterator == tracks_.end())
+    {
+        return;
+    }
+    if (iterator->second.transcoder)
+    {
+        iterator->second.transcoder->shutdown();
+    }
+    if (iterator->second.video_transcoder_)
+    {
+        iterator->second.video_transcoder_->shutdown();
+    }
+    tracks_.erase(iterator);
 }
 
 bool webrtc_output::configure_rtcp(int payload_id)

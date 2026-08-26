@@ -36,6 +36,7 @@ void rtmp_output_session::shutdown()
     reader_tracks_.clear();
     track_revision_ = 0;
     waiting_for_key_frame_ = false;
+    output_muxer_.shutdown();
     stream_.reset();
 }
 

@@ -24,6 +24,7 @@ class flv_output_muxer final
     explicit flv_output_muxer(output_handler handler, output_video_config video = {});
     ~flv_output_muxer();
 
+    void shutdown();
     void on_track(const media_track& track);
     void on_frame(const media_frame& frame);
 

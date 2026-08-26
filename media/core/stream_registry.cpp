@@ -129,7 +129,7 @@ void stream_registry::remove_output_session(std::string_view stream_name, std::s
 
 void stream_registry::clear()
 {
-    // session 析构可能回调 registry，先在锁内摘除，再在锁外释放。
+    // 先在锁内摘除全局引用，再在锁外释放对象，避免在 registry mutex 内执行析构。
     std::map<std::string, stream_entry, std::less<>> streams;
     {
         std::scoped_lock lock(mutex_);

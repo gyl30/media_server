@@ -8,10 +8,11 @@
 #include <arpa/inet.h>
 
 #include <spdlog/spdlog.h>
+
+#include "media/rtsp/rtsp_uri.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_output_tcp_session.h"
-#include "media/rtsp/rtsp_uri.h"
 
 extern "C"
 {
@@ -38,35 +39,27 @@ rtsp_output_tcp_session::rtsp_output_tcp_session(std::weak_ptr<rtsp_server_conne
                                                  std::shared_ptr<media_stream> stream,
                                                  std::string stream_name,
                                                  std::vector<rtsp_output_track_description> tracks,
-                                                 std::shared_ptr<video_transcoder> video_transcoder,
                                                  track_id video_track_id)
     : connection_(std::move(connection)),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
       descriptions_(std::move(tracks)),
-      video_transcoder_(std::move(video_transcoder)),
       video_track_id_(video_track_id)
 {
 }
 
-rtsp_output_tcp_session::~rtsp_output_tcp_session()
-{
-    if (interleaved_.data != nullptr)
-    {
-        std::free(interleaved_.data);
-        interleaved_.data = nullptr;
-    }
-    if (muxer_ != nullptr)
-    {
-        rtsp_muxer_destroy(muxer_);
-    }
-}
+rtsp_output_tcp_session::~rtsp_output_tcp_session() = default;
 
-int rtsp_output_tcp_session::startup(
-    rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
+int rtsp_output_tcp_session::startup(rtsp_server_t* server,
+                                     std::string_view uri,
+                                     std::string_view session,
+                                     const rtsp_header_transport_t transports[],
+                                     std::size_t count,
+                                     std::unique_ptr<video_transcoder>& video_transcoder)
 {
     if (closed_ || !create_muxer())
     {
+        safe_shutdown();
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
     }
     interleaved_.onrtp = &rtsp_output_tcp_session::rtp_callback;
@@ -75,12 +68,14 @@ int rtsp_output_tcp_session::startup(
     const auto result = on_setup(server, uri, session, transports, count);
     if (result != 0 || !std::ranges::any_of(tracks_, [](const auto& item) { return item.second.setup; }))
     {
+        safe_shutdown();
         return result;
     }
 
     const auto connection = connection_.lock();
     if (!connection)
     {
+        safe_shutdown();
         return -1;
     }
 
@@ -102,6 +97,7 @@ int rtsp_output_tcp_session::startup(
     { return self->on_teardown(handler_server, handler_session); };
     handler->on_get_parameter = [](rtsp_server_t* handler_server, const char*, const char*, const void*, int)
     { return rtsp_server_reply_get_parameter(handler_server, 200, nullptr, 0); };
+    video_transcoder_ = std::move(video_transcoder);
     connection->set_handler(std::move(handler));
     return result;
 }
@@ -303,7 +299,11 @@ void rtsp_output_tcp_session::safe_shutdown()
     interleaved_.bytes = 0;
     interleaved_.length = 0;
     interleaved_.state = 0;
-    video_transcoder_.reset();
+    if (video_transcoder_)
+    {
+        video_transcoder_->shutdown();
+        video_transcoder_.reset();
+    }
     video_track_id_ = 0;
     stream_.reset();
     descriptions_.clear();

@@ -82,7 +82,7 @@ struct srtp_transport::context
 
 srtp_transport::srtp_transport() = default;
 
-srtp_transport::~srtp_transport() { shutdown(); }
+srtp_transport::~srtp_transport() = default;
 
 bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
 {

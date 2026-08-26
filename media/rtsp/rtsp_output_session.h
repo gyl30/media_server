@@ -42,7 +42,7 @@ class rtsp_output_session final : public std::enable_shared_from_this<rtsp_outpu
     output_video_config video_config_;
     std::shared_ptr<media_stream> stream_;
     std::vector<rtsp_output_track_description> tracks_;
-    std::shared_ptr<video_transcoder> video_transcoder_;
+    std::unique_ptr<video_transcoder> video_transcoder_;
     track_id video_track_id_{};
     std::string stream_name_;
     bool closed_{};

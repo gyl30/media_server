@@ -21,13 +21,7 @@ http_flv_output::http_flv_output(write_handler on_write, end_handler on_end, out
 {
 }
 
-http_flv_output::~http_flv_output()
-{
-    if (writer_ != nullptr)
-    {
-        flv_writer_destroy(writer_);
-    }
-}
+http_flv_output::~http_flv_output() = default;
 
 void http_flv_output::on_tracks(media_track_snapshot_ptr tracks)
 {
@@ -57,6 +51,22 @@ void http_flv_output::on_read(media_read_batch batch)
 }
 
 void http_flv_output::on_end() { finish(); }
+
+void http_flv_output::shutdown()
+{
+    ended_ = true;
+    on_write_ = {};
+    on_end_ = {};
+    muxer_.shutdown();
+    if (writer_ != nullptr)
+    {
+        flv_writer_destroy(writer_);
+        writer_ = nullptr;
+    }
+    reader_tracks_.clear();
+    batch_ = {};
+    output_buffer_.clear();
+}
 
 void http_flv_output::write_complete(std::uint64_t generation)
 {

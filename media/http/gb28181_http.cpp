@@ -131,20 +131,6 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request, b
     return make_json_response(request, boost::beast::http::status::created, std::move(body));
 }
 
-gb28181_http_response handle_input_delete(const gb28181_http_request& request, std::string_view stream_name)
-{
-    auto session = registry::instance().find_input_session(stream_name);
-    if (!session)
-    {
-        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
-    }
-    session->shutdown();
-
-    boost::json::object body;
-    body["result"] = "ok";
-    return make_json_response(request, boost::beast::http::status::ok, std::move(body));
-}
-
 gb28181_http_response handle_output_create(const gb28181_http_request& request, boost::asio::io_context& owner, gb28181_output_config config)
 {
     const auto stream_name = config.stream_name;
@@ -195,20 +181,6 @@ gb28181_http_response handle_output_create(const gb28181_http_request& request, 
     return make_json_response(request, boost::beast::http::status::created, std::move(body));
 }
 
-gb28181_http_response handle_output_delete(const gb28181_http_request& request, std::string_view stream_name, std::string_view output_id)
-{
-    auto session = registry::instance().find_output_session(stream_name, output_id);
-    if (!session)
-    {
-        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
-    }
-    session->shutdown();
-
-    boost::json::object body;
-    body["result"] = "ok";
-    return make_json_response(request, boost::beast::http::status::ok, std::move(body));
-}
-
 }    // namespace
 
 gb28181_http_response handle_gb28181_input_request(const gb28181_http_request& request,
@@ -240,7 +212,16 @@ gb28181_http_response handle_gb28181_input_request(const gb28181_http_request& r
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    return handle_input_delete(request, *stream_name);
+    auto session = registry::instance().find_input_session(*stream_name);
+    if (!session)
+    {
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+    session->shutdown();
+
+    boost::json::object body;
+    body["result"] = "ok";
+    return make_json_response(request, boost::beast::http::status::ok, std::move(body));
 }
 
 gb28181_http_response handle_gb28181_output_request(const gb28181_http_request& request,
@@ -272,7 +253,16 @@ gb28181_http_response handle_gb28181_output_request(const gb28181_http_request& 
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    return handle_output_delete(request, identity->first, identity->second);
+    auto session = registry::instance().find_output_session(identity->first, identity->second);
+    if (!session)
+    {
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+    session->shutdown();
+
+    boost::json::object body;
+    body["result"] = "ok";
+    return make_json_response(request, boost::beast::http::status::ok, std::move(body));
 }
 
 }    // namespace media_server
