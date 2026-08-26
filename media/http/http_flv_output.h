@@ -27,6 +27,7 @@ class http_flv_output final : public media_reader
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;
     void on_end() override;
+    void shutdown();
     void write_complete(std::uint64_t generation);
 
    private:

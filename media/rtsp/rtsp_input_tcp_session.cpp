@@ -24,14 +24,7 @@ rtsp_input_tcp_session::rtsp_input_tcp_session(std::weak_ptr<rtsp_server_connect
 {
 }
 
-rtsp_input_tcp_session::~rtsp_input_tcp_session()
-{
-    if (interleaved_.data != nullptr)
-    {
-        std::free(interleaved_.data);
-        interleaved_.data = nullptr;
-    }
-}
+rtsp_input_tcp_session::~rtsp_input_tcp_session() = default;
 
 int rtsp_input_tcp_session::startup(
     rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
@@ -46,12 +39,14 @@ int rtsp_input_tcp_session::startup(
     const auto result = on_setup(server, uri, session, transports, count);
     if (result != 0 || !std::ranges::any_of(tracks_, [](const track_state& state) { return state.rtp_channel >= 0; }))
     {
+        safe_shutdown();
         return result;
     }
 
     const auto connection = connection_.lock();
     if (!connection)
     {
+        safe_shutdown();
         return -1;
     }
     const auto self = shared_from_this();

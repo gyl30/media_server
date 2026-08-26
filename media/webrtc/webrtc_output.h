@@ -43,6 +43,7 @@ class webrtc_output final
 
     void on_track(const media_track& track);
     void on_frame(const media_frame& frame);
+    void shutdown();
 
     [[nodiscard]] bool valid() const noexcept;
 
@@ -65,6 +66,7 @@ class webrtc_output final
     bool add_av1_track(const media_track& track);
     bool add_audio_track(const media_track& track);
     bool configure_rtcp(int payload_id);
+    void remove_track(track_id id);
     void emit_rtcp(int payload_id);
     void input_video(track_state& state, const media_frame& frame);
     void input_audio(track_state& state, const media_frame& frame);

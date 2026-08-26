@@ -4,8 +4,8 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
-#include "media/gb28181/gb28181_input_media.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_input_media.h"
 
 extern "C"
 {
@@ -65,16 +65,15 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 
 }    // namespace
 
-gb28181_input_media::gb28181_input_media(
-    boost::asio::any_io_executor executor, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
-    : executor_(std::move(executor)),
-      stream_name_(std::move(stream_name)),
-      payload_type_(payload_type),
-      expected_ssrc_(expected_ssrc)
+gb28181_input_media::gb28181_input_media(boost::asio::any_io_executor executor,
+                                         std::string stream_name,
+                                         std::uint8_t payload_type,
+                                         std::uint32_t expected_ssrc)
+    : executor_(std::move(executor)), stream_name_(std::move(stream_name)), payload_type_(payload_type), expected_ssrc_(expected_ssrc)
 {
 }
 
-gb28181_input_media::~gb28181_input_media() { shutdown(); }
+gb28181_input_media::~gb28181_input_media() = default;
 
 bool gb28181_input_media::startup()
 {

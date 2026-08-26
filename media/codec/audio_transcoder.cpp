@@ -89,7 +89,7 @@ struct audio_transcoder::state
 
 audio_transcoder::audio_transcoder() = default;
 
-audio_transcoder::~audio_transcoder() { shutdown(); }
+audio_transcoder::~audio_transcoder() = default;
 
 bool audio_transcoder::initialize_decoder(const audio_transcoder_config& config)
 {
@@ -285,8 +285,7 @@ void audio_transcoder::shutdown()
 
 bool audio_transcoder::transcode(const media_frame& input, std::vector<media_frame>& output)
 {
-    if (!state_ || !input.payload || input.payload->empty() ||
-        input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    if (!state_ || !input.payload || input.payload->empty() || input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
     {
         return false;
     }
