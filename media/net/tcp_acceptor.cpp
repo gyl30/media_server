@@ -19,7 +19,7 @@ tcp_acceptor::tcp_acceptor(boost::asio::any_io_executor executor,
 
 boost::system::error_code tcp_acceptor::startup(socket_handler handler)
 {
-    if (started_)
+    if (started_ || completed_)
     {
         return boost::asio::error::already_started;
     }
