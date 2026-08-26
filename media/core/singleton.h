@@ -2,7 +2,6 @@
 #define MEDIA_CORE_SINGLETON_H
 
 #include <exception>
-#include <memory>
 #include <utility>
 
 namespace media_server
@@ -15,38 +14,36 @@ class singleton
     ~singleton() = delete;
 
     template <typename... Args>
-    static void init(Args&&... args)
+    static T& init(Args&&... args)
     {
-        auto& value = storage();
-        if (value)
+        if (value_ != nullptr)
         {
             std::terminate();
         }
-        value.reset(new T(std::forward<Args>(args)...));
+        value_ = new T(std::forward<Args>(args)...);
+        return *value_;
     }
 
     static T& instance()
     {
-        auto& value = storage();
-        if (!value)
+        if (value_ == nullptr)
         {
             std::terminate();
         }
-        return *value;
+        return *value_;
     }
 
-    static void destroy() noexcept
+    static void destroy()
     {
-        storage().reset();
+        delete std::exchange(value_, nullptr);
     }
 
    private:
-    static std::unique_ptr<T>& storage()
-    {
-        static std::unique_ptr<T> value;
-        return value;
-    }
+    static T* value_;
 };
+
+template <typename T>
+T* singleton<T>::value_ = nullptr;
 
 }    // namespace media_server
 
