@@ -179,16 +179,19 @@ void test_request_namespace_dispatch()
 
 int main()
 {
+    media_server::registry::init();
     try
     {
         media_server::test_input_handlers();
         media_server::test_output_handlers();
         media_server::test_request_namespace_dispatch();
         std::cout << "[pass] gb28181_http_handlers\n";
+        media_server::registry::destroy();
         return 0;
     }
     catch (const std::exception& error)
     {
+        media_server::registry::destroy();
         std::cerr << "[fail] gb28181_http_handlers: " << error.what() << '\n';
         return 1;
     }

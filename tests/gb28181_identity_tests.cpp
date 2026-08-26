@@ -212,6 +212,7 @@ void test_tcp_timeout_unregisters_output_session()
 
 int main()
 {
+    media_server::registry::init();
     int failures = 0;
     const auto run = [&failures](std::string_view name, auto&& test)
     {
@@ -231,5 +232,6 @@ int main()
     run("output_identity_is_reusable_after_shutdown", media_server::test_output_identity_is_reusable_after_shutdown);
     run("tcp_timeout_unregisters_input_session", media_server::test_tcp_timeout_unregisters_input_session);
     run("tcp_timeout_unregisters_output_session", media_server::test_tcp_timeout_unregisters_output_session);
+    media_server::registry::destroy();
     return failures == 0 ? 0 : 1;
 }

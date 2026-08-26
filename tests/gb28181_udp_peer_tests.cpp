@@ -236,6 +236,7 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
 
 int main()
 {
+    media_server::registry::init();
     try
     {
         media_server::test_ps_fixture_creates_stream();
@@ -244,9 +245,11 @@ int main()
         std::cout << "[pass] signaled_rtp_peer_is_pinned_before_first_packet\n";
         media_server::test_first_valid_rtp_packet_pins_peer_when_unsignaled();
         std::cout << "[pass] first_valid_rtp_packet_pins_peer_when_unsignaled\n";
+        media_server::registry::destroy();
     }
     catch (const std::exception& error)
     {
+        media_server::registry::destroy();
         std::cerr << "[fail] " << error.what() << '\n';
         return 1;
     }
