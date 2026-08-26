@@ -31,12 +31,12 @@ class stream_registry final
     [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view name) const;
 
     bool add_input_session(std::string stream_name, std::shared_ptr<stream_session> session);
-    [[nodiscard]] std::shared_ptr<stream_session> take_input_session(std::string_view stream_name);
-    void remove_input_session(std::string_view stream_name, const stream_session& expected);
+    [[nodiscard]] std::shared_ptr<stream_session> find_input_session(std::string_view stream_name) const;
+    void remove_input_session(std::string_view stream_name);
 
     bool add_output_session(std::string stream_name, std::string output_id, std::shared_ptr<stream_session> session);
-    [[nodiscard]] std::shared_ptr<stream_session> take_output_session(std::string_view stream_name, std::string_view output_id);
-    void remove_output_session(std::string_view stream_name, std::string_view output_id, const stream_session& expected);
+    [[nodiscard]] std::shared_ptr<stream_session> find_output_session(std::string_view stream_name, std::string_view output_id) const;
+    void remove_output_session(std::string_view stream_name, std::string_view output_id);
 
     void clear();
 

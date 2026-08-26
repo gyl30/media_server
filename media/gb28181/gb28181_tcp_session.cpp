@@ -159,7 +159,7 @@ void gb28181_tcp_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    registry::instance().remove_input_session(stream_name_, *this);
+    registry::instance().remove_input_session(stream_name_);
     if (socket_source_)
     {
         socket_source_->shutdown();
