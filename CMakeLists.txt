@@ -176,7 +176,6 @@ add_library(media_core STATIC
     media/gb28181/gb28181_udp_output_session.cpp
     media/gb28181/gb28181_tcp_output_session.cpp
     media/gb28181/gb28181_tcp_session.cpp
-    media/gb28181/gb28181_session_registry.cpp
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
     media/webrtc/stun_message.cpp

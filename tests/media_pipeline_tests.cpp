@@ -26,6 +26,8 @@
 #include <boost/asio/read_until.hpp>
 #include <boost/beast/http/read.hpp>
 #include <boost/beast/http/write.hpp>
+#include <boost/json.hpp>
+#include <boost/url/parse.hpp>
 
 #include "media/hls/hls_output.h"
 #include "media/hls/hls.h"
@@ -2795,46 +2797,52 @@ void test_gb28181_multi_output_identity()
     require(second->set_tracks({make_video_track()}), "gb multi output second tracks");
     require(streams.add(first) && streams.add(second), "gb multi output source registry");
 
-    const gb28181_description description{.transport = gb28181_transport::udp,
-                                          .address = boost::asio::ip::address_v4::loopback(),
-                                          .rtp_port = 29'000,
-                                          .rtcp_port = 29'001,
-                                          .payload_type = 96,
-                                          .ssrc = 100'001'001U};
+    const auto create = [&io](std::string_view stream_name, std::string_view output_id)
+    {
+        boost::json::object body;
+        body["stream_name"] = stream_name;
+        body["output_id"] = output_id;
+        body["transport"] = "udp";
+        body["address"] = "127.0.0.1";
+        body["rtp_port"] = 29'000;
+        body["rtcp_port"] = 29'001;
+        body["payload_type"] = 96;
+        body["ssrc"] = 100'001'001U;
+        body["rtcp"] = false;
 
-    const gb28181_http_request request{boost::beast::http::verb::post, "/play/gb28181/create", 11};
+        gb28181_http_request request{boost::beast::http::verb::post, "/play/gb28181/create", 11};
+        request.set(boost::beast::http::field::content_type, "application/json");
+        request.body() = boost::json::serialize(body);
+        request.prepare_payload();
+        const auto target = boost::urls::parse_origin_form(request.target());
+        require(target.has_value(), "gb multi output create target");
+        return handle_gb28181_output_request(request, io, *target);
+    };
+    const auto remove = [&io](std::string_view stream_name, std::string_view output_id)
+    {
+        boost::json::object body;
+        body["stream_name"] = stream_name;
+        body["output_id"] = output_id;
 
-    require(handle_gb28181_output_create(request, io, gb28181_output_config{.stream_name = first->name(),
-                                                                              .output_id = "a",
-                                                                              .description = description,
-                                                                              .rtcp = false})
-                    .result() == boost::beast::http::status::created,
-            "gb multi output first identity");
-    require(handle_gb28181_output_create(request, io, gb28181_output_config{.stream_name = first->name(),
-                                                                              .output_id = "b",
-                                                                              .description = description,
-                                                                              .rtcp = false})
-                    .result() == boost::beast::http::status::created,
-            "gb multi output second identity");
-    require(handle_gb28181_output_create(request, io, gb28181_output_config{.stream_name = first->name(),
-                                                                              .output_id = "a",
-                                                                              .description = description,
-                                                                              .rtcp = false})
-                    .result() == boost::beast::http::status::internal_server_error,
+        gb28181_http_request request{boost::beast::http::verb::post, "/play/gb28181/delete", 11};
+        request.set(boost::beast::http::field::content_type, "application/json");
+        request.body() = boost::json::serialize(body);
+        request.prepare_payload();
+        const auto target = boost::urls::parse_origin_form(request.target());
+        require(target.has_value(), "gb multi output delete target");
+        return handle_gb28181_output_request(request, io, *target);
+    };
+
+    require(create(first->name(), "a").result() == boost::beast::http::status::created, "gb multi output first identity");
+    require(create(first->name(), "b").result() == boost::beast::http::status::created, "gb multi output second identity");
+    require(create(first->name(), "a").result() == boost::beast::http::status::internal_server_error,
             "gb multi output duplicate identity");
-    require(handle_gb28181_output_create(request, io, gb28181_output_config{.stream_name = second->name(),
-                                                                              .output_id = "a",
-                                                                              .description = description,
-                                                                              .rtcp = false})
-                    .result() == boost::beast::http::status::created,
+    require(create(second->name(), "a").result() == boost::beast::http::status::created,
             "gb multi output identity scoped by stream");
-    require(handle_gb28181_output_delete(request, first->name(), "a").result() == boost::beast::http::status::ok,
-            "gb multi output remove first identity");
-    require(handle_gb28181_output_delete(request, first->name(), "b").result() == boost::beast::http::status::ok,
-            "gb multi output remove second identity");
-    require(handle_gb28181_output_delete(request, second->name(), "a").result() == boost::beast::http::status::ok,
-            "gb multi output remove other stream identity");
-    require(handle_gb28181_output_delete(request, first->name(), "missing").result() == boost::beast::http::status::internal_server_error,
+    require(remove(first->name(), "a").result() == boost::beast::http::status::ok, "gb multi output remove first identity");
+    require(remove(first->name(), "b").result() == boost::beast::http::status::ok, "gb multi output remove second identity");
+    require(remove(second->name(), "a").result() == boost::beast::http::status::ok, "gb multi output remove other stream identity");
+    require(remove(first->name(), "missing").result() == boost::beast::http::status::internal_server_error,
             "gb multi output missing identity");
 
     io.run();

@@ -13,12 +13,12 @@
 #include "media/net/tcp_connection.h"
 #include "media/net/tcp_socket_source.h"
 #include "media/gb28181/gb28181_input_media.h"
-#include "media/gb28181/gb28181_session.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
 
-class gb28181_tcp_session final : public gb28181_session, public std::enable_shared_from_this<gb28181_tcp_session>
+class gb28181_tcp_session final : public stream_session, public std::enable_shared_from_this<gb28181_tcp_session>
 {
    public:
     gb28181_tcp_session(boost::asio::any_io_executor executor,
