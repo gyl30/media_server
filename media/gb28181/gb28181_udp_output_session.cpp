@@ -6,8 +6,8 @@
 #include <boost/asio/post.hpp>
 
 #include "media/net/udp_socket.h"
-#include "media/gb28181/gb28181_output_media.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_output_media.h"
 #include "media/gb28181/gb28181_udp_output_session.h"
 
 extern "C"
@@ -39,8 +39,7 @@ gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_execu
 {
 }
 
-std::optional<gb28181_udp_output_session::udp_socket_pair> gb28181_udp_output_session::prepare_udp_sockets(
-    boost::asio::ip::address bind_address)
+std::optional<gb28181_udp_output_session::udp_socket_pair> gb28181_udp_output_session::prepare_udp_sockets(boost::asio::ip::address bind_address)
 {
     const auto weak = weak_from_this();
     const auto start_socket = [weak, executor = executor_, &bind_address](std::uint16_t port)

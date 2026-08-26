@@ -4,17 +4,16 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 
-#include "media/gb28181/gb28181_tcp_session.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_tcp_session.h"
 
 namespace media_server
 {
-gb28181_tcp_session::gb28181_tcp_session(
-    boost::asio::any_io_executor executor,
-    std::shared_ptr<tcp_socket_source> socket_source,
-    std::string stream_name,
-    std::uint8_t payload_type,
-    std::uint32_t expected_ssrc)
+gb28181_tcp_session::gb28181_tcp_session(boost::asio::any_io_executor executor,
+                                         std::shared_ptr<tcp_socket_source> socket_source,
+                                         std::string stream_name,
+                                         std::uint8_t payload_type,
+                                         std::uint32_t expected_ssrc)
     : executor_(std::move(executor)),
       socket_source_(std::move(socket_source)),
       stream_name_(std::move(stream_name)),

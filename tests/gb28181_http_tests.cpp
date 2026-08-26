@@ -1,17 +1,17 @@
+#include <string>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
-#include <string>
 #include <string_view>
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/udp.hpp>
 #include <boost/json.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "media/core/media_stream.h"
-#include "media/core/stream_registry.h"
 #include "media/http/gb28181_http.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -36,10 +36,7 @@ gb28181_http_request request(std::string target, boost::json::object body)
     return value;
 }
 
-void require_json_response(const gb28181_http_response& response,
-                           boost::beast::http::status status,
-                           std::string_view body,
-                           std::string_view message)
+void require_json_response(const gb28181_http_response& response, boost::beast::http::status status, std::string_view body, std::string_view message)
 {
     require(response.result() == status, message);
     require(response.version() == 11, message);
@@ -100,10 +97,8 @@ void test_input_handlers()
     require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "input create response");
 
     const auto duplicate_response = input_request(io, request("/gb28181/create", create_body));
-    require_json_response(duplicate_response,
-                          boost::beast::http::status::internal_server_error,
-                          R"({"error":"operation_failed"})",
-                          "input create failure response");
+    require_json_response(
+        duplicate_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "input create failure response");
 
     boost::json::object delete_body;
     delete_body["stream_name"] = "live/http-handler-input";
@@ -111,10 +106,8 @@ void test_input_handlers()
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "input delete response");
 
     const auto missing_response = input_request(io, request("/gb28181/delete", delete_body));
-    require_json_response(missing_response,
-                          boost::beast::http::status::internal_server_error,
-                          R"({"error":"operation_failed"})",
-                          "input delete failure response");
+    require_json_response(
+        missing_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "input delete failure response");
     io.run();
     registry::instance().clear();
 }
@@ -142,10 +135,8 @@ void test_output_handlers()
     require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "output create response");
 
     const auto duplicate_response = output_request(io, request("/play/gb28181/create", create_body));
-    require_json_response(duplicate_response,
-                          boost::beast::http::status::internal_server_error,
-                          R"({"error":"operation_failed"})",
-                          "output create failure response");
+    require_json_response(
+        duplicate_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "output create failure response");
 
     boost::json::object delete_body;
     delete_body["stream_name"] = stream->name();
@@ -154,10 +145,8 @@ void test_output_handlers()
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "output delete response");
 
     const auto missing_response = output_request(io, request("/play/gb28181/delete", delete_body));
-    require_json_response(missing_response,
-                          boost::beast::http::status::internal_server_error,
-                          R"({"error":"operation_failed"})",
-                          "output delete failure response");
+    require_json_response(
+        missing_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "output delete failure response");
     io.run();
     registry::instance().clear();
 }

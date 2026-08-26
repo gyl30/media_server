@@ -11,8 +11,8 @@
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/core/media_stream.h"
-#include "media/gb28181/gb28181_types.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_types.h"
 
 namespace media_server
 {
@@ -20,8 +20,7 @@ namespace media_server
 class gb28181_output_media;
 class udp_socket;
 
-class gb28181_udp_output_session final : public stream_session,
-                                         public std::enable_shared_from_this<gb28181_udp_output_session>
+class gb28181_udp_output_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_output_session>
 {
    public:
     gb28181_udp_output_session(boost::asio::any_io_executor executor,

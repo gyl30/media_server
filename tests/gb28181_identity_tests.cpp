@@ -1,23 +1,23 @@
 #include <chrono>
+#include <string>
 #include <cstdint>
+#include <utility>
 #include <iostream>
 #include <stdexcept>
-#include <string>
 #include <string_view>
-#include <utility>
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/json.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/io_context.hpp>
 
+#include "media/net/tcp_acceptor.h"
 #include "media/core/media_stream.h"
+#include "media/http/gb28181_http.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_tcp_output_session.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_tcp_session.h"
-#include "media/http/gb28181_http.h"
-#include "media/net/tcp_acceptor.h"
+#include "media/gb28181/gb28181_tcp_output_session.h"
 
 namespace media_server
 {
@@ -148,9 +148,7 @@ void test_input_identity_is_reusable_after_remove()
     require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input second remove");
     io.run();
     io.restart();
-    require_status(create_input(io, "live/gb-identity", description),
-                   boost::beast::http::status::created,
-                   "gb input reusable after remove");
+    require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input reusable after remove");
     require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input final remove");
     io.run();
     clear_state();
@@ -205,9 +203,7 @@ void test_output_old_async_work_does_not_remove_replacement()
 
     require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output old generation create");
     require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output old generation remove");
-    require_status(create_output(io, *stream, "primary", description),
-                   boost::beast::http::status::created,
-                   "gb output replacement create");
+    require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output replacement create");
 
     io.poll();
     require_status(create_output(io, *stream, "primary", description),
@@ -224,10 +220,7 @@ void test_tcp_timeout_unregisters_input_session()
     boost::asio::io_context io;
     clear_state();
     const std::string stream_name = "live/gb-input-timeout";
-    auto source = std::make_shared<tcp_acceptor>(io.get_executor(),
-                                                 0,
-                                                 boost::asio::ip::address_v4::loopback(),
-                                                 std::chrono::milliseconds(5));
+    auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
     auto session = std::make_shared<gb28181_tcp_session>(io.get_executor(), source, stream_name, 96, 10'000'2005);
     require(registry::instance().add_input_session(stream_name, session), "gb input timeout registry add");
     require(session->startup(), "gb input timeout startup");
@@ -243,17 +236,9 @@ void test_tcp_timeout_unregisters_output_session()
     boost::asio::io_context io;
     clear_state();
     const auto stream = add_video_stream(io, "live/gb-output-timeout");
-    auto source = std::make_shared<tcp_acceptor>(io.get_executor(),
-                                                 0,
-                                                 boost::asio::ip::address_v4::loopback(),
-                                                 std::chrono::milliseconds(5));
-    auto session = std::make_shared<gb28181_tcp_output_session>(io.get_executor(),
-                                                                source,
-                                                                std::weak_ptr<media_stream>{stream},
-                                                                stream->name(),
-                                                                "timeout",
-                                                                96,
-                                                                10'000'2006);
+    auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
+    auto session = std::make_shared<gb28181_tcp_output_session>(
+        io.get_executor(), source, std::weak_ptr<media_stream>{stream}, stream->name(), "timeout", 96, 10'000'2006);
     require(registry::instance().add_output_session(stream->name(), "timeout", session), "gb output timeout registry add");
     require(session->startup(), "gb output timeout startup");
     io.run();
