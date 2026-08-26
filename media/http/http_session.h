@@ -1,22 +1,14 @@
 #ifndef MEDIA_HTTP_HTTP_SESSION_H
 #define MEDIA_HTTP_HTTP_SESSION_H
 
-#include <array>
-#include <chrono>
 #include <memory>
-#include <span>
 #include <string>
-#include <vector>
-#include <cstdint>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/url/url_view.hpp>
-#include <boost/asio/steady_timer.hpp>
 
 #include "config.h"
-#include "media/http/http_flv_output.h"
 
 namespace media_server
 {
@@ -36,41 +28,19 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void read_request();
     void on_request(boost::system::error_code error, std::size_t bytes);
     void handle_request();
-    void handle_flv(const boost::urls::url_view& target);
-    void handle_hls(const boost::urls::url_view& target);
-    void wait_hls_playlist(std::string stream_name);
-    void check_hls_playlist();
-
     void write_response(boost::beast::http::response<boost::beast::http::string_body> response);
     void write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response);
-    void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
-    void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
-    void startup_flv(std::shared_ptr<media_stream> stream);
-    void read_flv_client();
-    void enqueue_flv(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
-    void write_flv(std::uint64_t generation, std::vector<std::uint8_t> data);
-    void on_flv_write(std::uint64_t generation, boost::system::error_code error);
-    void detach_flv();
+    void send_text_response(boost::beast::http::status status,
+                            std::string_view content_type,
+                            std::string body,
+                            std::string_view allow = {});
     void safe_shutdown();
-
-    [[nodiscard]] static std::vector<std::string> path_segments(const boost::urls::url_view& target);
-    [[nodiscard]] static std::string join_segments(std::span<const std::string> segments, std::size_t begin, std::size_t end);
 
     boost::beast::tcp_stream stream_;
     boost::beast::flat_buffer buffer_;
     boost::beast::http::request<boost::beast::http::string_body> request_;
     io_context_pool& workers_;
     const config& config_;
-    boost::asio::steady_timer hls_wait_timer_;
-    std::chrono::steady_clock::time_point hls_wait_deadline_{};
-    std::string hls_wait_stream_name_;
-    std::shared_ptr<http_flv_output> flv_output_;
-    media_reader_handle flv_reader_;
-    std::vector<std::uint8_t> pending_flv_bootstrap_;
-    std::array<std::uint8_t, 1> flv_read_buffer_{};
-    std::uint64_t pending_flv_generation_{};
-    bool pending_flv_bootstrap_ready_{};
-    bool flv_write_in_progress_{};
     bool closed_{};
 };
 }    // namespace media_server

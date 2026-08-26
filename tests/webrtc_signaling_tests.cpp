@@ -990,12 +990,18 @@ void test_http_method_contract()
     const auto hls_post = peer.request(boost::beast::http::verb::post, "/play/hls/live/camera/index.m3u8");
     require(hls_post.result() == boost::beast::http::status::method_not_allowed, "http hls post status");
     require(hls_post[boost::beast::http::field::allow] == "GET", "http hls post allow");
+    const auto hls_missing = peer.request(boost::beast::http::verb::get, "/play/hls/live/missing/index.m3u8");
+    require(hls_missing.result() == boost::beast::http::status::not_found && hls_missing.body() == "stream not found\n",
+            "http hls handoff missing stream");
     const auto old_hls = peer.request(boost::beast::http::verb::get, "/hls/live/camera/index.m3u8");
     require(old_hls.result() == boost::beast::http::status::not_found, "http old hls route status");
 
     const auto flv_post = peer.request(boost::beast::http::verb::post, "/live/camera.flv");
     require(flv_post.result() == boost::beast::http::status::method_not_allowed, "http flv post status");
     require(flv_post[boost::beast::http::field::allow] == "GET", "http flv post allow");
+    const auto flv_missing = peer.request(boost::beast::http::verb::get, "/live/missing.flv");
+    require(flv_missing.result() == boost::beast::http::status::not_found && flv_missing.body() == "stream not found\n",
+            "http flv handoff missing stream");
 
     const auto hls_head = peer.request(boost::beast::http::verb::head, "/play/hls/live/camera/index.m3u8");
     require(hls_head.result() == boost::beast::http::status::method_not_allowed, "http hls head status");
