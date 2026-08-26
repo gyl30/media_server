@@ -11,9 +11,9 @@
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/tcp_connection.h"
+#include "media/core/stream_registry.h"
 #include "media/net/tcp_socket_source.h"
 #include "media/gb28181/gb28181_input_media.h"
-#include "media/core/stream_registry.h"
 
 namespace media_server
 {

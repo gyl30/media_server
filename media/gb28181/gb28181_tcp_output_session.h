@@ -1,8 +1,8 @@
 #ifndef MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
 #define MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
 
-#include <memory>
 #include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -19,8 +19,7 @@ namespace media_server
 class gb28181_output_media;
 class tcp_connection;
 
-class gb28181_tcp_output_session final : public stream_session,
-                                         public std::enable_shared_from_this<gb28181_tcp_output_session>
+class gb28181_tcp_output_session final : public stream_session, public std::enable_shared_from_this<gb28181_tcp_output_session>
 {
    public:
     gb28181_tcp_output_session(boost::asio::any_io_executor executor,

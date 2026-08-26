@@ -4,9 +4,9 @@
 #include <array>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
 #include <cstdint>
+#include <string_view>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -24,9 +24,7 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    http_flv_session(boost::beast::tcp_stream stream,
-                     request_type request,
-                     const config& config);
+    http_flv_session(boost::beast::tcp_stream stream, request_type request, const config& config);
 
     void startup();
     void shutdown();
@@ -34,10 +32,7 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
    private:
     void handle_request();
     void write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response);
-    void send_text_response(boost::beast::http::status status,
-                            std::string_view content_type,
-                            std::string body,
-                            std::string_view allow = {});
+    void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
     void startup_flv(std::shared_ptr<media_stream> stream);
     void read_client();
     void enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);

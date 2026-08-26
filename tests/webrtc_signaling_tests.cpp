@@ -17,6 +17,7 @@
 #include <openssl/ssl.h>
 #include <openssl/hmac.h>
 #include <openssl/srtp.h>
+#include <boost/url/parse.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/asio/buffer.hpp>
@@ -26,19 +27,18 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/asio/executor_work_guard.hpp>
-#include <boost/url/parse.hpp>
 
 #include "media/hls/hls.h"
+#include "media/webrtc/whep.h"
+#include "media/http/whep_http.h"
 #include "media/core/media_stream.h"
 #include "media/http/http_session.h"
-#include "media/http/whep_http.h"
 #include "media/webrtc/webrtc_sdp.h"
+#include "media/net/io_context_pool.h"
 #include "media/webrtc/stun_message.h"
-#include "media/webrtc/whep.h"
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/srtp_transport.h"
-#include "media/net/io_context_pool.h"
 #include "media/webrtc/dtls_certificate.h"
 
 extern "C"
@@ -833,10 +833,7 @@ media_frame make_video_key_frame(codec_id codec)
 class whep_http_test_peer final
 {
    public:
-    whep_http_test_peer()
-        : work_(boost::asio::make_work_guard(io_)),
-          workers_(1),
-          acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
+    whep_http_test_peer() : work_(boost::asio::make_work_guard(io_)), workers_(1), acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
     {
         streams_.clear();
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
@@ -847,11 +844,7 @@ class whep_http_test_peer final
 
     ~whep_http_test_peer()
     {
-        boost::asio::post(io_,
-                          [this]()
-                          {
-                              work_.reset();
-        });
+        boost::asio::post(io_, [this]() { work_.reset(); });
         runner_.join();
         hls::shutdown();
     }
@@ -2112,7 +2105,8 @@ void test_whep_session_lifecycle()
     const auto video_ice_offset = missing_ice_offer.find(video_ice_ufrag);
     require(video_ice_offset != std::string::npos, "whep invalid offer ice attribute");
     missing_ice_offer.erase(video_ice_offset, video_ice_ufrag.size());
-    require(whep::create(io.get_executor(), "live/test", missing_ice_offer, application_config).error == whep::create_error::invalid_offer, "whep semantic invalid offer");
+    require(whep::create(io.get_executor(), "live/test", missing_ice_offer, application_config).error == whep::create_error::invalid_offer,
+            "whep semantic invalid offer");
 
     const auto first = whep::create(io.get_executor(), "live/test", webrtc_offer_sdp, application_config);
     const auto second = whep::create(io.get_executor(), "live/test", webrtc_offer_sdp, application_config);

@@ -1,20 +1,19 @@
-#include <csignal>
 #include <memory>
+#include <csignal>
 #include <utility>
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
 
 #include "service.h"
-
-#include "media/core/log.h"
-#include "media/core/stream_registry.h"
 #include "media/hls/hls.h"
+#include "media/core/log.h"
 #include "media/http/http_server.h"
-#include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_server.h"
-#include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_server.h"
+#include "media/net/io_context_pool.h"
+#include "media/core/stream_registry.h"
+#include "media/rtsp/rtsp_pull_session.h"
 
 namespace media_server
 {
@@ -23,10 +22,7 @@ service::service(config cfg) : config_(std::move(cfg)) {}
 
 service::~service() = default;
 
-void service::stop()
-{
-    workers_->stop();
-}
+void service::stop() { workers_->stop(); }
 
 int service::run()
 {

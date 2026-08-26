@@ -96,9 +96,7 @@ void stream_registry::remove_input_session(std::string_view stream_name, const s
     }
 }
 
-bool stream_registry::add_output_session(std::string stream_name,
-                                         std::string output_id,
-                                         std::shared_ptr<stream_session> session)
+bool stream_registry::add_output_session(std::string stream_name, std::string output_id, std::shared_ptr<stream_session> session)
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = streams_.try_emplace(std::move(stream_name)).first;
@@ -130,9 +128,7 @@ std::shared_ptr<stream_session> stream_registry::take_output_session(std::string
     return session;
 }
 
-void stream_registry::remove_output_session(std::string_view stream_name,
-                                            std::string_view output_id,
-                                            const stream_session& expected)
+void stream_registry::remove_output_session(std::string_view stream_name, std::string_view output_id, const stream_session& expected)
 {
     std::shared_ptr<stream_session> removed;
     {
@@ -166,9 +162,6 @@ void stream_registry::clear()
     }
 }
 
-bool stream_registry::empty(const stream_entry& entry)
-{
-    return !entry.stream && !entry.input_session && entry.output_sessions.empty();
-}
+bool stream_registry::empty(const stream_entry& entry) { return !entry.stream && !entry.input_session && entry.output_sessions.empty(); }
 
 }    // namespace media_server

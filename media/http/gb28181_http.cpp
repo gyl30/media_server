@@ -1,22 +1,22 @@
 #include <chrono>
 #include <memory>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
+#include <optional>
+#include <string_view>
 
 #include <boost/json.hpp>
 
-#include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_output_media.h"
-#include "media/gb28181/gb28181_tcp_output_session.h"
-#include "media/gb28181/gb28181_tcp_session.h"
-#include "media/gb28181/gb28181_udp_output_session.h"
-#include "media/gb28181/gb28181_udp_session.h"
+#include "media/net/tcp_acceptor.h"
 #include "media/http/gb28181_http.h"
 #include "media/http/gb28181_json.h"
-#include "media/net/tcp_acceptor.h"
 #include "media/net/tcp_connector.h"
+#include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_tcp_session.h"
+#include "media/gb28181/gb28181_udp_session.h"
+#include "media/gb28181/gb28181_output_media.h"
+#include "media/gb28181/gb28181_tcp_output_session.h"
+#include "media/gb28181/gb28181_udp_output_session.h"
 
 namespace media_server
 {
@@ -29,16 +29,14 @@ std::shared_ptr<tcp_socket_source> create_tcp_socket_source(boost::asio::io_cont
 {
     if (description.transport == gb28181_transport::tcp_active)
     {
-        return std::make_shared<tcp_connector>(owner.get_executor(),
-                                                boost::asio::ip::tcp::endpoint{description.address, description.rtp_port},
-                                                tcp_establishment_timeout);
+        return std::make_shared<tcp_connector>(
+            owner.get_executor(), boost::asio::ip::tcp::endpoint{description.address, description.rtp_port}, tcp_establishment_timeout);
     }
-    return std::make_shared<tcp_acceptor>(
-        owner.get_executor(),
-        description.rtp_port,
-        description.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
-                                    : boost::asio::ip::address{boost::asio::ip::address_v6::any()},
-        tcp_establishment_timeout);
+    return std::make_shared<tcp_acceptor>(owner.get_executor(),
+                                          description.rtp_port,
+                                          description.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
+                                                                      : boost::asio::ip::address{boost::asio::ip::address_v6::any()},
+                                          tcp_establishment_timeout);
 }
 
 gb28181_http_response make_json_response(const gb28181_http_request& request,
@@ -60,9 +58,9 @@ gb28181_http_response make_json_response(const gb28181_http_request& request,
 }
 
 gb28181_http_response make_error_response(const gb28181_http_request& request,
-                                           boost::beast::http::status status,
-                                           std::string_view error,
-                                           std::string_view allow = {})
+                                          boost::beast::http::status status,
+                                          std::string_view error,
+                                          std::string_view allow = {})
 {
     boost::json::object body;
     body["error"] = error;
@@ -86,9 +84,7 @@ std::optional<gb28181_http_response> validate_request(const gb28181_http_request
     return std::nullopt;
 }
 
-gb28181_http_response handle_input_create(const gb28181_http_request& request,
-                                           boost::asio::io_context& owner,
-                                           gb28181_input_config config)
+gb28181_http_response handle_input_create(const gb28181_http_request& request, boost::asio::io_context& owner, gb28181_input_config config)
 {
     const auto stream_name = config.stream_name;
     auto& streams = registry::instance();
@@ -118,11 +114,8 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request,
     else
     {
         auto source = create_tcp_socket_source(owner, config.description);
-        auto session = std::make_shared<gb28181_tcp_session>(owner.get_executor(),
-                                                             std::move(source),
-                                                             stream_name,
-                                                             config.description.payload_type,
-                                                             config.description.ssrc);
+        auto session = std::make_shared<gb28181_tcp_session>(
+            owner.get_executor(), std::move(source), stream_name, config.description.payload_type, config.description.ssrc);
         if (!streams.add_input_session(stream_name, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -154,9 +147,7 @@ gb28181_http_response handle_input_delete(const gb28181_http_request& request, s
     return make_json_response(request, boost::beast::http::status::ok, std::move(body));
 }
 
-gb28181_http_response handle_output_create(const gb28181_http_request& request,
-                                            boost::asio::io_context& owner,
-                                            gb28181_output_config config)
+gb28181_http_response handle_output_create(const gb28181_http_request& request, boost::asio::io_context& owner, gb28181_output_config config)
 {
     const auto stream_name = config.stream_name;
     const auto output_id = config.output_id;
@@ -169,8 +160,7 @@ gb28181_http_response handle_output_create(const gb28181_http_request& request,
 
     if (config.description.transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_output_session>(
-            owner.get_executor(), stream, config.description, output_id, config.rtcp);
+        auto session = std::make_shared<gb28181_udp_output_session>(owner.get_executor(), stream, config.description, output_id, config.rtcp);
         if (!streams.add_output_session(stream_name, output_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -209,9 +199,7 @@ gb28181_http_response handle_output_create(const gb28181_http_request& request,
     return make_json_response(request, boost::beast::http::status::created, std::move(body));
 }
 
-gb28181_http_response handle_output_delete(const gb28181_http_request& request,
-                                            std::string_view stream_name,
-                                            std::string_view output_id)
+gb28181_http_response handle_output_delete(const gb28181_http_request& request, std::string_view stream_name, std::string_view output_id)
 {
     auto session = registry::instance().take_output_session(stream_name, output_id);
     if (!session)
