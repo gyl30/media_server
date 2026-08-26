@@ -15,6 +15,7 @@
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/udp_socket.h"
+#include "media/net/port_manager.h"
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
 #include "media/webrtc/webrtc_sdp.h"
@@ -100,6 +101,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     boost::asio::steady_timer establishment_timer_;
     boost::asio::steady_timer ice_activity_timer_;
     std::optional<boost::asio::ip::udp::endpoint> remote_endpoint_;
+    std::uint16_t local_port_reservation_{};
     std::string id_;
     std::string ice_ufrag_;
     std::string ice_pwd_;
