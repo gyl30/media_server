@@ -1,24 +1,18 @@
-#include <charconv>
 #include <chrono>
 #include <utility>
+#include <charconv>
 
 #include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
 
-#include "media/http/hls_http_session.h"
-
 #include "media/hls/hls.h"
+#include "media/http/hls_http_session.h"
 
 namespace media_server
 {
 
-hls_http_session::hls_http_session(boost::beast::tcp_stream stream,
-                                   request_type request,
-                                   const config& config)
-    : stream_(std::move(stream)),
-      request_(std::move(request)),
-      config_(config),
-      wait_timer_(stream_.get_executor())
+hls_http_session::hls_http_session(boost::beast::tcp_stream stream, request_type request, const config& config)
+    : stream_(std::move(stream)), request_(std::move(request)), config_(config), wait_timer_(stream_.get_executor())
 {
 }
 
@@ -177,43 +171,37 @@ void hls_http_session::check_playlist()
         });
 }
 
-void hls_http_session::write_string_response(
-    std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
+void hls_http_session::write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
 {
     const auto self = shared_from_this();
     if (request_.method() == boost::beast::http::verb::head)
     {
         auto serializer = std::make_shared<boost::beast::http::response_serializer<boost::beast::http::string_body>>(*response);
-        boost::beast::http::async_write_header(
-            stream_,
-            *serializer,
-            [self, response, serializer](boost::system::error_code error, std::size_t bytes)
-            {
-                static_cast<void>(response);
-                static_cast<void>(serializer);
-                static_cast<void>(error);
-                static_cast<void>(bytes);
-                self->shutdown();
-            });
+        boost::beast::http::async_write_header(stream_,
+                                               *serializer,
+                                               [self, response, serializer](boost::system::error_code error, std::size_t bytes)
+                                               {
+                                                   static_cast<void>(response);
+                                                   static_cast<void>(serializer);
+                                                   static_cast<void>(error);
+                                                   static_cast<void>(bytes);
+                                                   self->shutdown();
+                                               });
         return;
     }
 
-    boost::beast::http::async_write(
-        stream_,
-        *response,
-        [self, response](boost::system::error_code error, std::size_t bytes)
-        {
-            static_cast<void>(response);
-            static_cast<void>(error);
-            static_cast<void>(bytes);
-            self->shutdown();
-        });
+    boost::beast::http::async_write(stream_,
+                                    *response,
+                                    [self, response](boost::system::error_code error, std::size_t bytes)
+                                    {
+                                        static_cast<void>(response);
+                                        static_cast<void>(error);
+                                        static_cast<void>(bytes);
+                                        self->shutdown();
+                                    });
 }
 
-void hls_http_session::send_text_response(boost::beast::http::status status,
-                                          std::string_view content_type,
-                                          std::string body,
-                                          std::string_view allow)
+void hls_http_session::send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
@@ -229,9 +217,7 @@ void hls_http_session::send_text_response(boost::beast::http::status status,
     write_string_response(std::move(response));
 }
 
-void hls_http_session::send_binary_response(boost::beast::http::status status,
-                                            std::string_view content_type,
-                                            std::vector<std::uint8_t> body)
+void hls_http_session::send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::vector_body<std::uint8_t>>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
@@ -241,16 +227,15 @@ void hls_http_session::send_binary_response(boost::beast::http::status status,
     response->prepare_payload();
 
     const auto self = shared_from_this();
-    boost::beast::http::async_write(
-        stream_,
-        *response,
-        [self, response](boost::system::error_code error, std::size_t bytes)
-        {
-            static_cast<void>(response);
-            static_cast<void>(error);
-            static_cast<void>(bytes);
-            self->shutdown();
-        });
+    boost::beast::http::async_write(stream_,
+                                    *response,
+                                    [self, response](boost::system::error_code error, std::size_t bytes)
+                                    {
+                                        static_cast<void>(response);
+                                        static_cast<void>(error);
+                                        static_cast<void>(bytes);
+                                        self->shutdown();
+                                    });
 }
 
 void hls_http_session::shutdown()

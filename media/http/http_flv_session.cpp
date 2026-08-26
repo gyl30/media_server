@@ -1,21 +1,18 @@
 #include <utility>
 
 #include <boost/asio/post.hpp>
+#include <boost/url/parse.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
-#include <boost/url/parse.hpp>
-
-#include "media/http/http_flv_session.h"
 
 #include "media/core/stream_registry.h"
 #include "media/http/http_flv_output.h"
+#include "media/http/http_flv_session.h"
 
 namespace media_server
 {
 
-http_flv_session::http_flv_session(boost::beast::tcp_stream stream,
-                                   request_type request,
-                                   const config& config)
+http_flv_session::http_flv_session(boost::beast::tcp_stream stream, request_type request, const config& config)
     : stream_(std::move(stream)), request_(std::move(request)), config_(config)
 {
 }
@@ -88,43 +85,37 @@ void http_flv_session::handle_request()
         });
 }
 
-void http_flv_session::write_string_response(
-    std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
+void http_flv_session::write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
 {
     const auto self = shared_from_this();
     if (request_.method() == boost::beast::http::verb::head)
     {
         auto serializer = std::make_shared<boost::beast::http::response_serializer<boost::beast::http::string_body>>(*response);
-        boost::beast::http::async_write_header(
-            stream_,
-            *serializer,
-            [self, response, serializer](boost::system::error_code error, std::size_t bytes)
-            {
-                static_cast<void>(response);
-                static_cast<void>(serializer);
-                static_cast<void>(error);
-                static_cast<void>(bytes);
-                self->shutdown();
-            });
+        boost::beast::http::async_write_header(stream_,
+                                               *serializer,
+                                               [self, response, serializer](boost::system::error_code error, std::size_t bytes)
+                                               {
+                                                   static_cast<void>(response);
+                                                   static_cast<void>(serializer);
+                                                   static_cast<void>(error);
+                                                   static_cast<void>(bytes);
+                                                   self->shutdown();
+                                               });
         return;
     }
 
-    boost::beast::http::async_write(
-        stream_,
-        *response,
-        [self, response](boost::system::error_code error, std::size_t bytes)
-        {
-            static_cast<void>(response);
-            static_cast<void>(error);
-            static_cast<void>(bytes);
-            self->shutdown();
-        });
+    boost::beast::http::async_write(stream_,
+                                    *response,
+                                    [self, response](boost::system::error_code error, std::size_t bytes)
+                                    {
+                                        static_cast<void>(response);
+                                        static_cast<void>(error);
+                                        static_cast<void>(bytes);
+                                        self->shutdown();
+                                    });
 }
 
-void http_flv_session::send_text_response(boost::beast::http::status status,
-                                          std::string_view content_type,
-                                          std::string body,
-                                          std::string_view allow)
+void http_flv_session::send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
@@ -177,18 +168,17 @@ void http_flv_session::read_client()
     }
 
     const auto self = shared_from_this();
-    stream_.async_read_some(
-        boost::asio::buffer(read_buffer_),
-        [self](boost::system::error_code error, std::size_t bytes)
-        {
-            static_cast<void>(bytes);
-            if (error)
-            {
-                self->shutdown();
-                return;
-            }
-            self->read_client();
-        });
+    stream_.async_read_some(boost::asio::buffer(read_buffer_),
+                            [self](boost::system::error_code error, std::size_t bytes)
+                            {
+                                static_cast<void>(bytes);
+                                if (error)
+                                {
+                                    self->shutdown();
+                                    return;
+                                }
+                                self->read_client();
+                            });
 }
 
 void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -226,15 +216,14 @@ void http_flv_session::write_chunk(std::uint64_t generation, std::vector<std::ui
     const auto chunk = std::make_shared<decltype(boost::beast::http::make_chunk(boost::asio::buffer(*buffer)))>(
         boost::beast::http::make_chunk(boost::asio::buffer(*buffer)));
     const auto self = shared_from_this();
-    boost::asio::async_write(
-        stream_,
-        *chunk,
-        [self, buffer, chunk, generation](boost::system::error_code error, std::size_t bytes)
-        {
-            static_cast<void>(buffer);
-            static_cast<void>(bytes);
-            self->on_write(generation, error);
-        });
+    boost::asio::async_write(stream_,
+                             *chunk,
+                             [self, buffer, chunk, generation](boost::system::error_code error, std::size_t bytes)
+                             {
+                                 static_cast<void>(buffer);
+                                 static_cast<void>(bytes);
+                                 self->on_write(generation, error);
+                             });
 }
 
 void http_flv_session::on_write(std::uint64_t generation, boost::system::error_code error)

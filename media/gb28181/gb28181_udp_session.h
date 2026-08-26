@@ -12,9 +12,9 @@
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/udp_socket.h"
+#include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_input_media.h"
-#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -28,10 +28,7 @@ struct gb28181_udp_peer
 class gb28181_udp_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_session>
 {
    public:
-    gb28181_udp_session(boost::asio::any_io_executor executor,
-                        std::string stream_name,
-                        gb28181_description description,
-                        gb28181_udp_peer peer);
+    gb28181_udp_session(boost::asio::any_io_executor executor, std::string stream_name, gb28181_description description, gb28181_udp_peer peer);
 
     [[nodiscard]] bool startup();
     void shutdown() override;

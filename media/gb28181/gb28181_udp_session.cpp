@@ -6,14 +6,16 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 
-#include "media/gb28181/gb28181_udp_session.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_udp_session.h"
 
 namespace media_server
 {
 
-gb28181_udp_session::gb28181_udp_session(
-    boost::asio::any_io_executor executor, std::string stream_name, gb28181_description description, gb28181_udp_peer peer)
+gb28181_udp_session::gb28181_udp_session(boost::asio::any_io_executor executor,
+                                         std::string stream_name,
+                                         gb28181_description description,
+                                         gb28181_udp_peer peer)
     : executor_(executor),
       description_(std::move(description)),
       peer_(std::move(peer)),
@@ -24,8 +26,7 @@ gb28181_udp_session::gb28181_udp_session(
 
 bool gb28181_udp_session::startup()
 {
-    if (closed_ || description_.transport != gb28181_transport::udp || rtp_socket_ || rtcp_socket_ || peer_.rtcp_port == 0 ||
-        !media_.startup())
+    if (closed_ || description_.transport != gb28181_transport::udp || rtp_socket_ || rtcp_socket_ || peer_.rtcp_port == 0 || !media_.startup())
     {
         return false;
     }
