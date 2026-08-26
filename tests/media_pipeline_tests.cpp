@@ -35,6 +35,7 @@
 #include "media/rtsp/rtsp_uri.h"
 #include "media/hls/hls_output.h"
 #include "media/net/udp_socket.h"
+#include "media/net/port_manager.h"
 #include "media/core/media_sink.h"
 #include "media/net/tcp_listener.h"
 #include "media/rtmp/rtmp_server.h"
@@ -9405,6 +9406,7 @@ void test_webrtc_opus_packetizer()
 
 int main()
 {
+    media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::registry::init();
     media_server::test_timebase_conversions();
     std::cout << "[pass] timebase_conversions\n";
@@ -9640,5 +9642,6 @@ int main()
     std::cout << "[pass] webrtc_rtcp_sender\n";
     std::cout << "all tests passed\n";
     media_server::registry::destroy();
+    media_server::port_manager::destroy();
     return 0;
 }

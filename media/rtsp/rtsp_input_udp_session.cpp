@@ -1,4 +1,5 @@
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <utility>
 #include <algorithm>
@@ -118,12 +119,14 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
                                                                                                    boost::asio::any_io_executor executor)
 {
     const auto self = shared_from_this();
-    for (std::uint32_t port = 49'152; port <= 65'534; port += 2U)
+    std::vector<port_manager_impl::port_pair> failed_reservations;
+    while (const auto reserved = port_manager::instance().acquire_pair())
     {
+        const auto local_ports = *reserved;
         auto candidate_rtp = std::make_shared<udp_socket>(executor);
         if (!candidate_rtp->startup(
                 boost::asio::ip::address_v4::any(),
-                static_cast<std::uint16_t>(port),
+                local_ports.first,
                 [self, track_index](
                     boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
                 {
@@ -142,13 +145,14 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
                     }
                 }))
         {
+            failed_reservations.push_back(local_ports);
             continue;
         }
 
         auto candidate_rtcp = std::make_shared<udp_socket>(executor);
         if (!candidate_rtcp->startup(
                 boost::asio::ip::address_v4::any(),
-                static_cast<std::uint16_t>(port + 1U),
+                local_ports.second,
                 [self, track_index](
                     boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
                 {
@@ -167,10 +171,30 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
                     }
                 }))
         {
-            candidate_rtp->shutdown();
-            continue;
+            auto remaining = std::make_shared<std::atomic_uint8_t>(1);
+            candidate_rtp->shutdown(
+                [local_ports, remaining]
+                {
+                    if (remaining->fetch_sub(1U, std::memory_order_acq_rel) == 1U)
+                    {
+                        port_manager::instance().release(local_ports);
+                    }
+                });
+            for (const auto failed : failed_reservations)
+            {
+                port_manager::instance().release(failed);
+            }
+            return std::nullopt;
         }
-        return udp_socket_pair{.rtp = std::move(candidate_rtp), .rtcp = std::move(candidate_rtcp)};
+        for (const auto failed : failed_reservations)
+        {
+            port_manager::instance().release(failed);
+        }
+        return udp_socket_pair{.rtp = std::move(candidate_rtp), .rtcp = std::move(candidate_rtcp), .local_ports = local_ports};
+    }
+    for (const auto failed : failed_reservations)
+    {
+        port_manager::instance().release(failed);
     }
     return std::nullopt;
 }
@@ -233,6 +257,7 @@ int rtsp_input_udp_session::on_setup(
     auto& state = tracks_[selected_index];
     state.rtp_socket = std::move(sockets->rtp);
     state.rtcp_socket = std::move(sockets->rtcp);
+    state.local_ports = sockets->local_ports;
     state.rtp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport->rtp.u.client_port1);
     state.rtcp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport->rtp.u.client_port2);
 
@@ -313,13 +338,33 @@ void rtsp_input_udp_session::safe_shutdown()
     media_.shutdown();
     for (auto& state : tracks_)
     {
-        if (state.rtp_socket)
+        if (state.local_ports)
         {
-            state.rtp_socket->shutdown();
-        }
-        if (state.rtcp_socket)
-        {
-            state.rtcp_socket->shutdown();
+            const auto local_ports = *state.local_ports;
+            auto remaining = std::make_shared<std::atomic_uint8_t>(2);
+            const auto release = [local_ports, remaining]
+            {
+                if (remaining->fetch_sub(1U, std::memory_order_acq_rel) == 1U)
+                {
+                    port_manager::instance().release(local_ports);
+                }
+            };
+            if (state.rtp_socket)
+            {
+                state.rtp_socket->shutdown(release);
+            }
+            else
+            {
+                release();
+            }
+            if (state.rtcp_socket)
+            {
+                state.rtcp_socket->shutdown(release);
+            }
+            else
+            {
+                release();
+            }
         }
         state = {};
     }
