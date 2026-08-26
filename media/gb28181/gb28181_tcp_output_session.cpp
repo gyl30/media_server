@@ -7,7 +7,7 @@
 
 #include "media/net/tcp_connection.h"
 #include "media/gb28181/gb28181_output_media.h"
-#include "media/gb28181/gb28181_session_registry.h"
+#include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_tcp_output_session.h"
 
 namespace media_server
@@ -52,6 +52,7 @@ bool gb28181_tcp_output_session::startup()
     if (error)
     {
         spdlog::error("gb28181 tcp output source startup failed stream {} output {} error {}", stream_name_, output_id_, error.message());
+        shutdown();
         return false;
     }
     return true;
@@ -174,7 +175,7 @@ void gb28181_tcp_output_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    gb28181_session_registry::instance().remove_output(stream_name_, output_id_, *this);
+    registry::instance().remove_output_session(stream_name_, output_id_, *this);
     if (socket_source_)
     {
         socket_source_->shutdown();

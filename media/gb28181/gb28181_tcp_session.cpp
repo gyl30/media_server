@@ -5,7 +5,7 @@
 #include <boost/asio/post.hpp>
 
 #include "media/gb28181/gb28181_tcp_session.h"
-#include "media/gb28181/gb28181_session_registry.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -44,6 +44,7 @@ bool gb28181_tcp_session::startup()
     if (error)
     {
         spdlog::error("gb28181 tcp source startup failed stream {} error {}", stream_name_, error.message());
+        shutdown();
         return false;
     }
     return true;
@@ -159,7 +160,7 @@ void gb28181_tcp_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    gb28181_session_registry::instance().remove_input(stream_name_, *this);
+    registry::instance().remove_input_session(stream_name_, *this);
     if (socket_source_)
     {
         socket_source_->shutdown();
