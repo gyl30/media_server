@@ -13,6 +13,7 @@
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
+#include "media/net/port_manager.h"
 
 namespace media_server
 {
@@ -37,9 +38,11 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     {
         std::shared_ptr<udp_socket> rtp;
         std::shared_ptr<udp_socket> rtcp;
+        port_manager_impl::port_pair local_ports;
     };
 
     [[nodiscard]] std::optional<udp_socket_pair> prepare_udp_sockets(boost::asio::ip::address bind_address);
+    void shutdown_udp_sockets();
     void send_packet(std::vector<std::uint8_t> packet);
     void wait_rtcp();
     void safe_shutdown();
@@ -54,6 +57,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     boost::asio::steady_timer rtcp_timer_;
     std::shared_ptr<udp_socket> rtp_socket_;
     std::shared_ptr<udp_socket> rtcp_socket_;
+    std::optional<port_manager_impl::port_pair> local_ports_;
     std::shared_ptr<gb28181_output_media> media_;
     void* rtcp_sender_{};
     bool rtcp_enabled_{};

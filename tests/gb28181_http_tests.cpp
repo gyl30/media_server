@@ -12,6 +12,7 @@
 #include "media/core/media_stream.h"
 #include "media/http/gb28181_http.h"
 #include "media/core/stream_registry.h"
+#include "media/net/port_manager.h"
 
 namespace media_server
 {
@@ -106,7 +107,10 @@ void test_input_handlers()
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "input delete response");
 
     const auto closing_response = input_request(io, request("/gb28181/delete", delete_body));
-    require_json_response(closing_response, boost::beast::http::status::ok, R"({"result":"ok"})", "input delete while closing response");
+    require_json_response(closing_response,
+                          boost::beast::http::status::internal_server_error,
+                          R"({"error":"operation_failed"})",
+                          "input delete after identity release response");
     io.run();
     io.restart();
 
@@ -151,7 +155,10 @@ void test_output_handlers()
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "output delete response");
 
     const auto closing_response = output_request(io, request("/play/gb28181/delete", delete_body));
-    require_json_response(closing_response, boost::beast::http::status::ok, R"({"result":"ok"})", "output delete while closing response");
+    require_json_response(closing_response,
+                          boost::beast::http::status::internal_server_error,
+                          R"({"error":"operation_failed"})",
+                          "output delete after identity release response");
     io.run();
     io.restart();
 
@@ -179,6 +186,7 @@ void test_request_namespace_dispatch()
 
 int main()
 {
+    media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::registry::init();
     try
     {
@@ -187,11 +195,13 @@ int main()
         media_server::test_request_namespace_dispatch();
         std::cout << "[pass] gb28181_http_handlers\n";
         media_server::registry::destroy();
+        media_server::port_manager::destroy();
         return 0;
     }
     catch (const std::exception& error)
     {
         media_server::registry::destroy();
+        media_server::port_manager::destroy();
         std::cerr << "[fail] gb28181_http_handlers: " << error.what() << '\n';
         return 1;
     }
