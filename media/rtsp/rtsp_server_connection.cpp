@@ -10,13 +10,7 @@ namespace media_server
 
 rtsp_server_connection::rtsp_server_connection(std::shared_ptr<tcp_connection> connection) : connection_(std::move(connection)) {}
 
-rtsp_server_connection::~rtsp_server_connection()
-{
-    if (server_ != nullptr)
-    {
-        rtsp_server_destroy(server_);
-    }
-}
+rtsp_server_connection::~rtsp_server_connection() = default;
 
 bool rtsp_server_connection::startup(std::shared_ptr<const rtsp_server_connection_handler> handler)
 {

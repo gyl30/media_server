@@ -38,7 +38,6 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     void enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
     void write_chunk(std::uint64_t generation, std::vector<std::uint8_t> data);
     void on_write(std::uint64_t generation, boost::system::error_code error);
-    void detach();
     void safe_shutdown();
 
     boost::beast::tcp_stream stream_;

@@ -101,16 +101,16 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     local_port_ = udp_socket_->local_port();
     auto answer = make_webrtc_answer(offer,
-                                           source_tracks,
-                                           webrtc_answer_config{
-                                               .address = advertised_address_,
-                                               .port = local_port_,
-                                               .stream_id = id_,
-                                               .ice_ufrag = ice_ufrag_,
-                                               .ice_pwd = ice_pwd_,
-                                               .fingerprint = certificate_->sha256_fingerprint(),
-                                               .video = video_config_,
-                                           });
+                                     source_tracks,
+                                     webrtc_answer_config{
+                                         .address = advertised_address_,
+                                         .port = local_port_,
+                                         .stream_id = id_,
+                                         .ice_ufrag = ice_ufrag_,
+                                         .ice_pwd = ice_pwd_,
+                                         .fingerprint = certificate_->sha256_fingerprint(),
+                                         .video = video_config_,
+                                     });
     if (!answer)
     {
         spdlog::debug("webrtc answer create failed session {}", id_);
@@ -151,10 +151,9 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     for (const auto& track : source_tracks)
     {
-        const bool negotiated_video =
-            answer_.video_codec && track.kind == media_kind::video &&
-            ((*answer_.video_codec == codec_id::av1 && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
-             track.codec == *answer_.video_codec);
+        const bool negotiated_video = answer_.video_codec && track.kind == media_kind::video &&
+                                      ((*answer_.video_codec == codec_id::av1 && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
+                                       track.codec == *answer_.video_codec);
         const bool negotiated_audio =
             answer_.audio_payload_type && answer_.audio_codec && track.kind == media_kind::audio && track.codec == *answer_.audio_codec;
         if (negotiated_video || negotiated_audio)
@@ -201,7 +200,11 @@ void whep_session::safe_shutdown()
     remote_ice_ufrag_.clear();
     reader_.remove();
     reader_ = {};
-    output_.reset();
+    if (output_)
+    {
+        output_->shutdown();
+        output_.reset();
+    }
     pending_tracks_.clear();
     track_versions_.clear();
     reader_cursor_.reset();
@@ -209,7 +212,11 @@ void whep_session::safe_shutdown()
     tracks_ready_ = false;
     stream_.reset();
     certificate_.reset();
-    srtp_.reset();
+    if (srtp_)
+    {
+        srtp_->shutdown();
+        srtp_.reset();
+    }
     dtls_timer_.cancel();
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
@@ -551,6 +558,7 @@ bool whep_session::startup_media()
 
     if (!output->valid())
     {
+        srtp->shutdown();
         return false;
     }
 

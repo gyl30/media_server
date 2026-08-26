@@ -31,13 +31,7 @@ gb28181_output_media::gb28181_output_media(boost::asio::any_io_executor executor
 {
 }
 
-gb28181_output_media::~gb28181_output_media()
-{
-    if (muxer_ != nullptr)
-    {
-        rtsp_muxer_destroy(muxer_);
-    }
-}
+gb28181_output_media::~gb28181_output_media() = default;
 
 bool gb28181_output_media::supported_tracks(const std::vector<media_track>& tracks)
 {

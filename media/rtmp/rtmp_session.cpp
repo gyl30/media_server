@@ -4,9 +4,9 @@
 #include <boost/asio/post.hpp>
 
 #include "media/rtmp/rtmp_session.h"
+#include "media/core/stream_registry.h"
 #include "media/rtmp/rtmp_input_session.h"
 #include "media/rtmp/rtmp_output_session.h"
-#include "media/core/stream_registry.h"
 
 extern "C"
 {
@@ -17,20 +17,12 @@ extern "C"
 namespace media_server
 {
 
-rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection,
-                           output_video_config video,
-                           std::chrono::milliseconds initial_tracks_timeout)
+rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection, output_video_config video, std::chrono::milliseconds initial_tracks_timeout)
     : connection_(std::move(connection)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
 {
 }
 
-rtmp_session::~rtmp_session()
-{
-    if (server_ != nullptr)
-    {
-        rtmp_server_destroy(server_);
-    }
-}
+rtmp_session::~rtmp_session() = default;
 
 void rtmp_session::startup()
 {

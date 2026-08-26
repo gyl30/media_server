@@ -31,11 +31,15 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
                             std::shared_ptr<media_stream> stream,
                             std::string stream_name,
                             std::vector<rtsp_output_track_description> tracks,
-                            std::shared_ptr<video_transcoder> video_transcoder,
                             track_id video_track_id);
     ~rtsp_output_tcp_session() override;
 
-    int startup(rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
+    int startup(rtsp_server_t* server,
+                std::string_view uri,
+                std::string_view session,
+                const rtsp_header_transport_t transports[],
+                std::size_t count,
+                std::unique_ptr<video_transcoder>& video_transcoder);
     void shutdown();
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
@@ -77,7 +81,7 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     rtsp_muxer_t* muxer_{};
     media_reader_handle reader_;
     std::map<track_id, track_state> tracks_;
-    std::shared_ptr<video_transcoder> video_transcoder_;
+    std::unique_ptr<video_transcoder> video_transcoder_;
     track_id video_track_id_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};

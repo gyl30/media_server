@@ -271,7 +271,7 @@ struct video_transcoder::state
 
 video_transcoder::video_transcoder() = default;
 
-video_transcoder::~video_transcoder() { shutdown(); }
+video_transcoder::~video_transcoder() = default;
 
 bool video_transcoder::startup(const video_transcoder_config& config)
 {
@@ -383,8 +383,8 @@ bool video_transcoder::transcode(const media_frame& input, std::vector<media_fra
 {
     const bool annex_b_payload = input.payload && input.payload->size() >= 4 && (*input.payload)[0] == 0 && (*input.payload)[1] == 0 &&
                                  (((*input.payload)[2] == 1) || ((*input.payload)[2] == 0 && (*input.payload)[3] == 1));
-    if (!state_ || !input.payload || input.payload->empty() || input.pts_ns == AV_NOPTS_VALUE ||
-        input.dts_ns == AV_NOPTS_VALUE || input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) || !annex_b_payload ||
+    if (!state_ || !input.payload || input.payload->empty() || input.pts_ns == AV_NOPTS_VALUE || input.dts_ns == AV_NOPTS_VALUE ||
+        input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) || !annex_b_payload ||
         (state_->timeline_started && input.track != state_->output_track))
     {
         return false;

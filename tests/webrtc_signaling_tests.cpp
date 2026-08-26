@@ -2875,6 +2875,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
         drain_io(io);
     }
     require(session->local_port() == 0U, "dtls close notify shutdown");
+    peer_srtp.shutdown();
 
     boost::system::error_code error;
     client_socket.close(error);

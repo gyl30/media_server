@@ -32,17 +32,7 @@ hls_output::hls_output(hls_config config)
     }
 }
 
-hls_output::~hls_output()
-{
-    if (muxer_ != nullptr)
-    {
-        mpeg_ts_destroy(muxer_);
-    }
-    if (fmp4_ != nullptr)
-    {
-        fmp4_writer_destroy(fmp4_);
-    }
-}
+hls_output::~hls_output() = default;
 
 void hls_output::on_track(const media_track& track)
 {
@@ -174,7 +164,11 @@ void hls_output::on_end()
             fmp4_writer_destroy(fmp4_);
             fmp4_ = nullptr;
         }
-        video_transcoder_.reset();
+        if (video_transcoder_)
+        {
+            video_transcoder_->shutdown();
+            video_transcoder_.reset();
+        }
     }
     else
     {
@@ -354,7 +348,11 @@ void hls_output::reset_fmp4(bool clear_segments, bool clear_video_config)
 
 void hls_output::startup_video_transcoder(const media_track& track)
 {
-    video_transcoder_.reset();
+    if (video_transcoder_)
+    {
+        video_transcoder_->shutdown();
+        video_transcoder_.reset();
+    }
     video_track_id_ = 0;
     if (track.codec != codec_id::h264 && track.codec != codec_id::h265)
     {

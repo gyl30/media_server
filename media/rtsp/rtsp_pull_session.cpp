@@ -9,10 +9,10 @@
 #include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
 
-#include "media/codec/codec_utils.h"
-#include "media/rtsp/rtsp_pull_session.h"
-#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_sdp.h"
+#include "media/codec/codec_utils.h"
+#include "media/core/stream_registry.h"
+#include "media/rtsp/rtsp_pull_session.h"
 
 extern "C"
 {
@@ -57,11 +57,13 @@ bool should_setup_media(rtsp_client_t* client, int media)
 {
     const auto type = rtsp_client_get_media_type(client, media);
     const auto* encoding = rtsp_client_get_media_encoding(client, media);
-    const bool supported = (type == SDP_M_MEDIA_VIDEO && (rtsp_sdp_iequals(encoding, "H264") || rtsp_sdp_iequals(encoding, "H265") || rtsp_sdp_iequals(encoding, "HEVC"))) ||
-                           (type == SDP_M_MEDIA_AUDIO && (rtsp_sdp_iequals(encoding, "MPEG4-GENERIC") ||
-                                                          (rtsp_sdp_iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
-                                                           rtsp_sdp_opus_channel_count(rtsp_client_get_media_fmtp(client, media)).has_value()) ||
-                                                          selected_g711_codec(client, media).has_value()));
+    const bool supported =
+        (type == SDP_M_MEDIA_VIDEO &&
+         (rtsp_sdp_iequals(encoding, "H264") || rtsp_sdp_iequals(encoding, "H265") || rtsp_sdp_iequals(encoding, "HEVC"))) ||
+        (type == SDP_M_MEDIA_AUDIO && (rtsp_sdp_iequals(encoding, "MPEG4-GENERIC") ||
+                                       (rtsp_sdp_iequals(encoding, "opus") && rtsp_client_get_media_rate(client, media) == 48'000 &&
+                                        rtsp_sdp_opus_channel_count(rtsp_client_get_media_fmtp(client, media)).has_value()) ||
+                                       selected_g711_codec(client, media).has_value()));
     if (!supported)
     {
         return false;
@@ -98,21 +100,7 @@ rtsp_pull_session::rtsp_pull_session(boost::asio::io_context& io,
 {
 }
 
-rtsp_pull_session::~rtsp_pull_session()
-{
-    for (auto*& demuxer : demuxers_)
-    {
-        if (demuxer != nullptr)
-        {
-            rtsp_demuxer_destroy(demuxer);
-        }
-    }
-    if (client_ != nullptr)
-    {
-        rtsp_client_destroy(client_);
-    }
-    avpkt2bs_destroy(&bitstream_);
-}
+rtsp_pull_session::~rtsp_pull_session() = default;
 
 bool rtsp_pull_session::startup()
 {

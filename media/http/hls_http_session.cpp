@@ -66,7 +66,9 @@ void hls_http_session::handle_request()
         }
         if (*count == 0)
         {
-            wait_playlist(std::move(stream_name));
+            wait_stream_name_ = std::move(stream_name);
+            wait_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            check_playlist();
             return;
         }
 
@@ -118,13 +120,6 @@ void hls_http_session::handle_request()
         return;
     }
     send_binary_response(boost::beast::http::status::ok, fragmented_mp4 ? "video/mp4" : "video/mp2t", *segment);
-}
-
-void hls_http_session::wait_playlist(std::string stream_name)
-{
-    wait_stream_name_ = std::move(stream_name);
-    wait_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    check_playlist();
 }
 
 void hls_http_session::check_playlist()

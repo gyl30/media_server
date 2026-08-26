@@ -256,16 +256,6 @@ void http_flv_session::on_write(std::uint64_t generation, boost::system::error_c
     output_->write_complete(generation);
 }
 
-void http_flv_session::detach()
-{
-    reader_.remove();
-    reader_ = {};
-    output_.reset();
-    pending_bootstrap_.clear();
-    pending_bootstrap_ready_ = false;
-    write_in_progress_ = false;
-}
-
 void http_flv_session::shutdown()
 {
     const auto self = shared_from_this();
@@ -279,7 +269,16 @@ void http_flv_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    detach();
+    reader_.remove();
+    reader_ = {};
+    if (output_)
+    {
+        output_->shutdown();
+        output_.reset();
+    }
+    pending_bootstrap_.clear();
+    pending_bootstrap_ready_ = false;
+    write_in_progress_ = false;
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);

@@ -1,9 +1,9 @@
 #include <span>
-#include <utility>
 #include <vector>
+#include <utility>
 
-#include "media/http/whep_http.h"
 #include "media/webrtc/whep.h"
+#include "media/http/whep_http.h"
 
 namespace media_server
 {
@@ -11,20 +11,6 @@ namespace
 {
 
 constexpr int whep_retry_after_seconds = 1;
-
-std::string join_segments(std::span<const std::string> segments)
-{
-    std::string result;
-    for (const auto& segment : segments)
-    {
-        if (!result.empty())
-        {
-            result.push_back('/');
-        }
-        result.append(segment);
-    }
-    return result;
-}
 
 whep_http_string_response make_string_response(const whep_http_request& request,
                                                boost::beast::http::status status,
@@ -51,9 +37,7 @@ whep_http_string_response make_string_response(const whep_http_request& request,
     return response;
 }
 
-whep_http_string_response make_empty_response(const whep_http_request& request,
-                                              boost::beast::http::status status,
-                                              std::string_view content_type = {})
+whep_http_string_response make_empty_response(const whep_http_request& request, boost::beast::http::status status, std::string_view content_type = {})
 {
     whep_http_string_response response{status, request.version()};
     response.set(boost::beast::http::field::server, "media_server");
@@ -68,13 +52,8 @@ whep_http_string_response make_empty_response(const whep_http_request& request,
     return response;
 }
 
-}    // namespace
-
-whep_http_string_response make_whep_error_response(const whep_http_request& request,
-                                                   boost::beast::http::status status,
-                                                   std::string body,
-                                                   int retry_after_seconds,
-                                                   std::string_view allow)
+whep_http_string_response make_whep_error_response(
+    const whep_http_request& request, boost::beast::http::status status, std::string body, int retry_after_seconds = 0, std::string_view allow = {})
 {
     return make_string_response(request, status, "text/plain", std::move(body), allow, retry_after_seconds);
 }
@@ -124,12 +103,8 @@ whep_http_string_response handle_whep_post(const whep_http_request& request,
             return response;
         }
         case whep::create_error::stream_not_found:
-            return make_string_response(request,
-                                        boost::beast::http::status::conflict,
-                                        "text/plain",
-                                        "stream not found\n",
-                                        {},
-                                        whep_retry_after_seconds);
+            return make_string_response(
+                request, boost::beast::http::status::conflict, "text/plain", "stream not found\n", {}, whep_retry_after_seconds);
         case whep::create_error::invalid_offer:
             return make_string_response(request, boost::beast::http::status::bad_request, "text/plain", "invalid or unsupported sdp offer\n");
         case whep::create_error::internal_error:
@@ -146,6 +121,8 @@ whep_http_string_response handle_whep_delete(const whep_http_request& request, s
     }
     return make_empty_response(request, boost::beast::http::status::no_content);
 }
+
+}    // namespace
 
 whep_http_string_response handle_whep_request(const whep_http_request& request,
                                               boost::asio::any_io_executor executor,
@@ -186,10 +163,18 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
         const auto content_type = request[boost::beast::http::field::content_type];
         if (!boost::beast::iequals(content_type, "application/sdp"))
         {
-            return make_whep_error_response(
-                request, boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n");
+            return make_whep_error_response(request, boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n");
         }
-        return handle_whep_post(request, std::move(executor), join_segments(segments), application_config);
+        std::string stream_name;
+        for (const auto& segment : segments)
+        {
+            if (!stream_name.empty())
+            {
+                stream_name.push_back('/');
+            }
+            stream_name.append(segment);
+        }
+        return handle_whep_post(request, std::move(executor), std::move(stream_name), application_config);
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {

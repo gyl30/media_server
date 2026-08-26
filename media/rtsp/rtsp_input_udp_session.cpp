@@ -34,12 +34,14 @@ int rtsp_input_udp_session::startup(
     const auto result = on_setup(server, uri, session, transports, count);
     if (result != 0 || !std::ranges::any_of(tracks_, [](const track_state& state) { return state.rtp_socket != nullptr; }))
     {
+        safe_shutdown();
         return result;
     }
 
     const auto connection = connection_.lock();
     if (!connection)
     {
+        safe_shutdown();
         return -1;
     }
     const auto self = shared_from_this();
@@ -112,8 +114,8 @@ void rtsp_input_udp_session::on_rtcp(std::size_t track_index, std::span<const st
     }
 }
 
-std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::prepare_udp_sockets(
-    std::size_t track_index, boost::asio::any_io_executor executor)
+std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::prepare_udp_sockets(std::size_t track_index,
+                                                                                                   boost::asio::any_io_executor executor)
 {
     const auto self = shared_from_this();
     for (std::uint32_t port = 49'152; port <= 65'534; port += 2U)
@@ -122,9 +124,8 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
         if (!candidate_rtp->startup(
                 boost::asio::ip::address_v4::any(),
                 static_cast<std::uint16_t>(port),
-                [self, track_index](boost::system::error_code error,
-                                    std::span<const std::uint8_t> data,
-                                    const boost::asio::ip::udp::endpoint& endpoint)
+                [self, track_index](
+                    boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
                 {
                     if (error)
                     {
@@ -148,9 +149,8 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
         if (!candidate_rtcp->startup(
                 boost::asio::ip::address_v4::any(),
                 static_cast<std::uint16_t>(port + 1U),
-                [self, track_index](boost::system::error_code error,
-                                    std::span<const std::uint8_t> data,
-                                    const boost::asio::ip::udp::endpoint& endpoint)
+                [self, track_index](
+                    boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
                 {
                     if (error)
                     {
