@@ -33,10 +33,7 @@ class singleton
         return *value_;
     }
 
-    static void destroy()
-    {
-        delete std::exchange(value_, nullptr);
-    }
+    static void destroy() { delete std::exchange(value_, nullptr); }
 
    private:
     static T* value_;
