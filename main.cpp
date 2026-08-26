@@ -1,6 +1,7 @@
 #include <utility>
 
 #include "config.h"
+#include "media/core/stream_registry.h"
 #include "service.h"
 
 int main(int argc, char** argv)
@@ -16,6 +17,9 @@ int main(int argc, char** argv)
         return 0;
     }
 
+    media_server::registry::init();
     media_server::service service(std::move(cfg));
-    return service.run();
+    const int service_result = service.run();
+    media_server::registry::destroy();
+    return service_result;
 }

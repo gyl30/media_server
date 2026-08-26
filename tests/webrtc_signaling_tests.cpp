@@ -2886,6 +2886,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
 
 int main()
 {
+    media_server::registry::init();
     media_server::test_webrtc_sdp_answer();
     std::cout << "[pass] webrtc_sdp_answer\n";
     media_server::test_webrtc_h265_sdp_answer();
@@ -2951,5 +2952,6 @@ int main()
     media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AES128_CM_SHA1_80", false);
     std::cout << "[pass] whep_dtls_h264_sha1_80\n";
     std::cout << "all tests passed\n";
+    media_server::registry::destroy();
     return 0;
 }
