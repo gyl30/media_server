@@ -1,18 +1,20 @@
 #include <chrono>
-#include <string>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/json.hpp>
+#include <boost/url/parse.hpp>
 
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_session_registry.h"
 #include "media/gb28181/gb28181_tcp_output_session.h"
+#include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_tcp_session.h"
 #include "media/http/gb28181_http.h"
 #include "media/net/tcp_acceptor.h"
@@ -30,14 +32,32 @@ void require(bool condition, std::string_view message)
     }
 }
 
-gb28181_http_request request()
-{
-    return gb28181_http_request{boost::beast::http::verb::post, "/gb28181/create", 11};
-}
-
 void require_status(const gb28181_http_response& response, boost::beast::http::status status, std::string_view message)
 {
     require(response.result() == status, message);
+}
+
+gb28181_http_request request(std::string target, boost::json::object body)
+{
+    gb28181_http_request value{boost::beast::http::verb::post, std::move(target), 11};
+    value.set(boost::beast::http::field::content_type, "application/json");
+    value.body() = boost::json::serialize(body);
+    value.prepare_payload();
+    return value;
+}
+
+gb28181_http_response input_request(boost::asio::io_context& io, gb28181_http_request request)
+{
+    const auto target = boost::urls::parse_origin_form(request.target());
+    require(target.has_value(), "gb input target");
+    return handle_gb28181_input_request(request, io, *target);
+}
+
+gb28181_http_response output_request(boost::asio::io_context& io, gb28181_http_request request)
+{
+    const auto target = boost::urls::parse_origin_form(request.target());
+    require(target.has_value(), "gb output target");
+    return handle_gb28181_output_request(request, io, *target);
 }
 
 gb28181_description make_tcp_active_description(std::uint16_t port, std::uint32_t ssrc)
@@ -49,25 +69,34 @@ gb28181_description make_tcp_active_description(std::uint16_t port, std::uint32_
                                .ssrc = ssrc};
 }
 
-gb28181_input_config make_input_config(std::string stream_name, gb28181_description description)
+gb28181_http_response create_input(boost::asio::io_context& io, std::string_view stream_name, const gb28181_description& description)
 {
-    return gb28181_input_config{.stream_name = std::move(stream_name),
-                                .description = std::move(description),
-                                .remote_rtp_endpoint = std::nullopt,
-                                .remote_rtcp_port = std::nullopt};
+    boost::json::object body;
+    body["stream_name"] = stream_name;
+    body["transport"] = "tcp_active";
+    body["address"] = description.address.to_string();
+    body["rtp_port"] = description.rtp_port;
+    body["payload_type"] = description.payload_type;
+    body["ssrc"] = description.ssrc;
+    return input_request(io, request("/gb28181/create", std::move(body)));
+}
+
+gb28181_http_response delete_input(boost::asio::io_context& io, std::string_view stream_name)
+{
+    boost::json::object body;
+    body["stream_name"] = stream_name;
+    return input_request(io, request("/gb28181/delete", std::move(body)));
 }
 
 media_track make_video_track()
 {
-    return media_track{
-        .id = 1,
-        .kind = media_kind::video,
-        .codec = codec_id::h264,
-        .clock_rate = 90'000,
-        .channel_count = 0,
-        .codec_config = {},
-        .config_version = 0,
-    };
+    return media_track{.id = 1,
+                       .kind = media_kind::video,
+                       .codec = codec_id::h264,
+                       .clock_rate = 90'000,
+                       .channel_count = 0,
+                       .codec_config = {},
+                       .config_version = 0};
 }
 
 std::shared_ptr<media_stream> add_video_stream(boost::asio::io_context& io, std::string name)
@@ -78,21 +107,31 @@ std::shared_ptr<media_stream> add_video_stream(boost::asio::io_context& io, std:
     return stream;
 }
 
-gb28181_output_config make_output_config(const std::shared_ptr<media_stream>& stream,
-                                         std::string output_id,
-                                         gb28181_description description)
+gb28181_http_response create_output(boost::asio::io_context& io,
+                                    const media_stream& stream,
+                                    std::string_view output_id,
+                                    const gb28181_description& description)
 {
-    return gb28181_output_config{.stream_name = stream->name(),
-                                 .output_id = std::move(output_id),
-                                 .description = std::move(description),
-                                 .rtcp = false};
+    boost::json::object body;
+    body["stream_name"] = stream.name();
+    body["output_id"] = output_id;
+    body["transport"] = "tcp_active";
+    body["address"] = description.address.to_string();
+    body["rtp_port"] = description.rtp_port;
+    body["payload_type"] = description.payload_type;
+    body["ssrc"] = description.ssrc;
+    return output_request(io, request("/play/gb28181/create", std::move(body)));
 }
 
-void clear_state()
+gb28181_http_response delete_output(boost::asio::io_context& io, std::string_view stream_name, std::string_view output_id)
 {
-    gb28181_session_registry::instance().clear();
-    registry::instance().clear();
+    boost::json::object body;
+    body["stream_name"] = stream_name;
+    body["output_id"] = output_id;
+    return output_request(io, request("/play/gb28181/delete", std::move(body)));
 }
+
+void clear_state() { registry::instance().clear(); }
 
 void test_input_identity_is_reusable_after_remove()
 {
@@ -100,21 +139,19 @@ void test_input_identity_is_reusable_after_remove()
     clear_state();
     const auto description = make_tcp_active_description(65'000, 10'000'2001);
 
-    require_status(handle_gb28181_input_create(request(), io, make_input_config("live/gb-identity", description)),
-                   boost::beast::http::status::created,
-                   "gb input first create");
-    require_status(handle_gb28181_input_delete(request(), "live/gb-identity"), boost::beast::http::status::ok, "gb input remove");
-    require_status(handle_gb28181_input_create(request(), io, make_input_config("live/gb-identity", description)),
+    require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input first create");
+    require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input remove");
+    require_status(create_input(io, "live/gb-identity", description),
                    boost::beast::http::status::created,
                    "gb input identity reusable immediately after remove");
 
-    require_status(handle_gb28181_input_delete(request(), "live/gb-identity"), boost::beast::http::status::ok, "gb input second remove");
+    require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input second remove");
     io.run();
     io.restart();
-    require_status(handle_gb28181_input_create(request(), io, make_input_config("live/gb-identity", description)),
+    require_status(create_input(io, "live/gb-identity", description),
                    boost::beast::http::status::created,
                    "gb input reusable after remove");
-    require_status(handle_gb28181_input_delete(request(), "live/gb-identity"), boost::beast::http::status::ok, "gb input final remove");
+    require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input final remove");
     io.run();
     clear_state();
 }
@@ -126,15 +163,13 @@ void test_output_identity_is_reusable_after_remove()
     const auto stream = add_video_stream(io, "live/gb-output-identity");
     const auto description = make_tcp_active_description(65'000, 10'000'2002);
 
-    require_status(handle_gb28181_output_create(request(), io, make_output_config(stream, "primary", description)),
-                   boost::beast::http::status::created,
-                   "gb output first create");
-    require_status(handle_gb28181_output_delete(request(), stream->name(), "primary"), boost::beast::http::status::ok, "gb output remove");
-    require_status(handle_gb28181_output_create(request(), io, make_output_config(stream, "primary", description)),
+    require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output first create");
+    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output remove");
+    require_status(create_output(io, *stream, "primary", description),
                    boost::beast::http::status::created,
                    "gb output identity reusable immediately after remove");
 
-    require_status(handle_gb28181_output_delete(request(), stream->name(), "primary"), boost::beast::http::status::ok, "gb output second remove");
+    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output second remove");
     io.run();
     clear_state();
 }
@@ -146,20 +181,16 @@ void test_input_old_async_work_does_not_remove_replacement()
     clear_state();
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2003);
 
-    require_status(handle_gb28181_input_create(request(), io, make_input_config("live/gb-generation", description)),
-                   boost::beast::http::status::created,
-                   "gb input old generation create");
-    require_status(handle_gb28181_input_delete(request(), "live/gb-generation"), boost::beast::http::status::ok, "gb input old generation remove");
-    require_status(handle_gb28181_input_create(request(), io, make_input_config("live/gb-generation", description)),
-                   boost::beast::http::status::created,
-                   "gb input replacement create");
+    require_status(create_input(io, "live/gb-generation", description), boost::beast::http::status::created, "gb input old generation create");
+    require_status(delete_input(io, "live/gb-generation"), boost::beast::http::status::ok, "gb input old generation remove");
+    require_status(create_input(io, "live/gb-generation", description), boost::beast::http::status::created, "gb input replacement create");
 
     io.poll();
-    require_status(handle_gb28181_input_create(request(), io, make_input_config("live/gb-generation", description)),
+    require_status(create_input(io, "live/gb-generation", description),
                    boost::beast::http::status::internal_server_error,
                    "gb input old async work preserves replacement");
 
-    require_status(handle_gb28181_input_delete(request(), "live/gb-generation"), boost::beast::http::status::ok, "gb input replacement remove");
+    require_status(delete_input(io, "live/gb-generation"), boost::beast::http::status::ok, "gb input replacement remove");
     io.run();
     clear_state();
 }
@@ -172,20 +203,18 @@ void test_output_old_async_work_does_not_remove_replacement()
     const auto stream = add_video_stream(io, "live/gb-output-generation");
     const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2004);
 
-    require_status(handle_gb28181_output_create(request(), io, make_output_config(stream, "primary", description)),
-                   boost::beast::http::status::created,
-                   "gb output old generation create");
-    require_status(handle_gb28181_output_delete(request(), stream->name(), "primary"), boost::beast::http::status::ok, "gb output old generation remove");
-    require_status(handle_gb28181_output_create(request(), io, make_output_config(stream, "primary", description)),
+    require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output old generation create");
+    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output old generation remove");
+    require_status(create_output(io, *stream, "primary", description),
                    boost::beast::http::status::created,
                    "gb output replacement create");
 
     io.poll();
-    require_status(handle_gb28181_output_create(request(), io, make_output_config(stream, "primary", description)),
+    require_status(create_output(io, *stream, "primary", description),
                    boost::beast::http::status::internal_server_error,
                    "gb output old async work preserves replacement");
 
-    require_status(handle_gb28181_output_delete(request(), stream->name(), "primary"), boost::beast::http::status::ok, "gb output replacement remove");
+    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output replacement remove");
     io.run();
     clear_state();
 }
@@ -200,11 +229,11 @@ void test_tcp_timeout_unregisters_input_session()
                                                  boost::asio::ip::address_v4::loopback(),
                                                  std::chrono::milliseconds(5));
     auto session = std::make_shared<gb28181_tcp_session>(io.get_executor(), source, stream_name, 96, 10'000'2005);
-    require(gb28181_session_registry::instance().add_input(stream_name, session), "gb input timeout registry add");
+    require(registry::instance().add_input_session(stream_name, session), "gb input timeout registry add");
     require(session->startup(), "gb input timeout startup");
     io.run();
 
-    const auto remaining = gb28181_session_registry::instance().take_input(stream_name);
+    const auto remaining = registry::instance().take_input_session(stream_name);
     require(!remaining, "gb input timeout unregisters session");
     clear_state();
 }
@@ -225,12 +254,11 @@ void test_tcp_timeout_unregisters_output_session()
                                                                 "timeout",
                                                                 96,
                                                                 10'000'2006);
-    require(gb28181_session_registry::instance().add_output(stream->name(), "timeout", session),
-            "gb output timeout registry add");
+    require(registry::instance().add_output_session(stream->name(), "timeout", session), "gb output timeout registry add");
     require(session->startup(), "gb output timeout startup");
     io.run();
 
-    const auto remaining = gb28181_session_registry::instance().take_output(stream->name(), "timeout");
+    const auto remaining = registry::instance().take_output_session(stream->name(), "timeout");
     require(!remaining, "gb output timeout unregisters session");
     clear_state();
 }

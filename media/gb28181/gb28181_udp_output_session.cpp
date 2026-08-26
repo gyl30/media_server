@@ -7,7 +7,7 @@
 
 #include "media/net/udp_socket.h"
 #include "media/gb28181/gb28181_output_media.h"
-#include "media/gb28181/gb28181_session_registry.h"
+#include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_udp_output_session.h"
 
 extern "C"
@@ -235,7 +235,7 @@ void gb28181_udp_output_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    gb28181_session_registry::instance().remove_output(stream_name_, output_id_, *this);
+    registry::instance().remove_output_session(stream_name_, output_id_, *this);
     rtcp_timer_.cancel();
     if (media_)
     {

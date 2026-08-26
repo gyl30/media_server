@@ -1,15 +1,14 @@
-#include <optional>
-#include <span>
 #include <chrono>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
-#include <vector>
 
 #include <boost/json.hpp>
 
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_output_media.h"
-#include "media/gb28181/gb28181_session_registry.h"
 #include "media/gb28181/gb28181_tcp_output_session.h"
 #include "media/gb28181/gb28181_tcp_session.h"
 #include "media/gb28181/gb28181_udp_output_session.h"
@@ -26,12 +25,6 @@ namespace
 
 constexpr auto tcp_establishment_timeout = std::chrono::seconds(10);
 
-boost::asio::ip::address bind_address(const boost::asio::ip::address& address)
-{
-    return address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
-                           : boost::asio::ip::address{boost::asio::ip::address_v6::any()};
-}
-
 std::shared_ptr<tcp_socket_source> create_tcp_socket_source(boost::asio::io_context& owner, const gb28181_description& description)
 {
     if (description.transport == gb28181_transport::tcp_active)
@@ -40,45 +33,12 @@ std::shared_ptr<tcp_socket_source> create_tcp_socket_source(boost::asio::io_cont
                                                 boost::asio::ip::tcp::endpoint{description.address, description.rtp_port},
                                                 tcp_establishment_timeout);
     }
-    return std::make_shared<tcp_acceptor>(owner.get_executor(),
-                                          description.rtp_port,
-                                          bind_address(description.address),
-                                          tcp_establishment_timeout);
-}
-
-std::vector<std::string> path_segments(const boost::urls::url_view& target)
-{
-    std::vector<std::string> result;
-    for (const auto segment : target.segments())
-    {
-        result.emplace_back(segment);
-    }
-    return result;
-}
-
-std::optional<gb28181_http_response> validate_request(const gb28181_http_request& request,
-                                                      const boost::urls::url_view& target,
-                                                      std::span<const std::string> segments)
-{
-    if (segments.size() != 1 || (segments.front() != "create" && segments.front() != "delete"))
-    {
-        return make_gb28181_error_response(request, boost::beast::http::status::not_found, "not_found");
-    }
-    if (!target.params().empty())
-    {
-        return make_gb28181_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
-    }
-    if (request.method() != boost::beast::http::verb::post)
-    {
-        return make_gb28181_error_response(
-            request, boost::beast::http::status::method_not_allowed, "method_not_allowed", "POST");
-    }
-    const auto content_type = request[boost::beast::http::field::content_type];
-    if (!boost::beast::iequals(content_type, "application/json"))
-    {
-        return make_gb28181_error_response(request, boost::beast::http::status::unsupported_media_type, "unsupported_media_type");
-    }
-    return std::nullopt;
+    return std::make_shared<tcp_acceptor>(
+        owner.get_executor(),
+        description.rtp_port,
+        description.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
+                                    : boost::asio::ip::address{boost::asio::ip::address_v6::any()},
+        tcp_establishment_timeout);
 }
 
 gb28181_http_response make_json_response(const gb28181_http_request& request,
@@ -99,18 +59,170 @@ gb28181_http_response make_json_response(const gb28181_http_request& request,
     return response;
 }
 
-gb28181_http_response make_success_response(const gb28181_http_request& request, boost::beast::http::status status)
+gb28181_http_response make_error_response(const gb28181_http_request& request,
+                                           boost::beast::http::status status,
+                                           std::string_view error,
+                                           std::string_view allow = {})
 {
     boost::json::object body;
-    body["result"] = "ok";
-    return make_json_response(request, status, std::move(body));
+    body["error"] = error;
+    return make_json_response(request, status, std::move(body), allow);
 }
 
-gb28181_http_response make_operation_failed_response(const gb28181_http_request& request)
+std::optional<gb28181_http_response> validate_request(const gb28181_http_request& request, const boost::urls::url_view& target)
 {
+    if (!target.params().empty())
+    {
+        return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+    }
+    if (request.method() != boost::beast::http::verb::post)
+    {
+        return make_error_response(request, boost::beast::http::status::method_not_allowed, "method_not_allowed", "POST");
+    }
+    if (!boost::beast::iequals(request[boost::beast::http::field::content_type], "application/json"))
+    {
+        return make_error_response(request, boost::beast::http::status::unsupported_media_type, "unsupported_media_type");
+    }
+    return std::nullopt;
+}
+
+gb28181_http_response handle_input_create(const gb28181_http_request& request,
+                                           boost::asio::io_context& owner,
+                                           gb28181_input_config config)
+{
+    const auto stream_name = config.stream_name;
+    auto& streams = registry::instance();
+    if (streams.find(stream_name))
+    {
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+
+    if (config.description.transport == gb28181_transport::udp)
+    {
+        auto session = std::make_shared<gb28181_udp_session>(
+            owner.get_executor(),
+            stream_name,
+            config.description,
+            gb28181_udp_peer{.rtp = config.remote_rtp_endpoint, .rtcp_port = config.remote_rtcp_port.value_or(0)});
+        if (!streams.add_input_session(stream_name, session))
+        {
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+        if (!session->startup())
+        {
+            streams.remove_input_session(stream_name, *session);
+            session->shutdown();
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+    }
+    else
+    {
+        auto source = create_tcp_socket_source(owner, config.description);
+        auto session = std::make_shared<gb28181_tcp_session>(owner.get_executor(),
+                                                             std::move(source),
+                                                             stream_name,
+                                                             config.description.payload_type,
+                                                             config.description.ssrc);
+        if (!streams.add_input_session(stream_name, session))
+        {
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+        if (!session->startup())
+        {
+            streams.remove_input_session(stream_name, *session);
+            session->shutdown();
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+    }
+
     boost::json::object body;
-    body["error"] = "operation_failed";
-    return make_json_response(request, boost::beast::http::status::internal_server_error, std::move(body));
+    body["result"] = "ok";
+    return make_json_response(request, boost::beast::http::status::created, std::move(body));
+}
+
+gb28181_http_response handle_input_delete(const gb28181_http_request& request, std::string_view stream_name)
+{
+    auto session = registry::instance().take_input_session(stream_name);
+    if (!session)
+    {
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+    session->shutdown();
+
+    boost::json::object body;
+    body["result"] = "ok";
+    return make_json_response(request, boost::beast::http::status::ok, std::move(body));
+}
+
+gb28181_http_response handle_output_create(const gb28181_http_request& request,
+                                            boost::asio::io_context& owner,
+                                            gb28181_output_config config)
+{
+    const auto stream_name = config.stream_name;
+    const auto output_id = config.output_id;
+    auto& streams = registry::instance();
+    auto stream = streams.find(stream_name);
+    if (!stream || !gb28181_output_media::supported_tracks(stream->tracks()))
+    {
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+
+    if (config.description.transport == gb28181_transport::udp)
+    {
+        auto session = std::make_shared<gb28181_udp_output_session>(
+            owner.get_executor(), stream, config.description, output_id, config.rtcp);
+        if (!streams.add_output_session(stream_name, output_id, session))
+        {
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+        if (!session->startup())
+        {
+            streams.remove_output_session(stream_name, output_id, *session);
+            session->shutdown();
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+    }
+    else
+    {
+        auto source = create_tcp_socket_source(owner, config.description);
+        auto session = std::make_shared<gb28181_tcp_output_session>(owner.get_executor(),
+                                                                    std::move(source),
+                                                                    std::weak_ptr<media_stream>{stream},
+                                                                    stream_name,
+                                                                    output_id,
+                                                                    config.description.payload_type,
+                                                                    config.description.ssrc);
+        if (!streams.add_output_session(stream_name, output_id, session))
+        {
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+        if (!session->startup())
+        {
+            streams.remove_output_session(stream_name, output_id, *session);
+            session->shutdown();
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+    }
+
+    boost::json::object body;
+    body["result"] = "ok";
+    return make_json_response(request, boost::beast::http::status::created, std::move(body));
+}
+
+gb28181_http_response handle_output_delete(const gb28181_http_request& request,
+                                            std::string_view stream_name,
+                                            std::string_view output_id)
+{
+    auto session = registry::instance().take_output_session(stream_name, output_id);
+    if (!session)
+    {
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+    session->shutdown();
+
+    boost::json::object body;
+    body["result"] = "ok";
+    return make_json_response(request, boost::beast::http::status::ok, std::move(body));
 }
 
 }    // namespace
@@ -119,201 +231,64 @@ gb28181_http_response handle_gb28181_input_request(const gb28181_http_request& r
                                                    boost::asio::io_context& owner,
                                                    const boost::urls::url_view& target)
 {
-    const auto path = path_segments(target);
-    if (path.empty() || path.front() != "gb28181")
+    const auto path = target.encoded_path();
+    if (path != "/gb28181/create" && path != "/gb28181/delete")
     {
-        return make_gb28181_error_response(request, boost::beast::http::status::not_found, "not_found");
+        return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
-    const auto segments = std::span<const std::string>(path).subspan(1);
-    if (const auto error = validate_request(request, target, segments))
+    if (const auto error = validate_request(request, target))
     {
         return *error;
     }
-    if (segments.front() == "create")
+
+    if (path == "/gb28181/create")
     {
         auto config = parse_gb28181_input_config(request.body());
         if (!config)
         {
-            return make_gb28181_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+            return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
         }
-        return handle_gb28181_input_create(request, owner, std::move(*config));
+        return handle_input_create(request, owner, std::move(*config));
     }
 
     const auto stream_name = parse_gb28181_input_delete(request.body());
     if (!stream_name)
     {
-        return make_gb28181_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+        return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    return handle_gb28181_input_delete(request, *stream_name);
+    return handle_input_delete(request, *stream_name);
 }
 
 gb28181_http_response handle_gb28181_output_request(const gb28181_http_request& request,
                                                     boost::asio::io_context& owner,
                                                     const boost::urls::url_view& target)
 {
-    const auto path = path_segments(target);
-    if (path.size() < 2 || path[0] != "play" || path[1] != "gb28181")
+    const auto path = target.encoded_path();
+    if (path != "/play/gb28181/create" && path != "/play/gb28181/delete")
     {
-        return make_gb28181_error_response(request, boost::beast::http::status::not_found, "not_found");
+        return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
-    const auto segments = std::span<const std::string>(path).subspan(2);
-    if (const auto error = validate_request(request, target, segments))
+    if (const auto error = validate_request(request, target))
     {
         return *error;
     }
-    if (segments.front() == "create")
+
+    if (path == "/play/gb28181/create")
     {
         auto config = parse_gb28181_output_config(request.body());
         if (!config)
         {
-            return make_gb28181_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+            return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
         }
-        return handle_gb28181_output_create(request, owner, std::move(*config));
+        return handle_output_create(request, owner, std::move(*config));
     }
 
     const auto identity = parse_gb28181_output_delete(request.body());
     if (!identity)
     {
-        return make_gb28181_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+        return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    return handle_gb28181_output_delete(request, identity->first, identity->second);
-}
-
-gb28181_http_response make_gb28181_error_response(const gb28181_http_request& request,
-                                                  boost::beast::http::status status,
-                                                  std::string_view error,
-                                                  std::string_view allow)
-{
-    boost::json::object body;
-    body["error"] = error;
-    return make_json_response(request, status, std::move(body), allow);
-}
-
-gb28181_http_response handle_gb28181_input_create(const gb28181_http_request& request,
-                                                  boost::asio::io_context& owner,
-                                                  gb28181_input_config config)
-{
-    const auto stream_name = config.stream_name;
-    if (registry::instance().find(stream_name))
-    {
-        return make_operation_failed_response(request);
-    }
-
-    auto& sessions = gb28181_session_registry::instance();
-    if (config.description.transport == gb28181_transport::udp)
-    {
-        auto concrete = std::make_shared<gb28181_udp_session>(
-            owner.get_executor(),
-            stream_name,
-            config.description,
-            gb28181_udp_peer{.rtp = config.remote_rtp_endpoint, .rtcp_port = config.remote_rtcp_port.value_or(0)});
-        if (!sessions.add_input(stream_name, concrete))
-        {
-            return make_operation_failed_response(request);
-        }
-        if (!concrete->startup())
-        {
-            sessions.remove_input(stream_name, *concrete);
-            concrete->shutdown();
-            return make_operation_failed_response(request);
-        }
-    }
-    else
-    {
-        auto source = create_tcp_socket_source(owner, config.description);
-        auto concrete = std::make_shared<gb28181_tcp_session>(owner.get_executor(),
-                                                              std::move(source),
-                                                              stream_name,
-                                                              config.description.payload_type,
-                                                              config.description.ssrc);
-        if (!sessions.add_input(stream_name, concrete))
-        {
-            return make_operation_failed_response(request);
-        }
-        if (!concrete->startup())
-        {
-            sessions.remove_input(stream_name, *concrete);
-            concrete->shutdown();
-            return make_operation_failed_response(request);
-        }
-    }
-    return make_success_response(request, boost::beast::http::status::created);
-}
-
-gb28181_http_response handle_gb28181_input_delete(const gb28181_http_request& request, std::string stream_name)
-{
-    auto session = gb28181_session_registry::instance().take_input(stream_name);
-    if (!session)
-    {
-        return make_operation_failed_response(request);
-    }
-    session->shutdown();
-    return make_success_response(request, boost::beast::http::status::ok);
-}
-
-gb28181_http_response handle_gb28181_output_create(const gb28181_http_request& request,
-                                                   boost::asio::io_context& owner,
-                                                   gb28181_output_config config)
-{
-    const auto stream_name = config.stream_name;
-    const auto output_id = config.output_id;
-    auto stream = registry::instance().find(stream_name);
-    if (!stream || !gb28181_output_media::supported_tracks(stream->tracks()))
-    {
-        return make_operation_failed_response(request);
-    }
-
-    auto& sessions = gb28181_session_registry::instance();
-    if (config.description.transport == gb28181_transport::udp)
-    {
-        auto concrete = std::make_shared<gb28181_udp_output_session>(
-            owner.get_executor(), stream, config.description, output_id, config.rtcp);
-        if (!sessions.add_output(stream_name, output_id, concrete))
-        {
-            return make_operation_failed_response(request);
-        }
-        if (!concrete->startup())
-        {
-            sessions.remove_output(stream_name, output_id, *concrete);
-            concrete->shutdown();
-            return make_operation_failed_response(request);
-        }
-    }
-    else
-    {
-        auto source = create_tcp_socket_source(owner, config.description);
-        auto concrete = std::make_shared<gb28181_tcp_output_session>(owner.get_executor(),
-                                                                      std::move(source),
-                                                                      std::weak_ptr<media_stream>{stream},
-                                                                      stream_name,
-                                                                      output_id,
-                                                                      config.description.payload_type,
-                                                                      config.description.ssrc);
-        if (!sessions.add_output(stream_name, output_id, concrete))
-        {
-            return make_operation_failed_response(request);
-        }
-        if (!concrete->startup())
-        {
-            sessions.remove_output(stream_name, output_id, *concrete);
-            concrete->shutdown();
-            return make_operation_failed_response(request);
-        }
-    }
-    return make_success_response(request, boost::beast::http::status::created);
-}
-
-gb28181_http_response handle_gb28181_output_delete(const gb28181_http_request& request,
-                                                   std::string stream_name,
-                                                   std::string output_id)
-{
-    auto session = gb28181_session_registry::instance().take_output(stream_name, output_id);
-    if (!session)
-    {
-        return make_operation_failed_response(request);
-    }
-    session->shutdown();
-    return make_success_response(request, boost::beast::http::status::ok);
+    return handle_output_delete(request, identity->first, identity->second);
 }
 
 }    // namespace media_server

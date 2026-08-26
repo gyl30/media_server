@@ -14,7 +14,7 @@
 #include "media/net/udp_socket.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_input_media.h"
-#include "media/gb28181/gb28181_session.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -25,7 +25,7 @@ struct gb28181_udp_peer
     std::uint16_t rtcp_port{};
 };
 
-class gb28181_udp_session final : public gb28181_session, public std::enable_shared_from_this<gb28181_udp_session>
+class gb28181_udp_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_session>
 {
    public:
     gb28181_udp_session(boost::asio::any_io_executor executor,

@@ -1,10 +1,12 @@
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/json.hpp>
 #include <boost/url/parse.hpp>
 
 #include "media/core/media_stream.h"
@@ -24,10 +26,13 @@ void require(bool condition, std::string_view message)
     }
 }
 
-gb28181_http_request request()
+gb28181_http_request request(std::string target, boost::json::object body)
 {
-    gb28181_http_request value{boost::beast::http::verb::post, "/gb28181/create", 11};
+    gb28181_http_request value{boost::beast::http::verb::post, std::move(target), 11};
+    value.set(boost::beast::http::field::content_type, "application/json");
     value.keep_alive(true);
+    value.body() = boost::json::serialize(body);
+    value.prepare_payload();
     return value;
 }
 
@@ -43,72 +48,75 @@ void require_json_response(const gb28181_http_response& response,
     require(response.body() == body, message);
 }
 
-gb28181_input_config make_input_config(boost::asio::io_context& io)
+gb28181_http_response input_request(boost::asio::io_context& io, gb28181_http_request request)
 {
-    boost::asio::ip::udp::socket rtp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
-    boost::asio::ip::udp::socket rtcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
-    const auto rtp_port = rtp_probe.local_endpoint().port();
-    const auto rtcp_port = rtcp_probe.local_endpoint().port();
-    return gb28181_input_config{.stream_name = "live/http-handler-input",
-                                .description = gb28181_description{.transport = gb28181_transport::udp,
-                                                                    .address = boost::asio::ip::address_v4::loopback(),
-                                                                    .rtp_port = rtp_port,
-                                                                    .rtcp_port = rtcp_port,
-                                                                    .payload_type = 96,
-                                                                    .ssrc = 100},
-                                .remote_rtp_endpoint = std::nullopt,
-                                .remote_rtcp_port = 30001};
+    const auto target = boost::urls::parse_origin_form(request.target());
+    require(target.has_value(), "input request target");
+    return handle_gb28181_input_request(request, io, *target);
 }
 
-gb28181_output_config make_output_config()
+gb28181_http_response output_request(boost::asio::io_context& io, gb28181_http_request request)
 {
-    return gb28181_output_config{.stream_name = "live/http-handler-output",
-                                 .output_id = "primary",
-                                 .description = gb28181_description{.transport = gb28181_transport::udp,
-                                                                     .address = boost::asio::ip::address_v4::loopback(),
-                                                                     .rtp_port = 32000,
-                                                                     .rtcp_port = 32001,
-                                                                     .payload_type = 96,
-                                                                     .ssrc = 101},
-                                 .rtcp = false};
+    const auto target = boost::urls::parse_origin_form(request.target());
+    require(target.has_value(), "output request target");
+    return handle_gb28181_output_request(request, io, *target);
 }
 
 media_track make_video_track()
 {
     return media_track{.id = 1,
-                        .kind = media_kind::video,
-                        .codec = codec_id::h264,
-                        .clock_rate = 90'000,
-                        .channel_count = 0,
-                        .codec_config = {},
-                        .config_version = 0};
+                       .kind = media_kind::video,
+                       .codec = codec_id::h264,
+                       .clock_rate = 90'000,
+                       .channel_count = 0,
+                       .codec_config = {},
+                       .config_version = 0};
 }
 
 void test_input_handlers()
 {
     boost::asio::io_context io;
     registry::instance().clear();
-    auto config = make_input_config(io);
+    std::uint16_t rtp_port{};
+    std::uint16_t rtcp_port{};
+    {
+        boost::asio::ip::udp::socket rtp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::udp::socket rtcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+        rtp_port = rtp_probe.local_endpoint().port();
+        rtcp_port = rtcp_probe.local_endpoint().port();
+    }
 
-    auto create_request = request();
-    const auto create_response = handle_gb28181_input_create(create_request, io, config);
+    boost::json::object create_body;
+    create_body["stream_name"] = "live/http-handler-input";
+    create_body["transport"] = "udp";
+    create_body["address"] = "127.0.0.1";
+    create_body["rtp_port"] = rtp_port;
+    create_body["rtcp_port"] = rtcp_port;
+    create_body["payload_type"] = 96;
+    create_body["ssrc"] = 100;
+    create_body["remote_rtcp_port"] = 30001;
+
+    const auto create_response = input_request(io, request("/gb28181/create", create_body));
     require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "input create response");
 
-    const auto duplicate_response = handle_gb28181_input_create(create_request, io, config);
+    const auto duplicate_response = input_request(io, request("/gb28181/create", create_body));
     require_json_response(duplicate_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
                           "input create failure response");
 
-    auto delete_request = request();
-    const auto delete_response = handle_gb28181_input_delete(delete_request, "live/http-handler-input");
+    boost::json::object delete_body;
+    delete_body["stream_name"] = "live/http-handler-input";
+    const auto delete_response = input_request(io, request("/gb28181/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "input delete response");
 
-    const auto missing_response = handle_gb28181_input_delete(delete_request, "live/http-handler-input");
+    const auto missing_response = input_request(io, request("/gb28181/delete", delete_body));
     require_json_response(missing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
                           "input delete failure response");
+    io.run();
+    registry::instance().clear();
 }
 
 void test_output_handlers()
@@ -118,27 +126,39 @@ void test_output_handlers()
     auto stream = std::make_shared<media_stream>("live/http-handler-output", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "output handler tracks");
     require(registry::instance().add(stream), "output handler stream");
-    auto config = make_output_config();
 
-    auto create_request = request();
-    const auto create_response = handle_gb28181_output_create(create_request, io, config);
+    boost::json::object create_body;
+    create_body["stream_name"] = stream->name();
+    create_body["output_id"] = "primary";
+    create_body["transport"] = "udp";
+    create_body["address"] = "127.0.0.1";
+    create_body["rtp_port"] = 32000;
+    create_body["rtcp_port"] = 32001;
+    create_body["payload_type"] = 96;
+    create_body["ssrc"] = 101;
+    create_body["rtcp"] = false;
+
+    const auto create_response = output_request(io, request("/play/gb28181/create", create_body));
     require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "output create response");
 
-    const auto duplicate_response = handle_gb28181_output_create(create_request, io, config);
+    const auto duplicate_response = output_request(io, request("/play/gb28181/create", create_body));
     require_json_response(duplicate_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
                           "output create failure response");
 
-    auto delete_request = request();
-    const auto delete_response = handle_gb28181_output_delete(delete_request, "live/http-handler-output", "primary");
+    boost::json::object delete_body;
+    delete_body["stream_name"] = stream->name();
+    delete_body["output_id"] = "primary";
+    const auto delete_response = output_request(io, request("/play/gb28181/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "output delete response");
 
-    const auto missing_response = handle_gb28181_output_delete(delete_request, "live/http-handler-output", "primary");
+    const auto missing_response = output_request(io, request("/play/gb28181/delete", delete_body));
     require_json_response(missing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
                           "output delete failure response");
+    io.run();
     registry::instance().clear();
 }
 
@@ -146,18 +166,10 @@ void test_request_namespace_dispatch()
 {
     boost::asio::io_context io;
 
-    auto input_request = request();
-    input_request.target("/gb28181/missing");
-    const auto input_target = boost::urls::parse_origin_form(input_request.target());
-    require(input_target.has_value(), "input request target");
-    const auto input_response = handle_gb28181_input_request(input_request, io, *input_target);
+    const auto input_response = input_request(io, request("/gb28181/missing", {}));
     require_json_response(input_response, boost::beast::http::status::not_found, R"({"error":"not_found"})", "input request route");
 
-    auto output_request = request();
-    output_request.target("/play/gb28181/missing");
-    const auto output_target = boost::urls::parse_origin_form(output_request.target());
-    require(output_target.has_value(), "output request target");
-    const auto output_response = handle_gb28181_output_request(output_request, io, *output_target);
+    const auto output_response = output_request(io, request("/play/gb28181/missing", {}));
     require_json_response(output_response, boost::beast::http::status::not_found, R"({"error":"not_found"})", "output request route");
 }
 

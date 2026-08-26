@@ -7,7 +7,7 @@
 #include <boost/asio/post.hpp>
 
 #include "media/gb28181/gb28181_udp_session.h"
-#include "media/gb28181/gb28181_session_registry.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -201,7 +201,7 @@ void gb28181_udp_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    gb28181_session_registry::instance().remove_input(stream_name(), *this);
+    registry::instance().remove_input_session(stream_name(), *this);
     rtcp_timer_.cancel();
     media_.shutdown();
     if (rtp_socket_)
