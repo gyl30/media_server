@@ -6,6 +6,13 @@
 #include <thread>
 #include <vector>
 
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
+
+#include "media/core/media_stream.h"
+#include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_types.h"
+#include "media/gb28181/gb28181_udp_output_session.h"
 #include "media/net/port_manager.h"
 
 namespace media_server
@@ -80,19 +87,20 @@ void test_concurrent_reservation()
     threads.reserve(thread_count);
     for (std::size_t index = 0; index < thread_count; ++index)
     {
-        threads.emplace_back([&]
-        {
-            std::vector<std::uint16_t> local;
-            local.reserve(reservations_per_thread);
-            for (std::size_t count = 0; count < reservations_per_thread; ++count)
+        threads.emplace_back(
+            [&]
             {
-                const auto port = port_manager::instance().acquire();
-                require(port.has_value(), "concurrent reservation available");
-                local.push_back(*port);
-            }
-            std::scoped_lock lock(mutex);
-            reservations.insert(reservations.end(), local.begin(), local.end());
-        });
+                std::vector<std::uint16_t> local;
+                local.reserve(reservations_per_thread);
+                for (std::size_t count = 0; count < reservations_per_thread; ++count)
+                {
+                    const auto port = port_manager::instance().acquire();
+                    require(port.has_value(), "concurrent reservation available");
+                    local.push_back(*port);
+                }
+                std::scoped_lock lock(mutex);
+                reservations.insert(reservations.end(), local.begin(), local.end());
+            });
     }
     for (auto& thread : threads)
     {
@@ -107,6 +115,67 @@ void test_concurrent_reservation()
     port_manager::destroy();
 }
 
+media_track make_video_track()
+{
+    return media_track{.id = 1,
+                       .kind = media_kind::video,
+                       .codec = codec_id::h264,
+                       .clock_rate = 90'000,
+                       .channel_count = 0,
+                       .codec_config = {},
+                       .config_version = 0};
+}
+
+gb28181_description make_udp_description()
+{
+    return gb28181_description{.transport = gb28181_transport::udp,
+                               .address = boost::asio::ip::address_v4::loopback(),
+                               .rtp_port = 50'000,
+                               .rtcp_port = 50'001,
+                               .payload_type = 96,
+                               .ssrc = 10'000'2001};
+}
+
+void test_udp_output_releases_pair_after_shutdown()
+{
+    boost::asio::io_context io;
+    port_manager::init(40'000, 40'001);
+    auto stream = std::make_shared<media_stream>("live/port-release", io.get_executor());
+    require(stream->set_tracks({make_video_track()}), "port release stream tracks");
+    require(registry::instance().add(stream), "port release stream registry");
+    auto session = std::make_shared<gb28181_udp_output_session>(io.get_executor(), stream, make_udp_description(), "output", false);
+    require(registry::instance().add_output_session(stream->name(), "output", session), "port release output registry");
+    require(session->startup(), "port release output startup");
+
+    session->shutdown();
+    io.run();
+    session.reset();
+
+    const auto pair = port_manager::instance().acquire_pair();
+    require(pair && pair->first == 40'000 && pair->second == 40'001, "port release after shutdown");
+    port_manager::instance().release(*pair);
+    registry::instance().clear();
+    port_manager::destroy();
+}
+
+void test_udp_output_releases_pair_after_bind_failure()
+{
+    boost::asio::io_context io;
+    port_manager::init(40'010, 40'011);
+    boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 40'010});
+    auto stream = std::make_shared<media_stream>("live/port-bind-failure", io.get_executor());
+    require(stream->set_tracks({make_video_track()}), "port bind failure stream tracks");
+    require(registry::instance().add(stream), "port bind failure stream registry");
+    auto session = std::make_shared<gb28181_udp_output_session>(io.get_executor(), stream, make_udp_description(), "output", false);
+    require(!session->startup(), "port bind failure output startup");
+
+    const auto pair = port_manager::instance().acquire_pair();
+    require(pair && pair->first == 40'010 && pair->second == 40'011, "port release after bind failure");
+    port_manager::instance().release(*pair);
+    registry::instance().clear();
+    port_manager::destroy();
+}
+
 }    // namespace
 }    // namespace media_server
 
@@ -118,6 +187,10 @@ int main()
         media_server::test_pair_reservation();
         media_server::test_exhaustion();
         media_server::test_concurrent_reservation();
+        media_server::registry::init();
+        media_server::test_udp_output_releases_pair_after_shutdown();
+        media_server::test_udp_output_releases_pair_after_bind_failure();
+        media_server::registry::destroy();
         std::cout << "[pass] port_manager_tests\n";
         return 0;
     }
