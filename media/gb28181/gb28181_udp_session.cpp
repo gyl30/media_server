@@ -202,7 +202,7 @@ void gb28181_udp_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    registry::instance().remove_input_session(stream_name());
+    registry::instance().remove_input_session(stream_name(), *this);
     rtcp_timer_.cancel();
     media_.shutdown();
     if (rtp_socket_)

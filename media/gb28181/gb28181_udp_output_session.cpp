@@ -1,4 +1,5 @@
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <utility>
 
@@ -17,11 +18,6 @@ extern "C"
 
 namespace media_server
 {
-namespace
-{
-constexpr int udp_port_pair_attempts = 32;
-}
-
 gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_executor executor,
                                                        std::shared_ptr<media_stream> stream,
                                                        gb28181_description description,
@@ -42,61 +38,127 @@ gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_execu
 std::optional<gb28181_udp_output_session::udp_socket_pair> gb28181_udp_output_session::prepare_udp_sockets(boost::asio::ip::address bind_address)
 {
     const auto weak = weak_from_this();
-    const auto start_socket = [weak, executor = executor_, &bind_address](std::uint16_t port)
+    const auto reserved = port_manager::instance().acquire_pair();
+    if (!reserved)
     {
-        auto socket = std::make_shared<udp_socket>(executor);
-        if (!socket->startup(
-                bind_address,
-                port,
-                [weak](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
-                {
-                    if (error)
-                    {
-                        if (const auto self = weak.lock())
-                        {
-                            self->shutdown();
-                        }
-                    }
-                },
-                [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
-                {
-                    if (error)
-                    {
-                        if (const auto self = weak.lock())
-                        {
-                            self->shutdown();
-                        }
-                    }
-                }))
-        {
-            return std::shared_ptr<udp_socket>{};
-        }
-        return socket;
-    };
-
-    for (int attempt = 0; attempt < udp_port_pair_attempts; ++attempt)
-    {
-        auto first = start_socket(0);
-        if (!first)
-        {
-            break;
-        }
-        const auto first_port = first->local_port();
-        const auto second_port = static_cast<std::uint16_t>((first_port & 1U) == 0 ? first_port + 1U : first_port - 1U);
-        auto second = second_port == 0 ? std::shared_ptr<udp_socket>{} : start_socket(second_port);
-        if (!second)
-        {
-            first->shutdown();
-            continue;
-        }
-
-        if ((first_port & 1U) == 0)
-        {
-            return udp_socket_pair{.rtp = std::move(first), .rtcp = std::move(second)};
-        }
-        return udp_socket_pair{.rtp = std::move(second), .rtcp = std::move(first)};
+        return std::nullopt;
     }
-    return std::nullopt;
+
+    const auto local_ports = *reserved;
+    auto rtp_socket = std::make_shared<udp_socket>(executor_);
+    if (!rtp_socket->startup(
+            bind_address,
+            local_ports.first,
+            [weak](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+            {
+                if (error)
+                {
+                    if (const auto self = weak.lock())
+                    {
+                        self->shutdown();
+                    }
+                }
+            },
+            [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+            {
+                if (error)
+                {
+                    if (const auto self = weak.lock())
+                    {
+                        self->shutdown();
+                    }
+                }
+            }))
+    {
+        port_manager::instance().release(local_ports);
+        return std::nullopt;
+    }
+
+    auto rtcp_socket = std::make_shared<udp_socket>(executor_);
+    if (!rtcp_socket->startup(
+            bind_address,
+            local_ports.second,
+            [weak](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+            {
+                if (error)
+                {
+                    if (const auto self = weak.lock())
+                    {
+                        self->shutdown();
+                    }
+                }
+            },
+            [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+            {
+                if (error)
+                {
+                    if (const auto self = weak.lock())
+                    {
+                        self->shutdown();
+                    }
+                }
+            }))
+    {
+        auto remaining = std::make_shared<std::atomic_uint8_t>(1);
+        rtp_socket->shutdown(
+            [local_ports, remaining]
+            {
+                if (remaining->fetch_sub(1U, std::memory_order_acq_rel) == 1U)
+                {
+                    port_manager::instance().release(local_ports);
+                }
+            });
+        return std::nullopt;
+    }
+
+    return udp_socket_pair{.rtp = std::move(rtp_socket), .rtcp = std::move(rtcp_socket), .local_ports = local_ports};
+}
+
+void gb28181_udp_output_session::shutdown_udp_sockets()
+{
+    if (local_ports_)
+    {
+        const auto local_ports = *local_ports_;
+        auto remaining = std::make_shared<std::atomic_uint8_t>(2);
+        const auto release = [local_ports, remaining]
+        {
+            if (remaining->fetch_sub(1U, std::memory_order_acq_rel) == 1U)
+            {
+                port_manager::instance().release(local_ports);
+            }
+        };
+        if (rtp_socket_)
+        {
+            rtp_socket_->shutdown(release);
+        }
+        else
+        {
+            release();
+        }
+        if (rtcp_socket_)
+        {
+            rtcp_socket_->shutdown(release);
+        }
+        else
+        {
+            release();
+        }
+        rtp_socket_.reset();
+        rtcp_socket_.reset();
+        local_ports_.reset();
+        return;
+    }
+
+    if (rtp_socket_)
+    {
+        rtp_socket_->shutdown();
+        rtp_socket_.reset();
+    }
+    if (rtcp_socket_)
+    {
+        rtcp_socket_->shutdown();
+        rtcp_socket_.reset();
+    }
 }
 
 bool gb28181_udp_output_session::startup()
@@ -116,6 +178,7 @@ bool gb28181_udp_output_session::startup()
     }
     rtp_socket_ = std::move(sockets->rtp);
     rtcp_socket_ = std::move(sockets->rtcp);
+    local_ports_ = sockets->local_ports;
 
     if (rtcp_enabled_)
     {
@@ -123,10 +186,7 @@ bool gb28181_udp_output_session::startup()
         rtcp_sender_ = rtp_create(&handler, nullptr, description_.ssrc, 0, 90'000, 2 * 1024 * 1024, 1);
         if (rtcp_sender_ == nullptr)
         {
-            rtp_socket_->shutdown();
-            rtcp_socket_->shutdown();
-            rtp_socket_.reset();
-            rtcp_socket_.reset();
+            shutdown_udp_sockets();
             return false;
         }
     }
@@ -155,10 +215,7 @@ bool gb28181_udp_output_session::startup()
     {
         media_->shutdown();
         media_.reset();
-        rtp_socket_->shutdown();
-        rtcp_socket_->shutdown();
-        rtp_socket_.reset();
-        rtcp_socket_.reset();
+        shutdown_udp_sockets();
         if (rtcp_sender_ != nullptr)
         {
             rtp_destroy(rtcp_sender_);
@@ -235,23 +292,14 @@ void gb28181_udp_output_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    registry::instance().remove_output_session(stream_name_, output_id_);
+    registry::instance().remove_output_session(stream_name_, output_id_, *this);
     rtcp_timer_.cancel();
     if (media_)
     {
         media_->shutdown();
         media_.reset();
     }
-    if (rtp_socket_)
-    {
-        rtp_socket_->shutdown();
-        rtp_socket_.reset();
-    }
-    if (rtcp_socket_)
-    {
-        rtcp_socket_->shutdown();
-        rtcp_socket_.reset();
-    }
+    shutdown_udp_sockets();
     if (rtcp_sender_ != nullptr)
     {
         rtp_destroy(rtcp_sender_);

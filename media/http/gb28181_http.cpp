@@ -106,6 +106,7 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request, b
         }
         if (!session->startup())
         {
+            streams.remove_input_session(stream_name, *session);
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
@@ -121,6 +122,7 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request, b
         }
         if (!session->startup())
         {
+            streams.remove_input_session(stream_name, *session);
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
@@ -151,6 +153,7 @@ gb28181_http_response handle_output_create(const gb28181_http_request& request, 
         }
         if (!session->startup())
         {
+            streams.remove_output_session(stream_name, output_id, *session);
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
@@ -171,6 +174,7 @@ gb28181_http_response handle_output_create(const gb28181_http_request& request, 
         }
         if (!session->startup())
         {
+            streams.remove_output_session(stream_name, output_id, *session);
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
@@ -212,7 +216,7 @@ gb28181_http_response handle_gb28181_input_request(const gb28181_http_request& r
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = registry::instance().find_input_session(*stream_name);
+    auto session = registry::instance().take_input_session(*stream_name);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -253,7 +257,7 @@ gb28181_http_response handle_gb28181_output_request(const gb28181_http_request& 
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = registry::instance().find_output_session(identity->first, identity->second);
+    auto session = registry::instance().take_output_session(identity->first, identity->second);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");

@@ -141,12 +141,6 @@ void test_input_identity_is_reusable_after_shutdown()
 
     require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input first create");
     require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input remove");
-    require_status(create_input(io, "live/gb-identity", description),
-                   boost::beast::http::status::internal_server_error,
-                   "gb input identity remains until shutdown runs");
-
-    io.poll();
-    io.restart();
     require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input reusable after shutdown");
     require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input final remove");
     io.run();
@@ -162,12 +156,6 @@ void test_output_identity_is_reusable_after_shutdown()
 
     require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output first create");
     require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output remove");
-    require_status(create_output(io, *stream, "primary", description),
-                   boost::beast::http::status::internal_server_error,
-                   "gb output identity remains until shutdown runs");
-
-    io.poll();
-    io.restart();
     require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output reusable after shutdown");
     require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output final remove");
     io.run();
@@ -185,7 +173,7 @@ void test_tcp_timeout_unregisters_input_session()
     require(session->startup(), "gb input timeout startup");
     io.run();
 
-    const auto remaining = registry::instance().find_input_session(stream_name);
+    const auto remaining = registry::instance().take_input_session(stream_name);
     require(!remaining, "gb input timeout unregisters session");
     clear_state();
 }
@@ -202,7 +190,7 @@ void test_tcp_timeout_unregisters_output_session()
     require(session->startup(), "gb output timeout startup");
     io.run();
 
-    const auto remaining = registry::instance().find_output_session(stream->name(), "timeout");
+    const auto remaining = registry::instance().take_output_session(stream->name(), "timeout");
     require(!remaining, "gb output timeout unregisters session");
     clear_state();
 }
