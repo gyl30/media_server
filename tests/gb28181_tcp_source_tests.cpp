@@ -91,6 +91,13 @@ void test_acceptor_reports_success()
     io.run();
 
     require(completion_count == 1, "acceptor success completes once");
+    require(acceptor->startup(
+                [&](boost::system::error_code, boost::asio::ip::tcp::socket)
+                {
+                    ++completion_count;
+                }) == boost::asio::error::already_started,
+            "acceptor cannot restart after completion");
+    require(completion_count == 1, "acceptor restart has no completion");
 }
 
 void test_acceptor_reports_bind_failure()
