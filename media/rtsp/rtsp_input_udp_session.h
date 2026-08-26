@@ -15,6 +15,7 @@
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/udp_socket.h"
+#include "media/net/port_manager.h"
 #include "media/rtsp/rtsp_input_media.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
@@ -40,12 +41,14 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
         std::shared_ptr<udp_socket> rtcp_socket;
         boost::asio::ip::udp::endpoint rtp_endpoint;
         boost::asio::ip::udp::endpoint rtcp_endpoint;
+        std::optional<port_manager_impl::port_pair> local_ports;
     };
 
     struct udp_socket_pair
     {
         std::shared_ptr<udp_socket> rtp;
         std::shared_ptr<udp_socket> rtcp;
+        port_manager_impl::port_pair local_ports;
     };
 
     [[nodiscard]] std::size_t on_read(std::span<const std::uint8_t> data);

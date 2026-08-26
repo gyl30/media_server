@@ -80,10 +80,12 @@ void udp_socket::send(std::vector<std::uint8_t> packet, boost::asio::ip::udp::en
     }
 }
 
-void udp_socket::shutdown()
+void udp_socket::shutdown() { shutdown(shutdown_handler{}); }
+
+void udp_socket::shutdown(shutdown_handler handler)
 {
     const auto self = shared_from_this();
-    boost::asio::post(socket_.get_executor(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(socket_.get_executor(), [self, handler = std::move(handler)]() mutable { self->safe_shutdown(std::move(handler)); });
 }
 
 std::uint16_t udp_socket::local_port() const noexcept { return local_port_; }
@@ -146,10 +148,14 @@ void udp_socket::write_next()
                           });
 }
 
-void udp_socket::safe_shutdown()
+void udp_socket::safe_shutdown(shutdown_handler handler)
 {
     if (closed_)
     {
+        if (handler)
+        {
+            handler();
+        }
         return;
     }
     closed_ = true;
@@ -161,6 +167,10 @@ void udp_socket::safe_shutdown()
     boost::system::error_code error;
     socket_.cancel(error);
     socket_.close(error);
+    if (handler)
+    {
+        handler();
+    }
 }
 
 }    // namespace media_server
