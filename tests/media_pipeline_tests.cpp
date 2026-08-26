@@ -9405,6 +9405,7 @@ void test_webrtc_opus_packetizer()
 
 int main()
 {
+    media_server::registry::init();
     media_server::test_timebase_conversions();
     std::cout << "[pass] timebase_conversions\n";
     media_server::test_rtmp_legacy_fourcc_connect_parse();
@@ -9638,5 +9639,6 @@ int main()
     media_server::test_webrtc_rtcp_sender();
     std::cout << "[pass] webrtc_rtcp_sender\n";
     std::cout << "all tests passed\n";
+    media_server::registry::destroy();
     return 0;
 }
