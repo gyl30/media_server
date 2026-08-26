@@ -105,10 +105,16 @@ void test_input_handlers()
     const auto delete_response = input_request(io, request("/gb28181/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "input delete response");
 
-    const auto missing_response = input_request(io, request("/gb28181/delete", delete_body));
-    require_json_response(
-        missing_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "input delete failure response");
+    const auto closing_response = input_request(io, request("/gb28181/delete", delete_body));
+    require_json_response(closing_response, boost::beast::http::status::ok, R"({"result":"ok"})", "input delete while closing response");
     io.run();
+    io.restart();
+
+    const auto missing_response = input_request(io, request("/gb28181/delete", delete_body));
+    require_json_response(missing_response,
+                          boost::beast::http::status::internal_server_error,
+                          R"({"error":"operation_failed"})",
+                          "input delete after shutdown response");
     registry::instance().clear();
 }
 
@@ -144,10 +150,16 @@ void test_output_handlers()
     const auto delete_response = output_request(io, request("/play/gb28181/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "output delete response");
 
-    const auto missing_response = output_request(io, request("/play/gb28181/delete", delete_body));
-    require_json_response(
-        missing_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "output delete failure response");
+    const auto closing_response = output_request(io, request("/play/gb28181/delete", delete_body));
+    require_json_response(closing_response, boost::beast::http::status::ok, R"({"result":"ok"})", "output delete while closing response");
     io.run();
+    io.restart();
+
+    const auto missing_response = output_request(io, request("/play/gb28181/delete", delete_body));
+    require_json_response(missing_response,
+                          boost::beast::http::status::internal_server_error,
+                          R"({"error":"operation_failed"})",
+                          "output delete after shutdown response");
     registry::instance().clear();
 }
 

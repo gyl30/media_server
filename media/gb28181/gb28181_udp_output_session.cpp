@@ -234,7 +234,7 @@ void gb28181_udp_output_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    registry::instance().remove_output_session(stream_name_, output_id_, *this);
+    registry::instance().remove_output_session(stream_name_, output_id_);
     rtcp_timer_.cancel();
     if (media_)
     {

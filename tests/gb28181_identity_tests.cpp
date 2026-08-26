@@ -133,7 +133,7 @@ gb28181_http_response delete_output(boost::asio::io_context& io, std::string_vie
 
 void clear_state() { registry::instance().clear(); }
 
-void test_input_identity_is_reusable_after_remove()
+void test_input_identity_is_reusable_after_shutdown()
 {
     boost::asio::io_context io;
     clear_state();
@@ -142,19 +142,18 @@ void test_input_identity_is_reusable_after_remove()
     require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input first create");
     require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input remove");
     require_status(create_input(io, "live/gb-identity", description),
-                   boost::beast::http::status::created,
-                   "gb input identity reusable immediately after remove");
+                   boost::beast::http::status::internal_server_error,
+                   "gb input identity remains until shutdown runs");
 
-    require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input second remove");
-    io.run();
+    io.poll();
     io.restart();
-    require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input reusable after remove");
+    require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input reusable after shutdown");
     require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input final remove");
     io.run();
     clear_state();
 }
 
-void test_output_identity_is_reusable_after_remove()
+void test_output_identity_is_reusable_after_shutdown()
 {
     boost::asio::io_context io;
     clear_state();
@@ -164,53 +163,13 @@ void test_output_identity_is_reusable_after_remove()
     require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output first create");
     require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output remove");
     require_status(create_output(io, *stream, "primary", description),
-                   boost::beast::http::status::created,
-                   "gb output identity reusable immediately after remove");
-
-    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output second remove");
-    io.run();
-    clear_state();
-}
-
-void test_input_old_async_work_does_not_remove_replacement()
-{
-    boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor peer(io, {boost::asio::ip::tcp::v4(), 0});
-    clear_state();
-    const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2003);
-
-    require_status(create_input(io, "live/gb-generation", description), boost::beast::http::status::created, "gb input old generation create");
-    require_status(delete_input(io, "live/gb-generation"), boost::beast::http::status::ok, "gb input old generation remove");
-    require_status(create_input(io, "live/gb-generation", description), boost::beast::http::status::created, "gb input replacement create");
+                   boost::beast::http::status::internal_server_error,
+                   "gb output identity remains until shutdown runs");
 
     io.poll();
-    require_status(create_input(io, "live/gb-generation", description),
-                   boost::beast::http::status::internal_server_error,
-                   "gb input old async work preserves replacement");
-
-    require_status(delete_input(io, "live/gb-generation"), boost::beast::http::status::ok, "gb input replacement remove");
-    io.run();
-    clear_state();
-}
-
-void test_output_old_async_work_does_not_remove_replacement()
-{
-    boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor peer(io, {boost::asio::ip::tcp::v4(), 0});
-    clear_state();
-    const auto stream = add_video_stream(io, "live/gb-output-generation");
-    const auto description = make_tcp_active_description(peer.local_endpoint().port(), 10'000'2004);
-
-    require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output old generation create");
-    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output old generation remove");
-    require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output replacement create");
-
-    io.poll();
-    require_status(create_output(io, *stream, "primary", description),
-                   boost::beast::http::status::internal_server_error,
-                   "gb output old async work preserves replacement");
-
-    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output replacement remove");
+    io.restart();
+    require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output reusable after shutdown");
+    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output final remove");
     io.run();
     clear_state();
 }
@@ -226,7 +185,7 @@ void test_tcp_timeout_unregisters_input_session()
     require(session->startup(), "gb input timeout startup");
     io.run();
 
-    const auto remaining = registry::instance().take_input_session(stream_name);
+    const auto remaining = registry::instance().find_input_session(stream_name);
     require(!remaining, "gb input timeout unregisters session");
     clear_state();
 }
@@ -243,7 +202,7 @@ void test_tcp_timeout_unregisters_output_session()
     require(session->startup(), "gb output timeout startup");
     io.run();
 
-    const auto remaining = registry::instance().take_output_session(stream->name(), "timeout");
+    const auto remaining = registry::instance().find_output_session(stream->name(), "timeout");
     require(!remaining, "gb output timeout unregisters session");
     clear_state();
 }
@@ -268,10 +227,8 @@ int main()
         }
     };
 
-    run("input_identity_is_reusable_after_remove", media_server::test_input_identity_is_reusable_after_remove);
-    run("output_identity_is_reusable_after_remove", media_server::test_output_identity_is_reusable_after_remove);
-    run("input_old_async_work_does_not_remove_replacement", media_server::test_input_old_async_work_does_not_remove_replacement);
-    run("output_old_async_work_does_not_remove_replacement", media_server::test_output_old_async_work_does_not_remove_replacement);
+    run("input_identity_is_reusable_after_shutdown", media_server::test_input_identity_is_reusable_after_shutdown);
+    run("output_identity_is_reusable_after_shutdown", media_server::test_output_identity_is_reusable_after_shutdown);
     run("tcp_timeout_unregisters_input_session", media_server::test_tcp_timeout_unregisters_input_session);
     run("tcp_timeout_unregisters_output_session", media_server::test_tcp_timeout_unregisters_output_session);
     return failures == 0 ? 0 : 1;
