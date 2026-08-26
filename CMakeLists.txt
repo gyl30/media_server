@@ -156,6 +156,7 @@ add_library(media_core STATIC
     media/codec/video_transcoder.cpp
     media/codec/codec_utils.cpp
     media/net/io_context_pool.cpp
+    media/net/port_manager.cpp
     media/net/tcp_connection.cpp
     media/net/tcp_connector.cpp
     media/net/tcp_listener.cpp
@@ -282,6 +283,10 @@ if(BUILD_TESTING)
     add_executable(gb28181_tcp_source_tests tests/gb28181_tcp_source_tests.cpp)
     target_link_libraries(gb28181_tcp_source_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_tcp_source_tests COMMAND gb28181_tcp_source_tests)
+
+    add_executable(port_manager_tests tests/port_manager_tests.cpp)
+    target_link_libraries(port_manager_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME port_manager_tests COMMAND port_manager_tests)
 
     add_executable(ireader_rtcp_tests tests/ireader_rtcp_tests.cpp)
     target_link_libraries(ireader_rtcp_tests PRIVATE ireader_media)
