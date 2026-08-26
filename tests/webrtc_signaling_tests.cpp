@@ -37,6 +37,7 @@
 #include "media/net/io_context_pool.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
+#include "media/net/port_manager.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/dtls_certificate.h"
@@ -2886,6 +2887,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
 
 int main()
 {
+    media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::registry::init();
     media_server::test_webrtc_sdp_answer();
     std::cout << "[pass] webrtc_sdp_answer\n";
@@ -2953,5 +2955,6 @@ int main()
     std::cout << "[pass] whep_dtls_h264_sha1_80\n";
     std::cout << "all tests passed\n";
     media_server::registry::destroy();
+    media_server::port_manager::destroy();
     return 0;
 }
