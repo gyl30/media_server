@@ -65,10 +65,18 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     const auto bind_address = advertised_address_.is_v6() ? boost::asio::ip::address(boost::asio::ip::address_v6::any())
                                                           : boost::asio::ip::address(boost::asio::ip::address_v4::any());
+    const auto reserved = port_manager::instance().acquire();
+    if (!reserved)
+    {
+        spdlog::error("webrtc udp port allocation failed");
+        return whep_session_startup_error::internal_error;
+    }
+    local_port_reservation_ = *reserved;
     const auto weak = weak_from_this();
     udp_socket_ = std::make_shared<udp_socket>(executor_);
     if (!udp_socket_->startup(
             bind_address,
+            local_port_reservation_,
             [weak](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
             {
                 if (const auto self = weak.lock())
@@ -84,6 +92,8 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
                 }
             }))
     {
+        port_manager::instance().release(local_port_reservation_);
+        local_port_reservation_ = 0;
         spdlog::error("webrtc udp socket startup failed");
         shutdown();
         return whep_session_startup_error::internal_error;
@@ -225,9 +235,22 @@ void whep_session::safe_shutdown()
     local_port_ = 0;
     if (udp_socket_)
     {
-        udp_socket_->shutdown();
+        const auto local_port = local_port_reservation_;
+        udp_socket_->shutdown(
+            [local_port]
+            {
+                if (local_port != 0)
+                {
+                    port_manager::instance().release(local_port);
+                }
+            });
         udp_socket_.reset();
     }
+    else if (local_port_reservation_ != 0)
+    {
+        port_manager::instance().release(local_port_reservation_);
+    }
+    local_port_reservation_ = 0;
 
     spdlog::info("webrtc whep session shutdown {}", id_);
 }
