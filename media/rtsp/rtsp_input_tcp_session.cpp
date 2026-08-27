@@ -10,12 +10,12 @@
 namespace media_server
 {
 
-rtsp_input_tcp_session::rtsp_input_tcp_session(std::weak_ptr<rtsp_server_connection> connection,
+rtsp_input_tcp_session::rtsp_input_tcp_session(rtsp_server_connection& connection,
                                                boost::asio::any_io_executor executor,
                                                std::string stream_name,
                                                std::string session_id,
                                                std::vector<rtsp_input_track_description> descriptions)
-    : connection_(std::move(connection)),
+    : connection_(connection),
       media_(executor, std::move(stream_name), session_id, std::move(descriptions)),
       session_id_(std::move(session_id)),
       tracks_(media_.descriptions().size()),
@@ -39,12 +39,6 @@ int rtsp_input_tcp_session::startup(
         return result;
     }
 
-    const auto connection = connection_.lock();
-    if (!connection)
-    {
-        safe_shutdown();
-        return -1;
-    }
     const auto self = shared_from_this();
     auto handler = std::make_shared<rtsp_server_connection_handler>();
     handler->on_interleaved = [self](std::uint8_t channel, std::span<const std::uint8_t> data) { self->on_interleaved(channel, data); };
@@ -63,17 +57,11 @@ int rtsp_input_tcp_session::startup(
     { return self->on_record(handler_server, handler_session); };
     handler->on_get_parameter = [](rtsp_server_t* handler_server, const char*, const char*, const void*, int)
     { return rtsp_server_reply_get_parameter(handler_server, 200, nullptr, 0); };
-    connection->set_handler(std::move(handler));
+    connection_.set_handler(std::move(handler));
     return result;
 }
 
-void rtsp_input_tcp_session::shutdown()
-{
-    if (const auto connection = connection_.lock())
-    {
-        connection->shutdown();
-    }
-}
+void rtsp_input_tcp_session::shutdown() { connection_.shutdown(); }
 
 void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
@@ -195,13 +183,6 @@ void rtsp_input_tcp_session::wait_rtcp()
                 return;
             }
 
-            const auto connection = self->connection_.lock();
-            if (!connection)
-            {
-                self->shutdown();
-                return;
-            }
-
             std::array<std::uint8_t, 1500> buffer{};
             for (std::size_t index = 0; index < self->tracks_.size(); ++index)
             {
@@ -217,7 +198,7 @@ void rtsp_input_tcp_session::wait_rtcp()
                 packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
                 packet[3] = static_cast<std::uint8_t>(bytes);
                 std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
-                connection->write(packet);
+                self->connection_.write(packet);
             }
             self->wait_rtcp();
         });

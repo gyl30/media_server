@@ -29,18 +29,12 @@ std::uint32_t random_u32()
 
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection, boost::asio::any_io_executor executor)
-    : connection_(std::move(connection)), executor_(std::move(executor))
+rtsp_input_session::rtsp_input_session(rtsp_server_connection& connection, boost::asio::any_io_executor executor)
+    : connection_(connection), executor_(std::move(executor))
 {
 }
 
-void rtsp_input_session::shutdown()
-{
-    if (const auto connection = connection_.lock())
-    {
-        connection->shutdown();
-    }
-}
+void rtsp_input_session::shutdown() { connection_.shutdown(); }
 
 int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
@@ -178,12 +172,6 @@ int rtsp_input_session::on_setup(
     if (selected == nullptr)
     {
         return rtsp_server_reply_setup(server, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
-    }
-
-    const auto connection = connection_.lock();
-    if (!connection)
-    {
-        return -1;
     }
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)

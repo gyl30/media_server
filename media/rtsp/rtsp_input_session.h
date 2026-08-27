@@ -24,12 +24,12 @@ namespace media_server
 class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_session>
 {
    public:
-    rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection, boost::asio::any_io_executor executor);
+    rtsp_input_session(rtsp_server_connection& connection, boost::asio::any_io_executor executor);
 
     void shutdown();
 
    private:
-    friend class rtsp_server;
+    friend class rtsp_server_connection;
 
     int on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length);
     int on_setup(
@@ -38,7 +38,7 @@ class rtsp_input_session final : public std::enable_shared_from_this<rtsp_input_
     int on_teardown(rtsp_server_t* server, std::string_view session);
     void safe_shutdown();
 
-    std::weak_ptr<rtsp_server_connection> connection_;
+    rtsp_server_connection& connection_;
     boost::asio::any_io_executor executor_;
     std::vector<rtsp_input_track_description> descriptions_;
     std::string stream_name_;

@@ -25,7 +25,7 @@ namespace media_server
 class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_input_udp_session>
 {
    public:
-    rtsp_input_udp_session(std::weak_ptr<rtsp_server_connection> connection,
+    rtsp_input_udp_session(rtsp_server_connection& connection,
                            boost::asio::any_io_executor executor,
                            std::string stream_name,
                            std::string session_id,
@@ -61,7 +61,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     void wait_rtcp();
     void safe_shutdown();
 
-    std::weak_ptr<rtsp_server_connection> connection_;
+    rtsp_server_connection& connection_;
     boost::asio::any_io_executor executor_;
     rtsp_input_media media_;
     std::string session_id_;
