@@ -162,6 +162,48 @@ void test_output_identity_is_reusable_after_shutdown()
     clear_state();
 }
 
+void test_tcp_input_repeated_shutdown_is_idempotent()
+{
+    boost::asio::io_context io;
+    clear_state();
+    const std::string stream_name = "live/gb-input-repeated-shutdown";
+    auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
+    auto session = std::make_shared<gb28181_tcp_session>(io.get_executor(), source, stream_name, 96, 10'000'2007);
+    require(registry::instance().add_input_session(stream_name, session), "gb input repeated shutdown registry add");
+    require(session->startup(), "gb input repeated shutdown startup");
+
+    session->shutdown();
+    session->shutdown();
+    session->shutdown();
+    io.run();
+
+    const auto remaining = registry::instance().take_input_session(stream_name);
+    require(!remaining, "gb input repeated shutdown unregisters session");
+    clear_state();
+}
+
+void test_tcp_output_repeated_shutdown_is_idempotent()
+{
+    boost::asio::io_context io;
+    clear_state();
+    const auto stream = add_video_stream(io, "live/gb-output-repeated-shutdown");
+    auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
+    auto session = std::make_shared<gb28181_tcp_output_session>(
+        io.get_executor(), source, std::weak_ptr<media_stream>{stream}, stream->name(), "repeated-shutdown", 96, 10'000'2008);
+    require(registry::instance().add_output_session(stream->name(), "repeated-shutdown", session),
+            "gb output repeated shutdown registry add");
+    require(session->startup(), "gb output repeated shutdown startup");
+
+    session->shutdown();
+    session->shutdown();
+    session->shutdown();
+    io.run();
+
+    const auto remaining = registry::instance().take_output_session(stream->name(), "repeated-shutdown");
+    require(!remaining, "gb output repeated shutdown unregisters session");
+    clear_state();
+}
+
 void test_tcp_timeout_unregisters_input_session()
 {
     boost::asio::io_context io;
@@ -218,6 +260,8 @@ int main()
 
     run("input_identity_is_reusable_after_shutdown", media_server::test_input_identity_is_reusable_after_shutdown);
     run("output_identity_is_reusable_after_shutdown", media_server::test_output_identity_is_reusable_after_shutdown);
+    run("tcp_input_repeated_shutdown_is_idempotent", media_server::test_tcp_input_repeated_shutdown_is_idempotent);
+    run("tcp_output_repeated_shutdown_is_idempotent", media_server::test_tcp_output_repeated_shutdown_is_idempotent);
     run("tcp_timeout_unregisters_input_session", media_server::test_tcp_timeout_unregisters_input_session);
     run("tcp_timeout_unregisters_output_session", media_server::test_tcp_timeout_unregisters_output_session);
     media_server::registry::destroy();

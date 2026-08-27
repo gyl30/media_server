@@ -32,7 +32,7 @@ gb28181_tcp_output_session::gb28181_tcp_output_session(boost::asio::any_io_execu
 
 bool gb28181_tcp_output_session::startup()
 {
-    if (closed_ || shutdown_requested_.load() || !socket_source_)
+    if (closed_ || !socket_source_)
     {
         return false;
     }
@@ -66,7 +66,7 @@ void gb28181_tcp_output_session::on_socket(boost::system::error_code error, boos
         shutdown();
         return;
     }
-    if (shutdown_requested_.load() || closed_)
+    if (closed_)
     {
         boost::system::error_code ignored;
         socket.close(ignored);
@@ -141,17 +141,13 @@ void gb28181_tcp_output_session::on_socket(boost::system::error_code error, boos
 
 void gb28181_tcp_output_session::shutdown()
 {
-    if (shutdown_requested_.exchange(true))
-    {
-        return;
-    }
     const auto self = shared_from_this();
     boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
 }
 
 void gb28181_tcp_output_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (closed_ || shutdown_requested_.load() || !connection_)
+    if (closed_ || !connection_)
     {
         return;
     }
