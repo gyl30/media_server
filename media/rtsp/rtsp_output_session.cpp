@@ -293,7 +293,7 @@ int rtsp_output_session::on_setup(
     }
 
     auto child =
-        std::make_shared<rtsp_output_tcp_session>(executor_, stream_, stream_name_, tracks_, video_track_id_, write_);
+        std::make_shared<rtsp_output_tcp_session>(executor_, stream_, tracks_, video_track_id_, write_);
     child->set_error_handle(error_handle_);
     const auto result = child->startup(server, uri, session, transports, count, video_transcoder_);
     if (!child->closed_)
@@ -302,6 +302,9 @@ int rtsp_output_session::on_setup(
         tracks_.clear();
         video_track_id_ = 0;
         stream_.reset();
+        stream_name_.clear();
+        write_ = {};
+        error_handle_ = {};
     }
     return result;
 }
