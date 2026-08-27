@@ -61,7 +61,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     static int options_callback(void* param, rtsp_server_t* server, const char* uri);
     static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
 
-    [[nodiscard]] std::size_t input(std::span<const std::uint8_t> data);
     void on_tcp_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
 
@@ -72,6 +71,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     std::string local_address_;
     rtsp_server_t* server_{};
     rtp_over_rtsp_t interleaved_{};
+    bool rtsp_need_more_data_{};
     bool closed_{};
 };
 
