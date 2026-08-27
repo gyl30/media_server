@@ -128,7 +128,7 @@ const uint8_t* rtp_over_rtsp(struct rtp_over_rtsp_t *rtp, const uint8_t* data, c
 					rtp->onrtp(rtp->param, rtp->channel, rtp->data, rtp->length);
 				return data;
 			}
-			break;
+			return data;
 
 		default:
 			assert(0);
