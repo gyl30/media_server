@@ -56,7 +56,7 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
     }
 
     descriptions_.clear();
-    stream_name_ = rtsp_stream_name_from_uri(uri);
+    stream_name_ = rtsp_path_from_uri(uri);
     if (stream_name_.empty())
     {
         return rtsp_server_reply_announce(server, 400);

@@ -4714,15 +4714,9 @@ void test_rtsp_publish_opus_fmtp_whitespace()
 
 void test_rtsp_uri_contract()
 {
-    require(rtsp_stream_name_from_uri("rtsp://127.0.0.1:8554/live/test") == "live/test", "rtsp uri absolute stream");
-    require(rtsp_stream_name_from_uri("/live/test/trackID=2") == "live/test", "rtsp uri track stream");
-    require(rtsp_stream_name_from_uri("rtsp://[").empty(), "rtsp uri invalid stream");
-
-    require(rtsp_track_id_from_uri("/live/test/trackID=0") == 0U, "rtsp uri zero track");
-    require(rtsp_track_id_from_uri("/live/test/trackID=2?transport=tcp") == 2U, "rtsp uri track query");
-    require(!rtsp_track_id_from_uri("/live/test").has_value(), "rtsp uri missing track");
-    require(!rtsp_track_id_from_uri("/live/test/trackID=2x").has_value(), "rtsp uri invalid track");
-    require(!rtsp_track_id_from_uri("/live/test/trackID=4294967296").has_value(), "rtsp uri overflow track");
+    require(rtsp_path_from_uri("rtsp://127.0.0.1:8554/live/test") == "live/test", "rtsp uri absolute stream");
+    require(rtsp_path_from_uri("/live/test/trackID=2") == "live/test/trackID=2", "rtsp uri preserves opaque track segment");
+    require(rtsp_path_from_uri("rtsp://[").empty(), "rtsp uri invalid stream");
 }
 
 void test_rtsp_publish_server_contract()
@@ -5519,6 +5513,12 @@ void test_rtsp_output_session_contract()
                                            "CSeq: 6\r\n"
                                            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
     require(wrong_stream.starts_with("RTSP/1.0 404"), "rtsp output setup stream identity");
+
+    const auto opaque_track = peer.request("SETUP " + base +
+                                           "/trackID=01 RTSP/1.0\r\n"
+                                           "CSeq: 60\r\n"
+                                           "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+    require(opaque_track.starts_with("RTSP/1.0 404"), "rtsp output control uri is opaque");
 
     const auto record_setup = peer.request("SETUP " + base +
                                            "/trackID=1 RTSP/1.0\r\n"
