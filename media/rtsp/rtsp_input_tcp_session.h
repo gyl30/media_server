@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <functional>
 #include <utility>
-#include <string_view>
 
 #include <boost/system/error_code.hpp>
 
@@ -46,19 +45,16 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
         int rtcp_channel{-1};
     };
 
-    int startup(rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
+    int startup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
-    int on_setup(
-        rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
-    int on_record(rtsp_server_t* server, std::string_view session);
-    int on_teardown(rtsp_server_t* server, std::string_view session);
+    int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
+    int on_record(rtsp_server_t* server);
     void wait_rtcp();
     void safe_shutdown();
 
     std::function<void(std::span<const std::uint8_t>)> write_;
     std::function<void(boost::system::error_code)> error_handle_;
     rtsp_input_media media_;
-    std::string session_id_;
     std::vector<track_state> tracks_;
     boost::asio::steady_timer rtcp_timer_;
     bool recording_{};
