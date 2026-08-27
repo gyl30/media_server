@@ -44,7 +44,6 @@ class rtsp_output_session final : public rtsp_server_session
 
    private:
     [[nodiscard]] int prepare_stream(std::string_view uri);
-    [[nodiscard]] bool description_current() const;
 
     boost::asio::any_io_executor executor_;
     output_video_config video_config_;
