@@ -86,8 +86,7 @@ rtsp_pull_session::rtsp_pull_session(boost::asio::io_context& io,
                                      std::string url,
                                      std::chrono::milliseconds establishment_timeout,
                                      std::chrono::milliseconds initial_tracks_timeout)
-    : io_(io),
-      stream_name_(std::move(stream_name)),
+    : stream_name_(std::move(stream_name)),
       url_(std::move(url)),
       resolver_(io),
       connect_socket_(io),
@@ -118,7 +117,7 @@ bool rtsp_pull_session::startup()
     username_ = parsed->username;
     password_ = parsed->password;
 
-    stream_ = std::make_shared<media_stream>(stream_name_, io_.get_executor());
+    stream_ = std::make_shared<media_stream>(stream_name_, resolver_.get_executor());
 
     static_cast<void>(avpkt2bs_create(&bitstream_));
 
@@ -152,7 +151,7 @@ bool rtsp_pull_session::startup()
 void rtsp_pull_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(io_, [self]() { self->safe_shutdown(); });
+    boost::asio::post(resolver_.get_executor(), [self]() { self->safe_shutdown(); });
 }
 
 void rtsp_pull_session::record_establishment_progress() { last_establishment_progress_ = std::chrono::steady_clock::now(); }

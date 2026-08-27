@@ -244,7 +244,6 @@ void rtsp_server_connection::safe_shutdown()
     closed_ = true;
 
     const auto session = std::move(session_);
-    session_.reset();
     if (session)
     {
         session->shutdown();
