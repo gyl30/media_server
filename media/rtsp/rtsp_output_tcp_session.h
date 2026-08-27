@@ -32,8 +32,7 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
    public:
     rtsp_output_tcp_session(boost::asio::any_io_executor executor,
                             std::shared_ptr<media_stream> stream,
-                            std::string stream_name,
-                            std::vector<rtsp_output_track_description> tracks,
+                            std::vector<rtsp_output_track_description> descriptions,
                             track_id video_track_id,
                             std::function<void(std::span<const std::uint8_t>)> write);
     ~rtsp_output_tcp_session() override;
@@ -49,13 +48,11 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
 
     struct track_state
     {
-        codec_id codec{};
-        std::uint64_t config_version{};
+        rtsp_output_track_description description;
         int payload_index{-1};
         int media_id{-1};
-        std::uint8_t rtp_channel{};
-        std::uint8_t rtcp_channel{};
-        bool setup{};
+        int rtp_channel{-1};
+        int rtcp_channel{-1};
     };
 
     int startup(rtsp_server_t* server,
@@ -81,8 +78,6 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     std::function<void(std::span<const std::uint8_t>)> write_;
     std::function<void(boost::system::error_code)> error_handle_;
     std::shared_ptr<media_stream> stream_;
-    std::string stream_name_;
-    std::vector<rtsp_output_track_description> descriptions_;
     rtsp_muxer_t* muxer_{};
     media_reader_handle reader_;
     std::map<track_id, track_state> tracks_;
