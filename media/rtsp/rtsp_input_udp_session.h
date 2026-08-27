@@ -34,7 +34,6 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
    public:
     rtsp_input_udp_session(boost::asio::any_io_executor executor,
                            std::string stream_name,
-                           std::string session_id,
                            std::vector<rtsp_input_track_description> descriptions);
 
     void set_error_handle(std::function<void(boost::system::error_code)> handle) { error_handle_ = std::move(handle); }
@@ -72,7 +71,6 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     rtsp_input_media media_;
     std::vector<track_state> tracks_;
     boost::asio::steady_timer rtcp_timer_;
-    bool recording_{};
     bool closed_{};
 };
 

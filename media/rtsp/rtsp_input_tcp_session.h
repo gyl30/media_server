@@ -29,7 +29,6 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
    public:
     rtsp_input_tcp_session(boost::asio::any_io_executor executor,
                            std::string stream_name,
-                           std::string session_id,
                            std::vector<rtsp_input_track_description> descriptions,
                            std::function<void(std::span<const std::uint8_t>)> write);
     ~rtsp_input_tcp_session();
@@ -57,7 +56,6 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
     rtsp_input_media media_;
     std::vector<track_state> tracks_;
     boost::asio::steady_timer rtcp_timer_;
-    bool recording_{};
     bool closed_{};
 };
 
