@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <random>
 #include <string>
 #include <utility>
@@ -50,7 +51,7 @@ void rtsp_input_session::on_interleaved(std::uint8_t channel, std::span<const st
 
 int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
-    if (announced_ || sdp == nullptr || length <= 0)
+    if (!session_id_.empty() || sdp == nullptr || length <= 0)
     {
         return rtsp_server_reply_announce(server, 455);
     }
@@ -139,7 +140,6 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
         return rtsp_server_reply_announce(server, 415);
     }
 
-    announced_ = true;
     session_id_ = std::to_string(random_u32());
     return rtsp_server_reply_announce(server, 200);
 }
@@ -147,32 +147,18 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
 int rtsp_input_session::on_setup(
     rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
-    if (tcp_session_)
-    {
-        return tcp_session_->on_setup(server, uri, session, transports, count);
-    }
-    if (udp_session_)
-    {
-        return udp_session_->on_setup(server, uri, session, transports, count);
-    }
-    if (!announced_ || transports == nullptr || count == 0 || (!session.empty() && session != session_id_))
+    if (session_id_.empty() || transports == nullptr || count == 0 || (!session.empty() && session != session_id_))
     {
         return rtsp_server_reply_setup(server, 454, nullptr, nullptr);
     }
 
-    bool known_uri = false;
-    for (const auto& description : descriptions_)
-    {
-        if (uri == description.uri)
-        {
-            known_uri = true;
-            break;
-        }
-    }
-    if (!known_uri)
+    const auto description =
+        std::ranges::find_if(descriptions_, [uri](const rtsp_input_track_description& value) { return uri == value.uri; });
+    if (description == descriptions_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
+    const auto track_index = static_cast<std::size_t>(description - descriptions_.begin());
 
     const rtsp_header_transport_t* selected = nullptr;
     for (std::size_t index = 0; index < count; ++index)
@@ -182,8 +168,9 @@ int rtsp_input_session::on_setup(
         const bool valid_interleaved = transports[index].interleaved1 >= 0 && transports[index].interleaved2 >= 0 &&
                                        transports[index].interleaved1 <= 255 && transports[index].interleaved2 <= 255 &&
                                        transports[index].interleaved1 != transports[index].interleaved2;
-        if ((tcp || udp) && transports[index].multicast == 0 && (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_RECORD) &&
-            (!tcp || valid_interleaved))
+        const bool family_matches = (tcp && !udp_session_) || (udp && !tcp_session_);
+        if (family_matches && transports[index].multicast == 0 &&
+            (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_RECORD) && (!tcp || valid_interleaved))
         {
             selected = &transports[index];
             break;
@@ -191,14 +178,27 @@ int rtsp_input_session::on_setup(
     }
     if (selected == nullptr)
     {
-        return rtsp_server_reply_setup(server, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
+        return rtsp_server_reply_setup(server, 461, nullptr, udp_session_ ? nullptr : "RTP/AVP/TCP;unicast;interleaved=0-1");
+    }
+    if (selected->transport == RTSP_TRANSPORT_RTP_UDP && (selected->rtp.u.client_port1 == 0 || selected->rtp.u.client_port2 == 0))
+    {
+        return rtsp_server_reply_setup(server, 461, nullptr, nullptr);
+    }
+
+    if (tcp_session_)
+    {
+        return tcp_session_->on_setup(server, track_index, *selected, session_id_);
+    }
+    if (udp_session_)
+    {
+        return udp_session_->on_setup(server, track_index, *selected, session_id_);
     }
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
         auto child = std::make_shared<rtsp_input_tcp_session>(executor_, stream_name_, session_id_, descriptions_, write_);
         child->set_error_handle(error_handle_);
-        const auto result = child->startup(server, uri, session, transports, count);
+        const auto result = child->startup(server, track_index, *selected, session_id_);
         if (!child->closed_)
         {
             tcp_session_ = std::move(child);
@@ -208,7 +208,7 @@ int rtsp_input_session::on_setup(
 
     auto child = std::make_shared<rtsp_input_udp_session>(executor_, stream_name_, session_id_, descriptions_);
     child->set_error_handle(error_handle_);
-    const auto result = child->startup(server, uri, session, transports, count);
+    const auto result = child->startup(server, track_index, *selected, session_id_);
     if (!child->closed_)
     {
         udp_session_ = std::move(child);
@@ -222,31 +222,23 @@ int rtsp_input_session::on_record(rtsp_server_t* server,
                                   const std::int64_t*,
                                   const double*)
 {
+    if (session_id_.empty() || session != session_id_)
+    {
+        return rtsp_server_reply_record(server, 454, nullptr, nullptr);
+    }
     if (tcp_session_)
     {
-        return tcp_session_->on_record(server, session);
+        return tcp_session_->on_record(server);
     }
     if (udp_session_)
     {
-        return udp_session_->on_record(server, session);
-    }
-    if (!announced_ || session != session_id_)
-    {
-        return rtsp_server_reply_record(server, 454, nullptr, nullptr);
+        return udp_session_->on_record(server);
     }
     return rtsp_server_reply_record(server, 455, nullptr, nullptr);
 }
 
 int rtsp_input_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
 {
-    if (tcp_session_)
-    {
-        return tcp_session_->on_teardown(server, session);
-    }
-    if (udp_session_)
-    {
-        return udp_session_->on_teardown(server, session);
-    }
     if (session_id_.empty() || session != session_id_)
     {
         return rtsp_server_reply_teardown(server, 454);

@@ -7,7 +7,6 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <string_view>
 
 #include <boost/asio/any_io_executor.hpp>
@@ -53,7 +52,6 @@ class rtsp_input_session final : public rtsp_server_session
     std::vector<rtsp_input_track_description> descriptions_;
     std::string stream_name_;
     std::string session_id_;
-    bool announced_{};
     bool closed_{};
 };
 
