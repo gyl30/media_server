@@ -202,6 +202,8 @@ int rtsp_input_session::on_setup(
         if (!child->closed_)
         {
             tcp_session_ = std::move(child);
+            write_ = {};
+            stream_name_.clear();
         }
         return result;
     }
@@ -212,6 +214,8 @@ int rtsp_input_session::on_setup(
     if (!child->closed_)
     {
         udp_session_ = std::move(child);
+        write_ = {};
+        stream_name_.clear();
     }
     return result;
 }
