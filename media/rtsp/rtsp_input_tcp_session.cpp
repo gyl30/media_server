@@ -1,6 +1,5 @@
 #include <array>
 #include <chrono>
-#include <cstdlib>
 #include <utility>
 #include <algorithm>
 
@@ -33,9 +32,6 @@ int rtsp_input_tcp_session::startup(
     {
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
     }
-    interleaved_.onrtp = &rtsp_input_tcp_session::rtp_callback;
-    interleaved_.param = this;
-
     const auto result = on_setup(server, uri, session, transports, count);
     if (result != 0 || !std::ranges::any_of(tracks_, [](const track_state& state) { return state.rtp_channel >= 0; }))
     {
@@ -51,7 +47,7 @@ int rtsp_input_tcp_session::startup(
     }
     const auto self = shared_from_this();
     auto handler = std::make_shared<rtsp_server_connection_handler>();
-    handler->on_read = [self](std::span<const std::uint8_t> data) { return self->on_read(data); };
+    handler->on_interleaved = [self](std::uint8_t channel, std::span<const std::uint8_t> data) { self->on_interleaved(channel, data); };
     handler->on_shutdown = [self]() { self->safe_shutdown(); };
     handler->on_setup = [self](rtsp_server_t* handler_server,
                                const char* handler_uri,
@@ -79,36 +75,9 @@ void rtsp_input_tcp_session::shutdown()
     }
 }
 
-void rtsp_input_tcp_session::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
+void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
-    static_cast<rtsp_input_tcp_session*>(param)->on_rtp(channel, data, bytes);
-}
-
-std::size_t rtsp_input_tcp_session::on_read(std::span<const std::uint8_t> data)
-{
-    if (closed_ || data.empty())
-    {
-        return data.size();
-    }
-
-    if (interleaved_.state != 0 || data.front() == '$')
-    {
-        const auto* next = rtp_over_rtsp(&interleaved_, data.data(), data.data() + data.size());
-        if (next == data.data())
-        {
-            shutdown();
-            return data.size();
-        }
-        return static_cast<std::size_t>(next - data.data());
-    }
-
-    const auto connection = connection_.lock();
-    return connection ? connection->input(data) : data.size();
-}
-
-void rtsp_input_tcp_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
-{
-    if (!recording_ || data == nullptr)
+    if (!recording_ || data.empty())
     {
         return;
     }
@@ -116,7 +85,7 @@ void rtsp_input_tcp_session::on_rtp(std::uint8_t channel, const void* data, std:
     {
         if (tracks_[index].rtp_channel == channel || tracks_[index].rtcp_channel == channel)
         {
-            if (!media_.input(index, std::span(static_cast<const std::uint8_t*>(data), bytes)))
+            if (!media_.input(index, data))
             {
                 shutdown();
             }
@@ -263,15 +232,6 @@ void rtsp_input_tcp_session::safe_shutdown()
     closed_ = true;
     rtcp_timer_.cancel();
     media_.shutdown();
-    if (interleaved_.data != nullptr)
-    {
-        std::free(interleaved_.data);
-        interleaved_.data = nullptr;
-    }
-    interleaved_.capacity = 0;
-    interleaved_.bytes = 0;
-    interleaved_.length = 0;
-    interleaved_.state = 0;
     spdlog::debug("rtsp input tcp shutdown {}", media_.stream_name());
 }
 

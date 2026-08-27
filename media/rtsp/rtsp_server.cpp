@@ -29,18 +29,14 @@ boost::system::error_code rtsp_server::startup()
 
 void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
 {
+    const auto executor = socket.get_executor();
     auto tcp = std::make_shared<tcp_connection>(std::move(socket));
     auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp));
 
     const std::weak_ptr<rtsp_server> weak_owner = shared_from_this();
     const std::weak_ptr<rtsp_server_connection> weak_connection = connection;
     auto handler = std::make_shared<rtsp_server_connection_handler>();
-    handler->on_read = [weak_connection](std::span<const std::uint8_t> data)
-    {
-        const auto current = weak_connection.lock();
-        return current ? current->input(data) : data.size();
-    };
-    handler->on_describe = [weak_owner, weak_connection](rtsp_server_t* server, const char* uri)
+    handler->on_describe = [weak_owner, weak_connection, executor](rtsp_server_t* server, const char* uri)
     {
         const auto owner = weak_owner.lock();
         const auto current = weak_connection.lock();
@@ -48,12 +44,12 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
         {
             return -1;
         }
-        auto session = std::make_shared<rtsp_output_session>(current, owner->config_.rtsp_video);
+        auto session = std::make_shared<rtsp_output_session>(current, executor, owner->config_.rtsp_video);
         current->set_handler(session->make_handler());
         return session->on_describe(server, uri != nullptr ? uri : "");
     };
     handler->on_setup =
-        [weak_owner, weak_connection](
+        [weak_owner, weak_connection, executor](
             rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
     {
         const auto owner = weak_owner.lock();
@@ -62,11 +58,11 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
         {
             return -1;
         }
-        auto output = std::make_shared<rtsp_output_session>(current, owner->config_.rtsp_video);
+        auto output = std::make_shared<rtsp_output_session>(current, executor, owner->config_.rtsp_video);
         current->set_handler(output->make_handler());
         return output->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
     };
-    handler->on_announce = [weak_owner, weak_connection](rtsp_server_t* server, const char* uri, const char* sdp, int length)
+    handler->on_announce = [weak_owner, weak_connection, executor](rtsp_server_t* server, const char* uri, const char* sdp, int length)
     {
         const auto owner = weak_owner.lock();
         const auto current = weak_connection.lock();
@@ -74,9 +70,8 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
         {
             return -1;
         }
-        auto input = std::make_shared<rtsp_input_session>(current);
+        auto input = std::make_shared<rtsp_input_session>(current, executor);
         auto input_handler = std::make_shared<rtsp_server_connection_handler>();
-        input_handler->on_read = [input](std::span<const std::uint8_t> data) { return input->on_read(data); };
         input_handler->on_shutdown = [input]() { input->safe_shutdown(); };
         input_handler->on_setup = [input](rtsp_server_t* handler_server,
                                           const char* handler_uri,

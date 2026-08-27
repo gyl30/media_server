@@ -1,4 +1,5 @@
 #include <string>
+#include <cstdlib>
 #include <utility>
 
 #include <boost/asio/post.hpp>
@@ -8,7 +9,12 @@
 namespace media_server
 {
 
-rtsp_server_connection::rtsp_server_connection(std::shared_ptr<tcp_connection> connection) : connection_(std::move(connection)) {}
+rtsp_server_connection::rtsp_server_connection(std::shared_ptr<tcp_connection> connection)
+    : executor_(connection->socket().get_executor()), connection_(std::move(connection))
+{
+    interleaved_.onrtp = &rtsp_server_connection::interleaved_callback;
+    interleaved_.param = this;
+}
 
 rtsp_server_connection::~rtsp_server_connection() = default;
 
@@ -110,15 +116,9 @@ void rtsp_server_connection::write(std::span<const std::uint8_t> data)
 
 void rtsp_server_connection::shutdown()
 {
-    if (connection_ == nullptr)
-    {
-        return;
-    }
     const auto self = shared_from_this();
-    boost::asio::post(connection_->socket().get_executor(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
 }
-
-boost::asio::any_io_executor rtsp_server_connection::executor() const { return connection_->socket().get_executor(); }
 
 std::string rtsp_server_connection::local_address() const { return local_address_; }
 
@@ -131,6 +131,16 @@ int rtsp_server_connection::send_callback(void* param, const void* data, std::si
     }
     self->connection_->write(data, bytes);
     return 0;
+}
+
+void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
+{
+    auto* self = static_cast<rtsp_server_connection*>(param);
+    const auto handler = self->handler_;
+    if (handler && handler->on_interleaved)
+    {
+        handler->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes));
+    }
 }
 
 int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server, const char* uri)
@@ -193,14 +203,24 @@ void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
     auto remaining = data;
     while (!closed_ && !remaining.empty())
     {
-        const auto handler = handler_;
-        if (!handler || !handler->on_read)
+        std::size_t consumed{};
+        if (interleaved_.state != 0 || remaining.front() == '$')
         {
-            shutdown();
-            return;
+            const auto handler = handler_;
+            if (!handler || !handler->on_interleaved)
+            {
+                shutdown();
+                return;
+            }
+
+            const auto* next = rtp_over_rtsp(&interleaved_, remaining.data(), remaining.data() + remaining.size());
+            consumed = static_cast<std::size_t>(next - remaining.data());
+        }
+        else
+        {
+            consumed = input(remaining);
         }
 
-        const auto consumed = handler->on_read(remaining);
         if (closed_)
         {
             return;
@@ -232,6 +252,11 @@ void rtsp_server_connection::safe_shutdown()
     {
         rtsp_server_destroy(server_);
         server_ = nullptr;
+    }
+    if (interleaved_.data != nullptr)
+    {
+        std::free(interleaved_.data);
+        interleaved_.data = nullptr;
     }
     if (connection_)
     {
