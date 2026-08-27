@@ -75,7 +75,6 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     [[nodiscard]] bool update_track_from_packet(const avpacket_t& packet);
     [[nodiscard]] bool try_initialize_tracks();
 
-    boost::asio::io_context& io_;
     std::string stream_name_;
     std::string url_;
     std::string username_;

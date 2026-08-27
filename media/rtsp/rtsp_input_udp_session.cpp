@@ -21,10 +21,9 @@ namespace media_server
 rtsp_input_udp_session::rtsp_input_udp_session(boost::asio::any_io_executor executor,
                                                std::string stream_name,
                                                std::vector<rtsp_input_track_description> descriptions)
-    : executor_(std::move(executor)),
-      media_(executor_, std::move(stream_name), std::move(descriptions)),
+    : media_(executor, std::move(stream_name), std::move(descriptions)),
       tracks_(media_.descriptions().size()),
-      rtcp_timer_(executor_)
+      rtcp_timer_(std::move(executor))
 {
 }
 
@@ -80,8 +79,7 @@ void rtsp_input_udp_session::on_rtcp(std::size_t track_index, std::span<const st
     }
 }
 
-std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::prepare_udp_sockets(std::size_t track_index,
-                                                                                                   boost::asio::any_io_executor executor)
+std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::prepare_udp_sockets(std::size_t track_index)
 {
     const auto self = shared_from_this();
     const auto reserved = port_manager::instance().acquire_pair();
@@ -91,7 +89,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
     }
 
     const auto local_ports = *reserved;
-    auto candidate_rtp = std::make_shared<udp_socket>(executor);
+    auto candidate_rtp = std::make_shared<udp_socket>(rtcp_timer_.get_executor());
     if (!candidate_rtp->startup(
             boost::asio::ip::address_v4::any(),
             local_ports.first,
@@ -125,7 +123,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
         return std::nullopt;
     }
 
-    auto candidate_rtcp = std::make_shared<udp_socket>(executor);
+    auto candidate_rtcp = std::make_shared<udp_socket>(rtcp_timer_.get_executor());
     if (!candidate_rtcp->startup(
             boost::asio::ip::address_v4::any(),
             local_ports.second,
@@ -185,7 +183,7 @@ int rtsp_input_udp_session::on_setup(rtsp_server_t* server,
         return rtsp_server_reply_setup(server, 461, nullptr, nullptr);
     }
 
-    auto sockets = prepare_udp_sockets(track_index, executor_);
+    auto sockets = prepare_udp_sockets(track_index);
     if (!sockets)
     {
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
@@ -242,7 +240,7 @@ void rtsp_input_udp_session::wait_rtcp()
             {
                 auto& state = self->tracks_[index];
                 const auto bytes = self->media_.rtcp(index, buffer);
-                if (bytes <= 0 || !state.rtcp_socket)
+                if (bytes <= 0)
                 {
                     continue;
                 }
@@ -275,22 +273,8 @@ void rtsp_input_udp_session::safe_shutdown()
                     port_manager::instance().release(local_ports);
                 }
             };
-            if (state.rtp_socket)
-            {
-                state.rtp_socket->shutdown(release);
-            }
-            else
-            {
-                release();
-            }
-            if (state.rtcp_socket)
-            {
-                state.rtcp_socket->shutdown(release);
-            }
-            else
-            {
-                release();
-            }
+            state.rtp_socket->shutdown(release);
+            state.rtcp_socket->shutdown(release);
         }
         state = {};
     }
