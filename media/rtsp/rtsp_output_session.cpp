@@ -5,7 +5,6 @@
 
 #include <boost/system/error_code.hpp>
 #include <optional>
-#include <algorithm>
 
 #include <spdlog/spdlog.h>
 
@@ -22,7 +21,6 @@ extern "C"
 #include "rtsp-muxer.h"
 #include "rtp-profile.h"
 #include "rtsp-server.h"
-#include "rtsp-header-transport.h"
 }
 
 namespace media_server
@@ -293,34 +291,6 @@ int rtsp_output_session::on_setup(
             return rtsp_server_reply_setup(server, prepare_result, nullptr, nullptr);
         }
     }
-    const auto current_stream = registry::instance().find(stream_name_);
-    if (!stream_ || !current_stream)
-    {
-        return rtsp_server_reply_setup(server, 503, nullptr, nullptr);
-    }
-    if (current_stream.get() != stream_.get() || !description_current())
-    {
-        return rtsp_server_reply_setup(server, 455, nullptr, nullptr);
-    }
-    if (transports == nullptr || count == 0)
-    {
-        return rtsp_server_reply_setup(server, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
-    }
-
-    const rtsp_header_transport_t* selected = nullptr;
-    for (std::size_t index = 0; index < count; ++index)
-    {
-        if (transports[index].transport == RTSP_TRANSPORT_RTP_TCP && transports[index].multicast == 0 &&
-            (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_PLAY))
-        {
-            selected = &transports[index];
-            break;
-        }
-    }
-    if (selected == nullptr)
-    {
-        return rtsp_server_reply_setup(server, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
-    }
 
     auto child =
         std::make_shared<rtsp_output_tcp_session>(executor_, stream_, stream_name_, tracks_, video_track_id_, write_);
@@ -329,6 +299,9 @@ int rtsp_output_session::on_setup(
     if (!child->closed_)
     {
         tcp_session_ = std::move(child);
+        tracks_.clear();
+        video_track_id_ = 0;
+        stream_.reset();
     }
     return result;
 }
@@ -427,32 +400,6 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
     video_transcoder_ = std::move(prepared_transcoder);
     video_track_id_ = video_track_id;
     return 0;
-}
-
-bool rtsp_output_session::description_current() const
-{
-    if (!stream_)
-    {
-        return false;
-    }
-
-    const auto current = stream_->tracks();
-    std::size_t supported_count = 0;
-    for (const auto& track : current)
-    {
-        if (!rtsp_output_track_supported(track))
-        {
-            continue;
-        }
-        ++supported_count;
-        const auto iterator =
-            std::ranges::find_if(tracks_, [id = track.id](const rtsp_output_track_description& value) { return value.track.id == id; });
-        if (iterator == tracks_.end() || iterator->track.config_version != track.config_version)
-        {
-            return false;
-        }
-    }
-    return supported_count == tracks_.size();
 }
 
 }    // namespace media_server
