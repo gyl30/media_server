@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string_view>
 
@@ -17,24 +18,27 @@
 #include "media/net/udp_socket.h"
 #include "media/net/port_manager.h"
 #include "media/rtsp/rtsp_input_media.h"
-#include "media/rtsp/rtsp_server_connection.h"
+
+struct rtsp_server_t;
+struct rtsp_header_transport_t;
 
 namespace media_server
 {
 
+class rtsp_input_session;
+
 class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_input_udp_session>
 {
    public:
-    rtsp_input_udp_session(rtsp_server_connection& connection,
-                           boost::asio::any_io_executor executor,
+    rtsp_input_udp_session(boost::asio::any_io_executor executor,
                            std::string stream_name,
                            std::string session_id,
-                           std::vector<rtsp_input_track_description> descriptions);
-
-    int startup(rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
-    void shutdown();
+                           std::vector<rtsp_input_track_description> descriptions,
+                           std::function<void()> request_shutdown);
 
    private:
+    friend class rtsp_input_session;
+
     struct track_state
     {
         std::shared_ptr<udp_socket> rtp_socket;
@@ -51,6 +55,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
         port_manager_impl::port_pair local_ports;
     };
 
+    int startup(rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     void on_rtp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
     void on_rtcp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
     int on_setup(
@@ -61,8 +66,8 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     void wait_rtcp();
     void safe_shutdown();
 
-    rtsp_server_connection& connection_;
     boost::asio::any_io_executor executor_;
+    std::function<void()> request_shutdown_;
     rtsp_input_media media_;
     std::string session_id_;
     std::vector<track_state> tracks_;

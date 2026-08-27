@@ -5,7 +5,6 @@
 #include <memory>
 #include <string>
 #include <cstdint>
-#include <functional>
 
 #include <boost/asio/any_io_executor.hpp>
 
@@ -21,18 +20,7 @@ extern "C"
 namespace media_server
 {
 
-struct rtsp_server_connection_handler
-{
-    std::function<void(std::uint8_t, std::span<const std::uint8_t>)> on_interleaved;
-    std::function<void()> on_shutdown;
-    std::function<int(rtsp_server_t*, const char*)> on_describe;
-    std::function<int(rtsp_server_t*, const char*, const char*, const rtsp_header_transport_t[], std::size_t)> on_setup;
-    std::function<int(rtsp_server_t*, const char*, const char*, const std::int64_t*, const double*)> on_play;
-    std::function<int(rtsp_server_t*, const char*, const char*)> on_teardown;
-    std::function<int(rtsp_server_t*, const char*, const char*, int)> on_announce;
-    std::function<int(rtsp_server_t*, const char*, const char*, const std::int64_t*, const double*)> on_record;
-    std::function<int(rtsp_server_t*, const char*, const char*, const void*, int)> on_get_parameter;
-};
+class rtsp_server_session;
 
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
@@ -41,11 +29,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     ~rtsp_server_connection();
 
     void startup();
-    void set_handler(std::shared_ptr<const rtsp_server_connection_handler> handler);
-    void write(std::span<const std::uint8_t> data);
     void shutdown();
-
-    [[nodiscard]] std::string local_address() const;
 
    private:
     static int send_callback(void* param, const void* data, std::size_t bytes);
@@ -67,7 +51,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     boost::asio::any_io_executor executor_;
     const config& config_;
     std::shared_ptr<tcp_connection> connection_;
-    std::shared_ptr<const rtsp_server_connection_handler> handler_;
+    std::unique_ptr<rtsp_server_session> session_;
     std::string local_address_;
     rtsp_server_t* server_{};
     rtp_over_rtsp_t interleaved_{};

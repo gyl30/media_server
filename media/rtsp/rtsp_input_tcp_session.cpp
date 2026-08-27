@@ -7,15 +7,22 @@
 
 #include "media/rtsp/rtsp_input_tcp_session.h"
 
+extern "C"
+{
+#include "rtsp-server.h"
+}
+
 namespace media_server
 {
 
-rtsp_input_tcp_session::rtsp_input_tcp_session(rtsp_server_connection& connection,
-                                               boost::asio::any_io_executor executor,
+rtsp_input_tcp_session::rtsp_input_tcp_session(boost::asio::any_io_executor executor,
                                                std::string stream_name,
                                                std::string session_id,
-                                               std::vector<rtsp_input_track_description> descriptions)
-    : connection_(connection),
+                                               std::vector<rtsp_input_track_description> descriptions,
+                                               std::function<void(std::span<const std::uint8_t>)> write,
+                                               std::function<void()> request_shutdown)
+    : write_(std::move(write)),
+      request_shutdown_(std::move(request_shutdown)),
       media_(executor, std::move(stream_name), session_id, std::move(descriptions)),
       session_id_(std::move(session_id)),
       tracks_(media_.descriptions().size()),
@@ -38,30 +45,8 @@ int rtsp_input_tcp_session::startup(
         safe_shutdown();
         return result;
     }
-
-    const auto self = shared_from_this();
-    auto handler = std::make_shared<rtsp_server_connection_handler>();
-    handler->on_interleaved = [self](std::uint8_t channel, std::span<const std::uint8_t> data) { self->on_interleaved(channel, data); };
-    handler->on_shutdown = [self]() { self->safe_shutdown(); };
-    handler->on_setup = [self](rtsp_server_t* handler_server,
-                               const char* handler_uri,
-                               const char* handler_session,
-                               const rtsp_header_transport_t handler_transports[],
-                               std::size_t handler_count)
-    { return self->on_setup(handler_server, handler_uri, handler_session, handler_transports, handler_count); };
-    handler->on_teardown = [self](rtsp_server_t* handler_server, const char*, const char* handler_session)
-    { return self->on_teardown(handler_server, handler_session); };
-    handler->on_announce = [](rtsp_server_t* handler_server, const char*, const char*, int)
-    { return rtsp_server_reply_announce(handler_server, 455); };
-    handler->on_record = [self](rtsp_server_t* handler_server, const char*, const char* handler_session, const std::int64_t*, const double*)
-    { return self->on_record(handler_server, handler_session); };
-    handler->on_get_parameter = [](rtsp_server_t* handler_server, const char*, const char*, const void*, int)
-    { return rtsp_server_reply_get_parameter(handler_server, 200, nullptr, 0); };
-    connection_.set_handler(std::move(handler));
     return result;
 }
-
-void rtsp_input_tcp_session::shutdown() { connection_.shutdown(); }
 
 void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
@@ -75,7 +60,7 @@ void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<cons
         {
             if (!media_.input(index, data))
             {
-                shutdown();
+                request_shutdown_();
             }
             return;
         }
@@ -152,7 +137,7 @@ int rtsp_input_tcp_session::on_record(rtsp_server_t* server, std::string_view se
     if (!media_.start_recording())
     {
         rtsp_server_reply_record(server, 453, nullptr, nullptr);
-        shutdown();
+        request_shutdown_();
         return 0;
     }
     recording_ = true;
@@ -167,7 +152,7 @@ int rtsp_input_tcp_session::on_teardown(rtsp_server_t* server, std::string_view 
         return rtsp_server_reply_teardown(server, 454);
     }
     const auto result = rtsp_server_reply_teardown(server, 200);
-    shutdown();
+    request_shutdown_();
     return result;
 }
 
@@ -198,7 +183,7 @@ void rtsp_input_tcp_session::wait_rtcp()
                 packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
                 packet[3] = static_cast<std::uint8_t>(bytes);
                 std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
-                self->connection_.write(packet);
+                self->write_(packet);
             }
             self->wait_rtcp();
         });

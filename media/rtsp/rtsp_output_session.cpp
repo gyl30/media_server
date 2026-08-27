@@ -138,37 +138,41 @@ std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_
 }
 }    // namespace
 
-rtsp_output_session::rtsp_output_session(rtsp_server_connection& connection, boost::asio::any_io_executor executor, const config& config)
-    : connection_(connection), executor_(std::move(executor)), video_config_(config.rtsp_video)
+rtsp_output_session::rtsp_output_session(boost::asio::any_io_executor executor,
+                                         const config& config,
+                                         std::string local_address,
+                                         std::function<void(std::span<const std::uint8_t>)> write,
+                                         std::function<void()> request_shutdown)
+    : executor_(std::move(executor)),
+      video_config_(config.rtsp_video),
+      local_address_(std::move(local_address)),
+      write_(std::move(write)),
+      request_shutdown_(std::move(request_shutdown))
 {
 }
 
-std::shared_ptr<const rtsp_server_connection_handler> rtsp_output_session::make_handler()
+void rtsp_output_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
-    const auto self = shared_from_this();
-    auto handler = std::make_shared<rtsp_server_connection_handler>();
-    handler->on_shutdown = [self]() { self->safe_shutdown(); };
-    handler->on_describe = [self](rtsp_server_t* server, const char* uri) { return self->on_describe(server, uri); };
-    handler->on_setup =
-        [self](rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
-    { return self->on_setup(server, uri, session, transports, count); };
-    handler->on_play = [self](rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double*)
-    { return self->on_play(server, uri, session, npt); };
-    handler->on_teardown = [self](rtsp_server_t* server, const char*, const char* session) { return self->on_teardown(server, session); };
-    handler->on_get_parameter = [](rtsp_server_t* server, const char*, const char*, const void*, int)
-    { return rtsp_server_reply_get_parameter(server, 200, nullptr, 0); };
-    return handler;
+    if (!tcp_session_)
+    {
+        request_shutdown_();
+        return;
+    }
+    tcp_session_->on_interleaved(channel, data);
 }
 
-void rtsp_output_session::shutdown() { connection_.shutdown(); }
-
-void rtsp_output_session::safe_shutdown()
+void rtsp_output_session::shutdown()
 {
     if (closed_)
     {
         return;
     }
     closed_ = true;
+    if (tcp_session_)
+    {
+        tcp_session_->safe_shutdown();
+        tcp_session_.reset();
+    }
     tracks_.clear();
     if (video_transcoder_)
     {
@@ -181,6 +185,10 @@ void rtsp_output_session::safe_shutdown()
 
 int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri)
 {
+    if (tcp_session_)
+    {
+        return rtsp_server_reply_describe(server, 455, "");
+    }
     const auto prepare_result = prepare_stream(uri);
     if (prepare_result != 0)
     {
@@ -254,7 +262,7 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
 
     std::ostringstream sdp;
     sdp << "v=0\r\n"
-        << "o=- 1 1 IN IP4 " << connection_.local_address() << "\r\n"
+        << "o=- 1 1 IN IP4 " << local_address_ << "\r\n"
         << "s=media_server\r\n"
         << "c=IN IP4 0.0.0.0\r\n"
         << "t=0 0\r\n"
@@ -268,6 +276,10 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
 int rtsp_output_session::on_setup(
     rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
+    if (tcp_session_)
+    {
+        return tcp_session_->on_setup(server, uri, session, transports, count);
+    }
     if (!stream_)
     {
         const auto prepare_result = prepare_stream(uri);
@@ -314,12 +326,26 @@ int rtsp_output_session::on_setup(
         return rtsp_server_reply_setup(server, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
     }
 
-    auto child = std::make_shared<rtsp_output_tcp_session>(connection_, executor_, stream_, stream_name_, tracks_, video_track_id_);
-    return child->startup(server, uri, session, transports, count, video_transcoder_);
+    auto child =
+        std::make_shared<rtsp_output_tcp_session>(executor_, stream_, stream_name_, tracks_, video_track_id_, write_, request_shutdown_);
+    const auto result = child->startup(server, uri, session, transports, count, video_transcoder_);
+    if (!child->closed_)
+    {
+        tcp_session_ = std::move(child);
+    }
+    return result;
 }
 
-int rtsp_output_session::on_play(rtsp_server_t* server, std::string_view uri, std::string_view, const std::int64_t*)
+int rtsp_output_session::on_play(rtsp_server_t* server,
+                                 std::string_view uri,
+                                 std::string_view session,
+                                 const std::int64_t* npt,
+                                 const double*)
 {
+    if (tcp_session_)
+    {
+        return tcp_session_->on_play(server, uri, session, npt);
+    }
     if (rtsp_stream_name_from_uri(uri) != stream_name_)
     {
         return rtsp_server_reply_play(server, 404, nullptr, nullptr, nullptr);
@@ -327,7 +353,19 @@ int rtsp_output_session::on_play(rtsp_server_t* server, std::string_view uri, st
     return rtsp_server_reply_play(server, 454, nullptr, nullptr, nullptr);
 }
 
-int rtsp_output_session::on_teardown(rtsp_server_t* server, std::string_view) { return rtsp_server_reply_teardown(server, 454); }
+int rtsp_output_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
+{
+    if (tcp_session_)
+    {
+        return tcp_session_->on_teardown(server, session);
+    }
+    return rtsp_server_reply_teardown(server, 454);
+}
+
+int rtsp_output_session::on_get_parameter(rtsp_server_t* server, std::string_view, std::string_view, const void*, int)
+{
+    return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);
+}
 
 int rtsp_output_session::prepare_stream(std::string_view uri)
 {
