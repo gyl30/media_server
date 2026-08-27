@@ -7,7 +7,10 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
+#include <utility>
 #include <string_view>
+
+#include <boost/system/error_code.hpp>
 
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/any_io_executor.hpp>
@@ -29,9 +32,10 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
                            std::string stream_name,
                            std::string session_id,
                            std::vector<rtsp_input_track_description> descriptions,
-                           std::function<void(std::span<const std::uint8_t>)> write,
-                           std::function<void()> request_shutdown);
+                           std::function<void(std::span<const std::uint8_t>)> write);
     ~rtsp_input_tcp_session();
+
+    void set_error_handle(std::function<void(boost::system::error_code)> handle) { error_handle_ = std::move(handle); }
 
    private:
     friend class rtsp_input_session;
@@ -52,7 +56,7 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
     void safe_shutdown();
 
     std::function<void(std::span<const std::uint8_t>)> write_;
-    std::function<void()> request_shutdown_;
+    std::function<void(boost::system::error_code)> error_handle_;
     rtsp_input_media media_;
     std::string session_id_;
     std::vector<track_state> tracks_;

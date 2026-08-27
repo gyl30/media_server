@@ -2,6 +2,8 @@
 #include <memory>
 #include <sstream>
 #include <utility>
+
+#include <boost/system/error_code.hpp>
 #include <optional>
 #include <algorithm>
 
@@ -141,13 +143,8 @@ std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_
 rtsp_output_session::rtsp_output_session(boost::asio::any_io_executor executor,
                                          const config& config,
                                          std::string local_address,
-                                         std::function<void(std::span<const std::uint8_t>)> write,
-                                         std::function<void()> request_shutdown)
-    : executor_(std::move(executor)),
-      video_config_(config.rtsp_video),
-      local_address_(std::move(local_address)),
-      write_(std::move(write)),
-      request_shutdown_(std::move(request_shutdown))
+                                         std::function<void(std::span<const std::uint8_t>)> write)
+    : executor_(std::move(executor)), video_config_(config.rtsp_video), local_address_(std::move(local_address)), write_(std::move(write))
 {
 }
 
@@ -155,7 +152,7 @@ void rtsp_output_session::on_interleaved(std::uint8_t channel, std::span<const s
 {
     if (!tcp_session_)
     {
-        request_shutdown_();
+        error_handle_(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
         return;
     }
     tcp_session_->on_interleaved(channel, data);
@@ -181,6 +178,8 @@ void rtsp_output_session::shutdown()
     }
     video_track_id_ = 0;
     stream_.reset();
+    write_ = {};
+    error_handle_ = {};
 }
 
 int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri)
@@ -327,7 +326,8 @@ int rtsp_output_session::on_setup(
     }
 
     auto child =
-        std::make_shared<rtsp_output_tcp_session>(executor_, stream_, stream_name_, tracks_, video_track_id_, write_, request_shutdown_);
+        std::make_shared<rtsp_output_tcp_session>(executor_, stream_, stream_name_, tracks_, video_track_id_, write_);
+    child->set_error_handle(error_handle_);
     const auto result = child->startup(server, uri, session, transports, count, video_transcoder_);
     if (!child->closed_)
     {

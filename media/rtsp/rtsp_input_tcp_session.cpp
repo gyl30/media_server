@@ -3,6 +3,9 @@
 #include <utility>
 #include <algorithm>
 
+#include <boost/asio/error.hpp>
+#include <boost/system/error_code.hpp>
+
 #include <spdlog/spdlog.h>
 
 #include "media/rtsp/rtsp_input_tcp_session.h"
@@ -19,10 +22,8 @@ rtsp_input_tcp_session::rtsp_input_tcp_session(boost::asio::any_io_executor exec
                                                std::string stream_name,
                                                std::string session_id,
                                                std::vector<rtsp_input_track_description> descriptions,
-                                               std::function<void(std::span<const std::uint8_t>)> write,
-                                               std::function<void()> request_shutdown)
+                                               std::function<void(std::span<const std::uint8_t>)> write)
     : write_(std::move(write)),
-      request_shutdown_(std::move(request_shutdown)),
       media_(executor, std::move(stream_name), session_id, std::move(descriptions)),
       session_id_(std::move(session_id)),
       tracks_(media_.descriptions().size()),
@@ -60,7 +61,7 @@ void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<cons
         {
             if (!media_.input(index, data))
             {
-                request_shutdown_();
+                error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
             }
             return;
         }
@@ -137,7 +138,7 @@ int rtsp_input_tcp_session::on_record(rtsp_server_t* server, std::string_view se
     if (!media_.start_recording())
     {
         rtsp_server_reply_record(server, 453, nullptr, nullptr);
-        request_shutdown_();
+        error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
         return 0;
     }
     recording_ = true;
@@ -152,7 +153,7 @@ int rtsp_input_tcp_session::on_teardown(rtsp_server_t* server, std::string_view 
         return rtsp_server_reply_teardown(server, 454);
     }
     const auto result = rtsp_server_reply_teardown(server, 200);
-    request_shutdown_();
+    error_handle_(boost::asio::error::eof);
     return result;
 }
 
@@ -198,6 +199,8 @@ void rtsp_input_tcp_session::safe_shutdown()
     closed_ = true;
     rtcp_timer_.cancel();
     media_.shutdown();
+    write_ = {};
+    error_handle_ = {};
     spdlog::debug("rtsp input tcp shutdown {}", media_.stream_name());
 }
 
