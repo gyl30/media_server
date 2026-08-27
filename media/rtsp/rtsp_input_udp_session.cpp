@@ -11,12 +11,12 @@
 namespace media_server
 {
 
-rtsp_input_udp_session::rtsp_input_udp_session(std::weak_ptr<rtsp_server_connection> connection,
+rtsp_input_udp_session::rtsp_input_udp_session(rtsp_server_connection& connection,
                                                boost::asio::any_io_executor executor,
                                                std::string stream_name,
                                                std::string session_id,
                                                std::vector<rtsp_input_track_description> descriptions)
-    : connection_(std::move(connection)),
+    : connection_(connection),
       executor_(std::move(executor)),
       media_(executor_, std::move(stream_name), session_id, std::move(descriptions)),
       session_id_(std::move(session_id)),
@@ -40,12 +40,6 @@ int rtsp_input_udp_session::startup(
         return result;
     }
 
-    const auto connection = connection_.lock();
-    if (!connection)
-    {
-        safe_shutdown();
-        return -1;
-    }
     const auto self = shared_from_this();
     auto handler = std::make_shared<rtsp_server_connection_handler>();
     handler->on_shutdown = [self]() { self->safe_shutdown(); };
@@ -63,17 +57,11 @@ int rtsp_input_udp_session::startup(
     { return self->on_record(handler_server, handler_session); };
     handler->on_get_parameter = [](rtsp_server_t* handler_server, const char*, const char*, const void*, int)
     { return rtsp_server_reply_get_parameter(handler_server, 200, nullptr, 0); };
-    connection->set_handler(std::move(handler));
+    connection_.set_handler(std::move(handler));
     return result;
 }
 
-void rtsp_input_udp_session::shutdown()
-{
-    if (const auto connection = connection_.lock())
-    {
-        connection->shutdown();
-    }
-}
+void rtsp_input_udp_session::shutdown() { connection_.shutdown(); }
 
 void rtsp_input_udp_session::on_rtp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
 {
@@ -223,12 +211,6 @@ int rtsp_input_udp_session::on_setup(
     if (address_error)
     {
         return rtsp_server_reply_setup(server, 461, nullptr, nullptr);
-    }
-
-    const auto connection = connection_.lock();
-    if (!connection)
-    {
-        return -1;
     }
 
     auto sockets = prepare_udp_sockets(selected_index, executor_);

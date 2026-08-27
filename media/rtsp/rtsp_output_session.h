@@ -9,6 +9,7 @@
 
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_output_track.h"
+#include "config.h"
 #include "media/codec/output_video_config.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
@@ -21,13 +22,12 @@ namespace media_server
 class rtsp_output_session final : public std::enable_shared_from_this<rtsp_output_session>
 {
    public:
-    rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, boost::asio::any_io_executor executor, output_video_config video = {});
+    rtsp_output_session(rtsp_server_connection& connection, boost::asio::any_io_executor executor, const config& config);
 
-    void startup();
     void shutdown();
 
    private:
-    friend class rtsp_server;
+    friend class rtsp_server_connection;
 
     [[nodiscard]] std::shared_ptr<const rtsp_server_connection_handler> make_handler();
     void safe_shutdown();
@@ -39,7 +39,7 @@ class rtsp_output_session final : public std::enable_shared_from_this<rtsp_outpu
     [[nodiscard]] int prepare_stream(std::string_view uri);
     [[nodiscard]] bool description_current() const;
 
-    std::weak_ptr<rtsp_server_connection> connection_;
+    rtsp_server_connection& connection_;
     boost::asio::any_io_executor executor_;
     output_video_config video_config_;
     std::shared_ptr<media_stream> stream_;

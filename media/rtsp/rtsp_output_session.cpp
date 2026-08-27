@@ -138,23 +138,9 @@ std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_
 }
 }    // namespace
 
-rtsp_output_session::rtsp_output_session(
-    std::weak_ptr<rtsp_server_connection> connection, boost::asio::any_io_executor executor, output_video_config video)
-    : connection_(std::move(connection)), executor_(std::move(executor)), video_config_(video)
+rtsp_output_session::rtsp_output_session(rtsp_server_connection& connection, boost::asio::any_io_executor executor, const config& config)
+    : connection_(connection), executor_(std::move(executor)), video_config_(config.rtsp_video)
 {
-}
-
-void rtsp_output_session::startup()
-{
-    const auto connection = connection_.lock();
-    if (closed_ || !connection)
-    {
-        return;
-    }
-    if (!connection->startup(make_handler()))
-    {
-        connection->shutdown();
-    }
 }
 
 std::shared_ptr<const rtsp_server_connection_handler> rtsp_output_session::make_handler()
@@ -174,13 +160,7 @@ std::shared_ptr<const rtsp_server_connection_handler> rtsp_output_session::make_
     return handler;
 }
 
-void rtsp_output_session::shutdown()
-{
-    if (const auto connection = connection_.lock())
-    {
-        connection->shutdown();
-    }
-}
+void rtsp_output_session::shutdown() { connection_.shutdown(); }
 
 void rtsp_output_session::safe_shutdown()
 {
@@ -272,15 +252,9 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
         media_sdp << "a=control:trackID=" << description.track.id << "\r\n";
     }
 
-    const auto connection = connection_.lock();
-    if (!connection)
-    {
-        safe_shutdown();
-        return -1;
-    }
     std::ostringstream sdp;
     sdp << "v=0\r\n"
-        << "o=- 1 1 IN IP4 " << connection->local_address() << "\r\n"
+        << "o=- 1 1 IN IP4 " << connection_.local_address() << "\r\n"
         << "s=media_server\r\n"
         << "c=IN IP4 0.0.0.0\r\n"
         << "t=0 0\r\n"
@@ -340,12 +314,6 @@ int rtsp_output_session::on_setup(
         return rtsp_server_reply_setup(server, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
     }
 
-    const auto connection = connection_.lock();
-    if (!connection)
-    {
-        safe_shutdown();
-        return -1;
-    }
     auto child = std::make_shared<rtsp_output_tcp_session>(connection_, executor_, stream_, stream_name_, tracks_, video_track_id_);
     return child->startup(server, uri, session, transports, count, video_transcoder_);
 }
