@@ -27,6 +27,7 @@ struct rtsp_output_track_description
     int frequency{};
     int payload_type{-1};
     std::string encoding;
+    std::string control;
     std::vector<std::uint8_t> extra;
 };
 

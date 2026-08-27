@@ -256,7 +256,7 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
             return rtsp_server_reply_describe(server, 415, "");
         }
         media_sdp.write(media_text, media_text_size);
-        media_sdp << "a=control:trackID=" << description.track.id << "\r\n";
+        media_sdp << "a=control:" << description.control << "\r\n";
     }
 
     std::ostringstream sdp;
@@ -281,20 +281,17 @@ int rtsp_output_session::on_setup(
     }
     if (!stream_)
     {
-        const auto prepare_result = prepare_stream(uri);
+        const auto path = rtsp_path_from_uri(uri);
+        const auto separator = path.rfind('/');
+        if (separator == std::string::npos)
+        {
+            return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
+        }
+        const auto prepare_result = prepare_stream(path.substr(0, separator));
         if (prepare_result != 0)
         {
             return rtsp_server_reply_setup(server, prepare_result, nullptr, nullptr);
         }
-    }
-    if (rtsp_stream_name_from_uri(uri) != stream_name_)
-    {
-        return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
-    }
-    const auto id = rtsp_track_id_from_uri(uri);
-    if (!id || std::ranges::none_of(tracks_, [id](const rtsp_output_track_description& value) { return value.track.id == *id; }))
-    {
-        return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
     const auto current_stream = registry::instance().find(stream_name_);
     if (!stream_ || !current_stream)
@@ -346,7 +343,7 @@ int rtsp_output_session::on_play(rtsp_server_t* server,
     {
         return tcp_session_->on_play(server, uri, session, npt);
     }
-    if (rtsp_stream_name_from_uri(uri) != stream_name_)
+    if (rtsp_path_from_uri(uri) != stream_name_)
     {
         return rtsp_server_reply_play(server, 404, nullptr, nullptr, nullptr);
     }
@@ -378,7 +375,7 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
     video_track_id_ = 0;
     stream_.reset();
 
-    stream_name_ = rtsp_stream_name_from_uri(uri);
+    stream_name_ = rtsp_path_from_uri(uri);
     auto stream = registry::instance().find(stream_name_);
     if (!stream)
     {
@@ -416,6 +413,7 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
             video_track_id = track.id;
             prepared_transcoder = std::move(prepared->transcoder);
         }
+        prepared->description.control = "trackID=" + std::to_string(track.id);
         descriptions.emplace_back(std::move(prepared->description));
     }
 

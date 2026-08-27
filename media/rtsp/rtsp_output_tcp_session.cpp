@@ -333,17 +333,15 @@ int rtsp_output_tcp_session::on_setup(
     {
         return rtsp_server_reply_setup(server, 455, nullptr, nullptr);
     }
-    if (rtsp_stream_name_from_uri(uri) != stream_name_)
+    const auto path = rtsp_path_from_uri(uri);
+    const auto description = std::ranges::find_if(
+        descriptions_, [&path, this](const rtsp_output_track_description& value) { return path == stream_name_ + "/" + value.control; });
+    if (description == descriptions_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
-
-    const auto id = rtsp_track_id_from_uri(uri);
-    if (!id)
-    {
-        return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
-    }
-    auto iterator = tracks_.find(*id);
+    const auto id = description->track.id;
+    auto iterator = tracks_.find(id);
     if (iterator == tracks_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
@@ -373,7 +371,7 @@ int rtsp_output_tcp_session::on_setup(
         }
     }
     if (selected == nullptr || selected->interleaved1 < 0 || selected->interleaved1 > 255 || selected->interleaved2 < 0 ||
-        selected->interleaved2 > 255 || !channels_available(*id, selected->interleaved1, selected->interleaved2))
+        selected->interleaved2 > 255 || !channels_available(id, selected->interleaved1, selected->interleaved2))
     {
         return rtsp_server_reply_setup(server, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
     }
@@ -410,7 +408,7 @@ int rtsp_output_tcp_session::on_setup(
 
 int rtsp_output_tcp_session::on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt)
 {
-    if (rtsp_stream_name_from_uri(uri) != stream_name_)
+    if (rtsp_path_from_uri(uri) != stream_name_)
     {
         return rtsp_server_reply_play(server, 404, nullptr, nullptr, nullptr);
     }
