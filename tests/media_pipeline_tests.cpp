@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <chrono>
 #include <future>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
@@ -106,6 +107,12 @@ constexpr track_id audio_track_id = 2;
 
 static_assert(std::is_base_of_v<rtsp_server_session, rtsp_input_session>);
 static_assert(std::is_base_of_v<rtsp_server_session, rtsp_output_session>);
+static_assert(requires(rtsp_server_session& session, std::function<void(boost::system::error_code)> handle) {
+    session.set_error_handle(std::move(handle));
+});
+using rtsp_write_handle = std::function<void(std::span<const std::uint8_t>)>;
+static_assert(std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, rtsp_write_handle>);
+static_assert(std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, const config&, std::string, rtsp_write_handle>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -4740,15 +4747,43 @@ void test_rtsp_publish_server_contract()
         boost::asio::write(client, boost::asio::buffer(partial));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
+        boost::system::error_code error;
+        client.close(error);
         server->shutdown();
         workers.release_work();
         runner.join();
-        client.non_blocking(true);
-        std::array<std::uint8_t, 1> byte{};
-        boost::system::error_code error;
-        static_cast<void>(client.read_some(boost::asio::buffer(byte), error));
-        require(error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::not_connected,
-                "rtsp publish pre role shutdown closes partial connection");
+    }
+
+    {
+        io_context_pool shutdown_workers(1);
+        boost::asio::ip::tcp::acceptor shutdown_probe(shutdown_workers.context(0), {boost::asio::ip::tcp::v4(), 0});
+        const auto shutdown_port = shutdown_probe.local_endpoint().port();
+        shutdown_probe.close();
+        config shutdown_config;
+        shutdown_config.rtsp_port = shutdown_port;
+        auto shutdown_server = std::make_shared<rtsp_server>(shutdown_workers, shutdown_config);
+        require(!shutdown_server->startup(), "rtsp shutdown independence server startup");
+        std::jthread shutdown_runner([&shutdown_workers]() { shutdown_workers.run(); });
+
+        boost::asio::io_context shutdown_client_io;
+        boost::asio::ip::tcp::socket shutdown_client(shutdown_client_io);
+        shutdown_client.connect({boost::asio::ip::address_v4::loopback(), shutdown_port});
+        boost::asio::write(shutdown_client, boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"}));
+        require(read_rtsp_headers(shutdown_client).starts_with("RTSP/1.0 200"), "rtsp connection before server shutdown");
+
+        shutdown_server->shutdown();
+        std::promise<void> shutdown_barrier;
+        auto shutdown_barrier_future = shutdown_barrier.get_future();
+        boost::asio::post(shutdown_workers.context(0), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
+        shutdown_barrier_future.wait();
+
+        boost::asio::write(shutdown_client, boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 2\r\n\r\n"}));
+        require(read_rtsp_headers(shutdown_client).starts_with("RTSP/1.0 200"), "rtsp connection survives server shutdown");
+
+        boost::system::error_code shutdown_error;
+        shutdown_client.close(shutdown_error);
+        shutdown_workers.release_work();
+        shutdown_runner.join();
     }
 
     io_context_pool workers(1);

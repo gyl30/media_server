@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <mutex>
-#include <vector>
 #include <cstdint>
 
 #include <boost/asio/io_context.hpp>
@@ -14,8 +13,6 @@
 
 namespace media_server
 {
-class rtsp_server_connection;
-
 class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
 {
    public:
@@ -29,8 +26,7 @@ class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
 
     const config& config_;
     std::shared_ptr<tcp_listener> listener_;
-    std::mutex connections_mutex_;
-    std::vector<std::weak_ptr<rtsp_server_connection>> connections_;
+    std::mutex mutex_;
     bool closed_{};
 };
 

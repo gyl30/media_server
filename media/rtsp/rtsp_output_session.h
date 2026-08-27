@@ -27,8 +27,7 @@ class rtsp_output_session final : public rtsp_server_session
     rtsp_output_session(boost::asio::any_io_executor executor,
                         const config& config,
                         std::string local_address,
-                        std::function<void(std::span<const std::uint8_t>)> write,
-                        std::function<void()> request_shutdown);
+                        std::function<void(std::span<const std::uint8_t>)> write);
 
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data) override;
     int on_describe(rtsp_server_t* server, std::string_view uri) override;
@@ -51,7 +50,6 @@ class rtsp_output_session final : public rtsp_server_session
     output_video_config video_config_;
     std::string local_address_;
     std::function<void(std::span<const std::uint8_t>)> write_;
-    std::function<void()> request_shutdown_;
     std::shared_ptr<rtsp_output_tcp_session> tcp_session_;
     std::shared_ptr<media_stream> stream_;
     std::vector<rtsp_output_track_description> tracks_;

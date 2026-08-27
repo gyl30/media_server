@@ -2,9 +2,13 @@
 #define MEDIA_RTSP_RTSP_SERVER_SESSION_H
 
 #include <span>
+#include <functional>
+#include <utility>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+
+#include <boost/system/error_code.hpp>
 
 extern "C"
 {
@@ -18,6 +22,8 @@ class rtsp_server_session
 {
    public:
     virtual ~rtsp_server_session() = default;
+
+    void set_error_handle(std::function<void(boost::system::error_code)> handle) { error_handle_ = std::move(handle); }
 
     virtual void on_interleaved(std::uint8_t, std::span<const std::uint8_t>) {}
     virtual int on_describe(rtsp_server_t* server, std::string_view) { return rtsp_server_reply_describe(server, 501, ""); }
@@ -45,6 +51,9 @@ class rtsp_server_session
         return rtsp_server_reply_get_parameter(server, 501, nullptr, 0);
     }
     virtual void shutdown() {}
+
+   protected:
+    std::function<void(boost::system::error_code)> error_handle_;
 };
 
 }    // namespace media_server
