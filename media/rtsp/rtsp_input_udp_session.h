@@ -51,7 +51,6 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
         port_manager_impl::port_pair local_ports;
     };
 
-    [[nodiscard]] std::size_t on_read(std::span<const std::uint8_t> data);
     void on_rtp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
     void on_rtcp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
     int on_setup(
@@ -63,6 +62,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     void safe_shutdown();
 
     std::weak_ptr<rtsp_server_connection> connection_;
+    boost::asio::any_io_executor executor_;
     rtsp_input_media media_;
     std::string session_id_;
     std::vector<track_state> tracks_;

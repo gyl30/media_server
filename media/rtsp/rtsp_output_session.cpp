@@ -138,8 +138,9 @@ std::optional<prepared_rtsp_output_track> prepare_rtsp_output_track(const media_
 }
 }    // namespace
 
-rtsp_output_session::rtsp_output_session(std::weak_ptr<rtsp_server_connection> connection, output_video_config video)
-    : connection_(std::move(connection)), video_config_(video)
+rtsp_output_session::rtsp_output_session(
+    std::weak_ptr<rtsp_server_connection> connection, boost::asio::any_io_executor executor, output_video_config video)
+    : connection_(std::move(connection)), executor_(std::move(executor)), video_config_(video)
 {
 }
 
@@ -160,7 +161,6 @@ std::shared_ptr<const rtsp_server_connection_handler> rtsp_output_session::make_
 {
     const auto self = shared_from_this();
     auto handler = std::make_shared<rtsp_server_connection_handler>();
-    handler->on_read = [self](std::span<const std::uint8_t> data) { return self->on_read(data); };
     handler->on_shutdown = [self]() { self->safe_shutdown(); };
     handler->on_describe = [self](rtsp_server_t* server, const char* uri) { return self->on_describe(server, uri); };
     handler->on_setup =
@@ -180,12 +180,6 @@ void rtsp_output_session::shutdown()
     {
         connection->shutdown();
     }
-}
-
-std::size_t rtsp_output_session::on_read(std::span<const std::uint8_t> data)
-{
-    const auto connection = connection_.lock();
-    return connection ? connection->input(data) : data.size();
 }
 
 void rtsp_output_session::safe_shutdown()
@@ -352,7 +346,7 @@ int rtsp_output_session::on_setup(
         safe_shutdown();
         return -1;
     }
-    auto child = std::make_shared<rtsp_output_tcp_session>(connection_, stream_, stream_name_, tracks_, video_track_id_);
+    auto child = std::make_shared<rtsp_output_tcp_session>(connection_, executor_, stream_, stream_name_, tracks_, video_track_id_);
     return child->startup(server, uri, session, transports, count, video_transcoder_);
 }
 

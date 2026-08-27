@@ -7,15 +7,12 @@
 #include <vector>
 #include <cstdint>
 
+#include <boost/asio/any_io_executor.hpp>
+
 #include "media/core/media_reader.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_output_track.h"
 #include "media/rtsp/rtsp_server_connection.h"
-
-extern "C"
-{
-#include "rtp-over-rtsp.h"
-}
 
 struct rtsp_muxer_t;
 struct rtsp_server_t;
@@ -28,6 +25,7 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
 {
    public:
     rtsp_output_tcp_session(std::weak_ptr<rtsp_server_connection> connection,
+                            boost::asio::any_io_executor executor,
                             std::shared_ptr<media_stream> stream,
                             std::string stream_name,
                             std::vector<rtsp_output_track_description> tracks,
@@ -59,10 +57,7 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     };
 
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
-    static void rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);
-
-    [[nodiscard]] std::size_t on_control_read(std::span<const std::uint8_t> data);
-    void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
+    void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     void safe_shutdown();
     bool create_muxer();
     bool apply_tracks(const media_track_snapshot_ptr& tracks);
@@ -75,6 +70,7 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
     std::weak_ptr<rtsp_server_connection> connection_;
+    boost::asio::any_io_executor executor_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     std::vector<rtsp_output_track_description> descriptions_;
@@ -85,7 +81,6 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     track_id video_track_id_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
-    rtp_over_rtsp_t interleaved_{};
     std::string session_id_;
     bool playing_{};
     bool closed_{};

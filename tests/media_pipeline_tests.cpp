@@ -5268,7 +5268,7 @@ class rtsp_output_test_peer final
         auto server_socket = acceptor_.accept();
         auto tcp = std::make_shared<tcp_connection>(std::move(server_socket));
         auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp));
-        auto session = std::make_shared<rtsp_output_session>(connection, video);
+        auto session = std::make_shared<rtsp_output_session>(connection, io_.get_executor(), video);
         session_ = connection;
         session->startup();
         runner_ = std::jthread([this]() { io_.run(); });
