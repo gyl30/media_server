@@ -5028,13 +5028,21 @@ void test_rtsp_publish_server_contract()
     constexpr std::array<std::uint8_t, 21> interleaved_rtp{
         0x24, 0x00, 0x00, 0x11, 0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0,
     };
-    boost::asio::write(client, boost::asio::buffer(interleaved_rtp));
+    constexpr std::size_t first_interleaved_chunk_size = 12U;
+    boost::asio::write(client, boost::asio::buffer(interleaved_rtp.data(), first_interleaved_chunk_size));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    boost::asio::write(client,
+                       boost::asio::buffer(interleaved_rtp.data() + first_interleaved_chunk_size,
+                                           interleaved_rtp.size() - first_interleaved_chunk_size));
     auto next_interleaved_rtp = interleaved_rtp;
     next_interleaved_rtp[7] = 0x02;
     next_interleaved_rtp[10] = 0x0e;
     next_interleaved_rtp[11] = 0x10;
     boost::asio::write(client, boost::asio::buffer(next_interleaved_rtp));
-    require(sink->wait_for_frames(), "rtsp publish interleaved rtp reaches media stream");
+    require(sink->wait_for_frames(), "rtsp publish fragmented interleaved rtp reaches media stream");
+    require(request("GET_PARAMETER " + base + " RTSP/1.0\r\nCSeq: 5\r\nSession: " + session + "\r\nContent-Length: 0\r\n\r\n")
+                .starts_with("RTSP/1.0 200"),
+            "rtsp publish remains connected after fragmented interleaved rtp");
 
     boost::system::error_code error;
     client.close(error);
