@@ -30,8 +30,7 @@ class rtsp_input_session final : public rtsp_server_session
 {
    public:
     rtsp_input_session(boost::asio::any_io_executor executor,
-                       std::function<void(std::span<const std::uint8_t>)> write,
-                       std::function<void()> request_shutdown);
+                       std::function<void(std::span<const std::uint8_t>)> write);
 
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data) override;
     int on_setup(
@@ -49,7 +48,6 @@ class rtsp_input_session final : public rtsp_server_session
    private:
     boost::asio::any_io_executor executor_;
     std::function<void(std::span<const std::uint8_t>)> write_;
-    std::function<void()> request_shutdown_;
     std::shared_ptr<rtsp_input_tcp_session> tcp_session_;
     std::shared_ptr<rtsp_input_udp_session> udp_session_;
     std::vector<rtsp_input_track_description> descriptions_;

@@ -8,6 +8,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include <boost/asio/error.hpp>
+#include <boost/system/error_code.hpp>
+
 #include "media/rtsp/rtsp_uri.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/stream_registry.h"
@@ -39,11 +42,9 @@ rtsp_output_tcp_session::rtsp_output_tcp_session(boost::asio::any_io_executor ex
                                                  std::string stream_name,
                                                  std::vector<rtsp_output_track_description> tracks,
                                                  track_id video_track_id,
-                                                 std::function<void(std::span<const std::uint8_t>)> write,
-                                                 std::function<void()> request_shutdown)
+                                                 std::function<void(std::span<const std::uint8_t>)> write)
     : executor_(std::move(executor)),
       write_(std::move(write)),
-      request_shutdown_(std::move(request_shutdown)),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
       descriptions_(std::move(tracks)),
@@ -86,7 +87,7 @@ void rtsp_output_tcp_session::on_tracks(media_track_snapshot_ptr tracks)
 
     if (!apply_tracks(tracks))
     {
-        request_shutdown_();
+        error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
         return;
     }
     reader_handle().async_read(reader_cursor_);
@@ -102,7 +103,7 @@ void rtsp_output_tcp_session::on_read(media_read_batch batch)
     reader_cursor_ = batch.next_cursor;
     if (!apply_tracks(batch.tracks))
     {
-        request_shutdown_();
+        error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
         return;
     }
 
@@ -147,7 +148,7 @@ void rtsp_output_tcp_session::on_read(media_read_batch batch)
             if (!video_transcoder_->transcode(entry.frame, output))
             {
                 spdlog::error("rtsp av1 transcode failed track {}", entry.frame.track);
-                request_shutdown_();
+                error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
                 return;
             }
             for (const auto& encoded : output)
@@ -190,7 +191,13 @@ void rtsp_output_tcp_session::on_read(media_read_batch batch)
     }
 }
 
-void rtsp_output_tcp_session::on_end() { request_shutdown_(); }
+void rtsp_output_tcp_session::on_end()
+{
+    if (!closed_)
+    {
+        error_handle_(boost::asio::error::eof);
+    }
+}
 
 int rtsp_output_tcp_session::muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
 {
@@ -213,7 +220,7 @@ void rtsp_output_tcp_session::on_interleaved(std::uint8_t channel, std::span<con
         }
         if (rtsp_muxer_onrtcp(muxer_, state.payload_index, data.data(), static_cast<int>(data.size())) < 0)
         {
-            request_shutdown_();
+            error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
         }
         return;
     }
@@ -227,6 +234,8 @@ void rtsp_output_tcp_session::safe_shutdown()
     }
     closed_ = true;
     reader_.remove();
+    write_ = {};
+    error_handle_ = {};
     reader_ = {};
     reader_cursor_.reset();
     track_revision_ = 0;
@@ -443,7 +452,7 @@ int rtsp_output_tcp_session::on_teardown(rtsp_server_t* server, std::string_view
     }
 
     const auto result = rtsp_server_reply_teardown(server, 200);
-    request_shutdown_();
+    error_handle_(boost::asio::error::eof);
     return result;
 }
 

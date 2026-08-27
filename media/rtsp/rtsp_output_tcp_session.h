@@ -8,6 +8,9 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
+#include <utility>
+
+#include <boost/system/error_code.hpp>
 
 #include <boost/asio/any_io_executor.hpp>
 
@@ -32,13 +35,14 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
                             std::string stream_name,
                             std::vector<rtsp_output_track_description> tracks,
                             track_id video_track_id,
-                            std::function<void(std::span<const std::uint8_t>)> write,
-                            std::function<void()> request_shutdown);
+                            std::function<void(std::span<const std::uint8_t>)> write);
     ~rtsp_output_tcp_session() override;
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;
     void on_end() override;
+
+    void set_error_handle(std::function<void(boost::system::error_code)> handle) { error_handle_ = std::move(handle); }
 
    private:
     friend class rtsp_output_session;
@@ -75,7 +79,7 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
 
     boost::asio::any_io_executor executor_;
     std::function<void(std::span<const std::uint8_t>)> write_;
-    std::function<void()> request_shutdown_;
+    std::function<void(boost::system::error_code)> error_handle_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     std::vector<rtsp_output_track_description> descriptions_;

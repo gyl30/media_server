@@ -105,26 +105,11 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     auto* self = static_cast<rtsp_server_connection*>(param);
     if (!self->session_)
     {
-        const auto weak_connection = std::weak_ptr<tcp_connection>(self->connection_);
-        const auto weak_self = self->weak_from_this();
-        self->session_ = std::make_unique<rtsp_output_session>(
-            self->executor_,
-            self->config_,
-            self->local_address_,
-            [weak_connection](std::span<const std::uint8_t> data)
-            {
-                if (const auto connection = weak_connection.lock())
-                {
-                    connection->write(data);
-                }
-            },
-            [weak_self]()
-            {
-                if (const auto connection = weak_self.lock())
-                {
-                    connection->shutdown();
-                }
-            });
+        const auto connection = self->connection_;
+        auto next_session = std::make_unique<rtsp_output_session>(
+            self->executor_, self->config_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
+        next_session->set_error_handle([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
+        self->session_ = std::move(next_session);
     }
     return self->session_->on_describe(server, uri != nullptr ? uri : "");
 }
@@ -135,26 +120,11 @@ int rtsp_server_connection::setup_callback(
     auto* self = static_cast<rtsp_server_connection*>(param);
     if (!self->session_)
     {
-        const auto weak_connection = std::weak_ptr<tcp_connection>(self->connection_);
-        const auto weak_self = self->weak_from_this();
-        self->session_ = std::make_unique<rtsp_output_session>(
-            self->executor_,
-            self->config_,
-            self->local_address_,
-            [weak_connection](std::span<const std::uint8_t> data)
-            {
-                if (const auto connection = weak_connection.lock())
-                {
-                    connection->write(data);
-                }
-            },
-            [weak_self]()
-            {
-                if (const auto connection = weak_self.lock())
-                {
-                    connection->shutdown();
-                }
-            });
+        const auto connection = self->connection_;
+        auto next_session = std::make_unique<rtsp_output_session>(
+            self->executor_, self->config_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
+        next_session->set_error_handle([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
+        self->session_ = std::move(next_session);
     }
     return self->session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
 }
@@ -185,24 +155,11 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     auto* self = static_cast<rtsp_server_connection*>(param);
     if (!self->session_)
     {
-        const auto weak_connection = std::weak_ptr<tcp_connection>(self->connection_);
-        const auto weak_self = self->weak_from_this();
-        self->session_ = std::make_unique<rtsp_input_session>(
-            self->executor_,
-            [weak_connection](std::span<const std::uint8_t> data)
-            {
-                if (const auto connection = weak_connection.lock())
-                {
-                    connection->write(data);
-                }
-            },
-            [weak_self]()
-            {
-                if (const auto connection = weak_self.lock())
-                {
-                    connection->shutdown();
-                }
-            });
+        const auto connection = self->connection_;
+        auto next_session = std::make_unique<rtsp_input_session>(
+            self->executor_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
+        next_session->set_error_handle([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
+        self->session_ = std::move(next_session);
     }
     return self->session_->on_announce(server, uri != nullptr ? uri : "", sdp, length);
 }
