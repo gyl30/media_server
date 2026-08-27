@@ -1,6 +1,5 @@
 #include <array>
 #include <random>
-#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <utility>
@@ -36,11 +35,13 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_output_tcp_session::rtsp_output_tcp_session(std::weak_ptr<rtsp_server_connection> connection,
+                                                 boost::asio::any_io_executor executor,
                                                  std::shared_ptr<media_stream> stream,
                                                  std::string stream_name,
                                                  std::vector<rtsp_output_track_description> tracks,
                                                  track_id video_track_id)
     : connection_(std::move(connection)),
+      executor_(std::move(executor)),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
       descriptions_(std::move(tracks)),
@@ -62,8 +63,6 @@ int rtsp_output_tcp_session::startup(rtsp_server_t* server,
         safe_shutdown();
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
     }
-    interleaved_.onrtp = &rtsp_output_tcp_session::rtp_callback;
-    interleaved_.param = this;
 
     const auto result = on_setup(server, uri, session, transports, count);
     if (result != 0 || !std::ranges::any_of(tracks_, [](const auto& item) { return item.second.setup; }))
@@ -81,7 +80,7 @@ int rtsp_output_tcp_session::startup(rtsp_server_t* server,
 
     const auto self = shared_from_this();
     auto handler = std::make_shared<rtsp_server_connection_handler>();
-    handler->on_read = [self](std::span<const std::uint8_t> data) { return self->on_control_read(data); };
+    handler->on_interleaved = [self](std::uint8_t channel, std::span<const std::uint8_t> data) { self->on_interleaved(channel, data); };
     handler->on_shutdown = [self]() { self->safe_shutdown(); };
     handler->on_describe = [](rtsp_server_t* handler_server, const char*) { return rtsp_server_reply_describe(handler_server, 455, ""); };
     handler->on_setup = [self](rtsp_server_t* handler_server,
@@ -230,36 +229,9 @@ int rtsp_output_tcp_session::muxer_packet_callback(void* param, int pid, const v
     return static_cast<rtsp_output_tcp_session*>(param)->on_muxer_packet(pid, data, bytes);
 }
 
-void rtsp_output_tcp_session::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
+void rtsp_output_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
-    static_cast<rtsp_output_tcp_session*>(param)->on_rtp(channel, data, bytes);
-}
-
-std::size_t rtsp_output_tcp_session::on_control_read(std::span<const std::uint8_t> data)
-{
-    if (closed_ || data.empty())
-    {
-        return data.size();
-    }
-
-    if (interleaved_.state != 0 || data.front() == '$')
-    {
-        const auto* next = rtp_over_rtsp(&interleaved_, data.data(), data.data() + data.size());
-        if (next == data.data())
-        {
-            shutdown();
-            return data.size();
-        }
-        return static_cast<std::size_t>(next - data.data());
-    }
-
-    const auto connection = connection_.lock();
-    return connection ? connection->input(data) : data.size();
-}
-
-void rtsp_output_tcp_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
-{
-    if (muxer_ == nullptr || data == nullptr)
+    if (muxer_ == nullptr || data.empty())
     {
         return;
     }
@@ -271,7 +243,7 @@ void rtsp_output_tcp_session::on_rtp(std::uint8_t channel, const void* data, std
         {
             continue;
         }
-        if (rtsp_muxer_onrtcp(muxer_, state.payload_index, data, static_cast<int>(bytes)) < 0)
+        if (rtsp_muxer_onrtcp(muxer_, state.payload_index, data.data(), static_cast<int>(data.size())) < 0)
         {
             shutdown();
         }
@@ -290,15 +262,6 @@ void rtsp_output_tcp_session::safe_shutdown()
     reader_ = {};
     reader_cursor_.reset();
     track_revision_ = 0;
-    if (interleaved_.data != nullptr)
-    {
-        std::free(interleaved_.data);
-        interleaved_.data = nullptr;
-    }
-    interleaved_.capacity = 0;
-    interleaved_.bytes = 0;
-    interleaved_.length = 0;
-    interleaved_.state = 0;
     if (video_transcoder_)
     {
         video_transcoder_->shutdown();
@@ -505,7 +468,7 @@ int rtsp_output_tcp_session::on_play(rtsp_server_t* server, std::string_view uri
         return -1;
     }
     playing_ = true;
-    reader_ = stream_->add_reader(shared_from_this(), connection->executor());
+    reader_ = stream_->add_reader(shared_from_this(), executor_);
     return result;
 }
 

@@ -13,6 +13,7 @@
 
 extern "C"
 {
+#include "rtp-over-rtsp.h"
 #include "rtsp-server.h"
 }
 
@@ -21,7 +22,7 @@ namespace media_server
 
 struct rtsp_server_connection_handler
 {
-    std::function<std::size_t(std::span<const std::uint8_t>)> on_read;
+    std::function<void(std::uint8_t, std::span<const std::uint8_t>)> on_interleaved;
     std::function<void()> on_shutdown;
     std::function<int(rtsp_server_t*, const char*)> on_describe;
     std::function<int(rtsp_server_t*, const char*, const char*, const rtsp_header_transport_t[], std::size_t)> on_setup;
@@ -40,15 +41,14 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
 
     bool startup(std::shared_ptr<const rtsp_server_connection_handler> handler);
     void set_handler(std::shared_ptr<const rtsp_server_connection_handler> handler);
-    [[nodiscard]] std::size_t input(std::span<const std::uint8_t> data);
     void write(std::span<const std::uint8_t> data);
     void shutdown();
 
-    [[nodiscard]] boost::asio::any_io_executor executor() const;
     [[nodiscard]] std::string local_address() const;
 
    private:
     static int send_callback(void* param, const void* data, std::size_t bytes);
+    static void interleaved_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);
     static int describe_callback(void* param, rtsp_server_t* server, const char* uri);
     static int setup_callback(
         void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count);
@@ -60,13 +60,16 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     static int options_callback(void* param, rtsp_server_t* server, const char* uri);
     static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
 
+    [[nodiscard]] std::size_t input(std::span<const std::uint8_t> data);
     void on_tcp_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
 
+    boost::asio::any_io_executor executor_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<const rtsp_server_connection_handler> handler_;
     std::string local_address_;
     rtsp_server_t* server_{};
+    rtp_over_rtsp_t interleaved_{};
     bool closed_{};
 };
 

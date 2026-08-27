@@ -29,7 +29,8 @@ std::uint32_t random_u32()
 
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection) : connection_(std::move(connection))
+rtsp_input_session::rtsp_input_session(std::weak_ptr<rtsp_server_connection> connection, boost::asio::any_io_executor executor)
+    : connection_(std::move(connection)), executor_(std::move(executor))
 {
 }
 
@@ -39,12 +40,6 @@ void rtsp_input_session::shutdown()
     {
         connection->shutdown();
     }
-}
-
-std::size_t rtsp_input_session::on_read(std::span<const std::uint8_t> data)
-{
-    const auto connection = connection_.lock();
-    return connection ? connection->input(data) : data.size();
 }
 
 int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
@@ -194,11 +189,11 @@ int rtsp_input_session::on_setup(
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
         auto child =
-            std::make_shared<rtsp_input_tcp_session>(connection_, connection->executor(), stream_name_, session_id_, descriptions_);
+            std::make_shared<rtsp_input_tcp_session>(connection_, executor_, stream_name_, session_id_, descriptions_);
         return child->startup(server, uri, session, transports, count);
     }
 
-    auto child = std::make_shared<rtsp_input_udp_session>(connection_, connection->executor(), stream_name_, session_id_, descriptions_);
+    auto child = std::make_shared<rtsp_input_udp_session>(connection_, executor_, stream_name_, session_id_, descriptions_);
     return child->startup(server, uri, session, transports, count);
 }
 

@@ -17,10 +17,11 @@ rtsp_input_udp_session::rtsp_input_udp_session(std::weak_ptr<rtsp_server_connect
                                                std::string session_id,
                                                std::vector<rtsp_input_track_description> descriptions)
     : connection_(std::move(connection)),
-      media_(executor, std::move(stream_name), session_id, std::move(descriptions)),
+      executor_(std::move(executor)),
+      media_(executor_, std::move(stream_name), session_id, std::move(descriptions)),
       session_id_(std::move(session_id)),
       tracks_(media_.descriptions().size()),
-      rtcp_timer_(std::move(executor))
+      rtcp_timer_(executor_)
 {
 }
 
@@ -47,7 +48,6 @@ int rtsp_input_udp_session::startup(
     }
     const auto self = shared_from_this();
     auto handler = std::make_shared<rtsp_server_connection_handler>();
-    handler->on_read = [self](std::span<const std::uint8_t> data) { return self->on_read(data); };
     handler->on_shutdown = [self]() { self->safe_shutdown(); };
     handler->on_setup = [self](rtsp_server_t* handler_server,
                                const char* handler_uri,
@@ -73,12 +73,6 @@ void rtsp_input_udp_session::shutdown()
     {
         connection->shutdown();
     }
-}
-
-std::size_t rtsp_input_udp_session::on_read(std::span<const std::uint8_t> data)
-{
-    const auto connection = connection_.lock();
-    return connection ? connection->input(data) : data.size();
 }
 
 void rtsp_input_udp_session::on_rtp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
@@ -237,7 +231,7 @@ int rtsp_input_udp_session::on_setup(
         return -1;
     }
 
-    auto sockets = prepare_udp_sockets(selected_index, connection->executor());
+    auto sockets = prepare_udp_sockets(selected_index, executor_);
     if (!sockets)
     {
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
