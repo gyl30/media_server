@@ -29,12 +29,22 @@ std::uint32_t random_u32()
 
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(rtsp_server_connection& connection, boost::asio::any_io_executor executor)
-    : connection_(connection), executor_(std::move(executor))
+rtsp_input_session::rtsp_input_session(boost::asio::any_io_executor executor,
+                                       std::function<void(std::span<const std::uint8_t>)> write,
+                                       std::function<void()> request_shutdown)
+    : executor_(std::move(executor)), write_(std::move(write)), request_shutdown_(std::move(request_shutdown))
 {
 }
 
-void rtsp_input_session::shutdown() { connection_.shutdown(); }
+void rtsp_input_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
+{
+    if (!tcp_session_)
+    {
+        request_shutdown_();
+        return;
+    }
+    tcp_session_->on_interleaved(channel, data);
+}
 
 int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
@@ -135,6 +145,14 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
 int rtsp_input_session::on_setup(
     rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
+    if (tcp_session_)
+    {
+        return tcp_session_->on_setup(server, uri, session, transports, count);
+    }
+    if (udp_session_)
+    {
+        return udp_session_->on_setup(server, uri, session, transports, count);
+    }
     if (!announced_ || transports == nullptr || count == 0 || (!session.empty() && session != session_id_))
     {
         return rtsp_server_reply_setup(server, 454, nullptr, nullptr);
@@ -176,17 +194,38 @@ int rtsp_input_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        auto child =
-            std::make_shared<rtsp_input_tcp_session>(connection_, executor_, stream_name_, session_id_, descriptions_);
-        return child->startup(server, uri, session, transports, count);
+        auto child = std::make_shared<rtsp_input_tcp_session>(executor_, stream_name_, session_id_, descriptions_, write_, request_shutdown_);
+        const auto result = child->startup(server, uri, session, transports, count);
+        if (!child->closed_)
+        {
+            tcp_session_ = std::move(child);
+        }
+        return result;
     }
 
-    auto child = std::make_shared<rtsp_input_udp_session>(connection_, executor_, stream_name_, session_id_, descriptions_);
-    return child->startup(server, uri, session, transports, count);
+    auto child = std::make_shared<rtsp_input_udp_session>(executor_, stream_name_, session_id_, descriptions_, request_shutdown_);
+    const auto result = child->startup(server, uri, session, transports, count);
+    if (!child->closed_)
+    {
+        udp_session_ = std::move(child);
+    }
+    return result;
 }
 
-int rtsp_input_session::on_record(rtsp_server_t* server, std::string_view session)
+int rtsp_input_session::on_record(rtsp_server_t* server,
+                                  std::string_view,
+                                  std::string_view session,
+                                  const std::int64_t*,
+                                  const double*)
 {
+    if (tcp_session_)
+    {
+        return tcp_session_->on_record(server, session);
+    }
+    if (udp_session_)
+    {
+        return udp_session_->on_record(server, session);
+    }
     if (!announced_ || session != session_id_)
     {
         return rtsp_server_reply_record(server, 454, nullptr, nullptr);
@@ -194,24 +233,47 @@ int rtsp_input_session::on_record(rtsp_server_t* server, std::string_view sessio
     return rtsp_server_reply_record(server, 455, nullptr, nullptr);
 }
 
-int rtsp_input_session::on_teardown(rtsp_server_t* server, std::string_view session)
+int rtsp_input_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
 {
+    if (tcp_session_)
+    {
+        return tcp_session_->on_teardown(server, session);
+    }
+    if (udp_session_)
+    {
+        return udp_session_->on_teardown(server, session);
+    }
     if (session_id_.empty() || session != session_id_)
     {
         return rtsp_server_reply_teardown(server, 454);
     }
     const auto result = rtsp_server_reply_teardown(server, 200);
-    shutdown();
+    request_shutdown_();
     return result;
 }
 
-void rtsp_input_session::safe_shutdown()
+int rtsp_input_session::on_get_parameter(rtsp_server_t* server, std::string_view, std::string_view, const void*, int)
+{
+    return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);
+}
+
+void rtsp_input_session::shutdown()
 {
     if (closed_)
     {
         return;
     }
     closed_ = true;
+    if (tcp_session_)
+    {
+        tcp_session_->safe_shutdown();
+        tcp_session_.reset();
+    }
+    if (udp_session_)
+    {
+        udp_session_->safe_shutdown();
+        udp_session_.reset();
+    }
     descriptions_.clear();
 }
 

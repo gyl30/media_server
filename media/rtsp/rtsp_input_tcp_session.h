@@ -6,37 +6,43 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include <string_view>
 
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/rtsp/rtsp_input_media.h"
-#include "media/rtsp/rtsp_server_connection.h"
+
+struct rtsp_server_t;
+struct rtsp_header_transport_t;
 
 namespace media_server
 {
 
+class rtsp_input_session;
+
 class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_input_tcp_session>
 {
    public:
-    rtsp_input_tcp_session(rtsp_server_connection& connection,
-                           boost::asio::any_io_executor executor,
+    rtsp_input_tcp_session(boost::asio::any_io_executor executor,
                            std::string stream_name,
                            std::string session_id,
-                           std::vector<rtsp_input_track_description> descriptions);
+                           std::vector<rtsp_input_track_description> descriptions,
+                           std::function<void(std::span<const std::uint8_t>)> write,
+                           std::function<void()> request_shutdown);
     ~rtsp_input_tcp_session();
 
-    int startup(rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
-    void shutdown();
-
    private:
+    friend class rtsp_input_session;
+
     struct track_state
     {
         int rtp_channel{-1};
         int rtcp_channel{-1};
     };
 
+    int startup(rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_setup(
         rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
@@ -45,7 +51,8 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
     void wait_rtcp();
     void safe_shutdown();
 
-    rtsp_server_connection& connection_;
+    std::function<void(std::span<const std::uint8_t>)> write_;
+    std::function<void()> request_shutdown_;
     rtsp_input_media media_;
     std::string session_id_;
     std::vector<track_state> tracks_;
