@@ -5270,7 +5270,7 @@ class rtsp_output_test_peer final
         auto tcp = std::make_shared<tcp_connection>(std::move(server_socket));
         auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp), config_);
         session_ = connection;
-        require(connection->startup(), "rtsp output connection startup");
+        connection->startup();
         runner_ = std::jthread([this]() { io_.run(); });
     }
 

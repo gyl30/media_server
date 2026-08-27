@@ -64,23 +64,20 @@ rtsp_server_connection::rtsp_server_connection(std::shared_ptr<tcp_connection> c
 
 rtsp_server_connection::~rtsp_server_connection() = default;
 
-bool rtsp_server_connection::startup()
+void rtsp_server_connection::startup()
 {
-    if (closed_ || connection_ == nullptr || server_ != nullptr)
-    {
-        return false;
-    }
-
     boost::system::error_code endpoint_error;
     const auto peer = connection_->socket().remote_endpoint(endpoint_error);
     if (endpoint_error)
     {
-        return false;
+        shutdown();
+        return;
     }
     const auto local = connection_->socket().local_endpoint(endpoint_error);
     if (endpoint_error)
     {
-        return false;
+        shutdown();
+        return;
     }
 
     rtsp_handler_t rtsp_handler{};
@@ -98,8 +95,8 @@ bool rtsp_server_connection::startup()
     server_ = rtsp_server_create(peer_address.c_str(), peer.port(), &rtsp_handler, this, this);
     if (server_ == nullptr)
     {
-        handler_.reset();
-        return false;
+        shutdown();
+        return;
     }
     local_address_ = local.address().to_string();
 
@@ -121,19 +118,12 @@ bool rtsp_server_connection::startup()
                 self->shutdown();
             }
         });
-
-    return !closed_;
 }
 
 void rtsp_server_connection::set_handler(std::shared_ptr<const rtsp_server_connection_handler> handler) { handler_ = std::move(handler); }
 
 std::size_t rtsp_server_connection::input(std::span<const std::uint8_t> data)
 {
-    if (closed_ || server_ == nullptr || data.empty())
-    {
-        return 0;
-    }
-
     auto bytes = data.size();
     const auto result = rtsp_server_input(server_, data.data(), &bytes);
     if (result < 0)
@@ -151,13 +141,7 @@ std::size_t rtsp_server_connection::input(std::span<const std::uint8_t> data)
     return consumed;
 }
 
-void rtsp_server_connection::write(std::span<const std::uint8_t> data)
-{
-    if (!closed_ && connection_ && !data.empty())
-    {
-        connection_->write(data);
-    }
-}
+void rtsp_server_connection::write(std::span<const std::uint8_t> data) { connection_->write(data); }
 
 void rtsp_server_connection::shutdown()
 {
@@ -170,10 +154,6 @@ std::string rtsp_server_connection::local_address() const { return local_address
 int rtsp_server_connection::send_callback(void* param, const void* data, std::size_t bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_ || self->connection_ == nullptr)
-    {
-        return -1;
-    }
     self->connection_->write(data, bytes);
     return 0;
 }
@@ -246,7 +226,7 @@ int rtsp_server_connection::get_parameter_callback(
 void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
 {
     auto remaining = data;
-    while (!closed_ && !remaining.empty())
+    while (!remaining.empty())
     {
         std::size_t consumed{};
         if (interleaved_.state != 0 || remaining.front() == '$')
@@ -266,10 +246,6 @@ void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
             consumed = input(remaining);
         }
 
-        if (closed_)
-        {
-            return;
-        }
         if (consumed == 0 || consumed > remaining.size())
         {
             shutdown();
