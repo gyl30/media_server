@@ -24,7 +24,7 @@ namespace media_server
 class rtsp_output_tcp_session final : public media_reader, public std::enable_shared_from_this<rtsp_output_tcp_session>
 {
    public:
-    rtsp_output_tcp_session(std::weak_ptr<rtsp_server_connection> connection,
+    rtsp_output_tcp_session(rtsp_server_connection& connection,
                             boost::asio::any_io_executor executor,
                             std::shared_ptr<media_stream> stream,
                             std::string stream_name,
@@ -69,7 +69,7 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     [[nodiscard]] bool description_current() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
-    std::weak_ptr<rtsp_server_connection> connection_;
+    rtsp_server_connection& connection_;
     boost::asio::any_io_executor executor_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;

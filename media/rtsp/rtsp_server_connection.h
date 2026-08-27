@@ -9,6 +9,7 @@
 
 #include <boost/asio/any_io_executor.hpp>
 
+#include "config.h"
 #include "media/net/tcp_connection.h"
 
 extern "C"
@@ -36,10 +37,10 @@ struct rtsp_server_connection_handler
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
    public:
-    explicit rtsp_server_connection(std::shared_ptr<tcp_connection> connection);
+    rtsp_server_connection(std::shared_ptr<tcp_connection> connection, const config& config);
     ~rtsp_server_connection();
 
-    bool startup(std::shared_ptr<const rtsp_server_connection_handler> handler);
+    bool startup();
     void set_handler(std::shared_ptr<const rtsp_server_connection_handler> handler);
     void write(std::span<const std::uint8_t> data);
     void shutdown();
@@ -65,6 +66,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void safe_shutdown();
 
     boost::asio::any_io_executor executor_;
+    const config& config_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<const rtsp_server_connection_handler> handler_;
     std::string local_address_;

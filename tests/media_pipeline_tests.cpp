@@ -5259,6 +5259,7 @@ class rtsp_output_test_peer final
     explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()}, output_video_config video = {})
         : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_(io_)
     {
+        config_.rtsp_video = video;
         streams_.clear();
         stream_ = std::make_shared<media_stream>("live/test", io_.get_executor());
         require(stream_->set_tracks(std::move(tracks)), "rtsp output tracks");
@@ -5267,10 +5268,9 @@ class rtsp_output_test_peer final
         client_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto tcp = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp));
-        auto session = std::make_shared<rtsp_output_session>(connection, io_.get_executor(), video);
+        auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp), config_);
         session_ = connection;
-        session->startup();
+        require(connection->startup(), "rtsp output connection startup");
         runner_ = std::jthread([this]() { io_.run(); });
     }
 
@@ -5394,6 +5394,7 @@ class rtsp_output_test_peer final
 
    private:
     boost::asio::io_context io_;
+    config config_;
     stream_registry& streams_ = registry::instance();
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::tcp::acceptor acceptor_;
@@ -5412,35 +5413,36 @@ void test_rtsp_output_session_contract()
         "OPTIONS * RTSP/1.0\r\n"
         "CSeq: 1\r\n\r\n");
     require(options.starts_with("RTSP/1.0 200"), "rtsp output options");
-    require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,GET_PARAMETER", "rtsp output advertised methods");
+    require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER",
+            "rtsp pre role advertised methods");
+
+    const auto describe = peer.request("DESCRIBE " + base +
+                                       " RTSP/1.0\r\n"
+                                       "CSeq: 2\r\n"
+                                       "Accept: application/sdp\r\n\r\n");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp output describe");
+    require(describe.find("o=- 1 1 IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp output describe local address");
+    require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
+    require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp output audio control");
 
     const std::string parameter_body(70U * 1024U, 'x');
     const auto get_parameter = peer.request("GET_PARAMETER " + base +
                                             " RTSP/1.0\r\n"
-                                            "CSeq: 2\r\n"
+                                            "CSeq: 3\r\n"
                                             "Content-Length: " +
                                             std::to_string(parameter_body.size()) + "\r\n\r\n" + parameter_body);
     require(get_parameter.starts_with("RTSP/1.0 200"), "rtsp output fragmented request body");
 
     const auto pause = peer.request("PAUSE " + base +
                                     " RTSP/1.0\r\n"
-                                    "CSeq: 3\r\n\r\n");
+                                    "CSeq: 4\r\n\r\n");
     require(pause.starts_with("RTSP/1.0 501"), "rtsp output pause unsupported");
 
     const auto set_parameter = peer.request("SET_PARAMETER " + base +
                                             " RTSP/1.0\r\n"
-                                            "CSeq: 4\r\n"
+                                            "CSeq: 5\r\n"
                                             "Content-Length: 0\r\n\r\n");
     require(set_parameter.starts_with("RTSP/1.0 501"), "rtsp output set parameter unsupported");
-
-    const auto describe = peer.request("DESCRIBE " + base +
-                                       " RTSP/1.0\r\n"
-                                       "CSeq: 5\r\n"
-                                       "Accept: application/sdp\r\n\r\n");
-    require(describe.starts_with("RTSP/1.0 200"), "rtsp output describe");
-    require(describe.find("o=- 1 1 IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp output describe local address");
-    require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
-    require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp output audio control");
 
     const auto wrong_stream = peer.request("SETUP rtsp://127.0.0.1:" + std::to_string(peer.port()) +
                                            "/live/other/trackID=1 RTSP/1.0\r\n"

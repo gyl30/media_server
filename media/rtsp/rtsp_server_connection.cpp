@@ -4,21 +4,67 @@
 
 #include <boost/asio/post.hpp>
 
+#include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_output_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
 namespace media_server
 {
 
-rtsp_server_connection::rtsp_server_connection(std::shared_ptr<tcp_connection> connection)
-    : executor_(connection->socket().get_executor()), connection_(std::move(connection))
+rtsp_server_connection::rtsp_server_connection(std::shared_ptr<tcp_connection> connection, const config& config)
+    : executor_(connection->socket().get_executor()), config_(config), connection_(std::move(connection))
 {
     interleaved_.onrtp = &rtsp_server_connection::interleaved_callback;
     interleaved_.param = this;
+
+    auto handler = std::make_shared<rtsp_server_connection_handler>();
+    handler->on_describe = [this](rtsp_server_t* server, const char* uri)
+    {
+        auto session = std::make_shared<rtsp_output_session>(*this, executor_, config_);
+        set_handler(session->make_handler());
+        return session->on_describe(server, uri != nullptr ? uri : "");
+    };
+    handler->on_setup =
+        [this](rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
+    {
+        auto output = std::make_shared<rtsp_output_session>(*this, executor_, config_);
+        set_handler(output->make_handler());
+        return output->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
+    };
+    handler->on_announce = [this](rtsp_server_t* server, const char* uri, const char* sdp, int length)
+    {
+        auto input = std::make_shared<rtsp_input_session>(*this, executor_);
+        auto input_handler = std::make_shared<rtsp_server_connection_handler>();
+        input_handler->on_shutdown = [input]() { input->safe_shutdown(); };
+        input_handler->on_setup = [input](rtsp_server_t* handler_server,
+                                          const char* handler_uri,
+                                          const char* handler_session,
+                                          const rtsp_header_transport_t handler_transports[],
+                                          std::size_t handler_count)
+        { return input->on_setup(handler_server, handler_uri, handler_session, handler_transports, handler_count); };
+        input_handler->on_teardown = [input](rtsp_server_t* handler_server, const char*, const char* handler_session)
+        { return input->on_teardown(handler_server, handler_session); };
+        input_handler->on_announce = [input](rtsp_server_t* handler_server, const char* handler_uri, const char* handler_sdp, int handler_length)
+        { return input->on_announce(handler_server, handler_uri, handler_sdp, handler_length); };
+        input_handler->on_record =
+            [input](rtsp_server_t* handler_server, const char*, const char* handler_session, const std::int64_t*, const double*)
+        { return input->on_record(handler_server, handler_session); };
+        input_handler->on_get_parameter = [](rtsp_server_t* handler_server, const char*, const char*, const void*, int)
+        { return rtsp_server_reply_get_parameter(handler_server, 200, nullptr, 0); };
+        set_handler(std::move(input_handler));
+        return input->on_announce(server, uri != nullptr ? uri : "", sdp, length);
+    };
+    handler->on_play = [](rtsp_server_t*, const char*, const char*, const std::int64_t*, const double*) { return -1; };
+    handler->on_teardown = [](rtsp_server_t*, const char*, const char*) { return -1; };
+    handler->on_record = [](rtsp_server_t*, const char*, const char*, const std::int64_t*, const double*) { return -1; };
+    handler->on_get_parameter = [](rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
+    { return bytes == 0 && (session == nullptr || session[0] == '\0') ? rtsp_server_reply_get_parameter(server, 200, nullptr, 0) : -1; };
+    handler_ = std::move(handler);
 }
 
 rtsp_server_connection::~rtsp_server_connection() = default;
 
-bool rtsp_server_connection::startup(std::shared_ptr<const rtsp_server_connection_handler> handler)
+bool rtsp_server_connection::startup()
 {
     if (closed_ || connection_ == nullptr || server_ != nullptr)
     {
@@ -37,7 +83,6 @@ bool rtsp_server_connection::startup(std::shared_ptr<const rtsp_server_connectio
         return false;
     }
 
-    handler_ = std::move(handler);
     rtsp_handler_t rtsp_handler{};
     rtsp_handler.send = &rtsp_server_connection::send_callback;
     rtsp_handler.ondescribe = handler_->on_describe ? &rtsp_server_connection::describe_callback : nullptr;
