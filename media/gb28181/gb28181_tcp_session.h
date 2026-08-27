@@ -2,7 +2,6 @@
 #define MEDIA_GB28181_GB28181_TCP_SESSION_H
 
 #include <span>
-#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -43,7 +42,6 @@ class gb28181_tcp_session final : public stream_session, public std::enable_shar
     gb28181_input_media media_;
     std::shared_ptr<tcp_connection> connection_;
     std::vector<std::uint8_t> input_buffer_;
-    std::atomic_bool shutdown_requested_{};
     bool closed_{};
 };
 
