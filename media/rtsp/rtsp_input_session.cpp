@@ -196,7 +196,7 @@ int rtsp_input_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        auto child = std::make_shared<rtsp_input_tcp_session>(executor_, stream_name_, session_id_, descriptions_, write_);
+        auto child = std::make_shared<rtsp_input_tcp_session>(executor_, stream_name_, descriptions_, write_);
         child->set_error_handle(error_handle_);
         const auto result = child->startup(server, track_index, *selected, session_id_);
         if (!child->closed_)
@@ -206,7 +206,7 @@ int rtsp_input_session::on_setup(
         return result;
     }
 
-    auto child = std::make_shared<rtsp_input_udp_session>(executor_, stream_name_, session_id_, descriptions_);
+    auto child = std::make_shared<rtsp_input_udp_session>(executor_, stream_name_, descriptions_);
     child->set_error_handle(error_handle_);
     const auto result = child->startup(server, track_index, *selected, session_id_);
     if (!child->closed_)
@@ -246,11 +246,6 @@ int rtsp_input_session::on_teardown(rtsp_server_t* server, std::string_view, std
     const auto result = rtsp_server_reply_teardown(server, 200);
     error_handle_(boost::asio::error::eof);
     return result;
-}
-
-int rtsp_input_session::on_get_parameter(rtsp_server_t* server, std::string_view, std::string_view, const void*, int)
-{
-    return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);
 }
 
 void rtsp_input_session::shutdown()

@@ -41,7 +41,6 @@ class rtsp_input_session final : public rtsp_server_session
                   std::string_view session,
                   const std::int64_t* npt,
                   const double* scale) override;
-    int on_get_parameter(rtsp_server_t* server, std::string_view uri, std::string_view session, const void* content, int bytes) override;
     void shutdown() override;
 
    private:

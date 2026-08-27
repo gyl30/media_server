@@ -25,7 +25,7 @@ class rtsp_server_session
 
     void set_error_handle(std::function<void(boost::system::error_code)> handle) { error_handle_ = std::move(handle); }
 
-    virtual void on_interleaved(std::uint8_t, std::span<const std::uint8_t>) {}
+    virtual void on_interleaved(std::uint8_t, std::span<const std::uint8_t>) = 0;
     virtual int on_describe(rtsp_server_t* server, std::string_view) { return rtsp_server_reply_describe(server, 501, ""); }
     virtual int on_setup(rtsp_server_t* server,
                          std::string_view,
@@ -45,12 +45,7 @@ class rtsp_server_session
     {
         return rtsp_server_reply_record(server, 501, nullptr, nullptr);
     }
-    virtual int on_options(rtsp_server_t* server, std::string_view) { return rtsp_server_reply_options(server, 200); }
-    virtual int on_get_parameter(rtsp_server_t* server, std::string_view, std::string_view, const void*, int)
-    {
-        return rtsp_server_reply_get_parameter(server, 501, nullptr, 0);
-    }
-    virtual void shutdown() {}
+    virtual void shutdown() = 0;
 
    protected:
     std::function<void(boost::system::error_code)> error_handle_;

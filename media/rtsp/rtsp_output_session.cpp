@@ -335,11 +335,6 @@ int rtsp_output_session::on_teardown(rtsp_server_t* server, std::string_view, st
     return rtsp_server_reply_teardown(server, 454);
 }
 
-int rtsp_output_session::on_get_parameter(rtsp_server_t* server, std::string_view, std::string_view, const void*, int)
-{
-    return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);
-}
-
 int rtsp_output_session::prepare_stream(std::string_view uri)
 {
     tracks_.clear();

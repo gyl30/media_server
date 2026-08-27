@@ -39,7 +39,6 @@ class rtsp_output_session final : public rtsp_server_session
                 const std::int64_t* npt,
                 const double* scale) override;
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session) override;
-    int on_get_parameter(rtsp_server_t* server, std::string_view uri, std::string_view session, const void* content, int bytes) override;
     void shutdown() override;
 
    private:
