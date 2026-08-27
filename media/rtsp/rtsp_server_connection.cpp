@@ -122,25 +122,6 @@ void rtsp_server_connection::startup()
 
 void rtsp_server_connection::set_handler(std::shared_ptr<const rtsp_server_connection_handler> handler) { handler_ = std::move(handler); }
 
-std::size_t rtsp_server_connection::input(std::span<const std::uint8_t> data)
-{
-    auto bytes = data.size();
-    const auto result = rtsp_server_input(server_, data.data(), &bytes);
-    if (result < 0)
-    {
-        shutdown();
-        return data.size();
-    }
-
-    const auto consumed = data.size() - bytes;
-    if (result == 0 && consumed == 0)
-    {
-        shutdown();
-        return data.size();
-    }
-    return consumed;
-}
-
 void rtsp_server_connection::write(std::span<const std::uint8_t> data) { connection_->write(data); }
 
 void rtsp_server_connection::shutdown()
@@ -229,7 +210,7 @@ void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
     while (!remaining.empty())
     {
         std::size_t consumed{};
-        if (interleaved_.state != 0 || remaining.front() == '$')
+        if (!rtsp_need_more_data_ && (interleaved_.state != 0 || remaining.front() == '$'))
         {
             const auto handler = handler_;
             if (!handler || !handler->on_interleaved)
@@ -243,7 +224,20 @@ void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
         }
         else
         {
-            consumed = input(remaining);
+            auto bytes = remaining.size();
+            const auto result = rtsp_server_input(server_, remaining.data(), &bytes);
+            rtsp_need_more_data_ = result > 0;
+            if (result < 0)
+            {
+                shutdown();
+                return;
+            }
+            consumed = remaining.size() - bytes;
+            if (result == 0 && consumed == 0)
+            {
+                shutdown();
+                return;
+            }
         }
 
         if (consumed == 0 || consumed > remaining.size())

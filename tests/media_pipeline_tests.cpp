@@ -5284,6 +5284,11 @@ class rtsp_output_test_peer final
     std::string request(std::string_view request)
     {
         boost::asio::write(client_, boost::asio::buffer(request));
+        return read_response();
+    }
+
+    std::string read_response()
+    {
         boost::asio::read_until(client_, boost::asio::dynamic_buffer(read_buffer_), "\r\n\r\n");
         const auto header_end = read_buffer_.find("\r\n\r\n");
         require(header_end != std::string::npos, "rtsp response header");
@@ -5425,13 +5430,23 @@ void test_rtsp_output_session_contract()
     require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
     require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp output audio control");
 
-    const std::string parameter_body(70U * 1024U, 'x');
-    const auto get_parameter = peer.request("GET_PARAMETER " + base +
-                                            " RTSP/1.0\r\n"
-                                            "CSeq: 3\r\n"
-                                            "Content-Length: " +
-                                            std::to_string(parameter_body.size()) + "\r\n\r\n" + parameter_body);
-    require(get_parameter.starts_with("RTSP/1.0 200"), "rtsp output fragmented request body");
+    constexpr std::size_t parameter_body_size = 70U * 1024U;
+    const auto parameter_header = "GET_PARAMETER " + base +
+                                  " RTSP/1.0\r\n"
+                                  "CSeq: 3\r\n"
+                                  "Content-Length: " +
+                                  std::to_string(parameter_body_size) + "\r\n\r\n";
+    constexpr std::size_t tcp_read_size = 64U * 1024U;
+    require(parameter_header.size() < tcp_read_size, "rtsp output fragmented request header size");
+    const auto first_body_size = tcp_read_size - parameter_header.size();
+    auto first_chunk = parameter_header + std::string(first_body_size, 'x');
+    auto second_chunk = std::string(parameter_body_size - first_body_size, 'x');
+    second_chunk.front() = '$';
+    peer.write(std::span{reinterpret_cast<const std::uint8_t*>(first_chunk.data()), first_chunk.size()});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    peer.write(std::span{reinterpret_cast<const std::uint8_t*>(second_chunk.data()), second_chunk.size()});
+    const auto get_parameter = peer.read_response();
+    require(get_parameter.starts_with("RTSP/1.0 200"), "rtsp output fragmented request body starting with interleaved marker");
 
     const auto pause = peer.request("PAUSE " + base +
                                     " RTSP/1.0\r\n"
