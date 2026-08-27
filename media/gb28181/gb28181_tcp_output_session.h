@@ -1,7 +1,6 @@
 #ifndef MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
 #define MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
 
-#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -47,7 +46,6 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
     std::uint32_t ssrc_{};
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<gb28181_output_media> media_;
-    std::atomic_bool shutdown_requested_{};
     bool closed_{};
 };
 
