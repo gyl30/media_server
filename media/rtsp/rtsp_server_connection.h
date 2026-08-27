@@ -40,7 +40,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     rtsp_server_connection(std::shared_ptr<tcp_connection> connection, const config& config);
     ~rtsp_server_connection();
 
-    bool startup();
+    void startup();
     void set_handler(std::shared_ptr<const rtsp_server_connection_handler> handler);
     void write(std::span<const std::uint8_t> data);
     void shutdown();

@@ -29,10 +29,7 @@ void rtsp_server::on_accept(boost::asio::ip::tcp::socket socket)
 {
     auto tcp = std::make_shared<tcp_connection>(std::move(socket));
     auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp), config_);
-    if (!connection->startup())
-    {
-        connection->shutdown();
-    }
+    connection->startup();
 }
 
 }    // namespace media_server
