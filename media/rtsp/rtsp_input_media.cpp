@@ -25,15 +25,14 @@ constexpr char rtcp_name[] = "media_server";
 
 rtsp_input_media::rtsp_input_media(boost::asio::any_io_executor executor,
                                    std::string stream_name,
-                                   std::string rtcp_cname,
                                    std::vector<rtsp_input_track_description> descriptions)
-    : executor_(std::move(executor)), stream_name_(std::move(stream_name)), rtcp_cname_(std::move(rtcp_cname)), descriptions_(std::move(descriptions))
+    : executor_(std::move(executor)), stream_name_(std::move(stream_name)), descriptions_(std::move(descriptions))
 {
 }
 
 rtsp_input_media::~rtsp_input_media() = default;
 
-bool rtsp_input_media::startup()
+bool rtsp_input_media::startup(const std::string& rtcp_cname)
 {
     if (closed_ || stream_ || descriptions_.empty())
     {
@@ -53,7 +52,7 @@ bool rtsp_input_media::startup()
                                      description.payload_type,
                                      description.encoding.c_str(),
                                      description.fmtp.empty() ? nullptr : description.fmtp.c_str()) != 0 ||
-            rtsp_demuxer_set_info(demuxer, rtcp_cname_.c_str(), rtcp_name) != 0)
+            rtsp_demuxer_set_info(demuxer, rtcp_cname.c_str(), rtcp_name) != 0)
         {
             if (demuxer != nullptr)
             {
@@ -140,6 +139,8 @@ void rtsp_input_media::shutdown()
 const std::vector<rtsp_input_track_description>& rtsp_input_media::descriptions() const noexcept { return descriptions_; }
 
 const std::string& rtsp_input_media::stream_name() const noexcept { return stream_name_; }
+
+bool rtsp_input_media::recording() const noexcept { return recording_; }
 
 int rtsp_input_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_input_media*>(param)->on_packet(packet); }
 

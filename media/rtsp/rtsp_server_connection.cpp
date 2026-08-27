@@ -175,22 +175,20 @@ int rtsp_server_connection::record_callback(
     return self->session_->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
 }
 
-int rtsp_server_connection::options_callback(void* param, rtsp_server_t* server, const char* uri)
+int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*)
 {
-    auto* self = static_cast<rtsp_server_connection*>(param);
-    return self->session_ ? self->session_->on_options(server, uri != nullptr ? uri : "") : rtsp_server_reply_options(server, 200);
+    return rtsp_server_reply_options(server, 200);
 }
 
 int rtsp_server_connection::get_parameter_callback(
-    void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes)
+    void* param, rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_)
+    if (!self->session_ && (bytes != 0 || (session != nullptr && session[0] != '\0')))
     {
-        return bytes == 0 && (session == nullptr || session[0] == '\0') ? rtsp_server_reply_get_parameter(server, 200, nullptr, 0) : -1;
+        return -1;
     }
-    return self->session_->on_get_parameter(
-        server, uri != nullptr ? uri : "", session != nullptr ? session : "", content, bytes);
+    return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);
 }
 
 void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
