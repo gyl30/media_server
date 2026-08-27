@@ -61,14 +61,14 @@ int rtsp_output_tcp_session::startup(rtsp_server_t* server,
                                       std::size_t count,
                                       std::unique_ptr<video_transcoder>& video_transcoder)
 {
-    if (closed_ || !create_muxer())
+    if (!create_muxer())
     {
         safe_shutdown();
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
     }
 
     const auto result = on_setup(server, uri, session, transports, count);
-    if (result != 0 || !std::ranges::any_of(tracks_, [](const auto& item) { return item.second.setup; }))
+    if (result != 0 || session_id_.empty())
     {
         safe_shutdown();
         return result;
