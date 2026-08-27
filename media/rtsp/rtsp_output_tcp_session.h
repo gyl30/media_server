@@ -2,17 +2,18 @@
 #define MEDIA_RTSP_RTSP_OUTPUT_TCP_SESSION_H
 
 #include <map>
+#include <span>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/core/media_reader.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_output_track.h"
-#include "media/rtsp/rtsp_server_connection.h"
 
 struct rtsp_muxer_t;
 struct rtsp_server_t;
@@ -21,30 +22,27 @@ struct rtsp_header_transport_t;
 namespace media_server
 {
 
+class rtsp_output_session;
+
 class rtsp_output_tcp_session final : public media_reader, public std::enable_shared_from_this<rtsp_output_tcp_session>
 {
    public:
-    rtsp_output_tcp_session(rtsp_server_connection& connection,
-                            boost::asio::any_io_executor executor,
+    rtsp_output_tcp_session(boost::asio::any_io_executor executor,
                             std::shared_ptr<media_stream> stream,
                             std::string stream_name,
                             std::vector<rtsp_output_track_description> tracks,
-                            track_id video_track_id);
+                            track_id video_track_id,
+                            std::function<void(std::span<const std::uint8_t>)> write,
+                            std::function<void()> request_shutdown);
     ~rtsp_output_tcp_session() override;
-
-    int startup(rtsp_server_t* server,
-                std::string_view uri,
-                std::string_view session,
-                const rtsp_header_transport_t transports[],
-                std::size_t count,
-                std::unique_ptr<video_transcoder>& video_transcoder);
-    void shutdown();
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;
     void on_end() override;
 
    private:
+    friend class rtsp_output_session;
+
     struct track_state
     {
         codec_id codec{};
@@ -56,6 +54,12 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
         bool setup{};
     };
 
+    int startup(rtsp_server_t* server,
+                 std::string_view uri,
+                 std::string_view session,
+                 const rtsp_header_transport_t transports[],
+                 std::size_t count,
+                 std::unique_ptr<video_transcoder>& video_transcoder);
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     void safe_shutdown();
@@ -69,8 +73,9 @@ class rtsp_output_tcp_session final : public media_reader, public std::enable_sh
     [[nodiscard]] bool description_current() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
-    rtsp_server_connection& connection_;
     boost::asio::any_io_executor executor_;
+    std::function<void(std::span<const std::uint8_t>)> write_;
+    std::function<void()> request_shutdown_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     std::vector<rtsp_output_track_description> descriptions_;

@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -40,6 +41,7 @@
 #include "media/net/tcp_listener.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
+#include "media/rtsp/rtsp_server_connection.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
 #include "media/http/gb28181_http.h"
@@ -55,6 +57,8 @@
 #include "media/codec/audio_transcoder.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_pull_session.h"
+#include "media/rtsp/rtsp_server_session.h"
+#include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_output_session.h"
 
 extern "C"
@@ -99,6 +103,9 @@ namespace
 
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+
+static_assert(std::is_base_of_v<rtsp_server_session, rtsp_input_session>);
+static_assert(std::is_base_of_v<rtsp_server_session, rtsp_output_session>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -4733,10 +4740,15 @@ void test_rtsp_publish_server_contract()
         boost::asio::write(client, boost::asio::buffer(partial));
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-        boost::system::error_code error;
-        client.close(error);
-        workers.stop();
+        server->shutdown();
+        workers.release_work();
         runner.join();
+        client.non_blocking(true);
+        std::array<std::uint8_t, 1> byte{};
+        boost::system::error_code error;
+        static_cast<void>(client.read_some(boost::asio::buffer(byte), error));
+        require(error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::not_connected,
+                "rtsp publish pre role shutdown closes partial connection");
     }
 
     io_context_pool workers(1);
