@@ -51,7 +51,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     boost::asio::any_io_executor executor_;
     const config& config_;
     std::shared_ptr<tcp_connection> connection_;
-    std::unique_ptr<rtsp_server_session> session_;
+    std::shared_ptr<rtsp_server_session> session_;
     std::string local_address_;
     rtsp_server_t* server_{};
     rtp_over_rtsp_t interleaved_{};
