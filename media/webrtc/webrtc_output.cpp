@@ -89,9 +89,9 @@ void webrtc_output::on_track(const media_track& track)
 
 void webrtc_output::shutdown()
 {
-    while (!tracks_.empty())
+    while (!track_states_.empty())
     {
-        remove_track(tracks_.begin()->first);
+        remove_track(track_states_.begin()->first);
     }
     if (muxer_ != nullptr)
     {
@@ -106,8 +106,8 @@ bool webrtc_output::valid() const noexcept { return muxer_ != nullptr; }
 
 void webrtc_output::on_frame(const media_frame& frame)
 {
-    const auto iterator = tracks_.find(frame.track);
-    if (iterator == tracks_.end() || iterator->second.media_id < 0 || !frame.payload)
+    const auto iterator = track_states_.find(frame.track);
+    if (iterator == track_states_.end() || iterator->second.media_id < 0 || !frame.payload)
     {
         return;
     }
@@ -131,8 +131,8 @@ int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, 
         return 0;
     }
 
-    const auto state = std::find_if(self->tracks_.begin(), self->tracks_.end(), [pid](const auto& entry) { return entry.second.payload_id == pid; });
-    if (state == self->tracks_.end())
+    const auto state = std::find_if(self->track_states_.begin(), self->track_states_.end(), [pid](const auto& entry) { return entry.second.payload_id == pid; });
+    if (state == self->track_states_.end())
     {
         return -1;
     }
@@ -228,7 +228,7 @@ bool webrtc_output::add_h264_track(const media_track& track)
     }
 
     remove_track(track.id);
-    tracks_.emplace(track.id,
+    track_states_.emplace(track.id,
                     track_state{
                         .codec = track.codec,
                         .transcoder = {},
@@ -274,7 +274,7 @@ bool webrtc_output::add_h265_track(const media_track& track)
     }
 
     remove_track(track.id);
-    tracks_.emplace(track.id,
+    track_states_.emplace(track.id,
                     track_state{
                         .codec = track.codec,
                         .transcoder = {},
@@ -355,7 +355,7 @@ bool webrtc_output::add_av1_track(const media_track& track)
     }
 
     remove_track(track.id);
-    tracks_.emplace(track.id,
+    track_states_.emplace(track.id,
                     track_state{
                         .codec = codec_id::av1,
                         .transcoder = {},
@@ -478,7 +478,7 @@ bool webrtc_output::add_audio_track(const media_track& track)
     }
 
     remove_track(track.id);
-    tracks_.emplace(
+    track_states_.emplace(
         track.id,
         track_state{
             .codec = track.codec,
@@ -496,8 +496,8 @@ bool webrtc_output::add_audio_track(const media_track& track)
 
 void webrtc_output::remove_track(track_id id)
 {
-    const auto iterator = tracks_.find(id);
-    if (iterator == tracks_.end())
+    const auto iterator = track_states_.find(id);
+    if (iterator == track_states_.end())
     {
         return;
     }
@@ -509,7 +509,7 @@ void webrtc_output::remove_track(track_id id)
     {
         iterator->second.video_transcoder_->shutdown();
     }
-    tracks_.erase(iterator);
+    track_states_.erase(iterator);
 }
 
 bool webrtc_output::configure_rtcp(int payload_id)

@@ -50,7 +50,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     std::shared_ptr<tcp_connection> connection_;
     std::chrono::milliseconds initial_tracks_timeout_;
     output_video_config video_config_;
-    rtmp_server_t* server_{};
+    rtmp_server_t* rtmp_context_{};
     std::shared_ptr<rtmp_input_session> input_;
     std::shared_ptr<rtmp_output_session> output_;
     std::string stream_name_;

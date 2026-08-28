@@ -68,7 +68,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
 
     std::function<void(boost::system::error_code)> error_handler_;
     rtsp_input_media media_;
-    std::vector<track_state> tracks_;
+    std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;
     bool closed_{};
 };

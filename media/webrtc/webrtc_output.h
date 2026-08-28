@@ -75,7 +75,7 @@ class webrtc_output final
     packet_handler rtp_handler_;
     packet_handler rtcp_handler_;
     rtsp_muxer_t* muxer_{};
-    std::map<track_id, track_state> tracks_;
+    std::map<track_id, track_state> track_states_;
 };
 
 }    // namespace media_server

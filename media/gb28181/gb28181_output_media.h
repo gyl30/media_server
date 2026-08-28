@@ -64,7 +64,7 @@ class gb28181_output_media final : public media_reader, public std::enable_share
     end_handler end_handler_;
     rtsp_muxer_t* muxer_{};
     media_reader_handle reader_;
-    std::map<track_id, track_state> tracks_;
+    std::map<track_id, track_state> track_states_;
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     bool waiting_for_key_frame_{true};
