@@ -68,7 +68,7 @@ class rtsp_output_session final : public rtsp_server_session,
     [[nodiscard]] int prepare_stream(std::string_view uri);
     [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
-    [[nodiscard]] bool description_current() const;
+    [[nodiscard]] int presentation_status() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
     boost::asio::any_io_executor executor_;
@@ -82,7 +82,6 @@ class rtsp_output_session final : public rtsp_server_session,
     track_id video_track_id_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
-    std::string stream_name_;
     std::string session_id_;
     bool playing_{};
     bool closed_{};

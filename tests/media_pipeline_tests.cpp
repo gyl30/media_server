@@ -5479,6 +5479,18 @@ void test_rtsp_output_session_contract()
     require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
     require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp output audio control");
 
+    const auto play_before_setup = peer.request("PLAY " + base +
+                                                " RTSP/1.0\r\n"
+                                                "CSeq: 21\r\n"
+                                                "Session: invalid\r\n\r\n");
+    require(play_before_setup.starts_with("RTSP/1.0 454"), "rtsp output play before setup");
+
+    const auto wrong_play_before_setup = peer.request("PLAY rtsp://127.0.0.1:" + std::to_string(peer.port()) +
+                                                      "/live/other RTSP/1.0\r\n"
+                                                      "CSeq: 22\r\n"
+                                                      "Session: invalid\r\n\r\n");
+    require(wrong_play_before_setup.starts_with("RTSP/1.0 404"), "rtsp output play before setup stream identity");
+
     constexpr std::size_t parameter_body_size = 70U * 1024U;
     const auto parameter_header = "GET_PARAMETER " + base +
                                   " RTSP/1.0\r\n"
