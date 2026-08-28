@@ -2,14 +2,13 @@
 #define MEDIA_NET_TCP_ACCEPTOR_H
 
 #include <chrono>
-#include <functional>
 #include <memory>
 #include <cstdint>
 
-#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/tcp_socket_source.h"
 

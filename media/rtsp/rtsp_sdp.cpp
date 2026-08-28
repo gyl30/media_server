@@ -1,17 +1,17 @@
 #include <array>
 #include <cctype>
+#include <utility>
 #include <optional>
 #include <algorithm>
-#include <utility>
 
-#include "media/codec/codec_utils.h"
 #include "media/rtsp/rtsp_sdp.h"
+#include "media/codec/codec_utils.h"
 
 extern "C"
 {
 #include "base64.h"
-#include "rtp-profile.h"
 #include "sdp-a-fmtp.h"
+#include "rtp-profile.h"
 }
 
 namespace media_server

@@ -14,11 +14,6 @@
 #include "media/rtsp/rtsp_input_media.h"
 #include "media/rtsp/rtsp_server_session.h"
 
-extern "C"
-{
-#include "rtsp-media.h"
-}
-
 namespace media_server
 {
 
