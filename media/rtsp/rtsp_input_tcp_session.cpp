@@ -23,7 +23,7 @@ rtsp_input_tcp_session::rtsp_input_tcp_session(boost::asio::any_io_executor exec
                                                std::function<void(std::span<const std::uint8_t>)> write)
     : write_handler_(std::move(write)),
       media_(executor, std::move(stream_name), std::move(descriptions)),
-      tracks_(media_.descriptions().size()),
+      track_states_(media_.descriptions().size()),
       rtcp_timer_(std::move(executor))
 {
 }
@@ -53,9 +53,9 @@ void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<cons
     {
         return;
     }
-    for (std::size_t index = 0; index < tracks_.size(); ++index)
+    for (std::size_t index = 0; index < track_states_.size(); ++index)
     {
-        if (tracks_[index].rtp_channel == channel || tracks_[index].rtcp_channel == channel)
+        if (track_states_[index].rtp_channel == channel || track_states_[index].rtcp_channel == channel)
         {
             if (!media_.input(index, data))
             {
@@ -71,12 +71,12 @@ int rtsp_input_tcp_session::on_setup(rtsp_server_t* server,
                                        const rtsp_header_transport_t& transport,
                                        const std::string& session_id)
 {
-    if (tracks_[track_index].rtp_channel >= 0)
+    if (track_states_[track_index].rtp_channel >= 0)
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
 
-    for (const auto& state : tracks_)
+    for (const auto& state : track_states_)
     {
         if (state.rtp_channel >= 0 && (state.rtp_channel == transport.interleaved1 || state.rtp_channel == transport.interleaved2 ||
                                        state.rtcp_channel == transport.interleaved1 || state.rtcp_channel == transport.interleaved2))
@@ -85,7 +85,7 @@ int rtsp_input_tcp_session::on_setup(rtsp_server_t* server,
         }
     }
 
-    auto& state = tracks_[track_index];
+    auto& state = track_states_[track_index];
     state.rtp_channel = transport.interleaved1;
     state.rtcp_channel = transport.interleaved2;
     rtsp_server_set_session_timeout(server, 60);
@@ -100,7 +100,7 @@ int rtsp_input_tcp_session::on_record(rtsp_server_t* server)
     {
         return rtsp_server_reply_record(server, 454, nullptr, nullptr);
     }
-    if (std::ranges::any_of(tracks_, [](const track_state& state) { return state.rtp_channel < 0; }))
+    if (std::ranges::any_of(track_states_, [](const track_state& state) { return state.rtp_channel < 0; }))
     {
         return rtsp_server_reply_record(server, 455, nullptr, nullptr);
     }
@@ -127,7 +127,7 @@ void rtsp_input_tcp_session::wait_rtcp()
             }
 
             std::array<std::uint8_t, 1500> buffer{};
-            for (std::size_t index = 0; index < self->tracks_.size(); ++index)
+            for (std::size_t index = 0; index < self->track_states_.size(); ++index)
             {
                 const auto bytes = self->media_.rtcp(index, buffer);
                 if (bytes <= 0)
@@ -137,7 +137,7 @@ void rtsp_input_tcp_session::wait_rtcp()
 
                 std::vector<std::uint8_t> packet(static_cast<std::size_t>(bytes) + 4U);
                 packet[0] = '$';
-                packet[1] = static_cast<std::uint8_t>(self->tracks_[index].rtcp_channel);
+                packet[1] = static_cast<std::uint8_t>(self->track_states_[index].rtcp_channel);
                 packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
                 packet[3] = static_cast<std::uint8_t>(bytes);
                 std::copy_n(buffer.begin(), bytes, packet.begin() + 4);

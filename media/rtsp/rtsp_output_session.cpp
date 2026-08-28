@@ -98,8 +98,8 @@ void rtsp_output_session::on_read(media_read_batch batch)
 
     for (auto& entry : batch.entries)
     {
-        const auto iterator = tracks_.find(entry.frame.track);
-        if (iterator == tracks_.end() || !entry.frame.payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0 ||
+        const auto iterator = track_states_.find(entry.frame.track);
+        if (iterator == track_states_.end() || !entry.frame.payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0 ||
             iterator->second.config_version != entry.config_version)
         {
             continue;
@@ -203,7 +203,7 @@ void rtsp_output_session::on_interleaved(std::uint8_t channel, std::span<const s
         return;
     }
 
-    for (const auto& [id, state] : tracks_)
+    for (const auto& [id, state] : track_states_)
     {
         static_cast<void>(id);
         if (state.rtcp_channel < 0 || state.rtcp_channel != channel)
@@ -262,7 +262,7 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
     }
 
     std::ostringstream media_sdp;
-    for (const auto& [id, state] : tracks_)
+    for (const auto& [id, state] : track_states_)
     {
         std::uint16_t sequence{};
         std::uint32_t timestamp{};
@@ -311,10 +311,10 @@ int rtsp_output_session::on_setup(
         }
     }
 
-    auto iterator = std::ranges::find_if(tracks_, [&path, this](const auto& item) {
+    auto iterator = std::ranges::find_if(track_states_, [&path, this](const auto& item) {
         return path == stream_->name() + "/trackID=" + std::to_string(item.first);
     });
-    if (iterator == tracks_.end())
+    if (iterator == track_states_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
@@ -428,8 +428,8 @@ int rtsp_output_session::on_muxer_packet(int pid, const void* data, int bytes)
         return 0;
     }
 
-    auto iterator = std::find_if(tracks_.begin(), tracks_.end(), [pid](const auto& item) { return item.second.payload_index == pid; });
-    if (iterator == tracks_.end() || iterator->second.rtp_channel < 0)
+    auto iterator = std::find_if(track_states_.begin(), track_states_.end(), [pid](const auto& item) { return item.second.payload_index == pid; });
+    if (iterator == track_states_.end() || iterator->second.rtp_channel < 0)
     {
         return 0;
     }
@@ -462,7 +462,7 @@ bool rtsp_output_session::apply_tracks(const media_track_snapshot_ptr& tracks)
         return true;
     }
 
-    for (const auto& [id, state] : tracks_)
+    for (const auto& [id, state] : track_states_)
     {
         if (state.rtp_channel < 0)
         {
@@ -500,13 +500,13 @@ int rtsp_output_session::presentation_status() const
             continue;
         }
         ++supported_count;
-        const auto iterator = tracks_.find(track.id);
-        if (iterator == tracks_.end() || iterator->second.config_version != track.config_version)
+        const auto iterator = track_states_.find(track.id);
+        if (iterator == track_states_.end() || iterator->second.config_version != track.config_version)
         {
             return 455;
         }
     }
-    return supported_count == tracks_.size() ? 0 : 455;
+    return supported_count == track_states_.size() ? 0 : 455;
 }
 
 bool rtsp_output_session::channels_available(track_id id, int rtp_channel, int rtcp_channel) const
@@ -515,7 +515,7 @@ bool rtsp_output_session::channels_available(track_id id, int rtp_channel, int r
     {
         return false;
     }
-    for (const auto& [track, state] : tracks_)
+    for (const auto& [track, state] : track_states_)
     {
         if (track == id || state.rtp_channel < 0)
         {
@@ -532,7 +532,7 @@ bool rtsp_output_session::channels_available(track_id id, int rtp_channel, int r
 
 int rtsp_output_session::prepare_stream(std::string_view uri)
 {
-    tracks_.clear();
+    track_states_.clear();
     if (video_transcoder_)
     {
         video_transcoder_->shutdown();
@@ -715,7 +715,7 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
     }
 
     stream_ = std::move(stream);
-    tracks_ = std::move(prepared_tracks);
+    track_states_ = std::move(prepared_tracks);
     video_transcoder_ = std::move(prepared_transcoder);
     video_track_id_ = video_track_id;
     muxer_ = prepared_muxer.release();

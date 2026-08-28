@@ -125,8 +125,8 @@ void gb28181_output_media::on_read(media_read_batch batch)
 
     for (const auto& entry : batch.entries)
     {
-        const auto state = tracks_.find(entry.frame.track);
-        if (state == tracks_.end() || state->second.config_version != entry.config_version || !entry.frame.payload)
+        const auto state = track_states_.find(entry.frame.track);
+        if (state == track_states_.end() || state->second.config_version != entry.config_version || !entry.frame.payload)
         {
             continue;
         }
@@ -192,7 +192,7 @@ void gb28181_output_media::safe_shutdown()
     reader_ = {};
     reader_cursor_.reset();
     track_revision_ = 0;
-    tracks_.clear();
+    track_states_.clear();
     waiting_for_key_frame_ = true;
     stream_.reset();
     packet_handler_ = {};
@@ -255,7 +255,7 @@ bool gb28181_output_media::create_muxer(const std::vector<media_track>& tracks)
         {
             return false;
         }
-        tracks_.emplace(track.id,
+        track_states_.emplace(track.id,
                         track_state{
                             .kind = track.kind,
                             .codec = track.codec,
@@ -272,7 +272,7 @@ bool gb28181_output_media::apply_tracks(const media_track_snapshot_ptr& tracks)
     {
         return true;
     }
-    if (tracks->tracks.size() != tracks_.size())
+    if (tracks->tracks.size() != track_states_.size())
     {
         return false;
     }
@@ -280,8 +280,8 @@ bool gb28181_output_media::apply_tracks(const media_track_snapshot_ptr& tracks)
     bool video_changed = false;
     for (const auto& track : tracks->tracks)
     {
-        const auto state = tracks_.find(track.id);
-        if (state == tracks_.end() || state->second.codec != track.codec)
+        const auto state = track_states_.find(track.id);
+        if (state == track_states_.end() || state->second.codec != track.codec)
         {
             return false;
         }

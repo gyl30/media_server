@@ -48,8 +48,8 @@ void rtsp_server_connection::startup()
     rtsp_handler.ongetparameter = &rtsp_server_connection::get_parameter_callback;
 
     const auto peer_address = peer.address().to_string();
-    server_ = rtsp_server_create(peer_address.c_str(), peer.port(), &rtsp_handler, this, this);
-    if (server_ == nullptr)
+    rtsp_context_ = rtsp_server_create(peer_address.c_str(), peer.port(), &rtsp_handler, this, this);
+    if (rtsp_context_ == nullptr)
     {
         shutdown();
         return;
@@ -92,87 +92,87 @@ int rtsp_server_connection::send_callback(void* param, const void* data, std::si
 void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_)
+    if (!self->logical_session_)
     {
         self->shutdown();
         return;
     }
-    self->session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes));
+    self->logical_session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes));
 }
 
 int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server, const char* uri)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_)
+    if (!self->logical_session_)
     {
         const auto connection = self->connection_;
         auto next_session = std::make_shared<rtsp_output_session>(
             self->executor_, self->video_codec_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
         next_session->set_error_handler([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
-        self->session_ = std::move(next_session);
+        self->logical_session_ = std::move(next_session);
     }
-    return self->session_->on_describe(server, uri != nullptr ? uri : "");
+    return self->logical_session_->on_describe(server, uri != nullptr ? uri : "");
 }
 
 int rtsp_server_connection::setup_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_)
+    if (!self->logical_session_)
     {
         const auto connection = self->connection_;
         auto next_session = std::make_shared<rtsp_output_session>(
             self->executor_, self->video_codec_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
         next_session->set_error_handler([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
-        self->session_ = std::move(next_session);
+        self->logical_session_ = std::move(next_session);
     }
-    return self->session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
+    return self->logical_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
 }
 
 int rtsp_server_connection::play_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_)
+    if (!self->logical_session_)
     {
         return -1;
     }
-    return self->session_->on_play(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
+    return self->logical_session_->on_play(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
 }
 
 int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server, const char* uri, const char* session)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_)
+    if (!self->logical_session_)
     {
         return -1;
     }
-    return self->session_->on_teardown(server, uri != nullptr ? uri : "", session != nullptr ? session : "");
+    return self->logical_session_->on_teardown(server, uri != nullptr ? uri : "", session != nullptr ? session : "");
 }
 
 int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server, const char* uri, const char* sdp, int length)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_)
+    if (!self->logical_session_)
     {
         const auto connection = self->connection_;
         auto next_session = std::make_unique<rtsp_input_session>(
             self->executor_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
         next_session->set_error_handler([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
-        self->session_ = std::move(next_session);
+        self->logical_session_ = std::move(next_session);
     }
-    return self->session_->on_announce(server, uri != nullptr ? uri : "", sdp, length);
+    return self->logical_session_->on_announce(server, uri != nullptr ? uri : "", sdp, length);
 }
 
 int rtsp_server_connection::record_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_)
+    if (!self->logical_session_)
     {
         return -1;
     }
-    return self->session_->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
+    return self->logical_session_->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
 }
 
 int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*)
@@ -184,7 +184,7 @@ int rtsp_server_connection::get_parameter_callback(
     void* param, rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (!self->session_ && (bytes != 0 || (session != nullptr && session[0] != '\0')))
+    if (!self->logical_session_ && (bytes != 0 || (session != nullptr && session[0] != '\0')))
     {
         return -1;
     }
@@ -199,7 +199,7 @@ void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
         std::size_t consumed{};
         if (!rtsp_need_more_data_ && (interleaved_.state != 0 || remaining.front() == '$'))
         {
-            if (!session_)
+            if (!logical_session_)
             {
                 shutdown();
                 return;
@@ -211,7 +211,7 @@ void rtsp_server_connection::on_tcp_read(std::span<const std::uint8_t> data)
         else
         {
             auto bytes = remaining.size();
-            const auto result = rtsp_server_input(server_, remaining.data(), &bytes);
+            const auto result = rtsp_server_input(rtsp_context_, remaining.data(), &bytes);
             rtsp_need_more_data_ = result > 0;
             if (result < 0)
             {
@@ -243,15 +243,15 @@ void rtsp_server_connection::safe_shutdown()
     }
     closed_ = true;
 
-    const auto session = std::move(session_);
+    const auto session = std::move(logical_session_);
     if (session)
     {
         session->shutdown();
     }
-    if (server_ != nullptr)
+    if (rtsp_context_ != nullptr)
     {
-        rtsp_server_destroy(server_);
-        server_ = nullptr;
+        rtsp_server_destroy(rtsp_context_);
+        rtsp_context_ = nullptr;
     }
     if (interleaved_.data != nullptr)
     {
