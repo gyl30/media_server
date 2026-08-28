@@ -48,7 +48,7 @@ boost::system::error_code tcp_acceptor::startup(socket_handler handler)
 
     started_ = true;
     completed_ = false;
-    handler_ = std::move(handler);
+    socket_handler_ = std::move(handler);
     if (timeout_ > std::chrono::milliseconds::zero())
     {
         timer_.expires_after(timeout_);
@@ -108,7 +108,7 @@ void tcp_acceptor::safe_shutdown()
     }
     completed_ = true;
     started_ = false;
-    handler_ = {};
+    socket_handler_ = {};
     timer_.cancel();
     boost::system::error_code error;
     acceptor_.close(error);
@@ -127,7 +127,7 @@ void tcp_acceptor::complete(boost::system::error_code error, boost::asio::ip::tc
     timer_.cancel();
     boost::system::error_code close_error;
     acceptor_.close(close_error);
-    auto handler = std::move(handler_);
+    auto handler = std::move(socket_handler_);
     if (error)
     {
         socket.close(close_error);

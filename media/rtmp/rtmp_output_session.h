@@ -39,7 +39,7 @@ class rtmp_output_session final : public media_reader, public std::enable_shared
     boost::asio::any_io_executor executor_;
     std::shared_ptr<media_stream> stream_;
     flv_output_muxer output_muxer_;
-    end_handler on_end_;
+    end_handler end_handler_;
     media_reader_handle reader_;
     std::map<track_id, media_track> reader_tracks_;
     media_reader_cursor reader_cursor_;

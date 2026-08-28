@@ -28,9 +28,9 @@ struct dtls_srtp_keying_material
 class dtls_transport final
 {
    public:
-    using send_callback = std::function<void(std::span<const std::uint8_t>)>;
+    using send_handler = std::function<void(std::span<const std::uint8_t>)>;
 
-    dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_callback send);
+    dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_handler send);
 
     bool startup();
     void shutdown();
@@ -65,7 +65,7 @@ class dtls_transport final
 
     std::shared_ptr<dtls_certificate> certificate_;
     std::string remote_fingerprint_;
-    send_callback send_;
+    send_handler send_handler_;
     ssl_context_ptr context_;
     ssl_ptr ssl_;
     BIO* read_bio_{};

@@ -53,7 +53,7 @@ class rtmp_input_session final : public std::enable_shared_from_this<rtmp_input_
     std::chrono::milliseconds initial_tracks_timeout_;
     std::string stream_name_;
     std::shared_ptr<media_stream> stream_;
-    shutdown_handler on_shutdown_;
+    shutdown_handler shutdown_handler_;
     flv_demuxer_t* demuxer_{};
     rtmp_timestamp_state timestamp_;
     std::optional<media_track> initial_video_track_;

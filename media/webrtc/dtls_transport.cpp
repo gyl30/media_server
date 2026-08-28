@@ -113,14 +113,14 @@ std::optional<srtp_profile_size> profile_size(std::string_view profile)
 
 }    // namespace
 
-dtls_transport::dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_callback send)
-    : certificate_(std::move(certificate)), remote_fingerprint_(std::move(remote_fingerprint)), send_(std::move(send))
+dtls_transport::dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_handler send)
+    : certificate_(std::move(certificate)), remote_fingerprint_(std::move(remote_fingerprint)), send_handler_(std::move(send))
 {
 }
 
 bool dtls_transport::startup()
 {
-    if (ssl_ || !certificate_ || !send_ || !valid_sha256_fingerprint(remote_fingerprint_))
+    if (ssl_ || !certificate_ || !send_handler_ || !valid_sha256_fingerprint(remote_fingerprint_))
     {
         spdlog::debug("webrtc dtls startup rejected invalid state or fingerprint");
         return false;
@@ -418,7 +418,7 @@ bool dtls_transport::pump_outgoing()
             }
 
             spdlog::trace("webrtc dtls datagram output size {} content_type {}", record_size, output[offset]);
-            send_(std::span<const std::uint8_t>(output.data() + offset, record_size));
+            send_handler_(std::span<const std::uint8_t>(output.data() + offset, record_size));
             offset += record_size;
         }
     }

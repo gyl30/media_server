@@ -48,7 +48,7 @@ boost::system::error_code tcp_listener::startup(accept_handler handler, std::siz
     }
 
     started_ = true;
-    handler_ = std::move(handler);
+    accept_handler_ = std::move(handler);
     timeout_ = timeout;
     accept_limit_ = accept_limit;
     accepted_count_ = 0;
@@ -94,7 +94,7 @@ void tcp_listener::safe_shutdown()
         return;
     }
     started_ = false;
-    handler_ = {};
+    accept_handler_ = {};
     timer_.cancel();
     boost::system::error_code error;
     acceptor_.close(error);
@@ -113,7 +113,7 @@ void tcp_listener::accept_next()
         if (!error)
         {
             ++self->accepted_count_;
-            auto handler = self->handler_;
+            auto handler = self->accept_handler_;
             if (self->accept_limit_ != 0 && self->accepted_count_ >= self->accept_limit_)
             {
                 self->safe_shutdown();

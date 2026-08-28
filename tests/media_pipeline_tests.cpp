@@ -107,12 +107,12 @@ constexpr track_id audio_track_id = 2;
 
 static_assert(std::is_base_of_v<rtsp_server_session, rtsp_input_session>);
 static_assert(std::is_base_of_v<rtsp_server_session, rtsp_output_session>);
-static_assert(requires(rtsp_server_session& session, std::function<void(boost::system::error_code)> handle) {
-    session.set_error_handle(std::move(handle));
+static_assert(requires(rtsp_server_session& session, std::function<void(boost::system::error_code)> handler) {
+    session.set_error_handler(std::move(handler));
 });
-using rtsp_write_handle = std::function<void(std::span<const std::uint8_t>)>;
-static_assert(std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, rtsp_write_handle>);
-static_assert(std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, output_video_codec, std::string, rtsp_write_handle>);
+using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
+static_assert(std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, rtsp_write_handler>);
+static_assert(std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, output_video_codec, std::string, rtsp_write_handler>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);

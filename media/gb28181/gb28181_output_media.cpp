@@ -26,8 +26,8 @@ gb28181_output_media::gb28181_output_media(boost::asio::any_io_executor executor
       stream_(std::move(stream)),
       payload_type_(payload_type),
       ssrc_(ssrc),
-      on_packet_(std::move(on_packet)),
-      on_end_(std::move(on_end))
+      packet_handler_(std::move(on_packet)),
+      end_handler_(std::move(on_end))
 {
 }
 
@@ -66,7 +66,7 @@ bool gb28181_output_media::supported_tracks(const std::vector<media_track>& trac
 
 bool gb28181_output_media::startup()
 {
-    if (closed_ || !stream_ || muxer_ != nullptr || !on_packet_ || !create_muxer(stream_->tracks()))
+    if (closed_ || !stream_ || muxer_ != nullptr || !packet_handler_ || !create_muxer(stream_->tracks()))
     {
         return false;
     }
@@ -89,9 +89,9 @@ void gb28181_output_media::on_tracks(media_track_snapshot_ptr tracks)
     }
     if (!apply_tracks(tracks))
     {
-        if (on_end_)
+        if (end_handler_)
         {
-            on_end_();
+            end_handler_();
         }
         else
         {
@@ -112,9 +112,9 @@ void gb28181_output_media::on_read(media_read_batch batch)
     reader_cursor_ = batch.next_cursor;
     if (!apply_tracks(batch.tracks))
     {
-        if (on_end_)
+        if (end_handler_)
         {
-            on_end_();
+            end_handler_();
         }
         else
         {
@@ -150,9 +150,9 @@ void gb28181_output_media::on_read(media_read_batch batch)
         if (result < 0)
         {
             spdlog::error("gb28181 output mux failed stream {} result {}", stream_->name(), result);
-            if (on_end_)
+            if (end_handler_)
             {
-                on_end_();
+                end_handler_();
             }
             else
             {
@@ -170,9 +170,9 @@ void gb28181_output_media::on_read(media_read_batch batch)
 
 void gb28181_output_media::on_end()
 {
-    if (!closed_ && on_end_)
+    if (!closed_ && end_handler_)
     {
-        on_end_();
+        end_handler_();
     }
 }
 
@@ -195,8 +195,8 @@ void gb28181_output_media::safe_shutdown()
     tracks_.clear();
     waiting_for_key_frame_ = true;
     stream_.reset();
-    on_packet_ = {};
-    on_end_ = {};
+    packet_handler_ = {};
+    end_handler_ = {};
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
@@ -299,13 +299,13 @@ bool gb28181_output_media::apply_tracks(const media_track_snapshot_ptr& tracks)
 
 int gb28181_output_media::on_muxer_packet(const void* data, int bytes)
 {
-    if (closed_ || data == nullptr || bytes <= 0 || !on_packet_)
+    if (closed_ || data == nullptr || bytes <= 0 || !packet_handler_)
     {
         return -1;
     }
 
     const auto* begin = static_cast<const std::uint8_t*>(data);
-    on_packet_(std::vector<std::uint8_t>(begin, begin + bytes));
+    packet_handler_(std::vector<std::uint8_t>(begin, begin + bytes));
     return 0;
 }
 

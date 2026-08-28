@@ -43,8 +43,8 @@ bool udp_socket::startup(boost::asio::ip::address bind_address, std::uint16_t po
         return false;
     }
 
-    on_read_ = std::move(on_read);
-    on_write_error_ = std::move(on_write_error);
+    read_handler_ = std::move(on_read);
+    write_error_handler_ = std::move(on_write_error);
     local_port_ = endpoint.port();
     receive_next();
     return true;
@@ -108,15 +108,15 @@ void udp_socket::receive_next()
                                    }
                                    if (error)
                                    {
-                                       if (on_read_)
+                                       if (read_handler_)
                                        {
-                                           on_read_(error, {}, receive_endpoint_);
+                                           read_handler_(error, {}, receive_endpoint_);
                                        }
                                        return;
                                    }
-                                   if (on_read_)
+                                   if (read_handler_)
                                    {
-                                       on_read_(error, std::span{receive_buffer_.data(), bytes}, receive_endpoint_);
+                                       read_handler_(error, std::span{receive_buffer_.data(), bytes}, receive_endpoint_);
                                    }
                                    receive_next();
                                });
@@ -141,9 +141,9 @@ void udp_socket::write_next()
                               }
                               send_queue_.pop_front();
                               write_next();
-                              if (error && on_write_error_)
+                              if (error && write_error_handler_)
                               {
-                                  on_write_error_(error, datagram.endpoint);
+                                  write_error_handler_(error, datagram.endpoint);
                               }
                           });
 }
@@ -160,8 +160,8 @@ void udp_socket::safe_shutdown(shutdown_handler handler)
     }
     closed_ = true;
 
-    on_read_ = {};
-    on_write_error_ = {};
+    read_handler_ = {};
+    write_error_handler_ = {};
     send_queue_.clear();
     local_port_ = 0;
     boost::system::error_code error;
