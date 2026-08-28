@@ -1,19 +1,19 @@
-#include <algorithm>
 #include <random>
 #include <string>
 #include <utility>
+#include <algorithm>
 
 #include <boost/asio/error.hpp>
-#include <boost/system/error_code.hpp>
 
-#include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
+#include "media/rtsp/rtsp_input_session.h"
 #include "media/rtsp/rtsp_input_tcp_session.h"
 #include "media/rtsp/rtsp_input_udp_session.h"
 
 extern "C"
 {
+#include "rtsp-media.h"
 #include "rtp-profile.h"
 }
 

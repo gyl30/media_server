@@ -7,14 +7,13 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <utility>
 #include <optional>
-
-#include <boost/system/error_code.hpp>
+#include <functional>
 
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/udp_socket.h"

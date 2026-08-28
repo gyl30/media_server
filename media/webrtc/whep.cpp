@@ -1,16 +1,16 @@
 #include <map>
-#include <memory>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <utility>
 
-#include <boost/asio/ip/address.hpp>
 #include <spdlog/spdlog.h>
+#include <boost/asio/ip/address.hpp>
 
-#include "media/core/stream_registry.h"
-#include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/whep.h"
 #include "media/webrtc/whep_session.h"
+#include "media/core/stream_registry.h"
+#include "media/webrtc/dtls_certificate.h"
 
 namespace media_server::whep
 {

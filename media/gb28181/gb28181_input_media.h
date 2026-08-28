@@ -9,7 +9,8 @@
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include "media/core/stream_registry.h"
+#include "media/core/media_types.h"
+#include "media/core/media_stream.h"
 
 extern "C"
 {

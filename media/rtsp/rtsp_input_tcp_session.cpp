@@ -3,8 +3,6 @@
 #include <utility>
 #include <algorithm>
 
-#include <boost/system/error_code.hpp>
-
 #include <spdlog/spdlog.h>
 
 #include "media/rtsp/rtsp_input_tcp_session.h"

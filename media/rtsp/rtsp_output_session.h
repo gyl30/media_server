@@ -12,8 +12,8 @@
 
 #include "media/core/media_reader.h"
 #include "media/codec/video_transcoder.h"
-#include "media/codec/output_video_config.h"
 #include "media/rtsp/rtsp_server_session.h"
+#include "media/codec/output_video_config.h"
 
 struct rtsp_muxer_t;
 
