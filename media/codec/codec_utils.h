@@ -8,6 +8,8 @@
 
 #include "media/core/media_types.h"
 
+struct avstream_t;
+
 namespace media_server
 {
 
@@ -30,6 +32,10 @@ struct aac_config
 [[nodiscard]] std::optional<aac_config> parse_aac_adts(std::span<const std::uint8_t> adts);
 
 [[nodiscard]] std::vector<std::uint8_t> make_adts_frame(std::span<const std::uint8_t> asc, std::span<const std::uint8_t> raw_aac);
+
+[[nodiscard]] std::optional<media_track> media_track_from_avstream_config(const avstream_t& input,
+                                                                           track_id video_track_id,
+                                                                           track_id audio_track_id);
 
 [[nodiscard]] std::int64_t milliseconds_to_ns(std::int64_t value) noexcept;
 [[nodiscard]] std::int64_t ns_to_milliseconds(std::int64_t value) noexcept;

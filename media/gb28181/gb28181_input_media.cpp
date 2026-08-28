@@ -318,38 +318,7 @@ int gb28181_input_media::on_packet(avpacket_t* packet)
 
 bool gb28181_input_media::update_track_from_packet(const avpacket_t& packet)
 {
-    const auto& input = *packet.stream;
-    std::optional<media_track> track;
-    if (input.codecid == AVCODEC_VIDEO_H264 && input.extra != nullptr && input.bytes > 0)
-    {
-        auto config =
-            h264_avcc_to_annex_b(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
-        if (!config.empty())
-        {
-            track = media_track{
-                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
-        }
-    }
-    else if (input.codecid == AVCODEC_VIDEO_H265 && input.extra != nullptr && input.bytes > 0)
-    {
-        auto config =
-            h265_hvcc_to_annex_b(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
-        if (!config.empty())
-        {
-            track = media_track{
-                .id = video_track_id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
-        }
-    }
-    else if (input.codecid == AVCODEC_AUDIO_AAC && input.extra != nullptr && input.bytes > 0 && input.sample_rate > 0 && input.channels > 0)
-    {
-        const auto* begin = static_cast<const std::uint8_t*>(input.extra);
-        track = media_track{.id = audio_track_id,
-                            .kind = media_kind::audio,
-                            .codec = codec_id::aac,
-                            .clock_rate = static_cast<std::uint32_t>(input.sample_rate),
-                            .channel_count = static_cast<std::uint16_t>(input.channels),
-                            .codec_config = std::vector<std::uint8_t>(begin, begin + input.bytes)};
-    }
+    auto track = media_track_from_avstream_config(*packet.stream, video_track_id, audio_track_id);
     if (!track)
     {
         return false;
