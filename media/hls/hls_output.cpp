@@ -37,6 +37,11 @@ hls_output::~hls_output() = default;
 void hls_output::on_track(const media_track& track)
 {
     std::scoped_lock lock(mutex_);
+    if (ended_at_.has_value())
+    {
+        return;
+    }
+
     const auto existing = tracks_.find(track.id);
     const bool reconfigured = existing != tracks_.end() && existing->second.config_version != track.config_version;
     tracks_.insert_or_assign(track.id, track);

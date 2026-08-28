@@ -9026,6 +9026,13 @@ void test_hls_av1_fmp4_output()
     require(reconfigured_playlist.find("#EXT-X-MAP:URI=\"/play/hls/av1-reconfigured/init.mp4?v=1\"") != std::string::npos &&
                 reconfigured_playlist.find("/play/hls/av1-reconfigured/1.m4s") != std::string::npos,
             "hls av1 config change versions init segment uri");
+
+    const auto ended_segment_count = reconfigured.segment_count();
+    const auto ended_at = reconfigured.ended_at();
+    video_track.config_version = 3;
+    reconfigured.on_track(video_track);
+    require(reconfigured.segment_count() == ended_segment_count && reconfigured.ended_at() == ended_at,
+            "hls ended output ignores late track update");
 }
 
 void test_hls_g711_output()
