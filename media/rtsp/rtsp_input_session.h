@@ -45,7 +45,7 @@ class rtsp_input_session final : public rtsp_server_session
 
    private:
     boost::asio::any_io_executor executor_;
-    std::function<void(std::span<const std::uint8_t>)> write_;
+    std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::shared_ptr<rtsp_input_tcp_session> tcp_session_;
     std::shared_ptr<rtsp_input_udp_session> udp_session_;
     std::vector<rtsp_input_track_description> descriptions_;

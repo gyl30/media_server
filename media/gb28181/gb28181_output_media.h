@@ -60,8 +60,8 @@ class gb28181_output_media final : public media_reader, public std::enable_share
     std::shared_ptr<media_stream> stream_;
     std::uint8_t payload_type_{};
     std::uint32_t ssrc_{};
-    packet_handler on_packet_;
-    end_handler on_end_;
+    packet_handler packet_handler_;
+    end_handler end_handler_;
     rtsp_muxer_t* muxer_{};
     media_reader_handle reader_;
     std::map<track_id, track_state> tracks_;

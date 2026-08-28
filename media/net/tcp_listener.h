@@ -35,7 +35,7 @@ class tcp_listener final : public std::enable_shared_from_this<tcp_listener>
     io_context_pool& workers_;
     boost::asio::ip::address bind_address_;
     std::uint16_t port_{};
-    accept_handler handler_;
+    accept_handler accept_handler_;
     std::chrono::milliseconds timeout_{};
     std::size_t accept_limit_{};
     std::size_t accepted_count_{};

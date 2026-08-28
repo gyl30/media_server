@@ -23,7 +23,7 @@ boost::system::error_code tcp_connector::startup(socket_handler handler)
     }
 
     started_ = true;
-    handler_ = std::move(handler);
+    socket_handler_ = std::move(handler);
 
     const auto self = shared_from_this();
     if (timeout_ > std::chrono::milliseconds::zero())
@@ -64,7 +64,7 @@ void tcp_connector::complete(boost::system::error_code error)
         socket_.close(ignored);
     }
 
-    auto handler = std::move(handler_);
+    auto handler = std::move(socket_handler_);
     auto socket = std::move(socket_);
     if (handler)
     {
@@ -80,7 +80,7 @@ void tcp_connector::safe_shutdown()
     }
     completed_ = true;
 
-    handler_ = {};
+    socket_handler_ = {};
     timer_.cancel();
     boost::system::error_code ignored;
     socket_.cancel(ignored);

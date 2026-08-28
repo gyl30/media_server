@@ -23,7 +23,7 @@ class rtsp_server_session
    public:
     virtual ~rtsp_server_session() = default;
 
-    void set_error_handle(std::function<void(boost::system::error_code)> handle) { error_handle_ = std::move(handle); }
+    void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
 
     virtual void on_interleaved(std::uint8_t, std::span<const std::uint8_t>) = 0;
     virtual int on_describe(rtsp_server_t* server, std::string_view) { return rtsp_server_reply_describe(server, 501, ""); }
@@ -48,7 +48,7 @@ class rtsp_server_session
     virtual void shutdown() = 0;
 
    protected:
-    std::function<void(boost::system::error_code)> error_handle_;
+    std::function<void(boost::system::error_code)> error_handler_;
 };
 
 }    // namespace media_server

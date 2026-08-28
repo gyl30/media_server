@@ -14,7 +14,7 @@ namespace media_server
 {
 
 flv_output_muxer::flv_output_muxer(output_handler handler, output_video_config video)
-    : handler_(std::move(handler)), video_config_(video), muxer_(flv_muxer_create(&flv_output_muxer::on_output, this))
+    : output_handler_(std::move(handler)), video_config_(video), muxer_(flv_muxer_create(&flv_output_muxer::on_output, this))
 {
     if (muxer_ != nullptr && video_config_.codec == output_video_codec::av1)
     {
@@ -257,12 +257,12 @@ void flv_output_muxer::input_av1(const media_frame& frame)
 int flv_output_muxer::on_output(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<flv_output_muxer*>(param);
-    if (!self->handler_ || data == nullptr)
+    if (!self->output_handler_ || data == nullptr)
     {
         return 0;
     }
 
-    self->handler_(type, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), timestamp);
+    self->output_handler_(type, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), timestamp);
     return 0;
 }
 

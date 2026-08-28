@@ -37,8 +37,8 @@ class tcp_connection final : public std::enable_shared_from_this<tcp_connection>
     boost::asio::ip::tcp::socket socket_;
     std::array<std::uint8_t, 64 * 1024> read_buffer_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
-    read_handler on_read_;
-    write_handler on_write_;
+    read_handler read_handler_;
+    write_handler write_handler_;
     bool closed_{};
 };
 

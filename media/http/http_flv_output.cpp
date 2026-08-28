@@ -6,8 +6,8 @@
 namespace media_server
 {
 http_flv_output::http_flv_output(write_handler on_write, end_handler on_end, output_video_config video)
-    : on_write_(std::move(on_write)),
-      on_end_(std::move(on_end)),
+    : write_handler_(std::move(on_write)),
+      end_handler_(std::move(on_end)),
       muxer_(
           [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
           {
@@ -55,8 +55,8 @@ void http_flv_output::on_end() { finish(); }
 void http_flv_output::shutdown()
 {
     ended_ = true;
-    on_write_ = {};
-    on_end_ = {};
+    write_handler_ = {};
+    end_handler_ = {};
     muxer_.shutdown();
     if (writer_ != nullptr)
     {
@@ -111,9 +111,9 @@ bool http_flv_output::apply_tracks(const media_track_snapshot_ptr& tracks)
     track_revision_ = tracks->revision;
     waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
     ++generation_;
-    if (on_write_)
+    if (write_handler_)
     {
-        on_write_(generation_, std::move(output_buffer_), true);
+        write_handler_(generation_, std::move(output_buffer_), true);
     }
     return true;
 }
@@ -153,9 +153,9 @@ void http_flv_output::process_batch()
         {
             continue;
         }
-        if (on_write_)
+        if (write_handler_)
         {
-            on_write_(generation_, std::move(output_buffer_), false);
+            write_handler_(generation_, std::move(output_buffer_), false);
         }
         return;
     }
@@ -173,16 +173,16 @@ void http_flv_output::finish()
         return;
     }
     ended_ = true;
-    if (on_end_)
+    if (end_handler_)
     {
-        on_end_();
+        end_handler_();
     }
 }
 
 int http_flv_output::writer_callback(void* param, const flv_vec_t* vectors, int count)
 {
     auto* self = static_cast<http_flv_output*>(param);
-    if (!self->on_write_ || vectors == nullptr || count <= 0)
+    if (!self->write_handler_ || vectors == nullptr || count <= 0)
     {
         return 0;
     }
