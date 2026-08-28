@@ -147,7 +147,7 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
 int rtsp_input_session::on_setup(
     rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
-    if (session_id_.empty() || transports == nullptr || count == 0 || (!session.empty() && session != session_id_))
+    if (session_id_.empty() || (!session.empty() && session != session_id_))
     {
         return rtsp_server_reply_setup(server, 454, nullptr, nullptr);
     }
@@ -271,7 +271,6 @@ void rtsp_input_session::shutdown()
     }
     write_ = {};
     error_handle_ = {};
-    descriptions_.clear();
 }
 
 }    // namespace media_server

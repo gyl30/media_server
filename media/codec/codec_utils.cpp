@@ -191,6 +191,15 @@ std::optional<media_track> media_track_from_avstream_config(const avstream_t& in
                            .channel_count = static_cast<std::uint16_t>(input.channels),
                            .codec_config = std::vector<std::uint8_t>(begin, begin + input.bytes)};
     }
+    else if ((input.codecid == AVCODEC_AUDIO_G711A || input.codecid == AVCODEC_AUDIO_G711U) && input.sample_rate == 8'000 && input.channels == 1)
+    {
+        return media_track{.id = audio_track_id,
+                           .kind = media_kind::audio,
+                           .codec = input.codecid == AVCODEC_AUDIO_G711A ? codec_id::g711a : codec_id::g711u,
+                           .clock_rate = 8'000,
+                           .channel_count = 1,
+                           .codec_config = {}};
+    }
     return std::nullopt;
 }
 
