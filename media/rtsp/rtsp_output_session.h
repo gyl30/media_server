@@ -68,7 +68,7 @@ class rtsp_output_session final : public rtsp_server_session,
     boost::asio::any_io_executor executor_;
     output_video_codec video_codec_;
     std::string local_address_;
-    std::function<void(std::span<const std::uint8_t>)> write_;
+    std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::shared_ptr<media_stream> stream_;
     std::map<track_id, track_state> tracks_;
     std::unique_ptr<video_transcoder> video_transcoder_;

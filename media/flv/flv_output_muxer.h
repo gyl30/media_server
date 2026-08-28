@@ -35,7 +35,7 @@ class flv_output_muxer final
     void startup_video_transcoder(const media_track& track);
     void input_av1(const media_frame& frame);
 
-    output_handler handler_;
+    output_handler output_handler_;
     output_video_config video_config_;
     flv_muxer_t* muxer_{};
     std::map<track_id, media_track> tracks_;

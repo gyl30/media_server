@@ -58,7 +58,7 @@ void rtsp_input_udp_session::on_rtp(std::size_t track_index, std::span<const std
     }
     if (!media_.input(track_index, data))
     {
-        error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+        error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
     }
 }
 
@@ -75,7 +75,7 @@ void rtsp_input_udp_session::on_rtcp(std::size_t track_index, std::span<const st
     }
     if (!media_.input(track_index, data))
     {
-        error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+        error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
     }
 }
 
@@ -102,7 +102,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
                 }
                 if (error)
                 {
-                    self->error_handle_(error);
+                    self->error_handler_(error);
                     return;
                 }
                 self->on_rtp(track_index, data, endpoint);
@@ -115,7 +115,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
                 }
                 if (error)
                 {
-                    self->error_handle_(error);
+                    self->error_handler_(error);
                 }
             }))
     {
@@ -136,7 +136,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
                 }
                 if (error)
                 {
-                    self->error_handle_(error);
+                    self->error_handler_(error);
                     return;
                 }
                 self->on_rtcp(track_index, data, endpoint);
@@ -149,7 +149,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
                 }
                 if (error)
                 {
-                    self->error_handle_(error);
+                    self->error_handler_(error);
                 }
             }))
     {
@@ -216,7 +216,7 @@ int rtsp_input_udp_session::on_record(rtsp_server_t* server)
     if (!media_.start_recording())
     {
         rtsp_server_reply_record(server, 453, nullptr, nullptr);
-        error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+        error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
         return 0;
     }
     wait_rtcp();
@@ -259,7 +259,7 @@ void rtsp_input_udp_session::safe_shutdown()
     closed_ = true;
     rtcp_timer_.cancel();
     media_.shutdown();
-    error_handle_ = {};
+    error_handler_ = {};
     for (auto& state : tracks_)
     {
         if (state.local_ports)

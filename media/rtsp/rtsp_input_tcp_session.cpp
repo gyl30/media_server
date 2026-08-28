@@ -21,7 +21,7 @@ rtsp_input_tcp_session::rtsp_input_tcp_session(boost::asio::any_io_executor exec
                                                std::string stream_name,
                                                std::vector<rtsp_input_track_description> descriptions,
                                                std::function<void(std::span<const std::uint8_t>)> write)
-    : write_(std::move(write)),
+    : write_handler_(std::move(write)),
       media_(executor, std::move(stream_name), std::move(descriptions)),
       tracks_(media_.descriptions().size()),
       rtcp_timer_(std::move(executor))
@@ -59,7 +59,7 @@ void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<cons
         {
             if (!media_.input(index, data))
             {
-                error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+                error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
             }
             return;
         }
@@ -107,7 +107,7 @@ int rtsp_input_tcp_session::on_record(rtsp_server_t* server)
     if (!media_.start_recording())
     {
         rtsp_server_reply_record(server, 453, nullptr, nullptr);
-        error_handle_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+        error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
         return 0;
     }
     wait_rtcp();
@@ -141,7 +141,7 @@ void rtsp_input_tcp_session::wait_rtcp()
                 packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
                 packet[3] = static_cast<std::uint8_t>(bytes);
                 std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
-                self->write_(packet);
+                self->write_handler_(packet);
             }
             self->wait_rtcp();
         });
@@ -156,8 +156,8 @@ void rtsp_input_tcp_session::safe_shutdown()
     closed_ = true;
     rtcp_timer_.cancel();
     media_.shutdown();
-    write_ = {};
-    error_handle_ = {};
+    write_handler_ = {};
+    error_handler_ = {};
     spdlog::debug("rtsp input tcp shutdown {}", media_.stream_name());
 }
 

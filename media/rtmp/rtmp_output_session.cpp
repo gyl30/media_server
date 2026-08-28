@@ -10,7 +10,7 @@ rtmp_output_session::rtmp_output_session(boost::asio::any_io_executor executor,
                                          flv_output_muxer::output_handler output,
                                          output_video_config video,
                                          end_handler on_end)
-    : executor_(std::move(executor)), stream_(std::move(stream)), output_muxer_(std::move(output), video), on_end_(std::move(on_end))
+    : executor_(std::move(executor)), stream_(std::move(stream)), output_muxer_(std::move(output), video), end_handler_(std::move(on_end))
 {
 }
 
@@ -94,7 +94,7 @@ void rtmp_output_session::on_end()
 {
     if (!closed_)
     {
-        on_end_();
+        end_handler_();
     }
 }
 

@@ -33,7 +33,7 @@ class tcp_connector final : public tcp_socket_source, public std::enable_shared_
     boost::asio::steady_timer timer_;
     boost::asio::ip::tcp::endpoint endpoint_;
     std::chrono::milliseconds timeout_{};
-    socket_handler handler_;
+    socket_handler socket_handler_;
     bool started_{};
     bool completed_{};
 };

@@ -19,8 +19,8 @@ tcp_connection::tcp_connection(boost::asio::ip::tcp::socket socket) : socket_(st
 
 void tcp_connection::startup(read_handler on_read, write_handler on_write)
 {
-    on_read_ = std::move(on_read);
-    on_write_ = std::move(on_write);
+    read_handler_ = std::move(on_read);
+    write_handler_ = std::move(on_write);
     read_next();
 }
 
@@ -76,15 +76,15 @@ void tcp_connection::read_next()
                                 }
                                 if (error)
                                 {
-                                    if (on_read_)
+                                    if (read_handler_)
                                     {
-                                        on_read_(error, {});
+                                        read_handler_(error, {});
                                     }
                                     return;
                                 }
-                                if (bytes != 0 && on_read_)
+                                if (bytes != 0 && read_handler_)
                                 {
-                                    on_read_(error, std::span{read_buffer_.data(), bytes});
+                                    read_handler_(error, std::span{read_buffer_.data(), bytes});
                                 }
                                 read_next();
                             });
@@ -110,24 +110,24 @@ void tcp_connection::write_next()
                                  }
                                  if (error)
                                  {
-                                     if (on_write_)
+                                     if (write_handler_)
                                      {
-                                         on_write_(error, write_size);
+                                         write_handler_(error, write_size);
                                      }
                                      return;
                                  }
                                  write_queue_.pop_front();
                                  if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
                                  {
-                                     if (on_write_)
+                                     if (write_handler_)
                                      {
-                                         on_write_(boost::asio::error::make_error_code(boost::asio::error::timed_out), write_size);
+                                         write_handler_(boost::asio::error::make_error_code(boost::asio::error::timed_out), write_size);
                                      }
                                      return;
                                  }
-                                 if (on_write_)
+                                 if (write_handler_)
                                  {
-                                     on_write_(error, write_size);
+                                     write_handler_(error, write_size);
                                  }
                                  write_next();
                              });
@@ -145,8 +145,8 @@ void tcp_connection::safe_shutdown()
     socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     socket_.close(error);
     write_queue_.clear();
-    on_read_ = {};
-    on_write_ = {};
+    read_handler_ = {};
+    write_handler_ = {};
 }
 
 }    // namespace media_server

@@ -34,7 +34,7 @@ rtmp_input_session::rtmp_input_session(boost::asio::any_io_executor executor,
       initial_tracks_timeout_(initial_tracks_timeout),
       stream_name_(std::move(stream_name)),
       stream_(std::make_shared<media_stream>(stream_name_, executor)),
-      on_shutdown_(std::move(on_shutdown))
+      shutdown_handler_(std::move(on_shutdown))
 {
 }
 
@@ -58,7 +58,7 @@ bool rtmp_input_session::startup()
                 return;
             }
             spdlog::warn("rtmp input initial tracks timeout stream {}", self->stream_name_);
-            self->on_shutdown_();
+            self->shutdown_handler_();
         });
     return true;
 }
@@ -375,7 +375,7 @@ void rtmp_input_session::try_initialize_tracks()
 
     if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
     {
-        on_shutdown_();
+        shutdown_handler_();
         return;
     }
 
@@ -393,7 +393,7 @@ void rtmp_input_session::try_initialize_tracks()
     if (!registry::instance().add(stream_))
     {
         spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
-        on_shutdown_();
+        shutdown_handler_();
         return;
     }
     initial_tracks_timer_.cancel();

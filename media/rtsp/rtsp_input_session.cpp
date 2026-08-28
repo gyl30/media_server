@@ -35,7 +35,7 @@ std::uint32_t random_u32()
 
 rtsp_input_session::rtsp_input_session(boost::asio::any_io_executor executor,
                                        std::function<void(std::span<const std::uint8_t>)> write)
-    : executor_(std::move(executor)), write_(std::move(write))
+    : executor_(std::move(executor)), write_handler_(std::move(write))
 {
 }
 
@@ -43,7 +43,7 @@ void rtsp_input_session::on_interleaved(std::uint8_t channel, std::span<const st
 {
     if (!tcp_session_)
     {
-        error_handle_(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+        error_handler_(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
         return;
     }
     tcp_session_->on_interleaved(channel, data);
@@ -196,25 +196,25 @@ int rtsp_input_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        auto child = std::make_shared<rtsp_input_tcp_session>(executor_, stream_name_, descriptions_, write_);
-        child->set_error_handle(error_handle_);
+        auto child = std::make_shared<rtsp_input_tcp_session>(executor_, stream_name_, descriptions_, write_handler_);
+        child->set_error_handler(error_handler_);
         const auto result = child->startup(server, track_index, *selected, session_id_);
         if (!child->closed_)
         {
             tcp_session_ = std::move(child);
-            write_ = {};
+            write_handler_ = {};
             stream_name_.clear();
         }
         return result;
     }
 
     auto child = std::make_shared<rtsp_input_udp_session>(executor_, stream_name_, descriptions_);
-    child->set_error_handle(error_handle_);
+    child->set_error_handler(error_handler_);
     const auto result = child->startup(server, track_index, *selected, session_id_);
     if (!child->closed_)
     {
         udp_session_ = std::move(child);
-        write_ = {};
+        write_handler_ = {};
         stream_name_.clear();
     }
     return result;
@@ -248,7 +248,7 @@ int rtsp_input_session::on_teardown(rtsp_server_t* server, std::string_view, std
         return rtsp_server_reply_teardown(server, 454);
     }
     const auto result = rtsp_server_reply_teardown(server, 200);
-    error_handle_(boost::asio::error::eof);
+    error_handler_(boost::asio::error::eof);
     return result;
 }
 
@@ -269,8 +269,8 @@ void rtsp_input_session::shutdown()
         udp_session_->safe_shutdown();
         udp_session_.reset();
     }
-    write_ = {};
-    error_handle_ = {};
+    write_handler_ = {};
+    error_handler_ = {};
 }
 
 }    // namespace media_server

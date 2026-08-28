@@ -49,8 +49,8 @@ class udp_socket final : public std::enable_shared_from_this<udp_socket>
     std::array<std::uint8_t, 64 * 1024> receive_buffer_{};
     boost::asio::ip::udp::endpoint receive_endpoint_;
     std::deque<pending_datagram> send_queue_;
-    read_handler on_read_;
-    write_error_handler on_write_error_;
+    read_handler read_handler_;
+    write_error_handler write_error_handler_;
     std::uint16_t local_port_{};
     bool closed_{};
 };

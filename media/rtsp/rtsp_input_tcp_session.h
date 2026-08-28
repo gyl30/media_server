@@ -33,7 +33,7 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
                            std::function<void(std::span<const std::uint8_t>)> write);
     ~rtsp_input_tcp_session();
 
-    void set_error_handle(std::function<void(boost::system::error_code)> handle) { error_handle_ = std::move(handle); }
+    void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
 
    private:
     friend class rtsp_input_session;
@@ -51,8 +51,8 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
     void wait_rtcp();
     void safe_shutdown();
 
-    std::function<void(std::span<const std::uint8_t>)> write_;
-    std::function<void(boost::system::error_code)> error_handle_;
+    std::function<void(std::span<const std::uint8_t>)> write_handler_;
+    std::function<void(boost::system::error_code)> error_handler_;
     rtsp_input_media media_;
     std::vector<track_state> tracks_;
     boost::asio::steady_timer rtcp_timer_;
