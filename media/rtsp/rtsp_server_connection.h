@@ -51,9 +51,9 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     boost::asio::any_io_executor executor_;
     output_video_codec video_codec_;
     std::shared_ptr<tcp_connection> connection_;
-    std::shared_ptr<rtsp_server_session> session_;
+    std::shared_ptr<rtsp_server_session> logical_session_;
     std::string local_address_;
-    rtsp_server_t* server_{};
+    rtsp_server_t* rtsp_context_{};
     rtp_over_rtsp_t interleaved_{};
     bool rtsp_need_more_data_{};
     bool closed_{};

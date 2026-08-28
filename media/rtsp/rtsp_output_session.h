@@ -70,7 +70,7 @@ class rtsp_output_session final : public rtsp_server_session,
     std::string local_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::shared_ptr<media_stream> stream_;
-    std::map<track_id, track_state> tracks_;
+    std::map<track_id, track_state> track_states_;
     std::unique_ptr<video_transcoder> video_transcoder_;
     rtsp_muxer_t* muxer_{};
     track_id video_track_id_{};

@@ -37,8 +37,8 @@ void rtmp_session::startup()
     handler.onscript = &rtmp_session::script_callback;
     handler.ongetduration = &rtmp_session::duration_callback;
 
-    server_ = rtmp_server_create(this, &handler);
-    if (server_ == nullptr)
+    rtmp_context_ = rtmp_server_create(this, &handler);
+    if (rtmp_context_ == nullptr)
     {
         shutdown();
         return;
@@ -116,7 +116,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
         spdlog::warn("rtmp play stream not found {}", stream_name_);
         return -1;
     }
-    if (video_config_.codec == output_video_codec::av1 && !rtmp_server_peer_supports_fourcc(server_, "av01"))
+    if (video_config_.codec == output_video_codec::av1 && !rtmp_server_peer_supports_fourcc(rtmp_context_, "av01"))
     {
         spdlog::warn("rtmp play av1 unsupported by peer {}", stream_name_);
         return -1;
@@ -129,17 +129,17 @@ int rtmp_session::on_play(std::string app, std::string stream)
         [weak](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
             const auto self = weak.lock();
-            if (!self || self->closed_ || self->server_ == nullptr)
+            if (!self || self->closed_ || self->rtmp_context_ == nullptr)
             {
                 return;
             }
             if (type == FLV_TYPE_VIDEO)
             {
-                static_cast<void>(rtmp_server_send_video(self->server_, data.data(), data.size(), timestamp));
+                static_cast<void>(rtmp_server_send_video(self->rtmp_context_, data.data(), data.size(), timestamp));
             }
             else if (type == FLV_TYPE_AUDIO)
             {
-                static_cast<void>(rtmp_server_send_audio(self->server_, data.data(), data.size(), timestamp));
+                static_cast<void>(rtmp_server_send_audio(self->rtmp_context_, data.data(), data.size(), timestamp));
             }
         },
         video_config_,
@@ -155,11 +155,11 @@ int rtmp_session::on_play(std::string app, std::string stream)
     boost::asio::post(connection_->socket().get_executor(),
                       [self]()
                       {
-                          if (self->closed_ || self->server_ == nullptr || !self->output_)
+                          if (self->closed_ || self->rtmp_context_ == nullptr || !self->output_)
                           {
                               return;
                           }
-                          if (rtmp_server_start(self->server_, 0, nullptr) != 0)
+                          if (rtmp_server_start(self->rtmp_context_, 0, nullptr) != 0)
                           {
                               self->shutdown();
                               return;
@@ -206,11 +206,11 @@ void rtmp_session::on_tcp_read(boost::system::error_code error, std::span<const 
         shutdown();
         return;
     }
-    if (server_ == nullptr || closed_)
+    if (rtmp_context_ == nullptr || closed_)
     {
         return;
     }
-    if (rtmp_server_input(server_, data.data(), data.size()) != 0)
+    if (rtmp_server_input(rtmp_context_, data.data(), data.size()) != 0)
     {
         shutdown();
     }
@@ -249,10 +249,10 @@ void rtmp_session::safe_shutdown()
         output_.reset();
     }
     connection_->shutdown();
-    if (server_ != nullptr)
+    if (rtmp_context_ != nullptr)
     {
-        rtmp_server_destroy(server_);
-        server_ = nullptr;
+        rtmp_server_destroy(rtmp_context_);
+        rtmp_context_ = nullptr;
     }
     spdlog::debug("rtmp shutdown {}", stream_name_);
 }
