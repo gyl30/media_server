@@ -234,20 +234,14 @@ void rtsp_output_session::shutdown()
 void rtsp_output_session::safe_shutdown()
 {
     reader_handle().remove();
-    reader_cursor_.reset();
-    track_revision_ = 0;
     if (video_transcoder_)
     {
         video_transcoder_->shutdown();
-        video_transcoder_.reset();
     }
-    video_track_id_ = 0;
     if (stream_)
     {
         spdlog::debug("rtsp output shutdown {}", stream_->name());
-        stream_.reset();
     }
-    tracks_.clear();
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
@@ -293,7 +287,7 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
         << "a=control:*\r\n"
         << media_sdp.str();
 
-    spdlog::info("rtsp output describe {}", stream_name_);
+    spdlog::info("rtsp output describe {}", stream_->name());
     return rtsp_server_reply_describe(server, 200, sdp.str().c_str());
 }
 
@@ -304,9 +298,9 @@ int rtsp_output_session::on_setup(
     {
         return rtsp_server_reply_setup(server, 455, nullptr, nullptr);
     }
+    const auto path = rtsp_path_from_uri(uri);
     if (!stream_)
     {
-        const auto path = rtsp_path_from_uri(uri);
         const auto separator = path.rfind('/');
         if (separator == std::string::npos)
         {
@@ -319,7 +313,6 @@ int rtsp_output_session::on_setup(
         }
     }
 
-    const auto path = rtsp_path_from_uri(uri);
     auto iterator = std::ranges::find_if(tracks_, [&path, this](const auto& item) {
         return path == stream_->name() + "/trackID=" + std::to_string(item.first);
     });
@@ -328,14 +321,9 @@ int rtsp_output_session::on_setup(
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
     const auto id = iterator->first;
-    const auto current_stream = registry::instance().find(stream_->name());
-    if (!current_stream)
+    if (const auto status = presentation_status(); status != 0)
     {
-        return rtsp_server_reply_setup(server, 503, nullptr, nullptr);
-    }
-    if (current_stream.get() != stream_.get() || !description_current())
-    {
-        return rtsp_server_reply_setup(server, 455, nullptr, nullptr);
+        return rtsp_server_reply_setup(server, status, nullptr, nullptr);
     }
     if (!session_id_.empty() && session != session_id_)
     {
@@ -358,20 +346,19 @@ int rtsp_output_session::on_setup(
         return rtsp_server_reply_setup(server, 461, nullptr, "RTP/AVP/TCP;unicast;interleaved=0-1");
     }
 
+    const auto transport = "RTP/AVP/TCP;unicast;interleaved=" + std::to_string(selected->interleaved1) + '-' +
+                           std::to_string(selected->interleaved2);
     if (iterator->second.rtp_channel >= 0)
     {
         if (session == session_id_ && iterator->second.rtp_channel == selected->interleaved1 &&
             iterator->second.rtcp_channel == selected->interleaved2)
         {
-            std::ostringstream transport;
-            transport << "RTP/AVP/TCP;unicast;interleaved=" << selected->interleaved1 << '-' << selected->interleaved2;
-            return rtsp_server_reply_setup(server, 200, session_id_.c_str(), transport.str().c_str());
+            return rtsp_server_reply_setup(server, 200, session_id_.c_str(), transport.c_str());
         }
         return rtsp_server_reply_setup(server, 455, nullptr, nullptr);
     }
 
-    const auto first_setup = session_id_.empty();
-    if (first_setup)
+    if (session_id_.empty())
     {
         if (!session.empty())
         {
@@ -382,24 +369,7 @@ int rtsp_output_session::on_setup(
 
     iterator->second.rtp_channel = selected->interleaved1;
     iterator->second.rtcp_channel = selected->interleaved2;
-
-    std::ostringstream transport;
-    transport << "RTP/AVP/TCP;unicast;interleaved=" << selected->interleaved1 << '-' << selected->interleaved2;
-    const auto result = rtsp_server_reply_setup(server, 200, session_id_.c_str(), transport.str().c_str());
-    if (first_setup)
-    {
-        if (result != 0)
-        {
-            iterator->second.rtp_channel = -1;
-            iterator->second.rtcp_channel = -1;
-            session_id_.clear();
-        }
-        else
-        {
-            stream_name_.clear();
-        }
-    }
-    return result;
+    return rtsp_server_reply_setup(server, 200, session_id_.c_str(), transport.c_str());
 }
 
 int rtsp_output_session::on_play(rtsp_server_t* server,
@@ -408,15 +378,16 @@ int rtsp_output_session::on_play(rtsp_server_t* server,
                                  const std::int64_t* npt,
                                  const double*)
 {
+    const auto path = rtsp_path_from_uri(uri);
     if (session_id_.empty())
     {
-        if (rtsp_path_from_uri(uri) != stream_name_)
+        if (stream_ && path != stream_->name())
         {
             return rtsp_server_reply_play(server, 404, nullptr, nullptr, nullptr);
         }
         return rtsp_server_reply_play(server, 454, nullptr, nullptr, nullptr);
     }
-    if (rtsp_path_from_uri(uri) != stream_->name())
+    if (path != stream_->name())
     {
         return rtsp_server_reply_play(server, 404, nullptr, nullptr, nullptr);
     }
@@ -424,14 +395,9 @@ int rtsp_output_session::on_play(rtsp_server_t* server,
     {
         return rtsp_server_reply_play(server, 454, nullptr, nullptr, nullptr);
     }
-    const auto current_stream = registry::instance().find(stream_->name());
-    if (!current_stream)
+    if (const auto status = presentation_status(); status != 0)
     {
-        return rtsp_server_reply_play(server, 503, nullptr, nullptr, nullptr);
-    }
-    if (current_stream.get() != stream_.get() || !description_current())
-    {
-        return rtsp_server_reply_play(server, 455, nullptr, nullptr, nullptr);
+        return rtsp_server_reply_play(server, status, nullptr, nullptr, nullptr);
     }
 
     if (playing_)
@@ -520,11 +486,16 @@ bool rtsp_output_session::apply_tracks(const media_track_snapshot_ptr& tracks)
     return true;
 }
 
-bool rtsp_output_session::description_current() const
+int rtsp_output_session::presentation_status() const
 {
-    if (!stream_)
+    const auto current_stream = registry::instance().find(stream_->name());
+    if (!current_stream)
     {
-        return false;
+        return 503;
+    }
+    if (current_stream.get() != stream_.get())
+    {
+        return 455;
     }
 
     const auto current = stream_->tracks();
@@ -539,10 +510,10 @@ bool rtsp_output_session::description_current() const
         const auto iterator = tracks_.find(track.id);
         if (iterator == tracks_.end() || iterator->second.config_version != track.config_version)
         {
-            return false;
+            return 455;
         }
     }
-    return supported_count == tracks_.size();
+    return supported_count == tracks_.size() ? 0 : 455;
 }
 
 bool rtsp_output_session::channels_available(track_id id, int rtp_channel, int rtcp_channel) const
@@ -582,8 +553,7 @@ int rtsp_output_session::prepare_stream(std::string_view uri)
         muxer_ = nullptr;
     }
 
-    stream_name_ = rtsp_path_from_uri(uri);
-    auto stream = registry::instance().find(stream_name_);
+    auto stream = registry::instance().find(rtsp_path_from_uri(uri));
     if (!stream)
     {
         return 404;
