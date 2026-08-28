@@ -131,7 +131,8 @@ int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, 
         return 0;
     }
 
-    const auto state = std::find_if(self->track_states_.begin(), self->track_states_.end(), [pid](const auto& entry) { return entry.second.payload_id == pid; });
+    const auto state =
+        std::find_if(self->track_states_.begin(), self->track_states_.end(), [pid](const auto& entry) { return entry.second.payload_id == pid; });
     if (state == self->track_states_.end())
     {
         return -1;
@@ -229,14 +230,14 @@ bool webrtc_output::add_h264_track(const media_track& track)
 
     remove_track(track.id);
     track_states_.emplace(track.id,
-                    track_state{
-                        .codec = track.codec,
-                        .transcoder = {},
-                        .video_transcoder_ = {},
-                        .media_id = media_id,
-                        .payload_id = payload_index,
-                        .waiting_key_frame = true,
-                    });
+                          track_state{
+                              .codec = track.codec,
+                              .transcoder = {},
+                              .video_transcoder_ = {},
+                              .media_id = media_id,
+                              .payload_id = payload_index,
+                              .waiting_key_frame = true,
+                          });
     spdlog::debug("webrtc h264 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
@@ -275,14 +276,14 @@ bool webrtc_output::add_h265_track(const media_track& track)
 
     remove_track(track.id);
     track_states_.emplace(track.id,
-                    track_state{
-                        .codec = track.codec,
-                        .transcoder = {},
-                        .video_transcoder_ = {},
-                        .media_id = media_id,
-                        .payload_id = payload_index,
-                        .waiting_key_frame = true,
-                    });
+                          track_state{
+                              .codec = track.codec,
+                              .transcoder = {},
+                              .video_transcoder_ = {},
+                              .media_id = media_id,
+                              .payload_id = payload_index,
+                              .waiting_key_frame = true,
+                          });
     spdlog::debug("webrtc h265 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
@@ -356,14 +357,14 @@ bool webrtc_output::add_av1_track(const media_track& track)
 
     remove_track(track.id);
     track_states_.emplace(track.id,
-                    track_state{
-                        .codec = codec_id::av1,
-                        .transcoder = {},
-                        .video_transcoder_ = std::move(transcoder),
-                        .media_id = media_id,
-                        .payload_id = payload_index,
-                        .waiting_key_frame = true,
-                    });
+                          track_state{
+                              .codec = codec_id::av1,
+                              .transcoder = {},
+                              .video_transcoder_ = std::move(transcoder),
+                              .media_id = media_id,
+                              .payload_id = payload_index,
+                              .waiting_key_frame = true,
+                          });
     spdlog::debug("webrtc av1 output track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }

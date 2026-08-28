@@ -8,9 +8,7 @@
 namespace media_server
 {
 
-tcp_connector::tcp_connector(boost::asio::any_io_executor executor,
-                             boost::asio::ip::tcp::endpoint endpoint,
-                             std::chrono::milliseconds timeout)
+tcp_connector::tcp_connector(boost::asio::any_io_executor executor, boost::asio::ip::tcp::endpoint endpoint, std::chrono::milliseconds timeout)
     : socket_(executor), timer_(socket_.get_executor()), endpoint_(std::move(endpoint)), timeout_(timeout)
 {
 }

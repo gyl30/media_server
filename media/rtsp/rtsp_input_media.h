@@ -36,9 +36,7 @@ struct rtsp_input_track_description
 class rtsp_input_media final
 {
    public:
-    rtsp_input_media(boost::asio::any_io_executor executor,
-                     std::string stream_name,
-                     std::vector<rtsp_input_track_description> descriptions);
+    rtsp_input_media(boost::asio::any_io_executor executor, std::string stream_name, std::vector<rtsp_input_track_description> descriptions);
     ~rtsp_input_media();
 
     [[nodiscard]] bool startup(const std::string& rtcp_cname);

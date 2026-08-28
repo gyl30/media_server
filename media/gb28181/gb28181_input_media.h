@@ -32,10 +32,7 @@ enum class gb28181_rtp_input_result
 class gb28181_input_media final
 {
    public:
-    gb28181_input_media(boost::asio::any_io_executor executor,
-                        std::string stream_name,
-                        std::uint8_t payload_type,
-                        std::uint32_t expected_ssrc);
+    gb28181_input_media(boost::asio::any_io_executor executor, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
     ~gb28181_input_media();
 
     [[nodiscard]] bool startup();
