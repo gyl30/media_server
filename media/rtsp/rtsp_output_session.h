@@ -5,16 +5,15 @@
 #include <span>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <functional>
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include "config.h"
 #include "media/core/media_reader.h"
 #include "media/codec/video_transcoder.h"
 #include "media/codec/output_video_config.h"
-#include "media/rtsp/rtsp_output_track.h"
 #include "media/rtsp/rtsp_server_session.h"
 
 struct rtsp_muxer_t;
@@ -28,7 +27,7 @@ class rtsp_output_session final : public rtsp_server_session,
 {
    public:
     rtsp_output_session(boost::asio::any_io_executor executor,
-                        const config& config,
+                        output_video_codec video_codec,
                         std::string local_address,
                         std::function<void(std::span<const std::uint8_t>)> write);
 
@@ -51,7 +50,13 @@ class rtsp_output_session final : public rtsp_server_session,
    private:
     struct track_state
     {
-        rtsp_output_track_description description;
+        codec_id codec{};
+        std::uint64_t config_version{};
+        int rtp_codec{-1};
+        int frequency{};
+        int payload_type{-1};
+        std::string encoding;
+        std::vector<std::uint8_t> extra;
         int payload_index{-1};
         int media_id{-1};
         int rtp_channel{-1};
@@ -61,14 +66,13 @@ class rtsp_output_session final : public rtsp_server_session,
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
     void safe_shutdown();
     [[nodiscard]] int prepare_stream(std::string_view uri);
-    [[nodiscard]] bool create_muxer();
     [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
     [[nodiscard]] bool description_current() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
     boost::asio::any_io_executor executor_;
-    output_video_config video_config_;
+    output_video_codec video_codec_;
     std::string local_address_;
     std::function<void(std::span<const std::uint8_t>)> write_;
     std::shared_ptr<media_stream> stream_;

@@ -112,7 +112,7 @@ static_assert(requires(rtsp_server_session& session, std::function<void(boost::s
 });
 using rtsp_write_handle = std::function<void(std::span<const std::uint8_t>)>;
 static_assert(std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, rtsp_write_handle>);
-static_assert(std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, const config&, std::string, rtsp_write_handle>);
+static_assert(std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, output_video_codec, std::string, rtsp_write_handle>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -5317,7 +5317,7 @@ class rtsp_output_test_peer final
         client_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto tcp = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp), config_);
+        auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp), config_.rtsp_video.codec);
         session_ = connection;
         connection->startup();
         runner_ = std::jthread([this]() { io_.run(); });
