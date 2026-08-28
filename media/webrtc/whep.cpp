@@ -29,10 +29,7 @@ state& runtime()
     return value;
 }
 
-create_result failed(create_error error)
-{
-    return {.error = error, .session_id = {}, .answer_sdp = {}};
-}
+create_result failed(create_error error) { return {.error = error, .session_id = {}, .answer_sdp = {}}; }
 
 }    // namespace
 
@@ -95,12 +92,8 @@ create_result create(boost::asio::any_io_executor executor,
         }
     }
 
-    auto session = std::make_shared<whep_session>(std::move(executor),
-                                                   stream,
-                                                   advertised_address,
-                                                   std::move(certificate),
-                                                   whep_session_timeouts{},
-                                                   application_config.whep_video);
+    auto session = std::make_shared<whep_session>(
+        std::move(executor), stream, advertised_address, std::move(certificate), whep_session_timeouts{}, application_config.whep_video);
     switch (session->startup(std::move(*offer)))
     {
         case whep_session_startup_error::none:

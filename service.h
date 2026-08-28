@@ -15,13 +15,13 @@ class rtsp_server;
 
 class service
 {
-public:
+   public:
     explicit service(config cfg);
     ~service();
 
     int run();
 
-private:
+   private:
     void stop();
 
     config config_;

@@ -19,10 +19,7 @@ namespace media_server
 class tcp_acceptor final : public tcp_socket_source, public std::enable_shared_from_this<tcp_acceptor>
 {
    public:
-    tcp_acceptor(boost::asio::any_io_executor executor,
-                 std::uint16_t port,
-                 boost::asio::ip::address bind_address,
-                 std::chrono::milliseconds timeout);
+    tcp_acceptor(boost::asio::any_io_executor executor, std::uint16_t port, boost::asio::ip::address bind_address, std::chrono::milliseconds timeout);
 
     [[nodiscard]] boost::system::error_code startup(socket_handler handler) override;
     void shutdown() override;

@@ -28,19 +28,17 @@ class rtsp_input_udp_session;
 class rtsp_input_session final : public rtsp_server_session
 {
    public:
-    rtsp_input_session(boost::asio::any_io_executor executor,
-                       std::function<void(std::span<const std::uint8_t>)> write);
+    rtsp_input_session(boost::asio::any_io_executor executor, std::function<void(std::span<const std::uint8_t>)> write);
 
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data) override;
-    int on_setup(
-        rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count) override;
+    int on_setup(rtsp_server_t* server,
+                 std::string_view uri,
+                 std::string_view session,
+                 const rtsp_header_transport_t transports[],
+                 std::size_t count) override;
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session) override;
     int on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length) override;
-    int on_record(rtsp_server_t* server,
-                  std::string_view uri,
-                  std::string_view session,
-                  const std::int64_t* npt,
-                  const double* scale) override;
+    int on_record(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale) override;
     void shutdown() override;
 
    private:

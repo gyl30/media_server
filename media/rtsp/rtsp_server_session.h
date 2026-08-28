@@ -27,11 +27,7 @@ class rtsp_server_session
 
     virtual void on_interleaved(std::uint8_t, std::span<const std::uint8_t>) = 0;
     virtual int on_describe(rtsp_server_t* server, std::string_view) { return rtsp_server_reply_describe(server, 501, ""); }
-    virtual int on_setup(rtsp_server_t* server,
-                         std::string_view,
-                         std::string_view,
-                         const rtsp_header_transport_t[],
-                         std::size_t)
+    virtual int on_setup(rtsp_server_t* server, std::string_view, std::string_view, const rtsp_header_transport_t[], std::size_t)
     {
         return rtsp_server_reply_setup(server, 501, nullptr, nullptr);
     }

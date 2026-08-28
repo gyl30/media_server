@@ -158,7 +158,10 @@ void gb28181_input_media::shutdown()
 
 const std::string& gb28181_input_media::stream_name() const noexcept { return stream_name_; }
 
-int gb28181_input_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<gb28181_input_media*>(param)->on_demuxed_packet(packet); }
+int gb28181_input_media::packet_callback(void* param, avpacket_t* packet)
+{
+    return static_cast<gb28181_input_media*>(param)->on_demuxed_packet(packet);
+}
 
 void gb28181_input_media::stream_callback(void* param, int stream, int codecid, const void* extra, int bytes, int finish)
 {

@@ -33,8 +33,7 @@ std::uint32_t random_u32()
 
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(boost::asio::any_io_executor executor,
-                                       std::function<void(std::span<const std::uint8_t>)> write)
+rtsp_input_session::rtsp_input_session(boost::asio::any_io_executor executor, std::function<void(std::span<const std::uint8_t>)> write)
     : executor_(std::move(executor)), write_handler_(std::move(write))
 {
 }
@@ -152,8 +151,7 @@ int rtsp_input_session::on_setup(
         return rtsp_server_reply_setup(server, 454, nullptr, nullptr);
     }
 
-    const auto description =
-        std::ranges::find_if(descriptions_, [uri](const rtsp_input_track_description& value) { return uri == value.uri; });
+    const auto description = std::ranges::find_if(descriptions_, [uri](const rtsp_input_track_description& value) { return uri == value.uri; });
     if (description == descriptions_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
@@ -169,8 +167,8 @@ int rtsp_input_session::on_setup(
                                        transports[index].interleaved1 <= 255 && transports[index].interleaved2 <= 255 &&
                                        transports[index].interleaved1 != transports[index].interleaved2;
         const bool family_matches = (tcp && !udp_session_) || (udp && !tcp_session_);
-        if (family_matches && transports[index].multicast == 0 &&
-            (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_RECORD) && (!tcp || valid_interleaved))
+        if (family_matches && transports[index].multicast == 0 && (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_RECORD) &&
+            (!tcp || valid_interleaved))
         {
             selected = &transports[index];
             break;
@@ -220,11 +218,7 @@ int rtsp_input_session::on_setup(
     return result;
 }
 
-int rtsp_input_session::on_record(rtsp_server_t* server,
-                                  std::string_view,
-                                  std::string_view session,
-                                  const std::int64_t*,
-                                  const double*)
+int rtsp_input_session::on_record(rtsp_server_t* server, std::string_view, std::string_view session, const std::int64_t*, const double*)
 {
     if (session_id_.empty() || session != session_id_)
     {

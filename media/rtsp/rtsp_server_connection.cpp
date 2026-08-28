@@ -156,8 +156,8 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     if (!self->logical_session_)
     {
         const auto connection = self->connection_;
-        auto next_session = std::make_unique<rtsp_input_session>(
-            self->executor_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
+        auto next_session =
+            std::make_unique<rtsp_input_session>(self->executor_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
         next_session->set_error_handler([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
         self->logical_session_ = std::move(next_session);
     }
@@ -175,13 +175,9 @@ int rtsp_server_connection::record_callback(
     return self->logical_session_->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
 }
 
-int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*)
-{
-    return rtsp_server_reply_options(server, 200);
-}
+int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*) { return rtsp_server_reply_options(server, 200); }
 
-int rtsp_server_connection::get_parameter_callback(
-    void* param, rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
+int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
     if (!self->logical_session_ && (bytes != 0 || (session != nullptr && session[0] != '\0')))

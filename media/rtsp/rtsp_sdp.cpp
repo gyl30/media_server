@@ -139,14 +139,10 @@ std::optional<media_track> rtsp_sdp_track_from_format(
         sdp_a_fmtp_h264_t parameters{};
         auto payload = payload_type;
         std::vector<std::uint8_t> config;
-        if (fmtp != nullptr && sdp_a_fmtp_h264(fmtp, &payload, &parameters) == 0 && rtsp_sdp_append_parameter_sets(config, parameters.sprop_parameter_sets) &&
-            !h264_annex_b_to_avcc(config).empty())
+        if (fmtp != nullptr && sdp_a_fmtp_h264(fmtp, &payload, &parameters) == 0 &&
+            rtsp_sdp_append_parameter_sets(config, parameters.sprop_parameter_sets) && !h264_annex_b_to_avcc(config).empty())
         {
-            return media_track{.id = id,
-                               .kind = media_kind::video,
-                               .codec = codec_id::h264,
-                               .clock_rate = 90'000,
-                               .codec_config = std::move(config)};
+            return media_track{.id = id, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
     else if (video && (rtsp_sdp_iequals(encoding, "H265") || rtsp_sdp_iequals(encoding, "HEVC")))
@@ -158,11 +154,7 @@ std::optional<media_track> rtsp_sdp_track_from_format(
             rtsp_sdp_append_parameter_sets(config, parameters.sprop_sps) && rtsp_sdp_append_parameter_sets(config, parameters.sprop_pps) &&
             !h265_annex_b_to_hvcc(config).empty())
         {
-            return media_track{.id = id,
-                               .kind = media_kind::video,
-                               .codec = codec_id::h265,
-                               .clock_rate = 90'000,
-                               .codec_config = std::move(config)};
+            return media_track{.id = id, .kind = media_kind::video, .codec = codec_id::h265, .clock_rate = 90'000, .codec_config = std::move(config)};
         }
     }
     else if (audio && rtsp_sdp_iequals(encoding, "MPEG4-GENERIC"))
@@ -193,12 +185,8 @@ std::optional<media_track> rtsp_sdp_track_from_format(
     {
         if (const auto channels = rtsp_sdp_opus_channel_count(fmtp))
         {
-            return media_track{.id = id,
-                               .kind = media_kind::audio,
-                               .codec = codec_id::opus,
-                               .clock_rate = 48'000,
-                               .channel_count = *channels,
-                               .codec_config = {}};
+            return media_track{
+                .id = id, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000, .channel_count = *channels, .codec_config = {}};
         }
     }
     else if (audio && rate == 8'000 &&

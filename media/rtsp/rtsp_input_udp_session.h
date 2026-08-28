@@ -32,9 +32,7 @@ class rtsp_input_session;
 class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_input_udp_session>
 {
    public:
-    rtsp_input_udp_session(boost::asio::any_io_executor executor,
-                           std::string stream_name,
-                           std::vector<rtsp_input_track_description> descriptions);
+    rtsp_input_udp_session(boost::asio::any_io_executor executor, std::string stream_name, std::vector<rtsp_input_track_description> descriptions);
 
     void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
 

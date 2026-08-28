@@ -17,8 +17,7 @@ class http_session;
 class http_server final : public std::enable_shared_from_this<http_server>
 {
    public:
-    http_server(io_context_pool& workers,
-                const config& config);
+    http_server(io_context_pool& workers, const config& config);
 
     [[nodiscard]] boost::system::error_code startup();
 

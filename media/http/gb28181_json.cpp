@@ -191,8 +191,16 @@ std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view 
 {
     const auto object = parse_object(body);
     if (!object || !has_only_fields(*object,
-                                    {"stream_name", "transport", "address", "rtp_port", "rtcp_port", "payload_type", "ssrc",
-                                     "remote_rtp_address", "remote_rtp_port", "remote_rtcp_port"}))
+                                    {"stream_name",
+                                     "transport",
+                                     "address",
+                                     "rtp_port",
+                                     "rtcp_port",
+                                     "payload_type",
+                                     "ssrc",
+                                     "remote_rtp_address",
+                                     "remote_rtp_port",
+                                     "remote_rtcp_port"}))
     {
         return std::nullopt;
     }
@@ -206,9 +214,8 @@ std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view 
     std::optional<std::uint16_t> rtcp_port;
     std::optional<std::uint16_t> remote_rtp_port;
     std::optional<std::uint16_t> remote_rtcp_port;
-    if (!stream_name || !transport || !address || !rtp_port || !payload_type || !ssrc ||
-        !optional_port(*object, "rtcp_port", rtcp_port) || !optional_port(*object, "remote_rtp_port", remote_rtp_port) ||
-        !optional_port(*object, "remote_rtcp_port", remote_rtcp_port))
+    if (!stream_name || !transport || !address || !rtp_port || !payload_type || !ssrc || !optional_port(*object, "rtcp_port", rtcp_port) ||
+        !optional_port(*object, "remote_rtp_port", remote_rtp_port) || !optional_port(*object, "remote_rtcp_port", remote_rtcp_port))
     {
         return std::nullopt;
     }
@@ -258,11 +265,11 @@ std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view 
 
     return gb28181_input_config{.stream_name = std::move(*stream_name),
                                 .description = gb28181_description{.transport = *transport,
-                                                                    .address = *address,
-                                                                    .rtp_port = *rtp_port,
-                                                                    .rtcp_port = rtcp_port.value_or(0),
-                                                                    .payload_type = *payload_type,
-                                                                    .ssrc = *ssrc},
+                                                                   .address = *address,
+                                                                   .rtp_port = *rtp_port,
+                                                                   .rtcp_port = rtcp_port.value_or(0),
+                                                                   .payload_type = *payload_type,
+                                                                   .ssrc = *ssrc},
                                 .remote_rtp_endpoint = std::move(remote_rtp_endpoint),
                                 .remote_rtcp_port = remote_rtcp_port};
 }
@@ -270,9 +277,8 @@ std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view 
 std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object,
-                                    {"stream_name", "output_id", "transport", "address", "rtp_port", "rtcp_port", "payload_type", "ssrc",
-                                     "rtcp"}))
+    if (!object ||
+        !has_only_fields(*object, {"stream_name", "output_id", "transport", "address", "rtp_port", "rtcp_port", "payload_type", "ssrc", "rtcp"}))
     {
         return std::nullopt;
     }
@@ -311,11 +317,11 @@ std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_vie
     return gb28181_output_config{.stream_name = std::move(*stream_name),
                                  .output_id = std::move(*output_id),
                                  .description = gb28181_description{.transport = *transport,
-                                                                     .address = *address,
-                                                                     .rtp_port = *rtp_port,
-                                                                     .rtcp_port = rtcp_port.value_or(0),
-                                                                     .payload_type = *payload_type,
-                                                                     .ssrc = *ssrc},
+                                                                    .address = *address,
+                                                                    .rtp_port = *rtp_port,
+                                                                    .rtcp_port = rtcp_port.value_or(0),
+                                                                    .payload_type = *payload_type,
+                                                                    .ssrc = *ssrc},
                                  .rtcp = rtcp};
 }
 

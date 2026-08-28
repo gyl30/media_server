@@ -42,10 +42,7 @@ bool parse_output_video_codec(std::string_view text, output_video_codec& codec)
     return false;
 }
 
-void print_usage(const boost::program_options::options_description& options)
-{
-    std::cout << "usage: media_server [options]\n" << options << '\n';
-}
+void print_usage(const boost::program_options::options_description& options) { std::cout << "usage: media_server [options]\n" << options << '\n'; }
 
 }    // namespace
 
@@ -65,18 +62,15 @@ int parse_config(int argc, char** argv, config* cfg)
     std::vector<std::string> rtsp_pulls;
 
     po::options_description options("options");
-    options.add_options()
-        ("help", "show help")
-        ("rtmp-port", po::value<std::string>(&rtmp_port), "rtmp listen port")
-        ("rtsp-port", po::value<std::string>(&rtsp_port), "rtsp listen port")
-        ("http-port", po::value<std::string>(&http_port), "http listen port")
-        ("webrtc-address", po::value<std::string>(&result.webrtc_address), "webrtc address")
-        ("threads", po::value<std::string>(&threads), "worker thread count")
-        ("rtsp-pull", po::value<std::vector<std::string>>(&rtsp_pulls)->composing(), "stream_name=rtsp_url")
-        ("rtmp-video-codec", po::value<std::string>(&rtmp_video_codec), "passthrough|av1")
-        ("rtsp-video-codec", po::value<std::string>(&rtsp_video_codec), "passthrough|av1")
-        ("http-video-codec", po::value<std::string>(&http_video_codec), "passthrough|av1")
-        ("whep-video-codec", po::value<std::string>(&whep_video_codec), "passthrough|av1");
+    options.add_options()("help", "show help")("rtmp-port", po::value<std::string>(&rtmp_port), "rtmp listen port")(
+        "rtsp-port", po::value<std::string>(&rtsp_port), "rtsp listen port")("http-port", po::value<std::string>(&http_port), "http listen port")(
+        "webrtc-address", po::value<std::string>(&result.webrtc_address), "webrtc address")(
+        "threads", po::value<std::string>(&threads), "worker thread count")(
+        "rtsp-pull", po::value<std::vector<std::string>>(&rtsp_pulls)->composing(), "stream_name=rtsp_url")(
+        "rtmp-video-codec", po::value<std::string>(&rtmp_video_codec), "passthrough|av1")(
+        "rtsp-video-codec", po::value<std::string>(&rtsp_video_codec), "passthrough|av1")(
+        "http-video-codec", po::value<std::string>(&http_video_codec), "passthrough|av1")(
+        "whep-video-codec", po::value<std::string>(&whep_video_codec), "passthrough|av1");
 
     po::variables_map values;
     try
@@ -116,8 +110,7 @@ int parse_config(int argc, char** argv, config* cfg)
 
     if (!parse_output_video_codec(rtmp_video_codec, result.rtmp_video.codec) ||
         !parse_output_video_codec(rtsp_video_codec, result.rtsp_video.codec) ||
-        !parse_output_video_codec(http_video_codec, result.http_video.codec) ||
-        !parse_output_video_codec(whep_video_codec, result.whep_video.codec))
+        !parse_output_video_codec(http_video_codec, result.http_video.codec) || !parse_output_video_codec(whep_video_codec, result.whep_video.codec))
     {
         print_usage(options);
         return 1;
