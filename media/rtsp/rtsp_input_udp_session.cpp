@@ -56,7 +56,7 @@ void rtsp_input_udp_session::on_rtp(std::size_t track_index, std::span<const std
     {
         return;
     }
-    if (!media_.input(track_index, data))
+    if (!media_.input_packet(track_index, data))
     {
         error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
     }
@@ -73,7 +73,7 @@ void rtsp_input_udp_session::on_rtcp(std::size_t track_index, std::span<const st
     {
         return;
     }
-    if (!media_.input(track_index, data))
+    if (!media_.input_packet(track_index, data))
     {
         error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
     }
@@ -219,11 +219,11 @@ int rtsp_input_udp_session::on_record(rtsp_server_t* server)
         error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
         return 0;
     }
-    wait_rtcp();
+    schedule_rtcp();
     return rtsp_server_reply_record(server, 200, nullptr, nullptr);
 }
 
-void rtsp_input_udp_session::wait_rtcp()
+void rtsp_input_udp_session::schedule_rtcp()
 {
     rtcp_timer_.expires_after(std::chrono::seconds(1));
     const auto self = shared_from_this();
@@ -239,14 +239,14 @@ void rtsp_input_udp_session::wait_rtcp()
             for (std::size_t index = 0; index < self->track_states_.size(); ++index)
             {
                 auto& state = self->track_states_[index];
-                const auto bytes = self->media_.rtcp(index, buffer);
+                const auto bytes = self->media_.generate_rtcp(index, buffer);
                 if (bytes <= 0)
                 {
                     continue;
                 }
                 state.rtcp_socket->send(std::vector<std::uint8_t>(buffer.begin(), buffer.begin() + bytes), state.rtcp_endpoint);
             }
-            self->wait_rtcp();
+            self->schedule_rtcp();
         });
 }
 

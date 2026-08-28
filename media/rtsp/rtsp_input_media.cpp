@@ -88,7 +88,7 @@ bool rtsp_input_media::start_recording()
     return true;
 }
 
-bool rtsp_input_media::input(std::size_t track_index, std::span<const std::uint8_t> data)
+bool rtsp_input_media::input_packet(std::size_t track_index, std::span<const std::uint8_t> data)
 {
     if (closed_ || !recording_ || track_index >= demuxers_.size() || data.size() < 4)
     {
@@ -102,7 +102,7 @@ bool rtsp_input_media::input(std::size_t track_index, std::span<const std::uint8
     return !fatal_codec_change_;
 }
 
-int rtsp_input_media::rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
+int rtsp_input_media::generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
 {
     if (closed_ || !recording_ || track_index >= demuxers_.size() || demuxers_[track_index] == nullptr)
     {
@@ -142,9 +142,9 @@ const std::string& rtsp_input_media::stream_name() const noexcept { return strea
 
 bool rtsp_input_media::recording() const noexcept { return recording_; }
 
-int rtsp_input_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_input_media*>(param)->on_packet(packet); }
+int rtsp_input_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_input_media*>(param)->on_demuxed_packet(packet); }
 
-int rtsp_input_media::on_packet(avpacket_t* packet)
+int rtsp_input_media::on_demuxed_packet(avpacket_t* packet)
 {
     if (packet == nullptr || packet->stream == nullptr || !recording_ || closed_ || !stream_)
     {

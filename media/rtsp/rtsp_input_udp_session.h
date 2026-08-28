@@ -63,7 +63,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     [[nodiscard]] std::optional<udp_socket_pair> prepare_udp_sockets(std::size_t track_index);
     int on_record(rtsp_server_t* server);
-    void wait_rtcp();
+    void schedule_rtcp();
     void safe_shutdown();
 
     std::function<void(boost::system::error_code)> error_handler_;

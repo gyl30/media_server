@@ -34,7 +34,7 @@ bool gb28181_tcp_session::startup()
         {
             if (const auto self = weak.lock())
             {
-                self->on_socket(source_error, std::move(socket));
+                self->on_socket_result(source_error, std::move(socket));
                 return;
             }
             boost::system::error_code ignored;
@@ -57,7 +57,7 @@ void gb28181_tcp_session::shutdown()
 
 const std::string& gb28181_tcp_session::stream_name() const noexcept { return stream_name_; }
 
-void gb28181_tcp_session::on_socket(boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+void gb28181_tcp_session::on_socket_result(boost::system::error_code error, boost::asio::ip::tcp::socket socket)
 {
     if (error)
     {

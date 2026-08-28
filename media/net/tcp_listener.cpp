@@ -57,7 +57,7 @@ boost::system::error_code tcp_listener::startup(accept_handler handler, std::siz
                       [self]()
                       {
                           self->accept_next();
-                          self->wait_timeout();
+                          self->schedule_timeout();
                       });
     return {};
 }
@@ -68,7 +68,7 @@ void tcp_listener::shutdown()
     boost::asio::post(acceptor_.get_executor(), [self]() { self->safe_shutdown(); });
 }
 
-void tcp_listener::wait_timeout()
+void tcp_listener::schedule_timeout()
 {
     if (!started_ || timeout_ <= std::chrono::milliseconds::zero())
     {

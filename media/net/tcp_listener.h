@@ -26,7 +26,7 @@ class tcp_listener final : public std::enable_shared_from_this<tcp_listener>
     void shutdown();
 
    private:
-    void wait_timeout();
+    void schedule_timeout();
     void safe_shutdown();
     void accept_next();
 

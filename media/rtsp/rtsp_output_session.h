@@ -59,7 +59,7 @@ class rtsp_output_session final : public rtsp_server_session,
 
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
     void safe_shutdown();
-    [[nodiscard]] int prepare_stream(std::string_view uri);
+    [[nodiscard]] int prepare_presentation(std::string_view uri);
     [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
     [[nodiscard]] int presentation_status() const;

@@ -57,7 +57,7 @@ void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<cons
     {
         if (track_states_[index].rtp_channel == channel || track_states_[index].rtcp_channel == channel)
         {
-            if (!media_.input(index, data))
+            if (!media_.input_packet(index, data))
             {
                 error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
             }
@@ -110,11 +110,11 @@ int rtsp_input_tcp_session::on_record(rtsp_server_t* server)
         error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
         return 0;
     }
-    wait_rtcp();
+    schedule_rtcp();
     return rtsp_server_reply_record(server, 200, nullptr, nullptr);
 }
 
-void rtsp_input_tcp_session::wait_rtcp()
+void rtsp_input_tcp_session::schedule_rtcp()
 {
     rtcp_timer_.expires_after(std::chrono::seconds(1));
     const auto self = shared_from_this();
@@ -129,7 +129,7 @@ void rtsp_input_tcp_session::wait_rtcp()
             std::array<std::uint8_t, 1500> buffer{};
             for (std::size_t index = 0; index < self->track_states_.size(); ++index)
             {
-                const auto bytes = self->media_.rtcp(index, buffer);
+                const auto bytes = self->media_.generate_rtcp(index, buffer);
                 if (bytes <= 0)
                 {
                     continue;
@@ -143,7 +143,7 @@ void rtsp_input_tcp_session::wait_rtcp()
                 std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
                 self->write_handler_(packet);
             }
-            self->wait_rtcp();
+            self->schedule_rtcp();
         });
 }
 

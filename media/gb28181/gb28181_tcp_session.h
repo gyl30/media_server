@@ -32,7 +32,7 @@ class gb28181_tcp_session final : public stream_session, public std::enable_shar
     [[nodiscard]] const std::string& stream_name() const noexcept;
 
    private:
-    void on_socket(boost::system::error_code error, boost::asio::ip::tcp::socket socket);
+    void on_socket_result(boost::system::error_code error, boost::asio::ip::tcp::socket socket);
     void on_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
 

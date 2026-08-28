@@ -258,11 +258,11 @@ void gb28181_udp_output_session::send_packet(std::vector<std::uint8_t> packet)
     if (rtcp_sender_ != nullptr && !rtcp_started_)
     {
         rtcp_started_ = true;
-        wait_rtcp();
+        schedule_rtcp();
     }
 }
 
-void gb28181_udp_output_session::wait_rtcp()
+void gb28181_udp_output_session::schedule_rtcp()
 {
     rtcp_timer_.expires_after(std::chrono::seconds(25));
     const auto weak = weak_from_this();
@@ -281,7 +281,7 @@ void gb28181_udp_output_session::wait_rtcp()
             {
                 self->rtcp_socket_->send(std::vector<std::uint8_t>(buffer.begin(), buffer.begin() + bytes), self->remote_rtcp_endpoint_);
             }
-            self->wait_rtcp();
+            self->schedule_rtcp();
         });
 }
 
