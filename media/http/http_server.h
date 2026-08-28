@@ -2,6 +2,7 @@
 #define MEDIA_HTTP_HTTP_SERVER_H
 
 #include <memory>
+#include <mutex>
 
 #include <boost/system/error_code.hpp>
 
@@ -17,7 +18,8 @@ class http_server final : public std::enable_shared_from_this<http_server>
    public:
     http_server(io_context_pool& workers, const config& config);
 
-    [[nodiscard]] boost::system::error_code startup();
+    void startup(boost::system::error_code& error);
+    void shutdown();
 
    private:
     void on_accept(boost::asio::ip::tcp::socket socket);
@@ -25,6 +27,8 @@ class http_server final : public std::enable_shared_from_this<http_server>
     io_context_pool& workers_;
     const config& config_;
     std::shared_ptr<tcp_listener> listener_;
+    std::mutex mutex_;
+    bool closed_{};
 };
 }    // namespace media_server
 

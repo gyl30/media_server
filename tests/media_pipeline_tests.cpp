@@ -2139,7 +2139,9 @@ void test_tcp_listener_startup_error()
 
     io_context_pool workers(1);
     auto listener = std::make_shared<tcp_listener>(workers, occupied.local_endpoint().port());
-    require(static_cast<bool>(listener->startup([](boost::asio::ip::tcp::socket) {})), "tcp listener reports bind failure");
+    boost::system::error_code startup_error;
+    listener->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
+    require(static_cast<bool>(startup_error), "tcp listener reports bind failure");
 }
 
 void test_tcp_connector_successful_connect()
@@ -2158,14 +2160,16 @@ void test_tcp_connector_successful_connect()
             server.emplace(std::move(socket));
         });
     auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(2));
-    require(!connector->startup(
-                [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
-                {
-                    ++completion_count;
-                    require(!error, "tcp connector connect success");
-                    client.emplace(std::move(socket));
-                }),
-            "tcp connector startup");
+    boost::system::error_code startup_error;
+    connector->startup(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        {
+            ++completion_count;
+            require(!error, "tcp connector connect success");
+            client.emplace(std::move(socket));
+        },
+        startup_error);
+    require(!startup_error, "tcp connector startup");
     io.run();
 
     require(completion_count == 1, "tcp connector success completes once");
@@ -2194,14 +2198,17 @@ void test_tcp_connector_connection_refused()
     const auto started_at = std::chrono::steady_clock::now();
 
     auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(5));
-    require(!connector->startup(
-                [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
-                {
-                    ++completion_count;
-                    connect_error = error;
-                    require(!socket.is_open(), "tcp connector closes refused socket");
-                }),
-            "tcp connector startup");
+    boost::system::error_code startup_error;
+    connector->startup(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        {
+            ++completion_count;
+            connect_error = error;
+            require(!socket.is_open(), "tcp connector refusal has no connected socket");
+            connector->shutdown();
+        },
+        startup_error);
+    require(!startup_error, "tcp connector startup");
     io.run();
 
     require(completion_count == 1, "tcp connector refusal completes once");
@@ -2218,13 +2225,15 @@ void test_tcp_connector_shutdown_lifecycle()
     boost::system::error_code completion_error;
     auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(5));
     const std::weak_ptr<tcp_connector> weak_connector = connector;
-    require(!connector->startup(
-                [&](boost::system::error_code error, boost::asio::ip::tcp::socket)
-                {
-                    ++completion_count;
-                    completion_error = error;
-                }),
-            "tcp connector startup");
+    boost::system::error_code startup_error;
+    connector->startup(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket)
+        {
+            ++completion_count;
+            completion_error = error;
+        },
+        startup_error);
+    require(!startup_error, "tcp connector startup");
     connector->shutdown();
     connector->shutdown();
     connector->shutdown();
@@ -2338,15 +2347,17 @@ void test_udp_socket_receive_and_send()
     const std::vector<std::uint8_t> inbound{1, 2, 3, 4};
     const std::vector<std::uint8_t> outbound{5, 6, 7, 8};
 
-    require(socket->startup(boost::asio::ip::address_v4::any(),
-                            [&](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
-                            {
-                                read_error = error;
-                                received.assign(packet.begin(), packet.end());
-                                source = endpoint;
-                            },
-                            {}),
-            "udp socket startup");
+    boost::system::error_code startup_error;
+    socket->startup(boost::asio::ip::address_v4::any(),
+                    [&](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
+                    {
+                        read_error = error;
+                        received.assign(packet.begin(), packet.end());
+                        source = endpoint;
+                    },
+                    {},
+                    startup_error);
+    require(!startup_error, "udp socket startup");
 
     std::array<std::uint8_t, 32> peer_buffer{};
     boost::asio::ip::udp::endpoint sender;
@@ -2381,18 +2392,22 @@ void test_udp_socket_connected_peer_filter()
     boost::asio::ip::udp::socket second(io, {boost::asio::ip::address_v4::loopback(), 0});
     int read_count = 0;
 
-    require(socket->startup(boost::asio::ip::address_v4::any(),
-                            [&](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint& endpoint)
-                            {
-                                require(!error, "udp connected peer receive");
-                                ++read_count;
-                                if (read_count == 1)
-                                {
-                                    require(socket->connect(endpoint), "udp connected peer pin");
-                                }
-                            },
-                            {}),
-            "udp connected peer startup");
+    boost::system::error_code startup_error;
+    socket->startup(boost::asio::ip::address_v4::any(),
+                    [&](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint& endpoint)
+                    {
+                        require(!error, "udp connected peer receive");
+                        ++read_count;
+                        if (read_count == 1)
+                        {
+                            boost::system::error_code connect_error;
+                            socket->connect(endpoint, connect_error);
+                            require(!connect_error, "udp connected peer pin");
+                        }
+                    },
+                    {},
+                    startup_error);
+    require(!startup_error, "udp connected peer startup");
 
     const boost::asio::ip::udp::endpoint target{boost::asio::ip::address_v4::loopback(), socket->local_port()};
     first.send_to(boost::asio::buffer(std::array<std::uint8_t, 1>{0x01}), target);
@@ -2413,7 +2428,9 @@ void test_udp_socket_multi_endpoint_queue()
 {
     boost::asio::io_context io;
     auto socket = std::make_shared<udp_socket>(io.get_executor());
-    require(socket->startup(boost::asio::ip::address_v4::any(), {}, {}), "udp multi endpoint startup");
+    boost::system::error_code startup_error;
+    socket->startup(boost::asio::ip::address_v4::any(), {}, {}, startup_error);
+    require(!startup_error, "udp multi endpoint startup");
 
     boost::asio::ip::udp::socket first(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket second(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -2468,19 +2485,50 @@ void test_udp_socket_error_and_shutdown_lifecycle()
 {
     {
         boost::asio::io_context io;
+        boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 0});
         auto socket = std::make_shared<udp_socket>(io.get_executor());
+        boost::system::error_code startup_error;
+        socket->startup(boost::asio::ip::address_v4::loopback(), occupied.local_endpoint().port(), {}, {}, startup_error);
+        require(static_cast<bool>(startup_error), "udp socket reports bind failure");
+    }
+
+    {
+        boost::asio::io_context io;
+        auto socket = std::make_shared<udp_socket>(io.get_executor());
+        boost::asio::ip::udp::socket peer(io, {boost::asio::ip::address_v4::loopback(), 0});
         boost::system::error_code write_error;
-        require(socket->startup(boost::asio::ip::address_v4::any(),
-                                {},
-                                [&](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+        boost::system::error_code startup_error;
+        socket->startup(boost::asio::ip::address_v4::any(),
+                        {},
+                        [&](boost::system::error_code error, const boost::asio::ip::udp::endpoint&) { write_error = error; },
+                        startup_error);
+        require(!startup_error, "udp error startup");
+
+        bool peer_received = false;
+        std::array<std::uint8_t, 8> buffer{};
+        boost::asio::ip::udp::endpoint sender;
+        peer.async_receive_from(boost::asio::buffer(buffer),
+                                sender,
+                                [&](boost::system::error_code error, std::size_t)
                                 {
-                                    write_error = error;
-                                    socket->shutdown();
-                                }),
-                "udp error startup");
+                                    if (!error)
+                                    {
+                                        peer_received = true;
+                                    }
+                                });
+
         socket->send({0x01}, {boost::asio::ip::address_v6::loopback(), 9});
-        io.run();
+        socket->send({0x02}, {boost::asio::ip::address_v4::loopback(), peer.local_endpoint().port()});
+        io.run_for(std::chrono::milliseconds(100));
+
         require(static_cast<bool>(write_error), "udp socket reports write error");
+        require(!peer_received, "udp socket stops queued writes after error");
+
+        socket->shutdown();
+        boost::system::error_code ignored;
+        peer.close(ignored);
+        io.restart();
+        io.run();
     }
 
     {
@@ -2488,11 +2536,13 @@ void test_udp_socket_error_and_shutdown_lifecycle()
         auto socket = std::make_shared<udp_socket>(io.get_executor());
         int read_callback_count = 0;
         int write_error_callback_count = 0;
-        require(socket->startup(
-                    boost::asio::ip::address_v4::any(),
-                    [&](boost::system::error_code, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&) { ++read_callback_count; },
-                    [&](boost::system::error_code, const boost::asio::ip::udp::endpoint&) { ++write_error_callback_count; }),
-                "udp shutdown startup");
+        boost::system::error_code startup_error;
+        socket->startup(
+            boost::asio::ip::address_v4::any(),
+            [&](boost::system::error_code, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&) { ++read_callback_count; },
+            [&](boost::system::error_code, const boost::asio::ip::udp::endpoint&) { ++write_error_callback_count; },
+            startup_error);
+        require(!startup_error, "udp shutdown startup");
         const std::weak_ptr<udp_socket> weak_socket = socket;
         socket->send(std::vector<std::uint8_t>(1200, 0x5a), {boost::asio::ip::address_v4::loopback(), 9});
         socket->send(std::vector<std::uint8_t>(1200, 0x5b), {boost::asio::ip::address_v4::loopback(), 9});
@@ -2519,31 +2569,36 @@ void test_tcp_listener_worker_affinity()
     std::weak_ptr<tcp_listener> weak_listener;
     auto listener = std::make_shared<tcp_listener>(workers, port);
     weak_listener = listener;
-    require(!listener->startup(
-                [&](boost::asio::ip::tcp::socket socket)
-                {
-                    bool complete = false;
-                    {
-                        std::scoped_lock lock(mutex);
-                        threads.push_back(std::this_thread::get_id());
-                        complete = threads.size() == 2U;
-                    }
-                    boost::system::error_code error;
-                    socket.close(error);
-                    if (complete)
-                    {
-                        boost::asio::post(workers.context(0),
-                                          [&]()
-                                          {
-                                              if (const auto current = weak_listener.lock())
-                                              {
-                                                  current->shutdown();
-                                              }
-                                              workers.release_work();
-                                          });
-                    }
-                }),
-            "tcp listener worker startup");
+    boost::system::error_code startup_error;
+    listener->startup(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        {
+            require(!error, "tcp listener worker accept");
+            bool complete = false;
+            {
+                std::scoped_lock lock(mutex);
+                threads.push_back(std::this_thread::get_id());
+                complete = threads.size() == 2U;
+            }
+            boost::system::error_code close_error;
+            socket.close(close_error);
+            if (complete)
+            {
+                boost::asio::post(workers.context(0),
+                                  [&]()
+                                  {
+                                      if (const auto current = weak_listener.lock())
+                                      {
+                                          current->shutdown();
+                                      }
+                                      workers.release_work();
+                                  });
+            }
+        },
+        0,
+        {},
+        startup_error);
+    require(!startup_error, "tcp listener worker startup");
 
     boost::asio::io_context client_io;
     boost::asio::ip::tcp::socket first(client_io);
@@ -2568,20 +2623,24 @@ void test_tcp_listener_unlimited_accepts()
 
     int accept_count = 0;
     auto listener = std::make_shared<tcp_listener>(workers, port);
-    require(!listener->startup(
-                [&](boost::asio::ip::tcp::socket socket)
-                {
-                    ++accept_count;
-                    boost::system::error_code error;
-                    socket.close(error);
-                    if (accept_count == 3)
-                    {
-                        listener->shutdown();
-                        workers.release_work();
-                    }
-                },
-                0),
-            "tcp listener unlimited startup");
+    boost::system::error_code startup_error;
+    listener->startup(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        {
+            require(!error, "tcp listener unlimited accept");
+            ++accept_count;
+            boost::system::error_code close_error;
+            socket.close(close_error);
+            if (accept_count == 3)
+            {
+                listener->shutdown();
+                workers.release_work();
+            }
+        },
+        0,
+        {},
+        startup_error);
+    require(!startup_error, "tcp listener unlimited startup");
 
     boost::asio::io_context client_io;
     std::array<boost::asio::ip::tcp::socket, 3> clients{
@@ -2607,15 +2666,19 @@ void test_tcp_listener_single_accept_limit()
     std::array<std::uint8_t, 4> received{};
     auto listener = std::make_shared<tcp_listener>(workers, port);
     const std::weak_ptr<tcp_listener> weak_listener = listener;
-    require(!listener->startup(
-                [&](boost::asio::ip::tcp::socket socket)
-                {
-                    ++accept_count;
-                    boost::asio::read(socket, boost::asio::buffer(received));
-                    workers.release_work();
-                },
-                1),
-            "tcp listener single startup");
+    boost::system::error_code startup_error;
+    listener->startup(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        {
+            require(!error, "tcp listener single accept");
+            ++accept_count;
+            boost::asio::read(socket, boost::asio::buffer(received));
+            workers.release_work();
+        },
+        1,
+        {},
+        startup_error);
+    require(!startup_error, "tcp listener single startup");
 
     boost::asio::io_context client_io;
     boost::asio::ip::tcp::socket first(client_io);
@@ -2654,6 +2717,7 @@ void test_tcp_listener_dynamic_startup()
     std::array<std::uint8_t, request.size()> server_received{};
     std::array<std::uint8_t, response.size()> client_received{};
     boost::system::error_code startup_error;
+    boost::system::error_code accept_error;
     boost::system::error_code first_connect_error;
     boost::system::error_code client_write_error;
     boost::system::error_code client_read_error;
@@ -2701,18 +2765,24 @@ void test_tcp_listener_dynamic_startup()
         [&]()
         {
             startup_thread = std::this_thread::get_id();
-            startup_error = listener->startup(
-                [&](boost::asio::ip::tcp::socket socket)
+            listener->startup(
+                [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
                 {
+                    if (error)
+                    {
+                        accept_error = error;
+                        finish();
+                        return;
+                    }
                     accept_thread = std::this_thread::get_id();
                     ++accept_count;
                     auto server = std::make_shared<boost::asio::ip::tcp::socket>(std::move(socket));
                     boost::asio::async_read(*server,
                                             boost::asio::buffer(server_received),
-                                            [&, server](boost::system::error_code error, std::size_t)
+                                            [&, server](boost::system::error_code read_error, std::size_t)
                                             {
-                                                server_read_error = error;
-                                                if (!error)
+                                                server_read_error = read_error;
+                                                if (!read_error)
                                                 {
                                                     boost::asio::async_write(*server,
                                                                              boost::asio::buffer(response),
@@ -2721,7 +2791,9 @@ void test_tcp_listener_dynamic_startup()
                                                 }
                                             });
                 },
-                1);
+                1,
+                {},
+                startup_error);
 
             if (startup_error)
             {
@@ -2776,6 +2848,7 @@ void test_tcp_listener_dynamic_startup()
 
     require(!timed_out, "tcp listener dynamic startup completes without timeout");
     require(!startup_error, "tcp listener dynamic startup succeeds");
+    require(!accept_error, "tcp listener dynamic accept succeeds");
     require(!first_connect_error, "tcp listener dynamic first client connects");
     require(!client_write_error && !client_read_error, "tcp listener dynamic client io");
     require(!server_read_error && !server_write_error, "tcp listener dynamic accepted socket io");
@@ -2785,12 +2858,67 @@ void test_tcp_listener_dynamic_startup()
     require(startup_thread != accept_thread, "tcp listener dynamic first accept runs on owner executor");
 }
 
+void test_tcp_listener_timeout_reports_error_without_shutdown()
+{
+    io_context_pool workers(1);
+    boost::asio::ip::tcp::acceptor reserved(workers.context(0), {boost::asio::ip::tcp::v4(), 0});
+    const auto endpoint = reserved.local_endpoint();
+    reserved.close();
+
+    auto listener = std::make_shared<tcp_listener>(workers, endpoint.port(), boost::asio::ip::address_v4::loopback());
+    int completion_count = 0;
+    boost::system::error_code completion_error;
+    boost::system::error_code startup_error;
+    listener->startup(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        {
+            ++completion_count;
+            completion_error = error;
+            require(!socket.is_open(), "tcp listener timeout has no socket");
+            workers.release_work();
+        },
+        0,
+        std::chrono::milliseconds(5),
+        startup_error);
+    require(!startup_error, "tcp listener timeout startup");
+    workers.run();
+
+    require(completion_count == 1, "tcp listener timeout completes once");
+    require(completion_error == boost::asio::error::timed_out, "tcp listener timeout reports timed_out");
+
+    boost::asio::ip::tcp::acceptor before_shutdown(workers.context(0));
+    boost::system::error_code before_shutdown_error;
+    before_shutdown.open(boost::asio::ip::tcp::v4(), before_shutdown_error);
+    before_shutdown.bind(endpoint, before_shutdown_error);
+    require(before_shutdown_error == boost::asio::error::address_in_use, "tcp listener timeout keeps resource until owner shutdown");
+
+    listener->shutdown();
+    workers.context(0).restart();
+    workers.run();
+
+    boost::asio::ip::tcp::acceptor after_shutdown(workers.context(0));
+    boost::system::error_code after_shutdown_error;
+    after_shutdown.open(boost::asio::ip::tcp::v4(), after_shutdown_error);
+    after_shutdown.bind(endpoint, after_shutdown_error);
+    require(!after_shutdown_error, "tcp listener owner shutdown releases resource");
+}
+
 void test_tcp_listener_shutdown_lifecycle()
 {
     io_context_pool workers(1);
     auto listener = std::make_shared<tcp_listener>(workers, 0);
     int accept_count = 0;
-    require(!listener->startup([&](boost::asio::ip::tcp::socket) { ++accept_count; }), "tcp listener shutdown startup");
+    boost::system::error_code startup_error;
+    listener->startup(
+        [&](boost::system::error_code error, boost::asio::ip::tcp::socket)
+        {
+            require(!error, "tcp listener shutdown accept");
+            ++accept_count;
+        },
+        0,
+        {},
+        startup_error);
+    require(!startup_error, "tcp listener shutdown startup");
     const std::weak_ptr<tcp_listener> weak_listener = listener;
 
     listener->shutdown();
@@ -2872,7 +3000,9 @@ void test_rtmp_server_lifecycle()
     config application_config;
     application_config.rtmp_port = 0;
     auto server = std::make_shared<rtmp_server>(workers, application_config);
-    require(!server->startup(), "rtmp server lifecycle startup");
+    boost::system::error_code startup_error;
+    server->startup(startup_error);
+    require(!startup_error, "rtmp server lifecycle startup");
     const std::weak_ptr<rtmp_server> weak_server = server;
 
     server.reset();
@@ -4639,7 +4769,9 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     config application_config;
     application_config.rtsp_port = port;
     auto server = std::make_shared<rtsp_server>(workers, application_config);
-    require(!server->startup(), "rtsp opus whitespace server startup");
+    boost::system::error_code startup_error;
+    server->startup(startup_error);
+    require(!startup_error, "rtsp opus whitespace server startup");
     std::jthread runner([&workers]() { workers.run(); });
 
     boost::asio::io_context client_io;
@@ -4730,7 +4862,9 @@ void test_rtsp_publish_server_contract()
         config application_config;
         application_config.rtsp_port = port;
         auto server = std::make_shared<rtsp_server>(workers, application_config);
-        require(!server->startup(), "rtsp publish pre role server startup");
+        boost::system::error_code startup_error;
+        server->startup(startup_error);
+        require(!startup_error, "rtsp publish pre role server startup");
         std::jthread runner([&workers]() { workers.run(); });
 
         boost::asio::io_context client_io;
@@ -4755,7 +4889,9 @@ void test_rtsp_publish_server_contract()
         config shutdown_config;
         shutdown_config.rtsp_port = shutdown_port;
         auto shutdown_server = std::make_shared<rtsp_server>(shutdown_workers, shutdown_config);
-        require(!shutdown_server->startup(), "rtsp shutdown independence server startup");
+        boost::system::error_code startup_error;
+        shutdown_server->startup(startup_error);
+        require(!startup_error, "rtsp shutdown independence server startup");
         std::jthread shutdown_runner([&shutdown_workers]() { shutdown_workers.run(); });
 
         boost::asio::io_context shutdown_client_io;
@@ -4788,7 +4924,9 @@ void test_rtsp_publish_server_contract()
     config application_config;
     application_config.rtsp_port = port;
     auto server = std::make_shared<rtsp_server>(workers, application_config);
-    require(!server->startup(), "rtsp publish server startup");
+    boost::system::error_code startup_error;
+    server->startup(startup_error);
+    require(!startup_error, "rtsp publish server startup");
     std::jthread runner([&workers]() { workers.run(); });
 
     boost::asio::io_context client_io;
@@ -9609,6 +9747,8 @@ int main()
     std::cout << "[pass] tcp_listener_single_accept_limit\n";
     media_server::test_tcp_listener_dynamic_startup();
     std::cout << "[pass] tcp_listener_dynamic_startup\n";
+    media_server::test_tcp_listener_timeout_reports_error_without_shutdown();
+    std::cout << "[pass] tcp_listener_timeout_reports_error_without_shutdown\n";
     media_server::test_tcp_listener_shutdown_lifecycle();
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
     media_server::test_gb28181_multi_output_identity();

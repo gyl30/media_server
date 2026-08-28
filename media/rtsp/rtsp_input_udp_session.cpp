@@ -85,67 +85,73 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
     }
 
     const auto local_ports = *reserved;
+    boost::system::error_code network_error;
     auto candidate_rtp = std::make_shared<udp_socket>(rtcp_timer_.get_executor());
-    if (!candidate_rtp->startup(
-            boost::asio::ip::address_v4::any(),
-            local_ports.first,
-            [self, track_index](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+    candidate_rtp->startup(
+        boost::asio::ip::address_v4::any(),
+        local_ports.first,
+        [self, track_index](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+        {
+            if (self->closed_)
             {
-                if (self->closed_)
-                {
-                    return;
-                }
-                if (error)
-                {
-                    self->error_handler_(error);
-                    return;
-                }
-                self->on_rtp(track_index, data, endpoint);
-            },
-            [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+                return;
+            }
+            if (error)
             {
-                if (self->closed_)
-                {
-                    return;
-                }
-                if (error)
-                {
-                    self->error_handler_(error);
-                }
-            }))
+                self->error_handler_(error);
+                return;
+            }
+            self->on_rtp(track_index, data, endpoint);
+        },
+        [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+        {
+            if (self->closed_)
+            {
+                return;
+            }
+            if (error)
+            {
+                self->error_handler_(error);
+            }
+        },
+        network_error);
+    if (network_error)
     {
         port_manager::instance().release(local_ports);
+        error_handler_(network_error);
         return std::nullopt;
     }
 
     auto candidate_rtcp = std::make_shared<udp_socket>(rtcp_timer_.get_executor());
-    if (!candidate_rtcp->startup(
-            boost::asio::ip::address_v4::any(),
-            local_ports.second,
-            [self, track_index](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+    candidate_rtcp->startup(
+        boost::asio::ip::address_v4::any(),
+        local_ports.second,
+        [self, track_index](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+        {
+            if (self->closed_)
             {
-                if (self->closed_)
-                {
-                    return;
-                }
-                if (error)
-                {
-                    self->error_handler_(error);
-                    return;
-                }
-                self->on_rtcp(track_index, data, endpoint);
-            },
-            [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+                return;
+            }
+            if (error)
             {
-                if (self->closed_)
-                {
-                    return;
-                }
-                if (error)
-                {
-                    self->error_handler_(error);
-                }
-            }))
+                self->error_handler_(error);
+                return;
+            }
+            self->on_rtcp(track_index, data, endpoint);
+        },
+        [self](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+        {
+            if (self->closed_)
+            {
+                return;
+            }
+            if (error)
+            {
+                self->error_handler_(error);
+            }
+        },
+        network_error);
+    if (network_error)
     {
         auto remaining = std::make_shared<std::atomic_uint8_t>(1);
         candidate_rtp->shutdown(
@@ -156,6 +162,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
                     port_manager::instance().release(local_ports);
                 }
             });
+        error_handler_(network_error);
         return std::nullopt;
     }
     return udp_socket_pair{.rtp = std::move(candidate_rtp), .rtcp = std::move(candidate_rtcp), .local_ports = local_ports};

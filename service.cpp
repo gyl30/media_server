@@ -42,19 +42,23 @@ int service::run()
     rtsp_ = std::make_shared<rtsp_server>(*workers_, config_);
     http_ = std::make_shared<http_server>(*workers_, config_);
 
-    if (const auto error = rtmp_->startup())
+    boost::system::error_code network_error;
+    rtmp_->startup(network_error);
+    if (network_error)
     {
-        spdlog::error("rtmp listen failed port {} error {}", config_.rtmp_port, error.message());
+        spdlog::error("rtmp listen failed port {} error {}", config_.rtmp_port, network_error.message());
         return 2;
     }
-    if (const auto error = rtsp_->startup())
+    rtsp_->startup(network_error);
+    if (network_error)
     {
-        spdlog::error("rtsp listen failed port {} error {}", config_.rtsp_port, error.message());
+        spdlog::error("rtsp listen failed port {} error {}", config_.rtsp_port, network_error.message());
         return 2;
     }
-    if (const auto error = http_->startup())
+    http_->startup(network_error);
+    if (network_error)
     {
-        spdlog::error("http listen failed port {} error {}", config_.http_port, error.message());
+        spdlog::error("http listen failed port {} error {}", config_.http_port, network_error.message());
         return 2;
     }
 

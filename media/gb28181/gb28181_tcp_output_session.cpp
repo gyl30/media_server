@@ -38,7 +38,8 @@ bool gb28181_tcp_output_session::startup()
     }
 
     const auto weak = weak_from_this();
-    const auto error = socket_source_->startup(
+    boost::system::error_code error;
+    socket_source_->startup(
         [weak](boost::system::error_code source_error, boost::asio::ip::tcp::socket socket) mutable
         {
             if (const auto self = weak.lock())
@@ -48,7 +49,8 @@ bool gb28181_tcp_output_session::startup()
             }
             boost::system::error_code ignored;
             socket.close(ignored);
-        });
+        },
+        error);
     if (error)
     {
         spdlog::error("gb28181 tcp output source startup failed stream {} output {} error {}", stream_name_, output_id_, error.message());
