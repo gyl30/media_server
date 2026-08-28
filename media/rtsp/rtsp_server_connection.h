@@ -8,7 +8,7 @@
 
 #include <boost/asio/any_io_executor.hpp>
 
-#include "config.h"
+#include "media/codec/output_video_config.h"
 #include "media/net/tcp_connection.h"
 
 extern "C"
@@ -25,7 +25,7 @@ class rtsp_server_session;
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
    public:
-    rtsp_server_connection(std::shared_ptr<tcp_connection> connection, const config& config);
+    rtsp_server_connection(std::shared_ptr<tcp_connection> connection, output_video_codec video_codec);
     ~rtsp_server_connection();
 
     void startup();
@@ -49,7 +49,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void safe_shutdown();
 
     boost::asio::any_io_executor executor_;
-    const config& config_;
+    output_video_codec video_codec_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<rtsp_server_session> session_;
     std::string local_address_;
