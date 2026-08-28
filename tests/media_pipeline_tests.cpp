@@ -4974,6 +4974,28 @@ void test_rtsp_publish_server_contract()
     }
 
     {
+        boost::asio::ip::tcp::socket topology(client_io);
+        topology.connect({boost::asio::ip::address_v4::loopback(), port});
+        const auto topology_base = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/publish-duplicate-topology";
+        const auto topology_sdp = std::string("v=0\r\n") +
+                                  "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                                  "s=publish-duplicate-topology\r\n"
+                                  "c=IN IP4 127.0.0.1\r\n"
+                                  "t=0 0\r\n"
+                                  "m=video 0 RTP/AVP 96\r\n"
+                                  "a=rtpmap:96 H264/90000\r\n"
+                                  "a=control:video-h264\r\n"
+                                  "m=video 0 RTP/AVP 97\r\n"
+                                  "a=rtpmap:97 H265/90000\r\n"
+                                  "a=control:video-h265\r\n";
+        boost::asio::write(topology,
+                           boost::asio::buffer("ANNOUNCE " + topology_base +
+                                               " RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " +
+                                               std::to_string(topology_sdp.size()) + "\r\n\r\n" + topology_sdp));
+        require(read_rtsp_headers(topology).starts_with("RTSP/1.0 415"), "rtsp publish rejects duplicate video topology");
+    }
+
+    {
         boost::asio::ip::tcp::socket handoff(client_io);
         handoff.connect({boost::asio::ip::address_v4::loopback(), port});
         const auto handoff_base = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/publish-handoff";
