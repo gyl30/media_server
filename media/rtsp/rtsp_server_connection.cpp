@@ -11,8 +11,8 @@
 namespace media_server
 {
 
-rtsp_server_connection::rtsp_server_connection(std::shared_ptr<tcp_connection> connection, const config& config)
-    : executor_(connection->socket().get_executor()), config_(config), connection_(std::move(connection))
+rtsp_server_connection::rtsp_server_connection(std::shared_ptr<tcp_connection> connection, output_video_codec video_codec)
+    : executor_(connection->socket().get_executor()), video_codec_(video_codec), connection_(std::move(connection))
 {
     interleaved_.onrtp = &rtsp_server_connection::interleaved_callback;
     interleaved_.param = this;
@@ -107,7 +107,7 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     {
         const auto connection = self->connection_;
         auto next_session = std::make_shared<rtsp_output_session>(
-            self->executor_, self->config_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
+            self->executor_, self->video_codec_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
         next_session->set_error_handle([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
         self->session_ = std::move(next_session);
     }
@@ -122,7 +122,7 @@ int rtsp_server_connection::setup_callback(
     {
         const auto connection = self->connection_;
         auto next_session = std::make_shared<rtsp_output_session>(
-            self->executor_, self->config_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
+            self->executor_, self->video_codec_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
         next_session->set_error_handle([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
         self->session_ = std::move(next_session);
     }
