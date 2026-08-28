@@ -12,21 +12,50 @@ rtmp_server::rtmp_server(io_context_pool& workers, const config& config)
 {
 }
 
-boost::system::error_code rtmp_server::startup()
+void rtmp_server::startup(boost::system::error_code& error)
 {
     const std::weak_ptr<rtmp_server> weak = shared_from_this();
-    return listener_->startup(
-        [weak](boost::asio::ip::tcp::socket socket)
+    listener_->startup(
+        [weak](boost::system::error_code accept_error, boost::asio::ip::tcp::socket socket)
         {
             if (const auto self = weak.lock())
             {
+                if (accept_error)
+                {
+                    self->shutdown();
+                    return;
+                }
                 self->on_accept(std::move(socket));
             }
-        });
+        },
+        0,
+        {},
+        error);
+}
+
+void rtmp_server::shutdown()
+{
+    {
+        std::scoped_lock lock(mutex_);
+        if (closed_)
+        {
+            return;
+        }
+        closed_ = true;
+    }
+    listener_->shutdown();
 }
 
 void rtmp_server::on_accept(boost::asio::ip::tcp::socket socket)
 {
+    std::scoped_lock lock(mutex_);
+    if (closed_)
+    {
+        boost::system::error_code error;
+        socket.close(error);
+        return;
+    }
+
     auto connection = std::make_shared<tcp_connection>(std::move(socket));
     auto session = std::make_shared<rtmp_session>(std::move(connection), config_.rtmp_video);
     session->startup();

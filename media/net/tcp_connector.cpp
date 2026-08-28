@@ -13,11 +13,13 @@ tcp_connector::tcp_connector(boost::asio::any_io_executor executor, boost::asio:
 {
 }
 
-boost::system::error_code tcp_connector::startup(socket_handler handler)
+void tcp_connector::startup(socket_handler handler, boost::system::error_code& error)
 {
-    if (started_)
+    error.clear();
+    if (started_ || completed_)
     {
-        return boost::asio::error::already_started;
+        error = boost::asio::error::already_started;
+        return;
     }
 
     started_ = true;
@@ -28,16 +30,15 @@ boost::system::error_code tcp_connector::startup(socket_handler handler)
     {
         timer_.expires_after(timeout_);
         timer_.async_wait(
-            [self](const boost::system::error_code& error)
+            [self](const boost::system::error_code& timer_error)
             {
-                if (!error)
+                if (!timer_error)
                 {
                     self->complete(boost::asio::error::make_error_code(boost::asio::error::timed_out));
                 }
             });
     }
-    socket_.async_connect(endpoint_, [self](const boost::system::error_code& error) { self->complete(error); });
-    return {};
+    socket_.async_connect(endpoint_, [self](const boost::system::error_code& connect_error) { self->complete(connect_error); });
 }
 
 void tcp_connector::shutdown()
@@ -55,27 +56,33 @@ void tcp_connector::complete(boost::system::error_code error)
     completed_ = true;
 
     timer_.cancel();
-    boost::system::error_code ignored;
+    auto handler = std::move(socket_handler_);
     if (error)
     {
+        boost::system::error_code ignored;
         socket_.cancel(ignored);
-        socket_.close(ignored);
+        if (handler)
+        {
+            handler(error, boost::asio::ip::tcp::socket{socket_.get_executor()});
+        }
+        return;
     }
 
-    auto handler = std::move(socket_handler_);
+    started_ = false;
     auto socket = std::move(socket_);
     if (handler)
     {
-        handler(error, std::move(socket));
+        handler({}, std::move(socket));
     }
 }
 
 void tcp_connector::safe_shutdown()
 {
-    if (completed_)
+    if (!started_)
     {
         return;
     }
+    started_ = false;
     completed_ = true;
 
     socket_handler_ = {};

@@ -12,17 +12,25 @@ rtsp_server::rtsp_server(io_context_pool& workers, const config& config)
 {
 }
 
-boost::system::error_code rtsp_server::startup()
+void rtsp_server::startup(boost::system::error_code& error)
 {
     const std::weak_ptr<rtsp_server> weak = shared_from_this();
-    return listener_->startup(
-        [weak](boost::asio::ip::tcp::socket socket)
+    listener_->startup(
+        [weak](boost::system::error_code accept_error, boost::asio::ip::tcp::socket socket)
         {
             if (const auto self = weak.lock())
             {
+                if (accept_error)
+                {
+                    self->shutdown();
+                    return;
+                }
                 self->on_accept(std::move(socket));
             }
-        });
+        },
+        0,
+        {},
+        error);
 }
 
 void rtsp_server::shutdown()

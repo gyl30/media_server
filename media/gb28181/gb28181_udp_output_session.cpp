@@ -45,59 +45,64 @@ std::optional<gb28181_udp_output_session::udp_socket_pair> gb28181_udp_output_se
     }
 
     const auto local_ports = *reserved;
+    boost::system::error_code network_error;
     auto rtp_socket = std::make_shared<udp_socket>(executor_);
-    if (!rtp_socket->startup(
-            bind_address,
-            local_ports.first,
-            [weak](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+    rtp_socket->startup(
+        bind_address,
+        local_ports.first,
+        [weak](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+        {
+            if (error)
             {
-                if (error)
+                if (const auto self = weak.lock())
                 {
-                    if (const auto self = weak.lock())
-                    {
-                        self->shutdown();
-                    }
+                    self->shutdown();
                 }
-            },
-            [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+            }
+        },
+        [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+        {
+            if (error)
             {
-                if (error)
+                if (const auto self = weak.lock())
                 {
-                    if (const auto self = weak.lock())
-                    {
-                        self->shutdown();
-                    }
+                    self->shutdown();
                 }
-            }))
+            }
+        },
+        network_error);
+    if (network_error)
     {
         port_manager::instance().release(local_ports);
         return std::nullopt;
     }
 
     auto rtcp_socket = std::make_shared<udp_socket>(executor_);
-    if (!rtcp_socket->startup(
-            bind_address,
-            local_ports.second,
-            [weak](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+    rtcp_socket->startup(
+        bind_address,
+        local_ports.second,
+        [weak](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&)
+        {
+            if (error)
             {
-                if (error)
+                if (const auto self = weak.lock())
                 {
-                    if (const auto self = weak.lock())
-                    {
-                        self->shutdown();
-                    }
+                    self->shutdown();
                 }
-            },
-            [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+            }
+        },
+        [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
+        {
+            if (error)
             {
-                if (error)
+                if (const auto self = weak.lock())
                 {
-                    if (const auto self = weak.lock())
-                    {
-                        self->shutdown();
-                    }
+                    self->shutdown();
                 }
-            }))
+            }
+        },
+        network_error);
+    if (network_error)
     {
         auto remaining = std::make_shared<std::atomic_uint8_t>(1);
         rtp_socket->shutdown(
