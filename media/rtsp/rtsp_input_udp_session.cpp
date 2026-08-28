@@ -21,16 +21,14 @@ namespace media_server
 rtsp_input_udp_session::rtsp_input_udp_session(boost::asio::any_io_executor executor,
                                                std::string stream_name,
                                                std::vector<rtsp_input_track_description> descriptions)
-    : media_(executor, std::move(stream_name), std::move(descriptions)),
-      track_states_(media_.descriptions().size()),
-      rtcp_timer_(std::move(executor))
+    : media_(executor, std::move(stream_name), std::move(descriptions)), track_states_(media_.descriptions().size()), rtcp_timer_(std::move(executor))
 {
 }
 
 int rtsp_input_udp_session::startup(rtsp_server_t* server,
-                                      std::size_t track_index,
-                                      const rtsp_header_transport_t& transport,
-                                      const std::string& session_id)
+                                    std::size_t track_index,
+                                    const rtsp_header_transport_t& transport,
+                                    const std::string& session_id)
 {
     if (!media_.startup(session_id))
     {
@@ -93,8 +91,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
     if (!candidate_rtp->startup(
             boost::asio::ip::address_v4::any(),
             local_ports.first,
-            [self, track_index](
-                boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+            [self, track_index](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
             {
                 if (self->closed_)
                 {
@@ -127,8 +124,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
     if (!candidate_rtcp->startup(
             boost::asio::ip::address_v4::any(),
             local_ports.second,
-            [self, track_index](
-                boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+            [self, track_index](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
             {
                 if (self->closed_)
                 {
@@ -168,9 +164,9 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
 }
 
 int rtsp_input_udp_session::on_setup(rtsp_server_t* server,
-                                       std::size_t track_index,
-                                       const rtsp_header_transport_t& transport,
-                                       const std::string& session_id)
+                                     std::size_t track_index,
+                                     const rtsp_header_transport_t& transport,
+                                     const std::string& session_id)
 {
     if (track_states_[track_index].rtp_socket)
     {

@@ -48,16 +48,23 @@ void test_values()
 {
     media_server::config cfg;
     require(parse({"media_server",
-                   "--rtmp-port", "11935",
+                   "--rtmp-port",
+                   "11935",
                    "--rtsp-port=18554",
-                   "--http-port", "18080",
-                   "--webrtc-address", "192.0.2.10",
-                   "--threads", "3",
-                   "--rtsp-pull", "live/one=rtsp://127.0.0.1/one",
+                   "--http-port",
+                   "18080",
+                   "--webrtc-address",
+                   "192.0.2.10",
+                   "--threads",
+                   "3",
+                   "--rtsp-pull",
+                   "live/one=rtsp://127.0.0.1/one",
                    "--rtsp-pull=live/two=rtsp://127.0.0.1/two",
-                   "--rtmp-video-codec", "av1",
+                   "--rtmp-video-codec",
+                   "av1",
                    "--rtsp-video-codec=av1",
-                   "--http-video-codec", "av1",
+                   "--http-video-codec",
+                   "av1",
                    "--whep-video-codec=av1"},
                   &cfg) == 0,
             "explicit config parse");
@@ -66,8 +73,8 @@ void test_values()
     require(cfg.http_port == 18080, "explicit http port");
     require(cfg.webrtc_address == "192.0.2.10", "explicit webrtc address");
     require(cfg.threads == 3, "explicit threads");
-    require(cfg.rtsp_pulls == std::vector<std::pair<std::string, std::string>>{{"live/one", "rtsp://127.0.0.1/one"},
-                                                                              {"live/two", "rtsp://127.0.0.1/two"}},
+    require(cfg.rtsp_pulls ==
+                std::vector<std::pair<std::string, std::string>>{{"live/one", "rtsp://127.0.0.1/one"}, {"live/two", "rtsp://127.0.0.1/two"}},
             "explicit rtsp pulls");
     require(cfg.rtmp_video.codec == media_server::output_video_codec::av1, "explicit rtmp video codec");
     require(cfg.rtsp_video.codec == media_server::output_video_codec::av1, "explicit rtsp video codec");

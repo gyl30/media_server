@@ -31,9 +31,9 @@ rtsp_input_tcp_session::rtsp_input_tcp_session(boost::asio::any_io_executor exec
 rtsp_input_tcp_session::~rtsp_input_tcp_session() = default;
 
 int rtsp_input_tcp_session::startup(rtsp_server_t* server,
-                                      std::size_t track_index,
-                                      const rtsp_header_transport_t& transport,
-                                      const std::string& session_id)
+                                    std::size_t track_index,
+                                    const rtsp_header_transport_t& transport,
+                                    const std::string& session_id)
 {
     if (!media_.startup(session_id))
     {
@@ -67,9 +67,9 @@ void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<cons
 }
 
 int rtsp_input_tcp_session::on_setup(rtsp_server_t* server,
-                                       std::size_t track_index,
-                                       const rtsp_header_transport_t& transport,
-                                       const std::string& session_id)
+                                     std::size_t track_index,
+                                     const rtsp_header_transport_t& transport,
+                                     const std::string& session_id)
 {
     if (track_states_[track_index].rtp_channel >= 0)
     {

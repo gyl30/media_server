@@ -5,8 +5,7 @@
 
 namespace media_server
 {
-http_server::http_server(io_context_pool& workers,
-                         const config& config)
+http_server::http_server(io_context_pool& workers, const config& config)
     : workers_(workers), config_(config), listener_(std::make_shared<tcp_listener>(workers, config.http_port))
 {
 }

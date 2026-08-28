@@ -113,8 +113,7 @@ void test_delete_configs()
     const auto output = parse_gb28181_output_delete(R"({"stream_name":"live/camera","output_id":"platform-a"})");
     require(output && output->first == "live/camera" && output->second == "platform-a", "output delete");
     require(!parse_gb28181_output_delete(R"({"stream_name":"live/camera"})"), "missing output delete id");
-    require(!parse_gb28181_output_delete(R"({"stream_name":"live/camera","output_id":"platform-a","rtcp":false})"),
-            "output delete extra field");
+    require(!parse_gb28181_output_delete(R"({"stream_name":"live/camera","output_id":"platform-a","rtcp":false})"), "output delete extra field");
 }
 
 }    // namespace

@@ -157,14 +157,12 @@ std::vector<std::uint8_t> make_adts_frame(std::span<const std::uint8_t> asc, std
     return result;
 }
 
-std::optional<media_track> media_track_from_avstream_config(const avstream_t& input,
-                                                             track_id video_track_id,
-                                                             track_id audio_track_id)
+std::optional<media_track> media_track_from_avstream_config(const avstream_t& input, track_id video_track_id, track_id audio_track_id)
 {
     if (input.codecid == AVCODEC_VIDEO_H264 && input.extra != nullptr && input.bytes > 0)
     {
-        auto config = h264_avcc_to_annex_b(
-            std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+        auto config =
+            h264_avcc_to_annex_b(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         if (!config.empty())
         {
             return media_track{
@@ -173,8 +171,8 @@ std::optional<media_track> media_track_from_avstream_config(const avstream_t& in
     }
     else if (input.codecid == AVCODEC_VIDEO_H265 && input.extra != nullptr && input.bytes > 0)
     {
-        auto config = h265_hvcc_to_annex_b(
-            std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
+        auto config =
+            h265_hvcc_to_annex_b(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(input.extra), static_cast<std::size_t>(input.bytes)));
         if (!config.empty())
         {
             return media_track{

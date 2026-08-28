@@ -200,8 +200,7 @@ bool rtsp_input_media::update_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
     auto track = media_track_from_avstream_config(input, video_track_id, audio_track_id);
-    if (!track && input.codecid == AVCODEC_AUDIO_OPUS && input.sample_rate == 48'000 &&
-             (input.channels == 1 || input.channels == 2))
+    if (!track && input.codecid == AVCODEC_AUDIO_OPUS && input.sample_rate == 48'000 && (input.channels == 1 || input.channels == 2))
     {
         track = media_track{.id = audio_track_id,
                             .kind = media_kind::audio,

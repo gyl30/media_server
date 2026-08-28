@@ -256,12 +256,12 @@ bool gb28181_output_media::create_muxer(const std::vector<media_track>& tracks)
             return false;
         }
         track_states_.emplace(track.id,
-                        track_state{
-                            .kind = track.kind,
-                            .codec = track.codec,
-                            .config_version = track.config_version,
-                            .media_id = media,
-                        });
+                              track_state{
+                                  .kind = track.kind,
+                                  .codec = track.codec,
+                                  .config_version = track.config_version,
+                                  .media_id = media,
+                              });
     }
     return true;
 }

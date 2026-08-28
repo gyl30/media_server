@@ -190,8 +190,7 @@ void test_tcp_output_repeated_shutdown_is_idempotent()
     auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
     auto session = std::make_shared<gb28181_tcp_output_session>(
         io.get_executor(), source, std::weak_ptr<media_stream>{stream}, stream->name(), "repeated-shutdown", 96, 10'000'2008);
-    require(registry::instance().add_output_session(stream->name(), "repeated-shutdown", session),
-            "gb output repeated shutdown registry add");
+    require(registry::instance().add_output_session(stream->name(), "repeated-shutdown", session), "gb output repeated shutdown registry add");
     require(session->startup(), "gb output repeated shutdown startup");
 
     session->shutdown();

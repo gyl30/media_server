@@ -5072,9 +5072,8 @@ void test_rtsp_publish_server_contract()
     constexpr std::size_t first_interleaved_chunk_size = 12U;
     boost::asio::write(client, boost::asio::buffer(interleaved_rtp.data(), first_interleaved_chunk_size));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    boost::asio::write(client,
-                       boost::asio::buffer(interleaved_rtp.data() + first_interleaved_chunk_size,
-                                           interleaved_rtp.size() - first_interleaved_chunk_size));
+    boost::asio::write(
+        client, boost::asio::buffer(interleaved_rtp.data() + first_interleaved_chunk_size, interleaved_rtp.size() - first_interleaved_chunk_size));
     auto next_interleaved_rtp = interleaved_rtp;
     next_interleaved_rtp[7] = 0x02;
     next_interleaved_rtp[10] = 0x0e;
@@ -6280,8 +6279,8 @@ void test_avstream_g711_track_config_conversion()
     g711a.sample_rate = 8'000;
     g711a.channels = 1;
     const auto alaw = media_track_from_avstream_config(g711a, video_track_id, audio_track_id);
-    require(alaw && alaw->id == audio_track_id && alaw->kind == media_kind::audio && alaw->codec == codec_id::g711a &&
-                alaw->clock_rate == 8'000 && alaw->channel_count == 1 && alaw->codec_config.empty(),
+    require(alaw && alaw->id == audio_track_id && alaw->kind == media_kind::audio && alaw->codec == codec_id::g711a && alaw->clock_rate == 8'000 &&
+                alaw->channel_count == 1 && alaw->codec_config.empty(),
             "avstream g711a track config");
 
     avstream_t g711u = g711a;

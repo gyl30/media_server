@@ -81,23 +81,21 @@ void tcp_acceptor::accept_next()
     }
 
     const auto self = shared_from_this();
-    acceptor_.async_accept(
-        boost::asio::bind_executor(
-            acceptor_.get_executor(),
-            [self](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
-            {
-                if (!self->started_)
-                {
-                    return;
-                }
-                if (error)
-                {
-                    self->accept_next();
-                    return;
-                }
+    acceptor_.async_accept(boost::asio::bind_executor(acceptor_.get_executor(),
+                                                      [self](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
+                                                      {
+                                                          if (!self->started_)
+                                                          {
+                                                              return;
+                                                          }
+                                                          if (error)
+                                                          {
+                                                              self->accept_next();
+                                                              return;
+                                                          }
 
-                self->complete({}, std::move(socket));
-            }));
+                                                          self->complete({}, std::move(socket));
+                                                      }));
 }
 
 void tcp_acceptor::safe_shutdown()
@@ -135,14 +133,10 @@ void tcp_acceptor::complete(boost::system::error_code error, boost::asio::ip::tc
     if (handler)
     {
         boost::asio::dispatch(acceptor_.get_executor(),
-                              [handler = std::move(handler), error, socket = std::move(socket)]() mutable
-                              { handler(error, std::move(socket)); });
+                              [handler = std::move(handler), error, socket = std::move(socket)]() mutable { handler(error, std::move(socket)); });
     }
 }
 
-void tcp_acceptor::complete(boost::system::error_code error)
-{
-    complete(error, boost::asio::ip::tcp::socket{acceptor_.get_executor()});
-}
+void tcp_acceptor::complete(boost::system::error_code error) { complete(error, boost::asio::ip::tcp::socket{acceptor_.get_executor()}); }
 
 }    // namespace media_server

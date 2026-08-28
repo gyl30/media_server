@@ -20,9 +20,7 @@ struct rtsp_muxer_t;
 namespace media_server
 {
 
-class rtsp_output_session final : public rtsp_server_session,
-                                  public media_reader,
-                                  public std::enable_shared_from_this<rtsp_output_session>
+class rtsp_output_session final : public rtsp_server_session, public media_reader, public std::enable_shared_from_this<rtsp_output_session>
 {
    public:
     rtsp_output_session(boost::asio::any_io_executor executor,
@@ -32,13 +30,12 @@ class rtsp_output_session final : public rtsp_server_session,
 
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data) override;
     int on_describe(rtsp_server_t* server, std::string_view uri) override;
-    int on_setup(
-        rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count) override;
-    int on_play(rtsp_server_t* server,
-                std::string_view uri,
-                std::string_view session,
-                const std::int64_t* npt,
-                const double* scale) override;
+    int on_setup(rtsp_server_t* server,
+                 std::string_view uri,
+                 std::string_view session,
+                 const rtsp_header_transport_t transports[],
+                 std::size_t count) override;
+    int on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale) override;
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session) override;
     void shutdown() override;
 
