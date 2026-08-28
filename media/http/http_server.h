@@ -2,9 +2,7 @@
 #define MEDIA_HTTP_HTTP_SERVER_H
 
 #include <memory>
-#include <cstdint>
 
-#include <boost/asio/io_context.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "config.h"

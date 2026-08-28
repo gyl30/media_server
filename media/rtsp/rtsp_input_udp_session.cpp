@@ -6,8 +6,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <boost/system/error_code.hpp>
-
 #include "media/rtsp/rtsp_input_udp_session.h"
 
 extern "C"

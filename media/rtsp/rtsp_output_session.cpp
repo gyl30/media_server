@@ -1,18 +1,15 @@
 #include <array>
-#include <vector>
-#include <random>
-#include <cstring>
 #include <memory>
+#include <random>
+#include <vector>
+#include <cstring>
 #include <sstream>
 #include <utility>
 #include <algorithm>
-#include <arpa/inet.h>
-
-#include <boost/asio/error.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/system/error_code.hpp>
 
 #include <spdlog/spdlog.h>
+#include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
 #include "media/codec/codec_utils.h"
@@ -25,8 +22,8 @@ extern "C"
 #include "aom-av1.h"
 #include "rtp-packet.h"
 #include "rtsp-muxer.h"
-#include "rtp-profile.h"
 #include "rtp-payload.h"
+#include "rtp-profile.h"
 #include "rtsp-server.h"
 #include "rtsp-header-transport.h"
 }

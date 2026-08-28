@@ -3,7 +3,6 @@
 
 #include <chrono>
 #include <memory>
-#include <functional>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
