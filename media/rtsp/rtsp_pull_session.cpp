@@ -585,19 +585,6 @@ bool rtsp_pull_session::update_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
     auto track = media_track_from_avstream_config(input, video_track_id, audio_track_id);
-    if (!track && (input.codecid == AVCODEC_AUDIO_G711A || input.codecid == AVCODEC_AUDIO_G711U) && input.sample_rate == 8'000 &&
-        input.channels == 1)
-    {
-        track = media_track{
-            .id = audio_track_id,
-            .kind = media_kind::audio,
-            .codec = input.codecid == AVCODEC_AUDIO_G711A ? codec_id::g711a : codec_id::g711u,
-            .clock_rate = 8'000,
-            .channel_count = 1,
-            .codec_config = {},
-        };
-    }
-
     if (!track)
     {
         return false;

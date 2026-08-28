@@ -6273,6 +6273,23 @@ int capture_rtp_timestamp(void* param, int, const void*, int bytes, std::uint32_
     return 0;
 }
 
+void test_avstream_g711_track_config_conversion()
+{
+    avstream_t g711a{};
+    g711a.codecid = AVCODEC_AUDIO_G711A;
+    g711a.sample_rate = 8'000;
+    g711a.channels = 1;
+    const auto alaw = media_track_from_avstream_config(g711a, video_track_id, audio_track_id);
+    require(alaw && alaw->id == audio_track_id && alaw->kind == media_kind::audio && alaw->codec == codec_id::g711a &&
+                alaw->clock_rate == 8'000 && alaw->channel_count == 1 && alaw->codec_config.empty(),
+            "avstream g711a track config");
+
+    avstream_t g711u = g711a;
+    g711u.codecid = AVCODEC_AUDIO_G711U;
+    const auto ulaw = media_track_from_avstream_config(g711u, video_track_id, audio_track_id);
+    require(ulaw && ulaw->codec == codec_id::g711u, "avstream g711u track config");
+}
+
 void test_timebase_conversions()
 {
     constexpr std::int64_t thirty_hours_ns = 30LL * 60 * 60 * 1'000'000'000;
@@ -9492,6 +9509,8 @@ int main()
 {
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::registry::init();
+    media_server::test_avstream_g711_track_config_conversion();
+    std::cout << "[pass] avstream_g711_track_config_conversion\n";
     media_server::test_timebase_conversions();
     std::cout << "[pass] timebase_conversions\n";
     media_server::test_rtmp_legacy_fourcc_connect_parse();
