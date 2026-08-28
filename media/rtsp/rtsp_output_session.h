@@ -5,7 +5,6 @@
 #include <span>
 #include <memory>
 #include <string>
-#include <vector>
 #include <cstdint>
 #include <functional>
 
@@ -52,11 +51,6 @@ class rtsp_output_session final : public rtsp_server_session,
     {
         codec_id codec{};
         std::uint64_t config_version{};
-        int rtp_codec{-1};
-        int frequency{};
-        int payload_type{-1};
-        std::string encoding;
-        std::vector<std::uint8_t> extra;
         int payload_index{-1};
         int media_id{-1};
         int rtp_channel{-1};
