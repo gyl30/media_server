@@ -2030,6 +2030,16 @@ void test_rtmp_input_rejects_audio_codec_change()
     }
 
     {
+        rtmp_input_test_peer peer("live/g711a-g711u-established");
+        peer.push_metadata(true);
+        peer.push_video_config(make_video_track());
+        peer.push_g711(codec_id::g711a);
+        peer.wait_track(make_g711_track(codec_id::g711a), 1);
+        peer.push_g711(codec_id::g711u);
+        peer.wait_stream_removed();
+    }
+
+    {
         rtmp_input_test_peer peer("live/video-only-opus");
         peer.push_metadata(false);
         peer.push_video_config(make_video_track());
