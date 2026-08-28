@@ -33,7 +33,7 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
     void shutdown() override;
 
    private:
-    void on_socket(boost::system::error_code error, boost::asio::ip::tcp::socket socket);
+    void on_socket_result(boost::system::error_code error, boost::asio::ip::tcp::socket socket);
     void send_packet(std::vector<std::uint8_t> packet);
     void safe_shutdown();
 

@@ -120,7 +120,7 @@ bool gb28181_udp_session::startup()
 
     rtp_socket_ = std::move(rtp_socket);
     rtcp_socket_ = std::move(rtcp_socket);
-    wait_rtcp();
+    schedule_rtcp();
     spdlog::info(
         "gb28181 udp session started stream {} rtp_port {} rtcp_port {}", media_.stream_name(), description_.rtp_port, description_.rtcp_port);
     return true;
@@ -169,7 +169,7 @@ void gb28181_udp_session::on_rtcp(std::span<const std::uint8_t> data, const boos
     static_cast<void>(media_.input_rtcp(data));
 }
 
-void gb28181_udp_session::wait_rtcp()
+void gb28181_udp_session::schedule_rtcp()
 {
     rtcp_timer_.expires_after(std::chrono::seconds(1));
     const auto weak = weak_from_this();
@@ -185,13 +185,13 @@ void gb28181_udp_session::wait_rtcp()
             if (self->remote_rtcp_endpoint_ && self->rtcp_socket_)
             {
                 std::array<std::uint8_t, 1500> buffer{};
-                const auto bytes = self->media_.rtcp(buffer);
+                const auto bytes = self->media_.generate_rtcp(buffer);
                 if (bytes > 0)
                 {
                     self->rtcp_socket_->send(std::vector<std::uint8_t>(buffer.begin(), buffer.begin() + bytes), *self->remote_rtcp_endpoint_);
                 }
             }
-            self->wait_rtcp();
+            self->schedule_rtcp();
         });
 }
 

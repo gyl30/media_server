@@ -44,7 +44,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     [[nodiscard]] std::optional<udp_socket_pair> prepare_udp_sockets(boost::asio::ip::address bind_address);
     void shutdown_udp_sockets();
     void send_packet(std::vector<std::uint8_t> packet);
-    void wait_rtcp();
+    void schedule_rtcp();
     void safe_shutdown();
 
     boost::asio::any_io_executor executor_;

@@ -48,7 +48,7 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     int on_record(rtsp_server_t* server);
-    void wait_rtcp();
+    void schedule_rtcp();
     void safe_shutdown();
 
     std::function<void(std::span<const std::uint8_t>)> write_handler_;

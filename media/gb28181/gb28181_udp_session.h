@@ -38,7 +38,7 @@ class gb28181_udp_session final : public stream_session, public std::enable_shar
    private:
     void on_rtp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
     void on_rtcp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
-    void wait_rtcp();
+    void schedule_rtcp();
     void safe_shutdown();
 
     boost::asio::any_io_executor executor_;

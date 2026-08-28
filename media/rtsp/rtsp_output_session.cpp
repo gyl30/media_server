@@ -255,7 +255,7 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
     {
         return rtsp_server_reply_describe(server, 455, "");
     }
-    const auto prepare_result = prepare_stream(uri);
+    const auto prepare_result = prepare_presentation(uri);
     if (prepare_result != 0)
     {
         return rtsp_server_reply_describe(server, prepare_result, "");
@@ -304,7 +304,7 @@ int rtsp_output_session::on_setup(
         {
             return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
         }
-        const auto prepare_result = prepare_stream(path.substr(0, separator));
+        const auto prepare_result = prepare_presentation(path.substr(0, separator));
         if (prepare_result != 0)
         {
             return rtsp_server_reply_setup(server, prepare_result, nullptr, nullptr);
@@ -530,7 +530,7 @@ bool rtsp_output_session::channels_available(track_id id, int rtp_channel, int r
     return true;
 }
 
-int rtsp_output_session::prepare_stream(std::string_view uri)
+int rtsp_output_session::prepare_presentation(std::string_view uri)
 {
     track_states_.clear();
     if (video_transcoder_)
