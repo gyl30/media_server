@@ -87,18 +87,7 @@ void gb28181_output_media::on_tracks(media_track_snapshot_ptr tracks)
     {
         return;
     }
-    if (!apply_tracks(tracks))
-    {
-        if (end_handler_)
-        {
-            end_handler_();
-        }
-        else
-        {
-            shutdown();
-        }
-        return;
-    }
+    apply_tracks(tracks);
     reader_handle().async_read(reader_cursor_);
 }
 
@@ -110,18 +99,7 @@ void gb28181_output_media::on_read(media_read_batch batch)
     }
 
     reader_cursor_ = batch.next_cursor;
-    if (!apply_tracks(batch.tracks))
-    {
-        if (end_handler_)
-        {
-            end_handler_();
-        }
-        else
-        {
-            shutdown();
-        }
-        return;
-    }
+    apply_tracks(batch.tracks);
 
     for (const auto& entry : batch.entries)
     {
@@ -258,7 +236,6 @@ bool gb28181_output_media::create_muxer(const std::vector<media_track>& tracks)
         track_states_.emplace(track.id,
                               track_state{
                                   .kind = track.kind,
-                                  .codec = track.codec,
                                   .config_version = track.config_version,
                                   .media_id = media,
                               });
@@ -266,35 +243,26 @@ bool gb28181_output_media::create_muxer(const std::vector<media_track>& tracks)
     return true;
 }
 
-bool gb28181_output_media::apply_tracks(const media_track_snapshot_ptr& tracks)
+void gb28181_output_media::apply_tracks(const media_track_snapshot_ptr& tracks)
 {
     if (!tracks || tracks->revision <= track_revision_)
     {
-        return true;
-    }
-    if (tracks->tracks.size() != track_states_.size())
-    {
-        return false;
+        return;
     }
 
     bool video_changed = false;
     for (const auto& track : tracks->tracks)
     {
-        const auto state = track_states_.find(track.id);
-        if (state == track_states_.end() || state->second.codec != track.codec)
-        {
-            return false;
-        }
-        if (track.kind == media_kind::video && state->second.config_version != track.config_version)
+        auto& state = track_states_.at(track.id);
+        if (track.kind == media_kind::video && state.config_version != track.config_version)
         {
             video_changed = true;
         }
-        state->second.config_version = track.config_version;
+        state.config_version = track.config_version;
     }
 
     track_revision_ = tracks->revision;
     waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
-    return true;
 }
 
 int gb28181_output_media::on_muxer_packet(const void* data, int bytes)

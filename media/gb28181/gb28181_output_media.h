@@ -44,7 +44,6 @@ class gb28181_output_media final : public media_reader, public std::enable_share
     struct track_state
     {
         media_kind kind{};
-        codec_id codec{};
         std::uint64_t config_version{};
         int media_id{-1};
     };
@@ -53,7 +52,7 @@ class gb28181_output_media final : public media_reader, public std::enable_share
 
     void safe_shutdown();
     [[nodiscard]] bool create_muxer(const std::vector<media_track>& tracks);
-    [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
+    void apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(const void* data, int bytes);
 
     boost::asio::any_io_executor executor_;
