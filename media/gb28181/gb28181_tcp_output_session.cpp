@@ -43,7 +43,7 @@ bool gb28181_tcp_output_session::startup()
         {
             if (const auto self = weak.lock())
             {
-                self->on_socket(source_error, std::move(socket));
+                self->on_socket_result(source_error, std::move(socket));
                 return;
             }
             boost::system::error_code ignored;
@@ -58,7 +58,7 @@ bool gb28181_tcp_output_session::startup()
     return true;
 }
 
-void gb28181_tcp_output_session::on_socket(boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+void gb28181_tcp_output_session::on_socket_result(boost::system::error_code error, boost::asio::ip::tcp::socket socket)
 {
     if (error)
     {

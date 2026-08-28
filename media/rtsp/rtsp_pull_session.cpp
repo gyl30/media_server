@@ -122,7 +122,7 @@ bool rtsp_pull_session::startup()
     static_cast<void>(avpkt2bs_create(&bitstream_));
 
     record_establishment_progress();
-    wait_establishment_timeout();
+    schedule_establishment_timeout();
 
     const auto self = shared_from_this();
     resolver_.async_resolve(parsed->host,
@@ -156,7 +156,7 @@ void rtsp_pull_session::shutdown()
 
 void rtsp_pull_session::record_establishment_progress() { last_establishment_progress_ = std::chrono::steady_clock::now(); }
 
-void rtsp_pull_session::wait_establishment_timeout()
+void rtsp_pull_session::schedule_establishment_timeout()
 {
     establishment_timer_.expires_at(last_establishment_progress_ + establishment_timeout_);
     const auto self = shared_from_this();
@@ -171,7 +171,7 @@ void rtsp_pull_session::wait_establishment_timeout()
             const auto deadline = self->last_establishment_progress_ + self->establishment_timeout_;
             if (std::chrono::steady_clock::now() < deadline)
             {
-                self->wait_establishment_timeout();
+                self->schedule_establishment_timeout();
                 return;
             }
 
@@ -180,7 +180,7 @@ void rtsp_pull_session::wait_establishment_timeout()
         });
 }
 
-void rtsp_pull_session::wait_keepalive()
+void rtsp_pull_session::schedule_keepalive()
 {
     keepalive_timer_.expires_after(keepalive_interval_);
     const auto self = shared_from_this();
@@ -196,11 +196,11 @@ void rtsp_pull_session::wait_keepalive()
                 self->shutdown();
                 return;
             }
-            self->wait_keepalive();
+            self->schedule_keepalive();
         });
 }
 
-void rtsp_pull_session::wait_rtcp()
+void rtsp_pull_session::schedule_rtcp()
 {
     rtcp_timer_.expires_after(std::chrono::seconds(1));
     const auto self = shared_from_this();
@@ -233,7 +233,7 @@ void rtsp_pull_session::wait_rtcp()
                 std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
                 self->connection_->write(packet);
             }
-            self->wait_rtcp();
+            self->schedule_rtcp();
         });
 }
 
@@ -333,7 +333,7 @@ void rtsp_pull_session::rtp_callback(void* param, std::uint8_t channel, const vo
     static_cast<rtsp_pull_session*>(param)->on_rtp(channel, data, bytes);
 }
 
-int rtsp_pull_session::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_pull_session*>(param)->on_packet(packet); }
+int rtsp_pull_session::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_pull_session*>(param)->on_demuxed_packet(packet); }
 
 std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::string_view url)
 {
@@ -511,8 +511,8 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
         }
         media_started_ = true;
         establishment_timer_.cancel();
-        wait_keepalive();
-        wait_rtcp();
+        schedule_keepalive();
+        schedule_rtcp();
         static_cast<void>(try_initialize_tracks());
         if (!tracks_initialized_)
         {
@@ -534,7 +534,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
     static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
 }
 
-int rtsp_pull_session::on_packet(avpacket_t* packet)
+int rtsp_pull_session::on_demuxed_packet(avpacket_t* packet)
 {
     if (packet == nullptr || packet->stream == nullptr || closed_ || !stream_)
     {

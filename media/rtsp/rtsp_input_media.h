@@ -43,8 +43,8 @@ class rtsp_input_media final
 
     [[nodiscard]] bool startup(const std::string& rtcp_cname);
     [[nodiscard]] bool start_recording();
-    [[nodiscard]] bool input(std::size_t track_index, std::span<const std::uint8_t> data);
-    [[nodiscard]] int rtcp(std::size_t track_index, std::span<std::uint8_t> buffer);
+    [[nodiscard]] bool input_packet(std::size_t track_index, std::span<const std::uint8_t> data);
+    [[nodiscard]] int generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer);
     void shutdown();
 
     [[nodiscard]] const std::vector<rtsp_input_track_description>& descriptions() const noexcept;
@@ -53,7 +53,7 @@ class rtsp_input_media final
 
    private:
     static int packet_callback(void* param, avpacket_t* packet);
-    int on_packet(avpacket_t* packet);
+    int on_demuxed_packet(avpacket_t* packet);
     bool update_track_from_packet(const avpacket_t& packet);
 
     boost::asio::any_io_executor executor_;

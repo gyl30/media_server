@@ -41,7 +41,7 @@ class gb28181_input_media final
     [[nodiscard]] bool startup();
     [[nodiscard]] gb28181_rtp_input_result input_rtp(std::span<const std::uint8_t> data);
     [[nodiscard]] int input_rtcp(std::span<const std::uint8_t> data);
-    [[nodiscard]] int rtcp(std::span<std::uint8_t> buffer);
+    [[nodiscard]] int generate_rtcp(std::span<std::uint8_t> buffer);
     void shutdown();
 
     [[nodiscard]] const std::string& stream_name() const noexcept;
@@ -57,7 +57,7 @@ class gb28181_input_media final
     static int packet_callback(void* param, avpacket_t* packet);
     static void stream_callback(void* param, int stream, int codecid, const void* extra, int bytes, int finish);
 
-    int on_packet(avpacket_t* packet);
+    int on_demuxed_packet(avpacket_t* packet);
     void on_stream(int codecid, bool finish);
     void apply_topology();
     bool update_track_from_packet(const avpacket_t& packet);

@@ -126,7 +126,7 @@ int gb28181_input_media::input_rtcp(std::span<const std::uint8_t> data)
     return rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size()));
 }
 
-int gb28181_input_media::rtcp(std::span<std::uint8_t> buffer)
+int gb28181_input_media::generate_rtcp(std::span<std::uint8_t> buffer)
 {
     if (closed_ || demuxer_ == nullptr)
     {
@@ -158,7 +158,7 @@ void gb28181_input_media::shutdown()
 
 const std::string& gb28181_input_media::stream_name() const noexcept { return stream_name_; }
 
-int gb28181_input_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<gb28181_input_media*>(param)->on_packet(packet); }
+int gb28181_input_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<gb28181_input_media*>(param)->on_demuxed_packet(packet); }
 
 void gb28181_input_media::stream_callback(void* param, int stream, int codecid, const void* extra, int bytes, int finish)
 {
@@ -259,7 +259,7 @@ void gb28181_input_media::apply_topology()
     static_cast<void>(try_start_recording());
 }
 
-int gb28181_input_media::on_packet(avpacket_t* packet)
+int gb28181_input_media::on_demuxed_packet(avpacket_t* packet)
 {
     if (packet == nullptr || packet->stream == nullptr || closed_ || fatal_codec_change_)
     {

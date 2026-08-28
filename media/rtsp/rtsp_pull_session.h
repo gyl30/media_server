@@ -65,13 +65,13 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     void on_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
     void record_establishment_progress();
-    void wait_establishment_timeout();
-    void wait_keepalive();
-    void wait_rtcp();
+    void schedule_establishment_timeout();
+    void schedule_keepalive();
+    void schedule_rtcp();
     int on_describe(const char* sdp, int length);
     int on_setup(int timeout, std::int64_t duration);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
-    int on_packet(avpacket_t* packet);
+    int on_demuxed_packet(avpacket_t* packet);
     [[nodiscard]] bool update_track_from_packet(const avpacket_t& packet);
     [[nodiscard]] bool try_initialize_tracks();
 
