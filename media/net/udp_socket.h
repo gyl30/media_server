@@ -12,6 +12,7 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/system/error_code.hpp>
 
 namespace media_server
 {
@@ -25,9 +26,13 @@ class udp_socket final : public std::enable_shared_from_this<udp_socket>
 
     explicit udp_socket(boost::asio::any_io_executor executor);
 
-    [[nodiscard]] bool startup(boost::asio::ip::address bind_address, read_handler on_read, write_error_handler on_write_error);
-    [[nodiscard]] bool startup(boost::asio::ip::address bind_address, std::uint16_t port, read_handler on_read, write_error_handler on_write_error);
-    [[nodiscard]] bool connect(const boost::asio::ip::udp::endpoint& endpoint);
+    void startup(boost::asio::ip::address bind_address, read_handler on_read, write_error_handler on_write_error, boost::system::error_code& error);
+    void startup(boost::asio::ip::address bind_address,
+                 std::uint16_t port,
+                 read_handler on_read,
+                 write_error_handler on_write_error,
+                 boost::system::error_code& error);
+    void connect(const boost::asio::ip::udp::endpoint& endpoint, boost::system::error_code& error);
     void send(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint);
     void shutdown();
     void shutdown(shutdown_handler handler);

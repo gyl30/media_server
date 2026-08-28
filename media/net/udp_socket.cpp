@@ -2,6 +2,7 @@
 
 #include <boost/asio/post.hpp>
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/error.hpp>
 
 #include "media/net/udp_socket.h"
 
@@ -10,56 +11,65 @@ namespace media_server
 
 udp_socket::udp_socket(boost::asio::any_io_executor executor) : socket_(std::move(executor)) {}
 
-bool udp_socket::startup(boost::asio::ip::address bind_address, read_handler on_read, write_error_handler on_write_error)
+void udp_socket::startup(boost::asio::ip::address bind_address,
+                         read_handler on_read,
+                         write_error_handler on_write_error,
+                         boost::system::error_code& error)
 {
-    return startup(std::move(bind_address), 0, std::move(on_read), std::move(on_write_error));
+    startup(std::move(bind_address), 0, std::move(on_read), std::move(on_write_error), error);
 }
 
-bool udp_socket::startup(boost::asio::ip::address bind_address, std::uint16_t port, read_handler on_read, write_error_handler on_write_error)
+void udp_socket::startup(boost::asio::ip::address bind_address,
+                         std::uint16_t port,
+                         read_handler on_read,
+                         write_error_handler on_write_error,
+                         boost::system::error_code& error)
 {
+    error.clear();
     if (closed_ || socket_.is_open())
     {
-        return false;
+        error = boost::asio::error::already_started;
+        return;
     }
 
-    boost::system::error_code error;
     socket_.open(bind_address.is_v6() ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4(), error);
     if (error)
     {
-        return false;
+        return;
     }
 
     socket_.bind(boost::asio::ip::udp::endpoint(std::move(bind_address), port), error);
     if (error)
     {
-        socket_.close(error);
-        return false;
+        boost::system::error_code close_error;
+        socket_.close(close_error);
+        return;
     }
 
     const auto endpoint = socket_.local_endpoint(error);
-    if (error || endpoint.port() == 0)
+    if (error)
     {
-        socket_.close(error);
-        return false;
+        boost::system::error_code close_error;
+        socket_.close(close_error);
+        return;
     }
 
     read_handler_ = std::move(on_read);
     write_error_handler_ = std::move(on_write_error);
     local_port_ = endpoint.port();
     receive_next();
-    return true;
 }
 
-bool udp_socket::connect(const boost::asio::ip::udp::endpoint& endpoint)
+void udp_socket::connect(const boost::asio::ip::udp::endpoint& endpoint, boost::system::error_code& error)
 {
+    error.clear();
     if (closed_ || !socket_.is_open())
     {
-        return false;
+        error = boost::asio::error::bad_descriptor;
+        return;
     }
 
-    boost::system::error_code error;
     socket_.connect(endpoint, error);
-    return !error;
 }
 
 void udp_socket::send(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
@@ -139,12 +149,16 @@ void udp_socket::write_next()
                               {
                                   return;
                               }
+                              if (error)
+                              {
+                                  if (write_error_handler_)
+                                  {
+                                      write_error_handler_(error, datagram.endpoint);
+                                  }
+                                  return;
+                              }
                               send_queue_.pop_front();
                               write_next();
-                              if (error && write_error_handler_)
-                              {
-                                  write_error_handler_(error, datagram.endpoint);
-                              }
                           });
 }
 

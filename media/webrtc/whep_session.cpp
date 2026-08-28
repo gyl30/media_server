@@ -74,27 +74,30 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     local_port_reservation_ = *reserved;
     const auto weak = weak_from_this();
     udp_socket_ = std::make_shared<udp_socket>(executor_);
-    if (!udp_socket_->startup(
-            bind_address,
-            local_port_reservation_,
-            [weak](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
+    boost::system::error_code udp_error;
+    udp_socket_->startup(
+        bind_address,
+        local_port_reservation_,
+        [weak](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
+        {
+            if (const auto self = weak.lock())
             {
-                if (const auto self = weak.lock())
-                {
-                    self->on_udp_read(error, packet, endpoint);
-                }
-            },
-            [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint)
+                self->on_udp_read(error, packet, endpoint);
+            }
+        },
+        [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint)
+        {
+            if (const auto self = weak.lock())
             {
-                if (const auto self = weak.lock())
-                {
-                    self->on_udp_write_error(error, endpoint);
-                }
-            }))
+                self->on_udp_write_error(error, endpoint);
+            }
+        },
+        udp_error);
+    if (udp_error)
     {
         port_manager::instance().release(local_port_reservation_);
         local_port_reservation_ = 0;
-        spdlog::error("webrtc udp socket startup failed");
+        spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
         shutdown();
         return whep_session_startup_error::internal_error;
     }
@@ -372,10 +375,7 @@ void whep_session::on_udp_write_error(boost::system::error_code error, const boo
         return;
     }
     spdlog::debug("webrtc udp send failed session {} remote {} {} error {}", id_, endpoint.address().to_string(), endpoint.port(), error.message());
-    if (remote_endpoint_.has_value() && endpoint == *remote_endpoint_)
-    {
-        shutdown();
-    }
+    shutdown();
 }
 
 void whep_session::handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)

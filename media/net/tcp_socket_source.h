@@ -16,7 +16,7 @@ class tcp_socket_source
 
     virtual ~tcp_socket_source() = default;
 
-    [[nodiscard]] virtual boost::system::error_code startup(socket_handler handler) = 0;
+    virtual void startup(socket_handler handler, boost::system::error_code& error) = 0;
     virtual void shutdown() = 0;
 };
 

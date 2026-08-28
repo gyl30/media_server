@@ -17,15 +17,16 @@ tcp_acceptor::tcp_acceptor(boost::asio::any_io_executor executor,
 {
 }
 
-boost::system::error_code tcp_acceptor::startup(socket_handler handler)
+void tcp_acceptor::startup(socket_handler handler, boost::system::error_code& error)
 {
+    error.clear();
     if (started_ || completed_)
     {
-        return boost::asio::error::already_started;
+        error = boost::asio::error::already_started;
+        return;
     }
 
     const boost::asio::ip::tcp::endpoint endpoint{bind_address_, port_};
-    boost::system::error_code error;
     acceptor_.open(endpoint.protocol(), error);
     if (!error)
     {
@@ -43,7 +44,7 @@ boost::system::error_code tcp_acceptor::startup(socket_handler handler)
     {
         boost::system::error_code close_error;
         acceptor_.close(close_error);
-        return error;
+        return;
     }
 
     started_ = true;
@@ -64,7 +65,6 @@ boost::system::error_code tcp_acceptor::startup(socket_handler handler)
     }
     const auto self = shared_from_this();
     boost::asio::post(acceptor_.get_executor(), [self]() { self->accept_next(); });
-    return {};
 }
 
 void tcp_acceptor::shutdown()
@@ -75,7 +75,7 @@ void tcp_acceptor::shutdown()
 
 void tcp_acceptor::accept_next()
 {
-    if (!started_)
+    if (!started_ || completed_)
     {
         return;
     }
@@ -84,31 +84,28 @@ void tcp_acceptor::accept_next()
     acceptor_.async_accept(boost::asio::bind_executor(acceptor_.get_executor(),
                                                       [self](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
                                                       {
-                                                          if (!self->started_)
+                                                          if (!self->started_ || self->completed_)
                                                           {
+                                                              boost::system::error_code ignored;
+                                                              socket.close(ignored);
                                                               return;
                                                           }
-                                                          if (error)
-                                                          {
-                                                              self->accept_next();
-                                                              return;
-                                                          }
-
-                                                          self->complete({}, std::move(socket));
+                                                          self->complete(error, std::move(socket));
                                                       }));
 }
 
 void tcp_acceptor::safe_shutdown()
 {
-    if (!started_ || completed_)
+    if (!started_)
     {
         return;
     }
-    completed_ = true;
     started_ = false;
+    completed_ = true;
     socket_handler_ = {};
     timer_.cancel();
     boost::system::error_code error;
+    acceptor_.cancel(error);
     acceptor_.close(error);
 }
 
@@ -121,19 +118,30 @@ void tcp_acceptor::complete(boost::system::error_code error, boost::asio::ip::tc
         return;
     }
     completed_ = true;
-    started_ = false;
     timer_.cancel();
-    boost::system::error_code close_error;
-    acceptor_.close(close_error);
     auto handler = std::move(socket_handler_);
+
     if (error)
     {
-        socket.close(close_error);
+        boost::system::error_code ignored;
+        acceptor_.cancel(ignored);
+        socket.close(ignored);
+        if (handler)
+        {
+            boost::asio::dispatch(acceptor_.get_executor(),
+                                  [handler = std::move(handler), error, executor = acceptor_.get_executor()]() mutable
+                                  { handler(error, boost::asio::ip::tcp::socket{executor}); });
+        }
+        return;
     }
+
+    started_ = false;
+    boost::system::error_code close_error;
+    acceptor_.close(close_error);
     if (handler)
     {
         boost::asio::dispatch(acceptor_.get_executor(),
-                              [handler = std::move(handler), error, socket = std::move(socket)]() mutable { handler(error, std::move(socket)); });
+                              [handler = std::move(handler), socket = std::move(socket)]() mutable { handler({}, std::move(socket)); });
     }
 }
 

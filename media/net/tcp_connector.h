@@ -19,7 +19,7 @@ class tcp_connector final : public tcp_socket_source, public std::enable_shared_
    public:
     tcp_connector(boost::asio::any_io_executor executor, boost::asio::ip::tcp::endpoint endpoint, std::chrono::milliseconds timeout);
 
-    [[nodiscard]] boost::system::error_code startup(socket_handler handler) override;
+    void startup(socket_handler handler, boost::system::error_code& error) override;
     void shutdown() override;
 
    private:

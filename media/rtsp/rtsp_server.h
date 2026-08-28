@@ -18,7 +18,7 @@ class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
    public:
     rtsp_server(io_context_pool& workers, const config& config);
 
-    [[nodiscard]] boost::system::error_code startup();
+    void startup(boost::system::error_code& error);
     void shutdown();
 
    private:
