@@ -170,6 +170,7 @@ add_library(media_core STATIC
     media/http/hls_http_session.cpp
     media/http/gb28181_json.cpp
     media/http/gb28181_http.cpp
+    media/http/signaling_client.cpp
     media/http/whep_http.cpp
     media/http/http_session.cpp
     media/http/http_server.cpp
@@ -252,8 +253,13 @@ if(BUILD_TESTING)
         media_server_link_options
         Threads::Threads
         ${MEDIA_SERVER_BOOST_PROGRAM_OPTIONS_LIB}
+        ${MEDIA_SERVER_BOOST_LIBS}
     )
     add_test(NAME config_tests COMMAND config_tests)
+
+    add_executable(signaling_client_tests tests/signaling_client_tests.cpp)
+    target_link_libraries(signaling_client_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME signaling_client_tests COMMAND signaling_client_tests)
 
     add_executable(service_tests tests/service_tests.cpp service.cpp)
     target_link_libraries(service_tests PRIVATE media_core media_server_link_options)
@@ -266,6 +272,9 @@ if(BUILD_TESTING)
     add_executable(gb28181_udp_peer_tests tests/gb28181_udp_peer_tests.cpp)
     target_link_libraries(gb28181_udp_peer_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_udp_peer_tests COMMAND gb28181_udp_peer_tests)
+
+    add_executable(gb28181_rtp_fixture tests/gb28181_rtp_fixture.cpp)
+    target_link_libraries(gb28181_rtp_fixture PRIVATE media_core media_server_link_options)
 
     add_executable(gb28181_identity_tests tests/gb28181_identity_tests.cpp)
     target_link_libraries(gb28181_identity_tests PRIVATE media_core media_server_link_options)
