@@ -322,7 +322,18 @@ int rtsp_pull_session::setup_callback(void* param, int timeout, std::int64_t dur
     return static_cast<rtsp_pull_session*>(param)->on_setup(timeout, duration);
 }
 
-int rtsp_pull_session::play_callback(void*, int, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t*, int) { return 0; }
+int rtsp_pull_session::play_callback(
+    void* param, int media, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t* info, int count)
+{
+    if (info == nullptr || count == 0)
+    {
+        return 0;
+    }
+
+    auto* self = static_cast<rtsp_pull_session*>(param);
+    return rtsp_demuxer_rtpinfo(
+        self->demuxers_[static_cast<std::size_t>(media)], static_cast<std::uint16_t>(info[0].seq), info[0].time);
+}
 
 int rtsp_pull_session::pause_callback(void*) { return 0; }
 
