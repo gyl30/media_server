@@ -3797,7 +3797,7 @@ void test_http_flv_config_reset()
     };
 
     auto stream = std::make_shared<media_stream>("live/http-flv-reset", reader_worker.get_executor());
-    require(stream->set_tracks({make_video_track()}), "http flv reset initial track");
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "http flv reset initial tracks");
     http_flv_capture capture;
     auto output = std::make_shared<http_flv_output>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -3806,13 +3806,48 @@ void test_http_flv_config_reset()
     static_cast<void>(stream->add_reader(output, reader_worker.get_executor()));
     drain();
 
+    require(capture.writes.size() == 1U && capture.writes.back().bootstrap && capture.writes.back().generation == 1,
+            "http flv reset initial bootstrap");
+    output->write_complete(1);
+    drain();
+
+    stream->publish(make_video_frame(0, true));
+    drain();
+    require(capture.writes.size() == 2U && !capture.writes.back().bootstrap && capture.writes.back().generation == 1,
+            "http flv reset initial keyframe");
+
     auto updated_video = make_video_track();
     updated_video.codec_config = h264_config_updated;
     require(stream->update_track(std::move(updated_video)), "http flv reset video config");
     drain();
-    require(capture.writes.size() == 2U && capture.writes.back().bootstrap && capture.writes.back().generation == 2,
+    require(capture.writes.size() == 3U && capture.writes.back().bootstrap && capture.writes.back().generation == 2,
             "http flv reset emits new generation bootstrap");
     require(capture.ends == 0U, "http flv same topology reset stays open");
+
+    stream->publish(make_video_frame(40'000'000, false, h264_config_updated));
+    stream->publish(make_audio_frame(60'000'000));
+    stream->publish(make_video_frame(80'000'000, true, h264_config_updated));
+    drain();
+
+    output->write_complete(1);
+    drain();
+    require(capture.writes.size() == 3U, "http flv ignores stale generation write completion");
+    output->write_complete(2);
+    drain();
+    require(capture.writes.size() == 4U && !capture.writes.back().bootstrap && capture.writes.back().generation == 2,
+            "http flv resumes new generation at keyframe");
+
+    const auto decoded = demux_http_flv(capture);
+    std::vector<std::pair<int, std::int64_t>> media;
+    for (const auto& packet : decoded.packets)
+    {
+        if (packet.codec == FLV_VIDEO_H264 || packet.codec == FLV_AUDIO_AAC)
+        {
+            media.emplace_back(packet.codec, packet.pts);
+        }
+    }
+    require(media == std::vector<std::pair<int, std::int64_t>>{{FLV_VIDEO_H264, 0}, {FLV_VIDEO_H264, 80}},
+            "http flv config reset drops stale and pre-keyframe media");
     output->shutdown();
 }
 
