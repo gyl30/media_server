@@ -7065,6 +7065,36 @@ void test_flv_av1_transcode_round_trip()
                     "flv av1 audio update keeps video configuration");
             require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_AUDIO_ASC; }) == 2,
                     "flv av1 audio update refreshes aac configuration");
+
+            const auto updated_fixture = make_video_transcoder_fixture(codec_id::h264, 96, 64);
+            output.on_track(media_track{
+                .id = video_track_id,
+                .kind = media_kind::video,
+                .codec = codec_id::h264,
+                .clock_rate = 90'000,
+                .codec_config = updated_fixture.codec_config,
+                .config_version = 2,
+            });
+            for (auto frame : updated_fixture.frames)
+            {
+                frame.dts_ns += 10'000'000'000;
+                frame.pts_ns += 10'000'000'000;
+                output.on_frame(frame);
+            }
+            require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AV1C; }) == 2,
+                    "flv av1 video config update restarts configuration");
+            const auto updated_config = std::ranges::find_if(
+                capture.packets.rbegin(), capture.packets.rend(), [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AV1C; });
+            require(updated_config != capture.packets.rend() && !updated_config->payload.empty(), "flv av1 updated configuration record");
+            aom_av1_t updated_av1{};
+            require(aom_av1_codec_configuration_record_load(updated_config->payload.data(), updated_config->payload.size(), &updated_av1) ==
+                            static_cast<int>(updated_config->payload.size()) &&
+                        updated_av1.bytes > 0,
+                    "flv av1 updated configuration record load");
+            aom_av1_t updated_sequence{};
+            require(aom_av1_codec_configuration_record_init(&updated_sequence, updated_av1.data, updated_av1.bytes) == 0 &&
+                        updated_sequence.width == updated_fixture.width && updated_sequence.height == updated_fixture.height,
+                    "flv av1 video config update restarts transcoder dimensions");
         }
         else
         {
