@@ -57,6 +57,7 @@
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_input_media.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/rtsp/rtsp_server_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
@@ -1031,11 +1032,14 @@ struct rtsp_aac_capture
     avpkt2bs_t bitstream{};
     std::vector<std::uint8_t> rtp_payload;
     std::vector<std::uint8_t> frame;
+    std::vector<std::int64_t> timestamps;
+    std::uint32_t rtp_timestamp{};
 };
 
 int capture_rtsp_aac_frame(void* param, avpacket_t* packet)
 {
     auto& capture = *static_cast<rtsp_aac_capture*>(param);
+    capture.timestamps.push_back(packet->pts);
     const auto bytes = avpkt2bs_input(&capture.bitstream, packet);
     if (bytes > 0)
     {
@@ -1049,6 +1053,7 @@ int forward_rtsp_aac_rtp(void* param, int, const void* packet, int bytes, std::u
     auto& capture = *static_cast<rtsp_aac_capture*>(param);
     rtp_packet_t decoded{};
     require(rtp_packet_deserialize(&decoded, packet, bytes) == 0, "rtsp aac rtp packet");
+    capture.rtp_timestamp = decoded.rtp.timestamp;
     const auto* begin = static_cast<const std::uint8_t*>(decoded.payload);
     capture.rtp_payload.assign(begin, begin + decoded.payloadlen);
     return rtsp_demuxer_input(capture.demuxer, packet, bytes);
@@ -4528,6 +4533,139 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
     runner.join();
 }
 
+void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
+{
+    boost::asio::io_context io;
+    auto& streams = media_server::registry::instance();
+    streams.clear();
+
+    auto video = make_video_track();
+    auto audio = make_g711_track(codec_id::g711a);
+    rtsp_input_media media(io.get_executor(),
+                           "live/rtcp-sync",
+                           {
+                               rtsp_input_track_description{
+                                   .uri = "video",
+                                   .track = video,
+                                   .clock_rate = 90'000,
+                                   .payload_type = 96,
+                                   .encoding = "H264",
+                                   .fmtp = "packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==",
+                               },
+                               rtsp_input_track_description{
+                                   .uri = "audio",
+                                   .track = audio,
+                                   .clock_rate = 8'000,
+                                   .payload_type = RTP_PAYLOAD_PCMA,
+                                   .encoding = "PCMA",
+                                   .fmtp = {},
+                               },
+                           });
+    auto video_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{video_track_id});
+    auto audio_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{audio_track_id});
+    media_reader_handle video_handle;
+    media_reader_handle audio_handle;
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          require(media.startup("rtcp-sync"), "rtsp rtcp sync startup");
+                          require(media.start_recording(), "rtsp rtcp sync recording");
+                          const auto stream = streams.find("live/rtcp-sync");
+                          require(stream != nullptr, "rtsp rtcp sync stream");
+                          video_handle = stream->add_reader(video_reader, io.get_executor());
+                          audio_handle = stream->add_reader(audio_reader, io.get_executor());
+                      });
+    io.run();
+    io.restart();
+    require(video_reader->wait_for_ready(1) && audio_reader->wait_for_ready(1), "rtsp rtcp sync readers ready");
+
+    auto make_rtcp_sr = [](std::uint32_t ssrc, std::uint32_t ntp_msw, std::uint32_t ntp_lsw, std::uint32_t rtp_timestamp)
+    {
+        std::array<std::uint8_t, 28> packet{};
+        packet[0] = 0x80;
+        packet[1] = 200;
+        packet[2] = 0;
+        packet[3] = 6;
+        auto write_u32 = [&packet](std::size_t offset, std::uint32_t value)
+        {
+            packet[offset] = static_cast<std::uint8_t>(value >> 24U);
+            packet[offset + 1U] = static_cast<std::uint8_t>(value >> 16U);
+            packet[offset + 2U] = static_cast<std::uint8_t>(value >> 8U);
+            packet[offset + 3U] = static_cast<std::uint8_t>(value);
+        };
+        write_u32(4, ssrc);
+        write_u32(8, ntp_msw);
+        write_u32(12, ntp_lsw);
+        write_u32(16, rtp_timestamp);
+        return packet;
+    };
+    auto make_rtp = [](std::uint8_t payload, std::uint16_t sequence, std::uint32_t timestamp, std::uint32_t ssrc, std::vector<std::uint8_t> body)
+    {
+        std::vector<std::uint8_t> packet(12U + body.size());
+        packet[0] = 0x80;
+        packet[1] = payload;
+        packet[2] = static_cast<std::uint8_t>(sequence >> 8U);
+        packet[3] = static_cast<std::uint8_t>(sequence);
+        packet[4] = static_cast<std::uint8_t>(timestamp >> 24U);
+        packet[5] = static_cast<std::uint8_t>(timestamp >> 16U);
+        packet[6] = static_cast<std::uint8_t>(timestamp >> 8U);
+        packet[7] = static_cast<std::uint8_t>(timestamp);
+        packet[8] = static_cast<std::uint8_t>(ssrc >> 24U);
+        packet[9] = static_cast<std::uint8_t>(ssrc >> 16U);
+        packet[10] = static_cast<std::uint8_t>(ssrc >> 8U);
+        packet[11] = static_cast<std::uint8_t>(ssrc);
+        std::copy(body.begin(), body.end(), packet.begin() + 12);
+        return packet;
+    };
+
+    constexpr std::uint32_t video_ssrc = 0x11223344U;
+    constexpr std::uint32_t audio_ssrc = 0x55667788U;
+    constexpr std::uint32_t video_rtp_origin = 0x12345678U;
+    constexpr std::uint32_t audio_rtp_origin = 0x87654321U;
+    constexpr std::uint32_t common_ntp_seconds = 0xe1234567U;
+    const auto video_sr = make_rtcp_sr(video_ssrc, common_ntp_seconds, 0, video_rtp_origin);
+    const auto audio_sr = make_rtcp_sr(audio_ssrc, common_ntp_seconds, 0x1999999aU, audio_rtp_origin);
+
+    constexpr std::uint32_t video_first = video_rtp_origin + 9'000U;
+    constexpr std::uint32_t audio_first = audio_rtp_origin + 800U;
+    const std::vector<std::uint8_t> video_sps{0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f, 0x97, 0x01, 0x6e, 0x40};
+    const std::vector<std::uint8_t> video_pps{0x68, 0xce, 0x3c, 0x80};
+    const std::vector<std::uint8_t> video_idr{0x65, 0x88, 0x84, 0x21, 0xa0};
+    boost::asio::post(
+        io,
+        [&]()
+        {
+            require(media.input_packet(0, video_sr), "rtsp rtcp sync video sender report");
+            require(media.input_packet(1, audio_sr), "rtsp rtcp sync audio sender report");
+            require(media.input_packet(0, make_rtp(0x60, 1, video_first, video_ssrc, video_sps)), "rtsp rtcp sync video sps");
+            require(media.input_packet(0, make_rtp(0x60, 2, video_first, video_ssrc, video_pps)), "rtsp rtcp sync video pps");
+            require(media.input_packet(0, make_rtp(0xe0, 3, video_first, video_ssrc, video_idr)), "rtsp rtcp sync video first idr");
+            require(media.input_packet(0, make_rtp(0xe0, 4, video_first + 3'600U, video_ssrc, video_idr)), "rtsp rtcp sync video second idr");
+            require(media.input_packet(1, make_rtp(RTP_PAYLOAD_PCMA, 1, audio_first, audio_ssrc, std::vector<std::uint8_t>(160U, 0x5a))),
+                    "rtsp rtcp sync audio first");
+            require(media.input_packet(0, make_rtp(0xe0, 5, video_first + 7'200U, video_ssrc, video_idr)), "rtsp rtcp sync video third idr");
+            require(media.input_packet(1, make_rtp(RTP_PAYLOAD_PCMA, 2, audio_first + 320U, audio_ssrc, std::vector<std::uint8_t>(160U, 0x6a))),
+                    "rtsp rtcp sync audio second");
+        });
+    io.run();
+    io.restart();
+
+    require(video_reader->wait_for_frames(2) && audio_reader->wait_for_frames(2), "rtsp rtcp sync receives frames");
+    const auto video_frames = video_reader->frames();
+    const auto audio_frames = audio_reader->frames();
+    require(video_frames[0].second == 100'000'000 && video_frames[1].second == 140'000'000, "rtsp rtcp sync video common timeline");
+    require(audio_frames[0].second == 200'000'000 && audio_frames[1].second == 240'000'000, "rtsp rtcp sync audio common timeline");
+
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          video_handle.remove();
+                          audio_handle.remove();
+                          media.shutdown();
+                      });
+    io.run();
+}
+
 void test_rtsp_input_g711_passthrough()
 {
     test_rtsp_input_g711_passthrough_case(codec_id::g711a, false);
@@ -7551,6 +7689,39 @@ void test_rtsp_aac_adts_round_trip()
     require(au_size == raw_aac.size() && std::ranges::equal(std::span<const std::uint8_t>(capture.rtp_payload).subspan(4U), raw_aac),
             "rtsp aac rtp carries raw access unit");
     require(capture.frame == *frame.payload, "rtsp aac round trip keeps one adts header");
+    require(capture.timestamps == std::vector<std::int64_t>{0}, "rtsp demuxer random rtp origin starts at zero before synchronization");
+
+    require(rtsp_muxer_input(muxer, media, 40, 40, frame.payload->data(), static_cast<int>(frame.payload->size()), 0) == 0,
+            "rtsp aac second muxer input");
+    require(capture.timestamps == std::vector<std::int64_t>{0, 20}, "rtsp demuxer relative timeline before sender report");
+
+    std::array<std::uint8_t, 28> sender_report{};
+    sender_report[0] = 0x80;
+    sender_report[1] = 200;
+    sender_report[3] = 6;
+    auto write_u32 = [&sender_report](std::size_t offset, std::uint32_t value)
+    {
+        sender_report[offset] = static_cast<std::uint8_t>(value >> 24U);
+        sender_report[offset + 1U] = static_cast<std::uint8_t>(value >> 16U);
+        sender_report[offset + 2U] = static_cast<std::uint8_t>(value >> 8U);
+        sender_report[offset + 3U] = static_cast<std::uint8_t>(value);
+    };
+    write_u32(4, 0x11223344U);
+    write_u32(8, 0xe1234567U);
+    write_u32(16, capture.rtp_timestamp);
+    require(rtsp_demuxer_input(capture.demuxer, sender_report.data(), static_cast<int>(sender_report.size())) == 200,
+            "rtsp aac sender report input");
+    std::uint32_t ntp_msw{};
+    std::uint32_t ntp_lsw{};
+    std::uint32_t rtp_timestamp{};
+    std::int64_t sender_report_pts{};
+    require(rtsp_demuxer_sender_report(capture.demuxer, &ntp_msw, &ntp_lsw, &rtp_timestamp, &sender_report_pts) == 0 &&
+                rtp_timestamp == capture.rtp_timestamp && sender_report_pts == 20,
+            "rtsp aac sender report preserves current timeline");
+    require(rtsp_demuxer_set_timestamp(capture.demuxer, rtp_timestamp, sender_report_pts) == 0, "rtsp aac sender report timestamp mapping");
+    require(rtsp_muxer_input(muxer, media, 60, 60, frame.payload->data(), static_cast<int>(frame.payload->size()), 0) == 0,
+            "rtsp aac third muxer input");
+    require(capture.timestamps == std::vector<std::int64_t>({0, 20, 40}), "rtsp aac sender report keeps timeline continuous");
     require(rtsp_muxer_destroy(muxer) == 0, "rtsp aac muxer destroy");
     require(rtsp_demuxer_destroy(capture.demuxer) == 0, "rtsp aac demuxer destroy");
     require(avpkt2bs_destroy(&capture.bitstream) == 0, "rtsp aac bitstream destroy");
@@ -10016,6 +10187,8 @@ int main()
     std::cout << "[pass] rtsp_input_g711_passthrough\n";
     media_server::test_rtsp_pull_rtp_info_aligns_media_timestamps();
     std::cout << "[pass] rtsp_pull_rtp_info_aligns_media_timestamps\n";
+    media_server::test_rtsp_publish_rtcp_sender_reports_align_media_timestamps();
+    std::cout << "[pass] rtsp_publish_rtcp_sender_reports_align_media_timestamps\n";
     media_server::test_rtsp_input_rejects_mismatched_g711_rtpmap();
     std::cout << "[pass] rtsp_input_rejects_mismatched_g711_rtpmap\n";
     media_server::test_rtsp_input_rejects_audio_only_source();

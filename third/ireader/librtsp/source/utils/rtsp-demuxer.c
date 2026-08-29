@@ -42,9 +42,14 @@ struct rtp_payload_info_t
 
     uint32_t last; // last rtp packet timestamp
     int64_t timestamp; // rtp timestamp extend to 64bit
+    int64_t base_pts;
     int64_t pts; // last mapped rtp packet timestamp
 
     struct rtp_demuxer_t* rtp;
+    uint32_t sender_ntp_msw;
+    uint32_t sender_ntp_lsw;
+    uint32_t sender_rtp_timestamp;
+    int has_sender_report;
     void* ts, * ps; // only one
 
     union
@@ -272,11 +277,11 @@ static inline int rtsp_demuxer_onpspacket(void* param, const void* packet, int b
 
     // RTP timestamp => PTS/DTS
     if (0 == pt->last && INT64_MIN == pt->pts)
-        pt->timestamp = timestamp;
+        pt->timestamp = 0;
     else
         pt->timestamp += (int32_t)(timestamp - pt->last);
     pt->last = timestamp;
-    pt->pts = pt->timestamp * 1000 / pt->frequency;
+    pt->pts = pt->base_pts + pt->timestamp * 1000 / pt->frequency;
 
     flags = flags ? AVPACKET_FLAG_KEY : 0;
     return pt->tracks[0].bs->input(pt->tracks[0].filter, pt->pts, pt->pts, (const uint8_t*)packet, (int)bytes, flags);
@@ -291,11 +296,11 @@ static inline int rtsp_demuxer_onrtppacket(void* param, const void* data, int by
 
     // RTP timestamp => PTS/DTS
     if (0 == pt->last && INT64_MIN == pt->pts)
-        pt->timestamp = timestamp;
+        pt->timestamp = 0;
     else
         pt->timestamp += (int32_t)(timestamp - pt->last);
     pt->last = timestamp;
-    pt->pts = pt->timestamp * 1000 / pt->frequency;
+    pt->pts = pt->base_pts + pt->timestamp * 1000 / pt->frequency;
 
     r = -1;
     if (pt->bs && pt->filter)
@@ -316,11 +321,11 @@ static inline int rtsp_demuxer_onh2645nalu(void* param, const void* data, int by
 
     // RTP timestamp => PTS/DTS
     if (0 == pt->last && INT64_MIN == pt->pts)
-        pt->timestamp = timestamp;
+        pt->timestamp = 0;
     else
         pt->timestamp += (int32_t)(timestamp - pt->last);
     pt->last = timestamp;
-    pt->pts = pt->timestamp * 1000 / pt->frequency;
+    pt->pts = pt->base_pts + pt->timestamp * 1000 / pt->frequency;
 
     assert(pt->avbsf && pt->h2645);
     if (pt->avbsf && pt->h2645)
@@ -552,7 +557,48 @@ int rtsp_demuxer_rtpinfo(struct rtsp_demuxer_t* demuxer, uint16_t seq, uint32_t 
     {
         pt->last = timestamp;
         pt->timestamp = 0;
+        pt->base_pts = 0;
         pt->pts = 0;
+    }
+    return 0;
+}
+
+int rtsp_demuxer_set_timestamp(struct rtsp_demuxer_t* demuxer, uint32_t timestamp, int64_t pts)
+{
+    struct rtp_payload_info_t* pt;
+    if (!demuxer || demuxer->idx >= demuxer->count || demuxer->idx < 0)
+        return -ENOENT;
+
+    pt = &demuxer->pt[demuxer->idx];
+    pt->last = timestamp;
+    pt->timestamp = 0;
+    pt->base_pts = pts;
+    pt->pts = pts;
+    return 0;
+}
+
+int rtsp_demuxer_sender_report(
+    struct rtsp_demuxer_t* demuxer, uint32_t* ntp_msw, uint32_t* ntp_lsw, uint32_t* rtp_timestamp, int64_t* pts)
+{
+    struct rtp_payload_info_t* pt;
+    int64_t timestamp;
+    if (!demuxer || demuxer->idx >= demuxer->count || demuxer->idx < 0 || !ntp_msw || !ntp_lsw || !rtp_timestamp || !pts)
+        return -EINVAL;
+
+    pt = &demuxer->pt[demuxer->idx];
+    if (!pt->has_sender_report)
+        return -ENOENT;
+    *ntp_msw = pt->sender_ntp_msw;
+    *ntp_lsw = pt->sender_ntp_lsw;
+    *rtp_timestamp = pt->sender_rtp_timestamp;
+    if (INT64_MIN == pt->pts)
+    {
+        *pts = 0;
+    }
+    else
+    {
+        timestamp = pt->timestamp + (int32_t)(pt->sender_rtp_timestamp - pt->last);
+        *pts = pt->base_pts + timestamp * 1000 / pt->frequency;
     }
     return 0;
 }
@@ -579,8 +625,23 @@ int rtsp_demuxer_input(struct rtsp_demuxer_t* demuxer, const void* data, int byt
         // RTCP packet types in the ranges 1-191 and 224-254 SHOULD only be used when other values have been exhausted.
         if ( (id & 0x7F) == pt->payload || (192 <= id && id <= 223) )
         {
+            int r;
             demuxer->idx = i % demuxer->count;
-            return rtp_demuxer_input(pt->rtp, data, bytes);
+            r = rtp_demuxer_input(pt->rtp, data, bytes);
+            if (r == RTCP_SR && bytes >= 28)
+            {
+                const uint8_t* packet = (const uint8_t*)data;
+                const int rtcp_bytes = ((((int)packet[2] << 8) | packet[3]) + 1) * 4;
+                pt->has_sender_report = 0;
+                if ((packet[0] >> 6) == 2 && rtcp_bytes >= 28 && rtcp_bytes <= bytes)
+                {
+                    pt->sender_ntp_msw = ((uint32_t)packet[8] << 24) | ((uint32_t)packet[9] << 16) | ((uint32_t)packet[10] << 8) | packet[11];
+                    pt->sender_ntp_lsw = ((uint32_t)packet[12] << 24) | ((uint32_t)packet[13] << 16) | ((uint32_t)packet[14] << 8) | packet[15];
+                    pt->sender_rtp_timestamp = ((uint32_t)packet[16] << 24) | ((uint32_t)packet[17] << 16) | ((uint32_t)packet[18] << 8) | packet[19];
+                    pt->has_sender_report = 1;
+                }
+            }
+            return r;
         }
     }
 
