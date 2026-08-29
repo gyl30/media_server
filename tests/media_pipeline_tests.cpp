@@ -9173,17 +9173,56 @@ void test_hls_output()
     require(playlist.find("#EXTM3U") != std::string::npos, "hls playlist header");
     require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls endlist");
 
-    hls_output reconfigured(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
-    reconfigured.on_track(make_video_track());
-    reconfigured.on_frame(make_video_frame(0, true));
-    reconfigured.on_frame(make_video_frame(500'000'000, false));
-    reconfigured.on_track(make_video_track(2));
-    require(reconfigured.segment_count() == 1U, "hls config change closes current segment");
-    reconfigured.on_frame(make_video_frame(600'000'000, false));
-    require(reconfigured.segment_count() == 1U, "hls config change waits key frame");
-    reconfigured.on_frame(make_video_frame(1'000'000'000, true));
-    reconfigured.on_end();
-    require(reconfigured.segment_count() == 2U, "hls config change starts new segment");
+    boost::asio::io_context reconfigured_io;
+    auto reconfigured = std::make_shared<hls_output>(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    auto reconfigured_stream = std::make_shared<media_stream>("live/hls-reconfigured", reconfigured_io.get_executor());
+    boost::asio::post(reconfigured_io,
+                      [reconfigured, reconfigured_stream]()
+                      {
+                          require(reconfigured_stream->set_tracks({make_video_track(), make_audio_track()}), "hls config source tracks");
+                          reconfigured_stream->add_sink(reconfigured);
+                          reconfigured_stream->publish(make_video_frame(0, true));
+                          reconfigured_stream->publish(make_audio_frame(20'000'000));
+                          reconfigured_stream->publish(make_video_frame(500'000'000, false));
+
+                          auto updated_video = make_video_track();
+                          updated_video.codec_config = h264_config_updated;
+                          require(reconfigured_stream->update_track(std::move(updated_video)), "hls config source update");
+                          const auto updated_tracks = reconfigured_stream->tracks();
+                          const auto current_video = std::ranges::find_if(
+                              updated_tracks, [](const media_track& track) { return track.id == video_track_id; });
+                          require(current_video != updated_tracks.end() && current_video->config_version == 2 &&
+                                      current_video->codec_config == h264_config_updated,
+                                  "hls config source generation");
+                          require(reconfigured->segment_count() == 1U, "hls config change closes current segment");
+
+                          reconfigured_stream->publish(make_video_frame(600'000'000, false));
+                          reconfigured_stream->publish(make_audio_frame(620'000'000));
+                          require(reconfigured->segment_count() == 1U, "hls config change waits key frame");
+                          reconfigured_stream->publish(make_video_frame(1'000'000'000, true, h264_config_updated));
+                          reconfigured_stream->publish(make_audio_frame(1'020'000'000));
+                          reconfigured_stream->publish(make_video_frame(1'500'000'000, false));
+                          reconfigured_stream->publish(make_video_frame(2'000'000'000, true, h264_config_updated));
+                          reconfigured_stream->end();
+                      });
+    reconfigured_io.run();
+    require(reconfigured->segment_count() == 3U, "hls config change starts new segment");
+    const auto updated_segment = reconfigured->segment(1);
+    require(updated_segment.has_value(), "hls config updated segment");
+    const auto updated_capture = demux_ts_segment(*updated_segment);
+    require(updated_capture.stream_codecs == std::vector<int>{PSI_STREAM_AAC, PSI_STREAM_H264}, "hls config updated pmt stream types");
+    require(std::ranges::none_of(updated_capture.packets,
+                                 [](const demuxed_packet& packet) { return packet.pts == 54'000 || packet.pts == 55'800; }),
+            "hls config update drops pre-keyframe media");
+    const auto updated_key = std::ranges::find_if(
+        updated_capture.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_H264 && packet.pts == 90'000; });
+    require(updated_key != updated_capture.packets.end() && (updated_key->flags & MPEG_FLAG_IDR_FRAME) != 0 &&
+                updated_key->payload.size() > h264_config_updated.size() &&
+                std::equal(h264_config_updated.begin(), h264_config_updated.end(), updated_key->payload.begin()),
+            "hls config updated key frame payload");
+    require(std::ranges::any_of(updated_capture.packets,
+                                [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC && packet.pts == 91'800; }),
+            "hls config audio resumes after key frame");
 
     hls_output signed_timeline(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
     signed_timeline.on_track(make_video_track());
