@@ -22,18 +22,11 @@ void require(bool condition, std::string_view message)
 void test_input_configs()
 {
     const auto udp = parse_gb28181_input_config(
-        R"({"stream_name":"live/camera","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":0,"remote_rtcp_port":30001})");
+        R"({"stream_name":"live/camera","transport":"udp","address":"127.0.0.1","payload_type":96,"ssrc":0})");
     require(udp.has_value(), "valid input udp");
-    require(udp->stream_name == "live/camera" && udp->description.transport == gb28181_transport::udp && udp->description.rtp_port == 31000 &&
-                udp->description.rtcp_port == 31001 && udp->description.payload_type == 96 && udp->description.ssrc == 0 &&
-                !udp->remote_rtp_endpoint && udp->remote_rtcp_port == 30001,
+    require(udp->stream_name == "live/camera" && udp->description.transport == gb28181_transport::udp && udp->description.rtp_port == 0 &&
+                udp->description.rtcp_port == 0 && udp->description.payload_type == 96 && udp->description.ssrc == 0,
             "input udp values");
-
-    const auto fixed_peer = parse_gb28181_input_config(
-        R"({"stream_name":"live/fixed","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":100,"remote_rtp_address":"192.168.1.10","remote_rtp_port":30000,"remote_rtcp_port":30001})");
-    require(fixed_peer && fixed_peer->remote_rtp_endpoint && fixed_peer->remote_rtp_endpoint->port() == 30000 &&
-                fixed_peer->remote_rtp_endpoint->address().to_string() == "192.168.1.10",
-            "input fixed peer");
 
     const auto tcp_active = parse_gb28181_input_config(
         R"({"stream_name":"live/tcp","transport":"tcp_active","address":"192.168.1.10","rtp_port":30000,"payload_type":96,"ssrc":100})");
@@ -45,19 +38,16 @@ void test_input_configs()
     require(tcp_passive && tcp_passive->description.transport == gb28181_transport::tcp_passive, "input tcp passive");
 
     const std::string invalid[] = {
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":1,"unknown":true})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":"31000","rtcp_port":31001,"payload_type":96,"ssrc":1})",
-        R"({"stream_name":"live/x","transport":"udp","address":"bad","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":1})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":0,"rtcp_port":31001,"payload_type":96,"ssrc":1})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":65536,"rtcp_port":31001,"payload_type":96,"ssrc":1})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":128,"ssrc":1})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":-1})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":1,"remote_rtp_address":"127.0.0.1"})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":1,"remote_rtp_port":30000})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31000,"payload_type":96,"ssrc":1,"remote_rtcp_port":30001})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":1})",
-        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":1,"remote_rtp_address":"::1","remote_rtp_port":30000,"remote_rtcp_port":30001})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","payload_type":96})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","payload_type":96,"ssrc":1,"unknown":true})",
+        R"({"stream_name":"live/x","transport":"udp","address":"bad","payload_type":96,"ssrc":1})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","payload_type":128,"ssrc":1})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","payload_type":96,"ssrc":-1})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtp_port":31000,"payload_type":96,"ssrc":1})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","rtcp_port":31001,"payload_type":96,"ssrc":1})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","payload_type":96,"ssrc":1,"remote_rtp_address":"127.0.0.1"})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","payload_type":96,"ssrc":1,"remote_rtp_port":30000})",
+        R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","payload_type":96,"ssrc":1,"remote_rtcp_port":30001})",
         R"({"stream_name":"live/x","transport":"tcp_active","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":1})",
         R"({"stream_name":"live/x","transport":"tcp_active","address":"0.0.0.0","rtp_port":31000,"payload_type":96,"ssrc":1})",
         R"({"stream_name":"live/x","transport":"tcp_passive","address":"0.0.0.0","rtp_port":31000,"payload_type":96,"ssrc":1,"remote_rtcp_port":30001})",

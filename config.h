@@ -22,6 +22,10 @@ struct config
     std::string webrtc_address{"127.0.0.1"};
     std::size_t threads{std::max(1U, std::thread::hardware_concurrency())};
     std::vector<std::pair<std::string, std::string>> rtsp_pulls;
+    std::string signaling_url;
+    std::string server_id;
+    std::string control_url;
+    std::string media_ip;
     output_video_config rtmp_video;
     output_video_config rtsp_video;
     output_video_config http_video;

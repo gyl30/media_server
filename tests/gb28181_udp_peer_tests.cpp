@@ -17,6 +17,7 @@
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_output_media.h"
 #include "media/gb28181/gb28181_udp_session.h"
+#include "media/net/port_manager.h"
 
 extern "C"
 {
@@ -37,12 +38,6 @@ void require(bool condition, std::string_view message)
     {
         throw std::runtime_error(std::string(message));
     }
-}
-
-std::uint16_t unused_udp_port(boost::asio::io_context& io)
-{
-    boost::asio::ip::udp::socket socket(io, {boost::asio::ip::address_v4::loopback(), 0});
-    return socket.local_endpoint().port();
 }
 
 std::vector<std::vector<std::uint8_t>> make_ps_rtp(std::uint8_t payload_type,
@@ -231,36 +226,23 @@ void test_udp_session_fatal_codec_change_unregisters()
     auto& streams = media_server::registry::instance();
     streams.clear();
     boost::asio::ip::udp::socket sender(io, {boost::asio::ip::address_v4::loopback(), 0});
-    boost::asio::ip::udp::socket remote_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
-
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
     const std::string stream_name = "live/gb-fatal-codec-session";
-    const auto local_rtp_port = unused_udp_port(io);
-    auto local_rtcp_port = unused_udp_port(io);
-    while (local_rtcp_port == local_rtp_port)
-    {
-        local_rtcp_port = unused_udp_port(io);
-    }
-
     const gb28181_description description{
         .transport = gb28181_transport::udp,
         .address = boost::asio::ip::address_v4::loopback(),
-        .rtp_port = local_rtp_port,
-        .rtcp_port = local_rtcp_port,
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session = std::make_shared<gb28181_udp_session>(
-        io.get_executor(),
-        stream_name,
-        description,
-        gb28181_udp_peer{.rtp = sender.local_endpoint(), .rtcp_port = remote_rtcp.local_endpoint().port()});
+    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), stream_name, description);
     require(streams.add_input_session(stream_name, session), "gb fatal codec session registry add");
     require(session->startup(), "gb fatal codec session startup");
+    const auto local_ports = session->local_ports();
+    require(local_ports.has_value(), "gb fatal codec session local ports");
 
     const auto initial_packets = make_ps_rtp(payload_type, ssrc);
-    send_packets(sender, local_rtp_port, initial_packets);
+    send_packets(sender, local_ports->first, initial_packets);
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!streams.find(stream_name) && std::chrono::steady_clock::now() < deadline)
     {
@@ -271,7 +253,7 @@ void test_udp_session_fatal_codec_change_unregisters()
 
     auto changed_packets = make_ps_rtp(payload_type, ssrc, next_rtp_sequence(initial_packets), RTP_PAYLOAD_H265);
     set_psm_version(changed_packets, 2);
-    send_packets(sender, local_rtp_port, changed_packets);
+    send_packets(sender, local_ports->first, changed_packets);
     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (streams.find(stream_name) && std::chrono::steady_clock::now() < deadline)
     {
@@ -411,65 +393,99 @@ void test_output_same_codec_config_version_continues_ps_stream()
     io.run();
 }
 
-void test_signaled_rtp_peer_is_pinned_before_first_packet()
+void test_rtcp_peer_learning_overrides_rtp_plus_one()
 {
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
-    boost::asio::ip::udp::socket allowed(io, {boost::asio::ip::address_v4::loopback(), 0});
-    boost::asio::ip::udp::socket blocked(io, {boost::asio::ip::address_v4::loopback(), 0});
-    boost::asio::ip::udp::socket remote_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket sender(io);
+    boost::asio::ip::udp::socket default_rtcp(io);
+    boost::system::error_code bind_error;
+    std::uint16_t sender_port = 42'000;
+    for (; sender_port < 49'000; sender_port = static_cast<std::uint16_t>(sender_port + 2U))
+    {
+        sender.open(boost::asio::ip::udp::v4(), bind_error);
+        if (!bind_error)
+        {
+            sender.bind({boost::asio::ip::address_v4::loopback(), sender_port}, bind_error);
+        }
+        default_rtcp.open(boost::asio::ip::udp::v4(), bind_error);
+        if (!bind_error)
+        {
+            default_rtcp.bind({boost::asio::ip::address_v4::loopback(), static_cast<std::uint16_t>(sender_port + 1U)}, bind_error);
+        }
+        if (!bind_error)
+        {
+            break;
+        }
+        boost::system::error_code close_error;
+        sender.close(close_error);
+        default_rtcp.close(close_error);
+    }
+    require(sender.is_open() && default_rtcp.is_open() && !bind_error, "gb rtcp peer remote port pair");
+    boost::asio::ip::udp::socket actual_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket foreign_rtcp(
+        io, {boost::asio::ip::make_address_v4("127.0.0.2"), 0});
 
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    const auto local_rtp_port = unused_udp_port(io);
-    auto local_rtcp_port = unused_udp_port(io);
-    while (local_rtcp_port == local_rtp_port)
-    {
-        local_rtcp_port = unused_udp_port(io);
-    }
-
     const gb28181_description description{
         .transport = gb28181_transport::udp,
         .address = boost::asio::ip::address_v4::loopback(),
-        .rtp_port = local_rtp_port,
-        .rtcp_port = local_rtcp_port,
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    const gb28181_udp_peer peer{
-        .rtp = allowed.local_endpoint(),
-        .rtcp_port = remote_rtcp.local_endpoint().port(),
-    };
-    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/gb-peer-signaled", description, peer);
-    require(session->startup(), "gb peer signaled startup");
+    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/gb-rtcp-peer", description);
+    require(session->startup(), "gb rtcp peer startup");
+    const auto local_ports = session->local_ports();
+    require(local_ports.has_value(), "gb rtcp peer local ports");
 
     const auto packets = make_ps_rtp(payload_type, ssrc);
-    send_packets(blocked, local_rtp_port, packets);
-    io.run_for(std::chrono::milliseconds(200));
-    require(!streams.find("live/gb-peer-signaled"), "gb peer signaled rejects other first source");
-
-    io.restart();
-    send_packets(allowed, local_rtp_port, packets);
+    send_packets(sender, local_ports->first, packets);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while (!streams.find("live/gb-peer-signaled") && std::chrono::steady_clock::now() < deadline)
+    while (!streams.find("live/gb-rtcp-peer") && std::chrono::steady_clock::now() < deadline)
     {
         io.run_for(std::chrono::milliseconds(20));
         io.restart();
     }
-    require(streams.find("live/gb-peer-signaled") != nullptr, "gb peer signaled accepts configured source");
+    require(streams.find("live/gb-rtcp-peer") != nullptr, "gb rtcp peer accepts RTP source");
 
-    boost::asio::ip::udp::socket other_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
+    auto report_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    while (default_rtcp.available() == 0 && std::chrono::steady_clock::now() < report_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(20));
+        io.restart();
+    }
+    require(default_rtcp.available() > 0, "gb rtcp peer defaults to RTP source port plus one");
+    std::array<std::uint8_t, 1500> received{};
+    boost::asio::ip::udp::endpoint received_from;
+    default_rtcp.receive_from(boost::asio::buffer(received), received_from);
+
     constexpr std::array<std::uint8_t, 28> sender_report{
         0x80, 0xc8, 0x00, 0x06, 0x12, 0x34, 0x56, 0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     };
-    other_rtcp.send_to(boost::asio::buffer(sender_report), {boost::asio::ip::address_v4::loopback(), local_rtcp_port});
+    foreign_rtcp.send_to(boost::asio::buffer(sender_report), {boost::asio::ip::address_v4::loopback(), local_ports->second});
+    report_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (default_rtcp.available() == 0 && foreign_rtcp.available() == 0 && std::chrono::steady_clock::now() < report_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(20));
+        io.restart();
+    }
+    require(foreign_rtcp.available() == 0, "gb rtcp peer rejects source from another RTP address");
+    require(default_rtcp.available() > 0, "gb rtcp peer keeps RTP plus one fallback after foreign report");
+    default_rtcp.receive_from(boost::asio::buffer(received), received_from);
 
-    io.restart();
-    io.run_for(std::chrono::milliseconds(4500));
-    require(remote_rtcp.available() > 0, "gb peer signaled keeps rtcp target on configured port");
-    require(other_rtcp.available() == 0, "gb peer signaled never rebinds rtcp target");
+    actual_rtcp.send_to(boost::asio::buffer(sender_report), {boost::asio::ip::address_v4::loopback(), local_ports->second});
+
+    report_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (actual_rtcp.available() == 0 && std::chrono::steady_clock::now() < report_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(20));
+        io.restart();
+    }
+    require(actual_rtcp.available() > 0, "gb rtcp peer uses learned RTCP source");
+    require(default_rtcp.available() == 0, "gb rtcp peer stops using default target after learning");
 
     session->shutdown();
     io.restart();
@@ -483,31 +499,18 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
     streams.clear();
     boost::asio::ip::udp::socket expected(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket wrong(io, {boost::asio::ip::address_v4::loopback(), 0});
-    boost::asio::ip::udp::socket remote_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
-
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    const auto local_rtp_port = unused_udp_port(io);
-    auto local_rtcp_port = unused_udp_port(io);
-    while (local_rtcp_port == local_rtp_port)
-    {
-        local_rtcp_port = unused_udp_port(io);
-    }
-
     const gb28181_description description{
         .transport = gb28181_transport::udp,
         .address = boost::asio::ip::address_v4::loopback(),
-        .rtp_port = local_rtp_port,
-        .rtcp_port = local_rtcp_port,
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    const gb28181_udp_peer peer{
-        .rtp = std::nullopt,
-        .rtcp_port = remote_rtcp.local_endpoint().port(),
-    };
-    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/gb-peer-learned", description, peer);
+    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/gb-peer-learned", description);
     require(session->startup(), "gb peer learned startup");
+    const auto local_ports = session->local_ports();
+    require(local_ports.has_value(), "gb peer learned local ports");
 
     constexpr std::array<std::uint8_t, 12> wrong_ssrc{
         0x80,
@@ -523,12 +526,12 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
         0x43,
         0x21,
     };
-    wrong.send_to(boost::asio::buffer(wrong_ssrc), {boost::asio::ip::address_v4::loopback(), local_rtp_port});
+    wrong.send_to(boost::asio::buffer(wrong_ssrc), {boost::asio::ip::address_v4::loopback(), local_ports->first});
     io.run_for(std::chrono::milliseconds(50));
     io.restart();
 
     const auto packets = make_ps_rtp(payload_type, ssrc);
-    send_packets(expected, local_rtp_port, packets);
+    send_packets(expected, local_ports->first, packets);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!streams.find("live/gb-peer-learned") && std::chrono::steady_clock::now() < deadline)
     {
@@ -546,6 +549,7 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
 
 int main()
 {
+    media_server::port_manager::init(40'000, 40'199);
     media_server::registry::init();
     try
     {
@@ -559,15 +563,17 @@ int main()
         std::cout << "[pass] udp_session_fatal_codec_change_unregisters\n";
         media_server::test_output_same_codec_config_version_continues_ps_stream();
         std::cout << "[pass] output_same_codec_config_version_continues_ps_stream\n";
-        media_server::test_signaled_rtp_peer_is_pinned_before_first_packet();
-        std::cout << "[pass] signaled_rtp_peer_is_pinned_before_first_packet\n";
+        media_server::test_rtcp_peer_learning_overrides_rtp_plus_one();
+        std::cout << "[pass] rtcp_peer_learning_overrides_rtp_plus_one\n";
         media_server::test_first_valid_rtp_packet_pins_peer_when_unsignaled();
         std::cout << "[pass] first_valid_rtp_packet_pins_peer_when_unsignaled\n";
         media_server::registry::destroy();
+        media_server::port_manager::destroy();
     }
     catch (const std::exception& error)
     {
         media_server::registry::destroy();
+        media_server::port_manager::destroy();
         std::cerr << "[fail] " << error.what() << '\n';
         return 1;
     }

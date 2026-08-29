@@ -2,11 +2,9 @@
 #define MEDIA_GB28181_GB28181_TYPES_H
 
 #include <cstdint>
-#include <optional>
 #include <string>
 
 #include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/udp.hpp>
 
 namespace media_server
 {
@@ -32,8 +30,6 @@ struct gb28181_input_config
 {
     std::string stream_name;
     gb28181_description description;
-    std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint;
-    std::optional<std::uint16_t> remote_rtcp_port;
 };
 
 struct gb28181_output_config

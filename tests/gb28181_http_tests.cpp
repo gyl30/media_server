@@ -75,27 +75,30 @@ void test_input_handlers()
 {
     boost::asio::io_context io;
     registry::instance().clear();
-    std::uint16_t rtp_port{};
-    std::uint16_t rtcp_port{};
-    {
-        boost::asio::ip::udp::socket rtp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
-        boost::asio::ip::udp::socket rtcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
-        rtp_port = rtp_probe.local_endpoint().port();
-        rtcp_port = rtcp_probe.local_endpoint().port();
-    }
-
     boost::json::object create_body;
     create_body["stream_name"] = "live/http-handler-input";
     create_body["transport"] = "udp";
     create_body["address"] = "127.0.0.1";
-    create_body["rtp_port"] = rtp_port;
-    create_body["rtcp_port"] = rtcp_port;
     create_body["payload_type"] = 96;
     create_body["ssrc"] = 100;
-    create_body["remote_rtcp_port"] = 30001;
 
     const auto create_response = input_request(io, request("/gb28181/create", create_body));
-    require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "input create response");
+    require(create_response.result() == boost::beast::http::status::created, "input create response status");
+    const auto create_result = boost::json::parse(create_response.body()).as_object();
+    require(create_result.at("result").as_string() == "ok", "input create response result");
+    const auto rtp_port = static_cast<std::uint16_t>(create_result.at("rtp_port").as_int64());
+    const auto rtcp_port = static_cast<std::uint16_t>(create_result.at("rtcp_port").as_int64());
+    require(rtp_port != 0 && (rtp_port & 1U) == 0U && rtcp_port == rtp_port + 1U, "input create response port pair");
+
+    boost::system::error_code bind_error;
+    boost::asio::ip::udp::socket rtp_probe(io);
+    rtp_probe.open(boost::asio::ip::udp::v4());
+    rtp_probe.bind({boost::asio::ip::address_v4::loopback(), rtp_port}, bind_error);
+    require(bind_error == boost::asio::error::address_in_use, "input create binds rtp port before response");
+    boost::asio::ip::udp::socket rtcp_probe(io);
+    rtcp_probe.open(boost::asio::ip::udp::v4());
+    rtcp_probe.bind({boost::asio::ip::address_v4::loopback(), rtcp_port}, bind_error);
+    require(bind_error == boost::asio::error::address_in_use, "input create binds rtcp port before response");
 
     const auto duplicate_response = input_request(io, request("/gb28181/create", create_body));
     require_json_response(
@@ -113,6 +116,10 @@ void test_input_handlers()
                           "input delete after identity release response");
     io.run();
     io.restart();
+
+    const auto released = port_manager::instance().acquire_pair();
+    require(released && released->first == rtp_port && released->second == rtcp_port, "input delete releases returned port pair");
+    port_manager::instance().release(*released);
 
     const auto missing_response = input_request(io, request("/gb28181/delete", delete_body));
     require_json_response(missing_response,
