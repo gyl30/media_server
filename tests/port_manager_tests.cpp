@@ -12,6 +12,7 @@
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
+#include "media/gb28181/gb28181_udp_session.h"
 #include "media/gb28181/gb28181_udp_output_session.h"
 #include "media/net/port_manager.h"
 
@@ -176,6 +177,24 @@ void test_udp_output_releases_pair_after_bind_failure()
     port_manager::destroy();
 }
 
+void test_udp_input_releases_pair_after_bind_failure()
+{
+    boost::asio::io_context io;
+    port_manager::init(40'020, 40'021);
+    boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 40'020});
+    const gb28181_description description{.transport = gb28181_transport::udp,
+                                          .address = boost::asio::ip::address_v4::loopback(),
+                                          .payload_type = 96,
+                                          .ssrc = 10'000'2001};
+    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/input-port-bind-failure", description);
+    require(!session->startup(), "input port bind failure startup");
+
+    const auto pair = port_manager::instance().acquire_pair();
+    require(pair && pair->first == 40'020 && pair->second == 40'021, "input port release after bind failure");
+    port_manager::instance().release(*pair);
+    port_manager::destroy();
+}
+
 }    // namespace
 }    // namespace media_server
 
@@ -190,6 +209,7 @@ int main()
         media_server::registry::init();
         media_server::test_udp_output_releases_pair_after_shutdown();
         media_server::test_udp_output_releases_pair_after_bind_failure();
+        media_server::test_udp_input_releases_pair_after_bind_failure();
         media_server::registry::destroy();
         std::cout << "[pass] port_manager_tests\n";
         return 0;

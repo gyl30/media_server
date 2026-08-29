@@ -37,6 +37,7 @@ void test_defaults()
     require(cfg.webrtc_address == "127.0.0.1", "default webrtc address");
     require(cfg.threads > 0, "default threads");
     require(cfg.rtsp_pulls.empty(), "default rtsp pulls");
+    require(cfg.signaling_url.empty(), "default signaling disabled");
     require(cfg.rtmp_video.codec == media_server::output_video_codec::passthrough, "default rtmp video codec");
     require(cfg.rtsp_video.codec == media_server::output_video_codec::passthrough, "default rtsp video codec");
     require(cfg.http_video.codec == media_server::output_video_codec::passthrough, "default http video codec");
@@ -80,6 +81,23 @@ void test_values()
     require(cfg.rtsp_video.codec == media_server::output_video_codec::av1, "explicit rtsp video codec");
     require(cfg.http_video.codec == media_server::output_video_codec::av1, "explicit http video codec");
     require(cfg.whep_video.codec == media_server::output_video_codec::av1, "explicit whep video codec");
+
+    media_server::config signaling_cfg;
+    require(parse({"media_server",
+                   "--signaling-url",
+                   "http://127.0.0.1:19090",
+                   "--server-id",
+                   "media-1",
+                   "--control-url",
+                   "http://127.0.0.1:18080",
+                   "--media-ip",
+                   "192.0.2.10"},
+                  &signaling_cfg) == 0,
+            "signaling config parse");
+    require(signaling_cfg.signaling_url == "http://127.0.0.1:19090", "signaling url");
+    require(signaling_cfg.server_id == "media-1", "signaling server id");
+    require(signaling_cfg.control_url == "http://127.0.0.1:18080", "signaling control url");
+    require(signaling_cfg.media_ip == "192.0.2.10", "signaling media ip");
 }
 
 void test_help()
@@ -111,6 +129,11 @@ void test_invalid()
         {"media_server", "--rtsp-video-codec", ""},
         {"media_server", "--http-video-codec", "h265"},
         {"media_server", "--whep-video-codec", "vp9"},
+        {"media_server", "--signaling-url", "http://127.0.0.1:9090"},
+        {"media_server", "--signaling-url", "ftp://127.0.0.1:9090", "--server-id", "media-1", "--control-url", "http://127.0.0.1:8080", "--media-ip", "127.0.0.1"},
+        {"media_server", "--signaling-url", "http://127.0.0.1:9090/path", "--server-id", "media-1", "--control-url", "http://127.0.0.1:8080", "--media-ip", "127.0.0.1"},
+        {"media_server", "--signaling-url", "http://127.0.0.1:9090", "--server-id", "media-1", "--control-url", "invalid", "--media-ip", "127.0.0.1"},
+        {"media_server", "--signaling-url", "http://127.0.0.1:9090", "--server-id", "media-1", "--control-url", "http://127.0.0.1:8080", "--media-ip", "invalid"},
     };
 
     for (const auto& arguments : cases)

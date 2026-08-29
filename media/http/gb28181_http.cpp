@@ -95,11 +95,7 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request, b
 
     if (config.description.transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_session>(
-            owner.get_executor(),
-            stream_name,
-            config.description,
-            gb28181_udp_peer{.rtp = config.remote_rtp_endpoint, .rtcp_port = config.remote_rtcp_port.value_or(0)});
+        auto session = std::make_shared<gb28181_udp_session>(owner.get_executor(), stream_name, config.description);
         if (!streams.add_input_session(stream_name, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -110,6 +106,19 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request, b
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
+
+        const auto local_ports = session->local_ports();
+        if (!local_ports)
+        {
+            streams.remove_input_session(stream_name, *session);
+            session->shutdown();
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+        boost::json::object body;
+        body["result"] = "ok";
+        body["rtp_port"] = local_ports->first;
+        body["rtcp_port"] = local_ports->second;
+        return make_json_response(request, boost::beast::http::status::created, std::move(body));
     }
     else
     {
@@ -128,9 +137,7 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request, b
         }
     }
 
-    boost::json::object body;
-    body["result"] = "ok";
-    return make_json_response(request, boost::beast::http::status::created, std::move(body));
+    return make_json_response(request, boost::beast::http::status::created, {{"result", "ok"}});
 }
 
 gb28181_http_response handle_output_create(const gb28181_http_request& request, boost::asio::io_context& owner, gb28181_output_config config)
