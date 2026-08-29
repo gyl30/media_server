@@ -548,11 +548,12 @@ int rtsp_demuxer_rtpinfo(struct rtsp_demuxer_t* demuxer, uint16_t seq, uint32_t 
     pt = &demuxer->pt[demuxer->idx];
     pt->seq = seq;
     pt->base = timestamp;
-
-    // fixme
-    //if (0 == pt->last)
-    //    pt->last = timestamp;
-    //pt->pts = ((int64_t)(int32_t)(pt->last - timestamp)) * 1000 / pt->frequency;
+    if (0 == pt->last && INT64_MIN == pt->pts)
+    {
+        pt->last = timestamp;
+        pt->timestamp = 0;
+        pt->pts = 0;
+    }
     return 0;
 }
 
