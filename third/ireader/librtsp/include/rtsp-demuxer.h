@@ -29,6 +29,12 @@ int rtsp_demuxer_add_payload(struct rtsp_demuxer_t* demuxer, int frequency, int 
 /// Set RTP-Info
 int rtsp_demuxer_rtpinfo(struct rtsp_demuxer_t* demuxer, uint16_t seq, uint32_t timestamp);
 
+/// Map an RTP timestamp to the caller's millisecond timeline.
+int rtsp_demuxer_set_timestamp(struct rtsp_demuxer_t* demuxer, uint32_t timestamp, int64_t pts);
+/// Get the latest RTCP Sender Report and the report RTP timestamp's PTS on the current local timeline.
+int rtsp_demuxer_sender_report(
+    struct rtsp_demuxer_t* demuxer, uint32_t* ntp_msw, uint32_t* ntp_lsw, uint32_t* rtp_timestamp, int64_t* pts);
+
 /// @return 0-ok, >0-rtcp message type, <0-error
 int rtsp_demuxer_input(struct rtsp_demuxer_t* demuxer, const void* data, int bytes);
 
