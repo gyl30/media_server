@@ -1,3 +1,4 @@
+#include <bit>
 #include <utility>
 #include <algorithm>
 
@@ -10,6 +11,7 @@
 extern "C"
 {
 #include "avpacket.h"
+#include "rtcp-header.h"
 #include "rtsp-demuxer.h"
 }
 
@@ -97,7 +99,32 @@ bool rtsp_input_media::input_packet(std::size_t track_index, std::span<const std
     auto* demuxer = demuxers_[track_index];
     if (demuxer != nullptr)
     {
-        static_cast<void>(rtsp_demuxer_input(demuxer, data.data(), static_cast<int>(data.size())));
+        const auto result = rtsp_demuxer_input(demuxer, data.data(), static_cast<int>(data.size()));
+        if (result == RTCP_SR)
+        {
+            std::uint32_t ntp_msw{};
+            std::uint32_t ntp_lsw{};
+            std::uint32_t rtp_timestamp{};
+            std::int64_t pts{};
+            if (rtsp_demuxer_sender_report(demuxer, &ntp_msw, &ntp_lsw, &rtp_timestamp, &pts) == 0)
+            {
+                const auto ntp = (static_cast<std::uint64_t>(ntp_msw) << 32U) | ntp_lsw;
+                if (!rtcp_synchronized_)
+                {
+                    rtcp_sync_ntp_ = ntp;
+                    rtcp_sync_pts_ = pts;
+                    rtcp_synchronized_ = true;
+                }
+                else
+                {
+                    constexpr std::int64_t ntp_fraction = std::int64_t{1} << 32U;
+                    // NTP is unsigned 32.32 fixed-point; interpret modular subtraction as the signed session-time delta.
+                    const auto delta = std::bit_cast<std::int64_t>(ntp - rtcp_sync_ntp_);
+                    pts = rtcp_sync_pts_ + (delta / ntp_fraction) * 1'000 + (delta % ntp_fraction) * 1'000 / ntp_fraction;
+                }
+                static_cast<void>(rtsp_demuxer_set_timestamp(demuxer, rtp_timestamp, pts));
+            }
+        }
     }
     return !fatal_codec_change_;
 }
@@ -133,6 +160,7 @@ void rtsp_input_media::shutdown()
         }
     }
     demuxers_.clear();
+    rtcp_synchronized_ = false;
     avpkt2bs_destroy(&bitstream_);
 }
 

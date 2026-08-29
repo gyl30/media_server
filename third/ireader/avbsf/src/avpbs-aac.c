@@ -40,6 +40,8 @@ static void* avpbs_aac_create(int stream, AVPACKET_CODEC_ID codec, const uint8_t
 	bs->onpacket = onpacket;
 	bs->param = param;
 	bs->avs = stream;
+	bs->pts = INT64_MIN;
+	bs->dts = INT64_MIN;
 	return bs;
 }
 

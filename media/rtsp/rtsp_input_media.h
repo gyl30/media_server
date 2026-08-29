@@ -60,7 +60,10 @@ class rtsp_input_media final
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> stream_;
     avpkt2bs_t bitstream_{};
+    std::uint64_t rtcp_sync_ntp_{};
+    std::int64_t rtcp_sync_pts_{};
     bool recording_{};
+    bool rtcp_synchronized_{};
     bool fatal_codec_change_{};
     bool closed_{};
 };
