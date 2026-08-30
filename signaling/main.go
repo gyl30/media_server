@@ -27,6 +27,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	live := newLiveService(server, registry, newMediaServerHTTPClient(cfg.mediaRequestTimeout), ssrcs, logger)
 	live.inviteTimeout = cfg.inviteTimeout
 	live.byeTimeout = cfg.byeTimeout
+	infrastructure.live = live
 	server.onDeviceOffline = func(deviceID string) { live.deviceOffline(context.Background(), deviceID) }
 	infrastructure.onMediaServerOffline = func(instance mediaServerInstance) { live.mediaServerOffline(context.Background(), instance) }
 	logger.Info("SIP UDP listening", "address", cfg.sipListen)

@@ -18,6 +18,7 @@ type infrastructureServer struct {
 	cfg                  config
 	registry             *mediaServerRegistry
 	logger               *slog.Logger
+	live                 *liveService
 	onMediaServerOffline func(mediaServerInstance)
 }
 
@@ -29,6 +30,10 @@ func (s *infrastructureServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/media-servers/register", s.handleMediaServerRegister)
 	mux.HandleFunc("POST /internal/media-servers/heartbeat", s.handleMediaServerHeartbeat)
+	if s.live != nil {
+		mux.HandleFunc("POST /internal/live/start", s.handleLiveStart)
+		mux.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
+	}
 	return mux
 }
 
