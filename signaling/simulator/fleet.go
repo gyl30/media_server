@@ -393,7 +393,6 @@ func (f *simulatedFleet) registrationRefreshesDue(destination []int, now time.Ti
 			continue
 		}
 		state.refreshPending = true
-		state.refreshAt = now.Add(f.cfg.registerExpiry / 2)
 		destination = append(destination, index)
 	}
 	return destination
