@@ -173,6 +173,30 @@ func TestRegistrationRefreshScheduleSkipsUnregisteredAndPendingDevices(t *testin
 	}
 }
 
+func TestRegistrationRefreshFailureRemainsDueForRetry(t *testing.T) {
+	now := time.Now()
+	fleet := &simulatedFleet{
+		cfg:    config{registerExpiry: 120 * time.Second},
+		states: make([]fleetDeviceState, 1),
+	}
+	fleet.states[0].registered = true
+	fleet.states[0].refreshAt = now
+
+	due := fleet.registrationRefreshesDue(nil, now)
+	if len(due) != 1 || due[0] != 0 {
+		t.Fatalf("due registrations = %v, want [0]", due)
+	}
+	if !fleet.states[0].refreshAt.Equal(now) {
+		t.Fatalf("refresh deadline moved while request was only queued: got %v want %v", fleet.states[0].refreshAt, now)
+	}
+
+	fleet.states[0].refreshPending = false
+	retry := fleet.registrationRefreshesDue(nil, now.Add(time.Second))
+	if len(retry) != 1 || retry[0] != 0 {
+		t.Fatalf("retry registrations = %v, want [0]", retry)
+	}
+}
+
 func TestRegistrationRefreshSchedulerStopsWithContext(t *testing.T) {
 	fleet := &simulatedFleet{
 		cfg:           config{registerExpiry: 2 * time.Second},
