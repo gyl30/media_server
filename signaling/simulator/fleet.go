@@ -25,12 +25,15 @@ type fleetEndpoint struct {
 }
 
 type fleetDeviceState struct {
-	dialog      *sipgo.DialogServerSession
-	dialogID    string
-	target      mediaTarget
-	heartbeatSN atomic.Uint32
-	cataloged   bool
-	streaming   bool
+	dialog         *sipgo.DialogServerSession
+	dialogID       string
+	target         mediaTarget
+	heartbeatSN    atomic.Uint32
+	refreshAt      time.Time
+	cataloged      bool
+	registered     bool
+	refreshPending bool
+	streaming      bool
 }
 
 type catalogWork struct {
@@ -124,6 +127,8 @@ func (f *simulatedFleet) start(ctx context.Context) error {
 		go f.runCatalogWorker(runContext)
 		go f.runDeviceWorker(runContext)
 	}
+	f.done.Add(1)
+	go f.runRegistrationScheduler(runContext)
 	return nil
 }
 
@@ -252,6 +257,12 @@ func (f *simulatedFleet) register(ctx context.Context, index int, refresh bool) 
 	if response.StatusCode != sip.StatusOK {
 		return fmt.Errorf("device %d REGISTER status %d", index, response.StatusCode)
 	}
+	f.mutex.Lock()
+	state := &f.states[index]
+	state.registered = true
+	state.refreshPending = false
+	state.refreshAt = time.Now().Add(f.cfg.registerExpiry / 2)
+	f.mutex.Unlock()
 	if refresh {
 		f.counters.registerRefresh.Add(1)
 	} else {
@@ -352,17 +363,16 @@ func (f *simulatedFleet) runHeartbeatScheduler(ctx context.Context) {
 
 func (f *simulatedFleet) runRegistrationScheduler(ctx context.Context) {
 	defer f.done.Done()
-	period := max(1, int(f.cfg.registerExpiry/(2*time.Second)))
-	ticker := time.NewTicker(time.Second)
+	refreshInterval := f.cfg.registerExpiry / 2
+	ticker := time.NewTicker(min(time.Second, refreshInterval/2))
 	defer ticker.Stop()
-	bucket := 0
-	indices := make([]int, 0, (f.cfg.devices+period-1)/period)
+	indices := make([]int, 0, f.cfg.devices)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			indices = scheduleBucket(indices[:0], f.cfg.devices, period, bucket)
+		case now := <-ticker.C:
+			indices = f.registrationRefreshesDue(indices[:0], now)
 			for _, index := range indices {
 				select {
 				case <-ctx.Done():
@@ -370,9 +380,23 @@ func (f *simulatedFleet) runRegistrationScheduler(ctx context.Context) {
 				case f.registrations <- index:
 				}
 			}
-			bucket = (bucket + 1) % period
 		}
 	}
+}
+
+func (f *simulatedFleet) registrationRefreshesDue(destination []int, now time.Time) []int {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	for index := range f.states {
+		state := &f.states[index]
+		if !state.registered || state.refreshPending || now.Before(state.refreshAt) {
+			continue
+		}
+		state.refreshPending = true
+		state.refreshAt = now.Add(f.cfg.registerExpiry / 2)
+		destination = append(destination, index)
+	}
+	return destination
 }
 
 func (f *simulatedFleet) runDeviceWorker(ctx context.Context) {
@@ -386,6 +410,9 @@ func (f *simulatedFleet) runDeviceWorker(ctx context.Context) {
 			err := f.register(requestContext, index, true)
 			cancel()
 			if err != nil {
+				f.mutex.Lock()
+				f.states[index].refreshPending = false
+				f.mutex.Unlock()
 				f.counters.registerErrors.Add(1)
 			}
 		case index := <-f.heartbeats:
@@ -710,9 +737,8 @@ func runFleet(ctx context.Context, cfg config, source *sharedMediaSource, logger
 	if err := fleet.initialKeepalives(ctx); err != nil {
 		return err
 	}
-	fleet.done.Add(2)
+	fleet.done.Add(1)
 	go fleet.runHeartbeatScheduler(fleet.ctx)
-	go fleet.runRegistrationScheduler(fleet.ctx)
 	if err := fleet.startLive(ctx); err != nil {
 		return err
 	}
