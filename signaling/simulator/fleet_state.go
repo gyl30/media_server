@@ -83,5 +83,5 @@ func scheduleBucket(destination []int, total, period, bucket int) []int {
 }
 
 func assignMedia(index, workers, phases int) (int, int) {
-	return index % workers, index % phases
+	return index % workers, (index / workers) % phases
 }
