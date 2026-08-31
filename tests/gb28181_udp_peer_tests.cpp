@@ -549,7 +549,7 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
 
 int main()
 {
-    media_server::port_manager::init(40'000, 40'199);
+    media_server::port_manager::init(32'200, 32'399);
     media_server::registry::init();
     try
     {

@@ -140,7 +140,7 @@ gb28181_description make_udp_description()
 void test_udp_output_releases_pair_after_shutdown()
 {
     boost::asio::io_context io;
-    port_manager::init(40'000, 40'001);
+    port_manager::init(32'400, 32'401);
     auto stream = std::make_shared<media_stream>("live/port-release", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "port release stream tracks");
     require(registry::instance().add(stream), "port release stream registry");
@@ -152,7 +152,7 @@ void test_udp_output_releases_pair_after_shutdown()
     boost::system::error_code bind_error;
     boost::asio::ip::udp::socket other_address(io);
     other_address.open(boost::asio::ip::udp::v4());
-    other_address.bind({boost::asio::ip::make_address_v4("127.0.0.2"), 40'000}, bind_error);
+    other_address.bind({boost::asio::ip::make_address_v4("127.0.0.2"), 32'400}, bind_error);
     require(!bind_error, "udp output only binds configured local address");
 
     session->shutdown();
@@ -160,7 +160,7 @@ void test_udp_output_releases_pair_after_shutdown()
     session.reset();
 
     const auto pair = port_manager::instance().acquire_pair();
-    require(pair && pair->first == 40'000 && pair->second == 40'001, "port release after shutdown");
+    require(pair && pair->first == 32'400 && pair->second == 32'401, "port release after shutdown");
     port_manager::instance().release(*pair);
     registry::instance().clear();
     port_manager::destroy();
@@ -169,8 +169,8 @@ void test_udp_output_releases_pair_after_shutdown()
 void test_udp_output_releases_pair_after_bind_failure()
 {
     boost::asio::io_context io;
-    port_manager::init(40'010, 40'011);
-    boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 40'010});
+    port_manager::init(32'410, 32'411);
+    boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 32'410});
     auto stream = std::make_shared<media_stream>("live/port-bind-failure", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "port bind failure stream tracks");
     require(registry::instance().add(stream), "port bind failure stream registry");
@@ -179,7 +179,7 @@ void test_udp_output_releases_pair_after_bind_failure()
     require(!session->startup(), "port bind failure output startup");
 
     const auto pair = port_manager::instance().acquire_pair();
-    require(pair && pair->first == 40'010 && pair->second == 40'011, "port release after bind failure");
+    require(pair && pair->first == 32'410 && pair->second == 32'411, "port release after bind failure");
     port_manager::instance().release(*pair);
     registry::instance().clear();
     port_manager::destroy();
@@ -188,8 +188,8 @@ void test_udp_output_releases_pair_after_bind_failure()
 void test_udp_input_releases_pair_after_bind_failure()
 {
     boost::asio::io_context io;
-    port_manager::init(40'020, 40'021);
-    boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 40'020});
+    port_manager::init(32'420, 32'421);
+    boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 32'420});
     const gb28181_description description{.transport = gb28181_transport::udp,
                                           .address = boost::asio::ip::address_v4::loopback(),
                                           .payload_type = 96,
@@ -198,7 +198,7 @@ void test_udp_input_releases_pair_after_bind_failure()
     require(!session->startup(), "input port bind failure startup");
 
     const auto pair = port_manager::instance().acquire_pair();
-    require(pair && pair->first == 40'020 && pair->second == 40'021, "input port release after bind failure");
+    require(pair && pair->first == 32'420 && pair->second == 32'421, "input port release after bind failure");
     port_manager::instance().release(*pair);
     port_manager::destroy();
 }
@@ -206,7 +206,7 @@ void test_udp_input_releases_pair_after_bind_failure()
 void test_udp_input_rejects_unavailable_local_address()
 {
     boost::asio::io_context io;
-    port_manager::init(40'030, 40'031);
+    port_manager::init(32'430, 32'431);
     const gb28181_description description{.transport = gb28181_transport::udp,
                                           .address = boost::asio::ip::make_address("192.0.2.1"),
                                           .payload_type = 96,
@@ -215,7 +215,7 @@ void test_udp_input_rejects_unavailable_local_address()
     require(!session->startup(), "input unavailable local address rejected");
 
     const auto pair = port_manager::instance().acquire_pair();
-    require(pair && pair->first == 40'030 && pair->second == 40'031, "input unavailable address releases pair");
+    require(pair && pair->first == 32'430 && pair->second == 32'431, "input unavailable address releases pair");
     port_manager::instance().release(*pair);
     port_manager::destroy();
 }
