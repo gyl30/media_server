@@ -15,9 +15,15 @@ type mediaTask struct {
 	phase int
 }
 
+const (
+	simulatorMediaPortStart = 32000
+	simulatorMediaPortEnd   = 40000
+)
+
 type mediaWorker struct {
 	index  int
 	socket *net.UDPConn
+	rtcp   *net.UDPConn
 	sender *udpBatchSender
 	tasks  chan mediaTask
 }
@@ -39,6 +45,7 @@ type mediaEngine struct {
 	tableMu  sync.RWMutex
 	workers  []mediaWorker
 	workerWG sync.WaitGroup
+	rtcpWG   sync.WaitGroup
 	counters mediaCounters
 }
 
@@ -51,24 +58,51 @@ func startMediaEngine(ctx context.Context, source *sharedMediaSource, bindAddres
 		workers: make([]mediaWorker, workerCount),
 	}
 	for index := range workerCount {
-		socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(bindAddress)})
+		rtp, rtcp, err := listenMediaPair(bindAddress, index)
 		if err != nil {
 			cancel()
 			for previous := range index {
 				_ = engine.workers[previous].socket.Close()
+				_ = engine.workers[previous].rtcp.Close()
 			}
 			return nil, err
 		}
 		engine.workers[index] = mediaWorker{
-			index: index, socket: socket, sender: newUDPBatchSender(socket, batchSize, loss), tasks: make(chan mediaTask, 2),
+			index: index, socket: rtp, rtcp: rtcp, sender: newUDPBatchSender(rtp, batchSize, loss), tasks: make(chan mediaTask, 2),
 		}
 	}
 	for index := range engine.workers {
 		engine.workerWG.Add(1)
 		go engine.runWorker(runContext, &engine.workers[index])
+		engine.rtcpWG.Go(func() { engine.drainRTCP(&engine.workers[index]) })
 	}
 	go engine.runScheduler(runContext, source, phases)
 	return engine, nil
+}
+
+func listenMediaPair(bindAddress string, workerIndex int) (rtp, rtcp *net.UDPConn, err error) {
+	ip := net.ParseIP(bindAddress)
+	if ip == nil || ip.To4() == nil {
+		return nil, nil, fmt.Errorf("invalid media bind address")
+	}
+	if workerIndex < 0 {
+		return nil, nil, fmt.Errorf("invalid media worker index %d", workerIndex)
+	}
+	if workerIndex > (simulatorMediaPortEnd-simulatorMediaPortStart-1)/2 {
+		return nil, nil, fmt.Errorf("media worker %d exceeds RTP/RTCP port range", workerIndex)
+	}
+	rtpPort := simulatorMediaPortStart + workerIndex*2
+	rtcpPort := rtpPort + 1
+	rtp, err = net.ListenUDP("udp4", &net.UDPAddr{IP: ip, Port: rtpPort})
+	if err != nil {
+		return nil, nil, fmt.Errorf("bind RTP port %d: %w", rtpPort, err)
+	}
+	rtcp, err = net.ListenUDP("udp4", &net.UDPAddr{IP: ip, Port: rtcpPort})
+	if err != nil {
+		_ = rtp.Close()
+		return nil, nil, fmt.Errorf("bind RTCP port %d: %w", rtcpPort, err)
+	}
+	return rtp, rtcp, nil
 }
 
 func (e *mediaEngine) add(index int, target mediaTarget) error {
@@ -101,8 +135,10 @@ func (e *mediaEngine) runScheduler(ctx context.Context, source *sharedMediaSourc
 		e.cancel()
 		for index := range e.workers {
 			_ = e.workers[index].socket.Close()
+			_ = e.workers[index].rtcp.Close()
 		}
 		e.workerWG.Wait()
+		e.rtcpWG.Wait()
 		close(e.done)
 	}()
 	ticker := time.NewTicker(40 * time.Millisecond / time.Duration(phases))
@@ -136,6 +172,15 @@ func (e *mediaEngine) runScheduler(ctx context.Context, source *sharedMediaSourc
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+func (e *mediaEngine) drainRTCP(worker *mediaWorker) {
+	buffer := make([]byte, 2048)
+	for {
+		if _, _, err := worker.rtcp.ReadFromUDP(buffer); err != nil {
+			return
 		}
 	}
 }
