@@ -56,7 +56,7 @@ gb28181_http_response output_request(boost::asio::io_context& io, gb28181_http_r
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "gb output target");
-    return handle_gb28181_output_request(request, io, *target);
+    return handle_gb28181_output_request(request, io, *target, boost::asio::ip::address_v4::loopback());
 }
 
 gb28181_description make_tcp_active_description(std::uint16_t port, std::uint32_t ssrc)

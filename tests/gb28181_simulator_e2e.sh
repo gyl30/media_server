@@ -12,8 +12,10 @@ simulator_duration="${SIMULATOR_LIVE_DURATION:-10s}"
 simulator_register_rate="${SIMULATOR_REGISTER_RATE:-200}"
 simulator_register_expires="${SIMULATOR_REGISTER_EXPIRES:-120s}"
 simulator_start_rate="${SIMULATOR_START_RATE:-0}"
-simulator_media_bind="${SIMULATOR_MEDIA_BIND:-127.0.0.2}"
 simulator_media_profile="${SIMULATOR_MEDIA_PROFILE:-normal}"
+signaling_address="${SIGNALING_ADDRESS:-127.0.0.1}"
+media_server_address="${MEDIA_SERVER_ADDRESS:-127.0.0.1}"
+simulator_address="${SIMULATOR_ADDRESS:-127.0.0.2}"
 sample_resources="${SIMULATOR_SAMPLE_RESOURCES:-0}"
 probe_attempts="${SIMULATOR_PROBE_ATTEMPTS:-100}"
 signaling_bin="${SIGNALING_BIN:-}"
@@ -40,17 +42,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-read -r sip_port signaling_http_port rtmp_port rtsp_port media_http_port < <(python3 - <<'PY'
+read -r sip_port signaling_http_port rtmp_port rtsp_port media_http_port < <(python3 - "$signaling_address" "$media_server_address" <<'PY'
 import socket
+import sys
 
 sockets = []
-specs = [socket.SOCK_DGRAM, socket.SOCK_STREAM, socket.SOCK_STREAM, socket.SOCK_STREAM, socket.SOCK_STREAM]
+specs = [
+    (sys.argv[1], socket.SOCK_DGRAM),
+    (sys.argv[1], socket.SOCK_STREAM),
+    (sys.argv[2], socket.SOCK_STREAM),
+    (sys.argv[2], socket.SOCK_STREAM),
+    (sys.argv[2], socket.SOCK_STREAM),
+]
 try:
     ports = []
-    for kind in specs:
+    for address, kind in specs:
         while True:
             sock = socket.socket(socket.AF_INET, kind)
-            sock.bind(("127.0.0.1", 0))
+            sock.bind((address, 0))
             if kind != socket.SOCK_DGRAM or sock.getsockname()[1] < 49152:
                 break
             sock.close()
@@ -128,31 +137,33 @@ fi
     -bsf:v h264_metadata=aud=insert -an -f h264 -y "$work_dir/source.h264"
 
 "$signaling_bin" \
-    --sip-listen "127.0.0.1:$sip_port" \
-    --sip-advertise "127.0.0.1:$sip_port" \
-    --http-listen "127.0.0.1:$signaling_http_port" \
+    --sip-listen "$signaling_address:$sip_port" \
+    --sip-advertise "$signaling_address:$sip_port" \
+    --http-listen "$signaling_address:$signaling_http_port" \
     >"$work_dir/signaling.log" 2>&1 &
 signaling_pid=$!
-wait_http "http://127.0.0.1:$signaling_http_port/" "$signaling_pid" "$work_dir/signaling.log"
+wait_http "http://$signaling_address:$signaling_http_port/" "$signaling_pid" "$work_dir/signaling.log"
 
 "$server_bin" \
+    --bind-address "$media_server_address" \
+    --webrtc-address "$media_server_address" \
     --rtmp-port "$rtmp_port" \
     --rtsp-port "$rtsp_port" \
     --http-port "$media_http_port" \
     --threads 2 \
-    --signaling-url "http://127.0.0.1:$signaling_http_port" \
+    --signaling-url "http://$signaling_address:$signaling_http_port" \
     --server-id simulator-e2e \
-    --control-url "http://127.0.0.1:$media_http_port" \
-    --media-ip 127.0.0.1 \
+    --control-url "http://$media_server_address:$media_http_port" \
+    --media-ip "$media_server_address" \
     >"$work_dir/media_server.log" 2>&1 &
 media_pid=$!
-wait_http "http://127.0.0.1:$media_http_port/" "$media_pid" "$work_dir/media_server.log"
+wait_http "http://$media_server_address:$media_http_port/" "$media_pid" "$work_dir/media_server.log"
 
 "$simulator_bin" \
-    --platform-sip "127.0.0.1:$sip_port" \
-    --control-url "http://127.0.0.1:$signaling_http_port" \
-    --listen 127.0.0.2:0 \
-    --media-bind "$simulator_media_bind" \
+    --platform-sip "$signaling_address:$sip_port" \
+    --control-url "http://$signaling_address:$signaling_http_port" \
+    --listen "$simulator_address:0" \
+    --media-bind "$simulator_address" \
     --media-profile "$simulator_media_profile" \
     --media-file "$work_dir/source.h264" \
     --ffmpeg "$ffmpeg_bin" \
@@ -171,7 +182,7 @@ if [[ "$sample_resources" == "1" ]]; then
     sampler_pid=$!
 fi
 
-stream_url="rtsp://127.0.0.1:$rtsp_port/gb/34020000001320000001/34020000001320000002"
+stream_url="rtsp://$media_server_address:$rtsp_port/gb/34020000001320000001/34020000001320000002"
 probe_output="$work_dir/ffprobe.txt"
 probe_error="$work_dir/ffprobe.err"
 probe_ok=false
@@ -196,6 +207,16 @@ if [[ "$probe_ok" != "true" ]]; then
     print_logs
     exit 1
 fi
+
+ss -H -lntup >"$work_dir/sockets.txt"
+for pid in "$signaling_pid" "$media_pid" "$simulator_pid"; do
+    if awk -v process="pid=$pid," 'index($0, process) && ($5 ~ /^0\.0\.0\.0:/ || $5 ~ /^\[::\]:/) {print; found=1} END {exit !found}' \
+        "$work_dir/sockets.txt" >"$work_dir/any-address-sockets.txt"; then
+        echo "process $pid has an any-address socket" >&2
+        cat "$work_dir/any-address-sockets.txt" >&2
+        exit 1
+    fi
+done
 if ! wait "$simulator_pid"; then
     simulator_pid=""
     print_logs

@@ -22,6 +22,11 @@ void tcp_listener::startup(accept_handler handler, std::size_t accept_limit, std
     {
         return;
     }
+    if (bind_address_.is_unspecified())
+    {
+        error = boost::asio::error::invalid_argument;
+        return;
+    }
 
     const boost::asio::ip::tcp::endpoint endpoint{
         bind_address_,

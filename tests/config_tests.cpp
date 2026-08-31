@@ -34,6 +34,7 @@ void test_defaults()
     require(cfg.rtmp_port == 1935, "default rtmp port");
     require(cfg.rtsp_port == 8554, "default rtsp port");
     require(cfg.http_port == 8080, "default http port");
+    require(cfg.bind_address == "127.0.0.1", "default bind address");
     require(cfg.webrtc_address == "127.0.0.1", "default webrtc address");
     require(cfg.threads > 0, "default threads");
     require(cfg.rtsp_pulls.empty(), "default rtsp pulls");
@@ -54,6 +55,8 @@ void test_values()
                    "--rtsp-port=18554",
                    "--http-port",
                    "18080",
+                   "--bind-address",
+                   "192.0.2.20",
                    "--webrtc-address",
                    "192.0.2.10",
                    "--threads",
@@ -72,6 +75,7 @@ void test_values()
     require(cfg.rtmp_port == 11935, "explicit rtmp port");
     require(cfg.rtsp_port == 18554, "explicit rtsp port");
     require(cfg.http_port == 18080, "explicit http port");
+    require(cfg.bind_address == "192.0.2.20", "explicit bind address");
     require(cfg.webrtc_address == "192.0.2.10", "explicit webrtc address");
     require(cfg.threads == 3, "explicit threads");
     require(cfg.rtsp_pulls ==
@@ -129,6 +133,11 @@ void test_invalid()
         {"media_server", "--rtsp-video-codec", ""},
         {"media_server", "--http-video-codec", "h265"},
         {"media_server", "--whep-video-codec", "vp9"},
+        {"media_server", "--bind-address", "0.0.0.0"},
+        {"media_server", "--bind-address", "::"},
+        {"media_server", "--bind-address", "invalid"},
+        {"media_server", "--webrtc-address", "0.0.0.0"},
+        {"media_server", "--webrtc-address", "::"},
         {"media_server", "--signaling-url", "http://127.0.0.1:9090"},
         {"media_server", "--signaling-url", "ftp://127.0.0.1:9090", "--server-id", "media-1", "--control-url", "http://127.0.0.1:8080", "--media-ip", "127.0.0.1"},
         {"media_server", "--signaling-url", "http://127.0.0.1:9090/path", "--server-id", "media-1", "--control-url", "http://127.0.0.1:8080", "--media-ip", "127.0.0.1"},

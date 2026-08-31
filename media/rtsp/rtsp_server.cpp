@@ -8,7 +8,7 @@ namespace media_server
 {
 
 rtsp_server::rtsp_server(io_context_pool& workers, const config& config)
-    : config_(config), listener_(std::make_shared<tcp_listener>(workers, config.rtsp_port))
+    : config_(config), listener_(std::make_shared<tcp_listener>(workers, config.rtsp_port, boost::asio::ip::make_address(config.bind_address)))
 {
 }
 

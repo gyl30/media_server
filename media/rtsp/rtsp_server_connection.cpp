@@ -54,7 +54,7 @@ void rtsp_server_connection::startup()
         shutdown();
         return;
     }
-    local_address_ = local.address().to_string();
+    local_address_ = local.address();
 
     const auto self = shared_from_this();
     connection_->startup(
@@ -156,8 +156,8 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     if (!self->logical_session_)
     {
         const auto connection = self->connection_;
-        auto next_session =
-            std::make_unique<rtsp_input_session>(self->executor_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
+        auto next_session = std::make_unique<rtsp_input_session>(
+            self->executor_, self->local_address_, [connection](std::span<const std::uint8_t> data) { connection->write(data); });
         next_session->set_error_handler([owner = self->shared_from_this()](boost::system::error_code) { owner->shutdown(); });
         self->logical_session_ = std::move(next_session);
     }

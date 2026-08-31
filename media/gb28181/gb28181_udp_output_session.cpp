@@ -21,6 +21,7 @@ namespace media_server
 gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_executor executor,
                                                        std::shared_ptr<media_stream> stream,
                                                        gb28181_description description,
+                                                       boost::asio::ip::address bind_address,
                                                        std::string output_id,
                                                        bool rtcp_enabled)
     : executor_(executor),
@@ -28,6 +29,7 @@ gb28181_udp_output_session::gb28181_udp_output_session(boost::asio::any_io_execu
       stream_name_(stream_ ? stream_->name() : std::string{}),
       output_id_(std::move(output_id)),
       description_(std::move(description)),
+      bind_address_(std::move(bind_address)),
       remote_rtp_endpoint_(description_.address, description_.rtp_port),
       remote_rtcp_endpoint_(description_.address, description_.rtcp_port),
       rtcp_timer_(std::move(executor)),
@@ -169,14 +171,12 @@ void gb28181_udp_output_session::shutdown_udp_sockets()
 bool gb28181_udp_output_session::startup()
 {
     if (closed_ || rtp_socket_ || rtcp_socket_ || media_ || !stream_ || description_.transport != gb28181_transport::udp ||
-        description_.address.is_unspecified())
+        description_.address.is_unspecified() || bind_address_.is_unspecified())
     {
         return false;
     }
 
-    const auto bind_address = description_.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
-                                                           : boost::asio::ip::address{boost::asio::ip::address_v6::any()};
-    auto sockets = prepare_udp_sockets(bind_address);
+    auto sockets = prepare_udp_sockets(bind_address_);
     if (!sockets)
     {
         return false;

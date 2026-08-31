@@ -58,7 +58,7 @@ std::uint32_t random_u32()
 
 rtsp_output_session::rtsp_output_session(boost::asio::any_io_executor executor,
                                          output_video_codec video_codec,
-                                         std::string local_address,
+                                         boost::asio::ip::address local_address,
                                          std::function<void(std::span<const std::uint8_t>)> write)
     : executor_(std::move(executor)), video_codec_(video_codec), local_address_(std::move(local_address)), write_handler_(std::move(write))
 {
@@ -273,10 +273,11 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
     }
 
     std::ostringstream sdp;
+    const auto address_type = local_address_.is_v4() ? "IP4" : "IP6";
     sdp << "v=0\r\n"
-        << "o=- 1 1 IN IP4 " << local_address_ << "\r\n"
+        << "o=- 1 1 IN " << address_type << ' ' << local_address_.to_string() << "\r\n"
         << "s=media_server\r\n"
-        << "c=IN IP4 0.0.0.0\r\n"
+        << "c=IN " << address_type << ' ' << local_address_.to_string() << "\r\n"
         << "t=0 0\r\n"
         << "a=control:*\r\n"
         << media_sdp.str();

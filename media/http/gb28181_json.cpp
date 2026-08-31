@@ -218,7 +218,7 @@ std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view 
         return std::nullopt;
     }
 
-    if (*transport == gb28181_transport::tcp_active && address->is_unspecified())
+    if (address->is_unspecified())
     {
         return std::nullopt;
     }
@@ -267,7 +267,7 @@ std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_vie
         return std::nullopt;
     }
 
-    if (*transport == gb28181_transport::tcp_active && address->is_unspecified())
+    if (address->is_unspecified())
     {
         return std::nullopt;
     }

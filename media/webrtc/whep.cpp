@@ -56,7 +56,7 @@ create_result create(boost::asio::any_io_executor executor,
 
     boost::system::error_code address_error;
     const auto advertised_address = boost::asio::ip::make_address(application_config.webrtc_address, address_error);
-    if (address_error)
+    if (address_error || advertised_address.is_unspecified())
     {
         spdlog::error("whep create invalid advertised address {}", application_config.webrtc_address);
         return failed(create_error::internal_error);

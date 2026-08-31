@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/ip/address.hpp>
 
 #include "media/codec/output_video_config.h"
 #include "media/net/tcp_connection.h"
@@ -52,7 +53,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     output_video_codec video_codec_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<rtsp_server_session> logical_session_;
-    std::string local_address_;
+    boost::asio::ip::address local_address_;
     rtsp_server_t* rtsp_context_{};
     rtp_over_rtsp_t interleaved_{};
     bool rtsp_need_more_data_{};

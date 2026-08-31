@@ -834,7 +834,7 @@ media_frame make_video_key_frame(codec_id codec)
 class whep_http_test_peer final
 {
    public:
-    whep_http_test_peer() : work_(boost::asio::make_work_guard(io_)), workers_(1), acceptor_(io_, {boost::asio::ip::tcp::v4(), 0})
+    whep_http_test_peer() : work_(boost::asio::make_work_guard(io_)), workers_(1), acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0})
     {
         streams_.clear();
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
@@ -2089,6 +2089,11 @@ void test_whep_session_startup_errors()
             "startup errors rejected bundle tag");
 
     require(make_session(stream, nullptr)->startup(*offer) == whep_session_startup_error::internal_error, "startup errors internal error");
+
+    auto unavailable_address = std::make_shared<whep_session>(
+        io.get_executor(), stream, boost::asio::ip::make_address("192.0.2.1"), certificate);
+    require(unavailable_address->startup(*offer) == whep_session_startup_error::internal_error,
+            "startup errors unavailable local address");
 }
 
 void test_whep_session_lifecycle()
@@ -2281,14 +2286,20 @@ void test_whep_multi_session_isolation()
     require(first->id() != second->id(), "multi unique session ids");
     require(first->local_port() != second->local_port(), "multi unique udp ports");
 
+    boost::system::error_code bind_error;
+    boost::asio::ip::udp::socket other_address_probe(io);
+    other_address_probe.open(boost::asio::ip::udp::v4());
+    other_address_probe.bind({boost::asio::ip::make_address_v4("127.0.0.2"), first->local_port()}, bind_error);
+    require(!bind_error, "whep only binds advertised local address");
+
     const auto first_ufrag = sdp_attribute(first->answer_sdp(), "ice-ufrag");
     const auto first_pwd = sdp_attribute(first->answer_sdp(), "ice-pwd");
     const auto second_ufrag = sdp_attribute(second->answer_sdp(), "ice-ufrag");
     const auto second_pwd = sdp_attribute(second->answer_sdp(), "ice-pwd");
     require(first_ufrag != second_ufrag && first_pwd != second_pwd, "multi unique ice credentials");
 
-    boost::asio::ip::udp::socket first_client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
-    boost::asio::ip::udp::socket second_client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    boost::asio::ip::udp::socket first_client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    boost::asio::ip::udp::socket second_client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const boost::asio::ip::udp::endpoint first_endpoint(boost::asio::ip::make_address("127.0.0.1"), first->local_port());
     const boost::asio::ip::udp::endpoint second_endpoint(boost::asio::ip::make_address("127.0.0.1"), second->local_port());
 
@@ -2377,7 +2388,7 @@ void test_whep_ice_activity_timeout()
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
-    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
 
     const std::array<std::uint8_t, 12> nominate_id{4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
@@ -2477,7 +2488,7 @@ void test_whep_stun_unknown_attribute_contract()
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
     require(!local_ufrag.empty() && !local_pwd.empty(), "stun unknown local credentials");
 
-    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
     const auto username = local_ufrag + ":remotevideo";
 
@@ -2543,7 +2554,7 @@ void test_whep_ice_lite()
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
     require(!local_ufrag.empty() && !local_pwd.empty(), "ice local credentials");
 
-    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
     const auto username = local_ufrag + ":remotevideo";
 
@@ -2594,7 +2605,7 @@ void test_whep_selected_bundle_transport()
 
         const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
         const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
-        boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+        boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
         const boost::asio::ip::udp::endpoint endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
         std::array<std::uint8_t, 12> transaction_id{};
         transaction_id.fill(id);
@@ -2653,7 +2664,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
     require(!local_ufrag.empty() && !local_pwd.empty(), "dtls ice credentials");
 
-    boost::asio::ip::udp::socket client_socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    boost::asio::ip::udp::socket client_socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
     const std::array<std::uint8_t, 12> nominate_id{9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2};
     const auto nominate_response =
@@ -2661,7 +2672,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     require_stun_success(nominate_response, nominate_id);
     require(session->ice_connected(), "dtls ice connected");
 
-    boost::asio::ip::udp::socket second_client_socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+    boost::asio::ip::udp::socket second_client_socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const std::array<std::uint8_t, 12> second_nominate_id{2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     const auto second_nominate = make_stun_request(local_ufrag + ":remotevideo", local_pwd, second_nominate_id, true);
     static_cast<void>(second_client_socket.send_to(boost::asio::buffer(second_nominate), server_endpoint));
