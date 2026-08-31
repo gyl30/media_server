@@ -85,3 +85,43 @@ func TestMediaEngineFansOutWithFixedWorkers(t *testing.T) {
 		}
 	}
 }
+
+func TestMediaEngineWorkersUseRTPRTCPPairs(t *testing.T) {
+	source, err := newSharedMediaSource(testAnnexB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := startMediaEngine(t.Context(), source, "127.0.0.2", 1, 4, 4, 4, packetLoss{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := engine.stop(); err != nil {
+			t.Errorf("engine.stop() error = %v", err)
+		}
+	})
+
+	ports := make(map[int]int, len(engine.workers)*2)
+	for index := range engine.workers {
+		rtpPort := engine.workers[index].socket.LocalAddr().(*net.UDPAddr).Port
+		rtcpPort := engine.workers[index].rtcp.LocalAddr().(*net.UDPAddr).Port
+		wantRTP := simulatorMediaPortStart + index*2
+		if rtpPort != wantRTP || rtcpPort != wantRTP+1 {
+			t.Fatalf("worker %d ports = %d/%d, want %d/%d", index, rtpPort, rtcpPort, wantRTP, wantRTP+1)
+		}
+		if _, exists := ports[rtpPort]; exists {
+			t.Fatalf("duplicate RTP port %d", rtpPort)
+		}
+		if _, exists := ports[rtcpPort]; exists {
+			t.Fatalf("duplicate RTCP port %d", rtcpPort)
+		}
+		ports[rtpPort] = index
+		ports[rtcpPort] = index
+	}
+}
+
+func TestListenMediaPairRejectsWorkerOutsidePortRange(t *testing.T) {
+	if _, _, err := listenMediaPair("127.0.0.2", 4000); err == nil {
+		t.Fatal("listenMediaPair accepted worker outside port range")
+	}
+}
