@@ -140,14 +140,12 @@ void gb28181_udp_session::shutdown_udp_sockets()
 bool gb28181_udp_session::startup()
 {
     if (closed_ || description_.transport != gb28181_transport::udp || description_.rtp_port != 0 || description_.rtcp_port != 0 || rtp_socket_ ||
-        rtcp_socket_ || !media_.startup())
+        rtcp_socket_ || description_.address.is_unspecified() || !media_.startup())
     {
         return false;
     }
 
-    const auto bind_address = description_.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
-                                                           : boost::asio::ip::address{boost::asio::ip::address_v6::any()};
-    auto sockets = prepare_udp_sockets(bind_address);
+    auto sockets = prepare_udp_sockets(description_.address);
     if (!sockets)
     {
         media_.shutdown();

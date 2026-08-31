@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"time"
 )
 
@@ -27,7 +28,7 @@ func parseConfig(args []string) (config, error) {
 	var cfg config
 	flags := flag.NewFlagSet("signaling", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	flags.StringVar(&cfg.sipListen, "sip-listen", "0.0.0.0:5060", "SIP UDP listen address")
+	flags.StringVar(&cfg.sipListen, "sip-listen", "127.0.0.1:5060", "SIP UDP listen address")
 	flags.StringVar(&cfg.sipAdvertise, "sip-advertise", "127.0.0.1:5060", "SIP address advertised to devices")
 	flags.StringVar(&cfg.httpListen, "http-listen", "127.0.0.1:9090", "internal HTTP listen address")
 	flags.StringVar(&cfg.sipID, "sip-id", "34020000002000000001", "GB28181 platform ID")
@@ -45,11 +46,13 @@ func parseConfig(args []string) (config, error) {
 	if flags.NArg() != 0 {
 		return config{}, fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
-	if _, err := net.ResolveUDPAddr("udp", cfg.sipListen); err != nil {
-		return config{}, fmt.Errorf("invalid SIP listen address: %w", err)
+	sipListen, err := netip.ParseAddrPort(cfg.sipListen)
+	if err != nil || sipListen.Addr().IsUnspecified() {
+		return config{}, fmt.Errorf("invalid SIP listen address")
 	}
-	if _, err := net.ResolveTCPAddr("tcp", cfg.httpListen); err != nil {
-		return config{}, fmt.Errorf("invalid HTTP listen address: %w", err)
+	httpListen, err := netip.ParseAddrPort(cfg.httpListen)
+	if err != nil || httpListen.Addr().IsUnspecified() {
+		return config{}, fmt.Errorf("invalid HTTP listen address")
 	}
 	advertise, err := net.ResolveUDPAddr("udp", cfg.sipAdvertise)
 	if err != nil || advertise.IP == nil || advertise.IP.IsUnspecified() || advertise.Port == 0 {

@@ -111,8 +111,9 @@ static_assert(requires(rtsp_server_session& session, std::function<void(boost::s
     session.set_error_handler(std::move(handler));
 });
 using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
-static_assert(std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, rtsp_write_handler>);
-static_assert(std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, output_video_codec, std::string, rtsp_write_handler>);
+static_assert(std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, boost::asio::ip::address, rtsp_write_handler>);
+static_assert(
+    std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, output_video_codec, boost::asio::ip::address, rtsp_write_handler>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -1274,7 +1275,7 @@ class rtmp_input_test_peer final
    public:
     explicit rtmp_input_test_peer(std::string stream_name, std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000})
         : work_(boost::asio::make_work_guard(io_)),
-          acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}),
+          acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}),
           client_socket_(io_),
           stream_name_(std::move(stream_name))
     {
@@ -1589,7 +1590,7 @@ class rtmp_output_test_peer final
 {
    public:
     explicit rtmp_output_test_peer(media_track video_track = make_video_track(), bool with_audio = false)
-        : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_socket_(io_), expected_video_codec_(video_track.codec)
+        : acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}), client_socket_(io_), expected_video_codec_(video_track.codec)
     {
         streams_.clear();
         stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
@@ -2150,19 +2151,28 @@ void test_rtmp_tcp_error_lifecycle()
 void test_tcp_listener_startup_error()
 {
     boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor occupied(io, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor occupied(io, {boost::asio::ip::address_v4::loopback(), 0});
 
     io_context_pool workers(1);
-    auto listener = std::make_shared<tcp_listener>(workers, occupied.local_endpoint().port());
+    auto listener = std::make_shared<tcp_listener>(workers, occupied.local_endpoint().port(), boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
     listener->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
     require(static_cast<bool>(startup_error), "tcp listener reports bind failure");
+
+    auto unspecified = std::make_shared<tcp_listener>(workers, 0, boost::asio::ip::address_v4::any());
+    unspecified->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
+    require(startup_error == boost::asio::error::invalid_argument, "tcp listener rejects unspecified address");
+
+    auto unavailable = std::make_shared<tcp_listener>(workers, 0, boost::asio::ip::make_address("192.0.2.1"));
+    unavailable->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
+    require(startup_error == boost::system::error_code(EADDRNOTAVAIL, boost::system::system_category()),
+            "tcp listener preserves unavailable address error");
 }
 
 void test_tcp_connector_successful_connect()
 {
     boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port());
     std::optional<boost::asio::ip::tcp::socket> client;
     std::optional<boost::asio::ip::tcp::socket> server;
@@ -2234,7 +2244,7 @@ void test_tcp_connector_connection_refused()
 void test_tcp_connector_shutdown_lifecycle()
 {
     boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port());
     int completion_count = 0;
     boost::system::error_code completion_error;
@@ -2265,7 +2275,7 @@ void test_tcp_connector_shutdown_lifecycle()
 void test_tcp_connection_shutdown_lifecycle()
 {
     boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     auto server = acceptor.accept();
@@ -2294,7 +2304,7 @@ void test_tcp_connection_io_error_propagation()
 {
     {
         boost::asio::io_context io;
-        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
         boost::asio::ip::tcp::socket client(io);
         client.connect(acceptor.local_endpoint());
         auto connection = std::make_shared<tcp_connection>(acceptor.accept());
@@ -2310,7 +2320,7 @@ void test_tcp_connection_io_error_propagation()
 
     {
         boost::asio::io_context io;
-        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
         boost::asio::ip::tcp::socket client(io);
         client.connect(acceptor.local_endpoint());
         auto connection = std::make_shared<tcp_connection>(acceptor.accept());
@@ -2332,7 +2342,7 @@ void test_tcp_connection_io_error_propagation()
 void test_tcp_connection_shutdown_discards_pending_writes()
 {
     boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     auto connection = std::make_shared<tcp_connection>(acceptor.accept());
@@ -2363,7 +2373,7 @@ void test_udp_socket_receive_and_send()
     const std::vector<std::uint8_t> outbound{5, 6, 7, 8};
 
     boost::system::error_code startup_error;
-    socket->startup(boost::asio::ip::address_v4::any(),
+    socket->startup(boost::asio::ip::address_v4::loopback(),
                     [&](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
                     {
                         read_error = error;
@@ -2373,6 +2383,12 @@ void test_udp_socket_receive_and_send()
                     {},
                     startup_error);
     require(!startup_error, "udp socket startup");
+
+    boost::system::error_code other_bind_error;
+    boost::asio::ip::udp::socket other_address(io);
+    other_address.open(boost::asio::ip::udp::v4());
+    other_address.bind({boost::asio::ip::make_address_v4("127.0.0.2"), socket->local_port()}, other_bind_error);
+    require(!other_bind_error, "udp socket only binds requested local address");
 
     std::array<std::uint8_t, 32> peer_buffer{};
     boost::asio::ip::udp::endpoint sender;
@@ -2408,7 +2424,7 @@ void test_udp_socket_connected_peer_filter()
     int read_count = 0;
 
     boost::system::error_code startup_error;
-    socket->startup(boost::asio::ip::address_v4::any(),
+    socket->startup(boost::asio::ip::address_v4::loopback(),
                     [&](boost::system::error_code error, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint& endpoint)
                     {
                         require(!error, "udp connected peer receive");
@@ -2444,7 +2460,7 @@ void test_udp_socket_multi_endpoint_queue()
     boost::asio::io_context io;
     auto socket = std::make_shared<udp_socket>(io.get_executor());
     boost::system::error_code startup_error;
-    socket->startup(boost::asio::ip::address_v4::any(), {}, {}, startup_error);
+    socket->startup(boost::asio::ip::address_v4::loopback(), {}, {}, startup_error);
     require(!startup_error, "udp multi endpoint startup");
 
     boost::asio::ip::udp::socket first(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -2500,6 +2516,22 @@ void test_udp_socket_error_and_shutdown_lifecycle()
 {
     {
         boost::asio::io_context io;
+        auto socket = std::make_shared<udp_socket>(io.get_executor());
+        boost::system::error_code startup_error;
+        socket->startup(boost::asio::ip::address_v4::any(), {}, {}, startup_error);
+        require(startup_error == boost::asio::error::invalid_argument, "udp socket rejects unspecified address");
+    }
+
+    {
+        boost::asio::io_context io;
+        auto socket = std::make_shared<udp_socket>(io.get_executor());
+        boost::system::error_code startup_error;
+        socket->startup(boost::asio::ip::make_address("192.0.2.1"), {}, {}, startup_error);
+        require(startup_error.value() == EADDRNOTAVAIL, "udp socket preserves unavailable address error");
+    }
+
+    {
+        boost::asio::io_context io;
         boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 0});
         auto socket = std::make_shared<udp_socket>(io.get_executor());
         boost::system::error_code startup_error;
@@ -2513,7 +2545,7 @@ void test_udp_socket_error_and_shutdown_lifecycle()
         boost::asio::ip::udp::socket peer(io, {boost::asio::ip::address_v4::loopback(), 0});
         boost::system::error_code write_error;
         boost::system::error_code startup_error;
-        socket->startup(boost::asio::ip::address_v4::any(),
+        socket->startup(boost::asio::ip::address_v4::loopback(),
                         {},
                         [&](boost::system::error_code error, const boost::asio::ip::udp::endpoint&) { write_error = error; },
                         startup_error);
@@ -2553,7 +2585,7 @@ void test_udp_socket_error_and_shutdown_lifecycle()
         int write_error_callback_count = 0;
         boost::system::error_code startup_error;
         socket->startup(
-            boost::asio::ip::address_v4::any(),
+            boost::asio::ip::address_v4::loopback(),
             [&](boost::system::error_code, std::span<const std::uint8_t>, const boost::asio::ip::udp::endpoint&) { ++read_callback_count; },
             [&](boost::system::error_code, const boost::asio::ip::udp::endpoint&) { ++write_error_callback_count; },
             startup_error);
@@ -2575,14 +2607,14 @@ void test_udp_socket_error_and_shutdown_lifecycle()
 void test_tcp_listener_worker_affinity()
 {
     io_context_pool workers(2);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
     const auto port = probe.local_endpoint().port();
     probe.close();
 
     std::mutex mutex;
     std::vector<std::thread::id> threads;
     std::weak_ptr<tcp_listener> weak_listener;
-    auto listener = std::make_shared<tcp_listener>(workers, port);
+    auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
     weak_listener = listener;
     boost::system::error_code startup_error;
     listener->startup(
@@ -2615,6 +2647,12 @@ void test_tcp_listener_worker_affinity()
         startup_error);
     require(!startup_error, "tcp listener worker startup");
 
+    boost::asio::ip::tcp::acceptor other_address(workers.context(0));
+    boost::system::error_code other_bind_error;
+    other_address.open(boost::asio::ip::tcp::v4(), other_bind_error);
+    other_address.bind({boost::asio::ip::make_address_v4("127.0.0.2"), port}, other_bind_error);
+    require(!other_bind_error, "tcp listener only binds requested local address");
+
     boost::asio::io_context client_io;
     boost::asio::ip::tcp::socket first(client_io);
     boost::asio::ip::tcp::socket second(client_io);
@@ -2632,12 +2670,12 @@ void test_tcp_listener_worker_affinity()
 void test_tcp_listener_unlimited_accepts()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
     int accept_count = 0;
-    auto listener = std::make_shared<tcp_listener>(workers, port);
+    auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
     listener->startup(
         [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
@@ -2673,13 +2711,13 @@ void test_tcp_listener_unlimited_accepts()
 void test_tcp_listener_single_accept_limit()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
     int accept_count = 0;
     std::array<std::uint8_t, 4> received{};
-    auto listener = std::make_shared<tcp_listener>(workers, port);
+    auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
     const std::weak_ptr<tcp_listener> weak_listener = listener;
     boost::system::error_code startup_error;
     listener->startup(
@@ -2722,7 +2760,7 @@ void test_tcp_listener_single_accept_limit()
 void test_tcp_listener_dynamic_startup()
 {
     io_context_pool workers(2);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2745,7 +2783,7 @@ void test_tcp_listener_dynamic_startup()
     bool timed_out = false;
     bool finished = false;
 
-    auto listener = std::make_shared<tcp_listener>(workers, port);
+    auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
     auto first = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0));
     auto second = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0));
     boost::asio::steady_timer watchdog(workers.context(0));
@@ -2876,7 +2914,7 @@ void test_tcp_listener_dynamic_startup()
 void test_tcp_listener_timeout_reports_error_without_shutdown()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor reserved(workers.context(0), {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor reserved(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
     const auto endpoint = reserved.local_endpoint();
     reserved.close();
 
@@ -2921,7 +2959,7 @@ void test_tcp_listener_timeout_reports_error_without_shutdown()
 void test_tcp_listener_shutdown_lifecycle()
 {
     io_context_pool workers(1);
-    auto listener = std::make_shared<tcp_listener>(workers, 0);
+    auto listener = std::make_shared<tcp_listener>(workers, 0, boost::asio::ip::address_v4::loopback());
     int accept_count = 0;
     boost::system::error_code startup_error;
     listener->startup(
@@ -2978,7 +3016,7 @@ void test_gb28181_multi_output_identity()
         request.prepare_payload();
         const auto target = boost::urls::parse_origin_form(request.target());
         require(target.has_value(), "gb multi output create target");
-        return handle_gb28181_output_request(request, io, *target);
+        return handle_gb28181_output_request(request, io, *target, boost::asio::ip::address_v4::loopback());
     };
     const auto remove = [&io](std::string_view stream_name, std::string_view output_id)
     {
@@ -2992,7 +3030,7 @@ void test_gb28181_multi_output_identity()
         request.prepare_payload();
         const auto target = boost::urls::parse_origin_form(request.target());
         require(target.has_value(), "gb multi output delete target");
-        return handle_gb28181_output_request(request, io, *target);
+        return handle_gb28181_output_request(request, io, *target, boost::asio::ip::address_v4::loopback());
     };
 
     require(create(first->name(), "a").result() == boost::beast::http::status::created, "gb multi output first identity");
@@ -3130,7 +3168,7 @@ void test_gb28181_input_http_parameters()
     streams.clear();
     io_context_pool workers(1);
 
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     auto work = boost::asio::make_work_guard(io);
     std::jthread runner([&io]() { io.run(); });
 
@@ -3141,16 +3179,16 @@ void test_gb28181_input_http_parameters()
         return std::string{"{\"stream_name\":\"live/gb-input-http\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"payload_type\":96,"
                            "\"ssrc\":100001002}"};
     };
-    boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_active_port = tcp_active_probe.local_endpoint().port();
-    boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_passive_port = tcp_probe.local_endpoint().port();
     tcp_probe.close();
     const auto tcp_active_body =
         "{\"stream_name\":\"live/gb-input-http-active\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
         std::to_string(tcp_active_port) + ",\"payload_type\":96,\"ssrc\":100001004}";
     const auto tcp_passive_body =
-        "{\"stream_name\":\"live/gb-input-http-passive\",\"transport\":\"tcp_passive\",\"address\":\"0.0.0.0\",\"rtp_port\":" +
+        "{\"stream_name\":\"live/gb-input-http-passive\",\"transport\":\"tcp_passive\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
         std::to_string(tcp_passive_port) + ",\"payload_type\":96,\"ssrc\":100001005}";
     std::jthread worker_runner([&workers]() { workers.run(); });
     const auto check = [&](boost::beast::http::verb method,
@@ -3304,18 +3342,18 @@ void test_gb28181_output_http_parameters()
         "\"payload_type\":96,\"ssrc\":100001002}";
     const std::string tcp_base =
         "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-active\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":";
-    boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_active_port = tcp_active_probe.local_endpoint().port();
-    boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_passive_port = tcp_probe.local_endpoint().port();
     tcp_probe.close();
     const std::string tcp_active_body = tcp_base + std::to_string(tcp_active_port) + ",\"payload_type\":96,\"ssrc\":100001003}";
     const std::string tcp_passive_body =
-        "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-passive\",\"transport\":\"tcp_passive\",\"address\":\"0.0.0.0\",\"rtp_port\":" +
+        "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-passive\",\"transport\":\"tcp_passive\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
         std::to_string(tcp_passive_port) + ",\"payload_type\":96,\"ssrc\":100001004}";
     std::jthread worker_runner([&workers]() { workers.run(); });
 
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     auto work = boost::asio::make_work_guard(io);
     std::jthread runner([&io]() { io.run(); });
 
@@ -3446,7 +3484,7 @@ void test_http_flv_client_disconnect()
     require(stream->set_tracks({make_video_track()}), "http flv disconnect track");
     require(streams.add(stream), "http flv disconnect stream");
 
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
@@ -3481,7 +3519,7 @@ void test_http_flv_stream_end_during_write()
     require(stream->set_tracks({make_video_track()}), "http flv end write track");
     require(streams.add(stream), "http flv end write stream");
 
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
@@ -3515,7 +3553,7 @@ void test_http_flv_pending_bootstrap_end()
     require(stream->set_tracks({make_video_track()}), "http flv pending end track");
     require(streams.add(stream), "http flv pending end stream");
 
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
@@ -3824,7 +3862,7 @@ void test_http_flv_config_reset()
 void test_rtsp_pull_url_contract()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 0));
+    boost::asio::ip::tcp::acceptor acceptor(server_io, boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
 
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
@@ -3885,7 +3923,7 @@ void test_rtsp_pull_url_contract()
 void test_rtsp_input_establishment_timeout()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -3922,7 +3960,7 @@ void test_rtsp_input_establishment_timeout()
 void test_rtsp_input_establishment_progress_timeout()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -3986,7 +4024,7 @@ void test_rtsp_input_establishment_progress_timeout()
 void test_rtsp_input_selects_single_audio_and_video()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4057,7 +4095,7 @@ void test_rtsp_input_selects_single_audio_and_video()
 void test_rtsp_input_opus_passthrough_case(std::string_view fmtp, std::uint16_t expected_channels)
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4192,7 +4230,7 @@ void test_rtsp_input_opus_passthrough()
 void test_rtsp_input_rejects_invalid_opus_rate()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4257,7 +4295,7 @@ void test_rtsp_input_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     const auto encoding = codec == codec_id::g711a ? "PCMA" : "PCMU";
 
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4381,7 +4419,7 @@ void test_rtsp_input_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
 void test_rtsp_pull_rtp_info_aligns_media_timestamps()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4641,7 +4679,7 @@ void test_rtsp_input_g711_passthrough()
 void test_rtsp_input_rejects_mismatched_g711_rtpmap()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4690,7 +4728,7 @@ void test_rtsp_input_rejects_mismatched_g711_rtpmap()
 void test_rtsp_input_rejects_audio_only_source()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4741,7 +4779,7 @@ void test_rtsp_input_rejects_audio_only_source()
 void test_rtsp_input_uses_complete_sdp_topology_without_track_wait()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4839,7 +4877,7 @@ void test_rtsp_input_uses_complete_sdp_topology_without_track_wait()
 void test_rtsp_input_initial_tracks_timeout()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -4935,7 +4973,7 @@ void test_rtsp_input_initial_tracks_timeout()
 void test_rtsp_input_independent_keepalive()
 {
     boost::asio::io_context server_io;
-    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::io_context client_io;
     auto& streams = media_server::registry::instance();
     streams.clear();
@@ -5029,7 +5067,7 @@ void test_rtsp_sdp_contract()
 void test_rtsp_publish_opus_fmtp_whitespace()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
     const auto port = probe.local_endpoint().port();
     probe.close();
     auto& streams = media_server::registry::instance();
@@ -5122,7 +5160,7 @@ void test_rtsp_publish_server_contract()
 {
     {
         io_context_pool workers(1);
-        boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::tcp::v4(), 0});
+        boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
         const auto port = probe.local_endpoint().port();
         probe.close();
         auto& streams = media_server::registry::instance();
@@ -5151,7 +5189,7 @@ void test_rtsp_publish_server_contract()
 
     {
         io_context_pool shutdown_workers(1);
-        boost::asio::ip::tcp::acceptor shutdown_probe(shutdown_workers.context(0), {boost::asio::ip::tcp::v4(), 0});
+        boost::asio::ip::tcp::acceptor shutdown_probe(shutdown_workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
         const auto shutdown_port = shutdown_probe.local_endpoint().port();
         shutdown_probe.close();
         config shutdown_config;
@@ -5184,7 +5222,7 @@ void test_rtsp_publish_server_contract()
     }
 
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
     const auto port = probe.local_endpoint().port();
     probe.close();
     auto& streams = media_server::registry::instance();
@@ -5673,6 +5711,12 @@ void test_rtsp_publish_server_contract()
     require(port_error == std::errc{} && port_pointer == transport.data() + static_cast<std::ptrdiff_t>(port_end) && server_rtp_port <= 65'535U,
             "rtsp publish udp server rtp port parse");
 
+    boost::system::error_code udp_bind_error;
+    boost::asio::ip::udp::socket other_address_probe(client_io);
+    other_address_probe.open(boost::asio::ip::udp::v4());
+    other_address_probe.bind({boost::asio::ip::make_address_v4("127.0.0.2"), static_cast<std::uint16_t>(server_rtp_port)}, udp_bind_error);
+    require(!udp_bind_error, "rtsp publish udp only binds rtsp local address");
+
     const auto udp_record = udp_request("RECORD " + udp_base + " RTSP/1.0\r\nCSeq: 12\r\nSession: " + udp_session + "\r\n\r\n");
     require(udp_record.starts_with("RTSP/1.0 200"), "rtsp publish udp record");
     std::shared_ptr<media_stream> udp_stream;
@@ -5732,7 +5776,7 @@ class rtsp_output_test_peer final
 {
    public:
     explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()}, output_video_config video = {})
-        : acceptor_(io_, {boost::asio::ip::tcp::v4(), 0}), client_(io_)
+        : acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}), client_(io_)
     {
         config_.rtsp_video = video;
         streams_.clear();
@@ -5902,6 +5946,7 @@ void test_rtsp_output_session_contract()
                                        "Accept: application/sdp\r\n\r\n");
     require(describe.starts_with("RTSP/1.0 200"), "rtsp output describe");
     require(describe.find("o=- 1 1 IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp output describe local address");
+    require(describe.find("c=IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp output describe connection address");
     require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
     require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp output audio control");
 
