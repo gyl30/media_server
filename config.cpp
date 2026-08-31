@@ -78,6 +78,7 @@ int parse_config(int argc, char** argv, config* cfg)
     po::options_description options("options");
     options.add_options()("help", "show help")("rtmp-port", po::value<std::string>(&rtmp_port), "rtmp listen port")(
         "rtsp-port", po::value<std::string>(&rtsp_port), "rtsp listen port")("http-port", po::value<std::string>(&http_port), "http listen port")(
+        "bind-address", po::value<std::string>(&result.bind_address), "server listen address")(
         "webrtc-address", po::value<std::string>(&result.webrtc_address), "webrtc address")(
         "threads", po::value<std::string>(&threads), "worker thread count")(
         "rtsp-pull", po::value<std::vector<std::string>>(&rtsp_pulls)->composing(), "stream_name=rtsp_url")(
@@ -125,6 +126,16 @@ int parse_config(int argc, char** argv, config* cfg)
         return 1;
     }
     result.threads = thread_count;
+
+    boost::system::error_code bind_address_error;
+    const auto bind_address = boost::asio::ip::make_address(result.bind_address, bind_address_error);
+    boost::system::error_code webrtc_address_error;
+    const auto webrtc_address = boost::asio::ip::make_address(result.webrtc_address, webrtc_address_error);
+    if (bind_address_error || bind_address.is_unspecified() || webrtc_address_error || webrtc_address.is_unspecified())
+    {
+        print_usage(options);
+        return 1;
+    }
 
     if (!parse_output_video_codec(rtmp_video_codec, result.rtmp_video.codec) ||
         !parse_output_video_codec(rtsp_video_codec, result.rtsp_video.codec) ||

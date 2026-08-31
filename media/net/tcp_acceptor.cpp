@@ -25,6 +25,11 @@ void tcp_acceptor::startup(socket_handler handler, boost::system::error_code& er
         error = boost::asio::error::already_started;
         return;
     }
+    if (bind_address_.is_unspecified())
+    {
+        error = boost::asio::error::invalid_argument;
+        return;
+    }
 
     const boost::asio::ip::tcp::endpoint endpoint{bind_address_, port_};
     acceptor_.open(endpoint.protocol(), error);

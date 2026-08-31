@@ -42,7 +42,7 @@ func newSIPServer(cfg config, logger *slog.Logger) (*sipServer, error) {
 		_ = ua.Close()
 		return nil, err
 	}
-	client, err := sipgo.NewClient(ua, sipgo.WithClientAddr(cfg.sipAdvertise))
+	client, err := sipgo.NewClient(ua, sipgo.WithClientAddr(cfg.sipAdvertise), sipgo.WithClientConnectionAddr(cfg.sipListen))
 	if err != nil {
 		_ = ua.Close()
 		return nil, err
