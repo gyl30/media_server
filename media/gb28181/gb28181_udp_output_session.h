@@ -27,6 +27,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     gb28181_udp_output_session(boost::asio::any_io_executor executor,
                                std::shared_ptr<media_stream> stream,
                                gb28181_description description,
+                               boost::asio::ip::address bind_address,
                                std::string output_id,
                                bool rtcp_enabled);
 
@@ -52,6 +53,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     std::string stream_name_;
     std::string output_id_;
     gb28181_description description_;
+    boost::asio::ip::address bind_address_;
     boost::asio::ip::udp::endpoint remote_rtp_endpoint_;
     boost::asio::ip::udp::endpoint remote_rtcp_endpoint_;
     boost::asio::steady_timer rtcp_timer_;

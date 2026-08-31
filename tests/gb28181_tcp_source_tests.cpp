@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cerrno>
 #include <memory>
 #include <iostream>
 #include <stdexcept>
@@ -53,7 +54,7 @@ void test_connector_reports_terminal_error_once()
 void test_acceptor_timeout_reports_terminal_error_without_shutdown()
 {
     boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor reserved(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor reserved(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto endpoint = reserved.local_endpoint();
     reserved.close();
 
@@ -96,7 +97,7 @@ void test_acceptor_timeout_reports_terminal_error_without_shutdown()
 void test_acceptor_reports_success()
 {
     boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor reserved(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor reserved(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto endpoint = reserved.local_endpoint();
     reserved.close();
 
@@ -115,6 +116,12 @@ void test_acceptor_reports_success()
         },
         startup_error);
     require(!startup_error, "acceptor success startup");
+
+    boost::asio::ip::tcp::acceptor other_address(io);
+    boost::system::error_code other_bind_error;
+    other_address.open(boost::asio::ip::tcp::v4(), other_bind_error);
+    other_address.bind({boost::asio::ip::make_address_v4("127.0.0.2"), endpoint.port()}, other_bind_error);
+    require(!other_bind_error, "acceptor only binds requested local address");
     client.connect(endpoint);
     io.run();
 
@@ -128,7 +135,7 @@ void test_acceptor_reports_success()
 void test_acceptor_reports_bind_failure()
 {
     boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor reserved(io, {boost::asio::ip::tcp::v4(), 0});
+    boost::asio::ip::tcp::acceptor reserved(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto endpoint = reserved.local_endpoint();
     int completion_count = 0;
     auto acceptor =
@@ -138,6 +145,21 @@ void test_acceptor_reports_bind_failure()
     require(startup_error == boost::asio::error::address_in_use, "acceptor reports bind failure");
     io.run();
     require(completion_count == 0, "acceptor bind failure has no completion");
+}
+
+void test_acceptor_rejects_invalid_local_address()
+{
+    boost::asio::io_context io;
+    boost::system::error_code startup_error;
+    auto unspecified =
+        std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::any(), std::chrono::seconds(1));
+    unspecified->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, startup_error);
+    require(startup_error == boost::asio::error::invalid_argument, "acceptor rejects unspecified address");
+
+    auto unavailable =
+        std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::make_address("192.0.2.1"), std::chrono::seconds(1));
+    unavailable->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, startup_error);
+    require(startup_error.value() == EADDRNOTAVAIL, "acceptor preserves unavailable address error");
 }
 
 void test_pending_source_shutdown_suppresses_completion()
@@ -163,6 +185,7 @@ int main()
         media_server::test_connector_reports_terminal_error_once();
         media_server::test_acceptor_reports_success();
         media_server::test_acceptor_reports_bind_failure();
+        media_server::test_acceptor_rejects_invalid_local_address();
         media_server::test_acceptor_timeout_reports_terminal_error_without_shutdown();
         media_server::test_pending_source_shutdown_suppresses_completion();
         std::cout << "[pass] gb28181_tcp_source_tests\n";

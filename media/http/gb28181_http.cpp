@@ -32,11 +32,7 @@ std::shared_ptr<tcp_socket_source> create_tcp_socket_source(boost::asio::io_cont
         return std::make_shared<tcp_connector>(
             owner.get_executor(), boost::asio::ip::tcp::endpoint{description.address, description.rtp_port}, tcp_establishment_timeout);
     }
-    return std::make_shared<tcp_acceptor>(owner.get_executor(),
-                                          description.rtp_port,
-                                          description.address.is_v4() ? boost::asio::ip::address{boost::asio::ip::address_v4::any()}
-                                                                      : boost::asio::ip::address{boost::asio::ip::address_v6::any()},
-                                          tcp_establishment_timeout);
+    return std::make_shared<tcp_acceptor>(owner.get_executor(), description.rtp_port, description.address, tcp_establishment_timeout);
 }
 
 gb28181_http_response make_json_response(const gb28181_http_request& request,
@@ -140,7 +136,10 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request, b
     return make_json_response(request, boost::beast::http::status::created, {{"result", "ok"}});
 }
 
-gb28181_http_response handle_output_create(const gb28181_http_request& request, boost::asio::io_context& owner, gb28181_output_config config)
+gb28181_http_response handle_output_create(const gb28181_http_request& request,
+                                            boost::asio::io_context& owner,
+                                            gb28181_output_config config,
+                                            boost::asio::ip::address bind_address)
 {
     const auto stream_name = config.stream_name;
     const auto output_id = config.output_id;
@@ -153,7 +152,8 @@ gb28181_http_response handle_output_create(const gb28181_http_request& request, 
 
     if (config.description.transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_output_session>(owner.get_executor(), stream, config.description, output_id, config.rtcp);
+        auto session = std::make_shared<gb28181_udp_output_session>(
+            owner.get_executor(), stream, config.description, std::move(bind_address), output_id, config.rtcp);
         if (!streams.add_output_session(stream_name, output_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -237,7 +237,8 @@ gb28181_http_response handle_gb28181_input_request(const gb28181_http_request& r
 
 gb28181_http_response handle_gb28181_output_request(const gb28181_http_request& request,
                                                     boost::asio::io_context& owner,
-                                                    const boost::urls::url_view& target)
+                                                    const boost::urls::url_view& target,
+                                                    boost::asio::ip::address bind_address)
 {
     const auto path = target.encoded_path();
     if (path != "/play/gb28181/create" && path != "/play/gb28181/delete")
@@ -256,7 +257,7 @@ gb28181_http_response handle_gb28181_output_request(const gb28181_http_request& 
         {
             return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
         }
-        return handle_output_create(request, owner, std::move(*config));
+        return handle_output_create(request, owner, std::move(*config), std::move(bind_address));
     }
 
     const auto identity = parse_gb28181_output_delete(request.body());

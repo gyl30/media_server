@@ -57,7 +57,7 @@ gb28181_http_response output_request(boost::asio::io_context& io, gb28181_http_r
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "output request target");
-    return handle_gb28181_output_request(request, io, *target);
+    return handle_gb28181_output_request(request, io, *target, boost::asio::ip::address_v4::loopback());
 }
 
 media_track make_video_track()
@@ -99,6 +99,11 @@ void test_input_handlers()
     rtcp_probe.open(boost::asio::ip::udp::v4());
     rtcp_probe.bind({boost::asio::ip::address_v4::loopback(), rtcp_port}, bind_error);
     require(bind_error == boost::asio::error::address_in_use, "input create binds rtcp port before response");
+
+    boost::asio::ip::udp::socket other_address_probe(io);
+    other_address_probe.open(boost::asio::ip::udp::v4());
+    other_address_probe.bind({boost::asio::ip::make_address_v4("127.0.0.2"), rtp_port}, bind_error);
+    require(!bind_error, "input create only binds configured local address");
 
     const auto duplicate_response = input_request(io, request("/gb28181/create", create_body));
     require_json_response(

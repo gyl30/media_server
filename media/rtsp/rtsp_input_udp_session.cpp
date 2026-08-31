@@ -17,9 +17,13 @@ namespace media_server
 {
 
 rtsp_input_udp_session::rtsp_input_udp_session(boost::asio::any_io_executor executor,
+                                               boost::asio::ip::address bind_address,
                                                std::string stream_name,
                                                std::vector<rtsp_input_track_description> descriptions)
-    : media_(executor, std::move(stream_name), std::move(descriptions)), track_states_(media_.descriptions().size()), rtcp_timer_(std::move(executor))
+    : bind_address_(std::move(bind_address)),
+      media_(executor, std::move(stream_name), std::move(descriptions)),
+      track_states_(media_.descriptions().size()),
+      rtcp_timer_(std::move(executor))
 {
 }
 
@@ -88,7 +92,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
     boost::system::error_code network_error;
     auto candidate_rtp = std::make_shared<udp_socket>(rtcp_timer_.get_executor());
     candidate_rtp->startup(
-        boost::asio::ip::address_v4::any(),
+        bind_address_,
         local_ports.first,
         [self, track_index](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
         {
@@ -124,7 +128,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
 
     auto candidate_rtcp = std::make_shared<udp_socket>(rtcp_timer_.get_executor());
     candidate_rtcp->startup(
-        boost::asio::ip::address_v4::any(),
+        bind_address_,
         local_ports.second,
         [self, track_index](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
         {

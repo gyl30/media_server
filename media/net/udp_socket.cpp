@@ -31,6 +31,11 @@ void udp_socket::startup(boost::asio::ip::address bind_address,
         error = boost::asio::error::already_started;
         return;
     }
+    if (bind_address.is_unspecified())
+    {
+        error = boost::asio::error::invalid_argument;
+        return;
+    }
 
     socket_.open(bind_address.is_v6() ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4(), error);
     if (error)

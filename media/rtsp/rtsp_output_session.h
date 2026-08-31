@@ -9,6 +9,7 @@
 #include <functional>
 
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/ip/address.hpp>
 
 #include "media/core/media_reader.h"
 #include "media/codec/video_transcoder.h"
@@ -25,7 +26,7 @@ class rtsp_output_session final : public rtsp_server_session, public media_reade
    public:
     rtsp_output_session(boost::asio::any_io_executor executor,
                         output_video_codec video_codec,
-                        std::string local_address,
+                        boost::asio::ip::address local_address,
                         std::function<void(std::span<const std::uint8_t>)> write);
 
     void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data) override;
@@ -64,7 +65,7 @@ class rtsp_output_session final : public rtsp_server_session, public media_reade
 
     boost::asio::any_io_executor executor_;
     output_video_codec video_codec_;
-    std::string local_address_;
+    boost::asio::ip::address local_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::shared_ptr<media_stream> stream_;
     std::map<track_id, track_state> track_states_;

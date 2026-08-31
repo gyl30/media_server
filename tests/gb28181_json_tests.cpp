@@ -34,7 +34,7 @@ void test_input_configs()
             "input tcp active");
 
     const auto tcp_passive = parse_gb28181_input_config(
-        R"({"stream_name":"live/tcp","transport":"tcp_passive","address":"0.0.0.0","rtp_port":30000,"payload_type":96,"ssrc":100})");
+        R"({"stream_name":"live/tcp","transport":"tcp_passive","address":"127.0.0.1","rtp_port":30000,"payload_type":96,"ssrc":100})");
     require(tcp_passive && tcp_passive->description.transport == gb28181_transport::tcp_passive, "input tcp passive");
 
     const std::string invalid[] = {
@@ -50,6 +50,7 @@ void test_input_configs()
         R"({"stream_name":"live/x","transport":"udp","address":"127.0.0.1","payload_type":96,"ssrc":1,"remote_rtcp_port":30001})",
         R"({"stream_name":"live/x","transport":"tcp_active","address":"127.0.0.1","rtp_port":31000,"rtcp_port":31001,"payload_type":96,"ssrc":1})",
         R"({"stream_name":"live/x","transport":"tcp_active","address":"0.0.0.0","rtp_port":31000,"payload_type":96,"ssrc":1})",
+        R"({"stream_name":"live/x","transport":"tcp_passive","address":"0.0.0.0","rtp_port":31000,"payload_type":96,"ssrc":1})",
         R"({"stream_name":"live/x","transport":"tcp_passive","address":"0.0.0.0","rtp_port":31000,"payload_type":96,"ssrc":1,"remote_rtcp_port":30001})",
         R"({"stream_name":"live/x","transport":"TCP","address":"127.0.0.1","rtp_port":31000,"payload_type":96,"ssrc":1})",
         "{",
@@ -72,7 +73,7 @@ void test_output_configs()
     require(rtcp && rtcp->rtcp, "output udp rtcp");
 
     const auto tcp = parse_gb28181_output_config(
-        R"({"stream_name":"live/camera","output_id":"platform-a","transport":"tcp_passive","address":"0.0.0.0","rtp_port":32000,"payload_type":96,"ssrc":100})");
+        R"({"stream_name":"live/camera","output_id":"platform-a","transport":"tcp_passive","address":"127.0.0.1","rtp_port":32000,"payload_type":96,"ssrc":100})");
     require(tcp && tcp->description.transport == gb28181_transport::tcp_passive, "output tcp");
 
     const std::string invalid[] = {
@@ -83,6 +84,7 @@ void test_output_configs()
         R"({"stream_name":"live/camera","output_id":"platform-a","transport":"tcp_active","address":"127.0.0.1","rtp_port":32000,"payload_type":96,"ssrc":100,"rtcp":true})",
         R"({"stream_name":"live/camera","output_id":"platform-a","transport":"tcp_active","address":"127.0.0.1","rtp_port":32000,"rtcp_port":32001,"payload_type":96,"ssrc":100})",
         R"({"stream_name":"live/camera","output_id":"platform-a","transport":"tcp_active","address":"0.0.0.0","rtp_port":32000,"payload_type":96,"ssrc":100})",
+        R"({"stream_name":"live/camera","output_id":"platform-a","transport":"tcp_passive","address":"0.0.0.0","rtp_port":32000,"payload_type":96,"ssrc":100})",
         R"({"stream_name":"live/camera","output_id":"platform-a","transport":"udp","address":"192.168.1.20","rtp_port":32000,"rtcp_port":32001,"payload_type":96,"ssrc":100,"rtcp":1})",
         R"({"stream_name":"live/camera","output_id":"","transport":"udp","address":"192.168.1.20","rtp_port":32000,"rtcp_port":32001,"payload_type":96,"ssrc":100})",
         R"({"stream_name":"live/camera","output_id":"platform-a","transport":"udp","address":"192.168.1.20","rtp_port":32000,"rtcp_port":32001,"payload_type":96,"ssrc":100,"unknown":1})",

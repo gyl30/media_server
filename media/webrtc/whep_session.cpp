@@ -63,8 +63,11 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     }
     const auto source_tracks = stream_->tracks();
 
-    const auto bind_address = advertised_address_.is_v6() ? boost::asio::ip::address(boost::asio::ip::address_v6::any())
-                                                          : boost::asio::ip::address(boost::asio::ip::address_v4::any());
+    if (advertised_address_.is_unspecified())
+    {
+        spdlog::error("webrtc whep startup rejected unspecified local address");
+        return whep_session_startup_error::internal_error;
+    }
     const auto reserved = port_manager::instance().acquire();
     if (!reserved)
     {
@@ -76,7 +79,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     udp_socket_ = std::make_shared<udp_socket>(executor_);
     boost::system::error_code udp_error;
     udp_socket_->startup(
-        bind_address,
+        advertised_address_,
         local_port_reservation_,
         [weak](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
         {

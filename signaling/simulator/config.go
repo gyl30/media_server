@@ -51,7 +51,7 @@ func parseConfig(args []string) (config, error) {
 	flags.StringVar(&cfg.deviceID, "device-id", "34020000001320000001", "simulated device ID")
 	flags.StringVar(&cfg.channelID, "channel-id", "34020000001320000002", "simulated channel ID")
 	flags.StringVar(&cfg.mediaFile, "media-file", "", "Annex-B H264 input with AUD; empty generates a temporary fixture")
-	flags.StringVar(&cfg.mediaBind, "media-bind", "0.0.0.0", "local IPv4 address for RTP sender sockets")
+	flags.StringVar(&cfg.mediaBind, "media-bind", "127.0.0.1", "local IPv4 address for RTP sender sockets")
 	flags.StringVar(&cfg.mediaSink, "media-sink", "", "generator-only RTP UDP sink as IPv4:port")
 	flags.StringVar(&cfg.mediaProfile, "media-profile", "normal", "generated fixture bitrate profile: normal or high")
 	flags.StringVar(&cfg.ffmpeg, "ffmpeg", "ffmpeg", "FFmpeg executable used to generate a temporary H264 fixture")
@@ -78,8 +78,8 @@ func parseConfig(args []string) (config, error) {
 	if _, err := net.ResolveUDPAddr("udp", cfg.platformSIP); err != nil {
 		return config{}, fmt.Errorf("invalid platform SIP address: %w", err)
 	}
-	listen, err := net.ResolveUDPAddr("udp", cfg.listen)
-	if err != nil || listen.IP == nil || listen.IP.IsUnspecified() {
+	listen, err := netip.ParseAddrPort(cfg.listen)
+	if err != nil || listen.Addr().IsUnspecified() {
 		return config{}, fmt.Errorf("invalid device SIP listen address")
 	}
 	controlURL, err := url.Parse(cfg.controlURL)
@@ -92,7 +92,7 @@ func parseConfig(args []string) (config, error) {
 	if cfg.password == "" {
 		return config{}, fmt.Errorf("password is empty")
 	}
-	if address := net.ParseIP(cfg.mediaBind); address == nil || address.To4() == nil {
+	if address := net.ParseIP(cfg.mediaBind); address == nil || address.To4() == nil || address.IsUnspecified() {
 		return config{}, fmt.Errorf("invalid media bind address")
 	}
 	if cfg.mediaSink != "" {

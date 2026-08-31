@@ -70,7 +70,8 @@ void http_session::handle_request()
     }
     if (path == "/play/gb28181" || path.starts_with("/play/gb28181/"))
     {
-        write_response(media_server::handle_gb28181_output_request(request_, workers_.next(), *parsed));
+        write_response(media_server::handle_gb28181_output_request(
+            request_, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)));
         return;
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))

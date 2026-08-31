@@ -65,8 +65,14 @@ int service::run()
     configure_log_level();
 
     boost::system::error_code address_error;
-    static_cast<void>(boost::asio::ip::make_address(config_.webrtc_address, address_error));
-    if (address_error)
+    const auto bind_address = boost::asio::ip::make_address(config_.bind_address, address_error);
+    if (address_error || bind_address.is_unspecified())
+    {
+        spdlog::error("invalid bind address {}", config_.bind_address);
+        return 1;
+    }
+    const auto webrtc_address = boost::asio::ip::make_address(config_.webrtc_address, address_error);
+    if (address_error || webrtc_address.is_unspecified())
     {
         spdlog::error("invalid webrtc address {}", config_.webrtc_address);
         return 1;
@@ -148,9 +154,9 @@ int service::run()
         }
     }
 
-    spdlog::info("rtmp listen {}", config_.rtmp_port);
-    spdlog::info("rtsp listen {}", config_.rtsp_port);
-    spdlog::info("http listen {}", config_.http_port);
+    spdlog::info("rtmp listen {}:{}", config_.bind_address, config_.rtmp_port);
+    spdlog::info("rtsp listen {}:{}", config_.bind_address, config_.rtsp_port);
+    spdlog::info("http listen {}:{}", config_.bind_address, config_.http_port);
     spdlog::info("rtmp publish play path app/stream");
     spdlog::info("rtsp play path app/stream");
     spdlog::info("http flv path app/stream.flv");

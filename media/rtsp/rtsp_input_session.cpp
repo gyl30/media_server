@@ -33,8 +33,10 @@ std::uint32_t random_u32()
 
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(boost::asio::any_io_executor executor, std::function<void(std::span<const std::uint8_t>)> write)
-    : executor_(std::move(executor)), write_handler_(std::move(write))
+rtsp_input_session::rtsp_input_session(boost::asio::any_io_executor executor,
+                                       boost::asio::ip::address bind_address,
+                                       std::function<void(std::span<const std::uint8_t>)> write)
+    : executor_(std::move(executor)), bind_address_(std::move(bind_address)), write_handler_(std::move(write))
 {
 }
 
@@ -206,7 +208,7 @@ int rtsp_input_session::on_setup(
         return result;
     }
 
-    auto child = std::make_shared<rtsp_input_udp_session>(executor_, stream_name_, descriptions_);
+    auto child = std::make_shared<rtsp_input_udp_session>(executor_, bind_address_, stream_name_, descriptions_);
     child->set_error_handler(error_handler_);
     const auto result = child->startup(server, track_index, *selected, session_id_);
     if (!child->closed_)
