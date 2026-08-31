@@ -2607,7 +2607,7 @@ void test_udp_socket_error_and_shutdown_lifecycle()
 void test_tcp_listener_worker_affinity()
 {
     io_context_pool workers(2);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32100});
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2670,7 +2670,7 @@ void test_tcp_listener_worker_affinity()
 void test_tcp_listener_unlimited_accepts()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32102));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2711,7 +2711,7 @@ void test_tcp_listener_unlimited_accepts()
 void test_tcp_listener_single_accept_limit()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32104));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2760,7 +2760,7 @@ void test_tcp_listener_single_accept_limit()
 void test_tcp_listener_dynamic_startup()
 {
     io_context_pool workers(2);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32106));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2914,7 +2914,7 @@ void test_tcp_listener_dynamic_startup()
 void test_tcp_listener_timeout_reports_error_without_shutdown()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor reserved(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor reserved(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32108});
     const auto endpoint = reserved.local_endpoint();
     reserved.close();
 
@@ -3181,7 +3181,7 @@ void test_gb28181_input_http_parameters()
     };
     boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_active_port = tcp_active_probe.local_endpoint().port();
-    boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 32110});
     const auto tcp_passive_port = tcp_probe.local_endpoint().port();
     tcp_probe.close();
     const auto tcp_active_body =
@@ -3344,7 +3344,7 @@ void test_gb28181_output_http_parameters()
         "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-active\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":";
     boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_active_port = tcp_active_probe.local_endpoint().port();
-    boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 32112});
     const auto tcp_passive_port = tcp_probe.local_endpoint().port();
     tcp_probe.close();
     const std::string tcp_active_body = tcp_base + std::to_string(tcp_active_port) + ",\"payload_type\":96,\"ssrc\":100001003}";
@@ -5067,7 +5067,7 @@ void test_rtsp_sdp_contract()
 void test_rtsp_publish_opus_fmtp_whitespace()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32114});
     const auto port = probe.local_endpoint().port();
     probe.close();
     auto& streams = media_server::registry::instance();
@@ -5160,7 +5160,7 @@ void test_rtsp_publish_server_contract()
 {
     {
         io_context_pool workers(1);
-        boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32116});
         const auto port = probe.local_endpoint().port();
         probe.close();
         auto& streams = media_server::registry::instance();
@@ -5189,7 +5189,7 @@ void test_rtsp_publish_server_contract()
 
     {
         io_context_pool shutdown_workers(1);
-        boost::asio::ip::tcp::acceptor shutdown_probe(shutdown_workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::acceptor shutdown_probe(shutdown_workers.context(0), {boost::asio::ip::address_v4::loopback(), 32118});
         const auto shutdown_port = shutdown_probe.local_endpoint().port();
         shutdown_probe.close();
         config shutdown_config;
@@ -5222,7 +5222,7 @@ void test_rtsp_publish_server_contract()
     }
 
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32120});
     const auto port = probe.local_endpoint().port();
     probe.close();
     auto& streams = media_server::registry::instance();
