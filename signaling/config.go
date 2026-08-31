@@ -47,7 +47,7 @@ func parseConfig(args []string) (config, error) {
 		return config{}, fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
 	sipListen, err := netip.ParseAddrPort(cfg.sipListen)
-	if err != nil || sipListen.Addr().IsUnspecified() {
+	if err != nil || sipListen.Addr().IsUnspecified() || sipListen.Port() == 0 {
 		return config{}, fmt.Errorf("invalid SIP listen address")
 	}
 	httpListen, err := netip.ParseAddrPort(cfg.httpListen)
