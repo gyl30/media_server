@@ -2607,7 +2607,7 @@ void test_udp_socket_error_and_shutdown_lifecycle()
 void test_tcp_listener_worker_affinity()
 {
     io_context_pool workers(2);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32100});
+    boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32100});
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2631,7 +2631,7 @@ void test_tcp_listener_worker_affinity()
             socket.close(close_error);
             if (complete)
             {
-                boost::asio::post(workers.context(0),
+                boost::asio::post(workers.context(0).io(),
                                   [&]()
                                   {
                                       if (const auto current = weak_listener.lock())
@@ -2647,7 +2647,7 @@ void test_tcp_listener_worker_affinity()
         startup_error);
     require(!startup_error, "tcp listener worker startup");
 
-    boost::asio::ip::tcp::acceptor other_address(workers.context(0));
+    boost::asio::ip::tcp::acceptor other_address(workers.context(0).io());
     boost::system::error_code other_bind_error;
     other_address.open(boost::asio::ip::tcp::v4(), other_bind_error);
     other_address.bind({boost::asio::ip::make_address_v4("127.0.0.2"), port}, other_bind_error);
@@ -2670,7 +2670,7 @@ void test_tcp_listener_worker_affinity()
 void test_tcp_listener_unlimited_accepts()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32102));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32102));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2711,7 +2711,7 @@ void test_tcp_listener_unlimited_accepts()
 void test_tcp_listener_single_accept_limit()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32104));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32104));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2752,7 +2752,7 @@ void test_tcp_listener_single_accept_limit()
     listener->shutdown();
     listener->shutdown();
     listener.reset();
-    workers.context(0).restart();
+    workers.context(0).io().restart();
     workers.run();
     require(weak_listener.expired(), "tcp listener single shutdown remains idempotent after limit");
 }
@@ -2760,7 +2760,7 @@ void test_tcp_listener_single_accept_limit()
 void test_tcp_listener_dynamic_startup()
 {
     io_context_pool workers(2);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32106));
+    boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32106));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
@@ -2784,9 +2784,9 @@ void test_tcp_listener_dynamic_startup()
     bool finished = false;
 
     auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
-    auto first = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0));
-    auto second = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0));
-    boost::asio::steady_timer watchdog(workers.context(0));
+    auto first = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0).io());
+    auto second = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0).io());
+    boost::asio::steady_timer watchdog(workers.context(0).io());
     const std::function<void()> finish = [&]()
     {
         if (finished)
@@ -2814,7 +2814,7 @@ void test_tcp_listener_dynamic_startup()
             finish();
         });
     boost::asio::post(
-        workers.context(1),
+        workers.context(1).io(),
         [&]()
         {
             startup_thread = std::this_thread::get_id();
@@ -2850,11 +2850,11 @@ void test_tcp_listener_dynamic_startup()
 
             if (startup_error)
             {
-                boost::asio::post(workers.context(0), finish);
+                boost::asio::post(workers.context(0).io(), finish);
                 return;
             }
 
-            boost::asio::post(workers.context(0),
+            boost::asio::post(workers.context(0).io(),
                               [&]()
                               {
                                   first->async_connect(endpoint,
@@ -2914,7 +2914,7 @@ void test_tcp_listener_dynamic_startup()
 void test_tcp_listener_timeout_reports_error_without_shutdown()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor reserved(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32108});
+    boost::asio::ip::tcp::acceptor reserved(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32108});
     const auto endpoint = reserved.local_endpoint();
     reserved.close();
 
@@ -2939,17 +2939,17 @@ void test_tcp_listener_timeout_reports_error_without_shutdown()
     require(completion_count == 1, "tcp listener timeout completes once");
     require(completion_error == boost::asio::error::timed_out, "tcp listener timeout reports timed_out");
 
-    boost::asio::ip::tcp::acceptor before_shutdown(workers.context(0));
+    boost::asio::ip::tcp::acceptor before_shutdown(workers.context(0).io());
     boost::system::error_code before_shutdown_error;
     before_shutdown.open(boost::asio::ip::tcp::v4(), before_shutdown_error);
     before_shutdown.bind(endpoint, before_shutdown_error);
     require(before_shutdown_error == boost::asio::error::address_in_use, "tcp listener timeout keeps resource until owner shutdown");
 
     listener->shutdown();
-    workers.context(0).restart();
+    workers.context(0).io().restart();
     workers.run();
 
-    boost::asio::ip::tcp::acceptor after_shutdown(workers.context(0));
+    boost::asio::ip::tcp::acceptor after_shutdown(workers.context(0).io());
     boost::system::error_code after_shutdown_error;
     after_shutdown.open(boost::asio::ip::tcp::v4(), after_shutdown_error);
     after_shutdown.bind(endpoint, after_shutdown_error);
@@ -5067,7 +5067,7 @@ void test_rtsp_sdp_contract()
 void test_rtsp_publish_opus_fmtp_whitespace()
 {
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32114});
+    boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32114});
     const auto port = probe.local_endpoint().port();
     probe.close();
     auto& streams = media_server::registry::instance();
@@ -5160,7 +5160,7 @@ void test_rtsp_publish_server_contract()
 {
     {
         io_context_pool workers(1);
-        boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32116});
+        boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32116});
         const auto port = probe.local_endpoint().port();
         probe.close();
         auto& streams = media_server::registry::instance();
@@ -5189,7 +5189,7 @@ void test_rtsp_publish_server_contract()
 
     {
         io_context_pool shutdown_workers(1);
-        boost::asio::ip::tcp::acceptor shutdown_probe(shutdown_workers.context(0), {boost::asio::ip::address_v4::loopback(), 32118});
+        boost::asio::ip::tcp::acceptor shutdown_probe(shutdown_workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32118});
         const auto shutdown_port = shutdown_probe.local_endpoint().port();
         shutdown_probe.close();
         config shutdown_config;
@@ -5209,7 +5209,7 @@ void test_rtsp_publish_server_contract()
         shutdown_server->shutdown();
         std::promise<void> shutdown_barrier;
         auto shutdown_barrier_future = shutdown_barrier.get_future();
-        boost::asio::post(shutdown_workers.context(0), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
+        boost::asio::post(shutdown_workers.context(0).io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
         shutdown_barrier_future.wait();
 
         boost::asio::write(shutdown_client, boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 2\r\n\r\n"}));
@@ -5222,7 +5222,7 @@ void test_rtsp_publish_server_contract()
     }
 
     io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0), {boost::asio::ip::address_v4::loopback(), 32120});
+    boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32120});
     const auto port = probe.local_endpoint().port();
     probe.close();
     auto& streams = media_server::registry::instance();
@@ -8506,14 +8506,14 @@ void test_media_stream_sink_gop_replay()
 void test_media_stream_sink_owner_affinity()
 {
     io_context_pool workers(2);
-    auto stream = std::make_shared<media_stream>("live/threaded", workers.context(0).get_executor());
+    auto stream = std::make_shared<media_stream>("live/threaded", workers.context(0).io().get_executor());
 
     std::atomic_int ended_count{};
     auto sink = std::make_shared<worker_sink>(ended_count, workers);
     const void* first_payload{};
     const void* second_payload{};
 
-    boost::asio::post(workers.context(0),
+    boost::asio::post(workers.context(0).io(),
                       [&, stream]()
                       {
                           require(stream->set_tracks({make_video_track()}), "threaded stream track");
@@ -8542,24 +8542,24 @@ void test_media_stream_sink_owner_affinity()
 void test_media_stream_pull_reader_overrun()
 {
     io_context_pool workers(2);
-    auto stream = std::make_shared<media_stream>("live/pull-overrun", workers.context(0).get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-overrun", workers.context(0).io().get_executor());
     auto fast = std::make_shared<pull_test_reader>(true);
     auto stalled = std::make_shared<pull_test_reader>(false);
     std::thread::id owner_thread;
 
-    boost::asio::post(workers.context(0),
+    boost::asio::post(workers.context(0).io(),
                       [&, stream]()
                       {
                           owner_thread = std::this_thread::get_id();
                           require(stream->set_tracks({make_video_track()}), "pull overrun track");
-                          static_cast<void>(stream->add_reader(fast, workers.context(1).get_executor()));
-                          static_cast<void>(stream->add_reader(stalled, workers.context(1).get_executor()));
+                          static_cast<void>(stream->add_reader(fast, workers.context(1).io().get_executor()));
+                          static_cast<void>(stream->add_reader(stalled, workers.context(1).io().get_executor()));
                       });
 
     std::thread runner([&workers]() { workers.run(); });
     require(fast->wait_for_ready(1) && stalled->wait_for_ready(1), "pull readers ready");
 
-    boost::asio::post(workers.context(0), [stream]() { stream->publish(make_video_frame(0, true)); });
+    boost::asio::post(workers.context(0).io(), [stream]() { stream->publish(make_video_frame(0, true)); });
     require(fast->wait_for_frames(1) && stalled->wait_for_frames(1), "pull readers receive first key frame");
 
     const std::array<std::pair<std::int64_t, bool>, 4> frames{
@@ -8571,14 +8571,14 @@ void test_media_stream_pull_reader_overrun()
     for (std::size_t index = 0; index < frames.size(); ++index)
     {
         const auto [pts, key_frame] = frames[index];
-        boost::asio::post(workers.context(0), [stream, pts, key_frame]() { stream->publish(make_video_frame(pts, key_frame)); });
+        boost::asio::post(workers.context(0).io(), [stream, pts, key_frame]() { stream->publish(make_video_frame(pts, key_frame)); });
         require(fast->wait_for_frames(index + 2), "fast pull reader keeps pace");
     }
 
     stalled->request();
     require(stalled->wait_for_frames(2), "stalled pull reader resynchronizes");
 
-    boost::asio::post(workers.context(0), [stream]() { stream->end(); });
+    boost::asio::post(workers.context(0).io(), [stream]() { stream->end(); });
     require(fast->wait_for_ends(1) && stalled->wait_for_ends(1), "pull readers receive end");
     workers.release_work();
     runner.join();
@@ -9052,8 +9052,8 @@ void test_media_stream_video_keyframe_barrier_is_sticky()
 void test_io_context_pool_concurrent_next()
 {
     io_context_pool workers(2);
-    const auto* first = &workers.context(0);
-    const auto* second = &workers.context(1);
+    worker_context* first = &workers.context(0);
+    worker_context* second = &workers.context(1);
     std::atomic_bool invalid_context{};
     constexpr std::size_t caller_count = 8;
     std::vector<std::jthread> callers;
@@ -9065,7 +9065,7 @@ void test_io_context_pool_concurrent_next()
             {
                 for (std::size_t iteration = 0; iteration < 10'000; ++iteration)
                 {
-                    const auto* selected = &workers.next();
+                    worker_context* selected = &workers.next();
                     if (selected != first && selected != second)
                     {
                         invalid_context.store(true, std::memory_order_relaxed);
@@ -9088,7 +9088,7 @@ void test_io_context_pool_stop()
             workers.run();
             finished.set_value();
         });
-    boost::asio::post(workers.context(0), [&workers]() { workers.stop(); });
+    boost::asio::post(workers.context(0).io(), [&workers]() { workers.stop(); });
 
     const bool stopped = future.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
     if (!stopped)
