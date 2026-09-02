@@ -48,7 +48,7 @@ void service::schedule_signaling_abort()
         return;
     }
     spdlog::critical("signaling fenced this media server instance; aborting in 5 seconds");
-    signaling_abort_timer_ = std::make_unique<boost::asio::steady_timer>(workers_->context(0));
+    signaling_abort_timer_ = std::make_unique<boost::asio::steady_timer>(workers_->context(0).io());
     signaling_abort_timer_->expires_after(std::chrono::seconds{5});
     signaling_abort_timer_->async_wait(
         [](const boost::system::error_code& error)
@@ -79,7 +79,7 @@ int service::run()
     }
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
-    auto& control_io = workers_->context(0);
+    auto& control_io = workers_->context(0).io();
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_);
     rtsp_ = std::make_shared<rtsp_server>(*workers_, config_);
     http_ = std::make_shared<http_server>(*workers_, config_);
@@ -146,7 +146,7 @@ int service::run()
 
     for (const auto& [name, url] : config_.rtsp_pulls)
     {
-        auto pull = std::make_shared<rtsp_pull_session>(workers_->next(), name, url);
+        auto pull = std::make_shared<rtsp_pull_session>(workers_->next().io(), name, url);
         if (!pull->startup())
         {
             spdlog::error("rtsp pull startup failed stream {}", name);
