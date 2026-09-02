@@ -7,7 +7,8 @@
 #include <cstddef>
 
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/executor_work_guard.hpp>
+
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
@@ -26,10 +27,7 @@ class io_context_pool final
     void run();
 
    private:
-    using work_guard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
-
-    std::vector<std::unique_ptr<boost::asio::io_context>> contexts_;
-    std::vector<work_guard> work_;
+    std::vector<std::unique_ptr<worker_context>> contexts_;
     std::atomic<std::size_t> next_{};
 };
 
