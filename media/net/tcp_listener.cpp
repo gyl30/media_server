@@ -11,7 +11,7 @@ namespace media_server
 {
 
 tcp_listener::tcp_listener(io_context_pool& workers, std::uint16_t port, boost::asio::ip::address bind_address)
-    : acceptor_(workers.context(0)), timer_(workers.context(0)), workers_(workers), bind_address_(std::move(bind_address)), port_(port)
+    : acceptor_(workers.context(0).io()), timer_(workers.context(0).io()), workers_(workers), bind_address_(std::move(bind_address)), port_(port)
 {
 }
 
@@ -165,7 +165,7 @@ void tcp_listener::accept_next()
     };
 
     auto& worker = workers_.next();
-    acceptor_.async_accept(worker, boost::asio::bind_executor(acceptor_.get_executor(), std::move(on_accept)));
+    acceptor_.async_accept(worker.io(), boost::asio::bind_executor(acceptor_.get_executor(), std::move(on_accept)));
 }
 
 }    // namespace media_server
