@@ -1274,19 +1274,18 @@ class rtmp_input_test_peer final
 {
    public:
     explicit rtmp_input_test_peer(std::string stream_name, std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000})
-        : work_(boost::asio::make_work_guard(io_)),
-          acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}),
-          client_socket_(io_),
+        : acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}),
+          client_socket_(worker_.io()),
           stream_name_(std::move(stream_name))
     {
         streams_.clear();
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto session = std::make_shared<rtmp_session>(std::move(connection), output_video_config{}, initial_tracks_timeout);
+        auto session = std::make_shared<rtmp_session>(worker_, std::move(connection), output_video_config{}, initial_tracks_timeout);
         session_ = session;
         session->startup();
-        runner_ = std::jthread([this]() { io_.run(); });
+        runner_ = std::jthread([this]() { worker_.run(); });
 
         const auto separator = stream_name_.find('/');
         require(separator != std::string::npos, "rtmp input stream name");
@@ -1307,7 +1306,7 @@ class rtmp_input_test_peer final
         client_ = nullptr;
         boost::system::error_code error;
         client_socket_.close(error);
-        work_.reset();
+        worker_.release_work();
         runner_.join();
     }
 
@@ -1446,7 +1445,7 @@ class rtmp_input_test_peer final
     {
         std::promise<std::size_t> promise;
         auto future = promise.get_future();
-        boost::asio::post(io_,
+        boost::asio::post(worker_.io(),
                           [this, &promise]()
                           {
                               const auto stream = streams_.find(stream_name_);
@@ -1463,7 +1462,7 @@ class rtmp_input_test_peer final
         auto sink = std::make_shared<raw_audio_capture_sink>();
         std::promise<bool> promise;
         auto future = promise.get_future();
-        boost::asio::post(io_,
+        boost::asio::post(worker_.io(),
                           [this, sink, &promise]()
                           {
                               const auto stream = streams_.find(stream_name_);
@@ -1545,7 +1544,7 @@ class rtmp_input_test_peer final
     {
         std::promise<std::optional<media_track>> promise;
         auto future = promise.get_future();
-        boost::asio::post(io_,
+        boost::asio::post(worker_.io(),
                           [this, id, &promise]()
                           {
                               const auto stream = streams_.find(stream_name_);
@@ -1570,13 +1569,12 @@ class rtmp_input_test_peer final
     {
         std::promise<bool> promise;
         auto future = promise.get_future();
-        boost::asio::post(io_, [this, &promise]() { promise.set_value(static_cast<bool>(streams_.find(stream_name_))); });
+        boost::asio::post(worker_.io(), [this, &promise]() { promise.set_value(static_cast<bool>(streams_.find(stream_name_))); });
         require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtmp input stream query");
         return future.get();
     }
 
-    boost::asio::io_context io_;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
+    worker_context worker_;
     stream_registry& streams_ = registry::instance();
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_socket_;
@@ -1590,10 +1588,12 @@ class rtmp_output_test_peer final
 {
    public:
     explicit rtmp_output_test_peer(media_track video_track = make_video_track(), bool with_audio = false)
-        : acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}), client_socket_(io_), expected_video_codec_(video_track.codec)
+        : acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}),
+          client_socket_(worker_.io()),
+          expected_video_codec_(video_track.codec)
     {
         streams_.clear();
-        stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
+        stream_ = std::make_shared<media_stream>("live/camera", worker_.io().get_executor());
         std::vector<media_track> tracks;
         tracks.push_back(std::move(video_track));
         if (with_audio)
@@ -1606,9 +1606,9 @@ class rtmp_output_test_peer final
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
-        session_ = std::make_shared<rtmp_session>(std::move(connection));
+        session_ = std::make_shared<rtmp_session>(worker_, std::move(connection));
         session_->startup();
-        runner_ = std::jthread([this]() { io_.run(); });
+        runner_ = std::jthread([this]() { worker_.run(); });
 
         rtmp_client_handler_t handler{};
         handler.send = &rtmp_output_test_peer::send_callback;
@@ -1628,6 +1628,7 @@ class rtmp_output_test_peer final
         client_ = nullptr;
         boost::system::error_code error;
         client_socket_.close(error);
+        worker_.release_work();
         runner_.join();
     }
 
@@ -1645,7 +1646,7 @@ class rtmp_output_test_peer final
 
     void publish(media_frame frame)
     {
-        boost::asio::post(io_, [stream = stream_, frame = std::move(frame)]() mutable { stream->publish(std::move(frame)); });
+        boost::asio::post(worker_.io(), [stream = stream_, frame = std::move(frame)]() mutable { stream->publish(std::move(frame)); });
     }
 
     void receive_media(std::size_t count)
@@ -1666,15 +1667,16 @@ class rtmp_output_test_peer final
     {
         std::promise<bool> promise;
         auto future = promise.get_future();
-        boost::asio::post(
-            io_, [stream = stream_, track = std::move(track), &promise]() mutable { promise.set_value(stream->update_track(std::move(track))); });
+        boost::asio::post(worker_.io(),
+                          [stream = stream_, track = std::move(track), &promise]() mutable
+                          { promise.set_value(stream->update_track(std::move(track))); });
         require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp output config reset");
     }
 
     void end_stream()
     {
         const std::weak_ptr<rtmp_session> weak = session_;
-        boost::asio::post(io_, [stream = stream_]() { stream->end(); });
+        boost::asio::post(worker_.io(), [stream = stream_]() { stream->end(); });
         session_.reset();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
@@ -1796,7 +1798,7 @@ class rtmp_output_test_peer final
         return parse_rtmp_status(payload);
     }
 
-    boost::asio::io_context io_;
+    worker_context worker_;
     stream_registry& streams_ = registry::instance();
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::tcp::acceptor acceptor_;
@@ -2156,15 +2158,15 @@ void test_tcp_listener_startup_error()
     io_context_pool workers(1);
     auto listener = std::make_shared<tcp_listener>(workers, occupied.local_endpoint().port(), boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
-    listener->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
+    listener->startup([](boost::system::error_code, worker_context&, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
     require(static_cast<bool>(startup_error), "tcp listener reports bind failure");
 
     auto unspecified = std::make_shared<tcp_listener>(workers, 0, boost::asio::ip::address_v4::any());
-    unspecified->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
+    unspecified->startup([](boost::system::error_code, worker_context&, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
     require(startup_error == boost::asio::error::invalid_argument, "tcp listener rejects unspecified address");
 
     auto unavailable = std::make_shared<tcp_listener>(workers, 0, boost::asio::ip::make_address("192.0.2.1"));
-    unavailable->startup([](boost::system::error_code, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
+    unavailable->startup([](boost::system::error_code, worker_context&, boost::asio::ip::tcp::socket) {}, 0, {}, startup_error);
     require(startup_error == boost::system::error_code(EADDRNOTAVAIL, boost::system::system_category()),
             "tcp listener preserves unavailable address error");
 }
@@ -2613,18 +2615,20 @@ void test_tcp_listener_worker_affinity()
 
     std::mutex mutex;
     std::vector<std::thread::id> threads;
+    std::vector<worker_context*> accepted_workers;
     std::weak_ptr<tcp_listener> weak_listener;
     auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
     weak_listener = listener;
     boost::system::error_code startup_error;
     listener->startup(
-        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        [&](boost::system::error_code error, worker_context& worker, boost::asio::ip::tcp::socket socket)
         {
             require(!error, "tcp listener worker accept");
             bool complete = false;
             {
                 std::scoped_lock lock(mutex);
                 threads.push_back(std::this_thread::get_id());
+                accepted_workers.push_back(&worker);
                 complete = threads.size() == 2U;
             }
             boost::system::error_code close_error;
@@ -2663,8 +2667,9 @@ void test_tcp_listener_worker_affinity()
     workers.run();
 
     std::scoped_lock lock(mutex);
-    require(threads.size() == 2U, "tcp listener accepted clients");
+    require(threads.size() == 2U && accepted_workers.size() == 2U, "tcp listener accepted clients");
     require(threads[0] != threads[1], "tcp listener assigns different workers");
+    require(accepted_workers[0] != accepted_workers[1], "tcp listener reports assigned workers");
 }
 
 void test_tcp_listener_unlimited_accepts()
@@ -2678,7 +2683,7 @@ void test_tcp_listener_unlimited_accepts()
     auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
     listener->startup(
-        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        [&](boost::system::error_code error, worker_context&, boost::asio::ip::tcp::socket socket)
         {
             require(!error, "tcp listener unlimited accept");
             ++accept_count;
@@ -2721,7 +2726,7 @@ void test_tcp_listener_single_accept_limit()
     const std::weak_ptr<tcp_listener> weak_listener = listener;
     boost::system::error_code startup_error;
     listener->startup(
-        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        [&](boost::system::error_code error, worker_context&, boost::asio::ip::tcp::socket socket)
         {
             require(!error, "tcp listener single accept");
             ++accept_count;
@@ -2819,7 +2824,7 @@ void test_tcp_listener_dynamic_startup()
         {
             startup_thread = std::this_thread::get_id();
             listener->startup(
-                [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+                [&](boost::system::error_code error, worker_context&, boost::asio::ip::tcp::socket socket)
                 {
                     if (error)
                     {
@@ -2921,12 +2926,14 @@ void test_tcp_listener_timeout_reports_error_without_shutdown()
     auto listener = std::make_shared<tcp_listener>(workers, endpoint.port(), boost::asio::ip::address_v4::loopback());
     int completion_count = 0;
     boost::system::error_code completion_error;
+    worker_context* completion_worker{};
     boost::system::error_code startup_error;
     listener->startup(
-        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+        [&](boost::system::error_code error, worker_context& worker, boost::asio::ip::tcp::socket socket)
         {
             ++completion_count;
             completion_error = error;
+            completion_worker = &worker;
             require(!socket.is_open(), "tcp listener timeout has no socket");
             workers.release_work();
         },
@@ -2938,6 +2945,7 @@ void test_tcp_listener_timeout_reports_error_without_shutdown()
 
     require(completion_count == 1, "tcp listener timeout completes once");
     require(completion_error == boost::asio::error::timed_out, "tcp listener timeout reports timed_out");
+    require(completion_worker == &workers.context(0), "tcp listener timeout reports pending worker");
 
     boost::asio::ip::tcp::acceptor before_shutdown(workers.context(0).io());
     boost::system::error_code before_shutdown_error;
@@ -2963,7 +2971,7 @@ void test_tcp_listener_shutdown_lifecycle()
     int accept_count = 0;
     boost::system::error_code startup_error;
     listener->startup(
-        [&](boost::system::error_code error, boost::asio::ip::tcp::socket)
+        [&](boost::system::error_code error, worker_context&, boost::asio::ip::tcp::socket)
         {
             require(!error, "tcp listener shutdown accept");
             ++accept_count;
@@ -3112,6 +3120,7 @@ void require_http_session_released(const std::weak_ptr<http_session>& session, s
 }
 
 void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
+                         worker_context& worker,
                          io_context_pool& workers,
                          boost::beast::http::verb method,
                          std::string_view target,
@@ -3127,7 +3136,7 @@ void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
     boost::asio::ip::tcp::socket client(client_io);
     client.connect(acceptor.local_endpoint());
 
-    auto session = std::make_shared<http_session>(acceptor.accept(), workers, application_config);
+    auto session = std::make_shared<http_session>(worker, acceptor.accept(), workers, application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3168,7 +3177,7 @@ void test_gb28181_input_http_parameters()
     streams.clear();
     io_context_pool workers(1);
 
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 0});
     auto work = boost::asio::make_work_guard(io);
     std::jthread runner([&io]() { io.run(); });
 
@@ -3198,7 +3207,10 @@ void test_gb28181_input_http_parameters()
                            std::string body,
                            std::string_view expected_body = "{\"error\":\"invalid_request\"}",
                            std::string_view request_content_type = "application/json")
-    { require_http_status(acceptor, workers, method, target, body, expected, message, request_content_type, "application/json", expected_body); };
+    {
+        require_http_status(
+            acceptor, workers.context(0), workers, method, target, body, expected, message, request_content_type, "application/json", expected_body);
+    };
 
     check(post, "/gb28181/input/create", boost::beast::http::status::not_found, "gb input old route is gone", "{}", "{\"error\":\"not_found\"}");
     check(post,
@@ -3353,7 +3365,7 @@ void test_gb28181_output_http_parameters()
         std::to_string(tcp_passive_port) + ",\"payload_type\":96,\"ssrc\":100001004}";
     std::jthread worker_runner([&workers]() { workers.run(); });
 
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor acceptor(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 0});
     auto work = boost::asio::make_work_guard(io);
     std::jthread runner([&io]() { io.run(); });
 
@@ -3366,7 +3378,10 @@ void test_gb28181_output_http_parameters()
                            std::string body,
                            std::string_view expected_body = "{\"error\":\"invalid_request\"}",
                            std::string_view request_content_type = "application/json")
-    { require_http_status(acceptor, workers, method, target, body, expected, message, request_content_type, "application/json", expected_body); };
+    {
+        require_http_status(
+            acceptor, workers.context(0), workers, method, target, body, expected, message, request_content_type, "application/json", expected_body);
+    };
 
     check(post, "/gb28181/output/create", boost::beast::http::status::not_found, "gb output old route is gone", "{}", "{\"error\":\"not_found\"}");
     check(post,
@@ -3475,10 +3490,10 @@ void test_gb28181_output_http_parameters()
 
 void test_http_flv_client_disconnect()
 {
-    boost::asio::io_context io;
+    io_context_pool workers(1);
+    auto& io = workers.context(0).io();
     auto& streams = media_server::registry::instance();
     streams.clear();
-    io_context_pool workers(1);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-disconnect", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv disconnect track");
@@ -3488,7 +3503,7 @@ void test_http_flv_client_disconnect()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(acceptor.accept(), workers, application_config);
+    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), workers, application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3505,15 +3520,16 @@ void test_http_flv_client_disconnect()
     client.close(error);
 
     require_http_session_released(weak_session, "http flv disconnect releases session");
+    workers.release_work();
     runner.join();
 }
 
 void test_http_flv_stream_end_during_write()
 {
-    boost::asio::io_context io;
+    io_context_pool workers(1);
+    auto& io = workers.context(0).io();
     auto& streams = media_server::registry::instance();
     streams.clear();
-    io_context_pool workers(1);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-end-write", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv end write track");
@@ -3523,7 +3539,7 @@ void test_http_flv_stream_end_during_write()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(acceptor.accept(), workers, application_config);
+    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), workers, application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3539,15 +3555,16 @@ void test_http_flv_stream_end_during_write()
     require_http_session_released(weak_session, "http flv stream end closes in-flight write");
     boost::system::error_code error;
     client.close(error);
+    workers.release_work();
     runner.join();
 }
 
 void test_http_flv_pending_bootstrap_end()
 {
-    boost::asio::io_context io;
+    io_context_pool workers(1);
+    auto& io = workers.context(0).io();
     auto& streams = media_server::registry::instance();
     streams.clear();
-    io_context_pool workers(1);
 
     auto stream = std::make_shared<media_stream>("live/http-flv-pending-end", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "http flv pending end track");
@@ -3557,7 +3574,7 @@ void test_http_flv_pending_bootstrap_end()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(acceptor.accept(), workers, application_config);
+    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), workers, application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3581,6 +3598,7 @@ void test_http_flv_pending_bootstrap_end()
     require_http_session_released(weak_session, "http flv pending bootstrap end closes session");
     boost::system::error_code error;
     client.close(error);
+    workers.release_work();
     runner.join();
 }
 
@@ -5776,27 +5794,28 @@ class rtsp_output_test_peer final
 {
    public:
     explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()}, output_video_config video = {})
-        : acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}), client_(io_)
+        : acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}), client_(worker_.io())
     {
         config_.rtsp_video = video;
         streams_.clear();
-        stream_ = std::make_shared<media_stream>("live/test", io_.get_executor());
+        stream_ = std::make_shared<media_stream>("live/test", worker_.io().get_executor());
         require(stream_->set_tracks(std::move(tracks)), "rtsp output tracks");
         require(streams_.add(stream_), "rtsp output registry add");
 
         client_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto tcp = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto connection = std::make_shared<rtsp_server_connection>(std::move(tcp), config_.rtsp_video.codec);
+        auto connection = std::make_shared<rtsp_server_connection>(worker_, std::move(tcp), config_.rtsp_video.codec);
         session_ = connection;
         connection->startup();
-        runner_ = std::jthread([this]() { io_.run(); });
+        runner_ = std::jthread([this]() { worker_.run(); });
     }
 
     ~rtsp_output_test_peer()
     {
         boost::system::error_code error;
         client_.close(error);
+        worker_.release_work();
         runner_.join();
     }
 
@@ -5829,8 +5848,9 @@ class rtsp_output_test_peer final
     {
         auto promise = std::make_shared<std::promise<bool>>();
         auto future = promise->get_future();
-        boost::asio::post(
-            io_, [stream = stream_, track = std::move(track), promise]() mutable { promise->set_value(stream->update_track(std::move(track))); });
+        boost::asio::post(worker_.io(),
+                          [stream = stream_, track = std::move(track), promise]() mutable
+                          { promise->set_value(stream->update_track(std::move(track))); });
         require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp output track update");
         return future.get();
     }
@@ -5839,7 +5859,7 @@ class rtsp_output_test_peer final
     {
         auto promise = std::make_shared<std::promise<void>>();
         auto future = promise->get_future();
-        boost::asio::post(io_,
+        boost::asio::post(worker_.io(),
                           [stream = stream_, frame = std::move(frame), promise]() mutable
                           {
                               stream->publish(std::move(frame));
@@ -5853,7 +5873,7 @@ class rtsp_output_test_peer final
     {
         auto promise = std::make_shared<std::promise<void>>();
         auto future = promise->get_future();
-        boost::asio::post(io_,
+        boost::asio::post(worker_.io(),
                           [this, stream = stream_, promise]()
                           {
                               streams_.remove(*stream);
@@ -5917,7 +5937,7 @@ class rtsp_output_test_peer final
     }
 
    private:
-    boost::asio::io_context io_;
+    worker_context worker_;
     config config_;
     stream_registry& streams_ = registry::instance();
     std::shared_ptr<media_stream> stream_;
