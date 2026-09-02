@@ -6,7 +6,10 @@
 #include <string_view>
 
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include "media/net/tcp_acceptor.h"
 #include "media/net/tcp_connector.h"
@@ -22,6 +25,31 @@ void require(bool condition, std::string_view message)
     {
         throw std::runtime_error(std::string{message});
     }
+}
+
+void test_stackful_coroutine_support()
+{
+    boost::asio::io_context io;
+    bool started = false;
+    bool resumed = false;
+    boost::system::error_code wait_error;
+
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            started = true;
+            boost::asio::steady_timer timer(io);
+            timer.expires_after(std::chrono::milliseconds(1));
+            timer.async_wait(yield[wait_error]);
+            resumed = true;
+        },
+        boost::asio::detached);
+    io.run();
+
+    require(started, "stackful coroutine starts");
+    require(resumed, "stackful coroutine resumes");
+    require(!wait_error, "stackful coroutine wait succeeds");
 }
 
 void test_connector_reports_terminal_error_once()
@@ -182,6 +210,7 @@ int main()
 {
     try
     {
+        media_server::test_stackful_coroutine_support();
         media_server::test_connector_reports_terminal_error_once();
         media_server::test_acceptor_reports_success();
         media_server::test_acceptor_reports_bind_failure();
