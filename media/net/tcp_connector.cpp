@@ -2,6 +2,7 @@
 
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
+#include <boost/asio/detached.hpp>
 
 #include "media/net/tcp_connector.h"
 
@@ -16,29 +17,16 @@ tcp_connector::tcp_connector(boost::asio::any_io_executor executor, boost::asio:
 void tcp_connector::startup(socket_handler handler, boost::system::error_code& error)
 {
     error.clear();
-    if (started_ || completed_)
-    {
-        error = boost::asio::error::already_started;
-        return;
-    }
-
-    started_ = true;
     socket_handler_ = std::move(handler);
 
     const auto self = shared_from_this();
     if (timeout_ > std::chrono::milliseconds::zero())
     {
         timer_.expires_after(timeout_);
-        timer_.async_wait(
-            [self](const boost::system::error_code& timer_error)
-            {
-                if (!timer_error)
-                {
-                    self->complete(boost::asio::error::make_error_code(boost::asio::error::timed_out));
-                }
-            });
+        timer_.async_wait([self](const boost::system::error_code& timer_error) { self->on_timeout(timer_error); });
     }
-    socket_.async_connect(endpoint_, [self](const boost::system::error_code& connect_error) { self->complete(connect_error); });
+    boost::asio::spawn(
+        socket_.get_executor(), [self](boost::asio::yield_context yield) { self->run_connect(yield); }, boost::asio::detached);
 }
 
 void tcp_connector::shutdown()
@@ -47,49 +35,36 @@ void tcp_connector::shutdown()
     boost::asio::post(socket_.get_executor(), [self]() { self->safe_shutdown(); });
 }
 
-void tcp_connector::complete(boost::system::error_code error)
+void tcp_connector::run_connect(boost::asio::yield_context yield)
 {
-    if (completed_)
-    {
-        return;
-    }
-    completed_ = true;
-
+    boost::system::error_code error;
+    socket_.async_connect(endpoint_, yield[error]);
     timer_.cancel();
-    auto handler = std::move(socket_handler_);
+
     if (error)
     {
-        boost::system::error_code ignored;
-        socket_.cancel(ignored);
-        if (handler)
-        {
-            handler(error, boost::asio::ip::tcp::socket{socket_.get_executor()});
-        }
+        socket_handler_(error, boost::asio::ip::tcp::socket{socket_.get_executor()});
         return;
     }
+    socket_handler_({}, std::move(socket_));
+}
 
-    started_ = false;
-    auto socket = std::move(socket_);
-    if (handler)
+void tcp_connector::on_timeout(const boost::system::error_code& error)
+{
+    if (error)
     {
-        handler({}, std::move(socket));
+        return;
     }
+    socket_handler_(boost::asio::error::make_error_code(boost::asio::error::timed_out),
+                    boost::asio::ip::tcp::socket{socket_.get_executor()});
 }
 
 void tcp_connector::safe_shutdown()
 {
-    if (!started_)
-    {
-        return;
-    }
-    started_ = false;
-    completed_ = true;
-
-    socket_handler_ = {};
     timer_.cancel();
-    boost::system::error_code ignored;
-    socket_.cancel(ignored);
-    socket_.close(ignored);
+    boost::system::error_code error;
+    socket_.cancel(error);
+    socket_.close(error);
 }
 
 }    // namespace media_server

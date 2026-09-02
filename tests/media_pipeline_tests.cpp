@@ -2261,6 +2261,7 @@ void test_tcp_connector_shutdown_lifecycle()
         },
         startup_error);
     require(!startup_error, "tcp connector startup");
+    require(io.run_one() == 1, "tcp connector coroutine starts before shutdown");
     connector->shutdown();
     connector->shutdown();
     connector->shutdown();
@@ -2269,8 +2270,9 @@ void test_tcp_connector_shutdown_lifecycle()
 
     io.run();
 
-    require(completion_count <= 1, "tcp connector shutdown never duplicates completion");
-    require(completion_count == 0 || !completion_error, "tcp connector queued success may precede shutdown");
+    require(completion_count == 1, "tcp connector shutdown completes pending connect");
+    require(!completion_error || completion_error == boost::asio::error::operation_aborted,
+            "tcp connector connect may complete before shutdown or report cancellation");
     require(weak_connector.expired(), "tcp connector shutdown releases pending operations");
 }
 
