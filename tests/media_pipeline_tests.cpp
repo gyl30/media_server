@@ -2290,6 +2290,7 @@ void test_tcp_connection_shutdown_lifecycle()
                         [&io_callback_count](boost::system::error_code, std::size_t) { ++io_callback_count; });
     const std::weak_ptr<tcp_connection> weak_connection = connection;
 
+    require(io.run_one() == 1, "tcp connection read coroutine starts before shutdown");
     connection->shutdown();
     connection->shutdown();
     connection.reset();
@@ -2341,6 +2342,48 @@ void test_tcp_connection_io_error_propagation()
         io.restart();
         io.run();
     }
+
+    {
+        boost::asio::io_context io;
+        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::socket client(io);
+        client.connect(acceptor.local_endpoint());
+        auto connection = std::make_shared<tcp_connection>(acceptor.accept());
+        const std::weak_ptr<tcp_connection> weak_connection = connection;
+
+        int write_callback_count = 0;
+        boost::system::error_code first_write_error;
+        std::size_t first_write_size = 0;
+        connection->startup(
+            {},
+            [&](boost::system::error_code error, std::size_t bytes)
+            {
+                ++write_callback_count;
+                if (write_callback_count != 1)
+                {
+                    return;
+                }
+                first_write_error = error;
+                first_write_size = bytes;
+                if (const auto self = weak_connection.lock())
+                {
+                    self->shutdown();
+                }
+            });
+
+        const std::array<std::uint8_t, 3> first{1, 2, 3};
+        const std::array<std::uint8_t, 4> second{4, 5, 6, 7};
+        connection->write(first);
+        connection->write(second);
+        io.run();
+
+        require(!first_write_error, "tcp connection batch write succeeds");
+        require(first_write_size == first.size() + second.size(), "tcp connection batches pending writes");
+        require(write_callback_count == 1, "tcp connection batch completes once");
+
+        boost::system::error_code error;
+        client.close(error);
+    }
 }
 
 void test_tcp_connection_shutdown_discards_pending_writes()
@@ -2349,18 +2392,30 @@ void test_tcp_connection_shutdown_discards_pending_writes()
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
+    client.set_option(boost::asio::socket_base::receive_buffer_size(1024));
+
     auto connection = std::make_shared<tcp_connection>(acceptor.accept());
-    connection->startup({}, {});
+    connection->socket().set_option(boost::asio::socket_base::send_buffer_size(1024));
+
+    int write_callback_count = 0;
+    connection->startup({}, [&write_callback_count](boost::system::error_code, std::size_t) { ++write_callback_count; });
     const std::weak_ptr<tcp_connection> weak_connection = connection;
 
     std::vector<std::uint8_t> data(8 * 1024 * 1024, 0x5a);
     connection->write(data);
     connection->write(data);
+
+    require(io.run_one() == 1, "tcp connection read coroutine starts before shutdown");
+    require(io.run_one() == 1, "tcp connection write coroutine starts before shutdown");
+
+    connection->shutdown();
     connection->shutdown();
     connection.reset();
     io.run();
 
+    require(write_callback_count == 0, "tcp shutdown suppresses pending write cancellation callback");
     require(weak_connection.expired(), "tcp shutdown releases connection without draining writes");
+
     boost::system::error_code error;
     client.close(error);
 }
