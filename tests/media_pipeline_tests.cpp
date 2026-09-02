@@ -2254,7 +2254,7 @@ void test_tcp_connector_shutdown_lifecycle()
     const std::weak_ptr<tcp_connector> weak_connector = connector;
     boost::system::error_code startup_error;
     connector->startup(
-        [&](boost::system::error_code error, boost::asio::ip::tcp::socket)
+        [connector, &completion_count, &completion_error](boost::system::error_code error, boost::asio::ip::tcp::socket)
         {
             ++completion_count;
             completion_error = error;
@@ -2270,10 +2270,9 @@ void test_tcp_connector_shutdown_lifecycle()
 
     io.run();
 
-    require(completion_count == 1, "tcp connector shutdown completes pending connect");
-    require(!completion_error || completion_error == boost::asio::error::operation_aborted,
-            "tcp connector connect may complete before shutdown or report cancellation");
-    require(weak_connector.expired(), "tcp connector shutdown releases pending operations");
+    require(completion_count <= 1, "tcp connector shutdown completes at most once");
+    require(completion_count == 0 || !completion_error, "tcp connector shutdown suppresses cancellation callback");
+    require(weak_connector.expired(), "tcp connector shutdown clears callback ownership");
 }
 
 void test_tcp_connection_shutdown_lifecycle()

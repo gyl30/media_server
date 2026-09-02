@@ -43,7 +43,10 @@ void tcp_connector::run_connect(boost::asio::yield_context yield)
 
     if (error)
     {
-        socket_handler_(error, boost::asio::ip::tcp::socket{socket_.get_executor()});
+        if (socket_handler_)
+        {
+            socket_handler_(error, boost::asio::ip::tcp::socket{socket_.get_executor()});
+        }
         return;
     }
     socket_handler_({}, std::move(socket_));
@@ -61,6 +64,7 @@ void tcp_connector::on_timeout(const boost::system::error_code& error)
 
 void tcp_connector::safe_shutdown()
 {
+    socket_handler_ = {};
     timer_.cancel();
     boost::system::error_code error;
     socket_.cancel(error);
