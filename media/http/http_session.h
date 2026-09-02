@@ -12,12 +12,13 @@
 
 namespace media_server
 {
+class worker_context;
 class io_context_pool;
 
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
-    http_session(boost::asio::ip::tcp::socket socket, io_context_pool& workers, const config& config);
+    http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, io_context_pool& workers, const config& config);
 
     void startup();
     void shutdown();
@@ -31,6 +32,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
     void safe_shutdown();
 
+    worker_context& worker_;
     boost::beast::tcp_stream stream_;
     boost::beast::flat_buffer buffer_;
     boost::beast::http::request<boost::beast::http::string_body> request_;

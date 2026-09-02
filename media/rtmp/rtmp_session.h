@@ -15,13 +15,15 @@ struct rtmp_server_t;
 namespace media_server
 {
 
+class worker_context;
 class rtmp_input_session;
 class rtmp_output_session;
 
 class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 {
    public:
-    rtmp_session(std::shared_ptr<tcp_connection> connection,
+    rtmp_session(worker_context& worker,
+                 std::shared_ptr<tcp_connection> connection,
                  output_video_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
     ~rtmp_session();
@@ -47,6 +49,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     void safe_shutdown();
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
+    worker_context& worker_;
     std::shared_ptr<tcp_connection> connection_;
     std::chrono::milliseconds initial_tracks_timeout_;
     output_video_config video_config_;
