@@ -10,6 +10,7 @@
 #include <functional>
 
 #include <boost/asio.hpp>
+#include <boost/asio/spawn.hpp>
 
 namespace media_server
 {
@@ -30,8 +31,8 @@ class tcp_connection final : public std::enable_shared_from_this<tcp_connection>
     [[nodiscard]] boost::asio::ip::tcp::socket& socket() noexcept;
 
    private:
-    void read_next();
-    void write_next();
+    void run_read(boost::asio::yield_context yield);
+    void run_write(boost::asio::yield_context yield);
     void safe_shutdown();
 
     boost::asio::ip::tcp::socket socket_;
