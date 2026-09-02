@@ -24,7 +24,7 @@ class rtmp_server final : public std::enable_shared_from_this<rtmp_server>
     void shutdown();
 
    private:
-    void on_accept(boost::asio::ip::tcp::socket socket);
+    void on_accept(boost::system::error_code error, worker_context& worker, boost::asio::ip::tcp::socket socket);
 
     const config& config_;
     std::shared_ptr<tcp_listener> listener_;

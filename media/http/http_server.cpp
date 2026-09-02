@@ -16,16 +16,11 @@ void http_server::startup(boost::system::error_code& error)
 {
     const std::weak_ptr<http_server> weak = shared_from_this();
     listener_->startup(
-        [weak](boost::system::error_code accept_error, boost::asio::ip::tcp::socket socket)
+        [weak](boost::system::error_code accept_error, worker_context& worker, boost::asio::ip::tcp::socket socket)
         {
             if (const auto self = weak.lock())
             {
-                if (accept_error)
-                {
-                    self->shutdown();
-                    return;
-                }
-                self->on_accept(std::move(socket));
+                self->on_accept(accept_error, worker, std::move(socket));
             }
         },
         0,
@@ -46,17 +41,23 @@ void http_server::shutdown()
     listener_->shutdown();
 }
 
-void http_server::on_accept(boost::asio::ip::tcp::socket socket)
+void http_server::on_accept(boost::system::error_code error, worker_context& worker, boost::asio::ip::tcp::socket socket)
 {
-    std::scoped_lock lock(mutex_);
-    if (closed_)
+    if (error)
     {
-        boost::system::error_code error;
-        socket.close(error);
+        shutdown();
         return;
     }
 
-    auto session = std::make_shared<http_session>(std::move(socket), workers_, config_);
+    std::scoped_lock lock(mutex_);
+    if (closed_)
+    {
+        boost::system::error_code close_error;
+        socket.close(close_error);
+        return;
+    }
+
+    auto session = std::make_shared<http_session>(worker, std::move(socket), workers_, config_);
     session->startup();
 }
 }    // namespace media_server

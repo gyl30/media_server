@@ -60,17 +60,17 @@ void tcp_listener::startup(accept_handler handler, std::size_t accept_limit, std
     accepted_count_ = 0;
     const auto self = shared_from_this();
     boost::asio::post(acceptor_.get_executor(),
-                      [self]()
+                      [this, self]()
                       {
-                          self->accept_next();
-                          self->schedule_timeout();
+                          accept_next();
+                          schedule_timeout();
                       });
 }
 
 void tcp_listener::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(acceptor_.get_executor(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(acceptor_.get_executor(), [this, self]() { safe_shutdown(); });
 }
 
 void tcp_listener::schedule_timeout()
@@ -82,24 +82,26 @@ void tcp_listener::schedule_timeout()
 
     timer_.expires_after(timeout_);
     const auto self = shared_from_this();
-    timer_.async_wait(
-        [self](const boost::system::error_code& error)
-        {
-            if (error || !self->started_ || !self->accepting_)
-            {
-                return;
-            }
+    timer_.async_wait([this, self](const boost::system::error_code& error) { on_timeout(error); });
+}
 
-            self->accepting_ = false;
-            boost::system::error_code ignored;
-            self->acceptor_.cancel(ignored);
-            auto handler = std::move(self->accept_handler_);
-            if (handler)
-            {
-                handler(boost::asio::error::make_error_code(boost::asio::error::timed_out),
-                        boost::asio::ip::tcp::socket{self->acceptor_.get_executor()});
-            }
-        });
+void tcp_listener::on_timeout(const boost::system::error_code& error)
+{
+    if (error || !started_ || !accepting_)
+    {
+        return;
+    }
+
+    accepting_ = false;
+    auto* worker = accepting_worker_;
+    accepting_worker_ = nullptr;
+    boost::system::error_code ignored;
+    acceptor_.cancel(ignored);
+    auto handler = std::move(accept_handler_);
+    if (handler)
+    {
+        handler(boost::asio::error::make_error_code(boost::asio::error::timed_out), *worker, boost::asio::ip::tcp::socket{worker->io()});
+    }
 }
 
 void tcp_listener::safe_shutdown()
@@ -110,6 +112,7 @@ void tcp_listener::safe_shutdown()
     }
     started_ = false;
     accepting_ = false;
+    accepting_worker_ = nullptr;
     accept_handler_ = {};
     timer_.cancel();
     boost::system::error_code error;
@@ -124,48 +127,59 @@ void tcp_listener::accept_next()
         return;
     }
 
+    auto* worker = &workers_.next();
+    accepting_worker_ = worker;
     const auto self = shared_from_this();
-    auto on_accept = [self](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
-    {
-        if (!self->started_ || !self->accepting_)
-        {
-            boost::system::error_code ignored;
-            socket.close(ignored);
-            return;
-        }
-        if (error)
-        {
-            self->accepting_ = false;
-            self->timer_.cancel();
-            auto handler = std::move(self->accept_handler_);
-            if (handler)
-            {
-                boost::asio::dispatch(self->acceptor_.get_executor(),
-                                      [self, handler = std::move(handler), error]() mutable
-                                      { handler(error, boost::asio::ip::tcp::socket{self->acceptor_.get_executor()}); });
-            }
-            return;
-        }
+    acceptor_.async_accept(
+        worker->io(),
+        boost::asio::bind_executor(acceptor_.get_executor(),
+                                   [this, self, worker](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
+                                   { on_accept(*worker, error, std::move(socket)); }));
+}
 
-        ++self->accepted_count_;
-        auto handler = self->accept_handler_;
-        if (self->accept_limit_ != 0 && self->accepted_count_ >= self->accept_limit_)
-        {
-            self->safe_shutdown();
-        }
-        else
-        {
-            self->accept_next();
-        }
+void tcp_listener::on_accept(worker_context& worker, const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
+{
+    if (!started_ || !accepting_)
+    {
+        boost::system::error_code ignored;
+        socket.close(ignored);
+        return;
+    }
+    if (error)
+    {
+        accepting_ = false;
+        accepting_worker_ = nullptr;
+        timer_.cancel();
+        auto handler = std::move(accept_handler_);
         if (handler)
         {
-            boost::asio::dispatch(socket.get_executor(),
-                                  [self, handler = std::move(handler), socket = std::move(socket)]() mutable { handler({}, std::move(socket)); });
+            const auto self = shared_from_this();
+            auto* accepted_worker = &worker;
+            boost::asio::dispatch(acceptor_.get_executor(),
+                                  [this, self, accepted_worker, handler = std::move(handler), error]() mutable
+                                  { handler(error, *accepted_worker, boost::asio::ip::tcp::socket{accepted_worker->io()}); });
         }
-    };
+        return;
+    }
 
-    auto& worker = workers_.next();
-    acceptor_.async_accept(worker.io(), boost::asio::bind_executor(acceptor_.get_executor(), std::move(on_accept)));
+    ++accepted_count_;
+    auto handler = accept_handler_;
+    if (accept_limit_ != 0 && accepted_count_ >= accept_limit_)
+    {
+        safe_shutdown();
+    }
+    else
+    {
+        accept_next();
+    }
+    if (handler)
+    {
+        const auto self = shared_from_this();
+        auto* accepted_worker = &worker;
+        boost::asio::dispatch(socket.get_executor(),
+                              [this, self, accepted_worker, handler = std::move(handler), socket = std::move(socket)]() mutable
+                              { handler({}, *accepted_worker, std::move(socket)); });
+    }
 }
 
 }    // namespace media_server

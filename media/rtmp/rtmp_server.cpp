@@ -16,16 +16,11 @@ void rtmp_server::startup(boost::system::error_code& error)
 {
     const std::weak_ptr<rtmp_server> weak = shared_from_this();
     listener_->startup(
-        [weak](boost::system::error_code accept_error, boost::asio::ip::tcp::socket socket)
+        [weak](boost::system::error_code accept_error, worker_context& worker, boost::asio::ip::tcp::socket socket)
         {
             if (const auto self = weak.lock())
             {
-                if (accept_error)
-                {
-                    self->shutdown();
-                    return;
-                }
-                self->on_accept(std::move(socket));
+                self->on_accept(accept_error, worker, std::move(socket));
             }
         },
         0,
@@ -46,18 +41,24 @@ void rtmp_server::shutdown()
     listener_->shutdown();
 }
 
-void rtmp_server::on_accept(boost::asio::ip::tcp::socket socket)
+void rtmp_server::on_accept(boost::system::error_code error, worker_context& worker, boost::asio::ip::tcp::socket socket)
 {
+    if (error)
+    {
+        shutdown();
+        return;
+    }
+
     std::scoped_lock lock(mutex_);
     if (closed_)
     {
-        boost::system::error_code error;
-        socket.close(error);
+        boost::system::error_code close_error;
+        socket.close(close_error);
         return;
     }
 
     auto connection = std::make_shared<tcp_connection>(std::move(socket));
-    auto session = std::make_shared<rtmp_session>(std::move(connection), config_.rtmp_video);
+    auto session = std::make_shared<rtmp_session>(worker, std::move(connection), config_.rtmp_video);
     session->startup();
 }
 

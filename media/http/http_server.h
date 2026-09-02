@@ -22,7 +22,7 @@ class http_server final : public std::enable_shared_from_this<http_server>
     void shutdown();
 
    private:
-    void on_accept(boost::asio::ip::tcp::socket socket);
+    void on_accept(boost::system::error_code error, worker_context& worker, boost::asio::ip::tcp::socket socket);
 
     io_context_pool& workers_;
     const config& config_;

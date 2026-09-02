@@ -834,18 +834,18 @@ media_frame make_video_key_frame(codec_id codec)
 class whep_http_test_peer final
 {
    public:
-    whep_http_test_peer() : work_(boost::asio::make_work_guard(io_)), workers_(1), acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0})
+    whep_http_test_peer() : workers_(1), acceptor_(workers_.context(0).io(), {boost::asio::ip::address_v4::loopback(), 0})
     {
         streams_.clear();
-        stream_ = std::make_shared<media_stream>("live/camera", io_.get_executor());
+        stream_ = std::make_shared<media_stream>("live/camera", workers_.context(0).io().get_executor());
         require(stream_->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
         require(streams_.add(stream_), "whep http registry add");
-        runner_ = std::jthread([this]() { io_.run(); });
+        runner_ = std::jthread([this]() { workers_.run(); });
     }
 
     ~whep_http_test_peer()
     {
-        boost::asio::post(io_, [this]() { work_.reset(); });
+        boost::asio::post(workers_.context(0).io(), [this]() { workers_.release_work(); });
         runner_.join();
         hls::shutdown();
     }
@@ -896,7 +896,7 @@ class whep_http_test_peer final
         boost::asio::ip::tcp::socket client(client_io_);
         client.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto session = std::make_shared<http_session>(std::move(server_socket), workers_, config_);
+        auto session = std::make_shared<http_session>(workers_.context(0), std::move(server_socket), workers_, config_);
         session->startup();
 
         const bool head = request.method() == boost::beast::http::verb::head;
@@ -929,8 +929,6 @@ class whep_http_test_peer final
         return response;
     }
 
-    boost::asio::io_context io_;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
     config config_;
     stream_registry& streams_ = registry::instance();
     io_context_pool workers_;
