@@ -155,6 +155,7 @@ add_library(media_core STATIC
     media/codec/audio_transcoder.cpp
     media/codec/video_transcoder.cpp
     media/codec/codec_utils.cpp
+    media/net/worker_context.cpp
     media/net/io_context_pool.cpp
     media/net/port_manager.cpp
     media/net/tcp_connection.cpp
