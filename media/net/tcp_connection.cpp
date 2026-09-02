@@ -3,6 +3,7 @@
 #include <utility>
 
 #include <boost/asio/post.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/system/error_code.hpp>
 
 #include "media/net/tcp_connection.h"
@@ -21,7 +22,10 @@ void tcp_connection::startup(read_handler on_read, write_handler on_write)
 {
     read_handler_ = std::move(on_read);
     write_handler_ = std::move(on_write);
-    read_next();
+
+    const auto self = shared_from_this();
+    boost::asio::spawn(
+        socket_.get_executor(), [self](boost::asio::yield_context yield) { self->run_read(yield); }, boost::asio::detached);
 }
 
 void tcp_connection::write(std::span<const std::uint8_t> data)
@@ -35,7 +39,9 @@ void tcp_connection::write(std::span<const std::uint8_t> data)
     write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
     if (start_write)
     {
-        write_next();
+        const auto self = shared_from_this();
+        boost::asio::spawn(
+            socket_.get_executor(), [self](boost::asio::yield_context yield) { self->run_write(yield); }, boost::asio::detached);
     }
 }
 
@@ -59,80 +65,84 @@ void tcp_connection::shutdown()
 
 boost::asio::ip::tcp::socket& tcp_connection::socket() noexcept { return socket_; }
 
-void tcp_connection::read_next()
+void tcp_connection::run_read(boost::asio::yield_context yield)
 {
-    if (closed_)
+    for (;;)
     {
-        return;
+        boost::system::error_code error;
+        const auto bytes = socket_.async_read_some(boost::asio::buffer(read_buffer_), yield[error]);
+        if (error)
+        {
+            if (read_handler_)
+            {
+                read_handler_(error, {});
+            }
+            return;
+        }
+        if (bytes != 0 && read_handler_)
+        {
+            read_handler_(error, std::span{read_buffer_.data(), bytes});
+        }
     }
-
-    const auto self = shared_from_this();
-    socket_.async_read_some(boost::asio::buffer(read_buffer_),
-                            [this, self](const boost::system::error_code& error, std::size_t bytes)
-                            {
-                                if (closed_)
-                                {
-                                    return;
-                                }
-                                if (error)
-                                {
-                                    if (read_handler_)
-                                    {
-                                        read_handler_(error, {});
-                                    }
-                                    return;
-                                }
-                                if (bytes != 0 && read_handler_)
-                                {
-                                    read_handler_(error, std::span{read_buffer_.data(), bytes});
-                                }
-                                read_next();
-                            });
 }
 
-void tcp_connection::write_next()
+void tcp_connection::run_write(boost::asio::yield_context yield)
 {
-    if (closed_ || write_queue_.empty())
+    for (;;)
     {
-        return;
+        if (closed_ || write_queue_.empty())
+        {
+            return;
+        }
+
+        const auto batch_size = write_queue_.size();
+        std::vector<std::shared_ptr<std::vector<std::uint8_t>>> batch;
+        std::vector<boost::asio::const_buffer> buffers;
+        batch.reserve(batch_size);
+        buffers.reserve(batch_size);
+        for (std::size_t index = 0; index < batch_size; ++index)
+        {
+            batch.push_back(write_queue_[index]);
+            buffers.push_back(boost::asio::buffer(*batch.back()));
+        }
+
+        boost::system::error_code error;
+        const auto started_at = std::chrono::steady_clock::now();
+        const auto write_size = boost::asio::async_write(socket_, buffers, yield[error]);
+        if (error)
+        {
+            write_queue_.clear();
+            if (write_handler_)
+            {
+                write_handler_(error, write_size);
+            }
+            return;
+        }
+
+        for (std::size_t index = 0; index < batch_size; ++index)
+        {
+            write_queue_.pop_front();
+        }
+
+        if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
+        {
+            write_queue_.clear();
+            if (write_handler_)
+            {
+                write_handler_(boost::asio::error::make_error_code(boost::asio::error::timed_out), write_size);
+            }
+            return;
+        }
+        if (write_handler_)
+        {
+            write_handler_(error, write_size);
+        }
+        if (write_queue_.empty())
+        {
+            return;
+        }
     }
-
-    const auto self = shared_from_this();
-    const auto buffer = write_queue_.front();
-    const auto started_at = std::chrono::steady_clock::now();
-    boost::asio::async_write(socket_,
-                             boost::asio::buffer(*buffer),
-                             [this, self, buffer, started_at](const boost::system::error_code& error, std::size_t write_size)
-                             {
-                                 if (closed_)
-                                 {
-                                     return;
-                                 }
-                                 if (error)
-                                 {
-                                     if (write_handler_)
-                                     {
-                                         write_handler_(error, write_size);
-                                     }
-                                     return;
-                                 }
-                                 write_queue_.pop_front();
-                                 if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
-                                 {
-                                     if (write_handler_)
-                                     {
-                                         write_handler_(boost::asio::error::make_error_code(boost::asio::error::timed_out), write_size);
-                                     }
-                                     return;
-                                 }
-                                 if (write_handler_)
-                                 {
-                                     write_handler_(error, write_size);
-                                 }
-                                 write_next();
-                             });
 }
-
 void tcp_connection::safe_shutdown()
 {
     if (closed_)
@@ -141,12 +151,14 @@ void tcp_connection::safe_shutdown()
     }
     closed_ = true;
 
-    boost::system::error_code error;
-    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
-    socket_.close(error);
-    write_queue_.clear();
     read_handler_ = {};
     write_handler_ = {};
+    write_queue_.clear();
+
+    boost::system::error_code error;
+    socket_.cancel(error);
+    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
+    socket_.close(error);
 }
 
 }    // namespace media_server
