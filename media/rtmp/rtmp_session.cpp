@@ -4,6 +4,7 @@
 #include <boost/asio/post.hpp>
 
 #include "media/rtmp/rtmp_session.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/rtmp/rtmp_input_session.h"
 #include "media/rtmp/rtmp_output_session.h"
@@ -17,8 +18,11 @@ extern "C"
 namespace media_server
 {
 
-rtmp_session::rtmp_session(std::shared_ptr<tcp_connection> connection, output_video_config video, std::chrono::milliseconds initial_tracks_timeout)
-    : connection_(std::move(connection)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
+rtmp_session::rtmp_session(worker_context& worker,
+                           std::shared_ptr<tcp_connection> connection,
+                           output_video_config video,
+                           std::chrono::milliseconds initial_tracks_timeout)
+    : worker_(worker), connection_(std::move(connection)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
 {
 }
 
@@ -45,8 +49,8 @@ void rtmp_session::startup()
     }
 
     const auto self = shared_from_this();
-    connection_->startup([self](boost::system::error_code error, std::span<const std::uint8_t> data) { self->on_tcp_read(error, data); },
-                         [self](boost::system::error_code error, std::size_t write_size) { self->on_tcp_write(error, write_size); });
+    connection_->startup([this, self](boost::system::error_code error, std::span<const std::uint8_t> data) { on_tcp_read(error, data); },
+                         [this, self](boost::system::error_code error, std::size_t write_size) { on_tcp_write(error, write_size); });
 }
 
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
@@ -124,7 +128,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
     const std::weak_ptr<rtmp_session> weak = shared_from_this();
     output_ = std::make_shared<rtmp_output_session>(
-        connection_->socket().get_executor(),
+        worker_.io().get_executor(),
         std::move(media),
         [weak](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
@@ -152,7 +156,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
         });
 
     const auto self = shared_from_this();
-    boost::asio::post(connection_->socket().get_executor(),
+    boost::asio::post(worker_.io(),
                       [self]()
                       {
                           if (self->closed_ || self->rtmp_context_ == nullptr || !self->output_)
@@ -180,7 +184,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
 
     stream_name_ = make_stream_name(app, stream);
     const std::weak_ptr<rtmp_session> weak = shared_from_this();
-    auto input = std::make_shared<rtmp_input_session>(connection_->socket().get_executor(),
+    auto input = std::make_shared<rtmp_input_session>(worker_.io().get_executor(),
                                                       stream_name_,
                                                       initial_tracks_timeout_,
                                                       [weak]()
@@ -228,7 +232,7 @@ void rtmp_session::on_tcp_write(boost::system::error_code error, std::size_t wri
 void rtmp_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(connection_->socket().get_executor(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [this, self]() { safe_shutdown(); });
 }
 
 void rtmp_session::safe_shutdown()

@@ -6,7 +6,6 @@
 #include <string>
 #include <cstdint>
 
-#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/ip/address.hpp>
 
 #include "media/codec/output_video_config.h"
@@ -21,12 +20,13 @@ extern "C"
 namespace media_server
 {
 
+class worker_context;
 class rtsp_server_session;
 
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
    public:
-    rtsp_server_connection(std::shared_ptr<tcp_connection> connection, output_video_codec video_codec);
+    rtsp_server_connection(worker_context& worker, std::shared_ptr<tcp_connection> connection, output_video_codec video_codec);
     ~rtsp_server_connection();
 
     void startup();
@@ -49,7 +49,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void on_tcp_read(std::span<const std::uint8_t> data);
     void safe_shutdown();
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     output_video_codec video_codec_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<rtsp_server_session> logical_session_;
