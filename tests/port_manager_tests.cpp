@@ -15,6 +15,7 @@
 #include "media/gb28181/gb28181_udp_session.h"
 #include "media/gb28181/gb28181_udp_output_session.h"
 #include "media/net/port_manager.h"
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
@@ -139,13 +140,16 @@ gb28181_description make_udp_description()
 
 void test_udp_output_releases_pair_after_shutdown()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     port_manager::init(32'400, 32'401);
     auto stream = std::make_shared<media_stream>("live/port-release", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "port release stream tracks");
     require(registry::instance().add(stream), "port release stream registry");
     auto session = std::make_shared<gb28181_udp_output_session>(
-        io.get_executor(), stream, make_udp_description(), boost::asio::ip::address_v4::loopback(), "output", false);
+        worker, stream, make_udp_description(), boost::asio::ip::address_v4::loopback(), "output", false);
     require(registry::instance().add_output_session(stream->name(), "output", session), "port release output registry");
     require(session->startup(), "port release output startup");
 
@@ -168,14 +172,16 @@ void test_udp_output_releases_pair_after_shutdown()
 
 void test_udp_output_releases_pair_after_bind_failure()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
     port_manager::init(32'410, 32'411);
     boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 32'410});
     auto stream = std::make_shared<media_stream>("live/port-bind-failure", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "port bind failure stream tracks");
     require(registry::instance().add(stream), "port bind failure stream registry");
     auto session = std::make_shared<gb28181_udp_output_session>(
-        io.get_executor(), stream, make_udp_description(), boost::asio::ip::address_v4::loopback(), "output", false);
+        worker, stream, make_udp_description(), boost::asio::ip::address_v4::loopback(), "output", false);
     require(!session->startup(), "port bind failure output startup");
 
     const auto pair = port_manager::instance().acquire_pair();
@@ -187,14 +193,16 @@ void test_udp_output_releases_pair_after_bind_failure()
 
 void test_udp_input_releases_pair_after_bind_failure()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
     port_manager::init(32'420, 32'421);
     boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 32'420});
     const gb28181_description description{.transport = gb28181_transport::udp,
                                           .address = boost::asio::ip::address_v4::loopback(),
                                           .payload_type = 96,
                                           .ssrc = 10'000'2001};
-    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/input-port-bind-failure", description);
+    auto session = std::make_shared<gb28181_udp_session>(worker, "live/input-port-bind-failure", description);
     require(!session->startup(), "input port bind failure startup");
 
     const auto pair = port_manager::instance().acquire_pair();
@@ -205,13 +213,14 @@ void test_udp_input_releases_pair_after_bind_failure()
 
 void test_udp_input_rejects_unavailable_local_address()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
     port_manager::init(32'430, 32'431);
     const gb28181_description description{.transport = gb28181_transport::udp,
                                           .address = boost::asio::ip::make_address("192.0.2.1"),
                                           .payload_type = 96,
                                           .ssrc = 10'000'2001};
-    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/input-unavailable-address", description);
+    auto session = std::make_shared<gb28181_udp_session>(worker, "live/input-unavailable-address", description);
     require(!session->startup(), "input unavailable local address rejected");
 
     const auto pair = port_manager::instance().acquire_pair();

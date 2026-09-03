@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "media/webrtc/whep.h"
+#include "media/net/worker_context.h"
 #include "media/http/whep_http.h"
 
 namespace media_server
@@ -87,11 +88,11 @@ whep_http_string_response handle_whep_session_get(const whep_http_request& reque
 }
 
 whep_http_string_response handle_whep_post(const whep_http_request& request,
-                                           boost::asio::any_io_executor executor,
+                                           worker_context& worker,
                                            std::string stream_name,
                                            const config& application_config)
 {
-    auto result = whep::create(std::move(executor), stream_name, request.body(), application_config);
+    auto result = whep::create(worker, stream_name, request.body(), application_config);
     switch (result.error)
     {
         case whep::create_error::none:
@@ -125,7 +126,7 @@ whep_http_string_response handle_whep_delete(const whep_http_request& request, s
 }    // namespace
 
 whep_http_string_response handle_whep_request(const whep_http_request& request,
-                                              boost::asio::any_io_executor executor,
+                                              worker_context& worker,
                                               const boost::urls::url_view& target,
                                               const config& application_config)
 {
@@ -174,7 +175,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
             }
             stream_name.append(segment);
         }
-        return handle_whep_post(request, std::move(executor), std::move(stream_name), application_config);
+        return handle_whep_post(request, worker, std::move(stream_name), application_config);
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {

@@ -9,6 +9,14 @@
 namespace media_server
 {
 
+tcp_acceptor::tcp_acceptor(boost::asio::io_context& owner,
+                           std::uint16_t port,
+                           boost::asio::ip::address bind_address,
+                           std::chrono::milliseconds timeout)
+    : acceptor_(owner), timer_(owner), bind_address_(std::move(bind_address)), port_(port), timeout_(timeout)
+{
+}
+
 tcp_acceptor::tcp_acceptor(boost::asio::any_io_executor executor,
                            std::uint16_t port,
                            boost::asio::ip::address bind_address,

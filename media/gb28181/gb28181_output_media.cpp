@@ -5,6 +5,7 @@
 #include <boost/asio/post.hpp>
 
 #include "media/codec/codec_utils.h"
+#include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_output_media.h"
 
 extern "C"
@@ -16,13 +17,13 @@ extern "C"
 namespace media_server
 {
 
-gb28181_output_media::gb28181_output_media(boost::asio::any_io_executor executor,
+gb28181_output_media::gb28181_output_media(worker_context& worker,
                                            std::shared_ptr<media_stream> stream,
                                            std::uint8_t payload_type,
                                            std::uint32_t ssrc,
                                            packet_handler on_packet,
                                            end_handler on_end)
-    : executor_(std::move(executor)),
+    : worker_(worker),
       stream_(std::move(stream)),
       payload_type_(payload_type),
       ssrc_(ssrc),
@@ -71,14 +72,14 @@ bool gb28181_output_media::startup()
         return false;
     }
 
-    reader_ = stream_->add_reader(shared_from_this(), executor_);
+    reader_ = stream_->add_reader(shared_from_this(), worker_.io());
     return true;
 }
 
 void gb28181_output_media::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void gb28181_output_media::on_tracks(media_track_snapshot_ptr tracks)
