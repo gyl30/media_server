@@ -46,6 +46,15 @@
 #include "media/http/gb28181_http.h"
 #include "media/http/http_server.h"
 #include "media/http/http_session.h"
+#include "media/http/hls_http_session.h"
+#include "media/http/http_flv_session.h"
+#include "media/webrtc/whep_session.h"
+#include "media/gb28181/gb28181_udp_session.h"
+#include "media/gb28181/gb28181_tcp_session.h"
+#include "media/gb28181/gb28181_input_media.h"
+#include "media/gb28181/gb28181_output_media.h"
+#include "media/gb28181/gb28181_udp_output_session.h"
+#include "media/gb28181/gb28181_tcp_output_session.h"
 #include "media/net/tcp_connector.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/tcp_connection.h"
@@ -115,6 +124,31 @@ using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
 static_assert(std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, boost::asio::ip::address, rtsp_write_handler>);
 static_assert(
     std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, output_video_codec, boost::asio::ip::address, rtsp_write_handler>);
+
+using http_request = boost::beast::http::request<boost::beast::http::string_body>;
+static_assert(std::is_constructible_v<hls_http_session, worker_context&, boost::beast::tcp_stream, http_request, const config&>);
+static_assert(std::is_constructible_v<http_flv_session, worker_context&, boost::beast::tcp_stream, http_request, const config&>);
+
+static_assert(std::is_constructible_v<whep_session,
+                                      worker_context&,
+                                      std::shared_ptr<media_stream>,
+                                      boost::asio::ip::address,
+                                      std::shared_ptr<dtls_certificate>>);
+static_assert(std::is_constructible_v<gb28181_udp_session, worker_context&, std::string, gb28181_description>);
+static_assert(std::is_constructible_v<
+              gb28181_tcp_session, worker_context&, std::shared_ptr<tcp_socket_source>, std::string, std::uint8_t, std::uint32_t>);
+static_assert(std::is_constructible_v<gb28181_udp_output_session,
+                                      worker_context&, std::shared_ptr<media_stream>, gb28181_description, boost::asio::ip::address, std::string, bool>);
+static_assert(std::is_constructible_v<gb28181_tcp_output_session,
+                                      worker_context&, std::shared_ptr<tcp_socket_source>, std::weak_ptr<media_stream>, std::string, std::string, std::uint8_t, std::uint32_t>);
+static_assert(std::is_constructible_v<gb28181_input_media, worker_context&, std::string, std::uint8_t, std::uint32_t>);
+static_assert(std::is_constructible_v<gb28181_output_media,
+                                      worker_context&,
+                                      std::shared_ptr<media_stream>,
+                                      std::uint8_t,
+                                      std::uint32_t,
+                                      gb28181_output_media::packet_handler,
+                                      gb28181_output_media::end_handler>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -2975,7 +3009,9 @@ void test_tcp_listener_shutdown_lifecycle()
 
 void test_gb28181_multi_output_identity()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
     auto& streams = media_server::registry::instance();
     streams.clear();
     auto first = std::make_shared<media_stream>("live/gb-output-first", io.get_executor());
@@ -2984,7 +3020,7 @@ void test_gb28181_multi_output_identity()
     require(second->set_tracks({make_video_track()}), "gb multi output second tracks");
     require(streams.add(first) && streams.add(second), "gb multi output source registry");
 
-    const auto create = [&io](std::string_view stream_name, std::string_view output_id)
+    const auto create = [&worker](std::string_view stream_name, std::string_view output_id)
     {
         boost::json::object body;
         body["stream_name"] = stream_name;
@@ -3003,9 +3039,9 @@ void test_gb28181_multi_output_identity()
         request.prepare_payload();
         const auto target = boost::urls::parse_origin_form(request.target());
         require(target.has_value(), "gb multi output create target");
-        return handle_gb28181_output_request(request, io, *target, boost::asio::ip::address_v4::loopback());
+        return handle_gb28181_output_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
     };
-    const auto remove = [&io](std::string_view stream_name, std::string_view output_id)
+    const auto remove = [&worker](std::string_view stream_name, std::string_view output_id)
     {
         boost::json::object body;
         body["stream_name"] = stream_name;
@@ -3017,7 +3053,7 @@ void test_gb28181_multi_output_identity()
         request.prepare_payload();
         const auto target = boost::urls::parse_origin_form(request.target());
         require(target.has_value(), "gb multi output delete target");
-        return handle_gb28181_output_request(request, io, *target, boost::asio::ip::address_v4::loopback());
+        return handle_gb28181_output_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
     };
 
     require(create(first->name(), "a").result() == boost::beast::http::status::created, "gb multi output first identity");

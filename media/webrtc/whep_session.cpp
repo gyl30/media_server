@@ -8,6 +8,7 @@
 #include <boost/asio/post.hpp>
 
 #include "media/webrtc/stun_message.h"
+#include "media/net/worker_context.h"
 #include "media/webrtc/whep_session.h"
 
 namespace media_server
@@ -36,7 +37,7 @@ std::string random_hex(std::size_t byte_count)
 
 }    // namespace
 
-whep_session::whep_session(boost::asio::any_io_executor executor,
+whep_session::whep_session(worker_context& worker,
                            std::shared_ptr<media_stream> stream,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
@@ -47,10 +48,10 @@ whep_session::whep_session(boost::asio::any_io_executor executor,
       certificate_(std::move(certificate)),
       video_config_(video),
       timeouts_(timeouts),
-      executor_(executor),
-      dtls_timer_(executor),
-      establishment_timer_(executor),
-      ice_activity_timer_(executor)
+      worker_(worker),
+      dtls_timer_(worker_.io()),
+      establishment_timer_(worker_.io()),
+      ice_activity_timer_(worker_.io())
 {
 }
 
@@ -76,7 +77,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     }
     local_port_reservation_ = *reserved;
     const auto weak = weak_from_this();
-    udp_socket_ = std::make_shared<udp_socket>(executor_);
+    udp_socket_ = std::make_shared<udp_socket>(worker_.io());
     boost::system::error_code udp_error;
     udp_socket_->startup(
         advertised_address_,
@@ -177,7 +178,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
             track_versions_.emplace(track.id, track.config_version);
         }
     }
-    reader_ = stream_->add_reader(shared_from_this(), executor_);
+    reader_ = stream_->add_reader(shared_from_this(), worker_.io());
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
     spdlog::debug(
@@ -197,7 +198,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 void whep_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void whep_session::safe_shutdown()

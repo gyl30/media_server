@@ -9,6 +9,8 @@
 namespace media_server
 {
 
+udp_socket::udp_socket(boost::asio::io_context& owner) : socket_(owner) {}
+
 udp_socket::udp_socket(boost::asio::any_io_executor executor) : socket_(std::move(executor)) {}
 
 void udp_socket::startup(boost::asio::ip::address bind_address,

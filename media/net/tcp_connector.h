@@ -4,6 +4,7 @@
 #include <chrono>
 #include <memory>
 
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -18,6 +19,7 @@ namespace media_server
 class tcp_connector final : public tcp_socket_source, public std::enable_shared_from_this<tcp_connector>
 {
    public:
+    tcp_connector(boost::asio::io_context& owner, boost::asio::ip::tcp::endpoint endpoint, std::chrono::milliseconds timeout);
     tcp_connector(boost::asio::any_io_executor executor, boost::asio::ip::tcp::endpoint endpoint, std::chrono::milliseconds timeout);
 
     void startup(socket_handler handler, boost::system::error_code& error) override;

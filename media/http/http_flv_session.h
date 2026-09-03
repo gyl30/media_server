@@ -16,6 +16,7 @@
 
 namespace media_server
 {
+class worker_context;
 class http_flv_output;
 class media_stream;
 
@@ -24,7 +25,7 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    http_flv_session(boost::beast::tcp_stream stream, request_type request, const config& config);
+    http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config);
 
     void startup();
     void shutdown();
@@ -40,6 +41,7 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     void on_write(std::uint64_t generation, boost::system::error_code error);
     void safe_shutdown();
 
+    worker_context& worker_;
     boost::beast::tcp_stream stream_;
     request_type request_;
     const config& config_;

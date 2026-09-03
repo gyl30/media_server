@@ -8,6 +8,7 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "media/webrtc/whep.h"
+#include "media/net/worker_context.h"
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
 #include "media/webrtc/dtls_certificate.h"
@@ -33,7 +34,7 @@ create_result failed(create_error error) { return {.error = error, .session_id =
 
 }    // namespace
 
-create_result create(boost::asio::any_io_executor executor,
+create_result create(worker_context& worker,
                      std::string_view stream_name,
                      std::string_view offer_sdp,
                      const config& application_config)
@@ -93,7 +94,7 @@ create_result create(boost::asio::any_io_executor executor,
     }
 
     auto session = std::make_shared<whep_session>(
-        std::move(executor), stream, advertised_address, std::move(certificate), whep_session_timeouts{}, application_config.whep_video);
+        worker, stream, advertised_address, std::move(certificate), whep_session_timeouts{}, application_config.whep_video);
     switch (session->startup(std::move(*offer)))
     {
         case whep_session_startup_error::none:

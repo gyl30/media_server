@@ -6,13 +6,14 @@
 #include <boost/url/parse.hpp>
 
 #include "media/hls/hls.h"
+#include "media/net/worker_context.h"
 #include "media/http/hls_http_session.h"
 
 namespace media_server
 {
 
-hls_http_session::hls_http_session(boost::beast::tcp_stream stream, request_type request, const config& config)
-    : stream_(std::move(stream)), request_(std::move(request)), config_(config), wait_timer_(stream_.get_executor())
+hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
+    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config), wait_timer_(worker_.io())
 {
 }
 
@@ -236,7 +237,7 @@ void hls_http_session::send_binary_response(boost::beast::http::status status, s
 void hls_http_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(stream_.get_executor(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void hls_http_session::safe_shutdown()

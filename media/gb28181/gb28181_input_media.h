@@ -7,8 +7,6 @@
 #include <cstdint>
 #include <optional>
 
-#include <boost/asio/any_io_executor.hpp>
-
 #include "media/core/media_types.h"
 #include "media/core/media_stream.h"
 
@@ -22,6 +20,7 @@ struct rtsp_demuxer_t;
 
 namespace media_server
 {
+class worker_context;
 
 enum class gb28181_rtp_input_result
 {
@@ -33,7 +32,7 @@ enum class gb28181_rtp_input_result
 class gb28181_input_media final
 {
    public:
-    gb28181_input_media(boost::asio::any_io_executor executor, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
+    gb28181_input_media(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
     ~gb28181_input_media();
 
     [[nodiscard]] bool startup();
@@ -61,7 +60,7 @@ class gb28181_input_media final
     bool update_track_from_packet(const avpacket_t& packet);
     bool try_start_recording();
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     std::string stream_name_;
     std::uint8_t payload_type_{};
     std::uint32_t expected_ssrc_{};

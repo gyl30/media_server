@@ -9,6 +9,7 @@
 #include <vector>
 #include <optional>
 
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/any_io_executor.hpp>
 
 #include "media/core/media_sink.h"
@@ -20,12 +21,14 @@ namespace media_server
 class media_stream final : public std::enable_shared_from_this<media_stream>
 {
    public:
+    media_stream(std::string name, boost::asio::io_context& owner);
     media_stream(std::string name, boost::asio::any_io_executor owner_executor);
 
     [[nodiscard]] const std::string& name() const noexcept;
     [[nodiscard]] std::vector<media_track> tracks() const;
 
     void add_sink(const std::shared_ptr<media_sink>& sink);
+    [[nodiscard]] media_reader_handle add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::io_context& owner);
     [[nodiscard]] media_reader_handle add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::any_io_executor executor);
     // 仅用于发布完整初始轨道集合；成功后 track id/kind/codec 固定。只由 stream owner worker 调用。
     bool set_tracks(std::vector<media_track> tracks);
