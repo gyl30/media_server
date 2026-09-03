@@ -1,8 +1,8 @@
 #include <utility>
 
 #include <boost/asio/post.hpp>
-#include <boost/asio/dispatch.hpp>
-#include <boost/asio/bind_executor.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/detached.hpp>
 
 #include "media/net/tcp_acceptor.h"
 
@@ -20,11 +20,6 @@ tcp_acceptor::tcp_acceptor(boost::asio::any_io_executor executor,
 void tcp_acceptor::startup(socket_handler handler, boost::system::error_code& error)
 {
     error.clear();
-    if (started_ || completed_)
-    {
-        error = boost::asio::error::already_started;
-        return;
-    }
     if (bind_address_.is_unspecified())
     {
         error = boost::asio::error::invalid_argument;
@@ -52,24 +47,15 @@ void tcp_acceptor::startup(socket_handler handler, boost::system::error_code& er
         return;
     }
 
-    started_ = true;
-    completed_ = false;
     socket_handler_ = std::move(handler);
+    const auto self = shared_from_this();
     if (timeout_ > std::chrono::milliseconds::zero())
     {
         timer_.expires_after(timeout_);
-        const auto self = shared_from_this();
-        timer_.async_wait(
-            [self](const boost::system::error_code& timer_error)
-            {
-                if (!timer_error)
-                {
-                    self->complete(boost::asio::error::make_error_code(boost::asio::error::timed_out));
-                }
-            });
+        timer_.async_wait([self](const boost::system::error_code& timer_error) { self->on_timeout(timer_error); });
     }
-    const auto self = shared_from_this();
-    boost::asio::post(acceptor_.get_executor(), [self]() { self->accept_next(); });
+    boost::asio::spawn(
+        acceptor_.get_executor(), [self](boost::asio::yield_context yield) { self->run_accept(yield); }, boost::asio::detached);
 }
 
 void tcp_acceptor::shutdown()
@@ -78,78 +64,44 @@ void tcp_acceptor::shutdown()
     boost::asio::post(acceptor_.get_executor(), [self]() { self->safe_shutdown(); });
 }
 
-void tcp_acceptor::accept_next()
+void tcp_acceptor::run_accept(boost::asio::yield_context yield)
 {
-    if (!started_ || completed_)
+    boost::asio::ip::tcp::socket socket{acceptor_.get_executor()};
+    boost::system::error_code error;
+    acceptor_.async_accept(socket, yield[error]);
+    timer_.cancel();
+
+    if (error)
     {
+        if (socket_handler_)
+        {
+            socket_handler_(error, boost::asio::ip::tcp::socket{acceptor_.get_executor()});
+        }
         return;
     }
 
-    const auto self = shared_from_this();
-    acceptor_.async_accept(boost::asio::bind_executor(acceptor_.get_executor(),
-                                                      [self](const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
-                                                      {
-                                                          if (!self->started_ || self->completed_)
-                                                          {
-                                                              boost::system::error_code ignored;
-                                                              socket.close(ignored);
-                                                              return;
-                                                          }
-                                                          self->complete(error, std::move(socket));
-                                                      }));
+    boost::system::error_code close_error;
+    acceptor_.close(close_error);
+    socket_handler_({}, std::move(socket));
+}
+
+void tcp_acceptor::on_timeout(const boost::system::error_code& error)
+{
+    if (error)
+    {
+        return;
+    }
+    socket_handler_(boost::asio::error::make_error_code(boost::asio::error::timed_out),
+                    boost::asio::ip::tcp::socket{acceptor_.get_executor()});
 }
 
 void tcp_acceptor::safe_shutdown()
 {
-    if (!started_)
-    {
-        return;
-    }
-    started_ = false;
-    completed_ = true;
     socket_handler_ = {};
     timer_.cancel();
     boost::system::error_code error;
     acceptor_.cancel(error);
     acceptor_.close(error);
 }
-
-void tcp_acceptor::complete(boost::system::error_code error, boost::asio::ip::tcp::socket socket)
-{
-    if (!started_ || completed_)
-    {
-        boost::system::error_code ignored;
-        socket.close(ignored);
-        return;
-    }
-    completed_ = true;
-    timer_.cancel();
-    auto handler = std::move(socket_handler_);
-
-    if (error)
-    {
-        boost::system::error_code ignored;
-        acceptor_.cancel(ignored);
-        socket.close(ignored);
-        if (handler)
-        {
-            boost::asio::dispatch(acceptor_.get_executor(),
-                                  [handler = std::move(handler), error, executor = acceptor_.get_executor()]() mutable
-                                  { handler(error, boost::asio::ip::tcp::socket{executor}); });
-        }
-        return;
-    }
-
-    started_ = false;
-    boost::system::error_code close_error;
-    acceptor_.close(close_error);
-    if (handler)
-    {
-        boost::asio::dispatch(acceptor_.get_executor(),
-                              [handler = std::move(handler), socket = std::move(socket)]() mutable { handler({}, std::move(socket)); });
-    }
-}
-
-void tcp_acceptor::complete(boost::system::error_code error) { complete(error, boost::asio::ip::tcp::socket{acceptor_.get_executor()}); }
 
 }    // namespace media_server
