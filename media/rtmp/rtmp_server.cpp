@@ -2,7 +2,6 @@
 
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtmp/rtmp_session.h"
-#include "media/net/tcp_connection.h"
 
 namespace media_server
 {
@@ -50,8 +49,7 @@ void rtmp_server::on_accept(boost::system::error_code error, worker_context& wor
         return;
     }
 
-    auto connection = std::make_shared<tcp_connection>(std::move(socket));
-    auto session = std::make_shared<rtmp_session>(worker, std::move(connection), config_.rtmp_video);
+    auto session = std::make_shared<rtmp_session>(worker, std::move(socket), config_.rtmp_video);
     session->startup();
 }
 
