@@ -1,16 +1,17 @@
 #include <utility>
 
 #include "media/rtmp/rtmp_output_session.h"
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
 
-rtmp_output_session::rtmp_output_session(boost::asio::any_io_executor executor,
+rtmp_output_session::rtmp_output_session(worker_context& worker,
                                          std::shared_ptr<media_stream> stream,
                                          flv_output_muxer::output_handler output,
                                          output_video_config video,
                                          end_handler on_end)
-    : executor_(std::move(executor)), stream_(std::move(stream)), output_muxer_(std::move(output), video), end_handler_(std::move(on_end))
+    : worker_(worker), stream_(std::move(stream)), output_muxer_(std::move(output), video), end_handler_(std::move(on_end))
 {
 }
 
@@ -20,7 +21,7 @@ void rtmp_output_session::startup()
     {
         return;
     }
-    reader_ = stream_->add_reader(shared_from_this(), executor_);
+    reader_ = stream_->add_reader(shared_from_this(), worker_.io());
 }
 
 void rtmp_output_session::shutdown()

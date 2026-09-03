@@ -6,8 +6,6 @@
 #include <cstdint>
 #include <functional>
 
-#include <boost/asio/any_io_executor.hpp>
-
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
 #include "media/flv/flv_output_muxer.h"
@@ -15,12 +13,14 @@
 namespace media_server
 {
 
+class worker_context;
+
 class rtmp_output_session final : public media_reader, public std::enable_shared_from_this<rtmp_output_session>
 {
    public:
     using end_handler = std::function<void()>;
 
-    rtmp_output_session(boost::asio::any_io_executor executor,
+    rtmp_output_session(worker_context& worker,
                         std::shared_ptr<media_stream> stream,
                         flv_output_muxer::output_handler output,
                         output_video_config video,
@@ -36,7 +36,7 @@ class rtmp_output_session final : public media_reader, public std::enable_shared
    private:
     void apply_tracks(const media_track_snapshot_ptr& tracks);
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     flv_output_muxer output_muxer_;
     end_handler end_handler_;
