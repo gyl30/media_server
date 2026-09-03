@@ -12,6 +12,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
 
+#include "media/net/tcp_yield_transport.h"
 #include "media/codec/output_video_config.h"
 
 struct rtmp_server_t;
@@ -55,7 +56,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     worker_context& worker_;
-    boost::asio::ip::tcp::socket socket_;
+    tcp_yield_transport transport_;
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::chrono::milliseconds initial_tracks_timeout_;
     output_video_config video_config_;

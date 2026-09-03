@@ -159,6 +159,7 @@ add_library(media_core STATIC
     media/net/io_context_pool.cpp
     media/net/port_manager.cpp
     media/net/tcp_connection.cpp
+    media/net/tcp_yield_transport.cpp
     media/net/tcp_connector.cpp
     media/net/tcp_listener.cpp
     media/net/tcp_acceptor.cpp
@@ -269,6 +270,10 @@ if(BUILD_TESTING)
     add_executable(media_pipeline_tests tests/media_pipeline_tests.cpp)
     target_link_libraries(media_pipeline_tests PRIVATE media_core media_server_link_options)
     add_test(NAME media_pipeline_tests COMMAND media_pipeline_tests)
+
+    add_executable(tcp_yield_transport_tests tests/tcp_yield_transport_tests.cpp)
+    target_link_libraries(tcp_yield_transport_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME tcp_yield_transport_tests COMMAND tcp_yield_transport_tests)
 
     add_executable(gb28181_udp_peer_tests tests/gb28181_udp_peer_tests.cpp)
     target_link_libraries(gb28181_udp_peer_tests PRIVATE media_core media_server_link_options)
