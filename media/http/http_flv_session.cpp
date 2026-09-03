@@ -6,14 +6,15 @@
 #include <boost/beast/http/chunk_encode.hpp>
 
 #include "media/core/stream_registry.h"
+#include "media/net/worker_context.h"
 #include "media/http/http_flv_output.h"
 #include "media/http/http_flv_session.h"
 
 namespace media_server
 {
 
-http_flv_session::http_flv_session(boost::beast::tcp_stream stream, request_type request, const config& config)
-    : stream_(std::move(stream)), request_(std::move(request)), config_(config)
+http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
+    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config)
 {
 }
 
@@ -156,7 +157,7 @@ void http_flv_session::startup_flv(std::shared_ptr<media_stream> media_stream)
         },
         config_.http_video);
 
-    reader_ = media_stream->add_reader(output_, stream_.get_executor());
+    reader_ = media_stream->add_reader(output_, worker_.io());
     read_client();
 }
 
@@ -259,7 +260,7 @@ void http_flv_session::on_write(std::uint64_t generation, boost::system::error_c
 void http_flv_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(stream_.get_executor(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void http_flv_session::safe_shutdown()

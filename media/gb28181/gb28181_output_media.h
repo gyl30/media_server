@@ -7,8 +7,6 @@
 #include <cstdint>
 #include <functional>
 
-#include <boost/asio/any_io_executor.hpp>
-
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
 
@@ -16,6 +14,7 @@ struct rtsp_muxer_t;
 
 namespace media_server
 {
+class worker_context;
 
 class gb28181_output_media final : public media_reader, public std::enable_shared_from_this<gb28181_output_media>
 {
@@ -23,7 +22,7 @@ class gb28181_output_media final : public media_reader, public std::enable_share
     using packet_handler = std::function<void(std::vector<std::uint8_t>)>;
     using end_handler = std::function<void()>;
 
-    gb28181_output_media(boost::asio::any_io_executor executor,
+    gb28181_output_media(worker_context& worker,
                          std::shared_ptr<media_stream> stream,
                          std::uint8_t payload_type,
                          std::uint32_t ssrc,
@@ -55,7 +54,7 @@ class gb28181_output_media final : public media_reader, public std::enable_share
     void apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(const void* data, int bytes);
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     std::uint8_t payload_type_{};
     std::uint32_t ssrc_{};

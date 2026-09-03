@@ -2,6 +2,7 @@
 #include <utility>
 
 #include <boost/asio/post.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/url/parse.hpp>
 
 #include "media/http/whep_http.h"
@@ -22,38 +23,34 @@ http_session::http_session(worker_context& worker, boost::asio::ip::tcp::socket 
 
 void http_session::startup()
 {
-    stream_.expires_after(std::chrono::seconds(30));
-    read_request();
-}
-
-void http_session::read_request()
-{
     const auto self = shared_from_this();
-    boost::beast::http::async_read(
-        stream_, buffer_, request_, [this, self](boost::system::error_code error, std::size_t bytes) { on_request(error, bytes); });
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
 }
 
-void http_session::on_request(boost::system::error_code error, std::size_t bytes)
+void http_session::run(boost::asio::yield_context yield)
 {
-    static_cast<void>(bytes);
-    if (closed_)
-    {
-        return;
-    }
+    boost::beast::flat_buffer buffer;
+    boost::beast::http::request<boost::beast::http::string_body> request;
+    boost::system::error_code error;
+
+    stream_.expires_after(std::chrono::seconds(30));
+    static_cast<void>(boost::beast::http::async_read(stream_, buffer, request, yield[error]));
     if (error)
     {
         shutdown();
-        return;
     }
-    handle_request();
+    else
+    {
+        handle_request(request, yield);
+    }
 }
 
-void http_session::handle_request()
+void http_session::handle_request(boost::beast::http::request<boost::beast::http::string_body>& request, boost::asio::yield_context yield)
 {
-    const auto parsed = boost::urls::parse_origin_form(request_.target());
+    const auto parsed = boost::urls::parse_origin_form(request.target());
     if (!parsed)
     {
-        send_text_response(boost::beast::http::status::bad_request, "text/plain", "bad request target\n");
+        send_text_response(request, boost::beast::http::status::bad_request, "text/plain", "bad request target\n", yield);
         return;
     }
 
@@ -61,28 +58,30 @@ void http_session::handle_request()
     const std::string_view path(encoded_path.data(), encoded_path.size());
     if (path == "/")
     {
-        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
+        send_text_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
         return;
     }
     if (path == "/gb28181" || path.starts_with("/gb28181/"))
     {
-        write_response(media_server::handle_gb28181_input_request(request_, workers_.next().io(), *parsed));
+        write_response(request, media_server::handle_gb28181_input_request(request, workers_.next(), *parsed), yield);
         return;
     }
     if (path == "/play/gb28181" || path.starts_with("/play/gb28181/"))
     {
-        write_response(media_server::handle_gb28181_output_request(
-            request_, workers_.next().io(), *parsed, boost::asio::ip::make_address(config_.bind_address)));
+        write_response(request,
+                       media_server::handle_gb28181_output_request(
+                           request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
+                       yield);
         return;
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))
     {
-        write_response(media_server::handle_whep_request(request_, worker_.io().get_executor(), *parsed, config_));
+        write_response(request, media_server::handle_whep_request(request, worker_, *parsed, config_), yield);
         return;
     }
     if (path == "/play/hls" || path.starts_with("/play/hls/"))
     {
-        auto session = std::make_shared<hls_http_session>(std::move(stream_), std::move(request_), config_);
+        auto session = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request), config_);
         session->startup();
         return;
     }
@@ -90,75 +89,69 @@ void http_session::handle_request()
     const auto decoded_path = parsed->path();
     if (decoded_path.ends_with(".flv"))
     {
-        auto session = std::make_shared<http_flv_session>(std::move(stream_), std::move(request_), config_);
+        auto session = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request), config_);
         session->startup();
         return;
     }
 
-    if (request_.method() != boost::beast::http::verb::get)
+    if (request.method() != boost::beast::http::verb::get)
     {
-        send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "GET");
+        send_text_response(request, boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", yield, "GET");
         return;
     }
 
-    send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
+    send_text_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
 }
 
-void http_session::write_response(boost::beast::http::response<boost::beast::http::string_body> response)
+void http_session::write_response(boost::beast::http::request<boost::beast::http::string_body>& request,
+                                  boost::beast::http::response<boost::beast::http::string_body> response,
+                                  boost::asio::yield_context yield)
 {
-    write_string_response(std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(std::move(response)));
+    write_string_response(request, std::move(response), yield);
 }
 
-void http_session::write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
+void http_session::write_string_response(boost::beast::http::request<boost::beast::http::string_body>& request,
+                                         boost::beast::http::response<boost::beast::http::string_body> response,
+                                         boost::asio::yield_context yield)
 {
-    const auto self = shared_from_this();
-    if (request_.method() == boost::beast::http::verb::head)
+    boost::system::error_code error;
+    if (request.method() == boost::beast::http::verb::head)
     {
-        auto serializer = std::make_shared<boost::beast::http::response_serializer<boost::beast::http::string_body>>(*response);
-        boost::beast::http::async_write_header(stream_,
-                                               *serializer,
-                                               [this, self, response, serializer](boost::system::error_code error, std::size_t bytes)
-                                               {
-                                                   static_cast<void>(response);
-                                                   static_cast<void>(serializer);
-                                                   static_cast<void>(error);
-                                                   static_cast<void>(bytes);
-                                                   shutdown();
-                                               });
-        return;
+        boost::beast::http::response_serializer<boost::beast::http::string_body> serializer(response);
+        static_cast<void>(boost::beast::http::async_write_header(stream_, serializer, yield[error]));
     }
-
-    boost::beast::http::async_write(stream_,
-                                    *response,
-                                    [this, self, response](boost::system::error_code error, std::size_t bytes)
-                                    {
-                                        static_cast<void>(response);
-                                        static_cast<void>(error);
-                                        static_cast<void>(bytes);
-                                        shutdown();
-                                    });
+    else
+    {
+        static_cast<void>(boost::beast::http::async_write(stream_, response, yield[error]));
+    }
+    shutdown();
 }
 
-void http_session::send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow)
+void http_session::send_text_response(boost::beast::http::request<boost::beast::http::string_body>& request,
+                                      boost::beast::http::status status,
+                                      std::string_view content_type,
+                                      std::string body,
+                                      boost::asio::yield_context yield,
+                                      std::string_view allow)
 {
-    auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::content_type, content_type);
+    boost::beast::http::response<boost::beast::http::string_body> response(status, request.version());
+    response.set(boost::beast::http::field::server, "media_server");
+    response.set(boost::beast::http::field::content_type, content_type);
     if (!allow.empty())
     {
-        response->set(boost::beast::http::field::allow, allow);
+        response.set(boost::beast::http::field::allow, allow);
     }
-    response->keep_alive(false);
-    response->body() = std::move(body);
-    response->prepare_payload();
+    response.keep_alive(false);
+    response.body() = std::move(body);
+    response.prepare_payload();
 
-    write_string_response(std::move(response));
+    write_string_response(request, std::move(response), yield);
 }
 
 void http_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [this, self]() { safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void http_session::safe_shutdown()

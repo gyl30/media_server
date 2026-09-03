@@ -8,19 +8,20 @@
 #include "media/net/tcp_connection.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_output_media.h"
+#include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_tcp_output_session.h"
 
 namespace media_server
 {
 
-gb28181_tcp_output_session::gb28181_tcp_output_session(boost::asio::any_io_executor executor,
+gb28181_tcp_output_session::gb28181_tcp_output_session(worker_context& worker,
                                                        std::shared_ptr<tcp_socket_source> socket_source,
                                                        std::weak_ptr<media_stream> stream,
                                                        std::string stream_name,
                                                        std::string output_id,
                                                        std::uint8_t payload_type,
                                                        std::uint32_t ssrc)
-    : executor_(std::move(executor)),
+    : worker_(worker),
       socket_source_(std::move(socket_source)),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
@@ -110,7 +111,7 @@ void gb28181_tcp_output_session::on_socket_result(boost::system::error_code erro
         });
 
     media_ = std::make_shared<gb28181_output_media>(
-        executor_,
+        worker_,
         stream,
         payload_type_,
         ssrc_,
@@ -144,7 +145,7 @@ void gb28181_tcp_output_session::on_socket_result(boost::system::error_code erro
 void gb28181_tcp_output_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void gb28181_tcp_output_session::send_packet(std::vector<std::uint8_t> packet)

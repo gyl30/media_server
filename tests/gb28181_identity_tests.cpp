@@ -11,6 +11,7 @@
 #include <boost/asio/io_context.hpp>
 
 #include "media/net/tcp_acceptor.h"
+#include "media/net/worker_context.h"
 #include "media/core/media_stream.h"
 #include "media/http/gb28181_http.h"
 #include "media/core/stream_registry.h"
@@ -45,18 +46,18 @@ gb28181_http_request request(std::string target, boost::json::object body)
     return value;
 }
 
-gb28181_http_response input_request(boost::asio::io_context& io, gb28181_http_request request)
+gb28181_http_response input_request(worker_context& worker, gb28181_http_request request)
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "gb input target");
-    return handle_gb28181_input_request(request, io, *target);
+    return handle_gb28181_input_request(request, worker, *target);
 }
 
-gb28181_http_response output_request(boost::asio::io_context& io, gb28181_http_request request)
+gb28181_http_response output_request(worker_context& worker, gb28181_http_request request)
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "gb output target");
-    return handle_gb28181_output_request(request, io, *target, boost::asio::ip::address_v4::loopback());
+    return handle_gb28181_output_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
 }
 
 gb28181_description make_tcp_active_description(std::uint16_t port, std::uint32_t ssrc)
@@ -68,7 +69,7 @@ gb28181_description make_tcp_active_description(std::uint16_t port, std::uint32_
                                .ssrc = ssrc};
 }
 
-gb28181_http_response create_input(boost::asio::io_context& io, std::string_view stream_name, const gb28181_description& description)
+gb28181_http_response create_input(worker_context& worker, std::string_view stream_name, const gb28181_description& description)
 {
     boost::json::object body;
     body["stream_name"] = stream_name;
@@ -77,14 +78,14 @@ gb28181_http_response create_input(boost::asio::io_context& io, std::string_view
     body["rtp_port"] = description.rtp_port;
     body["payload_type"] = description.payload_type;
     body["ssrc"] = description.ssrc;
-    return input_request(io, request("/gb28181/create", std::move(body)));
+    return input_request(worker, request("/gb28181/create", std::move(body)));
 }
 
-gb28181_http_response delete_input(boost::asio::io_context& io, std::string_view stream_name)
+gb28181_http_response delete_input(worker_context& worker, std::string_view stream_name)
 {
     boost::json::object body;
     body["stream_name"] = stream_name;
-    return input_request(io, request("/gb28181/delete", std::move(body)));
+    return input_request(worker, request("/gb28181/delete", std::move(body)));
 }
 
 media_track make_video_track()
@@ -106,7 +107,7 @@ std::shared_ptr<media_stream> add_video_stream(boost::asio::io_context& io, std:
     return stream;
 }
 
-gb28181_http_response create_output(boost::asio::io_context& io,
+gb28181_http_response create_output(worker_context& worker,
                                     const media_stream& stream,
                                     std::string_view output_id,
                                     const gb28181_description& description)
@@ -119,55 +120,64 @@ gb28181_http_response create_output(boost::asio::io_context& io,
     body["rtp_port"] = description.rtp_port;
     body["payload_type"] = description.payload_type;
     body["ssrc"] = description.ssrc;
-    return output_request(io, request("/play/gb28181/create", std::move(body)));
+    return output_request(worker, request("/play/gb28181/create", std::move(body)));
 }
 
-gb28181_http_response delete_output(boost::asio::io_context& io, std::string_view stream_name, std::string_view output_id)
+gb28181_http_response delete_output(worker_context& worker, std::string_view stream_name, std::string_view output_id)
 {
     boost::json::object body;
     body["stream_name"] = stream_name;
     body["output_id"] = output_id;
-    return output_request(io, request("/play/gb28181/delete", std::move(body)));
+    return output_request(worker, request("/play/gb28181/delete", std::move(body)));
 }
 
 void clear_state() { registry::instance().clear(); }
 
 void test_input_identity_is_reusable_after_shutdown()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     clear_state();
     const auto description = make_tcp_active_description(65'000, 10'000'2001);
 
-    require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input first create");
-    require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input remove");
-    require_status(create_input(io, "live/gb-identity", description), boost::beast::http::status::created, "gb input reusable after shutdown");
-    require_status(delete_input(io, "live/gb-identity"), boost::beast::http::status::ok, "gb input final remove");
+    require_status(create_input(worker, "live/gb-identity", description), boost::beast::http::status::created, "gb input first create");
+    require_status(delete_input(worker, "live/gb-identity"), boost::beast::http::status::ok, "gb input remove");
+    require_status(create_input(worker, "live/gb-identity", description), boost::beast::http::status::created, "gb input reusable after shutdown");
+    require_status(delete_input(worker, "live/gb-identity"), boost::beast::http::status::ok, "gb input final remove");
     io.run();
     clear_state();
 }
 
 void test_output_identity_is_reusable_after_shutdown()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     clear_state();
     const auto stream = add_video_stream(io, "live/gb-output-identity");
     const auto description = make_tcp_active_description(65'000, 10'000'2002);
 
-    require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output first create");
-    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output remove");
-    require_status(create_output(io, *stream, "primary", description), boost::beast::http::status::created, "gb output reusable after shutdown");
-    require_status(delete_output(io, stream->name(), "primary"), boost::beast::http::status::ok, "gb output final remove");
+    require_status(create_output(worker, *stream, "primary", description), boost::beast::http::status::created, "gb output first create");
+    require_status(delete_output(worker, stream->name(), "primary"), boost::beast::http::status::ok, "gb output remove");
+    require_status(create_output(worker, *stream, "primary", description), boost::beast::http::status::created, "gb output reusable after shutdown");
+    require_status(delete_output(worker, stream->name(), "primary"), boost::beast::http::status::ok, "gb output final remove");
     io.run();
     clear_state();
 }
 
 void test_tcp_input_repeated_shutdown_is_idempotent()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     clear_state();
     const std::string stream_name = "live/gb-input-repeated-shutdown";
-    auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
-    auto session = std::make_shared<gb28181_tcp_session>(io.get_executor(), source, stream_name, 96, 10'000'2007);
+    auto source = std::make_shared<tcp_acceptor>(io, 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
+    auto session = std::make_shared<gb28181_tcp_session>(worker, source, stream_name, 96, 10'000'2007);
     require(registry::instance().add_input_session(stream_name, session), "gb input repeated shutdown registry add");
     require(session->startup(), "gb input repeated shutdown startup");
 
@@ -183,12 +193,15 @@ void test_tcp_input_repeated_shutdown_is_idempotent()
 
 void test_tcp_output_repeated_shutdown_is_idempotent()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     clear_state();
     const auto stream = add_video_stream(io, "live/gb-output-repeated-shutdown");
-    auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
+    auto source = std::make_shared<tcp_acceptor>(io, 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
     auto session = std::make_shared<gb28181_tcp_output_session>(
-        io.get_executor(), source, std::weak_ptr<media_stream>{stream}, stream->name(), "repeated-shutdown", 96, 10'000'2008);
+        worker, source, std::weak_ptr<media_stream>{stream}, stream->name(), "repeated-shutdown", 96, 10'000'2008);
     require(registry::instance().add_output_session(stream->name(), "repeated-shutdown", session), "gb output repeated shutdown registry add");
     require(session->startup(), "gb output repeated shutdown startup");
 
@@ -204,11 +217,14 @@ void test_tcp_output_repeated_shutdown_is_idempotent()
 
 void test_tcp_timeout_unregisters_input_session()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     clear_state();
     const std::string stream_name = "live/gb-input-timeout";
-    auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
-    auto session = std::make_shared<gb28181_tcp_session>(io.get_executor(), source, stream_name, 96, 10'000'2005);
+    auto source = std::make_shared<tcp_acceptor>(io, 0, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
+    auto session = std::make_shared<gb28181_tcp_session>(worker, source, stream_name, 96, 10'000'2005);
     require(registry::instance().add_input_session(stream_name, session), "gb input timeout registry add");
     require(session->startup(), "gb input timeout startup");
     io.run();
@@ -220,12 +236,15 @@ void test_tcp_timeout_unregisters_input_session()
 
 void test_tcp_timeout_unregisters_output_session()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     clear_state();
     const auto stream = add_video_stream(io, "live/gb-output-timeout");
-    auto source = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
+    auto source = std::make_shared<tcp_acceptor>(io, 0, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
     auto session = std::make_shared<gb28181_tcp_output_session>(
-        io.get_executor(), source, std::weak_ptr<media_stream>{stream}, stream->name(), "timeout", 96, 10'000'2006);
+        worker, source, std::weak_ptr<media_stream>{stream}, stream->name(), "timeout", 96, 10'000'2006);
     require(registry::instance().add_output_session(stream->name(), "timeout", session), "gb output timeout registry add");
     require(session->startup(), "gb output timeout startup");
     io.run();

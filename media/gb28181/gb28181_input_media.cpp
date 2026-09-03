@@ -5,6 +5,7 @@
 
 #include "media/codec/codec_utils.h"
 #include "media/core/stream_registry.h"
+#include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_input_media.h"
 
 extern "C"
@@ -65,11 +66,11 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 
 }    // namespace
 
-gb28181_input_media::gb28181_input_media(boost::asio::any_io_executor executor,
+gb28181_input_media::gb28181_input_media(worker_context& worker,
                                          std::string stream_name,
                                          std::uint8_t payload_type,
                                          std::uint32_t expected_ssrc)
-    : executor_(std::move(executor)), stream_name_(std::move(stream_name)), payload_type_(payload_type), expected_ssrc_(expected_ssrc)
+    : worker_(worker), stream_name_(std::move(stream_name)), payload_type_(payload_type), expected_ssrc_(expected_ssrc)
 {
 }
 
@@ -82,7 +83,7 @@ bool gb28181_input_media::startup()
         return false;
     }
 
-    stream_ = std::make_shared<media_stream>(stream_name_, executor_);
+    stream_ = std::make_shared<media_stream>(stream_name_, worker_.io());
     static_cast<void>(avpkt2bs_create(&bitstream_));
     demuxer_ = rtsp_demuxer_create(0, 500, &gb28181_input_media::packet_callback, this);
     if (demuxer_ == nullptr || rtsp_demuxer_add_payload(demuxer_, 90'000, payload_type_, "PS", nullptr) != 0 ||
