@@ -2,12 +2,16 @@
 #define MEDIA_RTMP_RTMP_SESSION_H
 
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <string_view>
 
-#include "media/net/tcp_connection.h"
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/spawn.hpp>
+
 #include "media/codec/output_video_config.h"
 
 struct rtmp_server_t;
@@ -23,7 +27,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 {
    public:
     rtmp_session(worker_context& worker,
-                 std::shared_ptr<tcp_connection> connection,
+                 boost::asio::ip::tcp::socket socket,
                  output_video_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
     ~rtmp_session();
@@ -42,15 +46,17 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     static int script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
     static int duration_callback(void* param, const char* app, const char* stream, double* duration);
 
+    void run(boost::asio::yield_context yield);
+    void run_write(boost::asio::yield_context yield);
+    void write(std::shared_ptr<std::vector<std::uint8_t>> data);
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
-    void on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data);
-    void on_tcp_write(boost::system::error_code error, std::size_t write_size);
     void safe_shutdown();
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     worker_context& worker_;
-    std::shared_ptr<tcp_connection> connection_;
+    boost::asio::ip::tcp::socket socket_;
+    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::chrono::milliseconds initial_tracks_timeout_;
     output_video_config video_config_;
     rtmp_server_t* rtmp_context_{};

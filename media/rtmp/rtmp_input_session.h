@@ -11,7 +11,6 @@
 #include <functional>
 
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/any_io_executor.hpp>
 
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/core/media_stream.h"
@@ -21,12 +20,14 @@ struct flv_demuxer_t;
 namespace media_server
 {
 
+class worker_context;
+
 class rtmp_input_session final : public std::enable_shared_from_this<rtmp_input_session>
 {
    public:
     using shutdown_handler = std::function<void()>;
 
-    rtmp_input_session(boost::asio::any_io_executor executor,
+    rtmp_input_session(worker_context& worker,
                        std::string stream_name,
                        std::chrono::milliseconds initial_tracks_timeout,
                        shutdown_handler on_shutdown);
@@ -49,6 +50,7 @@ class rtmp_input_session final : public std::enable_shared_from_this<rtmp_input_
     int publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     void try_initialize_tracks();
 
+    worker_context& worker_;
     boost::asio::steady_timer initial_tracks_timer_;
     std::chrono::milliseconds initial_tracks_timeout_;
     std::string stream_name_;
