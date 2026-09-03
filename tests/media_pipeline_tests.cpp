@@ -57,6 +57,8 @@
 #include "media/gb28181/gb28181_tcp_output_session.h"
 #include "media/net/tcp_connector.h"
 #include "media/rtmp/rtmp_session.h"
+#include "media/rtmp/rtmp_input_session.h"
+#include "media/rtmp/rtmp_output_session.h"
 #include "media/net/tcp_connection.h"
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_timestamp.h"
@@ -149,6 +151,28 @@ static_assert(std::is_constructible_v<gb28181_output_media,
                                       std::uint32_t,
                                       gb28181_output_media::packet_handler,
                                       gb28181_output_media::end_handler>);
+
+static_assert(std::is_constructible_v<rtmp_input_session,
+                                      worker_context&,
+                                      std::string,
+                                      std::chrono::milliseconds,
+                                      rtmp_input_session::shutdown_handler>);
+static_assert(std::is_constructible_v<rtmp_output_session,
+                                      worker_context&,
+                                      std::shared_ptr<media_stream>,
+                                      flv_output_muxer::output_handler,
+                                      output_video_config,
+                                      rtmp_output_session::end_handler>);
+static_assert(std::is_constructible_v<rtmp_session,
+                                      worker_context&,
+                                      boost::asio::ip::tcp::socket,
+                                      output_video_config,
+                                      std::chrono::milliseconds>);
+static_assert(!std::is_constructible_v<rtmp_session,
+                                       worker_context&,
+                                       std::shared_ptr<tcp_connection>,
+                                       output_video_config,
+                                       std::chrono::milliseconds>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -1316,8 +1340,7 @@ class rtmp_input_test_peer final
         streams_.clear();
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto session = std::make_shared<rtmp_session>(worker_, std::move(connection), output_video_config{}, initial_tracks_timeout);
+        auto session = std::make_shared<rtmp_session>(worker_, std::move(server_socket), output_video_config{}, initial_tracks_timeout);
         session_ = session;
         session->startup();
         runner_ = std::jthread([this]() { worker_.run(); });
@@ -1640,8 +1663,7 @@ class rtmp_output_test_peer final
 
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto connection = std::make_shared<tcp_connection>(std::move(server_socket));
-        session_ = std::make_shared<rtmp_session>(worker_, std::move(connection));
+        session_ = std::make_shared<rtmp_session>(worker_, std::move(server_socket));
         session_->startup();
         runner_ = std::jthread([this]() { worker_.run(); });
 
@@ -2183,6 +2205,33 @@ void test_rtmp_tcp_error_lifecycle()
         rtmp_output_test_peer peer;
         peer.disconnect_and_wait(true);
     }
+}
+
+void test_rtmp_session_shutdown_lifecycle()
+{
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+
+    boost::asio::ip::tcp::acceptor acceptor(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::socket client(worker.io());
+    client.connect(acceptor.local_endpoint());
+
+    auto session = std::make_shared<rtmp_session>(worker, acceptor.accept());
+    const std::weak_ptr<rtmp_session> weak = session;
+    session->startup();
+    require(worker.io().run_one() == 1, "rtmp session coroutine starts before shutdown");
+
+    session->shutdown();
+    session->shutdown();
+    session.reset();
+    require(!weak.expired(), "rtmp session shutdown keeps self until coroutine cleanup");
+
+    worker.io().run();
+    require(weak.expired(), "rtmp session released after coroutine cleanup");
+
+    boost::system::error_code error;
+    client.close(error);
 }
 
 void test_tcp_listener_startup_error()
@@ -10209,6 +10258,8 @@ int main()
     std::cout << "[pass] rtmp_output_config_reset_and_end\n";
     media_server::test_rtmp_tcp_error_lifecycle();
     std::cout << "[pass] rtmp_tcp_error_lifecycle\n";
+    media_server::test_rtmp_session_shutdown_lifecycle();
+    std::cout << "[pass] rtmp_session_shutdown_lifecycle\n";
     media_server::test_ireader_h266_avpacket_codec_identity();
     std::cout << "[pass] ireader_h266_avpacket_codec_identity\n";
     media_server::test_ireader_avs3_flv_mux_codec_identity();

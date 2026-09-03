@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/rtmp/rtmp_input_session.h"
 
@@ -26,14 +27,15 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 }    // namespace
 
-rtmp_input_session::rtmp_input_session(boost::asio::any_io_executor executor,
+rtmp_input_session::rtmp_input_session(worker_context& worker,
                                        std::string stream_name,
                                        std::chrono::milliseconds initial_tracks_timeout,
                                        shutdown_handler on_shutdown)
-    : initial_tracks_timer_(executor),
+    : worker_(worker),
+      initial_tracks_timer_(worker_.io()),
       initial_tracks_timeout_(initial_tracks_timeout),
       stream_name_(std::move(stream_name)),
-      stream_(std::make_shared<media_stream>(stream_name_, executor)),
+      stream_(std::make_shared<media_stream>(stream_name_, worker_.io())),
       shutdown_handler_(std::move(on_shutdown))
 {
 }

@@ -1,7 +1,10 @@
+#include <array>
 #include <utility>
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/detached.hpp>
 
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
@@ -17,18 +20,28 @@ extern "C"
 
 namespace media_server
 {
+namespace
+{
+constexpr auto slow_write_timeout = std::chrono::seconds(15);
+}
 
 rtmp_session::rtmp_session(worker_context& worker,
-                           std::shared_ptr<tcp_connection> connection,
+                           boost::asio::ip::tcp::socket socket,
                            output_video_config video,
                            std::chrono::milliseconds initial_tracks_timeout)
-    : worker_(worker), connection_(std::move(connection)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
+    : worker_(worker), socket_(std::move(socket)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
 {
 }
 
 rtmp_session::~rtmp_session() = default;
 
 void rtmp_session::startup()
+{
+    const auto self = shared_from_this();
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+}
+
+void rtmp_session::run(boost::asio::yield_context yield)
 {
     rtmp_server_handler_t handler{};
     handler.send = &rtmp_session::send_callback;
@@ -41,23 +54,61 @@ void rtmp_session::startup()
     handler.onscript = &rtmp_session::script_callback;
     handler.ongetduration = &rtmp_session::duration_callback;
 
-    rtmp_context_ = rtmp_server_create(this, &handler);
-    if (rtmp_context_ == nullptr)
+    auto* context = rtmp_server_create(this, &handler);
+    if (context == nullptr)
     {
-        shutdown();
+        safe_shutdown();
         return;
     }
+    rtmp_context_ = context;
 
-    const auto self = shared_from_this();
-    connection_->startup([this, self](boost::system::error_code error, std::span<const std::uint8_t> data) { on_tcp_read(error, data); },
-                         [this, self](boost::system::error_code error, std::size_t write_size) { on_tcp_write(error, write_size); });
+    std::array<std::uint8_t, 64 * 1024> buffer{};
+    for (;;)
+    {
+        boost::system::error_code error;
+        const auto bytes = socket_.async_read_some(boost::asio::buffer(buffer), yield[error]);
+        if (error)
+        {
+            break;
+        }
+        if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
+        {
+            break;
+        }
+    }
+
+    if (input_)
+    {
+        input_->shutdown();
+        input_.reset();
+    }
+    if (output_)
+    {
+        output_->shutdown();
+        output_.reset();
+    }
+    rtmp_context_ = nullptr;
+    rtmp_server_destroy(context);
+    safe_shutdown();
+    spdlog::debug("rtmp shutdown {}", stream_name_);
 }
 
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    self->connection_->write(header, header_bytes);
-    self->connection_->write(payload, payload_bytes);
+    auto data = std::make_shared<std::vector<std::uint8_t>>();
+    data->reserve(header_bytes + payload_bytes);
+    if (header_bytes != 0)
+    {
+        const auto* first = static_cast<const std::uint8_t*>(header);
+        data->insert(data->end(), first, first + header_bytes);
+    }
+    if (payload_bytes != 0)
+    {
+        const auto* first = static_cast<const std::uint8_t*>(payload);
+        data->insert(data->end(), first, first + payload_bytes);
+    }
+    self->write(std::move(data));
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
@@ -106,6 +157,52 @@ int rtmp_session::duration_callback(void*, const char*, const char*, double* dur
     return 0;
 }
 
+void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
+{
+    if (data->empty())
+    {
+        return;
+    }
+
+    const bool start_write = write_queue_.empty();
+    write_queue_.push_back(std::move(data));
+    if (start_write)
+    {
+        const auto self = shared_from_this();
+        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_write(yield); }, boost::asio::detached);
+    }
+}
+
+void rtmp_session::run_write(boost::asio::yield_context yield)
+{
+    for (;;)
+    {
+        if (write_queue_.empty())
+        {
+            return;
+        }
+
+        const auto data = write_queue_.front();
+        boost::system::error_code error;
+        const auto started_at = std::chrono::steady_clock::now();
+        static_cast<void>(boost::asio::async_write(socket_, boost::asio::buffer(*data), yield[error]));
+        if (error)
+        {
+            write_queue_.clear();
+            shutdown();
+            return;
+        }
+
+        write_queue_.pop_front();
+        if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
+        {
+            write_queue_.clear();
+            shutdown();
+            return;
+        }
+    }
+}
+
 int rtmp_session::on_play(std::string app, std::string stream)
 {
     if (input_ || output_)
@@ -128,12 +225,12 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
     const std::weak_ptr<rtmp_session> weak = shared_from_this();
     output_ = std::make_shared<rtmp_output_session>(
-        worker_.io().get_executor(),
+        worker_,
         std::move(media),
         [weak](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
             const auto self = weak.lock();
-            if (!self || self->closed_ || self->rtmp_context_ == nullptr)
+            if (!self || self->rtmp_context_ == nullptr)
             {
                 return;
             }
@@ -159,7 +256,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     boost::asio::post(worker_.io(),
                       [self]()
                       {
-                          if (self->closed_ || self->rtmp_context_ == nullptr || !self->output_)
+                          if (self->rtmp_context_ == nullptr || !self->output_)
                           {
                               return;
                           }
@@ -184,7 +281,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
 
     stream_name_ = make_stream_name(app, stream);
     const std::weak_ptr<rtmp_session> weak = shared_from_this();
-    auto input = std::make_shared<rtmp_input_session>(worker_.io().get_executor(),
+    auto input = std::make_shared<rtmp_input_session>(worker_,
                                                       stream_name_,
                                                       initial_tracks_timeout_,
                                                       [weak]()
@@ -203,36 +300,10 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     return 0;
 }
 
-void rtmp_session::on_tcp_read(boost::system::error_code error, std::span<const std::uint8_t> data)
-{
-    if (error)
-    {
-        shutdown();
-        return;
-    }
-    if (rtmp_context_ == nullptr || closed_)
-    {
-        return;
-    }
-    if (rtmp_server_input(rtmp_context_, data.data(), data.size()) != 0)
-    {
-        shutdown();
-    }
-}
-
-void rtmp_session::on_tcp_write(boost::system::error_code error, std::size_t write_size)
-{
-    static_cast<void>(write_size);
-    if (error)
-    {
-        shutdown();
-    }
-}
-
 void rtmp_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [this, self]() { safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void rtmp_session::safe_shutdown()
@@ -242,23 +313,13 @@ void rtmp_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    if (input_)
-    {
-        input_->shutdown();
-        input_.reset();
-    }
-    if (output_)
-    {
-        output_->shutdown();
-        output_.reset();
-    }
-    connection_->shutdown();
-    if (rtmp_context_ != nullptr)
-    {
-        rtmp_server_destroy(rtmp_context_);
-        rtmp_context_ = nullptr;
-    }
-    spdlog::debug("rtmp shutdown {}", stream_name_);
+    rtmp_context_ = nullptr;
+    write_queue_.clear();
+
+    boost::system::error_code error;
+    socket_.cancel(error);
+    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
+    socket_.close(error);
 }
 
 std::string rtmp_session::make_stream_name(std::string_view app, std::string_view stream)
