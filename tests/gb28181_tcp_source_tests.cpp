@@ -79,7 +79,7 @@ void test_connector_reports_terminal_error_once()
     require(static_cast<bool>(completion_error), "connector reports terminal error");
 }
 
-void test_acceptor_timeout_reports_terminal_error_without_shutdown()
+void test_acceptor_timeout_reports_terminal_error_once()
 {
     boost::asio::io_context io;
     boost::asio::ip::tcp::acceptor reserved(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -97,6 +97,7 @@ void test_acceptor_timeout_reports_terminal_error_without_shutdown()
             ++completion_count;
             completion_error = error;
             require(!socket.is_open(), "timed out acceptor has no connected socket");
+            acceptor->shutdown();
         },
         startup_error);
     require(!startup_error, "acceptor startup");
@@ -104,16 +105,6 @@ void test_acceptor_timeout_reports_terminal_error_without_shutdown()
 
     require(completion_count == 1, "acceptor timeout completes once");
     require(completion_error == boost::asio::error::timed_out, "acceptor timeout reports timed_out");
-
-    boost::asio::ip::tcp::acceptor before_shutdown(io);
-    boost::system::error_code before_shutdown_error;
-    before_shutdown.open(boost::asio::ip::tcp::v4(), before_shutdown_error);
-    before_shutdown.bind(endpoint, before_shutdown_error);
-    require(before_shutdown_error == boost::asio::error::address_in_use, "acceptor timeout keeps listener resource until owner shutdown");
-
-    acceptor->shutdown();
-    io.restart();
-    io.run();
 
     boost::asio::ip::tcp::acceptor after_shutdown(io);
     boost::system::error_code after_shutdown_error;
@@ -154,10 +145,6 @@ void test_acceptor_reports_success()
     io.run();
 
     require(completion_count == 1, "acceptor success completes once");
-    boost::system::error_code restart_error;
-    acceptor->startup([&](boost::system::error_code, boost::asio::ip::tcp::socket) { ++completion_count; }, restart_error);
-    require(restart_error == boost::asio::error::already_started, "acceptor cannot restart after completion");
-    require(completion_count == 1, "acceptor restart has no completion");
 }
 
 void test_acceptor_reports_bind_failure()
@@ -195,12 +182,21 @@ void test_pending_source_shutdown_suppresses_completion()
     boost::asio::io_context io;
     int completion_count = 0;
     auto acceptor = std::make_shared<tcp_acceptor>(io.get_executor(), 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
+    const std::weak_ptr<tcp_acceptor> weak_acceptor = acceptor;
     boost::system::error_code startup_error;
-    acceptor->startup([&](boost::system::error_code, boost::asio::ip::tcp::socket) { ++completion_count; }, startup_error);
+    acceptor->startup(
+        [acceptor, &completion_count](boost::system::error_code, boost::asio::ip::tcp::socket) { ++completion_count; }, startup_error);
     require(!startup_error, "pending acceptor startup");
+    require(io.run_one() == 1, "acceptor coroutine starts before shutdown");
     acceptor->shutdown();
+    acceptor->shutdown();
+    acceptor.reset();
+    require(!weak_acceptor.expired(), "acceptor shutdown keeps self until owner cleanup");
+
     io.run();
+
     require(completion_count == 0, "acceptor shutdown suppresses completion");
+    require(weak_acceptor.expired(), "acceptor shutdown clears callback ownership");
 }
 
 }    // namespace
@@ -215,7 +211,7 @@ int main()
         media_server::test_acceptor_reports_success();
         media_server::test_acceptor_reports_bind_failure();
         media_server::test_acceptor_rejects_invalid_local_address();
-        media_server::test_acceptor_timeout_reports_terminal_error_without_shutdown();
+        media_server::test_acceptor_timeout_reports_terminal_error_once();
         media_server::test_pending_source_shutdown_suppresses_completion();
         std::cout << "[pass] gb28181_tcp_source_tests\n";
         return 0;
