@@ -9,18 +9,19 @@
 #include <boost/asio/post.hpp>
 
 #include "media/core/stream_registry.h"
+#include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_udp_session.h"
 
 namespace media_server
 {
 
-gb28181_udp_session::gb28181_udp_session(boost::asio::any_io_executor executor,
+gb28181_udp_session::gb28181_udp_session(worker_context& worker,
                                          std::string stream_name,
                                          gb28181_description description)
-    : executor_(executor),
+    : worker_(worker),
       description_(std::move(description)),
-      media_(executor, std::move(stream_name), description_.payload_type, description_.ssrc),
-      rtcp_timer_(std::move(executor))
+      media_(worker_, std::move(stream_name), description_.payload_type, description_.ssrc),
+      rtcp_timer_(worker_.io())
 {
 }
 
@@ -35,7 +36,7 @@ std::optional<gb28181_udp_session::udp_socket_pair> gb28181_udp_session::prepare
     const auto local_ports = *reserved;
     const auto weak = weak_from_this();
     boost::system::error_code network_error;
-    auto rtp_socket = std::make_shared<udp_socket>(executor_);
+    auto rtp_socket = std::make_shared<udp_socket>(worker_.io());
     rtp_socket->startup(
         bind_address,
         local_ports.first,
@@ -68,7 +69,7 @@ std::optional<gb28181_udp_session::udp_socket_pair> gb28181_udp_session::prepare
         return std::nullopt;
     }
 
-    auto rtcp_socket = std::make_shared<udp_socket>(executor_);
+    auto rtcp_socket = std::make_shared<udp_socket>(worker_.io());
     rtcp_socket->startup(
         bind_address,
         local_ports.second,
@@ -165,7 +166,7 @@ bool gb28181_udp_session::startup()
 void gb28181_udp_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 const std::string& gb28181_udp_session::stream_name() const noexcept { return media_.stream_name(); }

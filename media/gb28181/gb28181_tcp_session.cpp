@@ -5,19 +5,20 @@
 #include <boost/asio/post.hpp>
 
 #include "media/core/stream_registry.h"
+#include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_tcp_session.h"
 
 namespace media_server
 {
-gb28181_tcp_session::gb28181_tcp_session(boost::asio::any_io_executor executor,
+gb28181_tcp_session::gb28181_tcp_session(worker_context& worker,
                                          std::shared_ptr<tcp_socket_source> socket_source,
                                          std::string stream_name,
                                          std::uint8_t payload_type,
                                          std::uint32_t expected_ssrc)
-    : executor_(std::move(executor)),
+    : worker_(worker),
       socket_source_(std::move(socket_source)),
       stream_name_(std::move(stream_name)),
-      media_(executor_, stream_name_, payload_type, expected_ssrc)
+      media_(worker_, stream_name_, payload_type, expected_ssrc)
 {
 }
 
@@ -54,7 +55,7 @@ bool gb28181_tcp_session::startup()
 void gb28181_tcp_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 const std::string& gb28181_tcp_session::stream_name() const noexcept { return stream_name_; }

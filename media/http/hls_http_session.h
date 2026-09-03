@@ -16,13 +16,14 @@
 
 namespace media_server
 {
+class worker_context;
 
 class hls_http_session final : public std::enable_shared_from_this<hls_http_session>
 {
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    hls_http_session(boost::beast::tcp_stream stream, request_type request, const config& config);
+    hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config);
 
     void startup();
     void shutdown();
@@ -35,6 +36,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
     void send_binary_response(boost::beast::http::status status, std::string_view content_type, std::vector<std::uint8_t> body);
     void safe_shutdown();
 
+    worker_context& worker_;
     boost::beast::tcp_stream stream_;
     request_type request_;
     const config& config_;

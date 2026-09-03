@@ -13,6 +13,7 @@
 #include "media/http/gb28181_http.h"
 #include "media/core/stream_registry.h"
 #include "media/net/port_manager.h"
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
@@ -46,18 +47,18 @@ void require_json_response(const gb28181_http_response& response, boost::beast::
     require(response.body() == body, message);
 }
 
-gb28181_http_response input_request(boost::asio::io_context& io, gb28181_http_request request)
+gb28181_http_response input_request(worker_context& worker, gb28181_http_request request)
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "input request target");
-    return handle_gb28181_input_request(request, io, *target);
+    return handle_gb28181_input_request(request, worker, *target);
 }
 
-gb28181_http_response output_request(boost::asio::io_context& io, gb28181_http_request request)
+gb28181_http_response output_request(worker_context& worker, gb28181_http_request request)
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "output request target");
-    return handle_gb28181_output_request(request, io, *target, boost::asio::ip::address_v4::loopback());
+    return handle_gb28181_output_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
 }
 
 media_track make_video_track()
@@ -73,7 +74,10 @@ media_track make_video_track()
 
 void test_input_handlers()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     registry::instance().clear();
     boost::json::object create_body;
     create_body["stream_name"] = "live/http-handler-input";
@@ -82,7 +86,7 @@ void test_input_handlers()
     create_body["payload_type"] = 96;
     create_body["ssrc"] = 100;
 
-    const auto create_response = input_request(io, request("/gb28181/create", create_body));
+    const auto create_response = input_request(worker, request("/gb28181/create", create_body));
     require(create_response.result() == boost::beast::http::status::created, "input create response status");
     const auto create_result = boost::json::parse(create_response.body()).as_object();
     require(create_result.at("result").as_string() == "ok", "input create response result");
@@ -105,16 +109,16 @@ void test_input_handlers()
     other_address_probe.bind({boost::asio::ip::make_address_v4("127.0.0.2"), rtp_port}, bind_error);
     require(!bind_error, "input create only binds configured local address");
 
-    const auto duplicate_response = input_request(io, request("/gb28181/create", create_body));
+    const auto duplicate_response = input_request(worker, request("/gb28181/create", create_body));
     require_json_response(
         duplicate_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "input create failure response");
 
     boost::json::object delete_body;
     delete_body["stream_name"] = "live/http-handler-input";
-    const auto delete_response = input_request(io, request("/gb28181/delete", delete_body));
+    const auto delete_response = input_request(worker, request("/gb28181/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "input delete response");
 
-    const auto closing_response = input_request(io, request("/gb28181/delete", delete_body));
+    const auto closing_response = input_request(worker, request("/gb28181/delete", delete_body));
     require_json_response(closing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
@@ -126,7 +130,7 @@ void test_input_handlers()
     require(released && released->first == rtp_port && released->second == rtcp_port, "input delete releases returned port pair");
     port_manager::instance().release(*released);
 
-    const auto missing_response = input_request(io, request("/gb28181/delete", delete_body));
+    const auto missing_response = input_request(worker, request("/gb28181/delete", delete_body));
     require_json_response(missing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
@@ -136,7 +140,10 @@ void test_input_handlers()
 
 void test_output_handlers()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
     registry::instance().clear();
     auto stream = std::make_shared<media_stream>("live/http-handler-output", io.get_executor());
     require(stream->set_tracks({make_video_track()}), "output handler tracks");
@@ -153,20 +160,20 @@ void test_output_handlers()
     create_body["ssrc"] = 101;
     create_body["rtcp"] = false;
 
-    const auto create_response = output_request(io, request("/play/gb28181/create", create_body));
+    const auto create_response = output_request(worker, request("/play/gb28181/create", create_body));
     require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "output create response");
 
-    const auto duplicate_response = output_request(io, request("/play/gb28181/create", create_body));
+    const auto duplicate_response = output_request(worker, request("/play/gb28181/create", create_body));
     require_json_response(
         duplicate_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "output create failure response");
 
     boost::json::object delete_body;
     delete_body["stream_name"] = stream->name();
     delete_body["output_id"] = "primary";
-    const auto delete_response = output_request(io, request("/play/gb28181/delete", delete_body));
+    const auto delete_response = output_request(worker, request("/play/gb28181/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "output delete response");
 
-    const auto closing_response = output_request(io, request("/play/gb28181/delete", delete_body));
+    const auto closing_response = output_request(worker, request("/play/gb28181/delete", delete_body));
     require_json_response(closing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
@@ -174,7 +181,7 @@ void test_output_handlers()
     io.run();
     io.restart();
 
-    const auto missing_response = output_request(io, request("/play/gb28181/delete", delete_body));
+    const auto missing_response = output_request(worker, request("/play/gb28181/delete", delete_body));
     require_json_response(missing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
@@ -184,12 +191,13 @@ void test_output_handlers()
 
 void test_request_namespace_dispatch()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
 
-    const auto input_response = input_request(io, request("/gb28181/missing", {}));
+    const auto input_response = input_request(worker, request("/gb28181/missing", {}));
     require_json_response(input_response, boost::beast::http::status::not_found, R"({"error":"not_found"})", "input request route");
 
-    const auto output_response = output_request(io, request("/play/gb28181/missing", {}));
+    const auto output_response = output_request(worker, request("/play/gb28181/missing", {}));
     require_json_response(output_response, boost::beast::http::status::not_found, R"({"error":"not_found"})", "output request route");
 }
 

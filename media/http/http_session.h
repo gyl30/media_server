@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 
+#include <boost/asio/spawn.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -24,18 +25,24 @@ class http_session final : public std::enable_shared_from_this<http_session>
     void shutdown();
 
    private:
-    void read_request();
-    void on_request(boost::system::error_code error, std::size_t bytes);
-    void handle_request();
-    void write_response(boost::beast::http::response<boost::beast::http::string_body> response);
-    void write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response);
-    void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
+    void run(boost::asio::yield_context yield);
+    void handle_request(boost::beast::http::request<boost::beast::http::string_body>& request, boost::asio::yield_context yield);
+    void write_response(boost::beast::http::request<boost::beast::http::string_body>& request,
+                        boost::beast::http::response<boost::beast::http::string_body> response,
+                        boost::asio::yield_context yield);
+    void write_string_response(boost::beast::http::request<boost::beast::http::string_body>& request,
+                               boost::beast::http::response<boost::beast::http::string_body> response,
+                               boost::asio::yield_context yield);
+    void send_text_response(boost::beast::http::request<boost::beast::http::string_body>& request,
+                            boost::beast::http::status status,
+                            std::string_view content_type,
+                            std::string body,
+                            boost::asio::yield_context yield,
+                            std::string_view allow = {});
     void safe_shutdown();
 
     worker_context& worker_;
     boost::beast::tcp_stream stream_;
-    boost::beast::flat_buffer buffer_;
-    boost::beast::http::request<boost::beast::http::string_body> request_;
     io_context_pool& workers_;
     const config& config_;
     bool closed_{};

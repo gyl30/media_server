@@ -9,7 +9,6 @@
 
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/udp_socket.h"
 #include "media/net/port_manager.h"
@@ -19,11 +18,12 @@
 
 namespace media_server
 {
+class worker_context;
 
 class gb28181_udp_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_session>
 {
    public:
-    gb28181_udp_session(boost::asio::any_io_executor executor, std::string stream_name, gb28181_description description);
+    gb28181_udp_session(worker_context& worker, std::string stream_name, gb28181_description description);
 
     [[nodiscard]] bool startup();
     void shutdown() override;
@@ -46,7 +46,7 @@ class gb28181_udp_session final : public stream_session, public std::enable_shar
     void schedule_rtcp();
     void safe_shutdown();
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     gb28181_description description_;
     gb28181_input_media media_;
     std::shared_ptr<udp_socket> rtp_socket_;

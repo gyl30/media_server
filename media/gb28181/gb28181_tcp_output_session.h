@@ -6,14 +6,13 @@
 #include <vector>
 #include <cstdint>
 
-#include <boost/asio/any_io_executor.hpp>
-
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_socket_source.h"
 
 namespace media_server
 {
+class worker_context;
 
 class gb28181_output_media;
 class tcp_connection;
@@ -21,7 +20,7 @@ class tcp_connection;
 class gb28181_tcp_output_session final : public stream_session, public std::enable_shared_from_this<gb28181_tcp_output_session>
 {
    public:
-    gb28181_tcp_output_session(boost::asio::any_io_executor executor,
+    gb28181_tcp_output_session(worker_context& worker,
                                std::shared_ptr<tcp_socket_source> socket_source,
                                std::weak_ptr<media_stream> stream,
                                std::string stream_name,
@@ -37,7 +36,7 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
     void send_packet(std::vector<std::uint8_t> packet);
     void safe_shutdown();
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     std::shared_ptr<tcp_socket_source> socket_source_;
     std::weak_ptr<media_stream> stream_;
     std::string stream_name_;

@@ -18,6 +18,7 @@
 #include "media/gb28181/gb28181_output_media.h"
 #include "media/gb28181/gb28181_udp_session.h"
 #include "media/net/port_manager.h"
+#include "media/net/worker_context.h"
 
 extern "C"
 {
@@ -137,12 +138,13 @@ void send_packets(boost::asio::ip::udp::socket& socket, std::uint16_t port, cons
 
 void test_ps_fixture_creates_stream()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
     auto& streams = media_server::registry::instance();
     streams.clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    gb28181_input_media media(io.get_executor(), "live/gb-peer-fixture", payload_type, ssrc);
+    gb28181_input_media media(worker, "live/gb-peer-fixture", payload_type, ssrc);
     require(media.startup(), "gb peer fixture media startup");
     const auto packets = make_ps_rtp(payload_type, ssrc);
     for (const auto& packet : packets)
@@ -155,12 +157,13 @@ void test_ps_fixture_creates_stream()
 
 void test_input_video_codec_change_is_fatal()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
     auto& streams = media_server::registry::instance();
     streams.clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    gb28181_input_media media(io.get_executor(), "live/gb-video-codec-change", payload_type, ssrc);
+    gb28181_input_media media(worker, "live/gb-video-codec-change", payload_type, ssrc);
     require(media.startup(), "gb video codec change startup");
 
     const auto initial_packets = make_ps_rtp(payload_type, ssrc);
@@ -188,12 +191,13 @@ void test_input_video_codec_change_is_fatal()
 
 void test_input_audio_codec_change_is_fatal()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
     auto& streams = media_server::registry::instance();
     streams.clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    gb28181_input_media media(io.get_executor(), "live/gb-audio-codec-change", payload_type, ssrc);
+    gb28181_input_media media(worker, "live/gb-audio-codec-change", payload_type, ssrc);
     require(media.startup(), "gb audio codec change startup");
 
     const auto initial_packets = make_ps_rtp(payload_type, ssrc, 1, RTP_PAYLOAD_H264, RTP_PAYLOAD_PCMA);
@@ -222,7 +226,9 @@ void test_input_audio_codec_change_is_fatal()
 
 void test_udp_session_fatal_codec_change_unregisters()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
     auto& streams = media_server::registry::instance();
     streams.clear();
     boost::asio::ip::udp::socket sender(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -235,7 +241,7 @@ void test_udp_session_fatal_codec_change_unregisters()
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), stream_name, description);
+    auto session = std::make_shared<gb28181_udp_session>(worker, stream_name, description);
     require(streams.add_input_session(stream_name, session), "gb fatal codec session registry add");
     require(session->startup(), "gb fatal codec session startup");
     const auto local_ports = session->local_ports();
@@ -267,7 +273,9 @@ void test_udp_session_fatal_codec_change_unregisters()
 
 void test_output_same_codec_config_version_continues_ps_stream()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
     auto& streams = media_server::registry::instance();
     streams.clear();
 
@@ -314,14 +322,14 @@ void test_output_same_codec_config_version_continues_ps_stream()
             }}),
             "gb output config initial track");
 
-    gb28181_input_media receiver(io.get_executor(), "live/gb-output-config-received", payload_type, ssrc);
+    gb28181_input_media receiver(worker, "live/gb-output-config-received", payload_type, ssrc);
     require(receiver.startup(), "gb output config receiver startup");
 
     std::size_t packet_count = 0;
     std::size_t end_count = 0;
     std::vector<std::uint8_t> ps_payload;
     auto output = std::make_shared<gb28181_output_media>(
-        io.get_executor(),
+        worker,
         source,
         payload_type,
         ssrc,
@@ -395,7 +403,9 @@ void test_output_same_codec_config_version_continues_ps_stream()
 
 void test_rtcp_peer_learning_overrides_rtp_plus_one()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
     auto& streams = media_server::registry::instance();
     streams.clear();
     boost::asio::ip::udp::socket sender(io);
@@ -435,7 +445,7 @@ void test_rtcp_peer_learning_overrides_rtp_plus_one()
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/gb-rtcp-peer", description);
+    auto session = std::make_shared<gb28181_udp_session>(worker, "live/gb-rtcp-peer", description);
     require(session->startup(), "gb rtcp peer startup");
     const auto local_ports = session->local_ports();
     require(local_ports.has_value(), "gb rtcp peer local ports");
@@ -494,7 +504,9 @@ void test_rtcp_peer_learning_overrides_rtp_plus_one()
 
 void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
     auto& streams = media_server::registry::instance();
     streams.clear();
     boost::asio::ip::udp::socket expected(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -507,7 +519,7 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session = std::make_shared<gb28181_udp_session>(io.get_executor(), "live/gb-peer-learned", description);
+    auto session = std::make_shared<gb28181_udp_session>(worker, "live/gb-peer-learned", description);
     require(session->startup(), "gb peer learned startup");
     const auto local_ports = session->local_ports();
     require(local_ports.has_value(), "gb peer learned local ports");

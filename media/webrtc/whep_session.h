@@ -12,7 +12,6 @@
 
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/udp_socket.h"
 #include "media/net/port_manager.h"
@@ -27,6 +26,7 @@
 
 namespace media_server
 {
+class worker_context;
 
 struct whep_session_timeouts
 {
@@ -44,7 +44,7 @@ enum class whep_session_startup_error
 class whep_session final : public media_reader, public std::enable_shared_from_this<whep_session>
 {
    public:
-    whep_session(boost::asio::any_io_executor executor,
+    whep_session(worker_context& worker,
                  std::shared_ptr<media_stream> stream,
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
@@ -95,7 +95,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::shared_ptr<webrtc_output> output_;
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     std::shared_ptr<udp_socket> udp_socket_;
     boost::asio::steady_timer dtls_timer_;
     boost::asio::steady_timer establishment_timer_;

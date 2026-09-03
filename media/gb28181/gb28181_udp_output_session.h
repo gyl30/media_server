@@ -8,7 +8,6 @@
 
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/any_io_executor.hpp>
 
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
@@ -18,13 +17,14 @@
 namespace media_server
 {
 
+class worker_context;
 class gb28181_output_media;
 class udp_socket;
 
 class gb28181_udp_output_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_output_session>
 {
    public:
-    gb28181_udp_output_session(boost::asio::any_io_executor executor,
+    gb28181_udp_output_session(worker_context& worker,
                                std::shared_ptr<media_stream> stream,
                                gb28181_description description,
                                boost::asio::ip::address bind_address,
@@ -48,7 +48,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     void schedule_rtcp();
     void safe_shutdown();
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     std::string output_id_;

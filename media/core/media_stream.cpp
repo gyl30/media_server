@@ -72,6 +72,8 @@ void media_reader_handle::remove() const
     }
 }
 
+media_stream::media_stream(std::string name, boost::asio::io_context& owner) : media_stream(std::move(name), owner.get_executor()) {}
+
 media_stream::media_stream(std::string name, boost::asio::any_io_executor owner_executor)
     : name_(std::move(name)), owner_executor_(std::move(owner_executor))
 {
@@ -97,6 +99,11 @@ void media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
         return;
     }
     boost::asio::dispatch(owner_executor_, [self, sink]() { self->add_sink_on_owner(sink); });
+}
+
+media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::io_context& owner)
+{
+    return add_reader(reader, owner.get_executor());
 }
 
 media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::any_io_executor executor)

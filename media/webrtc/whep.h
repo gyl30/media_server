@@ -5,9 +5,12 @@
 #include <string>
 #include <string_view>
 
-#include <boost/asio/any_io_executor.hpp>
-
 #include "config.h"
+
+namespace media_server
+{
+class worker_context;
+}
 
 namespace media_server::whep
 {
@@ -27,7 +30,7 @@ struct create_result
     std::string answer_sdp;
 };
 
-[[nodiscard]] create_result create(boost::asio::any_io_executor executor,
+[[nodiscard]] create_result create(worker_context& worker,
                                    std::string_view stream_name,
                                    std::string_view offer_sdp,
                                    const config& application_config);

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/any_io_executor.hpp>
@@ -24,6 +25,7 @@ class udp_socket final : public std::enable_shared_from_this<udp_socket>
     using write_error_handler = std::function<void(boost::system::error_code, const boost::asio::ip::udp::endpoint&)>;
     using shutdown_handler = std::function<void()>;
 
+    explicit udp_socket(boost::asio::io_context& owner);
     explicit udp_socket(boost::asio::any_io_executor executor);
 
     void startup(boost::asio::ip::address bind_address, read_handler on_read, write_error_handler on_write_error, boost::system::error_code& error);
