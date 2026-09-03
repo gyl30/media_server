@@ -5281,7 +5281,8 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    workers.stop();
+    server->shutdown();
+    workers.release_work();
     runner.join();
 }
 
@@ -5904,7 +5905,8 @@ void test_rtsp_publish_server_contract()
     }
     require(!streams.find("live/publish-udp"), "rtsp publish udp disconnect removes generation");
 
-    workers.stop();
+    server->shutdown();
+    workers.release_work();
     runner.join();
 }
 
