@@ -3,7 +3,6 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/asio/write.hpp>
 #include <boost/asio/detached.hpp>
 
 #include "media/rtmp/rtmp_session.h"
@@ -29,7 +28,7 @@ rtmp_session::rtmp_session(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
                            output_video_config video,
                            std::chrono::milliseconds initial_tracks_timeout)
-    : worker_(worker), socket_(std::move(socket)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
+    : worker_(worker), transport_(std::move(socket)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
 {
 }
 
@@ -66,7 +65,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     for (;;)
     {
         boost::system::error_code error;
-        const auto bytes = socket_.async_read_some(boost::asio::buffer(buffer), yield[error]);
+        const auto bytes = transport_.read(buffer, yield, error);
         if (error)
         {
             break;
@@ -185,7 +184,7 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         const auto data = write_queue_.front();
         boost::system::error_code error;
         const auto started_at = std::chrono::steady_clock::now();
-        static_cast<void>(boost::asio::async_write(socket_, boost::asio::buffer(*data), yield[error]));
+        static_cast<void>(transport_.write(*data, yield, error));
         if (error)
         {
             write_queue_.clear();
@@ -316,10 +315,7 @@ void rtmp_session::safe_shutdown()
     rtmp_context_ = nullptr;
     write_queue_.clear();
 
-    boost::system::error_code error;
-    socket_.cancel(error);
-    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
-    socket_.close(error);
+    transport_.shutdown();
 }
 
 std::string rtmp_session::make_stream_name(std::string_view app, std::string_view stream)
