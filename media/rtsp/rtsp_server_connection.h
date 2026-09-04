@@ -2,18 +2,20 @@
 #define MEDIA_RTSP_RTSP_SERVER_CONNECTION_H
 
 #include <span>
+#include <deque>
 #include <memory>
-#include <string>
+#include <vector>
 #include <cstdint>
 
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/spawn.hpp>
 
+#include "media/net/tcp_yield_transport.h"
 #include "media/codec/output_video_config.h"
-#include "media/net/tcp_connection.h"
 
 extern "C"
 {
-#include "rtp-over-rtsp.h"
 #include "rtsp-server.h"
 }
 
@@ -26,7 +28,7 @@ class rtsp_server_session;
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
    public:
-    rtsp_server_connection(worker_context& worker, std::shared_ptr<tcp_connection> connection, output_video_codec video_codec);
+    rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket, output_video_codec video_codec);
     ~rtsp_server_connection();
 
     void startup();
@@ -46,17 +48,17 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     static int options_callback(void* param, rtsp_server_t* server, const char* uri);
     static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
 
-    void on_tcp_read(std::span<const std::uint8_t> data);
+    void run(boost::asio::yield_context yield);
+    void run_write(boost::asio::yield_context yield);
+    void write(std::span<const std::uint8_t> data);
     void safe_shutdown();
 
     worker_context& worker_;
     output_video_codec video_codec_;
-    std::shared_ptr<tcp_connection> connection_;
+    tcp_yield_transport transport_;
+    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::shared_ptr<rtsp_server_session> logical_session_;
     boost::asio::ip::address local_address_;
-    rtsp_server_t* rtsp_context_{};
-    rtp_over_rtsp_t interleaved_{};
-    bool rtsp_need_more_data_{};
     bool closed_{};
 };
 
