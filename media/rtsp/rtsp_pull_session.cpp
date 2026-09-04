@@ -3,12 +3,15 @@
 #include <optional>
 #include <algorithm>
 #include <string_view>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 #include <boost/url/url.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/url/parse.hpp>
 
+#include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/stream_registry.h"
@@ -32,6 +35,7 @@ namespace
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
+constexpr auto slow_write_timeout = std::chrono::seconds(15);
 
 std::optional<codec_id> selected_g711_codec(rtsp_client_t* client, int media)
 {
@@ -81,19 +85,20 @@ bool should_setup_media(rtsp_client_t* client, int media)
 }
 }    // namespace
 
-rtsp_pull_session::rtsp_pull_session(boost::asio::io_context& io,
+rtsp_pull_session::rtsp_pull_session(worker_context& worker,
                                      std::string stream_name,
                                      std::string url,
                                      std::chrono::milliseconds establishment_timeout,
                                      std::chrono::milliseconds initial_tracks_timeout)
-    : stream_name_(std::move(stream_name)),
+    : worker_(worker),
+      stream_name_(std::move(stream_name)),
       url_(std::move(url)),
-      resolver_(io),
-      connect_socket_(io),
-      establishment_timer_(io),
-      initial_tracks_timer_(io),
-      keepalive_timer_(io),
-      rtcp_timer_(io),
+      resolver_(worker_.io()),
+      connect_socket_(worker_.io()),
+      establishment_timer_(worker_.io()),
+      initial_tracks_timer_(worker_.io()),
+      keepalive_timer_(worker_.io()),
+      rtcp_timer_(worker_.io()),
       establishment_timeout_(establishment_timeout),
       initial_tracks_timeout_(initial_tracks_timeout)
 {
@@ -117,7 +122,7 @@ bool rtsp_pull_session::startup()
     username_ = parsed->username;
     password_ = parsed->password;
 
-    stream_ = std::make_shared<media_stream>(stream_name_, resolver_.get_executor());
+    stream_ = std::make_shared<media_stream>(stream_name_, worker_.io());
 
     static_cast<void>(avpkt2bs_create(&bitstream_));
 
@@ -125,33 +130,17 @@ bool rtsp_pull_session::startup()
     schedule_establishment_timeout();
 
     const auto self = shared_from_this();
-    resolver_.async_resolve(parsed->host,
-                            std::to_string(parsed->port),
-                            [this, self](const boost::system::error_code& error, boost::asio::ip::tcp::resolver::results_type endpoints)
-                            {
-                                if (closed_)
-                                {
-                                    return;
-                                }
-                                if (error)
-                                {
-                                    shutdown();
-                                    return;
-                                }
-                                record_establishment_progress();
-                                boost::asio::async_connect(
-                                    connect_socket_,
-                                    endpoints,
-                                    [this, self](const boost::system::error_code& connect_error, const boost::asio::ip::tcp::endpoint&)
-                                    { on_connect(connect_error, std::move(connect_socket_)); });
-                            });
+    boost::asio::spawn(worker_.io(),
+                       [self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield)
+                       { self->run(host, port, yield); },
+                       boost::asio::detached);
     return true;
 }
 
 void rtsp_pull_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(resolver_.get_executor(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void rtsp_pull_session::record_establishment_progress() { last_establishment_progress_ = std::chrono::steady_clock::now(); }
@@ -207,7 +196,7 @@ void rtsp_pull_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || !self->media_started_ || !self->connection_)
+            if (error || self->closed_ || !self->media_started_ || !self->transport_)
             {
                 return;
             }
@@ -231,7 +220,7 @@ void rtsp_pull_session::schedule_rtcp()
                 packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
                 packet[3] = static_cast<std::uint8_t>(bytes);
                 std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
-                self->connection_->write(packet);
+                self->write(packet);
             }
             self->schedule_rtcp();
         });
@@ -257,10 +246,9 @@ void rtsp_pull_session::safe_shutdown()
     resolver_.cancel();
     boost::system::error_code error;
     connect_socket_.close(error);
-    if (connection_)
+    if (transport_)
     {
-        connection_->shutdown();
-        connection_.reset();
+        transport_->shutdown();
     }
     for (auto*& demuxer : demuxers_)
     {
@@ -270,11 +258,6 @@ void rtsp_pull_session::safe_shutdown()
             demuxer = nullptr;
         }
     }
-    if (client_ != nullptr)
-    {
-        rtsp_client_destroy(client_);
-        client_ = nullptr;
-    }
     avpkt2bs_destroy(&bitstream_);
     spdlog::debug("rtsp input shutdown {}", stream_name_);
 }
@@ -282,7 +265,7 @@ void rtsp_pull_session::safe_shutdown()
 int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
 {
     auto* self = static_cast<rtsp_pull_session*>(param);
-    if (!self->connection_)
+    if (self->closed_ || !self->transport_)
     {
         return -1;
     }
@@ -290,7 +273,7 @@ int rtsp_pull_session::send_callback(void* param, const char*, const void* reque
     {
         self->record_establishment_progress();
     }
-    self->connection_->write(request, bytes);
+    self->write(std::span{static_cast<const std::uint8_t*>(request), bytes});
     return static_cast<int>(bytes);
 }
 
@@ -377,17 +360,30 @@ std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::s
     return result;
 }
 
-void rtsp_pull_session::on_connect(const boost::system::error_code& error, boost::asio::ip::tcp::socket socket)
+void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::yield_context yield)
 {
     if (closed_)
     {
         return;
     }
-    if (error)
+
+    boost::system::error_code error;
+    const auto endpoints = resolver_.async_resolve(host, std::to_string(port), yield[error]);
+    if (error || closed_)
     {
-        shutdown();
+        safe_shutdown();
         return;
     }
+
+    record_establishment_progress();
+    boost::asio::async_connect(connect_socket_, endpoints, yield[error]);
+    if (error || closed_)
+    {
+        safe_shutdown();
+        return;
+    }
+
+    transport_ = std::make_unique<tcp_yield_transport>(std::move(connect_socket_));
 
     rtsp_client_handler_t handler{};
     handler.send = &rtsp_pull_session::send_callback;
@@ -399,46 +395,89 @@ void rtsp_pull_session::on_connect(const boost::system::error_code& error, boost
     handler.onteardown = &rtsp_pull_session::teardown_callback;
     handler.onrtp = &rtsp_pull_session::rtp_callback;
 
-    client_ = rtsp_client_create(
+    auto* client = rtsp_client_create(
         url_.c_str(), username_.empty() ? nullptr : username_.c_str(), password_.empty() ? nullptr : password_.c_str(), &handler, this);
-    if (client_ == nullptr)
+    if (client == nullptr)
     {
-        shutdown();
+        safe_shutdown();
+        return;
+    }
+    client_ = client;
+
+    spdlog::info("rtsp input connected stream {}", stream_name_);
+    bool stop = rtsp_client_describe(client_) != 0;
+    std::vector<std::uint8_t> buffer(64 * 1024);
+    while (!stop)
+    {
+        const auto bytes = transport_->read(buffer, yield, error);
+        if (error)
+        {
+            break;
+        }
+        if (rtsp_client_input(client_, buffer.data(), bytes) != 0)
+        {
+            break;
+        }
+    }
+
+    client_ = nullptr;
+    rtsp_client_destroy(client);
+    safe_shutdown();
+}
+
+void rtsp_pull_session::write(std::span<const std::uint8_t> data)
+{
+    if (closed_ || !transport_ || data.empty())
+    {
         return;
     }
 
-    connection_ = std::make_shared<tcp_connection>(std::move(socket));
-    const auto self = shared_from_this();
-    connection_->startup(
-        [self](boost::system::error_code read_error, std::span<const std::uint8_t> data)
-        {
-            if (read_error)
-            {
-                self->shutdown();
-                return;
-            }
-            self->on_read(data);
-        },
-        [self](boost::system::error_code write_error, std::size_t)
-        {
-            if (write_error)
-            {
-                self->shutdown();
-            }
-        });
-
-    spdlog::info("rtsp input connected stream {}", stream_name_);
-    if (rtsp_client_describe(client_) != 0)
+    const bool start_write = write_queue_.empty();
+    write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
+    if (start_write)
     {
-        shutdown();
+        const auto self = shared_from_this();
+        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context write_yield) { self->run_write(write_yield); }, boost::asio::detached);
     }
 }
 
-void rtsp_pull_session::on_read(std::span<const std::uint8_t> data)
+void rtsp_pull_session::run_write(boost::asio::yield_context yield)
 {
-    if (client_ != nullptr && rtsp_client_input(client_, data.data(), data.size()) != 0)
+    for (;;)
     {
-        shutdown();
+        if (closed_)
+        {
+            write_queue_.clear();
+            return;
+        }
+        if (write_queue_.empty())
+        {
+            return;
+        }
+
+        const auto data = write_queue_.front();
+        boost::system::error_code error;
+        const auto started_at = std::chrono::steady_clock::now();
+        static_cast<void>(transport_->write(*data, yield, error));
+        if (closed_)
+        {
+            write_queue_.clear();
+            return;
+        }
+        if (error)
+        {
+            write_queue_.clear();
+            shutdown();
+            return;
+        }
+
+        write_queue_.pop_front();
+        if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
+        {
+            write_queue_.clear();
+            shutdown();
+            return;
+        }
     }
 }
 
