@@ -8,8 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <boost/asio/any_io_executor.hpp>
-
 #include "media/core/media_stream.h"
 
 extern "C"
@@ -22,6 +20,8 @@ struct rtsp_demuxer_t;
 
 namespace media_server
 {
+
+class worker_context;
 
 struct rtsp_input_track_description
 {
@@ -36,7 +36,7 @@ struct rtsp_input_track_description
 class rtsp_input_media final
 {
    public:
-    rtsp_input_media(boost::asio::any_io_executor executor, std::string stream_name, std::vector<rtsp_input_track_description> descriptions);
+    rtsp_input_media(worker_context& worker, std::string stream_name, std::vector<rtsp_input_track_description> descriptions);
     ~rtsp_input_media();
 
     [[nodiscard]] bool startup(const std::string& rtcp_cname);
@@ -54,7 +54,7 @@ class rtsp_input_media final
     int on_demuxed_packet(avpacket_t* packet);
     bool update_track_from_packet(const avpacket_t& packet);
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     std::string stream_name_;
     std::vector<rtsp_input_track_description> descriptions_;
     std::vector<rtsp_demuxer_t*> demuxers_;

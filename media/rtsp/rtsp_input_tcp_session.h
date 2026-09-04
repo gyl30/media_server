@@ -12,7 +12,6 @@
 #include <boost/system/error_code.hpp>
 
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/any_io_executor.hpp>
 
 #include "media/rtsp/rtsp_input_media.h"
 
@@ -22,12 +21,13 @@ struct rtsp_header_transport_t;
 namespace media_server
 {
 
+class worker_context;
 class rtsp_input_session;
 
 class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_input_tcp_session>
 {
    public:
-    rtsp_input_tcp_session(boost::asio::any_io_executor executor,
+    rtsp_input_tcp_session(worker_context& worker,
                            std::string stream_name,
                            std::vector<rtsp_input_track_description> descriptions,
                            std::function<void(std::span<const std::uint8_t>)> write);
@@ -51,6 +51,7 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
     void schedule_rtcp();
     void safe_shutdown();
 
+    worker_context& worker_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void(boost::system::error_code)> error_handler_;
     rtsp_input_media media_;

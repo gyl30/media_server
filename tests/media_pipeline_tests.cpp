@@ -69,6 +69,8 @@
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_input_tcp_session.h"
+#include "media/rtsp/rtsp_input_udp_session.h"
 #include "media/rtsp/rtsp_input_media.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/rtsp/rtsp_server_session.h"
@@ -123,9 +125,43 @@ static_assert(requires(rtsp_server_session& session, std::function<void(boost::s
     session.set_error_handler(std::move(handler));
 });
 using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
-static_assert(std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, boost::asio::ip::address, rtsp_write_handler>);
-static_assert(
-    std::is_constructible_v<rtsp_output_session, boost::asio::any_io_executor, output_video_codec, boost::asio::ip::address, rtsp_write_handler>);
+static_assert(std::is_constructible_v<rtsp_input_session, worker_context&, boost::asio::ip::address, rtsp_write_handler>);
+static_assert(!std::is_constructible_v<rtsp_input_session, boost::asio::any_io_executor, boost::asio::ip::address, rtsp_write_handler>);
+static_assert(std::is_constructible_v<rtsp_input_tcp_session,
+                                      worker_context&,
+                                      std::string,
+                                      std::vector<rtsp_input_track_description>,
+                                      rtsp_write_handler>);
+static_assert(!std::is_constructible_v<rtsp_input_tcp_session,
+                                       boost::asio::any_io_executor,
+                                       std::string,
+                                       std::vector<rtsp_input_track_description>,
+                                       rtsp_write_handler>);
+static_assert(std::is_constructible_v<rtsp_input_udp_session,
+                                      worker_context&,
+                                      boost::asio::ip::address,
+                                      std::string,
+                                      std::vector<rtsp_input_track_description>>);
+static_assert(!std::is_constructible_v<rtsp_input_udp_session,
+                                       boost::asio::any_io_executor,
+                                       boost::asio::ip::address,
+                                       std::string,
+                                       std::vector<rtsp_input_track_description>>);
+static_assert(std::is_constructible_v<rtsp_input_media, worker_context&, std::string, std::vector<rtsp_input_track_description>>);
+static_assert(!std::is_constructible_v<rtsp_input_media,
+                                       boost::asio::any_io_executor,
+                                       std::string,
+                                       std::vector<rtsp_input_track_description>>);
+static_assert(std::is_constructible_v<rtsp_output_session,
+                                      worker_context&,
+                                      output_video_codec,
+                                      boost::asio::ip::address,
+                                      rtsp_write_handler>);
+static_assert(!std::is_constructible_v<rtsp_output_session,
+                                       boost::asio::any_io_executor,
+                                       output_video_codec,
+                                       boost::asio::ip::address,
+                                       rtsp_write_handler>);
 
 using http_request = boost::beast::http::request<boost::beast::http::string_body>;
 static_assert(std::is_constructible_v<hls_http_session, worker_context&, boost::beast::tcp_stream, http_request, const config&>);
@@ -4676,13 +4712,14 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
 
 void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    auto& io = worker.io();
     auto& streams = media_server::registry::instance();
     streams.clear();
 
     auto video = make_video_track();
     auto audio = make_g711_track(codec_id::g711a);
-    rtsp_input_media media(io.get_executor(),
+    rtsp_input_media media(worker,
                            "live/rtcp-sync",
                            {
                                rtsp_input_track_description{
@@ -4716,6 +4753,7 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
                           video_handle = stream->add_reader(video_reader, io.get_executor());
                           audio_handle = stream->add_reader(audio_reader, io.get_executor());
                       });
+    worker.release_work();
     io.run();
     io.restart();
     require(video_reader->wait_for_ready(1) && audio_reader->wait_for_ready(1), "rtsp rtcp sync readers ready");

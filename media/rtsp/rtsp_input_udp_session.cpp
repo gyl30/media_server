@@ -6,6 +6,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_input_udp_session.h"
 
 extern "C"
@@ -16,14 +17,15 @@ extern "C"
 namespace media_server
 {
 
-rtsp_input_udp_session::rtsp_input_udp_session(boost::asio::any_io_executor executor,
+rtsp_input_udp_session::rtsp_input_udp_session(worker_context& worker,
                                                boost::asio::ip::address bind_address,
                                                std::string stream_name,
                                                std::vector<rtsp_input_track_description> descriptions)
-    : bind_address_(std::move(bind_address)),
-      media_(executor, std::move(stream_name), std::move(descriptions)),
+    : worker_(worker),
+      bind_address_(std::move(bind_address)),
+      media_(worker_, std::move(stream_name), std::move(descriptions)),
       track_states_(media_.descriptions().size()),
-      rtcp_timer_(std::move(executor))
+      rtcp_timer_(worker_.io())
 {
 }
 
@@ -90,7 +92,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
 
     const auto local_ports = *reserved;
     boost::system::error_code network_error;
-    auto candidate_rtp = std::make_shared<udp_socket>(rtcp_timer_.get_executor());
+    auto candidate_rtp = std::make_shared<udp_socket>(worker_.io());
     candidate_rtp->startup(
         bind_address_,
         local_ports.first,
@@ -126,7 +128,7 @@ std::optional<rtsp_input_udp_session::udp_socket_pair> rtsp_input_udp_session::p
         return std::nullopt;
     }
 
-    auto candidate_rtcp = std::make_shared<udp_socket>(rtcp_timer_.get_executor());
+    auto candidate_rtcp = std::make_shared<udp_socket>(worker_.io());
     candidate_rtcp->startup(
         bind_address_,
         local_ports.second,

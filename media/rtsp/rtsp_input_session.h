@@ -9,7 +9,6 @@
 #include <functional>
 #include <string_view>
 
-#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/ip/address.hpp>
 
 #include "media/rtsp/rtsp_input_media.h"
@@ -18,13 +17,14 @@
 namespace media_server
 {
 
+class worker_context;
 class rtsp_input_tcp_session;
 class rtsp_input_udp_session;
 
 class rtsp_input_session final : public rtsp_server_session
 {
    public:
-    rtsp_input_session(boost::asio::any_io_executor executor,
+    rtsp_input_session(worker_context& worker,
                        boost::asio::ip::address bind_address,
                        std::function<void(std::span<const std::uint8_t>)> write);
 
@@ -40,7 +40,7 @@ class rtsp_input_session final : public rtsp_server_session
     void shutdown() override;
 
    private:
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     boost::asio::ip::address bind_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::shared_ptr<rtsp_input_tcp_session> tcp_session_;
