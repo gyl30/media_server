@@ -146,7 +146,7 @@ int service::run()
 
     for (const auto& [name, url] : config_.rtsp_pulls)
     {
-        auto pull = std::make_shared<rtsp_pull_session>(workers_->next().io(), name, url);
+        auto pull = std::make_shared<rtsp_pull_session>(workers_->next(), name, url);
         if (!pull->startup())
         {
             spdlog::error("rtsp pull startup failed stream {}", name);
