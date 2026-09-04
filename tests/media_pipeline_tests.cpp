@@ -57,7 +57,6 @@
 #include "media/gb28181/gb28181_output_media.h"
 #include "media/gb28181/gb28181_udp_output_session.h"
 #include "media/gb28181/gb28181_tcp_output_session.h"
-#include "media/net/tcp_connector.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtmp/rtmp_input_session.h"
 #include "media/rtmp/rtmp_output_session.h"
@@ -197,12 +196,20 @@ static_assert(std::is_constructible_v<whep_session,
                                       boost::asio::ip::address,
                                       std::shared_ptr<dtls_certificate>>);
 static_assert(std::is_constructible_v<gb28181_udp_session, worker_context&, std::string, gb28181_description>);
-static_assert(std::is_constructible_v<
-              gb28181_tcp_session, worker_context&, std::shared_ptr<tcp_socket_source>, std::string, std::uint8_t, std::uint32_t>);
+static_assert(std::is_constructible_v<gb28181_tcp_session,
+                                      worker_context&,
+                                      std::string,
+                                      gb28181_description,
+                                      std::chrono::milliseconds>);
 static_assert(std::is_constructible_v<gb28181_udp_output_session,
                                       worker_context&, std::shared_ptr<media_stream>, gb28181_description, boost::asio::ip::address, std::string, bool>);
 static_assert(std::is_constructible_v<gb28181_tcp_output_session,
-                                      worker_context&, std::shared_ptr<tcp_socket_source>, std::weak_ptr<media_stream>, std::string, std::string, std::uint8_t, std::uint32_t>);
+                                      worker_context&,
+                                      std::weak_ptr<media_stream>,
+                                      std::string,
+                                      std::string,
+                                      gb28181_description,
+                                      std::chrono::milliseconds>);
 static_assert(std::is_constructible_v<gb28181_input_media, worker_context&, std::string, std::uint8_t, std::uint32_t>);
 static_assert(std::is_constructible_v<gb28181_output_media,
                                       worker_context&,
@@ -2317,108 +2324,78 @@ void test_tcp_listener_startup_error()
             "tcp listener preserves unavailable address error");
 }
 
-void test_tcp_connector_successful_connect()
+void test_gb28181_tcp_active_connect_successful()
 {
-    boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
-    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port());
-    std::optional<boost::asio::ip::tcp::socket> client;
-    std::optional<boost::asio::ip::tcp::socket> server;
-    int completion_count = 0;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
+    auto& streams = registry::instance();
+    streams.clear();
 
+    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
+    std::optional<boost::asio::ip::tcp::socket> peer;
     acceptor.async_accept(
         [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
         {
-            require(!error, "tcp connector server accept");
-            server.emplace(std::move(socket));
+            require(!error, "gb28181 tcp active peer accept");
+            peer.emplace(std::move(socket));
         });
-    auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(2));
-    boost::system::error_code startup_error;
-    connector->startup(
-        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
-        {
-            ++completion_count;
-            require(!error, "tcp connector connect success");
-            client.emplace(std::move(socket));
-        },
-        startup_error);
-    require(!startup_error, "tcp connector startup");
+
+    const std::string stream_name = "live/gb-active-connect";
+    const gb28181_description description{.transport = gb28181_transport::tcp_active,
+                                          .address = boost::asio::ip::address_v4::loopback(),
+                                          .rtp_port = acceptor.local_endpoint().port(),
+                                          .payload_type = 96,
+                                          .ssrc = 10'000'2101};
+    auto session = std::make_shared<gb28181_tcp_session>(worker, stream_name, description, std::chrono::seconds(2));
+    require(streams.add_input_session(stream_name, session), "gb28181 tcp active registry add");
+    require(session->startup(), "gb28181 tcp active startup");
+
+    io.run_for(std::chrono::milliseconds(100));
+    require(peer && peer->is_open(), "gb28181 tcp active connects to peer");
+    require(streams.take_input_session(stream_name) == session, "gb28181 tcp active remains registered after connect");
+
+    session->shutdown();
+    boost::system::error_code error;
+    peer->close(error);
+    io.restart();
     io.run();
-
-    require(completion_count == 1, "tcp connector success completes once");
-    require(client && server && client->is_open() && server->is_open(), "tcp connector transfers connected socket");
-
-    const std::array<std::uint8_t, 4> outbound{1, 2, 3, 4};
-    const std::array<std::uint8_t, 3> inbound{5, 6, 7};
-    std::array<std::uint8_t, outbound.size()> server_received{};
-    std::array<std::uint8_t, inbound.size()> client_received{};
-    boost::asio::write(*client, boost::asio::buffer(outbound));
-    boost::asio::read(*server, boost::asio::buffer(server_received));
-    boost::asio::write(*server, boost::asio::buffer(inbound));
-    boost::asio::read(*client, boost::asio::buffer(client_received));
-    require(server_received == outbound && client_received == inbound, "tcp connector transferred socket bidirectional io");
+    streams.clear();
 }
 
-void test_tcp_connector_connection_refused()
+void test_gb28181_tcp_active_connection_refused()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
+    auto& streams = registry::instance();
+    streams.clear();
+
     boost::asio::ip::tcp::acceptor reserved(io);
     reserved.open(boost::asio::ip::tcp::v4());
     reserved.bind({boost::asio::ip::address_v4::loopback(), 0});
     const auto endpoint = reserved.local_endpoint();
-    int completion_count = 0;
-    boost::system::error_code connect_error;
+    reserved.close();
+
+    const std::string stream_name = "live/gb-active-refused";
+    const gb28181_description description{.transport = gb28181_transport::tcp_active,
+                                          .address = endpoint.address(),
+                                          .rtp_port = endpoint.port(),
+                                          .payload_type = 96,
+                                          .ssrc = 10'000'2102};
+    auto session = std::make_shared<gb28181_tcp_session>(worker, stream_name, description, std::chrono::seconds(5));
+    require(streams.add_input_session(stream_name, session), "gb28181 tcp active refusal registry add");
+    require(session->startup(), "gb28181 tcp active refusal startup");
     const auto started_at = std::chrono::steady_clock::now();
 
-    auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(5));
-    boost::system::error_code startup_error;
-    connector->startup(
-        [&](boost::system::error_code error, boost::asio::ip::tcp::socket socket)
-        {
-            ++completion_count;
-            connect_error = error;
-            require(!socket.is_open(), "tcp connector refusal has no connected socket");
-            connector->shutdown();
-        },
-        startup_error);
-    require(!startup_error, "tcp connector startup");
     io.run();
 
-    require(completion_count == 1, "tcp connector refusal completes once");
-    require(connect_error && connect_error != boost::asio::error::timed_out, "tcp connector preserves refused error");
-    require(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(2), "tcp connector refusal does not wait for timeout");
-}
-
-void test_tcp_connector_shutdown_lifecycle()
-{
-    boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
-    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), acceptor.local_endpoint().port());
-    int completion_count = 0;
-    boost::system::error_code completion_error;
-    auto connector = std::make_shared<tcp_connector>(io.get_executor(), endpoint, std::chrono::seconds(5));
-    const std::weak_ptr<tcp_connector> weak_connector = connector;
-    boost::system::error_code startup_error;
-    connector->startup(
-        [connector, &completion_count, &completion_error](boost::system::error_code error, boost::asio::ip::tcp::socket)
-        {
-            ++completion_count;
-            completion_error = error;
-        },
-        startup_error);
-    require(!startup_error, "tcp connector startup");
-    require(io.run_one() == 1, "tcp connector coroutine starts before shutdown");
-    connector->shutdown();
-    connector->shutdown();
-    connector->shutdown();
-    connector.reset();
-    require(!weak_connector.expired(), "tcp connector shutdown keeps self until owner cleanup");
-
-    io.run();
-
-    require(completion_count <= 1, "tcp connector shutdown completes at most once");
-    require(completion_count == 0 || !completion_error, "tcp connector shutdown suppresses cancellation callback");
-    require(weak_connector.expired(), "tcp connector shutdown clears callback ownership");
+    require(!streams.take_input_session(stream_name), "gb28181 tcp active refusal unregisters session");
+    require(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(2),
+            "gb28181 tcp active refusal does not wait for timeout");
+    streams.clear();
 }
 
 void test_tcp_connection_shutdown_lifecycle()
@@ -10263,12 +10240,10 @@ int main()
     std::cout << "[pass] media_stream_configless_audio_track\n";
     media_server::test_rtsp_client_session_timeout();
     std::cout << "[pass] rtsp_client_session_timeout\n";
-    media_server::test_tcp_connector_successful_connect();
-    std::cout << "[pass] tcp_connector_successful_connect\n";
-    media_server::test_tcp_connector_connection_refused();
-    std::cout << "[pass] tcp_connector_connection_refused\n";
-    media_server::test_tcp_connector_shutdown_lifecycle();
-    std::cout << "[pass] tcp_connector_shutdown_lifecycle\n";
+    media_server::test_gb28181_tcp_active_connect_successful();
+    std::cout << "[pass] gb28181_tcp_active_connect_successful\n";
+    media_server::test_gb28181_tcp_active_connection_refused();
+    std::cout << "[pass] gb28181_tcp_active_connection_refused\n";
     media_server::test_tcp_connection_shutdown_lifecycle();
     std::cout << "[pass] tcp_connection_shutdown_lifecycle\n";
     media_server::test_tcp_connection_io_error_propagation();

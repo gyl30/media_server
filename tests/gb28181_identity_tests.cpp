@@ -10,7 +10,6 @@
 #include <boost/url/parse.hpp>
 #include <boost/asio/io_context.hpp>
 
-#include "media/net/tcp_acceptor.h"
 #include "media/net/worker_context.h"
 #include "media/core/media_stream.h"
 #include "media/http/gb28181_http.h"
@@ -63,6 +62,15 @@ gb28181_http_response output_request(worker_context& worker, gb28181_http_reques
 gb28181_description make_tcp_active_description(std::uint16_t port, std::uint32_t ssrc)
 {
     return gb28181_description{.transport = gb28181_transport::tcp_active,
+                               .address = boost::asio::ip::address_v4::loopback(),
+                               .rtp_port = port,
+                               .payload_type = 96,
+                               .ssrc = ssrc};
+}
+
+gb28181_description make_tcp_passive_description(std::uint16_t port, std::uint32_t ssrc)
+{
+    return gb28181_description{.transport = gb28181_transport::tcp_passive,
                                .address = boost::asio::ip::address_v4::loopback(),
                                .rtp_port = port,
                                .payload_type = 96,
@@ -176,8 +184,8 @@ void test_tcp_input_repeated_shutdown_is_idempotent()
     auto& io = worker.io();
     clear_state();
     const std::string stream_name = "live/gb-input-repeated-shutdown";
-    auto source = std::make_shared<tcp_acceptor>(io, 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
-    auto session = std::make_shared<gb28181_tcp_session>(worker, source, stream_name, 96, 10'000'2007);
+    const auto description = make_tcp_passive_description(0, 10'000'2007);
+    auto session = std::make_shared<gb28181_tcp_session>(worker, stream_name, description, std::chrono::seconds(1));
     require(registry::instance().add_input_session(stream_name, session), "gb input repeated shutdown registry add");
     require(session->startup(), "gb input repeated shutdown startup");
 
@@ -199,9 +207,13 @@ void test_tcp_output_repeated_shutdown_is_idempotent()
     auto& io = worker.io();
     clear_state();
     const auto stream = add_video_stream(io, "live/gb-output-repeated-shutdown");
-    auto source = std::make_shared<tcp_acceptor>(io, 0, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
-    auto session = std::make_shared<gb28181_tcp_output_session>(
-        worker, source, std::weak_ptr<media_stream>{stream}, stream->name(), "repeated-shutdown", 96, 10'000'2008);
+    const auto description = make_tcp_passive_description(0, 10'000'2008);
+    auto session = std::make_shared<gb28181_tcp_output_session>(worker,
+                                                                std::weak_ptr<media_stream>{stream},
+                                                                stream->name(),
+                                                                "repeated-shutdown",
+                                                                description,
+                                                                std::chrono::seconds(1));
     require(registry::instance().add_output_session(stream->name(), "repeated-shutdown", session), "gb output repeated shutdown registry add");
     require(session->startup(), "gb output repeated shutdown startup");
 
@@ -223,8 +235,8 @@ void test_tcp_timeout_unregisters_input_session()
     auto& io = worker.io();
     clear_state();
     const std::string stream_name = "live/gb-input-timeout";
-    auto source = std::make_shared<tcp_acceptor>(io, 0, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
-    auto session = std::make_shared<gb28181_tcp_session>(worker, source, stream_name, 96, 10'000'2005);
+    const auto description = make_tcp_passive_description(0, 10'000'2005);
+    auto session = std::make_shared<gb28181_tcp_session>(worker, stream_name, description, std::chrono::milliseconds(5));
     require(registry::instance().add_input_session(stream_name, session), "gb input timeout registry add");
     require(session->startup(), "gb input timeout startup");
     io.run();
@@ -242,9 +254,13 @@ void test_tcp_timeout_unregisters_output_session()
     auto& io = worker.io();
     clear_state();
     const auto stream = add_video_stream(io, "live/gb-output-timeout");
-    auto source = std::make_shared<tcp_acceptor>(io, 0, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
-    auto session = std::make_shared<gb28181_tcp_output_session>(
-        worker, source, std::weak_ptr<media_stream>{stream}, stream->name(), "timeout", 96, 10'000'2006);
+    const auto description = make_tcp_passive_description(0, 10'000'2006);
+    auto session = std::make_shared<gb28181_tcp_output_session>(worker,
+                                                                std::weak_ptr<media_stream>{stream},
+                                                                stream->name(),
+                                                                "timeout",
+                                                                description,
+                                                                std::chrono::milliseconds(5));
     require(registry::instance().add_output_session(stream->name(), "timeout", session), "gb output timeout registry add");
     require(session->startup(), "gb output timeout startup");
     io.run();

@@ -2,6 +2,9 @@
 #include <utility>
 
 #include <spdlog/spdlog.h>
+#include <boost/asio/cancel_after.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
 
 #include "media/core/stream_registry.h"
@@ -11,44 +14,40 @@
 namespace media_server
 {
 gb28181_tcp_session::gb28181_tcp_session(worker_context& worker,
-                                         std::shared_ptr<tcp_socket_source> socket_source,
                                          std::string stream_name,
-                                         std::uint8_t payload_type,
-                                         std::uint32_t expected_ssrc)
+                                         gb28181_description description,
+                                         std::chrono::milliseconds establishment_timeout)
     : worker_(worker),
-      socket_source_(std::move(socket_source)),
       stream_name_(std::move(stream_name)),
-      media_(worker_, stream_name_, payload_type, expected_ssrc)
+      description_(std::move(description)),
+      media_(worker_, stream_name_, description_.payload_type, description_.ssrc),
+      establishment_timeout_(establishment_timeout),
+      socket_(worker_.io())
 {
 }
 
 bool gb28181_tcp_session::startup()
 {
-    if (closed_ || !socket_source_)
+    if (closed_)
     {
         return false;
     }
 
-    const auto weak = weak_from_this();
-    boost::system::error_code error;
-    socket_source_->startup(
-        [weak](boost::system::error_code source_error, boost::asio::ip::tcp::socket socket) mutable
-        {
-            if (const auto self = weak.lock())
-            {
-                self->on_socket_result(source_error, std::move(socket));
-                return;
-            }
-            boost::system::error_code ignored;
-            socket.close(ignored);
-        },
-        error);
-    if (error)
+    if (description_.transport == gb28181_transport::tcp_passive)
     {
-        spdlog::error("gb28181 tcp source startup failed stream {} error {}", stream_name_, error.message());
-        shutdown();
-        return false;
+        listener_ = std::make_unique<tcp_listener>(worker_.io(), description_.rtp_port, description_.address);
+        boost::system::error_code error;
+        listener_->startup(error);
+        if (error)
+        {
+            spdlog::error("gb28181 tcp listener startup failed stream {} error {}", stream_name_, error.message());
+            listener_.reset();
+            return false;
+        }
     }
+
+    const auto self = shared_from_this();
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
     return true;
 }
 
@@ -60,30 +59,48 @@ void gb28181_tcp_session::shutdown()
 
 const std::string& gb28181_tcp_session::stream_name() const noexcept { return stream_name_; }
 
-void gb28181_tcp_session::on_socket_result(boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+void gb28181_tcp_session::run(boost::asio::yield_context yield)
 {
-    if (error)
-    {
-        spdlog::warn("gb28181 tcp source failed stream {} error {}", stream_name_, error.message());
-        shutdown();
-        return;
-    }
     if (closed_)
     {
-        boost::system::error_code ignored;
-        socket.close(ignored);
         return;
     }
 
-    socket_source_.reset();
+    boost::system::error_code error;
+    if (description_.transport == gb28181_transport::tcp_passive)
+    {
+        listener_->accept(socket_, establishment_timeout_, yield, error);
+        listener_->shutdown();
+        listener_.reset();
+    }
+    else
+    {
+        socket_.async_connect(boost::asio::ip::tcp::endpoint{description_.address, description_.rtp_port},
+                              boost::asio::cancel_after(establishment_timeout_, yield[error]));
+        if (error == boost::asio::error::operation_aborted && !closed_)
+        {
+            error = boost::asio::error::timed_out;
+        }
+    }
+
+    if (error || closed_)
+    {
+        if (error && !closed_)
+        {
+            spdlog::warn("gb28181 tcp establishment failed stream {} error {}", stream_name_, error.message());
+        }
+        safe_shutdown();
+        return;
+    }
+
     if (!media_.startup())
     {
         spdlog::error("gb28181 tcp input media startup failed stream {}", stream_name_);
-        shutdown();
+        safe_shutdown();
         return;
     }
 
-    connection_ = std::make_shared<tcp_connection>(std::move(socket));
+    connection_ = std::make_shared<tcp_connection>(std::move(socket_));
     input_buffer_.reserve(64 * 1024);
     const auto weak = weak_from_this();
     connection_->startup(
@@ -159,11 +176,13 @@ void gb28181_tcp_session::safe_shutdown()
     }
     closed_ = true;
     registry::instance().remove_input_session(stream_name_, *this);
-    if (socket_source_)
+    if (listener_)
     {
-        socket_source_->shutdown();
-        socket_source_.reset();
+        listener_->shutdown();
     }
+    boost::system::error_code error;
+    socket_.cancel(error);
+    socket_.close(error);
     media_.shutdown();
     if (connection_)
     {
