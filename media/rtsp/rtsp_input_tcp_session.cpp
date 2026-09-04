@@ -5,6 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_input_tcp_session.h"
 
 extern "C"
@@ -15,14 +16,15 @@ extern "C"
 namespace media_server
 {
 
-rtsp_input_tcp_session::rtsp_input_tcp_session(boost::asio::any_io_executor executor,
+rtsp_input_tcp_session::rtsp_input_tcp_session(worker_context& worker,
                                                std::string stream_name,
                                                std::vector<rtsp_input_track_description> descriptions,
                                                std::function<void(std::span<const std::uint8_t>)> write)
-    : write_handler_(std::move(write)),
-      media_(executor, std::move(stream_name), std::move(descriptions)),
+    : worker_(worker),
+      write_handler_(std::move(write)),
+      media_(worker_, std::move(stream_name), std::move(descriptions)),
       track_states_(media_.descriptions().size()),
-      rtcp_timer_(std::move(executor))
+      rtcp_timer_(worker_.io())
 {
 }
 

@@ -12,6 +12,7 @@
 #include <boost/asio/error.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
+#include "media/net/worker_context.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/stream_registry.h"
 #include "media/codec/video_transcoder.h"
@@ -56,11 +57,11 @@ std::uint32_t random_u32()
 }
 }    // namespace
 
-rtsp_output_session::rtsp_output_session(boost::asio::any_io_executor executor,
+rtsp_output_session::rtsp_output_session(worker_context& worker,
                                          output_video_codec video_codec,
                                          boost::asio::ip::address local_address,
                                          std::function<void(std::span<const std::uint8_t>)> write)
-    : executor_(std::move(executor)), video_codec_(video_codec), local_address_(std::move(local_address)), write_handler_(std::move(write))
+    : worker_(worker), video_codec_(video_codec), local_address_(std::move(local_address)), write_handler_(std::move(write))
 {
 }
 
@@ -222,7 +223,7 @@ void rtsp_output_session::shutdown()
     }
     closed_ = true;
     const auto self = shared_from_this();
-    boost::asio::post(executor_, [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void rtsp_output_session::safe_shutdown()
@@ -396,7 +397,7 @@ int rtsp_output_session::on_play(rtsp_server_t* server, std::string_view uri, st
 
     static_cast<void>(rtsp_server_reply_play(server, 200, npt, nullptr, nullptr));
     playing_ = true;
-    static_cast<void>(stream_->add_reader(shared_from_this(), executor_));
+    static_cast<void>(stream_->add_reader(shared_from_this(), worker_.io()));
     return 0;
 }
 

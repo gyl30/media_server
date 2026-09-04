@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_input_media.h"
 
@@ -25,10 +26,10 @@ constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
-rtsp_input_media::rtsp_input_media(boost::asio::any_io_executor executor,
+rtsp_input_media::rtsp_input_media(worker_context& worker,
                                    std::string stream_name,
                                    std::vector<rtsp_input_track_description> descriptions)
-    : executor_(std::move(executor)), stream_name_(std::move(stream_name)), descriptions_(std::move(descriptions))
+    : worker_(worker), stream_name_(std::move(stream_name)), descriptions_(std::move(descriptions))
 {
 }
 
@@ -41,7 +42,7 @@ bool rtsp_input_media::startup(const std::string& rtcp_cname)
         return false;
     }
 
-    stream_ = std::make_shared<media_stream>(stream_name_, executor_);
+    stream_ = std::make_shared<media_stream>(stream_name_, worker_.io());
     static_cast<void>(avpkt2bs_create(&bitstream_));
     demuxers_.resize(descriptions_.size());
     for (std::size_t index = 0; index < descriptions_.size(); ++index)
