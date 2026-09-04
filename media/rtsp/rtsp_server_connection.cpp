@@ -43,13 +43,13 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     const auto peer = transport_.remote_endpoint(endpoint_error);
     if (endpoint_error)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
     const auto local = transport_.local_endpoint(endpoint_error);
     if (endpoint_error)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
 
@@ -68,7 +68,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     auto* rtsp_context = rtsp_server_create(peer_address.c_str(), peer.port(), &rtsp_handler, this, this);
     if (rtsp_context == nullptr)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
     local_address_ = local.address();
@@ -141,7 +141,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     {
         std::free(interleaved.data);
     }
-    safe_shutdown();
+    shutdown();
 }
 
 void rtsp_server_connection::shutdown()
@@ -261,7 +261,7 @@ int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* s
 
 void rtsp_server_connection::write(std::span<const std::uint8_t> data)
 {
-    if (closed_ || data.empty())
+    if (data.empty())
     {
         return;
     }
@@ -279,11 +279,6 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_)
-        {
-            write_queue_.clear();
-            return;
-        }
         if (write_queue_.empty())
         {
             return;
@@ -293,14 +288,8 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         boost::system::error_code error;
         const auto started_at = std::chrono::steady_clock::now();
         static_cast<void>(transport_.write(*data, yield, error));
-        if (closed_)
-        {
-            write_queue_.clear();
-            return;
-        }
         if (error)
         {
-            write_queue_.clear();
             shutdown();
             return;
         }
@@ -308,7 +297,6 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         write_queue_.pop_front();
         if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
         {
-            write_queue_.clear();
             shutdown();
             return;
         }
