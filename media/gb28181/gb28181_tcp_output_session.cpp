@@ -1,3 +1,5 @@
+#include <array>
+#include <chrono>
 #include <limits>
 #include <utility>
 #include <algorithm>
@@ -8,7 +10,6 @@
 #include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
 
-#include "media/net/tcp_connection.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_output_media.h"
 #include "media/net/worker_context.h"
@@ -16,6 +17,10 @@
 
 namespace media_server
 {
+namespace
+{
+constexpr auto slow_write_timeout = std::chrono::seconds(15);
+}
 
 gb28181_tcp_output_session::gb28181_tcp_output_session(worker_context& worker,
                                                        std::weak_ptr<media_stream> stream,
@@ -102,30 +107,8 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
         return;
     }
 
-    connection_ = std::make_shared<tcp_connection>(std::move(socket_));
+    transport_ = std::make_unique<tcp_yield_transport>(std::move(socket_));
     const auto weak = weak_from_this();
-    connection_->startup(
-        [weak](boost::system::error_code connection_error, std::span<const std::uint8_t>)
-        {
-            if (connection_error)
-            {
-                if (const auto self = weak.lock())
-                {
-                    self->shutdown();
-                }
-            }
-        },
-        [weak](boost::system::error_code connection_error, std::size_t)
-        {
-            if (connection_error)
-            {
-                if (const auto self = weak.lock())
-                {
-                    self->shutdown();
-                }
-            }
-        });
-
     media_ = std::make_shared<gb28181_output_media>(
         worker_,
         stream,
@@ -149,13 +132,23 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
     {
         media_->shutdown();
         media_.reset();
-        connection_->shutdown();
-        connection_.reset();
         safe_shutdown();
         return;
     }
 
     spdlog::info("gb28181 tcp output started stream {} output {}", stream_name_, output_id_);
+
+    std::array<std::uint8_t, 64 * 1024> buffer{};
+    for (;;)
+    {
+        static_cast<void>(transport_->read(buffer, yield, error));
+        if (error)
+        {
+            break;
+        }
+    }
+
+    safe_shutdown();
 }
 
 void gb28181_tcp_output_session::shutdown()
@@ -164,9 +157,49 @@ void gb28181_tcp_output_session::shutdown()
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
+void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
+{
+    for (;;)
+    {
+        if (closed_)
+        {
+            write_queue_.clear();
+            return;
+        }
+        if (write_queue_.empty())
+        {
+            return;
+        }
+
+        const auto data = write_queue_.front();
+        boost::system::error_code error;
+        const auto started_at = std::chrono::steady_clock::now();
+        static_cast<void>(transport_->write(*data, yield, error));
+        if (closed_)
+        {
+            write_queue_.clear();
+            return;
+        }
+        if (error)
+        {
+            write_queue_.clear();
+            shutdown();
+            return;
+        }
+
+        write_queue_.pop_front();
+        if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
+        {
+            write_queue_.clear();
+            shutdown();
+            return;
+        }
+    }
+}
+
 void gb28181_tcp_output_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (closed_ || !connection_)
+    if (closed_ || !transport_)
     {
         return;
     }
@@ -176,12 +209,19 @@ void gb28181_tcp_output_session::send_packet(std::vector<std::uint8_t> packet)
         return;
     }
 
-    std::vector<std::uint8_t> frame(packet.size() + 2U);
+    auto frame = std::make_shared<std::vector<std::uint8_t>>(packet.size() + 2U);
     const auto length = static_cast<std::uint16_t>(packet.size());
-    frame[0] = static_cast<std::uint8_t>(length >> 8U);
-    frame[1] = static_cast<std::uint8_t>(length & 0xffU);
-    std::copy(packet.begin(), packet.end(), frame.begin() + 2);
-    connection_->write(frame);
+    (*frame)[0] = static_cast<std::uint8_t>(length >> 8U);
+    (*frame)[1] = static_cast<std::uint8_t>(length & 0xffU);
+    std::copy(packet.begin(), packet.end(), frame->begin() + 2);
+
+    const bool start_write = write_queue_.empty();
+    write_queue_.push_back(std::move(frame));
+    if (start_write)
+    {
+        const auto self = shared_from_this();
+        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context write_yield) { self->run_write(write_yield); }, boost::asio::detached);
+    }
 }
 
 void gb28181_tcp_output_session::safe_shutdown()
@@ -204,10 +244,10 @@ void gb28181_tcp_output_session::safe_shutdown()
         media_->shutdown();
         media_.reset();
     }
-    if (connection_)
+    write_queue_.clear();
+    if (transport_)
     {
-        connection_->shutdown();
-        connection_.reset();
+        transport_->shutdown();
     }
     spdlog::debug("gb28181 tcp output shutdown {} output {}", stream_name_, output_id_);
 }
