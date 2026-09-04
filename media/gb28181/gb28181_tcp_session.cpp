@@ -1,4 +1,3 @@
-#include <array>
 #include <cstddef>
 #include <span>
 #include <utility>
@@ -96,7 +95,7 @@ void gb28181_tcp_session::run(boost::asio::yield_context yield)
 
     spdlog::info("gb28181 tcp session started stream {}", stream_name_);
 
-    std::array<std::uint8_t, 64 * 1024> buffer{};
+    std::vector<std::uint8_t> buffer(64 * 1024);
     std::vector<std::uint8_t> input_buffer;
     input_buffer.reserve(buffer.size());
     for (;;)
