@@ -1,5 +1,8 @@
+#include <array>
 #include <cstddef>
+#include <span>
 #include <utility>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/cancel_after.hpp>
@@ -93,6 +96,7 @@ void gb28181_tcp_session::run(boost::asio::yield_context yield)
         return;
     }
 
+    transport_ = std::make_unique<tcp_yield_transport>(std::move(socket_));
     if (!media_.startup())
     {
         spdlog::error("gb28181 tcp input media startup failed stream {}", stream_name_);
@@ -100,72 +104,53 @@ void gb28181_tcp_session::run(boost::asio::yield_context yield)
         return;
     }
 
-    connection_ = std::make_shared<tcp_connection>(std::move(socket_));
-    input_buffer_.reserve(64 * 1024);
-    const auto weak = weak_from_this();
-    connection_->startup(
-        [weak](boost::system::error_code connection_error, std::span<const std::uint8_t> data)
-        {
-            if (const auto self = weak.lock())
-            {
-                if (connection_error)
-                {
-                    self->shutdown();
-                    return;
-                }
-                self->on_read(data);
-            }
-        },
-        [weak](boost::system::error_code connection_error, std::size_t)
-        {
-            if (connection_error)
-            {
-                if (const auto self = weak.lock())
-                {
-                    self->shutdown();
-                }
-            }
-        });
     spdlog::info("gb28181 tcp session started stream {}", stream_name_);
-}
 
-void gb28181_tcp_session::on_read(std::span<const std::uint8_t> data)
-{
-    if (closed_ || data.empty())
+    std::array<std::uint8_t, 64 * 1024> buffer{};
+    std::vector<std::uint8_t> input_buffer;
+    input_buffer.reserve(buffer.size());
+    for (;;)
     {
-        return;
-    }
-
-    input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
-    std::size_t offset = 0;
-    while (input_buffer_.size() - offset >= 2)
-    {
-        const auto bytes = static_cast<std::size_t>((static_cast<std::uint16_t>(input_buffer_[offset]) << 8U) | input_buffer_[offset + 1]);
-        if (input_buffer_.size() - offset < bytes + 2U)
+        const auto read_bytes = transport_->read(buffer, yield, error);
+        if (error)
         {
             break;
         }
-        offset += 2;
-        if (bytes != 0)
+
+        input_buffer.insert(input_buffer.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(read_bytes));
+        std::size_t offset = 0;
+        while (input_buffer.size() - offset >= 2U)
         {
-            const std::span packet{input_buffer_.data() + offset, bytes};
-            if (media_.input_rtp(packet) == gb28181_rtp_input_result::fatal)
+            const auto packet_bytes =
+                static_cast<std::size_t>((static_cast<std::uint16_t>(input_buffer[offset]) << 8U) | input_buffer[offset + 1U]);
+            if (input_buffer.size() - offset < packet_bytes + 2U)
             {
-                shutdown();
-                return;
+                break;
             }
+            offset += 2U;
+            if (packet_bytes != 0U)
+            {
+                const std::span packet{input_buffer.data() + offset, packet_bytes};
+                if (media_.input_rtp(packet) == gb28181_rtp_input_result::fatal)
+                {
+                    safe_shutdown();
+                    return;
+                }
+            }
+            offset += packet_bytes;
         }
-        offset += bytes;
+
+        if (offset == input_buffer.size())
+        {
+            input_buffer.clear();
+        }
+        else if (offset != 0U)
+        {
+            input_buffer.erase(input_buffer.begin(), input_buffer.begin() + static_cast<std::ptrdiff_t>(offset));
+        }
     }
 
-    if (offset == input_buffer_.size())
-    {
-        input_buffer_.clear();
-    }
-    else if (offset != 0)
-    {
-        input_buffer_.erase(input_buffer_.begin(), input_buffer_.begin() + static_cast<std::ptrdiff_t>(offset));
-    }
+    safe_shutdown();
 }
 
 void gb28181_tcp_session::safe_shutdown()
@@ -184,12 +169,10 @@ void gb28181_tcp_session::safe_shutdown()
     socket_.cancel(error);
     socket_.close(error);
     media_.shutdown();
-    if (connection_)
+    if (transport_)
     {
-        connection_->shutdown();
-        connection_.reset();
+        transport_->shutdown();
     }
-    input_buffer_.clear();
     spdlog::debug("gb28181 tcp session shutdown {}", stream_name_);
 }
 

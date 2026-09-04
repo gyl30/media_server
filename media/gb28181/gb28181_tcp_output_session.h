@@ -2,6 +2,7 @@
 #define MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
 
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_listener.h"
+#include "media/net/tcp_yield_transport.h"
 #include "media/gb28181/gb28181_types.h"
 
 namespace media_server
@@ -20,7 +22,6 @@ namespace media_server
 class worker_context;
 
 class gb28181_output_media;
-class tcp_connection;
 
 class gb28181_tcp_output_session final : public stream_session, public std::enable_shared_from_this<gb28181_tcp_output_session>
 {
@@ -37,6 +38,7 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
 
    private:
     void run(boost::asio::yield_context yield);
+    void run_write(boost::asio::yield_context yield);
     void send_packet(std::vector<std::uint8_t> packet);
     void safe_shutdown();
 
@@ -48,7 +50,8 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
     std::chrono::milliseconds establishment_timeout_{};
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
-    std::shared_ptr<tcp_connection> connection_;
+    std::unique_ptr<tcp_yield_transport> transport_;
+    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::shared_ptr<gb28181_output_media> media_;
     bool closed_{};
 };
