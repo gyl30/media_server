@@ -1,7 +1,6 @@
 #include <utility>
 
 #include "media/rtsp/rtsp_server.h"
-#include "media/net/tcp_connection.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
 namespace media_server
@@ -50,8 +49,7 @@ void rtsp_server::on_accept(boost::system::error_code error, worker_context& wor
         return;
     }
 
-    auto tcp = std::make_shared<tcp_connection>(std::move(socket));
-    auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(tcp), config_.rtsp_video.codec);
+    auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket), config_.rtsp_video.codec);
     connection->startup();
 }
 
