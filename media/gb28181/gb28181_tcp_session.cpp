@@ -31,11 +31,6 @@ gb28181_tcp_session::gb28181_tcp_session(worker_context& worker,
 
 bool gb28181_tcp_session::startup()
 {
-    if (closed_)
-    {
-        return false;
-    }
-
     if (description_.transport == gb28181_transport::tcp_passive)
     {
         listener_ = std::make_unique<tcp_listener>(worker_.io(), description_.rtp_port, description_.address);
@@ -64,11 +59,6 @@ const std::string& gb28181_tcp_session::stream_name() const noexcept { return st
 
 void gb28181_tcp_session::run(boost::asio::yield_context yield)
 {
-    if (closed_)
-    {
-        return;
-    }
-
     boost::system::error_code error;
     if (description_.transport == gb28181_transport::tcp_passive)
     {
@@ -80,19 +70,19 @@ void gb28181_tcp_session::run(boost::asio::yield_context yield)
     {
         socket_.async_connect(boost::asio::ip::tcp::endpoint{description_.address, description_.rtp_port},
                               boost::asio::cancel_after(establishment_timeout_, yield[error]));
-        if (error == boost::asio::error::operation_aborted && !closed_)
+        if (error == boost::asio::error::operation_aborted && socket_.is_open())
         {
             error = boost::asio::error::timed_out;
         }
     }
 
-    if (error || closed_)
+    if (error)
     {
-        if (error && !closed_)
+        if (error != boost::asio::error::operation_aborted)
         {
             spdlog::warn("gb28181 tcp establishment failed stream {} error {}", stream_name_, error.message());
         }
-        safe_shutdown();
+        shutdown();
         return;
     }
 
@@ -100,7 +90,7 @@ void gb28181_tcp_session::run(boost::asio::yield_context yield)
     if (!media_.startup())
     {
         spdlog::error("gb28181 tcp input media startup failed stream {}", stream_name_);
-        safe_shutdown();
+        shutdown();
         return;
     }
 
@@ -133,7 +123,7 @@ void gb28181_tcp_session::run(boost::asio::yield_context yield)
                 const std::span packet{input_buffer.data() + offset, packet_bytes};
                 if (media_.input_rtp(packet) == gb28181_rtp_input_result::fatal)
                 {
-                    safe_shutdown();
+                    shutdown();
                     return;
                 }
             }
@@ -150,7 +140,7 @@ void gb28181_tcp_session::run(boost::asio::yield_context yield)
         }
     }
 
-    safe_shutdown();
+    shutdown();
 }
 
 void gb28181_tcp_session::safe_shutdown()
