@@ -56,7 +56,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     auto* context = rtmp_server_create(this, &handler);
     if (context == nullptr)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
     rtmp_context_ = context;
@@ -88,7 +88,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     }
     rtmp_context_ = nullptr;
     rtmp_server_destroy(context);
-    safe_shutdown();
+    shutdown();
     spdlog::debug("rtmp shutdown {}", stream_name_);
 }
 
@@ -187,7 +187,6 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         static_cast<void>(transport_.write(*data, yield, error));
         if (error)
         {
-            write_queue_.clear();
             shutdown();
             return;
         }
@@ -195,7 +194,6 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         write_queue_.pop_front();
         if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
         {
-            write_queue_.clear();
             shutdown();
             return;
         }
@@ -313,7 +311,6 @@ void rtmp_session::safe_shutdown()
     }
     closed_ = true;
     rtmp_context_ = nullptr;
-    write_queue_.clear();
 
     transport_.shutdown();
 }
