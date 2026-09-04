@@ -2,43 +2,36 @@
 #define MEDIA_NET_TCP_LISTENER_H
 
 #include <chrono>
-#include <memory>
-#include <cstddef>
 #include <cstdint>
-#include <functional>
 
-#include <boost/asio.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
-
-#include "media/net/io_context_pool.h"
 
 namespace media_server
 {
 
-class tcp_listener final : public std::enable_shared_from_this<tcp_listener>
+class tcp_listener final
 {
    public:
-    using accept_handler = std::function<void(boost::system::error_code, worker_context&, boost::asio::ip::tcp::socket)>;
+    tcp_listener(boost::asio::io_context& io, std::uint16_t port, boost::asio::ip::address bind_address);
 
-    tcp_listener(io_context_pool& workers, std::uint16_t port, boost::asio::ip::address bind_address);
-
-    void startup(accept_handler handler, std::chrono::milliseconds timeout, boost::system::error_code& ec);
+    void startup(boost::system::error_code& error);
+    void accept(boost::asio::ip::tcp::socket& socket,
+                std::chrono::milliseconds timeout,
+                boost::asio::yield_context& yield,
+                boost::system::error_code& error);
     void shutdown();
 
    private:
-    void accept_loop(std::chrono::milliseconds timeout, boost::asio::yield_context& yield);
-    void on_timeout(const boost::system::error_code& ec);
-    void safe_shutdown();
-
-   private:
-    worker_context& worker_;
     boost::asio::steady_timer timer_;
     boost::asio::ip::tcp::acceptor acceptor_;
     std::uint16_t port_{};
     boost::asio::ip::address bind_address_;
-    io_context_pool& workers_;
-    accept_handler accept_handler_;
+    bool closed_{};
 };
 
 }    // namespace media_server
