@@ -1,8 +1,8 @@
-#include <array>
 #include <chrono>
 #include <limits>
 #include <utility>
 #include <algorithm>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/cancel_after.hpp>
@@ -126,7 +126,7 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
 
     spdlog::info("gb28181 tcp output started stream {} output {}", stream_name_, output_id_);
 
-    std::array<std::uint8_t, 64 * 1024> buffer{};
+    std::vector<std::uint8_t> buffer(64 * 1024);
     for (;;)
     {
         static_cast<void>(transport_->read(buffer, yield, error));
