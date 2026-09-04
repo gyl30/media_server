@@ -1,17 +1,17 @@
 #ifndef MEDIA_GB28181_GB28181_UDP_SESSION_H
 #define MEDIA_GB28181_GB28181_UDP_SESSION_H
 
-#include <span>
 #include <memory>
 #include <string>
 #include <cstdint>
 #include <optional>
 
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/spawn.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include "media/net/udp_socket.h"
 #include "media/net/port_manager.h"
+#include "media/net/udp_yield_transport.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_input_media.h"
@@ -32,25 +32,17 @@ class gb28181_udp_session final : public stream_session, public std::enable_shar
     [[nodiscard]] std::optional<port_manager_impl::port_pair> local_ports() const noexcept;
 
    private:
-    struct udp_socket_pair
-    {
-        std::shared_ptr<udp_socket> rtp;
-        std::shared_ptr<udp_socket> rtcp;
-        port_manager_impl::port_pair local_ports;
-    };
-
-    [[nodiscard]] std::optional<udp_socket_pair> prepare_udp_sockets(boost::asio::ip::address bind_address);
-    void shutdown_udp_sockets();
-    void on_rtp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
-    void on_rtcp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
-    void schedule_rtcp();
+    [[nodiscard]] std::optional<port_manager_impl::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
+    void run_rtp(boost::asio::yield_context yield);
+    void run_rtcp(boost::asio::yield_context yield);
+    void run_rtcp_sender(boost::asio::yield_context yield);
     void safe_shutdown();
 
     worker_context& worker_;
     gb28181_description description_;
     gb28181_input_media media_;
-    std::shared_ptr<udp_socket> rtp_socket_;
-    std::shared_ptr<udp_socket> rtcp_socket_;
+    udp_yield_transport rtp_transport_;
+    udp_yield_transport rtcp_transport_;
     std::optional<port_manager_impl::port_pair> local_ports_;
     boost::asio::steady_timer rtcp_timer_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint_;
