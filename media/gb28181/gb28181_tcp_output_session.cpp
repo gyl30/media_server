@@ -3,6 +3,9 @@
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
+#include <boost/asio/cancel_after.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
 
 #include "media/net/tcp_connection.h"
@@ -15,78 +18,91 @@ namespace media_server
 {
 
 gb28181_tcp_output_session::gb28181_tcp_output_session(worker_context& worker,
-                                                       std::shared_ptr<tcp_socket_source> socket_source,
                                                        std::weak_ptr<media_stream> stream,
                                                        std::string stream_name,
                                                        std::string output_id,
-                                                       std::uint8_t payload_type,
-                                                       std::uint32_t ssrc)
+                                                       gb28181_description description,
+                                                       std::chrono::milliseconds establishment_timeout)
     : worker_(worker),
-      socket_source_(std::move(socket_source)),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
       output_id_(std::move(output_id)),
-      payload_type_(payload_type),
-      ssrc_(ssrc)
+      description_(std::move(description)),
+      establishment_timeout_(establishment_timeout),
+      socket_(worker_.io())
 {
 }
 
 bool gb28181_tcp_output_session::startup()
 {
-    if (closed_ || !socket_source_)
+    if (closed_)
     {
         return false;
     }
 
-    const auto weak = weak_from_this();
-    boost::system::error_code error;
-    socket_source_->startup(
-        [weak](boost::system::error_code source_error, boost::asio::ip::tcp::socket socket) mutable
-        {
-            if (const auto self = weak.lock())
-            {
-                self->on_socket_result(source_error, std::move(socket));
-                return;
-            }
-            boost::system::error_code ignored;
-            socket.close(ignored);
-        },
-        error);
-    if (error)
+    if (description_.transport == gb28181_transport::tcp_passive)
     {
-        spdlog::error("gb28181 tcp output source startup failed stream {} output {} error {}", stream_name_, output_id_, error.message());
-        shutdown();
-        return false;
+        listener_ = std::make_unique<tcp_listener>(worker_.io(), description_.rtp_port, description_.address);
+        boost::system::error_code error;
+        listener_->startup(error);
+        if (error)
+        {
+            spdlog::error("gb28181 tcp output listener startup failed stream {} output {} error {}",
+                          stream_name_,
+                          output_id_,
+                          error.message());
+            listener_.reset();
+            return false;
+        }
     }
+
+    const auto self = shared_from_this();
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
     return true;
 }
 
-void gb28181_tcp_output_session::on_socket_result(boost::system::error_code error, boost::asio::ip::tcp::socket socket)
+void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
 {
-    if (error)
-    {
-        spdlog::warn("gb28181 tcp output source failed stream {} output {} error {}", stream_name_, output_id_, error.message());
-        shutdown();
-        return;
-    }
     if (closed_)
     {
-        boost::system::error_code ignored;
-        socket.close(ignored);
+        return;
+    }
+
+    boost::system::error_code error;
+    if (description_.transport == gb28181_transport::tcp_passive)
+    {
+        listener_->accept(socket_, establishment_timeout_, yield, error);
+        listener_->shutdown();
+        listener_.reset();
+    }
+    else
+    {
+        socket_.async_connect(boost::asio::ip::tcp::endpoint{description_.address, description_.rtp_port},
+                              boost::asio::cancel_after(establishment_timeout_, yield[error]));
+        if (error == boost::asio::error::operation_aborted && !closed_)
+        {
+            error = boost::asio::error::timed_out;
+        }
+    }
+
+    if (error || closed_)
+    {
+        if (error && !closed_)
+        {
+            spdlog::warn("gb28181 tcp output establishment failed stream {} output {} error {}", stream_name_, output_id_, error.message());
+        }
+        safe_shutdown();
         return;
     }
 
     const auto stream = stream_.lock();
     if (!stream)
     {
-        boost::system::error_code ignored;
-        socket.close(ignored);
-        shutdown();
+        safe_shutdown();
         return;
     }
 
-    socket_source_.reset();
-    connection_ = std::make_shared<tcp_connection>(std::move(socket));
+    connection_ = std::make_shared<tcp_connection>(std::move(socket_));
     const auto weak = weak_from_this();
     connection_->startup(
         [weak](boost::system::error_code connection_error, std::span<const std::uint8_t>)
@@ -113,8 +129,8 @@ void gb28181_tcp_output_session::on_socket_result(boost::system::error_code erro
     media_ = std::make_shared<gb28181_output_media>(
         worker_,
         stream,
-        payload_type_,
-        ssrc_,
+        description_.payload_type,
+        description_.ssrc,
         [weak](std::vector<std::uint8_t> packet)
         {
             if (const auto session = weak.lock())
@@ -135,7 +151,7 @@ void gb28181_tcp_output_session::on_socket_result(boost::system::error_code erro
         media_.reset();
         connection_->shutdown();
         connection_.reset();
-        shutdown();
+        safe_shutdown();
         return;
     }
 
@@ -176,11 +192,13 @@ void gb28181_tcp_output_session::safe_shutdown()
     }
     closed_ = true;
     registry::instance().remove_output_session(stream_name_, output_id_, *this);
-    if (socket_source_)
+    if (listener_)
     {
-        socket_source_->shutdown();
-        socket_source_.reset();
+        listener_->shutdown();
     }
+    boost::system::error_code error;
+    socket_.cancel(error);
+    socket_.close(error);
     if (media_)
     {
         media_->shutdown();

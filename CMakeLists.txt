@@ -160,9 +160,7 @@ add_library(media_core STATIC
     media/net/port_manager.cpp
     media/net/tcp_connection.cpp
     media/net/tcp_yield_transport.cpp
-    media/net/tcp_connector.cpp
     media/net/tcp_listener.cpp
-    media/net/tcp_acceptor.cpp
     media/net/udp_socket.cpp
     media/flv/flv_output_muxer.cpp
     media/hls/hls_output.cpp
@@ -293,10 +291,6 @@ if(BUILD_TESTING)
     add_executable(gb28181_http_tests tests/gb28181_http_tests.cpp)
     target_link_libraries(gb28181_http_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_http_tests COMMAND gb28181_http_tests)
-
-    add_executable(gb28181_tcp_source_tests tests/gb28181_tcp_source_tests.cpp)
-    target_link_libraries(gb28181_tcp_source_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME gb28181_tcp_source_tests COMMAND gb28181_tcp_source_tests)
 
     add_executable(port_manager_tests tests/port_manager_tests.cpp)
     target_link_libraries(port_manager_tests PRIVATE media_core media_server_link_options)
