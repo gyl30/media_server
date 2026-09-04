@@ -7,11 +7,9 @@
 
 #include <boost/json.hpp>
 
-#include "media/net/tcp_acceptor.h"
 #include "media/net/worker_context.h"
 #include "media/http/gb28181_http.h"
 #include "media/http/gb28181_json.h"
-#include "media/net/tcp_connector.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_tcp_session.h"
 #include "media/gb28181/gb28181_udp_session.h"
@@ -25,16 +23,6 @@ namespace
 {
 
 constexpr auto tcp_establishment_timeout = std::chrono::seconds(10);
-
-std::shared_ptr<tcp_socket_source> create_tcp_socket_source(worker_context& worker, const gb28181_description& description)
-{
-    if (description.transport == gb28181_transport::tcp_active)
-    {
-        return std::make_shared<tcp_connector>(
-            worker.io(), boost::asio::ip::tcp::endpoint{description.address, description.rtp_port}, tcp_establishment_timeout);
-    }
-    return std::make_shared<tcp_acceptor>(worker.io(), description.rtp_port, description.address, tcp_establishment_timeout);
-}
 
 gb28181_http_response make_json_response(const gb28181_http_request& request,
                                          boost::beast::http::status status,
@@ -119,9 +107,8 @@ gb28181_http_response handle_input_create(const gb28181_http_request& request, w
     }
     else
     {
-        auto source = create_tcp_socket_source(worker, config.description);
         auto session = std::make_shared<gb28181_tcp_session>(
-            worker, std::move(source), stream_name, config.description.payload_type, config.description.ssrc);
+            worker, stream_name, config.description, tcp_establishment_timeout);
         if (!streams.add_input_session(stream_name, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -168,14 +155,12 @@ gb28181_http_response handle_output_create(const gb28181_http_request& request,
     }
     else
     {
-        auto source = create_tcp_socket_source(worker, config.description);
         auto session = std::make_shared<gb28181_tcp_output_session>(worker,
-                                                                    std::move(source),
                                                                     std::weak_ptr<media_stream>{stream},
                                                                     stream_name,
                                                                     output_id,
-                                                                    config.description.payload_type,
-                                                                    config.description.ssrc);
+                                                                    config.description,
+                                                                    tcp_establishment_timeout);
         if (!streams.add_output_session(stream_name, output_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");

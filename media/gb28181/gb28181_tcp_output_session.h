@@ -1,14 +1,19 @@
 #ifndef MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
 #define MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
 
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/spawn.hpp>
+
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
-#include "media/net/tcp_socket_source.h"
+#include "media/net/tcp_listener.h"
+#include "media/gb28181/gb28181_types.h"
 
 namespace media_server
 {
@@ -21,28 +26,28 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
 {
    public:
     gb28181_tcp_output_session(worker_context& worker,
-                               std::shared_ptr<tcp_socket_source> socket_source,
                                std::weak_ptr<media_stream> stream,
                                std::string stream_name,
                                std::string output_id,
-                               std::uint8_t payload_type,
-                               std::uint32_t ssrc);
+                               gb28181_description description,
+                               std::chrono::milliseconds establishment_timeout);
 
     [[nodiscard]] bool startup();
     void shutdown() override;
 
    private:
-    void on_socket_result(boost::system::error_code error, boost::asio::ip::tcp::socket socket);
+    void run(boost::asio::yield_context yield);
     void send_packet(std::vector<std::uint8_t> packet);
     void safe_shutdown();
 
     worker_context& worker_;
-    std::shared_ptr<tcp_socket_source> socket_source_;
     std::weak_ptr<media_stream> stream_;
     std::string stream_name_;
     std::string output_id_;
-    std::uint8_t payload_type_{};
-    std::uint32_t ssrc_{};
+    gb28181_description description_;
+    std::chrono::milliseconds establishment_timeout_{};
+    boost::asio::ip::tcp::socket socket_;
+    std::unique_ptr<tcp_listener> listener_;
     std::shared_ptr<tcp_connection> connection_;
     std::shared_ptr<gb28181_output_media> media_;
     bool closed_{};
