@@ -500,6 +500,7 @@ void test_rtcp_peer_learning_overrides_rtp_plus_one()
     session->shutdown();
     io.restart();
     io.run();
+    require(!session->local_ports(), "gb rtcp peer releases local ports after shutdown");
 }
 
 void test_first_valid_rtp_packet_pins_peer_when_unsignaled()

@@ -1,12 +1,14 @@
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <limits>
+#include <span>
 #include <vector>
 #include <utility>
 
 #include <spdlog/spdlog.h>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/spawn.hpp>
 
 #include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
@@ -21,11 +23,13 @@ gb28181_udp_session::gb28181_udp_session(worker_context& worker,
     : worker_(worker),
       description_(std::move(description)),
       media_(worker_, std::move(stream_name), description_.payload_type, description_.ssrc),
+      rtp_transport_(worker_.io()),
+      rtcp_transport_(worker_.io()),
       rtcp_timer_(worker_.io())
 {
 }
 
-std::optional<gb28181_udp_session::udp_socket_pair> gb28181_udp_session::prepare_udp_sockets(boost::asio::ip::address bind_address)
+std::optional<port_manager_impl::port_pair> gb28181_udp_session::prepare_udp_transports(boost::asio::ip::address bind_address)
 {
     const auto reserved = port_manager::instance().acquire_pair();
     if (!reserved)
@@ -34,128 +38,46 @@ std::optional<gb28181_udp_session::udp_socket_pair> gb28181_udp_session::prepare
     }
 
     const auto local_ports = *reserved;
-    const auto weak = weak_from_this();
     boost::system::error_code network_error;
-    auto rtp_socket = std::make_shared<udp_socket>(worker_.io());
-    rtp_socket->startup(
-        bind_address,
-        local_ports.first,
-        [weak](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
-        {
-            if (const auto self = weak.lock())
-            {
-                if (error)
-                {
-                    self->shutdown();
-                    return;
-                }
-                self->on_rtp(data, endpoint);
-            }
-        },
-        [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
-        {
-            if (error)
-            {
-                if (const auto self = weak.lock())
-                {
-                    self->shutdown();
-                }
-            }
-        },
-        network_error);
+    rtp_transport_.startup(bind_address, local_ports.first, network_error);
     if (network_error)
     {
         port_manager::instance().release(local_ports);
         return std::nullopt;
     }
 
-    auto rtcp_socket = std::make_shared<udp_socket>(worker_.io());
-    rtcp_socket->startup(
-        bind_address,
-        local_ports.second,
-        [weak](boost::system::error_code error, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
-        {
-            if (const auto self = weak.lock())
-            {
-                if (error)
-                {
-                    self->shutdown();
-                    return;
-                }
-                self->on_rtcp(data, endpoint);
-            }
-        },
-        [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint&)
-        {
-            if (error)
-            {
-                if (const auto self = weak.lock())
-                {
-                    self->shutdown();
-                }
-            }
-        },
-        network_error);
+    rtcp_transport_.startup(std::move(bind_address), local_ports.second, network_error);
     if (network_error)
     {
-        rtp_socket->shutdown([local_ports]() { port_manager::instance().release(local_ports); });
+        rtp_transport_.shutdown();
+        port_manager::instance().release(local_ports);
         return std::nullopt;
     }
 
-    return udp_socket_pair{.rtp = std::move(rtp_socket), .rtcp = std::move(rtcp_socket), .local_ports = local_ports};
-}
-
-void gb28181_udp_session::shutdown_udp_sockets()
-{
-    if (local_ports_)
-    {
-        const auto local_ports = *local_ports_;
-        auto remaining = std::make_shared<std::atomic_uint8_t>(2);
-        const auto release = [local_ports, remaining]
-        {
-            if (remaining->fetch_sub(1U, std::memory_order_acq_rel) == 1U)
-            {
-                port_manager::instance().release(local_ports);
-            }
-        };
-        rtp_socket_->shutdown(release);
-        rtcp_socket_->shutdown(release);
-        rtp_socket_.reset();
-        rtcp_socket_.reset();
-        local_ports_.reset();
-        return;
-    }
-
-    if (rtp_socket_)
-    {
-        rtp_socket_->shutdown();
-        rtp_socket_.reset();
-    }
-    if (rtcp_socket_)
-    {
-        rtcp_socket_->shutdown();
-        rtcp_socket_.reset();
-    }
+    return local_ports;
 }
 
 bool gb28181_udp_session::startup()
 {
-    if (closed_ || description_.transport != gb28181_transport::udp || description_.rtp_port != 0 || description_.rtcp_port != 0 || rtp_socket_ ||
-        rtcp_socket_ || description_.address.is_unspecified() || !media_.startup())
+    if (description_.transport != gb28181_transport::udp || description_.rtp_port != 0 || description_.rtcp_port != 0 || local_ports_ ||
+        description_.address.is_unspecified() || !media_.startup())
     {
         return false;
     }
 
-    auto sockets = prepare_udp_sockets(description_.address);
-    if (!sockets)
+    auto local_ports = prepare_udp_transports(description_.address);
+    if (!local_ports)
     {
         media_.shutdown();
         return false;
     }
-    rtp_socket_ = std::move(sockets->rtp);
-    rtcp_socket_ = std::move(sockets->rtcp);
-    local_ports_ = sockets->local_ports;
-    schedule_rtcp();
+    local_ports_ = *local_ports;
+
+    const auto self = shared_from_this();
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtp(yield); }, boost::asio::detached);
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtcp(yield); }, boost::asio::detached);
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtcp_sender(yield); }, boost::asio::detached);
+
     spdlog::info("gb28181 udp session started stream {} rtp_port {} rtcp_port {}",
                  media_.stream_name(),
                  local_ports_->first,
@@ -173,83 +95,103 @@ const std::string& gb28181_udp_session::stream_name() const noexcept { return me
 
 std::optional<port_manager_impl::port_pair> gb28181_udp_session::local_ports() const noexcept { return local_ports_; }
 
-void gb28181_udp_session::on_rtp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+void gb28181_udp_session::run_rtp(boost::asio::yield_context yield)
 {
-    if (closed_)
+    std::vector<std::uint8_t> buffer(64 * 1024);
+    boost::system::error_code error;
+    for (;;)
     {
-        return;
+        boost::asio::ip::udp::endpoint endpoint;
+        const auto bytes = rtp_transport_.read(buffer, endpoint, yield, error);
+        if (error)
+        {
+            break;
+        }
+
+        const auto result = media_.input_rtp(std::span{buffer.data(), bytes});
+        if (result == gb28181_rtp_input_result::fatal)
+        {
+            break;
+        }
+        if (result == gb28181_rtp_input_result::accepted && !remote_rtp_endpoint_)
+        {
+            rtp_transport_.connect(endpoint, error);
+            if (error)
+            {
+                break;
+            }
+            remote_rtp_endpoint_ = endpoint;
+        }
     }
 
-    const auto result = media_.input_rtp(data);
-    if (result == gb28181_rtp_input_result::fatal)
-    {
-        shutdown();
-        return;
-    }
-    if (result == gb28181_rtp_input_result::accepted && !remote_rtp_endpoint_)
-    {
-        if (!rtp_socket_)
-        {
-            shutdown();
-            return;
-        }
-        boost::system::error_code network_error;
-        rtp_socket_->connect(endpoint, network_error);
-        if (network_error)
-        {
-            shutdown();
-            return;
-        }
-        remote_rtp_endpoint_ = endpoint;
-    }
+    shutdown();
 }
 
-void gb28181_udp_session::on_rtcp(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
+void gb28181_udp_session::run_rtcp(boost::asio::yield_context yield)
 {
-    if (closed_ || media_.input_rtcp(data) <= 0 || remote_rtcp_endpoint_ || !remote_rtp_endpoint_ ||
-        endpoint.address() != remote_rtp_endpoint_->address())
+    std::vector<std::uint8_t> buffer(64 * 1024);
+    boost::system::error_code error;
+    for (;;)
     {
-        return;
+        boost::asio::ip::udp::endpoint endpoint;
+        const auto bytes = rtcp_transport_.read(buffer, endpoint, yield, error);
+        if (error)
+        {
+            break;
+        }
+        if (media_.input_rtcp(std::span{buffer.data(), bytes}) <= 0 || remote_rtcp_endpoint_ || !remote_rtp_endpoint_ ||
+            endpoint.address() != remote_rtp_endpoint_->address())
+        {
+            continue;
+        }
+
+        rtcp_transport_.connect(endpoint, error);
+        if (error)
+        {
+            break;
+        }
+        remote_rtcp_endpoint_ = endpoint;
     }
-    boost::system::error_code network_error;
-    rtcp_socket_->connect(endpoint, network_error);
-    if (network_error)
-    {
-        shutdown();
-        return;
-    }
-    remote_rtcp_endpoint_ = endpoint;
+
+    shutdown();
 }
 
-void gb28181_udp_session::schedule_rtcp()
+void gb28181_udp_session::run_rtcp_sender(boost::asio::yield_context yield)
 {
-    rtcp_timer_.expires_after(std::chrono::seconds(1));
-    const auto weak = weak_from_this();
-    rtcp_timer_.async_wait(
-        [weak](const boost::system::error_code& error)
+    boost::system::error_code error;
+    for (;;)
+    {
+        rtcp_timer_.expires_after(std::chrono::seconds(1));
+        rtcp_timer_.async_wait(yield[error]);
+        if (error)
         {
-            const auto self = weak.lock();
-            if (!self || error || self->closed_)
-            {
-                return;
-            }
+            break;
+        }
 
-            std::optional<boost::asio::ip::udp::endpoint> target = self->remote_rtcp_endpoint_;
-            if (!target && self->remote_rtp_endpoint_ && self->remote_rtp_endpoint_->port() != std::numeric_limits<std::uint16_t>::max())
-            {
-                target.emplace(self->remote_rtp_endpoint_->address(), static_cast<std::uint16_t>(self->remote_rtp_endpoint_->port() + 1U));
-            }
-            if (target && self->rtcp_socket_)
-            {
-                std::array<std::uint8_t, 1500> buffer{};
-                const auto bytes = self->media_.generate_rtcp(buffer);
-                if (bytes > 0)
-                {
-                    self->rtcp_socket_->send(std::vector<std::uint8_t>(buffer.begin(), buffer.begin() + bytes), *target);
-                }
-            }
-            self->schedule_rtcp();
-        });
+        std::optional<boost::asio::ip::udp::endpoint> target = remote_rtcp_endpoint_;
+        if (!target && remote_rtp_endpoint_ && remote_rtp_endpoint_->port() != std::numeric_limits<std::uint16_t>::max())
+        {
+            target.emplace(remote_rtp_endpoint_->address(), static_cast<std::uint16_t>(remote_rtp_endpoint_->port() + 1U));
+        }
+        if (!target)
+        {
+            continue;
+        }
+
+        std::array<std::uint8_t, 1500> buffer{};
+        const auto bytes = media_.generate_rtcp(buffer);
+        if (bytes <= 0)
+        {
+            continue;
+        }
+        static_cast<void>(rtcp_transport_.write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, *target, yield, error));
+        if (error)
+        {
+            break;
+        }
+    }
+
+    shutdown();
 }
 
 void gb28181_udp_session::safe_shutdown()
@@ -261,8 +203,14 @@ void gb28181_udp_session::safe_shutdown()
     closed_ = true;
     registry::instance().remove_input_session(stream_name(), *this);
     rtcp_timer_.cancel();
+    rtp_transport_.shutdown();
+    rtcp_transport_.shutdown();
     media_.shutdown();
-    shutdown_udp_sockets();
+    if (local_ports_)
+    {
+        port_manager::instance().release(*local_ports_);
+        local_ports_.reset();
+    }
     remote_rtp_endpoint_.reset();
     remote_rtcp_endpoint_.reset();
     spdlog::debug("gb28181 udp session shutdown {}", media_.stream_name());
