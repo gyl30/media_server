@@ -1,4 +1,4 @@
-#include <array>
+#include <vector>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -61,7 +61,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     }
     rtmp_context_ = context;
 
-    std::array<std::uint8_t, 64 * 1024> buffer{};
+    std::vector<std::uint8_t> buffer(64 * 1024);
     for (;;)
     {
         boost::system::error_code error;
