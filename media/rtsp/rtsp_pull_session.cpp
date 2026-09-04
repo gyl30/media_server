@@ -362,24 +362,19 @@ std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::s
 
 void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::yield_context yield)
 {
-    if (closed_)
-    {
-        return;
-    }
-
     boost::system::error_code error;
     const auto endpoints = resolver_.async_resolve(host, std::to_string(port), yield[error]);
-    if (error || closed_)
+    if (error)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
 
     record_establishment_progress();
     boost::asio::async_connect(connect_socket_, endpoints, yield[error]);
-    if (error || closed_)
+    if (error)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
 
@@ -399,7 +394,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
         url_.c_str(), username_.empty() ? nullptr : username_.c_str(), password_.empty() ? nullptr : password_.c_str(), &handler, this);
     if (client == nullptr)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
     client_ = client;
@@ -422,12 +417,12 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
 
     client_ = nullptr;
     rtsp_client_destroy(client);
-    safe_shutdown();
+    shutdown();
 }
 
 void rtsp_pull_session::write(std::span<const std::uint8_t> data)
 {
-    if (closed_ || !transport_ || data.empty())
+    if (!transport_ || data.empty())
     {
         return;
     }
@@ -445,11 +440,6 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_)
-        {
-            write_queue_.clear();
-            return;
-        }
         if (write_queue_.empty())
         {
             return;
@@ -459,14 +449,8 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
         boost::system::error_code error;
         const auto started_at = std::chrono::steady_clock::now();
         static_cast<void>(transport_->write(*data, yield, error));
-        if (closed_)
-        {
-            write_queue_.clear();
-            return;
-        }
         if (error)
         {
-            write_queue_.clear();
             shutdown();
             return;
         }
@@ -474,7 +458,6 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
         write_queue_.pop_front();
         if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
         {
-            write_queue_.clear();
             shutdown();
             return;
         }
