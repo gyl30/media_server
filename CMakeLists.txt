@@ -158,7 +158,6 @@ add_library(media_core STATIC
     media/net/worker_context.cpp
     media/net/io_context_pool.cpp
     media/net/port_manager.cpp
-    media/net/tcp_connection.cpp
     media/net/tcp_yield_transport.cpp
     media/net/tcp_listener.cpp
     media/net/udp_socket.cpp
