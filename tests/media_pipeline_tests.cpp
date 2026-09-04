@@ -173,6 +173,8 @@ static_assert(!std::is_constructible_v<rtmp_session,
                                        std::shared_ptr<tcp_connection>,
                                        output_video_config,
                                        std::chrono::milliseconds>);
+static_assert(std::is_constructible_v<rtsp_server_connection, worker_context&, boost::asio::ip::tcp::socket, output_video_codec>);
+static_assert(!std::is_constructible_v<rtsp_server_connection, worker_context&, std::shared_ptr<tcp_connection>, output_video_codec>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -5924,8 +5926,7 @@ class rtsp_output_test_peer final
 
         client_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto tcp = std::make_shared<tcp_connection>(std::move(server_socket));
-        auto connection = std::make_shared<rtsp_server_connection>(worker_, std::move(tcp), config_.rtsp_video.codec);
+        auto connection = std::make_shared<rtsp_server_connection>(worker_, std::move(server_socket), config_.rtsp_video.codec);
         session_ = connection;
         connection->startup();
         runner_ = std::jthread([this]() { worker_.run(); });
