@@ -60,7 +60,6 @@
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtmp/rtmp_input_session.h"
 #include "media/rtmp/rtmp_output_session.h"
-#include "media/net/tcp_connection.h"
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/core/stream_registry.h"
@@ -235,13 +234,7 @@ static_assert(std::is_constructible_v<rtmp_session,
                                       boost::asio::ip::tcp::socket,
                                       output_video_config,
                                       std::chrono::milliseconds>);
-static_assert(!std::is_constructible_v<rtmp_session,
-                                       worker_context&,
-                                       std::shared_ptr<tcp_connection>,
-                                       output_video_config,
-                                       std::chrono::milliseconds>);
 static_assert(std::is_constructible_v<rtsp_server_connection, worker_context&, boost::asio::ip::tcp::socket, output_video_codec>);
-static_assert(!std::is_constructible_v<rtsp_server_connection, worker_context&, std::shared_ptr<tcp_connection>, output_video_codec>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -2396,150 +2389,6 @@ void test_gb28181_tcp_active_connection_refused()
     require(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(2),
             "gb28181 tcp active refusal does not wait for timeout");
     streams.clear();
-}
-
-void test_tcp_connection_shutdown_lifecycle()
-{
-    boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
-    boost::asio::ip::tcp::socket client(io);
-    client.connect(acceptor.local_endpoint());
-    auto server = acceptor.accept();
-
-    int io_callback_count = 0;
-    auto connection = std::make_shared<tcp_connection>(std::move(server));
-    connection->startup([&io_callback_count](boost::system::error_code, std::span<const std::uint8_t>) { ++io_callback_count; },
-                        [&io_callback_count](boost::system::error_code, std::size_t) { ++io_callback_count; });
-    const std::weak_ptr<tcp_connection> weak_connection = connection;
-
-    require(io.run_one() == 1, "tcp connection read coroutine starts before shutdown");
-    connection->shutdown();
-    connection->shutdown();
-    connection.reset();
-    require(!weak_connection.expired(), "tcp connection shutdown keeps self until owner worker cleanup");
-
-    io.run();
-
-    require(io_callback_count == 0, "tcp shutdown suppresses cancellation callbacks");
-    require(weak_connection.expired(), "tcp connection released after owner worker cleanup");
-
-    boost::system::error_code error;
-    client.close(error);
-}
-
-void test_tcp_connection_io_error_propagation()
-{
-    {
-        boost::asio::io_context io;
-        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
-        boost::asio::ip::tcp::socket client(io);
-        client.connect(acceptor.local_endpoint());
-        auto connection = std::make_shared<tcp_connection>(acceptor.accept());
-        boost::system::error_code read_error;
-        connection->startup([&read_error](boost::system::error_code error, std::span<const std::uint8_t>) { read_error = error; }, {});
-        client.close();
-        io.run();
-        require(static_cast<bool>(read_error), "tcp connection reports read error");
-        connection->shutdown();
-        io.restart();
-        io.run();
-    }
-
-    {
-        boost::asio::io_context io;
-        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
-        boost::asio::ip::tcp::socket client(io);
-        client.connect(acceptor.local_endpoint());
-        auto connection = std::make_shared<tcp_connection>(acceptor.accept());
-        boost::system::error_code write_error;
-        connection->startup({}, [&write_error](boost::system::error_code error, std::size_t) { write_error = error; });
-
-        client.set_option(boost::asio::socket_base::linger(true, 0));
-        client.close();
-        std::vector<std::uint8_t> data(8 * 1024 * 1024, 0x5a);
-        connection->write(data);
-        io.run();
-        require(static_cast<bool>(write_error), "tcp connection reports write error");
-        connection->shutdown();
-        io.restart();
-        io.run();
-    }
-
-    {
-        boost::asio::io_context io;
-        boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
-        boost::asio::ip::tcp::socket client(io);
-        client.connect(acceptor.local_endpoint());
-        auto connection = std::make_shared<tcp_connection>(acceptor.accept());
-        const std::weak_ptr<tcp_connection> weak_connection = connection;
-
-        int write_callback_count = 0;
-        boost::system::error_code first_write_error;
-        std::size_t first_write_size = 0;
-        connection->startup(
-            {},
-            [&](boost::system::error_code error, std::size_t bytes)
-            {
-                ++write_callback_count;
-                if (write_callback_count != 1)
-                {
-                    return;
-                }
-                first_write_error = error;
-                first_write_size = bytes;
-                if (const auto self = weak_connection.lock())
-                {
-                    self->shutdown();
-                }
-            });
-
-        const std::array<std::uint8_t, 3> first{1, 2, 3};
-        const std::array<std::uint8_t, 4> second{4, 5, 6, 7};
-        connection->write(first);
-        connection->write(second);
-        io.run();
-
-        require(!first_write_error, "tcp connection batch write succeeds");
-        require(first_write_size == first.size() + second.size(), "tcp connection batches pending writes");
-        require(write_callback_count == 1, "tcp connection batch completes once");
-
-        boost::system::error_code error;
-        client.close(error);
-    }
-}
-
-void test_tcp_connection_shutdown_discards_pending_writes()
-{
-    boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
-    boost::asio::ip::tcp::socket client(io);
-    client.connect(acceptor.local_endpoint());
-    client.set_option(boost::asio::socket_base::receive_buffer_size(1024));
-
-    auto connection = std::make_shared<tcp_connection>(acceptor.accept());
-    connection->socket().set_option(boost::asio::socket_base::send_buffer_size(1024));
-
-    int write_callback_count = 0;
-    connection->startup({}, [&write_callback_count](boost::system::error_code, std::size_t) { ++write_callback_count; });
-    const std::weak_ptr<tcp_connection> weak_connection = connection;
-
-    std::vector<std::uint8_t> data(8 * 1024 * 1024, 0x5a);
-    connection->write(data);
-    connection->write(data);
-
-    require(io.run_one() == 1, "tcp connection read coroutine starts before shutdown");
-    require(io.run_one() == 1, "tcp connection write coroutine starts before shutdown");
-
-    connection->shutdown();
-    connection->shutdown();
-    connection.reset();
-    io.run();
-
-    require(write_callback_count == 0, "tcp shutdown suppresses pending write cancellation callback");
-    require(weak_connection.expired(), "tcp shutdown releases connection without draining writes");
-
-    boost::system::error_code error;
-    client.close(error);
 }
 
 void test_udp_socket_receive_and_send()
@@ -10244,12 +10093,6 @@ int main()
     std::cout << "[pass] gb28181_tcp_active_connect_successful\n";
     media_server::test_gb28181_tcp_active_connection_refused();
     std::cout << "[pass] gb28181_tcp_active_connection_refused\n";
-    media_server::test_tcp_connection_shutdown_lifecycle();
-    std::cout << "[pass] tcp_connection_shutdown_lifecycle\n";
-    media_server::test_tcp_connection_io_error_propagation();
-    std::cout << "[pass] tcp_connection_io_error_propagation\n";
-    media_server::test_tcp_connection_shutdown_discards_pending_writes();
-    std::cout << "[pass] tcp_connection_shutdown_discards_pending_writes\n";
     media_server::test_udp_socket_receive_and_send();
     std::cout << "[pass] udp_socket_receive_and_send\n";
     media_server::test_udp_socket_connected_peer_filter();
