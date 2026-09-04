@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <functional>
 
-#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/ip/address.hpp>
 
 #include "media/core/media_reader.h"
@@ -21,10 +20,12 @@ struct rtsp_muxer_t;
 namespace media_server
 {
 
+class worker_context;
+
 class rtsp_output_session final : public rtsp_server_session, public media_reader, public std::enable_shared_from_this<rtsp_output_session>
 {
    public:
-    rtsp_output_session(boost::asio::any_io_executor executor,
+    rtsp_output_session(worker_context& worker,
                         output_video_codec video_codec,
                         boost::asio::ip::address local_address,
                         std::function<void(std::span<const std::uint8_t>)> write);
@@ -63,7 +64,7 @@ class rtsp_output_session final : public rtsp_server_session, public media_reade
     [[nodiscard]] int presentation_status() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
-    boost::asio::any_io_executor executor_;
+    worker_context& worker_;
     output_video_codec video_codec_;
     boost::asio::ip::address local_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;

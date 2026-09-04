@@ -174,7 +174,7 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     if (!self->logical_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_output_session>(self->worker_.io().get_executor(),
+        auto next_session = std::make_shared<rtsp_output_session>(self->worker_,
                                                                   self->video_codec_,
                                                                   self->local_address_,
                                                                   [owner](std::span<const std::uint8_t> data) { owner->write(data); });
@@ -191,7 +191,7 @@ int rtsp_server_connection::setup_callback(
     if (!self->logical_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_output_session>(self->worker_.io().get_executor(),
+        auto next_session = std::make_shared<rtsp_output_session>(self->worker_,
                                                                   self->video_codec_,
                                                                   self->local_address_,
                                                                   [owner](std::span<const std::uint8_t> data) { owner->write(data); });
@@ -229,7 +229,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     {
         const auto owner = self->shared_from_this();
         auto next_session = std::make_unique<rtsp_input_session>(
-            self->worker_.io().get_executor(), self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
+            self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
         next_session->set_error_handler([owner](boost::system::error_code) { owner->shutdown(); });
         self->logical_session_ = std::move(next_session);
     }

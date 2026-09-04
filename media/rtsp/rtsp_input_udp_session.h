@@ -14,7 +14,6 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
-#include <boost/asio/any_io_executor.hpp>
 
 #include "media/net/udp_socket.h"
 #include "media/net/port_manager.h"
@@ -26,12 +25,13 @@ struct rtsp_header_transport_t;
 namespace media_server
 {
 
+class worker_context;
 class rtsp_input_session;
 
 class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_input_udp_session>
 {
    public:
-    rtsp_input_udp_session(boost::asio::any_io_executor executor,
+    rtsp_input_udp_session(worker_context& worker,
                            boost::asio::ip::address bind_address,
                            std::string stream_name,
                            std::vector<rtsp_input_track_description> descriptions);
@@ -66,6 +66,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     void schedule_rtcp();
     void safe_shutdown();
 
+    worker_context& worker_;
     std::function<void(boost::system::error_code)> error_handler_;
     boost::asio::ip::address bind_address_;
     rtsp_input_media media_;
