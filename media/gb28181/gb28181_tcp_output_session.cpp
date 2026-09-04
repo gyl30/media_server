@@ -40,11 +40,6 @@ gb28181_tcp_output_session::gb28181_tcp_output_session(worker_context& worker,
 
 bool gb28181_tcp_output_session::startup()
 {
-    if (closed_)
-    {
-        return false;
-    }
-
     if (description_.transport == gb28181_transport::tcp_passive)
     {
         listener_ = std::make_unique<tcp_listener>(worker_.io(), description_.rtp_port, description_.address);
@@ -68,11 +63,6 @@ bool gb28181_tcp_output_session::startup()
 
 void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
 {
-    if (closed_)
-    {
-        return;
-    }
-
     boost::system::error_code error;
     if (description_.transport == gb28181_transport::tcp_passive)
     {
@@ -84,26 +74,26 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
     {
         socket_.async_connect(boost::asio::ip::tcp::endpoint{description_.address, description_.rtp_port},
                               boost::asio::cancel_after(establishment_timeout_, yield[error]));
-        if (error == boost::asio::error::operation_aborted && !closed_)
+        if (error == boost::asio::error::operation_aborted && socket_.is_open())
         {
             error = boost::asio::error::timed_out;
         }
     }
 
-    if (error || closed_)
+    if (error)
     {
-        if (error && !closed_)
+        if (error != boost::asio::error::operation_aborted)
         {
             spdlog::warn("gb28181 tcp output establishment failed stream {} output {} error {}", stream_name_, output_id_, error.message());
         }
-        safe_shutdown();
+        shutdown();
         return;
     }
 
     const auto stream = stream_.lock();
     if (!stream)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
 
@@ -130,9 +120,7 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
         });
     if (!media_->startup())
     {
-        media_->shutdown();
-        media_.reset();
-        safe_shutdown();
+        shutdown();
         return;
     }
 
@@ -148,7 +136,7 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
         }
     }
 
-    safe_shutdown();
+    shutdown();
 }
 
 void gb28181_tcp_output_session::shutdown()
@@ -161,11 +149,6 @@ void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_)
-        {
-            write_queue_.clear();
-            return;
-        }
         if (write_queue_.empty())
         {
             return;
@@ -175,14 +158,8 @@ void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
         boost::system::error_code error;
         const auto started_at = std::chrono::steady_clock::now();
         static_cast<void>(transport_->write(*data, yield, error));
-        if (closed_)
-        {
-            write_queue_.clear();
-            return;
-        }
         if (error)
         {
-            write_queue_.clear();
             shutdown();
             return;
         }
@@ -190,7 +167,6 @@ void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
         write_queue_.pop_front();
         if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
         {
-            write_queue_.clear();
             shutdown();
             return;
         }
@@ -199,7 +175,7 @@ void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
 
 void gb28181_tcp_output_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (closed_ || !transport_)
+    if (!transport_)
     {
         return;
     }
@@ -244,7 +220,6 @@ void gb28181_tcp_output_session::safe_shutdown()
         media_->shutdown();
         media_.reset();
     }
-    write_queue_.clear();
     if (transport_)
     {
         transport_->shutdown();
