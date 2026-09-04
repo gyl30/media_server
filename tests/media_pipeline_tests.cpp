@@ -28,6 +28,8 @@
 #include <boost/url/parse.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/read_until.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/spawn.hpp>
 #include <boost/beast/http/read.hpp>
 #include <boost/beast/http/write.hpp>
 
@@ -174,6 +176,16 @@ static_assert(!std::is_constructible_v<rtsp_pull_session,
                                        std::string,
                                        std::chrono::milliseconds,
                                        std::chrono::milliseconds>);
+static_assert(std::is_constructible_v<tcp_listener, boost::asio::io_context&, std::uint16_t, boost::asio::ip::address>);
+static_assert(!std::is_constructible_v<tcp_listener, io_context_pool&, std::uint16_t, boost::asio::ip::address>);
+static_assert(requires(tcp_listener& listener,
+                       boost::asio::ip::tcp::socket& socket,
+                       boost::asio::yield_context& yield,
+                       boost::system::error_code& error) {
+    listener.startup(error);
+    listener.accept(socket, std::chrono::milliseconds{}, yield, error);
+    listener.shutdown();
+});
 
 using http_request = boost::beast::http::request<boost::beast::http::string_body>;
 static_assert(std::is_constructible_v<hls_http_session, worker_context&, boost::beast::tcp_stream, http_request, const config&>);
@@ -2286,21 +2298,21 @@ void test_rtmp_session_shutdown_lifecycle()
 
 void test_tcp_listener_startup_error()
 {
-    boost::asio::io_context io;
-    boost::asio::ip::tcp::acceptor occupied(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::io_context occupied_io;
+    boost::asio::ip::tcp::acceptor occupied(occupied_io, {boost::asio::ip::address_v4::loopback(), 0});
 
-    io_context_pool workers(1);
-    auto listener = std::make_shared<tcp_listener>(workers, occupied.local_endpoint().port(), boost::asio::ip::address_v4::loopback());
+    worker_context worker;
+    tcp_listener listener(worker.io(), occupied.local_endpoint().port(), boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
-    listener->startup([](boost::system::error_code, worker_context&, boost::asio::ip::tcp::socket) {}, {}, startup_error);
+    listener.startup(startup_error);
     require(static_cast<bool>(startup_error), "tcp listener reports bind failure");
 
-    auto unspecified = std::make_shared<tcp_listener>(workers, 0, boost::asio::ip::address_v4::any());
-    unspecified->startup([](boost::system::error_code, worker_context&, boost::asio::ip::tcp::socket) {}, {}, startup_error);
+    tcp_listener unspecified(worker.io(), 0, boost::asio::ip::address_v4::any());
+    unspecified.startup(startup_error);
     require(startup_error == boost::asio::error::invalid_argument, "tcp listener rejects unspecified address");
 
-    auto unavailable = std::make_shared<tcp_listener>(workers, 0, boost::asio::ip::make_address("192.0.2.1"));
-    unavailable->startup([](boost::system::error_code, worker_context&, boost::asio::ip::tcp::socket) {}, {}, startup_error);
+    tcp_listener unavailable(worker.io(), 0, boost::asio::ip::make_address("192.0.2.1"));
+    unavailable.startup(startup_error);
     require(startup_error == boost::system::error_code(EADDRNOTAVAIL, boost::system::system_category()),
             "tcp listener preserves unavailable address error");
 }
@@ -2796,94 +2808,96 @@ void test_udp_socket_error_and_shutdown_lifecycle()
     }
 }
 
-void test_tcp_listener_worker_assignment()
+void test_tcp_listener_external_socket_owner()
 {
     io_context_pool workers(2);
     boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32100});
     const auto port = probe.local_endpoint().port();
     probe.close();
 
-    std::mutex mutex;
-    std::vector<worker_context*> accepted_workers;
-    std::weak_ptr<tcp_listener> weak_listener;
-    auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
-    weak_listener = listener;
+    tcp_listener listener(workers.context(0).io(), port, boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
-    listener->startup(
-        [&](boost::system::error_code error, worker_context& worker, boost::asio::ip::tcp::socket socket)
-        {
-            require(!error, "tcp listener worker accept");
-            bool complete = false;
-            {
-                std::scoped_lock lock(mutex);
-                accepted_workers.push_back(&worker);
-                complete = accepted_workers.size() == 2U;
-            }
-            boost::system::error_code close_error;
-            socket.close(close_error);
-            if (complete)
-            {
-                boost::asio::post(workers.context(0).io(),
-                                  [&]()
-                                  {
-                                      if (const auto current = weak_listener.lock())
-                                      {
-                                          current->shutdown();
-                                      }
-                                      workers.release_work();
-                                  });
-            }
-        },
-        {},
-        startup_error);
-    require(!startup_error, "tcp listener worker startup");
+    listener.startup(startup_error);
+    require(!startup_error, "tcp listener external socket startup");
 
-    boost::asio::ip::tcp::acceptor other_address(workers.context(0).io());
-    boost::system::error_code other_bind_error;
-    other_address.open(boost::asio::ip::tcp::v4(), other_bind_error);
-    other_address.bind({boost::asio::ip::make_address_v4("127.0.0.2"), port}, other_bind_error);
-    require(!other_bind_error, "tcp listener only binds requested local address");
+    boost::system::error_code first_accept_error;
+    boost::system::error_code second_accept_error;
+    bool first_owner_matches = false;
+    bool second_owner_matches = false;
+    boost::asio::spawn(
+        workers.context(0).io(),
+        [&](boost::asio::yield_context yield)
+        {
+            boost::asio::ip::tcp::socket first(workers.context(0).io());
+            listener.accept(first, {}, yield, first_accept_error);
+            first_owner_matches = first.get_executor() == workers.context(0).io().get_executor();
+            boost::system::error_code close_error;
+            first.close(close_error);
+            if (first_accept_error)
+            {
+                listener.shutdown();
+                workers.release_work();
+                return;
+            }
+
+            boost::asio::ip::tcp::socket second(workers.context(1).io());
+            listener.accept(second, {}, yield, second_accept_error);
+            second_owner_matches = second.get_executor() == workers.context(1).io().get_executor();
+            second.close(close_error);
+
+            listener.shutdown();
+            workers.release_work();
+        },
+        boost::asio::detached);
 
     boost::asio::io_context client_io;
-    boost::asio::ip::tcp::socket first(client_io);
-    boost::asio::ip::tcp::socket second(client_io);
+    boost::asio::ip::tcp::socket first_client(client_io);
+    boost::asio::ip::tcp::socket second_client(client_io);
     const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
-    first.connect(endpoint);
-    second.connect(endpoint);
+    first_client.connect(endpoint);
+    second_client.connect(endpoint);
 
     workers.run();
 
-    std::scoped_lock lock(mutex);
-    require(accepted_workers.size() == 2U, "tcp listener accepted clients");
-    require(accepted_workers[0] != accepted_workers[1], "tcp listener reports assigned workers");
+    require(!first_accept_error && !second_accept_error, "tcp listener accepts external sockets");
+    require(first_owner_matches, "tcp listener preserves first socket owner");
+    require(second_owner_matches, "tcp listener preserves second socket owner");
 }
 
 void test_tcp_listener_unlimited_accepts()
 {
-    io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32102));
+    worker_context worker;
+    boost::asio::ip::tcp::acceptor probe(worker.io(), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32102));
     const auto port = probe.local_endpoint().port();
     probe.close();
 
-    int accept_count = 0;
-    auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
+    tcp_listener listener(worker.io(), port, boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
-    listener->startup(
-        [&](boost::system::error_code error, worker_context&, boost::asio::ip::tcp::socket socket)
-        {
-            require(!error, "tcp listener unlimited accept");
-            ++accept_count;
-            boost::system::error_code close_error;
-            socket.close(close_error);
-            if (accept_count == 3)
-            {
-                listener->shutdown();
-                workers.release_work();
-            }
-        },
-        {},
-        startup_error);
+    listener.startup(startup_error);
     require(!startup_error, "tcp listener unlimited startup");
+
+    int accept_count = 0;
+    boost::system::error_code accept_error;
+    boost::asio::spawn(
+        worker.io(),
+        [&](boost::asio::yield_context yield)
+        {
+            for (int index = 0; index < 3; ++index)
+            {
+                boost::asio::ip::tcp::socket socket(worker.io());
+                listener.accept(socket, {}, yield, accept_error);
+                if (accept_error)
+                {
+                    break;
+                }
+                ++accept_count;
+                boost::system::error_code close_error;
+                socket.close(close_error);
+            }
+            listener.shutdown();
+            worker.release_work();
+        },
+        boost::asio::detached);
 
     boost::asio::io_context client_io;
     std::array<boost::asio::ip::tcp::socket, 3> clients{
@@ -2894,216 +2908,97 @@ void test_tcp_listener_unlimited_accepts()
         client.connect(endpoint);
     }
 
-    workers.run();
+    worker.run();
+    require(!accept_error, "tcp listener unlimited accept error");
     require(accept_count == 3, "tcp listener unlimited accepts all clients");
 }
 
-void test_tcp_listener_dynamic_startup()
+void test_tcp_listener_timeout_preserves_listener()
 {
-    io_context_pool workers(2);
-    boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 32106));
-    const auto port = probe.local_endpoint().port();
-    probe.close();
-
-    const boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
-    const std::array<std::uint8_t, 4> request{2, 4, 6, 8};
-    const std::array<std::uint8_t, 3> response{1, 3, 5};
-    std::array<std::uint8_t, request.size()> server_received{};
-    std::array<std::uint8_t, response.size()> client_received{};
-    boost::system::error_code startup_error;
-    boost::system::error_code accept_error;
-    boost::system::error_code first_connect_error;
-    boost::system::error_code client_write_error;
-    boost::system::error_code client_read_error;
-    boost::system::error_code server_read_error;
-    boost::system::error_code server_write_error;
-    std::thread::id startup_thread;
-    std::thread::id accept_thread;
-    int accept_count = 0;
-    bool timed_out = false;
-    bool finished = false;
-
-    auto listener = std::make_shared<tcp_listener>(workers, port, boost::asio::ip::address_v4::loopback());
-    auto first = std::make_shared<boost::asio::ip::tcp::socket>(workers.context(0).io());
-    boost::asio::steady_timer watchdog(workers.context(0).io());
-    const std::function<void()> finish = [&]()
-    {
-        if (finished)
-        {
-            return;
-        }
-        finished = true;
-        watchdog.cancel();
-        listener->shutdown();
-        listener->shutdown();
-        workers.release_work();
-    };
-    watchdog.expires_after(std::chrono::seconds(5));
-    watchdog.async_wait(
-        [&](const boost::system::error_code& error)
-        {
-            if (error)
-            {
-                return;
-            }
-            timed_out = true;
-            boost::system::error_code ignored;
-            first->close(ignored);
-            finish();
-        });
-    boost::asio::post(
-        workers.context(1).io(),
-        [&]()
-        {
-            startup_thread = std::this_thread::get_id();
-            listener->startup(
-                [&](boost::system::error_code error, worker_context&, boost::asio::ip::tcp::socket socket)
-                {
-                    if (error)
-                    {
-                        accept_error = error;
-                        finish();
-                        return;
-                    }
-                    accept_thread = std::this_thread::get_id();
-                    ++accept_count;
-                    auto server = std::make_shared<boost::asio::ip::tcp::socket>(std::move(socket));
-                    boost::asio::async_read(*server,
-                                            boost::asio::buffer(server_received),
-                                            [&, server](boost::system::error_code read_error, std::size_t)
-                                            {
-                                                server_read_error = read_error;
-                                                if (!read_error)
-                                                {
-                                                    boost::asio::async_write(*server,
-                                                                             boost::asio::buffer(response),
-                                                                             [&, server](boost::system::error_code write_error, std::size_t)
-                                                                             { server_write_error = write_error; });
-                                                }
-                                            });
-                },
-                {},
-                startup_error);
-
-            if (startup_error)
-            {
-                boost::asio::post(workers.context(0).io(), finish);
-                return;
-            }
-
-            boost::asio::post(workers.context(0).io(),
-                              [&]()
-                              {
-                                  first->async_connect(endpoint,
-                                                       [&](boost::system::error_code error)
-                                                       {
-                                                           first_connect_error = error;
-                                                           if (error)
-                                                           {
-                                                               finish();
-                                                               return;
-                                                           }
-                                                           boost::asio::async_write(*first,
-                                                                                    boost::asio::buffer(request),
-                                                                                    [&](boost::system::error_code write_error, std::size_t)
-                                                                                    {
-                                                                                        client_write_error = write_error;
-                                                                                        if (write_error)
-                                                                                        {
-                                                                                            boost::system::error_code ignored;
-                                                                                            first->close(ignored);
-                                                                                            finish();
-                                                                                            return;
-                                                                                        }
-                                                                                        boost::asio::async_read(
-                                                                                            *first,
-                                                                                            boost::asio::buffer(client_received),
-                                                                                            [&](boost::system::error_code read_error, std::size_t)
-                                                                                            {
-                                                                                                client_read_error = read_error;
-                                                                                                finish();
-                                                                                            });
-                                                                                    });
-                                                       });
-                              });
-        });
-
-    workers.run();
-
-    require(!timed_out, "tcp listener dynamic startup completes without timeout");
-    require(!startup_error, "tcp listener dynamic startup succeeds");
-    require(!accept_error, "tcp listener dynamic accept succeeds");
-    require(!first_connect_error, "tcp listener dynamic first client connects");
-    require(!client_write_error && !client_read_error, "tcp listener dynamic client io");
-    require(!server_read_error && !server_write_error, "tcp listener dynamic accepted socket io");
-    require(server_received == request && client_received == response, "tcp listener dynamic payloads");
-    require(accept_count == 1, "tcp listener dynamic accepts once");
-    require(startup_thread != accept_thread, "tcp listener dynamic first accept runs on owner executor");
-}
-
-void test_tcp_listener_timeout_reports_error_once()
-{
-    io_context_pool workers(1);
-    boost::asio::ip::tcp::acceptor reserved(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32108});
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor reserved(io, {boost::asio::ip::address_v4::loopback(), 32108});
     const auto endpoint = reserved.local_endpoint();
     reserved.close();
 
-    auto listener = std::make_shared<tcp_listener>(workers, endpoint.port(), boost::asio::ip::address_v4::loopback());
-    int completion_count = 0;
-    boost::system::error_code completion_error;
+    tcp_listener listener(io, endpoint.port(), boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
-    listener->startup(
-        [&](boost::system::error_code error, worker_context&, boost::asio::ip::tcp::socket socket)
-        {
-            ++completion_count;
-            completion_error = error;
-            require(!socket.is_open(), "tcp listener timeout has no socket");
-            listener->shutdown();
-            workers.release_work();
-        },
-        std::chrono::milliseconds(5),
-        startup_error);
+    listener.startup(startup_error);
     require(!startup_error, "tcp listener timeout startup");
-    workers.run();
+
+    int completion_count = 0;
+    boost::system::error_code timeout_error;
+    bool timeout_socket_open = true;
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            boost::asio::ip::tcp::socket socket(io);
+            listener.accept(socket, std::chrono::milliseconds(5), yield, timeout_error);
+            ++completion_count;
+            timeout_socket_open = socket.is_open();
+        },
+        boost::asio::detached);
+
+    io.run();
 
     require(completion_count == 1, "tcp listener timeout completes once");
-    require(completion_error == boost::asio::error::timed_out, "tcp listener timeout reports timed_out");
+    require(timeout_error == boost::asio::error::timed_out, "tcp listener timeout reports timed_out");
+    require(!timeout_socket_open, "tcp listener timeout has no socket");
 
-    boost::asio::ip::tcp::acceptor after_shutdown(workers.context(0).io());
-    boost::system::error_code after_shutdown_error;
-    after_shutdown.open(boost::asio::ip::tcp::v4(), after_shutdown_error);
-    after_shutdown.bind(endpoint, after_shutdown_error);
-    require(!after_shutdown_error, "tcp listener owner shutdown releases resource");
+    io.restart();
+    boost::system::error_code accept_error;
+    bool accepted = false;
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            boost::asio::ip::tcp::socket socket(io);
+            listener.accept(socket, {}, yield, accept_error);
+            accepted = !accept_error;
+            boost::system::error_code close_error;
+            socket.close(close_error);
+        },
+        boost::asio::detached);
+
+    boost::asio::ip::tcp::socket client(io);
+    client.connect(endpoint);
+    io.run();
+
+    require(accepted, "tcp listener accepts after timeout");
+
+    boost::system::error_code close_error;
+    client.close(close_error);
+    listener.shutdown();
 }
 
 void test_tcp_listener_shutdown_lifecycle()
 {
-    io_context_pool workers(1);
-    auto listener = std::make_shared<tcp_listener>(workers, 0, boost::asio::ip::address_v4::loopback());
-    int accept_count = 0;
+    worker_context worker;
+    tcp_listener listener(worker.io(), 0, boost::asio::ip::address_v4::loopback());
     boost::system::error_code startup_error;
-    listener->startup(
-        [listener, &accept_count](boost::system::error_code error, worker_context&, boost::asio::ip::tcp::socket)
-        {
-            require(!error, "tcp listener shutdown accept");
-            ++accept_count;
-        },
-        {},
-        startup_error);
+    listener.startup(startup_error);
     require(!startup_error, "tcp listener shutdown startup");
-    const std::weak_ptr<tcp_listener> weak_listener = listener;
-    require(workers.context(0).io().run_one() == 1, "tcp listener coroutine starts before shutdown");
 
-    listener->shutdown();
-    listener->shutdown();
-    listener.reset();
-    require(!weak_listener.expired(), "tcp listener shutdown keeps self until owner worker cleanup");
+    bool accept_returned = false;
+    boost::system::error_code accept_error;
+    boost::asio::spawn(
+        worker.io(),
+        [&](boost::asio::yield_context yield)
+        {
+            boost::asio::ip::tcp::socket socket(worker.io());
+            listener.accept(socket, {}, yield, accept_error);
+            accept_returned = true;
+        },
+        boost::asio::detached);
+    require(worker.io().run_one() == 1, "tcp listener accept waits before shutdown");
 
-    workers.release_work();
-    workers.run();
+    listener.shutdown();
+    listener.shutdown();
+    worker.release_work();
+    worker.run();
 
-    require(accept_count == 0, "tcp listener shutdown suppresses accept callback");
-    require(weak_listener.expired(), "tcp listener released after owner worker cleanup");
+    require(accept_returned, "tcp listener shutdown wakes pending accept");
+    require(accept_error == boost::asio::error::operation_aborted, "tcp listener shutdown reports operation_aborted");
 }
 
 void test_gb28181_multi_output_identity()
@@ -3181,16 +3076,16 @@ void test_rtmp_server_lifecycle()
     const std::weak_ptr<rtmp_server> weak_server = server;
 
     server.reset();
-    require(!weak_server.expired(), "rtmp server listener callback keeps server alive");
+    require(!weak_server.expired(), "rtmp server accept coroutine keeps server alive");
 
     {
         const auto current = weak_server.lock();
-        require(current != nullptr, "rtmp server shared callback remains available for shutdown");
+        require(current != nullptr, "rtmp server accept coroutine remains available for shutdown");
         current->shutdown();
     }
     workers.release_work();
     workers.run();
-    require(weak_server.expired(), "rtmp server shutdown releases listener callback ownership");
+    require(weak_server.expired(), "rtmp server shutdown releases accept coroutine ownership");
 }
 
 void test_http_server_lifecycle()
@@ -3205,16 +3100,16 @@ void test_http_server_lifecycle()
     const std::weak_ptr<http_server> weak_server = server;
 
     server.reset();
-    require(!weak_server.expired(), "http server listener callback keeps server alive");
+    require(!weak_server.expired(), "http server accept coroutine keeps server alive");
 
     {
         const auto current = weak_server.lock();
-        require(current != nullptr, "http server shared callback remains available for shutdown");
+        require(current != nullptr, "http server accept coroutine remains available for shutdown");
         current->shutdown();
     }
     workers.release_work();
     workers.run();
-    require(weak_server.expired(), "http server shutdown releases listener callback ownership");
+    require(weak_server.expired(), "http server shutdown releases accept coroutine ownership");
 }
 
 void test_rtsp_server_lifecycle()
@@ -3229,16 +3124,16 @@ void test_rtsp_server_lifecycle()
     const std::weak_ptr<rtsp_server> weak_server = server;
 
     server.reset();
-    require(!weak_server.expired(), "rtsp server listener callback keeps server alive");
+    require(!weak_server.expired(), "rtsp server accept coroutine keeps server alive");
 
     {
         const auto current = weak_server.lock();
-        require(current != nullptr, "rtsp server shared callback remains available for shutdown");
+        require(current != nullptr, "rtsp server accept coroutine remains available for shutdown");
         current->shutdown();
     }
     workers.release_work();
     workers.run();
-    require(weak_server.expired(), "rtsp server shutdown releases listener callback ownership");
+    require(weak_server.expired(), "rtsp server shutdown releases accept coroutine ownership");
 }
 
 void start_http_flv_client(boost::asio::ip::tcp::socket& client, std::string_view path)
@@ -10390,14 +10285,12 @@ int main()
     std::cout << "[pass] udp_socket_error_and_shutdown_lifecycle\n";
     media_server::test_tcp_listener_startup_error();
     std::cout << "[pass] tcp_listener_startup_error\n";
-    media_server::test_tcp_listener_worker_assignment();
-    std::cout << "[pass] tcp_listener_worker_assignment\n";
+    media_server::test_tcp_listener_external_socket_owner();
+    std::cout << "[pass] tcp_listener_external_socket_owner\n";
     media_server::test_tcp_listener_unlimited_accepts();
     std::cout << "[pass] tcp_listener_unlimited_accepts\n";
-    media_server::test_tcp_listener_dynamic_startup();
-    std::cout << "[pass] tcp_listener_dynamic_startup\n";
-    media_server::test_tcp_listener_timeout_reports_error_once();
-    std::cout << "[pass] tcp_listener_timeout_reports_error_once\n";
+    media_server::test_tcp_listener_timeout_preserves_listener();
+    std::cout << "[pass] tcp_listener_timeout_preserves_listener\n";
     media_server::test_tcp_listener_shutdown_lifecycle();
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
     media_server::test_gb28181_multi_output_identity();
