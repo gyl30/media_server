@@ -3,14 +3,17 @@
 
 #include <array>
 #include <chrono>
+#include <deque>
 #include <memory>
+#include <span>
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <optional>
 
 #include <boost/asio.hpp>
 
-#include "media/net/tcp_connection.h"
+#include "media/net/tcp_yield_transport.h"
 #include "media/core/media_stream.h"
 
 extern "C"
@@ -26,10 +29,12 @@ struct avpacket_t;
 namespace media_server
 {
 
+class worker_context;
+
 class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_session>
 {
    public:
-    rtsp_pull_session(boost::asio::io_context& io,
+    rtsp_pull_session(worker_context& worker,
                       std::string stream_name,
                       std::string url,
                       std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
@@ -61,8 +66,9 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     static int packet_callback(void* param, avpacket_t* packet);
 
     [[nodiscard]] static std::optional<parsed_url> parse_url(std::string_view url);
-    void on_connect(const boost::system::error_code& error, boost::asio::ip::tcp::socket socket);
-    void on_read(std::span<const std::uint8_t> data);
+    void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
+    void run_write(boost::asio::yield_context yield);
+    void write(std::span<const std::uint8_t> data);
     void safe_shutdown();
     void record_establishment_progress();
     void schedule_establishment_timeout();
@@ -75,6 +81,7 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     [[nodiscard]] bool update_track_from_packet(const avpacket_t& packet);
     [[nodiscard]] bool try_initialize_tracks();
 
+    worker_context& worker_;
     std::string stream_name_;
     std::string url_;
     std::string username_;
@@ -85,7 +92,8 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     boost::asio::steady_timer initial_tracks_timer_;
     boost::asio::steady_timer keepalive_timer_;
     boost::asio::steady_timer rtcp_timer_;
-    std::shared_ptr<tcp_connection> connection_;
+    std::unique_ptr<tcp_yield_transport> transport_;
+    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::shared_ptr<media_stream> stream_;
     rtsp_client_t* client_{};
     std::array<rtsp_demuxer_t*, 2> demuxers_{};
