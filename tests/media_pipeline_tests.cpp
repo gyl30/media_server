@@ -71,7 +71,7 @@
 #include "media/rtsp/rtsp_input_tcp_session.h"
 #include "media/rtsp/rtsp_input_udp_session.h"
 #include "media/rtsp/rtsp_input_media.h"
-#include "media/rtsp/rtsp_output_session.h"
+#include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_server_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
@@ -119,7 +119,7 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 
 static_assert(std::is_base_of_v<rtsp_server_session, rtsp_publish_session>);
-static_assert(std::is_base_of_v<rtsp_server_session, rtsp_output_session>);
+static_assert(std::is_base_of_v<rtsp_server_session, rtsp_play_session>);
 static_assert(requires(rtsp_server_session& session, std::function<void(boost::system::error_code)> handler) {
     session.set_error_handler(std::move(handler));
 });
@@ -151,12 +151,12 @@ static_assert(!std::is_constructible_v<rtsp_input_media,
                                        boost::asio::any_io_executor,
                                        std::string,
                                        std::vector<rtsp_input_track_description>>);
-static_assert(std::is_constructible_v<rtsp_output_session,
+static_assert(std::is_constructible_v<rtsp_play_session,
                                       worker_context&,
                                       output_video_codec,
                                       boost::asio::ip::address,
                                       rtsp_write_handler>);
-static_assert(!std::is_constructible_v<rtsp_output_session,
+static_assert(!std::is_constructible_v<rtsp_play_session,
                                        boost::asio::any_io_executor,
                                        output_video_codec,
                                        boost::asio::ip::address,
