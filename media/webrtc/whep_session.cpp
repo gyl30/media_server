@@ -6,6 +6,9 @@
 #include <openssl/rand.h>
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/spawn.hpp>
+#include <boost/asio/detached.hpp>
 
 #include "media/webrtc/stun_message.h"
 #include "media/net/worker_context.h"
@@ -49,6 +52,7 @@ whep_session::whep_session(worker_context& worker,
       video_config_(video),
       timeouts_(timeouts),
       worker_(worker),
+      udp_transport_(worker_.io()),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
       ice_activity_timer_(worker_.io())
@@ -77,26 +81,8 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     }
     local_port_reservation_ = *reserved;
     const auto weak = weak_from_this();
-    udp_socket_ = std::make_shared<udp_socket>(worker_.io());
     boost::system::error_code udp_error;
-    udp_socket_->startup(
-        advertised_address_,
-        local_port_reservation_,
-        [weak](boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
-        {
-            if (const auto self = weak.lock())
-            {
-                self->on_udp_read(error, packet, endpoint);
-            }
-        },
-        [weak](boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint)
-        {
-            if (const auto self = weak.lock())
-            {
-                self->on_udp_write_error(error, endpoint);
-            }
-        },
-        udp_error);
+    udp_transport_.startup(advertised_address_, local_port_reservation_, udp_error);
     if (udp_error)
     {
         port_manager::instance().release(local_port_reservation_);
@@ -116,7 +102,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         return whep_session_startup_error::internal_error;
     }
 
-    local_port_ = udp_socket_->local_port();
+    local_port_ = local_port_reservation_;
     auto answer = make_webrtc_answer(offer,
                                      source_tracks,
                                      webrtc_answer_config{
@@ -165,6 +151,9 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     answer_ = std::move(*answer);
     started_ = true;
+
+    const auto self = shared_from_this();
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_udp(yield); }, boost::asio::detached);
 
     for (const auto& track : source_tracks)
     {
@@ -240,26 +229,23 @@ void whep_session::safe_shutdown()
     dtls_.reset();
     answer_ = {};
     local_port_ = 0;
-    if (udp_socket_)
+    if (udp_write_queue_.empty())
     {
-        const auto local_port = local_port_reservation_;
-        udp_socket_->shutdown(
-            [local_port]
-            {
-                if (local_port != 0)
-                {
-                    port_manager::instance().release(local_port);
-                }
-            });
-        udp_socket_.reset();
+        shutdown_udp_transport();
     }
-    else if (local_port_reservation_ != 0)
-    {
-        port_manager::instance().release(local_port_reservation_);
-    }
-    local_port_reservation_ = 0;
 
     spdlog::info("webrtc whep session shutdown {}", id_);
+}
+
+void whep_session::shutdown_udp_transport()
+{
+    udp_transport_.shutdown();
+    local_port_ = 0;
+    if (local_port_reservation_ != 0)
+    {
+        port_manager::instance().release(local_port_reservation_);
+        local_port_reservation_ = 0;
+    }
 }
 
 const std::string& whep_session::id() const noexcept { return id_; }
@@ -357,34 +343,64 @@ bool whep_session::apply_tracks(const media_track_snapshot_ptr& tracks)
     return true;
 }
 
-void whep_session::on_udp_read(boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
+void whep_session::run_udp(boost::asio::yield_context yield)
 {
-    if (!started_)
+    std::vector<std::uint8_t> buffer(64 * 1024);
+    boost::asio::ip::udp::endpoint endpoint;
+    for (;;)
     {
-        return;
+        boost::system::error_code error;
+        const auto bytes = udp_transport_.read(buffer, endpoint, yield, error);
+        if (error)
+        {
+            if (error != boost::asio::error::operation_aborted)
+            {
+                spdlog::debug("webrtc udp receive failed session {} error {}", id_, error.message());
+            }
+            break;
+        }
+        handle_packet(std::span<const std::uint8_t>{buffer.data(), bytes}, endpoint);
     }
-    if (error)
-    {
-        spdlog::debug("webrtc udp receive failed session {} error {}", id_, error.message());
-        shutdown();
-        return;
-    }
-    handle_packet(packet, endpoint);
+    shutdown();
 }
 
-void whep_session::on_udp_write_error(boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint)
+void whep_session::run_udp_write(boost::asio::yield_context yield)
 {
-    if (!started_)
+    for (;;)
     {
-        return;
+        if (udp_write_queue_.empty())
+        {
+            if (local_port_ == 0)
+            {
+                shutdown_udp_transport();
+            }
+            return;
+        }
+
+        const auto datagram = udp_write_queue_.front();
+        boost::system::error_code error;
+        static_cast<void>(
+            udp_transport_.write(std::span<const std::uint8_t>{datagram.packet->data(), datagram.packet->size()}, datagram.endpoint, yield, error));
+        if (error)
+        {
+            spdlog::debug("webrtc udp send failed session {} remote {} {} error {}",
+                          id_,
+                          datagram.endpoint.address().to_string(),
+                          datagram.endpoint.port(),
+                          error.message());
+            udp_write_queue_.clear();
+            shutdown_udp_transport();
+            shutdown();
+            return;
+        }
+
+        udp_write_queue_.pop_front();
     }
-    spdlog::debug("webrtc udp send failed session {} remote {} {} error {}", id_, endpoint.address().to_string(), endpoint.port(), error.message());
-    shutdown();
 }
 
 void whep_session::handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
-    if (packet.empty())
+    if (!started_ || packet.empty())
     {
         return;
     }
@@ -448,7 +464,7 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
                       remote_address,
                       remote_port,
                       request->unknown_required_attributes.size());
-        udp_socket_->send(std::move(response), endpoint);
+        send_udp(std::move(response), endpoint);
         return;
     }
 
@@ -466,7 +482,7 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
             return;
         }
         spdlog::debug("webrtc stun role conflict session {} remote {} {}", id_, remote_address, remote_port);
-        udp_socket_->send(std::move(response), endpoint);
+        send_udp(std::move(response), endpoint);
         return;
     }
     if (!request->ice_controlling)
@@ -506,7 +522,7 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
     }
 
     spdlog::trace("webrtc stun response send session {} remote {} {} size {}", id_, remote_address, remote_port, response.size());
-    udp_socket_->send(std::move(response), endpoint);
+    send_udp(std::move(response), endpoint);
 }
 
 void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
@@ -662,12 +678,30 @@ void whep_session::send_rtcp(std::span<const std::uint8_t> packet)
 
 void whep_session::send_udp(std::vector<std::uint8_t> packet)
 {
-    if (!started_ || !udp_socket_ || !remote_endpoint_.has_value() || packet.empty())
+    if (!remote_endpoint_.has_value())
+    {
+        return;
+    }
+    send_udp(std::move(packet), *remote_endpoint_);
+}
+
+void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
+{
+    if (!started_ || local_port_reservation_ == 0 || packet.empty())
     {
         return;
     }
 
-    udp_socket_->send(std::move(packet), *remote_endpoint_);
+    const bool start_write = udp_write_queue_.empty();
+    udp_write_queue_.push_back(pending_datagram{
+        .packet = std::make_shared<std::vector<std::uint8_t>>(std::move(packet)),
+        .endpoint = std::move(endpoint),
+    });
+    if (start_write)
+    {
+        const auto self = shared_from_this();
+        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_udp_write(yield); }, boost::asio::detached);
+    }
 }
 
 void whep_session::schedule_dtls_timeout()
