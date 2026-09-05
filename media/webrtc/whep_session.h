@@ -3,6 +3,7 @@
 
 #include <map>
 #include <span>
+#include <deque>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -10,11 +11,12 @@
 #include <cstdint>
 #include <optional>
 
+#include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include "media/net/udp_socket.h"
 #include "media/net/port_manager.h"
+#include "media/net/udp_yield_transport.h"
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
 #include "media/webrtc/webrtc_sdp.h"
@@ -66,9 +68,16 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void on_end() override;
 
    private:
+    struct pending_datagram
+    {
+        std::shared_ptr<std::vector<std::uint8_t>> packet;
+        boost::asio::ip::udp::endpoint endpoint;
+    };
+
     void safe_shutdown();
-    void on_udp_read(boost::system::error_code error, std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
-    void on_udp_write_error(boost::system::error_code error, const boost::asio::ip::udp::endpoint& endpoint);
+    void shutdown_udp_transport();
+    void run_udp(boost::asio::yield_context yield);
+    void run_udp_write(boost::asio::yield_context yield);
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_dtls(std::span<const std::uint8_t> packet);
@@ -79,6 +88,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void send_rtp(std::span<const std::uint8_t> packet);
     void send_rtcp(std::span<const std::uint8_t> packet);
     void send_udp(std::vector<std::uint8_t> packet);
+    void send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint);
     void schedule_dtls_timeout();
     void handle_dtls_timeout();
     void startup_establishment_timeout();
@@ -96,7 +106,8 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::unique_ptr<srtp_transport> srtp_;
     std::shared_ptr<webrtc_output> output_;
     worker_context& worker_;
-    std::shared_ptr<udp_socket> udp_socket_;
+    udp_yield_transport udp_transport_;
+    std::deque<pending_datagram> udp_write_queue_;
     boost::asio::steady_timer dtls_timer_;
     boost::asio::steady_timer establishment_timer_;
     boost::asio::steady_timer ice_activity_timer_;
