@@ -2564,6 +2564,80 @@ void test_whep_stun_unknown_attribute_contract()
     client.close(error);
 }
 
+void test_whep_udp_send_queue()
+{
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
+    auto stream = std::make_shared<media_stream>("live/udp-send-queue", io.get_executor());
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "udp send queue initial tracks");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "udp send queue parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "udp send queue certificate");
+
+    auto session = std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+    require(session->startup(*offer) == whep_session_startup_error::none, "udp send queue session startup");
+
+    const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
+    const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
+    require(!local_ufrag.empty() && !local_pwd.empty(), "udp send queue local credentials");
+
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    boost::system::error_code error;
+    client.non_blocking(true, error);
+    require(!error, "udp send queue non blocking");
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
+    const auto username = local_ufrag + ":remotevideo";
+    constexpr std::array<std::array<std::uint8_t, 12>, 3> transaction_ids{{
+        {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+        {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13},
+        {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14},
+    }};
+
+    for (const auto& transaction_id : transaction_ids)
+    {
+        const auto request = make_stun_request(username, local_pwd, transaction_id, false);
+        static_cast<void>(client.send_to(boost::asio::buffer(request), server_endpoint));
+    }
+
+    std::array<std::uint8_t, 2048> buffer{};
+    boost::asio::ip::udp::endpoint sender;
+    std::size_t response_index = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (response_index < transaction_ids.size() && std::chrono::steady_clock::now() < deadline)
+    {
+        io.run_for(std::chrono::milliseconds(10));
+        io.restart();
+
+        for (;;)
+        {
+            error.clear();
+            const auto bytes = client.receive_from(boost::asio::buffer(buffer), sender, 0, error);
+            if (error == boost::asio::error::would_block || error == boost::asio::error::try_again)
+            {
+                break;
+            }
+            require(!error && sender == server_endpoint, "udp send queue response receive");
+            require_stun_success(std::span<const std::uint8_t>{buffer.data(), bytes}, transaction_ids[response_index]);
+            ++response_index;
+            if (response_index == transaction_ids.size())
+            {
+                break;
+            }
+        }
+    }
+
+    require(response_index == transaction_ids.size(), "udp send queue responses");
+    require(!session->ice_connected(), "udp send queue does not nominate");
+
+    session->shutdown();
+    drain_io(io);
+    client.close(error);
+}
+
 void test_whep_ice_lite()
 {
     worker_context worker;
@@ -2991,6 +3065,8 @@ int main()
     std::cout << "[pass] stun_ice_connectivity_check_contract\n";
     media_server::test_whep_stun_unknown_attribute_contract();
     std::cout << "[pass] whep_stun_unknown_attribute_contract\n";
+    media_server::test_whep_udp_send_queue();
+    std::cout << "[pass] whep_udp_send_queue\n";
     media_server::test_whep_ice_lite();
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();
