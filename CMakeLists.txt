@@ -161,7 +161,6 @@ add_library(media_core STATIC
     media/net/tcp_yield_transport.cpp
     media/net/udp_yield_transport.cpp
     media/net/tcp_listener.cpp
-    media/net/udp_socket.cpp
     media/flv/flv_output_muxer.cpp
     media/hls/hls_output.cpp
     media/hls/hls.cpp
