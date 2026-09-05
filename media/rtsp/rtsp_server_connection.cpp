@@ -9,7 +9,7 @@
 
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_publish_session.h"
-#include "media/rtsp/rtsp_output_session.h"
+#include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
 extern "C"
@@ -174,7 +174,7 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     if (!self->logical_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_output_session>(self->worker_,
+        auto next_session = std::make_shared<rtsp_play_session>(self->worker_,
                                                                   self->video_codec_,
                                                                   self->local_address_,
                                                                   [owner](std::span<const std::uint8_t> data) { owner->write(data); });
@@ -191,7 +191,7 @@ int rtsp_server_connection::setup_callback(
     if (!self->logical_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_output_session>(self->worker_,
+        auto next_session = std::make_shared<rtsp_play_session>(self->worker_,
                                                                   self->video_codec_,
                                                                   self->local_address_,
                                                                   [owner](std::span<const std::uint8_t> data) { owner->write(data); });

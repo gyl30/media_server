@@ -16,7 +16,7 @@
 #include "media/codec/codec_utils.h"
 #include "media/core/stream_registry.h"
 #include "media/codec/video_transcoder.h"
-#include "media/rtsp/rtsp_output_session.h"
+#include "media/rtsp/rtsp_play_session.h"
 
 extern "C"
 {
@@ -57,7 +57,7 @@ std::uint32_t random_u32()
 }
 }    // namespace
 
-rtsp_output_session::rtsp_output_session(worker_context& worker,
+rtsp_play_session::rtsp_play_session(worker_context& worker,
                                          output_video_codec video_codec,
                                          boost::asio::ip::address local_address,
                                          std::function<void(std::span<const std::uint8_t>)> write)
@@ -65,7 +65,7 @@ rtsp_output_session::rtsp_output_session(worker_context& worker,
 {
 }
 
-void rtsp_output_session::on_tracks(media_track_snapshot_ptr tracks)
+void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
 {
     if (closed_)
     {
@@ -80,7 +80,7 @@ void rtsp_output_session::on_tracks(media_track_snapshot_ptr tracks)
     reader_handle().async_read(reader_cursor_);
 }
 
-void rtsp_output_session::on_read(media_read_batch batch)
+void rtsp_play_session::on_read(media_read_batch batch)
 {
     if (closed_)
     {
@@ -175,7 +175,7 @@ void rtsp_output_session::on_read(media_read_batch batch)
     reader_handle().async_read(reader_cursor_);
 }
 
-void rtsp_output_session::on_end()
+void rtsp_play_session::on_end()
 {
     if (!closed_)
     {
@@ -183,12 +183,12 @@ void rtsp_output_session::on_end()
     }
 }
 
-int rtsp_output_session::muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
+int rtsp_play_session::muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
 {
-    return static_cast<rtsp_output_session*>(param)->on_muxer_packet(pid, data, bytes);
+    return static_cast<rtsp_play_session*>(param)->on_muxer_packet(pid, data, bytes);
 }
 
-void rtsp_output_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
+void rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
     if (session_id_.empty())
     {
@@ -215,7 +215,7 @@ void rtsp_output_session::on_interleaved(std::uint8_t channel, std::span<const s
     }
 }
 
-void rtsp_output_session::shutdown()
+void rtsp_play_session::shutdown()
 {
     if (closed_)
     {
@@ -226,7 +226,7 @@ void rtsp_output_session::shutdown()
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void rtsp_output_session::safe_shutdown()
+void rtsp_play_session::safe_shutdown()
 {
     reader_handle().remove();
     if (video_transcoder_)
@@ -246,7 +246,7 @@ void rtsp_output_session::safe_shutdown()
     error_handler_ = {};
 }
 
-int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri)
+int rtsp_play_session::on_describe(rtsp_server_t* server, std::string_view uri)
 {
     if (!session_id_.empty())
     {
@@ -287,7 +287,7 @@ int rtsp_output_session::on_describe(rtsp_server_t* server, std::string_view uri
     return rtsp_server_reply_describe(server, 200, sdp.str().c_str());
 }
 
-int rtsp_output_session::on_setup(
+int rtsp_play_session::on_setup(
     rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     if (playing_)
@@ -366,7 +366,7 @@ int rtsp_output_session::on_setup(
     return rtsp_server_reply_setup(server, 200, session_id_.c_str(), transport.c_str());
 }
 
-int rtsp_output_session::on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double*)
+int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double*)
 {
     const auto path = rtsp_path_from_uri(uri);
     if (session_id_.empty())
@@ -401,7 +401,7 @@ int rtsp_output_session::on_play(rtsp_server_t* server, std::string_view uri, st
     return 0;
 }
 
-int rtsp_output_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
+int rtsp_play_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
 {
     if (session_id_.empty() || session != session_id_)
     {
@@ -413,7 +413,7 @@ int rtsp_output_session::on_teardown(rtsp_server_t* server, std::string_view, st
     return result;
 }
 
-int rtsp_output_session::on_muxer_packet(int pid, const void* data, int bytes)
+int rtsp_play_session::on_muxer_packet(int pid, const void* data, int bytes)
 {
     if (data == nullptr || bytes <= 0)
     {
@@ -447,7 +447,7 @@ int rtsp_output_session::on_muxer_packet(int pid, const void* data, int bytes)
     return 0;
 }
 
-bool rtsp_output_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+bool rtsp_play_session::apply_tracks(const media_track_snapshot_ptr& tracks)
 {
     if (!tracks || tracks->revision <= track_revision_)
     {
@@ -471,7 +471,7 @@ bool rtsp_output_session::apply_tracks(const media_track_snapshot_ptr& tracks)
     return true;
 }
 
-int rtsp_output_session::presentation_status() const
+int rtsp_play_session::presentation_status() const
 {
     const auto current_stream = registry::instance().find(stream_->name());
     if (!current_stream)
@@ -501,7 +501,7 @@ int rtsp_output_session::presentation_status() const
     return supported_count == track_states_.size() ? 0 : 455;
 }
 
-bool rtsp_output_session::channels_available(track_id id, int rtp_channel, int rtcp_channel) const
+bool rtsp_play_session::channels_available(track_id id, int rtp_channel, int rtcp_channel) const
 {
     if (rtp_channel == rtcp_channel)
     {
@@ -522,7 +522,7 @@ bool rtsp_output_session::channels_available(track_id id, int rtp_channel, int r
     return true;
 }
 
-int rtsp_output_session::prepare_presentation(std::string_view uri)
+int rtsp_play_session::prepare_presentation(std::string_view uri)
 {
     track_states_.clear();
     if (video_transcoder_)
@@ -545,7 +545,7 @@ int rtsp_output_session::prepare_presentation(std::string_view uri)
     }
     const auto snapshot = stream->tracks();
 
-    auto prepared_muxer = std::unique_ptr<rtsp_muxer_t, void (*)(rtsp_muxer_t*)>(rtsp_muxer_create(&rtsp_output_session::muxer_packet_callback, this),
+    auto prepared_muxer = std::unique_ptr<rtsp_muxer_t, void (*)(rtsp_muxer_t*)>(rtsp_muxer_create(&rtsp_play_session::muxer_packet_callback, this),
                                                                                  [](rtsp_muxer_t* value) { rtsp_muxer_destroy(value); });
     if (!prepared_muxer)
     {
