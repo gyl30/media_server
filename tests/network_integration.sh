@@ -143,9 +143,10 @@ probe_streams "$work_dir/http_flv_from_rtsp.txt" 'http://127.0.0.1:18081/relay/t
 
 probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/play/hls/relay/test'
 
-# RTSP push TCP/UDP 使用独立 stream，验证推流输入可被现有四种非 WebRTC 输出消费。
-for transport in tcp udp; do
-    stream_name="rtsp-push-$transport"
+# RTSP push TCP/UDP 使用独立 stream；UDP 连续建立两次，覆盖传输资源释放后的再次建链。
+for push_case in tcp udp udp-restart; do
+    transport="${push_case%%-*}"
+    stream_name="rtsp-push-$push_case"
     ffmpeg -nostdin -hide_banner -loglevel error -re \
         -f lavfi -i 'testsrc=size=320x180:rate=25' \
         -f lavfi -i 'sine=frequency=1200:sample_rate=44100' \
@@ -154,14 +155,14 @@ for transport in tcp udp; do
         -g 25 -keyint_min 25 -sc_threshold 0 \
         -c:a aac -b:a 96k -ac 2 \
         -t 24 -rtsp_transport "$transport" -f rtsp "rtsp://127.0.0.1:18554/live/$stream_name" \
-        >"$work_dir/rtsp_publish_${transport}.log" 2>&1 &
+        >"$work_dir/rtsp_publish_${push_case}.log" 2>&1 &
     rtsp_publish_pid=$!
 
-    wait_probe_streams "$work_dir/rtsp_push_${transport}_rtsp.txt" h264 aac -rtsp_transport tcp \
+    wait_probe_streams "$work_dir/rtsp_push_${push_case}_rtsp.txt" h264 aac -rtsp_transport tcp \
         "rtsp://127.0.0.1:18554/live/$stream_name"
-    probe_streams "$work_dir/rtsp_push_${transport}_rtmp.txt" "rtmp://127.0.0.1:19350/live/$stream_name"
-    probe_streams "$work_dir/rtsp_push_${transport}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
-    probe_hls_ts "rtsp_push_${transport}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
+    probe_streams "$work_dir/rtsp_push_${push_case}_rtmp.txt" "rtmp://127.0.0.1:19350/live/$stream_name"
+    probe_streams "$work_dir/rtsp_push_${push_case}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
+    probe_hls_ts "rtsp_push_${push_case}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
 
     kill "$rtsp_publish_pid" 2>/dev/null || true
     wait "$rtsp_publish_pid" 2>/dev/null || true
@@ -297,6 +298,7 @@ rtsp input -> http-flv output: pass
 rtsp input -> hls output: pass
 rtsp push tcp -> rtsp/rtmp/http-flv/hls outputs: pass
 rtsp push udp -> rtsp/rtmp/http-flv/hls outputs: pass
+rtsp push udp restart -> rtsp/rtmp/http-flv/hls outputs: pass
 rtmp input -> rtsp av1 output: pass
 rtsp pull input -> rtsp av1 output: pass
 rtsp push tcp -> rtsp av1 output: pass
