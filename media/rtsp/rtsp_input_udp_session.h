@@ -1,7 +1,6 @@
 #ifndef MEDIA_RTSP_RTSP_INPUT_UDP_SESSION_H
 #define MEDIA_RTSP_RTSP_INPUT_UDP_SESSION_H
 
-#include <span>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,11 +11,12 @@
 #include <functional>
 
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/spawn.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "media/net/udp_socket.h"
 #include "media/net/port_manager.h"
+#include "media/net/udp_yield_transport.h"
 #include "media/rtsp/rtsp_input_media.h"
 
 struct rtsp_server_t;
@@ -43,27 +43,19 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
 
     struct track_state
     {
-        std::shared_ptr<udp_socket> rtp_socket;
-        std::shared_ptr<udp_socket> rtcp_socket;
+        std::optional<udp_yield_transport> rtp_transport;
+        std::optional<udp_yield_transport> rtcp_transport;
         boost::asio::ip::udp::endpoint rtp_endpoint;
         boost::asio::ip::udp::endpoint rtcp_endpoint;
         std::optional<port_manager_impl::port_pair> local_ports;
     };
 
-    struct udp_socket_pair
-    {
-        std::shared_ptr<udp_socket> rtp;
-        std::shared_ptr<udp_socket> rtcp;
-        port_manager_impl::port_pair local_ports;
-    };
-
     int startup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
-    void on_rtp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
-    void on_rtcp(std::size_t track_index, std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
+    void run_rtp(std::size_t track_index, boost::asio::yield_context yield);
+    void run_rtcp(std::size_t track_index, boost::asio::yield_context yield);
+    void run_rtcp_sender(boost::asio::yield_context yield);
     int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
-    [[nodiscard]] std::optional<udp_socket_pair> prepare_udp_sockets(std::size_t track_index);
     int on_record(rtsp_server_t* server);
-    void schedule_rtcp();
     void safe_shutdown();
 
     worker_context& worker_;
