@@ -1,5 +1,5 @@
-#ifndef MEDIA_RTSP_RTSP_OUTPUT_SESSION_H
-#define MEDIA_RTSP_RTSP_OUTPUT_SESSION_H
+#ifndef MEDIA_RTSP_RTSP_PLAY_SESSION_H
+#define MEDIA_RTSP_RTSP_PLAY_SESSION_H
 
 #include <map>
 #include <span>
@@ -22,10 +22,10 @@ namespace media_server
 
 class worker_context;
 
-class rtsp_output_session final : public rtsp_server_session, public media_reader, public std::enable_shared_from_this<rtsp_output_session>
+class rtsp_play_session final : public rtsp_server_session, public media_reader, public std::enable_shared_from_this<rtsp_play_session>
 {
    public:
-    rtsp_output_session(worker_context& worker,
+    rtsp_play_session(worker_context& worker,
                         output_video_codec video_codec,
                         boost::asio::ip::address local_address,
                         std::function<void(std::span<const std::uint8_t>)> write);
