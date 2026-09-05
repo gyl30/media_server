@@ -1,5 +1,5 @@
-#ifndef MEDIA_RTSP_RTSP_INPUT_SESSION_H
-#define MEDIA_RTSP_RTSP_INPUT_SESSION_H
+#ifndef MEDIA_RTSP_RTSP_PUBLISH_SESSION_H
+#define MEDIA_RTSP_RTSP_PUBLISH_SESSION_H
 
 #include <span>
 #include <memory>
@@ -21,10 +21,10 @@ class worker_context;
 class rtsp_input_tcp_session;
 class rtsp_input_udp_session;
 
-class rtsp_input_session final : public rtsp_server_session
+class rtsp_publish_session final : public rtsp_server_session
 {
    public:
-    rtsp_input_session(worker_context& worker,
+    rtsp_publish_session(worker_context& worker,
                        boost::asio::ip::address bind_address,
                        std::function<void(std::span<const std::uint8_t>)> write);
 

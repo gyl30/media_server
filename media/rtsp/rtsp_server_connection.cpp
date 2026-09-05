@@ -8,7 +8,7 @@
 #include <boost/asio/detached.hpp>
 
 #include "media/net/worker_context.h"
-#include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_output_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
@@ -228,7 +228,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     if (!self->logical_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_unique<rtsp_input_session>(
+        auto next_session = std::make_unique<rtsp_publish_session>(
             self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
         next_session->set_error_handler([owner](boost::system::error_code) { owner->shutdown(); });
         self->logical_session_ = std::move(next_session);

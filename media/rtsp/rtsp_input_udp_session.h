@@ -26,7 +26,7 @@ namespace media_server
 {
 
 class worker_context;
-class rtsp_input_session;
+class rtsp_publish_session;
 
 class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_input_udp_session>
 {
@@ -39,7 +39,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
 
    private:
-    friend class rtsp_input_session;
+    friend class rtsp_publish_session;
 
     struct track_state
     {
