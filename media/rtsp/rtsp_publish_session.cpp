@@ -7,7 +7,7 @@
 
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
-#include "media/rtsp/rtsp_input_session.h"
+#include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_input_tcp_session.h"
 #include "media/rtsp/rtsp_input_udp_session.h"
 
@@ -33,14 +33,14 @@ std::uint32_t random_u32()
 
 }    // namespace
 
-rtsp_input_session::rtsp_input_session(worker_context& worker,
+rtsp_publish_session::rtsp_publish_session(worker_context& worker,
                                        boost::asio::ip::address bind_address,
                                        std::function<void(std::span<const std::uint8_t>)> write)
     : worker_(worker), bind_address_(std::move(bind_address)), write_handler_(std::move(write))
 {
 }
 
-void rtsp_input_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
+void rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
     if (!tcp_session_)
     {
@@ -50,7 +50,7 @@ void rtsp_input_session::on_interleaved(std::uint8_t channel, std::span<const st
     tcp_session_->on_interleaved(channel, data);
 }
 
-int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
+int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
     if (!session_id_.empty() || sdp == nullptr || length <= 0)
     {
@@ -145,7 +145,7 @@ int rtsp_input_session::on_announce(rtsp_server_t* server, std::string_view uri,
     return rtsp_server_reply_announce(server, 200);
 }
 
-int rtsp_input_session::on_setup(
+int rtsp_publish_session::on_setup(
     rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     if (session_id_.empty() || (!session.empty() && session != session_id_))
@@ -220,7 +220,7 @@ int rtsp_input_session::on_setup(
     return result;
 }
 
-int rtsp_input_session::on_record(rtsp_server_t* server, std::string_view, std::string_view session, const std::int64_t*, const double*)
+int rtsp_publish_session::on_record(rtsp_server_t* server, std::string_view, std::string_view session, const std::int64_t*, const double*)
 {
     if (session_id_.empty() || session != session_id_)
     {
@@ -237,7 +237,7 @@ int rtsp_input_session::on_record(rtsp_server_t* server, std::string_view, std::
     return rtsp_server_reply_record(server, 455, nullptr, nullptr);
 }
 
-int rtsp_input_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
+int rtsp_publish_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
 {
     if (session_id_.empty() || session != session_id_)
     {
@@ -248,7 +248,7 @@ int rtsp_input_session::on_teardown(rtsp_server_t* server, std::string_view, std
     return result;
 }
 
-void rtsp_input_session::shutdown()
+void rtsp_publish_session::shutdown()
 {
     if (closed_)
     {
