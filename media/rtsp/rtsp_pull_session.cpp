@@ -95,8 +95,7 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
       url_(std::move(url)),
       resolver_(worker_.io()),
       connect_socket_(worker_.io()),
-      establishment_timer_(worker_.io()),
-      initial_tracks_timer_(worker_.io()),
+      startup_timer_(worker_.io()),
       keepalive_timer_(worker_.io()),
       rtcp_timer_(worker_.io()),
       establishment_timeout_(establishment_timeout),
@@ -147,9 +146,9 @@ void rtsp_pull_session::record_establishment_progress() { last_establishment_pro
 
 void rtsp_pull_session::schedule_establishment_timeout()
 {
-    establishment_timer_.expires_at(last_establishment_progress_ + establishment_timeout_);
+    startup_timer_.expires_at(last_establishment_progress_ + establishment_timeout_);
     const auto self = shared_from_this();
-    establishment_timer_.async_wait(
+    startup_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
             if (error || self->closed_ || self->media_started_)
@@ -239,8 +238,7 @@ void rtsp_pull_session::safe_shutdown()
         stream_->end();
         stream_.reset();
     }
-    establishment_timer_.cancel();
-    initial_tracks_timer_.cancel();
+    startup_timer_.cancel();
     keepalive_timer_.cancel();
     rtcp_timer_.cancel();
     resolver_.cancel();
@@ -543,15 +541,15 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
             return;
         }
         media_started_ = true;
-        establishment_timer_.cancel();
+        startup_timer_.cancel();
         schedule_keepalive();
         schedule_rtcp();
         static_cast<void>(try_initialize_tracks());
         if (!tracks_initialized_)
         {
-            initial_tracks_timer_.expires_after(initial_tracks_timeout_);
+            startup_timer_.expires_after(initial_tracks_timeout_);
             const auto self = shared_from_this();
-            initial_tracks_timer_.async_wait(
+            startup_timer_.async_wait(
                 [self](const boost::system::error_code& error)
                 {
                     if (error || self->closed_ || self->tracks_initialized_)
@@ -642,7 +640,7 @@ bool rtsp_pull_session::update_track_from_packet(const avpacket_t& packet)
     }
     pending = *track;
 
-    if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
+    if (std::chrono::steady_clock::now() >= startup_timer_.expiry())
     {
         shutdown();
         return changed;
@@ -676,7 +674,7 @@ bool rtsp_pull_session::try_initialize_tracks()
         shutdown();
         return true;
     }
-    initial_tracks_timer_.cancel();
+    startup_timer_.cancel();
     spdlog::info("rtsp input tracks ready audio {}", expected_audio_);
     return true;
 }
