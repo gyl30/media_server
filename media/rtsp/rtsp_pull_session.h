@@ -88,8 +88,7 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     std::string password_;
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket connect_socket_;
-    boost::asio::steady_timer establishment_timer_;
-    boost::asio::steady_timer initial_tracks_timer_;
+    boost::asio::steady_timer startup_timer_;
     boost::asio::steady_timer keepalive_timer_;
     boost::asio::steady_timer rtcp_timer_;
     std::unique_ptr<tcp_yield_transport> transport_;
