@@ -1,6 +1,8 @@
+#include <array>
 #include <utility>
 
 #include <boost/asio/post.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
@@ -18,13 +20,23 @@ http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_str
 {
 }
 
-void http_flv_session::startup() { handle_request(); }
+void http_flv_session::startup()
+{
+    const auto self = shared_from_this();
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+}
 
-void http_flv_session::handle_request()
+void http_flv_session::run(boost::asio::yield_context yield)
+{
+    handle_request(yield);
+    shutdown();
+}
+
+void http_flv_session::handle_request(boost::asio::yield_context& yield)
 {
     if (request_.method() != boost::beast::http::verb::get)
     {
-        send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", "GET");
+        send_text_response(boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", yield, "GET");
         return;
     }
 
@@ -36,7 +48,7 @@ void http_flv_session::handle_request()
     }
     if (path.empty() || !path.back().ends_with(".flv"))
     {
-        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n");
+        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
         return;
     }
 
@@ -54,91 +66,71 @@ void http_flv_session::handle_request()
     auto media_stream = registry::instance().find(stream_name);
     if (!media_stream)
     {
-        send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n");
+        send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
         return;
     }
 
-    auto response =
-        std::make_shared<boost::beast::http::response<boost::beast::http::empty_body>>(boost::beast::http::status::ok, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::content_type, "video/x-flv");
-    response->set(boost::beast::http::field::cache_control, "no-cache");
-    response->keep_alive(false);
-    response->chunked(true);
-
-    auto serializer = std::make_shared<boost::beast::http::serializer<false, boost::beast::http::empty_body>>(*response);
     stream_.expires_never();
-    const auto self = shared_from_this();
-    boost::beast::http::async_write_header(
-        stream_,
-        *serializer,
-        [self, response, serializer, media_stream = std::move(media_stream)](boost::system::error_code error, std::size_t bytes) mutable
-        {
-            static_cast<void>(response);
-            static_cast<void>(serializer);
-            static_cast<void>(bytes);
-            if (error)
-            {
-                self->shutdown();
-                return;
-            }
-            self->startup_flv(std::move(media_stream));
-        });
-}
-
-void http_flv_session::write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response)
-{
-    const auto self = shared_from_this();
-    if (request_.method() == boost::beast::http::verb::head)
     {
-        auto serializer = std::make_shared<boost::beast::http::response_serializer<boost::beast::http::string_body>>(*response);
-        boost::beast::http::async_write_header(stream_,
-                                               *serializer,
-                                               [self, response, serializer](boost::system::error_code error, std::size_t bytes)
-                                               {
-                                                   static_cast<void>(response);
-                                                   static_cast<void>(serializer);
-                                                   static_cast<void>(error);
-                                                   static_cast<void>(bytes);
-                                                   self->shutdown();
-                                               });
-        return;
+        boost::beast::http::response<boost::beast::http::empty_body> response(boost::beast::http::status::ok, request_.version());
+        response.set(boost::beast::http::field::server, "media_server");
+        response.set(boost::beast::http::field::content_type, "video/x-flv");
+        response.set(boost::beast::http::field::cache_control, "no-cache");
+        response.keep_alive(false);
+        response.chunked(true);
+
+        boost::beast::http::serializer<false, boost::beast::http::empty_body> serializer(response);
+        boost::system::error_code error;
+        static_cast<void>(boost::beast::http::async_write_header(stream_, serializer, yield[error]));
+        if (error)
+        {
+            return;
+        }
     }
 
-    boost::beast::http::async_write(stream_,
-                                    *response,
-                                    [self, response](boost::system::error_code error, std::size_t bytes)
-                                    {
-                                        static_cast<void>(response);
-                                        static_cast<void>(error);
-                                        static_cast<void>(bytes);
-                                        self->shutdown();
-                                    });
+    startup_flv(std::move(media_stream));
+
+    std::array<std::uint8_t, 1> read_buffer{};
+    for (;;)
+    {
+        boost::system::error_code error;
+        static_cast<void>(stream_.async_read_some(boost::asio::buffer(read_buffer), yield[error]));
+        if (error)
+        {
+            return;
+        }
+    }
 }
 
-void http_flv_session::send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow)
+void http_flv_session::send_text_response(boost::beast::http::status status,
+                                          std::string_view content_type,
+                                          std::string body,
+                                          boost::asio::yield_context& yield,
+                                          std::string_view allow)
 {
-    auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
-    response->set(boost::beast::http::field::server, "media_server");
-    response->set(boost::beast::http::field::content_type, content_type);
+    boost::beast::http::response<boost::beast::http::string_body> response(status, request_.version());
+    response.set(boost::beast::http::field::server, "media_server");
+    response.set(boost::beast::http::field::content_type, content_type);
     if (!allow.empty())
     {
-        response->set(boost::beast::http::field::allow, allow);
+        response.set(boost::beast::http::field::allow, allow);
     }
-    response->keep_alive(false);
-    response->body() = std::move(body);
-    response->prepare_payload();
+    response.keep_alive(false);
+    response.body() = std::move(body);
+    response.prepare_payload();
 
-    write_string_response(std::move(response));
+    boost::system::error_code error;
+    if (request_.method() == boost::beast::http::verb::head)
+    {
+        boost::beast::http::response_serializer<boost::beast::http::string_body> serializer(response);
+        static_cast<void>(boost::beast::http::async_write_header(stream_, serializer, yield[error]));
+        return;
+    }
+    static_cast<void>(boost::beast::http::async_write(stream_, response, yield[error]));
 }
 
 void http_flv_session::startup_flv(std::shared_ptr<media_stream> media_stream)
 {
-    if (closed_)
-    {
-        return;
-    }
-
     const auto weak = weak_from_this();
     output_ = std::make_shared<http_flv_output>(
         [weak](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -158,37 +150,10 @@ void http_flv_session::startup_flv(std::shared_ptr<media_stream> media_stream)
         config_.http_video);
 
     reader_ = media_stream->add_reader(output_, worker_.io());
-    read_client();
-}
-
-void http_flv_session::read_client()
-{
-    if (closed_)
-    {
-        return;
-    }
-
-    const auto self = shared_from_this();
-    stream_.async_read_some(boost::asio::buffer(read_buffer_),
-                            [self](boost::system::error_code error, std::size_t bytes)
-                            {
-                                static_cast<void>(bytes);
-                                if (error)
-                                {
-                                    self->shutdown();
-                                    return;
-                                }
-                                self->read_client();
-                            });
 }
 
 void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
 {
-    if (closed_)
-    {
-        return;
-    }
-
     if (write_in_progress_)
     {
         if (!bootstrap)
@@ -207,54 +172,46 @@ void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_
         output_->write_complete(generation);
         return;
     }
-    write_chunk(generation, std::move(data));
-}
 
-void http_flv_session::write_chunk(std::uint64_t generation, std::vector<std::uint8_t> data)
-{
     write_in_progress_ = true;
-    const auto buffer = std::make_shared<std::vector<std::uint8_t>>(std::move(data));
-    const auto chunk = std::make_shared<decltype(boost::beast::http::make_chunk(boost::asio::buffer(*buffer)))>(
-        boost::beast::http::make_chunk(boost::asio::buffer(*buffer)));
     const auto self = shared_from_this();
-    boost::asio::async_write(stream_,
-                             *chunk,
-                             [self, buffer, chunk, generation](boost::system::error_code error, std::size_t bytes)
-                             {
-                                 static_cast<void>(buffer);
-                                 static_cast<void>(bytes);
-                                 self->on_write(generation, error);
-                             });
+    boost::asio::spawn(worker_.io(),
+                       [self, generation, data = std::move(data)](boost::asio::yield_context yield) mutable
+                       { self->run_write(generation, std::move(data), yield); },
+                       boost::asio::detached);
 }
 
-void http_flv_session::on_write(std::uint64_t generation, boost::system::error_code error)
+void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield)
 {
-    if (closed_)
+    for (;;)
     {
-        return;
-    }
-    write_in_progress_ = false;
-    if (error)
-    {
-        shutdown();
-        return;
-    }
-    if (pending_bootstrap_ready_)
-    {
-        const auto pending_generation = pending_generation_;
-        auto pending = std::move(pending_bootstrap_);
+        const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(data));
+        boost::system::error_code error;
+        static_cast<void>(boost::asio::async_write(stream_, chunk, yield[error]));
+        if (error)
+        {
+            write_in_progress_ = false;
+            shutdown();
+            return;
+        }
+
+        if (!pending_bootstrap_ready_)
+        {
+            write_in_progress_ = false;
+            output_->write_complete(generation);
+            return;
+        }
+
+        generation = pending_generation_;
+        data = std::move(pending_bootstrap_);
         pending_bootstrap_ready_ = false;
-        if (pending.empty())
+        if (data.empty())
         {
-            output_->write_complete(pending_generation);
+            write_in_progress_ = false;
+            output_->write_complete(generation);
+            return;
         }
-        else
-        {
-            write_chunk(pending_generation, std::move(pending));
-        }
-        return;
     }
-    output_->write_complete(generation);
 }
 
 void http_flv_session::shutdown()

@@ -1,7 +1,6 @@
 #ifndef MEDIA_HTTP_HTTP_FLV_SESSION_H
 #define MEDIA_HTTP_HTTP_FLV_SESSION_H
 
-#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -10,6 +9,7 @@
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/asio/spawn.hpp>
 
 #include "config.h"
 #include "media/core/media_reader.h"
@@ -31,14 +31,16 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     void shutdown();
 
    private:
-    void handle_request();
-    void write_string_response(std::shared_ptr<boost::beast::http::response<boost::beast::http::string_body>> response);
-    void send_text_response(boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {});
+    void run(boost::asio::yield_context yield);
+    void handle_request(boost::asio::yield_context& yield);
+    void send_text_response(boost::beast::http::status status,
+                            std::string_view content_type,
+                            std::string body,
+                            boost::asio::yield_context& yield,
+                            std::string_view allow = {});
     void startup_flv(std::shared_ptr<media_stream> stream);
-    void read_client();
     void enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
-    void write_chunk(std::uint64_t generation, std::vector<std::uint8_t> data);
-    void on_write(std::uint64_t generation, boost::system::error_code error);
+    void run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield);
     void safe_shutdown();
 
     worker_context& worker_;
@@ -48,7 +50,6 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     std::shared_ptr<http_flv_output> output_;
     media_reader_handle reader_;
     std::vector<std::uint8_t> pending_bootstrap_;
-    std::array<std::uint8_t, 1> read_buffer_{};
     std::uint64_t pending_generation_{};
     bool pending_bootstrap_ready_{};
     bool write_in_progress_{};
