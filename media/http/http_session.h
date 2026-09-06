@@ -45,7 +45,6 @@ class http_session final : public std::enable_shared_from_this<http_session>
     boost::beast::tcp_stream stream_;
     io_context_pool& workers_;
     const config& config_;
-    bool closed_{};
 };
 }    // namespace media_server
 
