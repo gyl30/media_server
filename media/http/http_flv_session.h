@@ -53,7 +53,6 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     std::uint64_t pending_generation_{};
     bool pending_bootstrap_ready_{};
     bool write_in_progress_{};
-    bool closed_{};
 };
 
 }    // namespace media_server
