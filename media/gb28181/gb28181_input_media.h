@@ -72,7 +72,6 @@ class gb28181_input_media final
     std::optional<codec_id> audio_codec_;
     std::optional<media_track> video_track_;
     std::optional<media_track> audio_track_;
-    bool collecting_topology_{};
     bool recording_{};
     bool fatal_codec_change_{};
     bool closed_{};
