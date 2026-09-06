@@ -31,7 +31,6 @@ class tcp_listener final
     boost::asio::ip::tcp::acceptor acceptor_;
     std::uint16_t port_{};
     boost::asio::ip::address bind_address_;
-    bool closed_{};
 };
 
 }    // namespace media_server

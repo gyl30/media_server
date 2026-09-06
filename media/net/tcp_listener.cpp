@@ -52,7 +52,7 @@ void tcp_listener::accept(boost::asio::ip::tcp::socket& socket,
     if (timeout > std::chrono::milliseconds::zero())
     {
         acceptor_.async_accept(socket, boost::asio::cancel_after(timer_, timeout, yield[error]));
-        if (error == boost::asio::error::operation_aborted && !closed_)
+        if (error == boost::asio::error::operation_aborted && acceptor_.is_open())
         {
             error = boost::asio::error::timed_out;
         }
@@ -64,12 +64,6 @@ void tcp_listener::accept(boost::asio::ip::tcp::socket& socket,
 
 void tcp_listener::shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
-
     boost::system::error_code error;
     acceptor_.cancel(error);
     acceptor_.close(error);
