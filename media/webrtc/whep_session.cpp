@@ -214,7 +214,6 @@ void whep_session::safe_shutdown()
     track_versions_.clear();
     reader_cursor_.reset();
     track_revision_ = 0;
-    tracks_ready_ = false;
     stream_.reset();
     certificate_.reset();
     if (srtp_)
@@ -333,10 +332,9 @@ bool whep_session::apply_tracks(const media_track_snapshot_ptr& tracks)
         negotiated_tracks.push_back(*track);
     }
 
-    if (!tracks_ready_)
+    if (track_revision_ == 0)
     {
         pending_tracks_ = std::move(negotiated_tracks);
-        tracks_ready_ = true;
     }
     track_revision_ = tracks->revision;
     return true;
@@ -606,7 +604,7 @@ bool whep_session::startup_media()
 
     srtp_ = std::move(srtp);
     output_ = std::move(output);
-    if (tracks_ready_ && !start_media_read())
+    if (track_revision_ != 0 && !start_media_read())
     {
         return false;
     }
@@ -619,7 +617,7 @@ bool whep_session::startup_media()
 
 bool whep_session::start_media_read()
 {
-    if (!output_ || !tracks_ready_)
+    if (!output_ || track_revision_ == 0)
     {
         return false;
     }
