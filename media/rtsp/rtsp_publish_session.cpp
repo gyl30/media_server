@@ -257,11 +257,6 @@ int rtsp_publish_session::on_teardown(rtsp_server_t* server, std::string_view, s
 
 void rtsp_publish_session::shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     if (tcp_session_)
     {
         tcp_session_->safe_shutdown();
