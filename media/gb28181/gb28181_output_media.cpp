@@ -67,7 +67,7 @@ bool gb28181_output_media::supported_tracks(const std::vector<media_track>& trac
 
 bool gb28181_output_media::startup()
 {
-    if (closed_ || !stream_ || muxer_ != nullptr || !packet_handler_ || !create_muxer(stream_->tracks()))
+    if (!stream_ || muxer_ != nullptr || !packet_handler_ || !create_muxer(stream_->tracks()))
     {
         return false;
     }
@@ -84,7 +84,7 @@ void gb28181_output_media::shutdown()
 
 void gb28181_output_media::on_tracks(media_track_snapshot_ptr tracks)
 {
-    if (closed_)
+    if (!packet_handler_)
     {
         return;
     }
@@ -94,7 +94,7 @@ void gb28181_output_media::on_tracks(media_track_snapshot_ptr tracks)
 
 void gb28181_output_media::on_read(media_read_batch batch)
 {
-    if (closed_)
+    if (!packet_handler_)
     {
         return;
     }
@@ -141,7 +141,7 @@ void gb28181_output_media::on_read(media_read_batch batch)
         }
     }
 
-    if (!closed_)
+    if (packet_handler_)
     {
         reader_handle().async_read(reader_cursor_);
     }
@@ -149,7 +149,7 @@ void gb28181_output_media::on_read(media_read_batch batch)
 
 void gb28181_output_media::on_end()
 {
-    if (!closed_ && end_handler_)
+    if (end_handler_)
     {
         end_handler_();
     }
@@ -162,11 +162,12 @@ int gb28181_output_media::muxer_packet_callback(void* param, int, const void* da
 
 void gb28181_output_media::safe_shutdown()
 {
-    if (closed_)
+    if (!stream_)
     {
         return;
     }
-    closed_ = true;
+    packet_handler_ = {};
+    end_handler_ = {};
     reader_.remove();
     reader_ = {};
     reader_cursor_.reset();
@@ -174,8 +175,6 @@ void gb28181_output_media::safe_shutdown()
     track_states_.clear();
     waiting_for_key_frame_ = true;
     stream_.reset();
-    packet_handler_ = {};
-    end_handler_ = {};
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
@@ -268,7 +267,7 @@ void gb28181_output_media::apply_tracks(const media_track_snapshot_ptr& tracks)
 
 int gb28181_output_media::on_muxer_packet(const void* data, int bytes)
 {
-    if (closed_ || data == nullptr || bytes <= 0 || !packet_handler_)
+    if (data == nullptr || bytes <= 0 || !packet_handler_)
     {
         return -1;
     }
