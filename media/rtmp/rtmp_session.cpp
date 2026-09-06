@@ -307,11 +307,6 @@ void rtmp_session::shutdown()
 
 void rtmp_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     rtmp_context_ = nullptr;
 
     transport_.shutdown();
