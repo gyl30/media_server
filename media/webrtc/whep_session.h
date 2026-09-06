@@ -123,7 +123,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::uint64_t track_revision_{};
     bool tracks_ready_{};
     bool started_{};
-    bool closed_{};
 };
 
 }    // namespace media_server

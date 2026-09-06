@@ -61,7 +61,7 @@ whep_session::whep_session(worker_context& worker,
 
 whep_session_startup_error whep_session::startup(webrtc_offer offer)
 {
-    if (closed_ || started_ || !stream_ || !certificate_)
+    if (started_ || !stream_ || !certificate_)
     {
         spdlog::error("webrtc whep startup rejected invalid state");
         return whep_session_startup_error::internal_error;
@@ -192,11 +192,10 @@ void whep_session::shutdown()
 
 void whep_session::safe_shutdown()
 {
-    if (closed_)
+    if (!stream_ && !certificate_)
     {
         return;
     }
-    closed_ = true;
     if (dtls_)
     {
         dtls_->shutdown();
@@ -262,7 +261,7 @@ bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
 
 void whep_session::on_tracks(media_track_snapshot_ptr tracks)
 {
-    if (closed_ || !started_)
+    if (!started_)
     {
         return;
     }
@@ -280,7 +279,7 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
 
 void whep_session::on_read(media_read_batch batch)
 {
-    if (closed_ || !started_ || !output_)
+    if (!started_ || !output_)
     {
         return;
     }
@@ -303,7 +302,7 @@ void whep_session::on_read(media_read_batch batch)
         output_->on_frame(entry.frame);
     }
 
-    if (!closed_)
+    if (started_)
     {
         reader_handle().async_read(reader_cursor_);
     }
