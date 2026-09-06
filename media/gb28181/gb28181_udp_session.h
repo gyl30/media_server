@@ -52,7 +52,6 @@ class gb28181_udp_session final : public stream_session, public std::enable_shar
     std::chrono::milliseconds rtcp_interval_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
-    bool closed_{};
 };
 
 }    // namespace media_server
