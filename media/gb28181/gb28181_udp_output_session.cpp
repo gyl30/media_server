@@ -255,11 +255,10 @@ void gb28181_udp_output_session::send_packet(std::vector<std::uint8_t> packet)
 
 void gb28181_udp_output_session::safe_shutdown()
 {
-    if (closed_)
+    if (!local_ports_)
     {
         return;
     }
-    closed_ = true;
     registry::instance().remove_output_session(stream_name_, output_id_, *this);
     rtcp_timer_.cancel();
     if (media_)
