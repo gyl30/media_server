@@ -17,23 +17,20 @@
 
 namespace media_server
 {
-namespace
-{
-constexpr auto slow_write_timeout = std::chrono::seconds(15);
-}
-
 gb28181_tcp_output_session::gb28181_tcp_output_session(worker_context& worker,
                                                        std::weak_ptr<media_stream> stream,
                                                        std::string stream_name,
                                                        std::string output_id,
                                                        gb28181_description description,
-                                                       std::chrono::milliseconds establishment_timeout)
+                                                       std::chrono::milliseconds establishment_timeout,
+                                                       std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
       output_id_(std::move(output_id)),
       description_(std::move(description)),
       establishment_timeout_(establishment_timeout),
+      max_write_queue_bytes_(max_write_queue_bytes),
       socket_(worker_.io())
 {
 }
@@ -156,7 +153,6 @@ void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
 
         const auto data = write_queue_.front();
         boost::system::error_code error;
-        const auto started_at = std::chrono::steady_clock::now();
         static_cast<void>(transport_->write(*data, yield, error));
         if (error)
         {
@@ -164,12 +160,8 @@ void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
             return;
         }
 
+        queued_write_bytes_ -= data->size();
         write_queue_.pop_front();
-        if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
-        {
-            shutdown();
-            return;
-        }
     }
 }
 
@@ -185,13 +177,21 @@ void gb28181_tcp_output_session::send_packet(std::vector<std::uint8_t> packet)
         return;
     }
 
-    auto frame = std::make_shared<std::vector<std::uint8_t>>(packet.size() + 2U);
+    const auto frame_bytes = packet.size() + 2U;
+    if (frame_bytes > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - frame_bytes)
+    {
+        shutdown();
+        return;
+    }
+
+    auto frame = std::make_shared<std::vector<std::uint8_t>>(frame_bytes);
     const auto length = static_cast<std::uint16_t>(packet.size());
     (*frame)[0] = static_cast<std::uint8_t>(length >> 8U);
     (*frame)[1] = static_cast<std::uint8_t>(length & 0xffU);
     std::copy(packet.begin(), packet.end(), frame->begin() + 2);
 
     const bool start_write = write_queue_.empty();
+    queued_write_bytes_ += frame_bytes;
     write_queue_.push_back(std::move(frame));
     if (start_write)
     {
