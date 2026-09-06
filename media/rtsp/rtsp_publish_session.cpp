@@ -8,8 +8,8 @@
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
 #include "media/rtsp/rtsp_publish_session.h"
-#include "media/rtsp/rtsp_input_tcp_session.h"
-#include "media/rtsp/rtsp_input_udp_session.h"
+#include "media/rtsp/rtsp_publish_tcp_session.h"
+#include "media/rtsp/rtsp_publish_udp_session.h"
 
 extern "C"
 {
@@ -196,7 +196,7 @@ int rtsp_publish_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        auto child = std::make_shared<rtsp_input_tcp_session>(worker_, stream_name_, descriptions_, write_handler_);
+        auto child = std::make_shared<rtsp_publish_tcp_session>(worker_, stream_name_, descriptions_, write_handler_);
         child->set_error_handler(error_handler_);
         const auto result = child->startup(server, track_index, *selected, session_id_);
         if (!child->closed_)
@@ -208,7 +208,7 @@ int rtsp_publish_session::on_setup(
         return result;
     }
 
-    auto child = std::make_shared<rtsp_input_udp_session>(worker_, bind_address_, stream_name_, descriptions_);
+    auto child = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_);
     child->set_error_handler(error_handler_);
     const auto result = child->startup(server, track_index, *selected, session_id_);
     if (!child->closed_)

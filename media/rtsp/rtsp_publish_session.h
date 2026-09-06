@@ -18,8 +18,8 @@ namespace media_server
 {
 
 class worker_context;
-class rtsp_input_tcp_session;
-class rtsp_input_udp_session;
+class rtsp_publish_tcp_session;
+class rtsp_publish_udp_session;
 
 class rtsp_publish_session final : public rtsp_server_session
 {
@@ -43,8 +43,8 @@ class rtsp_publish_session final : public rtsp_server_session
     worker_context& worker_;
     boost::asio::ip::address bind_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
-    std::shared_ptr<rtsp_input_tcp_session> tcp_session_;
-    std::shared_ptr<rtsp_input_udp_session> udp_session_;
+    std::shared_ptr<rtsp_publish_tcp_session> tcp_session_;
+    std::shared_ptr<rtsp_publish_udp_session> udp_session_;
     std::vector<rtsp_publish_track_description> descriptions_;
     std::string stream_name_;
     std::string session_id_;

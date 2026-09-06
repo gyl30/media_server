@@ -68,8 +68,8 @@
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_publish_session.h"
-#include "media/rtsp/rtsp_input_tcp_session.h"
-#include "media/rtsp/rtsp_input_udp_session.h"
+#include "media/rtsp/rtsp_publish_tcp_session.h"
+#include "media/rtsp/rtsp_publish_udp_session.h"
 #include "media/rtsp/rtsp_publish_media.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_server_session.h"
@@ -126,22 +126,22 @@ static_assert(requires(rtsp_server_session& session, std::function<void(boost::s
 using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
 static_assert(std::is_constructible_v<rtsp_publish_session, worker_context&, boost::asio::ip::address, rtsp_write_handler>);
 static_assert(!std::is_constructible_v<rtsp_publish_session, boost::asio::any_io_executor, boost::asio::ip::address, rtsp_write_handler>);
-static_assert(std::is_constructible_v<rtsp_input_tcp_session,
+static_assert(std::is_constructible_v<rtsp_publish_tcp_session,
                                       worker_context&,
                                       std::string,
                                       std::vector<rtsp_publish_track_description>,
                                       rtsp_write_handler>);
-static_assert(!std::is_constructible_v<rtsp_input_tcp_session,
+static_assert(!std::is_constructible_v<rtsp_publish_tcp_session,
                                        boost::asio::any_io_executor,
                                        std::string,
                                        std::vector<rtsp_publish_track_description>,
                                        rtsp_write_handler>);
-static_assert(std::is_constructible_v<rtsp_input_udp_session,
+static_assert(std::is_constructible_v<rtsp_publish_udp_session,
                                       worker_context&,
                                       boost::asio::ip::address,
                                       std::string,
                                       std::vector<rtsp_publish_track_description>>);
-static_assert(!std::is_constructible_v<rtsp_input_udp_session,
+static_assert(!std::is_constructible_v<rtsp_publish_udp_session,
                                        boost::asio::any_io_executor,
                                        boost::asio::ip::address,
                                        std::string,
