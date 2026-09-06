@@ -2809,6 +2809,35 @@ void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
     require_http_session_released(weak_session, message);
 }
 
+void test_hls_http_session_shutdown_lifecycle()
+{
+    worker_context worker;
+    boost::asio::ip::tcp::acceptor acceptor(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+
+    boost::beast::tcp_stream stream(worker.io());
+    stream.socket() = acceptor.accept();
+
+    config application_config;
+    http_request request(boost::beast::http::verb::get, "/play/hls/live/test/index.m3u8", 11);
+    auto session = std::make_shared<hls_http_session>(worker, std::move(stream), std::move(request), application_config);
+    const std::weak_ptr<hls_http_session> weak_session = session;
+
+    session->shutdown();
+    session->shutdown();
+    session.reset();
+
+    worker.release_work();
+    worker.run();
+    require(weak_session.expired(), "hls http repeated shutdown releases session");
+
+    boost::system::error_code error;
+    client.close(error);
+}
+
 void test_gb28181_input_http_parameters()
 {
     boost::asio::io_context io;
@@ -9863,6 +9892,8 @@ int main()
     std::cout << "[pass] rtmp_server_lifecycle\n";
     media_server::test_http_server_lifecycle();
     std::cout << "[pass] http_server_lifecycle\n";
+    media_server::test_hls_http_session_shutdown_lifecycle();
+    std::cout << "[pass] hls_http_session_shutdown_lifecycle\n";
     media_server::test_rtsp_server_lifecycle();
     std::cout << "[pass] rtsp_server_lifecycle\n";
     media_server::test_http_flv_client_disconnect();

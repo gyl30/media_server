@@ -47,7 +47,6 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
     request_type request_;
     const config& config_;
     boost::asio::steady_timer wait_timer_;
-    bool closed_{};
 };
 
 }    // namespace media_server
