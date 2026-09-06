@@ -140,13 +140,12 @@ int rtmp_input_session::on_script(std::span<const std::uint8_t> data)
     }
 
     const bool audio = audio_codec != 0.0;
-    if ((metadata_received_ && expected_audio_ != audio) || (initial_audio_track_ && !audio))
+    if ((expected_audio_.has_value() && *expected_audio_ != audio) || (initial_audio_track_ && !audio))
     {
         return -1;
     }
 
     expected_audio_ = audio;
-    metadata_received_ = true;
     try_initialize_tracks();
     return 0;
 }
@@ -199,7 +198,7 @@ int rtmp_input_session::handle_video_config(int codec, std::span<const std::uint
 
 int rtmp_input_session::handle_audio_config(int codec, std::span<const std::uint8_t> data)
 {
-    if (metadata_received_ && !expected_audio_)
+    if (expected_audio_.has_value() && !*expected_audio_)
     {
         return -1;
     }
@@ -265,7 +264,7 @@ int rtmp_input_session::handle_audio_config(int codec, std::span<const std::uint
 
 int rtmp_input_session::initialize_g711_track(int codec)
 {
-    if (metadata_received_ && !expected_audio_)
+    if (expected_audio_.has_value() && !*expected_audio_)
     {
         return -1;
     }
@@ -370,7 +369,7 @@ int rtmp_input_session::on_flv_demux(int codec, std::span<const std::uint8_t> da
 
 void rtmp_input_session::try_initialize_tracks()
 {
-    if (tracks_initialized_ || !metadata_received_ || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
+    if (tracks_initialized_ || !expected_audio_.has_value() || !initial_video_track_ || (*expected_audio_ && !initial_audio_track_))
     {
         return;
     }
@@ -383,7 +382,7 @@ void rtmp_input_session::try_initialize_tracks()
 
     std::vector<media_track> tracks;
     tracks.push_back(*initial_video_track_);
-    if (expected_audio_)
+    if (*expected_audio_)
     {
         tracks.push_back(*initial_audio_track_);
     }
@@ -399,7 +398,7 @@ void rtmp_input_session::try_initialize_tracks()
         return;
     }
     initial_tracks_timer_.cancel();
-    spdlog::info("rtmp input tracks ready audio {}", expected_audio_);
+    spdlog::info("rtmp input tracks ready audio {}", *expected_audio_);
 }
 
 }    // namespace media_server

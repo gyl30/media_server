@@ -60,8 +60,7 @@ class rtmp_input_session final : public std::enable_shared_from_this<rtmp_input_
     rtmp_timestamp_state timestamp_;
     std::optional<media_track> initial_video_track_;
     std::optional<media_track> initial_audio_track_;
-    bool expected_audio_{};
-    bool metadata_received_{};
+    std::optional<bool> expected_audio_;
     bool tracks_initialized_{};
     bool closed_{};
 };
