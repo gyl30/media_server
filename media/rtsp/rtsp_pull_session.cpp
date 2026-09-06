@@ -531,7 +531,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
                 startup_timer_.async_wait(
                     [self](const boost::system::error_code& error)
                     {
-                        if (error || self->closed_ || !self->media_ || self->media_->tracks_initialized())
+                        if (error || !self->media_ || self->media_->tracks_initialized())
                         {
                             return;
                         }

@@ -210,7 +210,7 @@ int rtsp_publish_udp_session::on_record(rtsp_server_t* server)
 
 void rtsp_publish_udp_session::schedule_rtcp()
 {
-    if (closed_)
+    if (std::ranges::any_of(track_states_, [](const track_state& state) { return !state.local_ports; }))
     {
         return;
     }
