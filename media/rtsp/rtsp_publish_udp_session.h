@@ -1,6 +1,7 @@
 #ifndef MEDIA_RTSP_RTSP_PUBLISH_UDP_SESSION_H
 #define MEDIA_RTSP_RTSP_PUBLISH_UDP_SESSION_H
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,7 +35,8 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     rtsp_publish_udp_session(worker_context& worker,
                            boost::asio::ip::address bind_address,
                            std::string stream_name,
-                           std::vector<rtsp_publish_track_description> descriptions);
+                           std::vector<rtsp_publish_track_description> descriptions,
+                           std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
 
@@ -53,7 +55,8 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     int startup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     void run_rtp(std::size_t track_index, boost::asio::yield_context yield);
     void run_rtcp(std::size_t track_index, boost::asio::yield_context yield);
-    void run_rtcp_sender(boost::asio::yield_context yield);
+    void schedule_rtcp();
+    void run_rtcp_write(boost::asio::yield_context yield);
     int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     int on_record(rtsp_server_t* server);
     void safe_shutdown();
@@ -64,6 +67,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     rtsp_publish_media media_;
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;
+    std::chrono::milliseconds rtcp_interval_;
     bool closed_{};
 };
 
