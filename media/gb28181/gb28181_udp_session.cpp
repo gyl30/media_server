@@ -160,7 +160,7 @@ void gb28181_udp_session::run_rtcp(boost::asio::yield_context yield)
 
 void gb28181_udp_session::schedule_rtcp()
 {
-    if (closed_)
+    if (!local_ports_)
     {
         return;
     }

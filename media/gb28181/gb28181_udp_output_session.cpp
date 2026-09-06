@@ -184,7 +184,7 @@ void gb28181_udp_output_session::run_rtp_write(boost::asio::yield_context yield)
 
 void gb28181_udp_output_session::schedule_rtcp()
 {
-    if (closed_ || rtcp_sender_ == nullptr)
+    if (rtcp_sender_ == nullptr)
     {
         return;
     }
