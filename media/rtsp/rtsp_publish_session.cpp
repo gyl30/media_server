@@ -15,6 +15,8 @@ extern "C"
 {
 #include "rtsp-media.h"
 #include "rtp-profile.h"
+#include "rtsp-server.h"
+#include "rtsp-header-transport.h"
 }
 
 namespace media_server
