@@ -238,8 +238,6 @@ void rtsp_pull_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    write_queue_.clear();
-    queued_write_bytes_ = 0;
     spdlog::debug("rtsp input shutdown {}", stream_name_);
 }
 
