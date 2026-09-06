@@ -35,7 +35,8 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
                       std::string stream_name,
                       std::string url,
                       std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
-                      std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
+                      std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
+                      std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtsp_pull_session();
 
     bool startup();
@@ -85,6 +86,8 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     boost::asio::steady_timer keepalive_timer_;
     boost::asio::steady_timer rtcp_timer_;
     std::unique_ptr<tcp_yield_transport> transport_;
+    std::size_t max_write_queue_bytes_;
+    std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};
