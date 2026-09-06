@@ -1,3 +1,4 @@
+#include <array>
 #include <chrono>
 #include <utility>
 #include <optional>
@@ -13,18 +14,14 @@
 
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_sdp.h"
-#include "media/codec/codec_utils.h"
-#include "media/core/stream_registry.h"
+#include "media/rtsp/rtsp_pull_media.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
 extern "C"
 {
 #include "sdp.h"
-#include "avpacket.h"
-#include "avstream.h"
 #include "rtp-profile.h"
 #include "rtsp-client.h"
-#include "rtsp-demuxer.h"
 }
 
 namespace media_server
@@ -34,7 +31,7 @@ namespace
 {
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
-constexpr char rtcp_name[] = "media_server";
+constexpr std::size_t max_media_count = 2;
 constexpr auto slow_write_timeout = std::chrono::seconds(15);
 
 std::optional<codec_id> selected_g711_codec(rtsp_client_t* client, int media)
@@ -107,7 +104,7 @@ rtsp_pull_session::~rtsp_pull_session() = default;
 
 bool rtsp_pull_session::startup()
 {
-    if (closed_ || stream_)
+    if (closed_ || started_)
     {
         return false;
     }
@@ -120,10 +117,7 @@ bool rtsp_pull_session::startup()
     url_ = parsed->request_url;
     username_ = parsed->username;
     password_ = parsed->password;
-
-    stream_ = std::make_shared<media_stream>(stream_name_, worker_.io());
-
-    static_cast<void>(avpkt2bs_create(&bitstream_));
+    started_ = true;
 
     record_establishment_progress();
     schedule_establishment_timeout();
@@ -201,13 +195,9 @@ void rtsp_pull_session::schedule_rtcp()
             }
 
             std::array<std::uint8_t, 1500> buffer{};
-            for (std::size_t media = 0; media < self->demuxers_.size(); ++media)
+            for (std::size_t media = 0; media < self->media_count_; ++media)
             {
-                if (self->demuxers_[media] == nullptr)
-                {
-                    continue;
-                }
-                const auto bytes = rtsp_demuxer_rtcp(self->demuxers_[media], buffer.data(), static_cast<int>(buffer.size()));
+                const auto bytes = self->media_->generate_rtcp(media, buffer);
                 if (bytes <= 0)
                 {
                     continue;
@@ -232,11 +222,10 @@ void rtsp_pull_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    if (stream_)
+    if (media_)
     {
-        registry::instance().remove(*stream_);
-        stream_->end();
-        stream_.reset();
+        media_->shutdown();
+        media_.reset();
     }
     startup_timer_.cancel();
     keepalive_timer_.cancel();
@@ -248,15 +237,6 @@ void rtsp_pull_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    for (auto*& demuxer : demuxers_)
-    {
-        if (demuxer != nullptr)
-        {
-            rtsp_demuxer_destroy(demuxer);
-            demuxer = nullptr;
-        }
-    }
-    avpkt2bs_destroy(&bitstream_);
     spdlog::debug("rtsp input shutdown {}", stream_name_);
 }
 
@@ -312,8 +292,7 @@ int rtsp_pull_session::play_callback(
     }
 
     auto* self = static_cast<rtsp_pull_session*>(param);
-    return rtsp_demuxer_rtpinfo(
-        self->demuxers_[static_cast<std::size_t>(media)], static_cast<std::uint16_t>(info[0].seq), info[0].time);
+    return self->media_->set_rtp_info(static_cast<std::size_t>(media), static_cast<std::uint16_t>(info[0].seq), info[0].time);
 }
 
 int rtsp_pull_session::pause_callback(void*) { return 0; }
@@ -324,8 +303,6 @@ void rtsp_pull_session::rtp_callback(void* param, std::uint8_t channel, const vo
 {
     static_cast<rtsp_pull_session*>(param)->on_rtp(channel, data, bytes);
 }
-
-int rtsp_pull_session::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_pull_session*>(param)->on_demuxed_packet(packet); }
 
 std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::string_view url)
 {
@@ -474,44 +451,47 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
     keepalive_interval_ = std::chrono::seconds(keepalive_seconds);
 
     const auto media_count = rtsp_client_media_count(client_);
-    if (media_count < 0 || static_cast<std::size_t>(media_count) > demuxers_.size())
+    if (media_count < 0 || static_cast<std::size_t>(media_count) > max_media_count)
     {
         return -1;
     }
 
     bool expected_video = false;
+    std::vector<rtsp_pull_track_description> descriptions;
+    descriptions.reserve(static_cast<std::size_t>(media_count));
     for (int media = 0; media < media_count; ++media)
     {
         const auto media_type = rtsp_client_get_media_type(client_, media);
         expected_video = expected_video || media_type == SDP_M_MEDIA_VIDEO;
-        expected_audio_ = expected_audio_ || media_type == SDP_M_MEDIA_AUDIO;
 
         const char* media_name = media_type == SDP_M_MEDIA_VIDEO ? "video" : (media_type == SDP_M_MEDIA_AUDIO ? "audio" : nullptr);
         const auto* encoding = rtsp_client_get_media_encoding(client_, media);
         const auto* fmtp = rtsp_client_get_media_fmtp(client_, media);
         const auto rate = rtsp_client_get_media_rate(client_, media);
         const auto payload = rtsp_client_get_media_payload(client_, media);
-        auto*& demuxer = demuxers_[static_cast<std::size_t>(media)];
-        demuxer = rtsp_demuxer_create(media, 500, &rtsp_pull_session::packet_callback, this);
-        if (demuxer == nullptr || rtsp_demuxer_add_payload(demuxer, rate, payload, encoding, fmtp) != 0 ||
-            rtsp_demuxer_set_info(demuxer, stream_name_.c_str(), rtcp_name) != 0)
-        {
-            return -1;
-        }
-
         const auto id = media_type == SDP_M_MEDIA_VIDEO ? video_track_id : audio_track_id;
-        const auto track = rtsp_sdp_track_from_format(media_name, payload, rate, encoding, fmtp, id);
-
-        if (track)
-        {
-            auto& pending = track->kind == media_kind::video ? initial_video_track_ : initial_audio_track_;
-            pending = std::move(*track);
-        }
+        descriptions.push_back(rtsp_pull_track_description{
+            .media = static_cast<std::size_t>(media),
+            .kind = media_type == SDP_M_MEDIA_VIDEO ? media_kind::video : media_kind::audio,
+            .clock_rate = rate,
+            .payload_type = payload,
+            .encoding = encoding != nullptr ? encoding : "",
+            .fmtp = fmtp != nullptr ? fmtp : "",
+            .initial_track = rtsp_sdp_track_from_format(media_name, payload, rate, encoding, fmtp, id),
+        });
     }
     if (!expected_video)
     {
         return -1;
     }
+
+    auto media = std::make_unique<rtsp_pull_media>(worker_, stream_name_, std::move(descriptions));
+    if (!media->startup())
+    {
+        return -1;
+    }
+    media_ = std::move(media);
+    media_count_ = static_cast<std::size_t>(media_count);
 
     std::uint64_t npt{};
     return rtsp_client_play(client_, &npt, nullptr);
@@ -521,162 +501,58 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
 {
     const auto media = static_cast<std::size_t>(channel / 2U);
     const bool rtcp = (channel % 2U) != 0U;
-    if (media >= demuxers_.size() || demuxers_[media] == nullptr || data == nullptr || bytes < (rtcp ? 4U : 12U))
+    if (media >= media_count_ || data == nullptr || bytes < (rtcp ? 4U : 12U))
     {
-        return;
-    }
-    if (rtcp)
-    {
-        static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
         return;
     }
 
-    if (!media_started_)
+    if (!rtcp)
     {
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= last_establishment_progress_ + establishment_timeout_)
+        if (!media_started_)
         {
-            spdlog::warn("rtsp input establishment timeout stream {}", stream_name_);
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= last_establishment_progress_ + establishment_timeout_)
+            {
+                spdlog::warn("rtsp input establishment timeout stream {}", stream_name_);
+                shutdown();
+                return;
+            }
+            media_started_ = true;
+            startup_timer_.cancel();
+            schedule_keepalive();
+            schedule_rtcp();
+            if (!media_->tracks_initialized())
+            {
+                startup_timer_.expires_after(initial_tracks_timeout_);
+                const auto self = shared_from_this();
+                startup_timer_.async_wait(
+                    [self](const boost::system::error_code& error)
+                    {
+                        if (error || self->closed_ || !self->media_ || self->media_->tracks_initialized())
+                        {
+                            return;
+                        }
+                        spdlog::warn("rtsp input initial tracks timeout stream {}", self->stream_name_);
+                        self->shutdown();
+                    });
+            }
+        }
+        else if (!media_->tracks_initialized() && std::chrono::steady_clock::now() >= startup_timer_.expiry())
+        {
             shutdown();
             return;
         }
-        media_started_ = true;
+    }
+
+    if (!media_->input_packet(channel, std::span{static_cast<const std::uint8_t*>(data), bytes}))
+    {
+        shutdown();
+        return;
+    }
+    if (!rtcp && media_->tracks_initialized())
+    {
         startup_timer_.cancel();
-        schedule_keepalive();
-        schedule_rtcp();
-        static_cast<void>(try_initialize_tracks());
-        if (!tracks_initialized_)
-        {
-            startup_timer_.expires_after(initial_tracks_timeout_);
-            const auto self = shared_from_this();
-            startup_timer_.async_wait(
-                [self](const boost::system::error_code& error)
-                {
-                    if (error || self->closed_ || self->tracks_initialized_)
-                    {
-                        return;
-                    }
-                    spdlog::warn("rtsp input initial tracks timeout stream {}", self->stream_name_);
-                    self->shutdown();
-                });
-        }
     }
-
-    static_cast<void>(rtsp_demuxer_input(demuxers_[media], data, static_cast<int>(bytes)));
-}
-
-int rtsp_pull_session::on_demuxed_packet(avpacket_t* packet)
-{
-    if (packet == nullptr || packet->stream == nullptr || closed_ || !stream_)
-    {
-        return -1;
-    }
-
-    // ireader 会随码流更新 packet.stream 中的配置，核心负责过滤未变化配置。
-    // avpkt2bs 会缓存首次解析的编解码配置，配置代际变化时重置后再转换当前帧。
-    if (update_track_from_packet(*packet))
-    {
-        avpkt2bs_destroy(&bitstream_);
-        static_cast<void>(avpkt2bs_create(&bitstream_));
-    }
-    const auto bytes = avpkt2bs_input(&bitstream_, packet);
-    if (bytes <= 0 || bitstream_.ptr == nullptr)
-    {
-        return bytes < 0 ? bytes : 0;
-    }
-
-    track_id id{};
-    if (packet->stream->codecid == AVCODEC_VIDEO_H264 || packet->stream->codecid == AVCODEC_VIDEO_H265)
-    {
-        id = video_track_id;
-    }
-    else if (packet->stream->codecid == AVCODEC_AUDIO_AAC || packet->stream->codecid == AVCODEC_AUDIO_OPUS ||
-             packet->stream->codecid == AVCODEC_AUDIO_G711A || packet->stream->codecid == AVCODEC_AUDIO_G711U)
-    {
-        id = audio_track_id;
-    }
-    else
-    {
-        return 0;
-    }
-
-    auto payload = std::make_shared<const std::vector<std::uint8_t>>(bitstream_.ptr, bitstream_.ptr + bytes);
-    media_frame frame{
-        .track = id,
-        .dts_ns = milliseconds_to_ns(packet->dts),
-        .pts_ns = milliseconds_to_ns(packet->pts),
-        .key_frame = (packet->flags & AVPACKET_FLAG_KEY) != 0,
-        .payload = std::move(payload),
-    };
-    stream_->publish(std::move(frame));
-    return 0;
-}
-
-bool rtsp_pull_session::update_track_from_packet(const avpacket_t& packet)
-{
-    const auto& input = *packet.stream;
-    auto track = media_track_from_avstream_config(input, video_track_id, audio_track_id);
-    if (!track)
-    {
-        return false;
-    }
-
-    if (tracks_initialized_)
-    {
-        const bool changed = stream_->update_track(*track);
-        if (changed)
-        {
-            spdlog::info("rtsp input track {} {}", to_string(track->kind), to_string(track->codec));
-        }
-        return changed;
-    }
-
-    bool changed = false;
-    auto& pending = track->kind == media_kind::video ? initial_video_track_ : initial_audio_track_;
-    if (pending)
-    {
-        changed = pending->codec != track->codec || pending->clock_rate != track->clock_rate || pending->channel_count != track->channel_count ||
-                  pending->codec_config != track->codec_config;
-    }
-    pending = *track;
-
-    if (std::chrono::steady_clock::now() >= startup_timer_.expiry())
-    {
-        shutdown();
-        return changed;
-    }
-    return try_initialize_tracks() || changed;
-}
-
-bool rtsp_pull_session::try_initialize_tracks()
-{
-    if (tracks_initialized_ || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
-    {
-        return false;
-    }
-
-    std::vector<media_track> tracks;
-    tracks.push_back(std::move(*initial_video_track_));
-    if (expected_audio_)
-    {
-        tracks.push_back(std::move(*initial_audio_track_));
-    }
-    tracks_initialized_ = stream_->set_tracks(std::move(tracks));
-    initial_video_track_.reset();
-    initial_audio_track_.reset();
-    if (!tracks_initialized_)
-    {
-        return false;
-    }
-    if (!registry::instance().add(stream_))
-    {
-        spdlog::warn("rtsp input duplicate stream {}", stream_name_);
-        shutdown();
-        return true;
-    }
-    startup_timer_.cancel();
-    spdlog::info("rtsp input tracks ready audio {}", expected_audio_);
-    return true;
 }
 
 }    // namespace media_server

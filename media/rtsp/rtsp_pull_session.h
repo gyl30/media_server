@@ -1,8 +1,8 @@
 #ifndef MEDIA_RTSP_RTSP_PULL_SESSION_H
 #define MEDIA_RTSP_RTSP_PULL_SESSION_H
 
-#include <array>
 #include <chrono>
+#include <cstddef>
 #include <deque>
 #include <memory>
 #include <span>
@@ -14,22 +14,19 @@
 #include <boost/asio.hpp>
 
 #include "media/net/tcp_yield_transport.h"
-#include "media/core/media_stream.h"
 
 extern "C"
 {
-#include "avpkt2bs.h"
 #include "rtsp-client.h"
 }
 
 struct rtsp_client_t;
-struct rtsp_demuxer_t;
-struct avpacket_t;
 
 namespace media_server
 {
 
 class worker_context;
+class rtsp_pull_media;
 
 class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_session>
 {
@@ -63,7 +60,6 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     static int pause_callback(void* param);
     static int teardown_callback(void* param);
     static void rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);
-    static int packet_callback(void* param, avpacket_t* packet);
 
     [[nodiscard]] static std::optional<parsed_url> parse_url(std::string_view url);
     void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
@@ -77,9 +73,6 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     int on_describe(const char* sdp, int length);
     int on_setup(int timeout, std::int64_t duration);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
-    int on_demuxed_packet(avpacket_t* packet);
-    [[nodiscard]] bool update_track_from_packet(const avpacket_t& packet);
-    [[nodiscard]] bool try_initialize_tracks();
 
     worker_context& worker_;
     std::string stream_name_;
@@ -93,18 +86,14 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
     boost::asio::steady_timer rtcp_timer_;
     std::unique_ptr<tcp_yield_transport> transport_;
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
-    std::shared_ptr<media_stream> stream_;
+    std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};
-    std::array<rtsp_demuxer_t*, 2> demuxers_{};
-    avpkt2bs_t bitstream_{};
     std::chrono::milliseconds establishment_timeout_;
     std::chrono::milliseconds initial_tracks_timeout_;
     std::chrono::steady_clock::time_point last_establishment_progress_{};
     std::chrono::seconds keepalive_interval_{30};
-    std::optional<media_track> initial_video_track_;
-    std::optional<media_track> initial_audio_track_;
-    bool expected_audio_{};
-    bool tracks_initialized_{};
+    std::size_t media_count_{};
+    bool started_{};
     bool media_started_{};
     bool closed_{};
 };
