@@ -25,7 +25,8 @@ gb28181_udp_output_session::gb28181_udp_output_session(worker_context& worker,
                                                        gb28181_description description,
                                                        boost::asio::ip::address bind_address,
                                                        std::string output_id,
-                                                       bool rtcp_enabled)
+                                                       bool rtcp_enabled,
+                                                       std::chrono::milliseconds rtcp_interval)
     : worker_(worker),
       stream_(std::move(stream)),
       stream_name_(stream_ ? stream_->name() : std::string{}),
@@ -37,6 +38,7 @@ gb28181_udp_output_session::gb28181_udp_output_session(worker_context& worker,
       rtp_transport_(worker_.io()),
       rtcp_transport_(worker_.io()),
       rtcp_timer_(worker_.io()),
+      rtcp_interval_(rtcp_interval),
       rtcp_enabled_(rtcp_enabled)
 {
 }
@@ -180,34 +182,48 @@ void gb28181_udp_output_session::run_rtp_write(boost::asio::yield_context yield)
     }
 }
 
-void gb28181_udp_output_session::run_rtcp_sender(boost::asio::yield_context yield)
+void gb28181_udp_output_session::schedule_rtcp()
 {
-    boost::system::error_code error;
-    for (;;)
+    if (closed_ || rtcp_sender_ == nullptr)
     {
-        rtcp_timer_.expires_after(std::chrono::seconds(25));
-        rtcp_timer_.async_wait(yield[error]);
-        if (error)
-        {
-            break;
-        }
-
-        std::array<std::uint8_t, 1500> buffer{};
-        const auto bytes = rtp_rtcp_report(rtcp_sender_, buffer.data(), static_cast<int>(buffer.size()));
-        if (bytes <= 0 || bytes > static_cast<int>(buffer.size()))
-        {
-            continue;
-        }
-
-        static_cast<void>(
-            rtcp_transport_.write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, remote_rtcp_endpoint_, yield, error));
-        if (error)
-        {
-            break;
-        }
+        return;
     }
 
-    shutdown();
+    rtcp_timer_.expires_after(rtcp_interval_);
+    const auto self = shared_from_this();
+    rtcp_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_ || self->rtcp_sender_ == nullptr)
+            {
+                return;
+            }
+
+            std::array<std::uint8_t, 1500> buffer{};
+            const auto bytes = rtp_rtcp_report(self->rtcp_sender_, buffer.data(), static_cast<int>(buffer.size()));
+            if (bytes <= 0 || bytes > static_cast<int>(buffer.size()))
+            {
+                self->schedule_rtcp();
+                return;
+            }
+
+            auto packet = std::make_shared<std::vector<std::uint8_t>>(buffer.begin(), buffer.begin() + bytes);
+            boost::asio::spawn(
+                self->worker_.io(),
+                [self, packet](boost::asio::yield_context yield)
+                {
+                    boost::system::error_code write_error;
+                    static_cast<void>(self->rtcp_transport_.write(
+                        std::span<const std::uint8_t>{packet->data(), packet->size()}, self->remote_rtcp_endpoint_, yield, write_error));
+                    if (write_error)
+                    {
+                        self->shutdown();
+                        return;
+                    }
+                    self->schedule_rtcp();
+                },
+                boost::asio::detached);
+        });
 }
 
 void gb28181_udp_output_session::send_packet(std::vector<std::uint8_t> packet)
@@ -233,8 +249,7 @@ void gb28181_udp_output_session::send_packet(std::vector<std::uint8_t> packet)
     if (rtcp_sender_ != nullptr && !rtcp_started_)
     {
         rtcp_started_ = true;
-        const auto self = shared_from_this();
-        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtcp_sender(yield); }, boost::asio::detached);
+        schedule_rtcp();
     }
 }
 
