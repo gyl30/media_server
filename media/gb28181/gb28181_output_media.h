@@ -66,7 +66,6 @@ class gb28181_output_media final : public media_reader, public std::enable_share
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     bool waiting_for_key_frame_{true};
-    bool closed_{};
 };
 
 }    // namespace media_server
