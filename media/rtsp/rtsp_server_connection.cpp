@@ -366,7 +366,7 @@ void rtsp_server_connection::schedule_inactivity_timeout()
     inactivity_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_)
+            if (error)
             {
                 return;
             }

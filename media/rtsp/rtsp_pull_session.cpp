@@ -146,7 +146,7 @@ void rtsp_pull_session::schedule_establishment_timeout()
     startup_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || self->media_started_)
+            if (error || self->media_started_)
             {
                 return;
             }
@@ -170,7 +170,7 @@ void rtsp_pull_session::schedule_keepalive()
     keepalive_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || self->client_ == nullptr)
+            if (error || self->client_ == nullptr)
             {
                 return;
             }
@@ -190,7 +190,7 @@ void rtsp_pull_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || !self->media_started_ || !self->transport_)
+            if (error || !self->media_started_ || !self->transport_)
             {
                 return;
             }
