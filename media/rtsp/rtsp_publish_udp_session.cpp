@@ -9,7 +9,7 @@
 #include <boost/asio/error.hpp>
 
 #include "media/net/worker_context.h"
-#include "media/rtsp/rtsp_input_udp_session.h"
+#include "media/rtsp/rtsp_publish_udp_session.h"
 
 extern "C"
 {
@@ -19,7 +19,7 @@ extern "C"
 namespace media_server
 {
 
-rtsp_input_udp_session::rtsp_input_udp_session(worker_context& worker,
+rtsp_publish_udp_session::rtsp_publish_udp_session(worker_context& worker,
                                                boost::asio::ip::address bind_address,
                                                std::string stream_name,
                                                std::vector<rtsp_publish_track_description> descriptions)
@@ -31,7 +31,7 @@ rtsp_input_udp_session::rtsp_input_udp_session(worker_context& worker,
 {
 }
 
-int rtsp_input_udp_session::startup(rtsp_server_t* server,
+int rtsp_publish_udp_session::startup(rtsp_server_t* server,
                                     std::size_t track_index,
                                     const rtsp_header_transport_t& transport,
                                     const std::string& session_id)
@@ -49,7 +49,7 @@ int rtsp_input_udp_session::startup(rtsp_server_t* server,
     return result;
 }
 
-void rtsp_input_udp_session::run_rtp(std::size_t track_index, boost::asio::yield_context yield)
+void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yield_context yield)
 {
     std::vector<std::uint8_t> buffer(64 * 1024);
     boost::asio::ip::udp::endpoint endpoint;
@@ -81,7 +81,7 @@ void rtsp_input_udp_session::run_rtp(std::size_t track_index, boost::asio::yield
     }
 }
 
-void rtsp_input_udp_session::run_rtcp(std::size_t track_index, boost::asio::yield_context yield)
+void rtsp_publish_udp_session::run_rtcp(std::size_t track_index, boost::asio::yield_context yield)
 {
     std::vector<std::uint8_t> buffer(64 * 1024);
     boost::asio::ip::udp::endpoint endpoint;
@@ -113,7 +113,7 @@ void rtsp_input_udp_session::run_rtcp(std::size_t track_index, boost::asio::yiel
     }
 }
 
-int rtsp_input_udp_session::on_setup(rtsp_server_t* server,
+int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
                                      std::size_t track_index,
                                      const rtsp_header_transport_t& transport,
                                      const std::string& session_id)
@@ -185,7 +185,7 @@ int rtsp_input_udp_session::on_setup(rtsp_server_t* server,
     return rtsp_server_reply_setup(server, 200, session_id.c_str(), response.c_str());
 }
 
-int rtsp_input_udp_session::on_record(rtsp_server_t* server)
+int rtsp_publish_udp_session::on_record(rtsp_server_t* server)
 {
     if (media_.recording())
     {
@@ -207,7 +207,7 @@ int rtsp_input_udp_session::on_record(rtsp_server_t* server)
     return rtsp_server_reply_record(server, 200, nullptr, nullptr);
 }
 
-void rtsp_input_udp_session::run_rtcp_sender(boost::asio::yield_context yield)
+void rtsp_publish_udp_session::run_rtcp_sender(boost::asio::yield_context yield)
 {
     boost::system::error_code error;
     for (;;)
@@ -243,7 +243,7 @@ void rtsp_input_udp_session::run_rtcp_sender(boost::asio::yield_context yield)
     }
 }
 
-void rtsp_input_udp_session::safe_shutdown()
+void rtsp_publish_udp_session::safe_shutdown()
 {
     if (closed_)
     {
@@ -269,7 +269,7 @@ void rtsp_input_udp_session::safe_shutdown()
             state.local_ports.reset();
         }
     }
-    spdlog::debug("rtsp input udp shutdown {}", media_.stream_name());
+    spdlog::debug("rtsp publish udp shutdown {}", media_.stream_name());
 }
 
 }    // namespace media_server
