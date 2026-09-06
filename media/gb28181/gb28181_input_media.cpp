@@ -228,7 +228,7 @@ void gb28181_input_media::apply_topology()
         return;
     }
 
-    if (topology_known_)
+    if (video_codec_)
     {
         if (video_codec_ != pending_topology_.video || audio_codec_ != pending_topology_.audio)
         {
@@ -259,7 +259,6 @@ void gb28181_input_media::apply_topology()
             .config_version = 0,
         };
     }
-    topology_known_ = true;
     static_cast<void>(try_start_recording());
 }
 
@@ -273,7 +272,7 @@ int gb28181_input_media::on_demuxed_packet(avpacket_t* packet)
     const auto codec = codec_from_avpacket(packet->stream->codecid);
     if (!codec)
     {
-        if (topology_known_)
+        if (video_codec_)
         {
             spdlog::warn("gb28181 unsupported raw codec stream {} codecid {}", stream_name_, packet->stream->codecid);
             fatal_codec_change_ = true;
@@ -281,7 +280,7 @@ int gb28181_input_media::on_demuxed_packet(avpacket_t* packet)
         }
         return 0;
     }
-    if (!topology_known_)
+    if (!video_codec_)
     {
         return 0;
     }
@@ -358,7 +357,7 @@ bool gb28181_input_media::try_start_recording()
     {
         return true;
     }
-    if (!topology_known_ || !video_track_ || (audio_codec_ && !audio_track_))
+    if (!video_codec_ || !video_track_ || (audio_codec_ && !audio_track_))
     {
         return false;
     }
