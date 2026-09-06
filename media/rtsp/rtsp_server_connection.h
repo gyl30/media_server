@@ -3,6 +3,7 @@
 
 #include <span>
 #include <deque>
+#include <chrono>
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include "media/net/tcp_yield_transport.h"
 #include "media/codec/output_video_config.h"
@@ -29,7 +31,10 @@ class rtsp_play_session;
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
    public:
-    rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket, output_video_codec video_codec);
+    rtsp_server_connection(worker_context& worker,
+                           boost::asio::ip::tcp::socket socket,
+                           output_video_codec video_codec,
+                           std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000});
     ~rtsp_server_connection();
 
     void startup();
@@ -53,10 +58,15 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     void safe_shutdown();
+    void record_control_activity();
+    void schedule_inactivity_timeout();
 
     worker_context& worker_;
     output_video_codec video_codec_;
     tcp_yield_transport transport_;
+    boost::asio::steady_timer inactivity_timer_;
+    std::chrono::milliseconds inactivity_timeout_;
+    std::chrono::steady_clock::time_point last_control_activity_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
