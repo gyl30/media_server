@@ -32,7 +32,6 @@ namespace
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 constexpr std::size_t max_media_count = 2;
-constexpr auto slow_write_timeout = std::chrono::seconds(15);
 
 std::optional<codec_id> selected_g711_codec(rtsp_client_t* client, int media)
 {
@@ -86,7 +85,8 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
                                      std::string stream_name,
                                      std::string url,
                                      std::chrono::milliseconds establishment_timeout,
-                                     std::chrono::milliseconds initial_tracks_timeout)
+                                     std::chrono::milliseconds initial_tracks_timeout,
+                                     std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
       url_(std::move(url)),
@@ -95,6 +95,7 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
       startup_timer_(worker_.io()),
       keepalive_timer_(worker_.io()),
       rtcp_timer_(worker_.io()),
+      max_write_queue_bytes_(max_write_queue_bytes),
       establishment_timeout_(establishment_timeout),
       initial_tracks_timeout_(initial_tracks_timeout)
 {
@@ -237,6 +238,8 @@ void rtsp_pull_session::safe_shutdown()
     {
         transport_->shutdown();
     }
+    write_queue_.clear();
+    queued_write_bytes_ = 0;
     spdlog::debug("rtsp input shutdown {}", stream_name_);
 }
 
@@ -402,8 +405,15 @@ void rtsp_pull_session::write(std::span<const std::uint8_t> data)
         return;
     }
 
+    if (data.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data.size())
+    {
+        shutdown();
+        return;
+    }
+
     const bool start_write = write_queue_.empty();
     write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
+    queued_write_bytes_ += data.size();
     if (start_write)
     {
         const auto self = shared_from_this();
@@ -422,7 +432,6 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
 
         const auto data = write_queue_.front();
         boost::system::error_code error;
-        const auto started_at = std::chrono::steady_clock::now();
         static_cast<void>(transport_->write(*data, yield, error));
         if (error)
         {
@@ -430,12 +439,8 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
             return;
         }
 
+        queued_write_bytes_ -= data->size();
         write_queue_.pop_front();
-        if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
-        {
-            shutdown();
-            return;
-        }
     }
 }
 
