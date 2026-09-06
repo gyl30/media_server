@@ -381,11 +381,6 @@ void rtsp_server_connection::schedule_inactivity_timeout()
 
 void rtsp_server_connection::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     inactivity_timer_.cancel();
     transport_.shutdown();
 }
