@@ -64,7 +64,6 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     void* rtcp_sender_{};
     bool rtcp_enabled_{};
     bool rtcp_started_{};
-    bool closed_{};
 };
 
 }    // namespace media_server
