@@ -19,16 +19,16 @@ extern "C"
 
 namespace media_server
 {
-namespace
-{
-constexpr auto slow_write_timeout = std::chrono::seconds(15);
-}
-
 rtmp_session::rtmp_session(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
                            output_video_config video,
-                           std::chrono::milliseconds initial_tracks_timeout)
-    : worker_(worker), transport_(std::move(socket)), initial_tracks_timeout_(initial_tracks_timeout), video_config_(video)
+                           std::chrono::milliseconds initial_tracks_timeout,
+                           std::size_t max_write_queue_bytes)
+    : worker_(worker),
+      transport_(std::move(socket)),
+      max_write_queue_bytes_(max_write_queue_bytes),
+      initial_tracks_timeout_(initial_tracks_timeout),
+      video_config_(video)
 {
 }
 
@@ -163,7 +163,14 @@ void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
         return;
     }
 
+    if (data->size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data->size())
+    {
+        shutdown();
+        return;
+    }
+
     const bool start_write = write_queue_.empty();
+    queued_write_bytes_ += data->size();
     write_queue_.push_back(std::move(data));
     if (start_write)
     {
@@ -183,7 +190,6 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
 
         const auto data = write_queue_.front();
         boost::system::error_code error;
-        const auto started_at = std::chrono::steady_clock::now();
         static_cast<void>(transport_.write(*data, yield, error));
         if (error)
         {
@@ -191,12 +197,8 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
             return;
         }
 
+        queued_write_bytes_ -= data->size();
         write_queue_.pop_front();
-        if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
-        {
-            shutdown();
-            return;
-        }
     }
 }
 
