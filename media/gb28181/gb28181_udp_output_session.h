@@ -1,6 +1,7 @@
 #ifndef MEDIA_GB28181_GB28181_UDP_OUTPUT_SESSION_H
 #define MEDIA_GB28181_GB28181_UDP_OUTPUT_SESSION_H
 
+#include <chrono>
 #include <deque>
 #include <memory>
 #include <string>
@@ -31,7 +32,8 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
                                gb28181_description description,
                                boost::asio::ip::address bind_address,
                                std::string output_id,
-                               bool rtcp_enabled);
+                               bool rtcp_enabled,
+                               std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{25'000});
 
     [[nodiscard]] bool startup();
     void shutdown() override;
@@ -40,7 +42,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     [[nodiscard]] std::optional<port_manager_impl::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
     void shutdown_udp_transports();
     void run_rtp_write(boost::asio::yield_context yield);
-    void run_rtcp_sender(boost::asio::yield_context yield);
+    void schedule_rtcp();
     void send_packet(std::vector<std::uint8_t> packet);
     void safe_shutdown();
 
@@ -55,6 +57,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     udp_yield_transport rtp_transport_;
     udp_yield_transport rtcp_transport_;
     boost::asio::steady_timer rtcp_timer_;
+    std::chrono::milliseconds rtcp_interval_;
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::optional<port_manager_impl::port_pair> local_ports_;
     std::shared_ptr<gb28181_output_media> media_;

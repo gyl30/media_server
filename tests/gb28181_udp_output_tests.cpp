@@ -110,6 +110,79 @@ void test_udp_output_session_sends_rtp()
     io.run();
 }
 
+void test_udp_output_rtcp_shutdown_releases_scheduler()
+{
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    auto& streams = registry::instance();
+    streams.clear();
+
+    boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
+    constexpr std::uint8_t payload_type = 96;
+    constexpr std::uint32_t ssrc = 0x12345679U;
+    constexpr track_id video_track_id = 1;
+    const std::vector<std::uint8_t> config{
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
+        0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80,
+    };
+    auto source = std::make_shared<media_stream>("live/gb-udp-output-rtcp-shutdown", io.get_executor());
+    require(source->set_tracks({media_track{
+                .id = video_track_id,
+                .kind = media_kind::video,
+                .codec = codec_id::h264,
+                .clock_rate = 90'000,
+                .channel_count = 0,
+                .codec_config = config,
+            }}),
+            "gb udp output rtcp source tracks");
+    require(streams.add(source), "gb udp output rtcp source registry");
+
+    const gb28181_description description{
+        .transport = gb28181_transport::udp,
+        .address = boost::asio::ip::address_v4::loopback(),
+        .rtp_port = rtp_receiver.local_endpoint().port(),
+        .rtcp_port = rtcp_receiver.local_endpoint().port(),
+        .payload_type = payload_type,
+        .ssrc = ssrc,
+    };
+    auto session = std::make_shared<gb28181_udp_output_session>(worker,
+                                                                source,
+                                                                description,
+                                                                boost::asio::ip::address_v4::loopback(),
+                                                                "udp-output-rtcp",
+                                                                true,
+                                                                std::chrono::milliseconds::zero());
+    require(streams.add_output_session(source->name(), "udp-output-rtcp", session), "gb udp output rtcp session registry");
+    require(session->startup(), "gb udp output rtcp session startup");
+
+    io.run_for(std::chrono::milliseconds(20));
+    io.restart();
+
+    auto payload = config;
+    payload.insert(payload.end(), {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x21, 0xa0});
+    source->publish(media_frame{
+        .track = video_track_id,
+        .dts_ns = 0,
+        .pts_ns = 0,
+        .key_frame = true,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(payload)),
+    });
+
+    session->shutdown();
+    std::weak_ptr<gb28181_udp_output_session> weak_session = session;
+    session.reset();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!weak_session.expired() && std::chrono::steady_clock::now() < deadline)
+    {
+        io.run_for(std::chrono::milliseconds(20));
+        io.restart();
+    }
+    require(weak_session.expired(), "gb udp output rtcp scheduler released after shutdown");
+}
+
 }    // namespace
 }    // namespace media_server
 
@@ -120,6 +193,7 @@ int main()
     try
     {
         media_server::test_udp_output_session_sends_rtp();
+        media_server::test_udp_output_rtcp_shutdown_releases_scheduler();
         media_server::registry::destroy();
         media_server::port_manager::destroy();
         std::cout << "[pass] gb28181_udp_output_tests\n";
