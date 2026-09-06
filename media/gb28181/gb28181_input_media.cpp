@@ -178,12 +178,6 @@ void gb28181_input_media::on_stream(int codecid, bool finish)
     {
         return;
     }
-    if (!collecting_topology_)
-    {
-        pending_topology_ = {};
-        collecting_topology_ = true;
-    }
-
     const auto codec = codec_from_ps(codecid);
     if (!codec)
     {
@@ -214,8 +208,8 @@ void gb28181_input_media::on_stream(int codecid, bool finish)
 
     if (finish)
     {
-        collecting_topology_ = false;
         apply_topology();
+        pending_topology_ = {};
     }
 }
 
