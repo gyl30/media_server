@@ -19,20 +19,17 @@ extern "C"
 
 namespace media_server
 {
-namespace
-{
-constexpr auto slow_write_timeout = std::chrono::seconds(15);
-}
-
 rtsp_server_connection::rtsp_server_connection(worker_context& worker,
                                                    boost::asio::ip::tcp::socket socket,
                                                    output_video_codec video_codec,
-                                                   std::chrono::milliseconds inactivity_timeout)
+                                                   std::chrono::milliseconds inactivity_timeout,
+                                                   std::size_t max_write_queue_bytes)
     : worker_(worker),
       video_codec_(video_codec),
       transport_(std::move(socket)),
       inactivity_timer_(worker_.io()),
-      inactivity_timeout_(inactivity_timeout)
+      inactivity_timeout_(inactivity_timeout),
+      max_write_queue_bytes_(max_write_queue_bytes)
 {
 }
 
@@ -321,8 +318,15 @@ void rtsp_server_connection::write(std::span<const std::uint8_t> data)
         return;
     }
 
+    if (data.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data.size())
+    {
+        shutdown();
+        return;
+    }
+
     const bool start_write = write_queue_.empty();
     write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
+    queued_write_bytes_ += data.size();
     if (start_write)
     {
         const auto self = shared_from_this();
@@ -341,7 +345,6 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
 
         const auto data = write_queue_.front();
         boost::system::error_code error;
-        const auto started_at = std::chrono::steady_clock::now();
         static_cast<void>(transport_.write(*data, yield, error));
         if (error)
         {
@@ -349,12 +352,8 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
             return;
         }
 
+        queued_write_bytes_ -= data->size();
         write_queue_.pop_front();
-        if (std::chrono::steady_clock::now() - started_at > slow_write_timeout)
-        {
-            shutdown();
-            return;
-        }
     }
 }
 
@@ -389,6 +388,8 @@ void rtsp_server_connection::safe_shutdown()
     closed_ = true;
     inactivity_timer_.cancel();
     transport_.shutdown();
+    write_queue_.clear();
+    queued_write_bytes_ = 0;
 }
 
 }    // namespace media_server

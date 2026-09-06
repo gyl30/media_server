@@ -34,7 +34,8 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     rtsp_server_connection(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
                            output_video_codec video_codec,
-                           std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000});
+                           std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
+                           std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtsp_server_connection();
 
     void startup();
@@ -67,6 +68,8 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     boost::asio::steady_timer inactivity_timer_;
     std::chrono::milliseconds inactivity_timeout_;
     std::chrono::steady_clock::time_point last_control_activity_{};
+    std::size_t max_write_queue_bytes_;
+    std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
