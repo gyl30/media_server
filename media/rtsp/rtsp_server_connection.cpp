@@ -24,8 +24,15 @@ namespace
 constexpr auto slow_write_timeout = std::chrono::seconds(15);
 }
 
-rtsp_server_connection::rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket, output_video_codec video_codec)
-    : worker_(worker), video_codec_(video_codec), transport_(std::move(socket))
+rtsp_server_connection::rtsp_server_connection(worker_context& worker,
+                                                   boost::asio::ip::tcp::socket socket,
+                                                   output_video_codec video_codec,
+                                                   std::chrono::milliseconds inactivity_timeout)
+    : worker_(worker),
+      video_codec_(video_codec),
+      transport_(std::move(socket)),
+      inactivity_timer_(worker_.io()),
+      inactivity_timeout_(inactivity_timeout)
 {
 }
 
@@ -72,6 +79,8 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
         return;
     }
     local_address_ = local.address();
+    record_control_activity();
+    schedule_inactivity_timeout();
 
     rtp_over_rtsp_t interleaved{};
     interleaved.onrtp = &rtsp_server_connection::interleaved_callback;
@@ -181,6 +190,7 @@ void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t chan
 int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server, const char* uri)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
+    self->record_control_activity();
     if (self->publish_session_)
     {
         return rtsp_server_reply_describe(server, 501, "");
@@ -202,6 +212,7 @@ int rtsp_server_connection::setup_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
+    self->record_control_activity();
     if (self->publish_session_)
     {
         return self->publish_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
@@ -223,6 +234,7 @@ int rtsp_server_connection::play_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
+    self->record_control_activity();
     if (self->play_session_)
     {
         return self->play_session_->on_play(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
@@ -237,6 +249,7 @@ int rtsp_server_connection::play_callback(
 int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server, const char* uri, const char* session)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
+    self->record_control_activity();
     if (self->publish_session_)
     {
         return self->publish_session_->on_teardown(server, uri != nullptr ? uri : "", session != nullptr ? session : "");
@@ -251,6 +264,7 @@ int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server
 int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server, const char* uri, const char* sdp, int length)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
+    self->record_control_activity();
     if (self->play_session_)
     {
         return rtsp_server_reply_announce(server, 501);
@@ -270,6 +284,7 @@ int rtsp_server_connection::record_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
+    self->record_control_activity();
     if (self->publish_session_)
     {
         return self->publish_session_->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
@@ -281,11 +296,17 @@ int rtsp_server_connection::record_callback(
     return -1;
 }
 
-int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*) { return rtsp_server_reply_options(server, 200); }
+int rtsp_server_connection::options_callback(void* param, rtsp_server_t* server, const char*)
+{
+    auto* self = static_cast<rtsp_server_connection*>(param);
+    self->record_control_activity();
+    return rtsp_server_reply_options(server, 200);
+}
 
 int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
+    self->record_control_activity();
     if (!self->publish_session_ && !self->play_session_ && (bytes != 0 || (session != nullptr && session[0] != '\0')))
     {
         return -1;
@@ -337,6 +358,28 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
     }
 }
 
+void rtsp_server_connection::record_control_activity() { last_control_activity_ = std::chrono::steady_clock::now(); }
+
+void rtsp_server_connection::schedule_inactivity_timeout()
+{
+    inactivity_timer_.expires_at(last_control_activity_ + inactivity_timeout_);
+    const auto self = shared_from_this();
+    inactivity_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_)
+            {
+                return;
+            }
+            if (std::chrono::steady_clock::now() < self->last_control_activity_ + self->inactivity_timeout_)
+            {
+                self->schedule_inactivity_timeout();
+                return;
+            }
+            self->shutdown();
+        });
+}
+
 void rtsp_server_connection::safe_shutdown()
 {
     if (closed_)
@@ -344,6 +387,7 @@ void rtsp_server_connection::safe_shutdown()
         return;
     }
     closed_ = true;
+    inactivity_timer_.cancel();
     transport_.shutdown();
 }
 
