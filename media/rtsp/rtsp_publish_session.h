@@ -11,7 +11,7 @@
 
 #include <boost/asio/ip/address.hpp>
 
-#include "media/rtsp/rtsp_input_media.h"
+#include "media/rtsp/rtsp_publish_media.h"
 #include "media/rtsp/rtsp_server_session.h"
 
 namespace media_server
@@ -45,7 +45,7 @@ class rtsp_publish_session final : public rtsp_server_session
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::shared_ptr<rtsp_input_tcp_session> tcp_session_;
     std::shared_ptr<rtsp_input_udp_session> udp_session_;
-    std::vector<rtsp_input_track_description> descriptions_;
+    std::vector<rtsp_publish_track_description> descriptions_;
     std::string stream_name_;
     std::string session_id_;
     bool closed_{};

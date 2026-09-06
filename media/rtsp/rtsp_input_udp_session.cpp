@@ -22,7 +22,7 @@ namespace media_server
 rtsp_input_udp_session::rtsp_input_udp_session(worker_context& worker,
                                                boost::asio::ip::address bind_address,
                                                std::string stream_name,
-                                               std::vector<rtsp_input_track_description> descriptions)
+                                               std::vector<rtsp_publish_track_description> descriptions)
     : worker_(worker),
       bind_address_(std::move(bind_address)),
       media_(worker_, std::move(stream_name), std::move(descriptions)),
