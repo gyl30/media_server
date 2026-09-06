@@ -74,7 +74,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;
-    bool closed_{};
 };
 
 }    // namespace media_server
