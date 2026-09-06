@@ -222,11 +222,10 @@ void http_flv_session::shutdown()
 
 void http_flv_session::safe_shutdown()
 {
-    if (closed_)
+    if (!stream_.socket().is_open())
     {
         return;
     }
-    closed_ = true;
     reader_.remove();
     reader_ = {};
     if (output_)
