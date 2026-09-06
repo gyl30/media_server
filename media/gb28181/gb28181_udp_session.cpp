@@ -19,13 +19,15 @@ namespace media_server
 
 gb28181_udp_session::gb28181_udp_session(worker_context& worker,
                                          std::string stream_name,
-                                         gb28181_description description)
+                                         gb28181_description description,
+                                         std::chrono::milliseconds rtcp_interval)
     : worker_(worker),
       description_(std::move(description)),
       media_(worker_, std::move(stream_name), description_.payload_type, description_.ssrc),
       rtp_transport_(worker_.io()),
       rtcp_transport_(worker_.io()),
-      rtcp_timer_(worker_.io())
+      rtcp_timer_(worker_.io()),
+      rtcp_interval_(rtcp_interval)
 {
 }
 
@@ -76,7 +78,7 @@ bool gb28181_udp_session::startup()
     const auto self = shared_from_this();
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtp(yield); }, boost::asio::detached);
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtcp(yield); }, boost::asio::detached);
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtcp_sender(yield); }, boost::asio::detached);
+    schedule_rtcp();
 
     spdlog::info("gb28181 udp session started stream {} rtp_port {} rtcp_port {}",
                  media_.stream_name(),
@@ -156,42 +158,61 @@ void gb28181_udp_session::run_rtcp(boost::asio::yield_context yield)
     shutdown();
 }
 
-void gb28181_udp_session::run_rtcp_sender(boost::asio::yield_context yield)
+void gb28181_udp_session::schedule_rtcp()
 {
-    boost::system::error_code error;
-    for (;;)
+    if (closed_)
     {
-        rtcp_timer_.expires_after(std::chrono::seconds(1));
-        rtcp_timer_.async_wait(yield[error]);
-        if (error)
-        {
-            break;
-        }
-
-        std::optional<boost::asio::ip::udp::endpoint> target = remote_rtcp_endpoint_;
-        if (!target && remote_rtp_endpoint_ && remote_rtp_endpoint_->port() != std::numeric_limits<std::uint16_t>::max())
-        {
-            target.emplace(remote_rtp_endpoint_->address(), static_cast<std::uint16_t>(remote_rtp_endpoint_->port() + 1U));
-        }
-        if (!target)
-        {
-            continue;
-        }
-
-        std::array<std::uint8_t, 1500> buffer{};
-        const auto bytes = media_.generate_rtcp(buffer);
-        if (bytes <= 0)
-        {
-            continue;
-        }
-        static_cast<void>(rtcp_transport_.write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, *target, yield, error));
-        if (error)
-        {
-            break;
-        }
+        return;
     }
 
-    shutdown();
+    rtcp_timer_.expires_after(rtcp_interval_);
+    const auto self = shared_from_this();
+    rtcp_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || self->closed_)
+            {
+                return;
+            }
+
+            std::optional<boost::asio::ip::udp::endpoint> target = self->remote_rtcp_endpoint_;
+            if (!target && self->remote_rtp_endpoint_ &&
+                self->remote_rtp_endpoint_->port() != std::numeric_limits<std::uint16_t>::max())
+            {
+                target.emplace(self->remote_rtp_endpoint_->address(),
+                               static_cast<std::uint16_t>(self->remote_rtp_endpoint_->port() + 1U));
+            }
+            if (!target)
+            {
+                self->schedule_rtcp();
+                return;
+            }
+
+            std::array<std::uint8_t, 1500> buffer{};
+            const auto bytes = self->media_.generate_rtcp(buffer);
+            if (bytes <= 0)
+            {
+                self->schedule_rtcp();
+                return;
+            }
+
+            auto packet = std::make_shared<std::vector<std::uint8_t>>(buffer.begin(), buffer.begin() + bytes);
+            boost::asio::spawn(
+                self->worker_.io(),
+                [self, packet, target = *target](boost::asio::yield_context yield)
+                {
+                    boost::system::error_code write_error;
+                    static_cast<void>(
+                        self->rtcp_transport_.write(std::span<const std::uint8_t>{packet->data(), packet->size()}, target, yield, write_error));
+                    if (write_error)
+                    {
+                        self->shutdown();
+                        return;
+                    }
+                    self->schedule_rtcp();
+                },
+                boost::asio::detached);
+        });
 }
 
 void gb28181_udp_session::safe_shutdown()

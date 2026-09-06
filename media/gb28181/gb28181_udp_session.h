@@ -1,6 +1,7 @@
 #ifndef MEDIA_GB28181_GB28181_UDP_SESSION_H
 #define MEDIA_GB28181_GB28181_UDP_SESSION_H
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -23,7 +24,10 @@ class worker_context;
 class gb28181_udp_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_session>
 {
    public:
-    gb28181_udp_session(worker_context& worker, std::string stream_name, gb28181_description description);
+    gb28181_udp_session(worker_context& worker,
+                        std::string stream_name,
+                        gb28181_description description,
+                        std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     [[nodiscard]] bool startup();
     void shutdown() override;
@@ -35,7 +39,7 @@ class gb28181_udp_session final : public stream_session, public std::enable_shar
     [[nodiscard]] std::optional<port_manager_impl::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
     void run_rtp(boost::asio::yield_context yield);
     void run_rtcp(boost::asio::yield_context yield);
-    void run_rtcp_sender(boost::asio::yield_context yield);
+    void schedule_rtcp();
     void safe_shutdown();
 
     worker_context& worker_;
@@ -45,6 +49,7 @@ class gb28181_udp_session final : public stream_session, public std::enable_shar
     udp_yield_transport rtcp_transport_;
     std::optional<port_manager_impl::port_pair> local_ports_;
     boost::asio::steady_timer rtcp_timer_;
+    std::chrono::milliseconds rtcp_interval_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
     bool closed_{};
