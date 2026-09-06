@@ -1,5 +1,5 @@
-#ifndef MEDIA_RTSP_RTSP_INPUT_MEDIA_H
-#define MEDIA_RTSP_RTSP_INPUT_MEDIA_H
+#ifndef MEDIA_RTSP_RTSP_PUBLISH_MEDIA_H
+#define MEDIA_RTSP_RTSP_PUBLISH_MEDIA_H
 
 #include <span>
 #include <memory>
@@ -23,7 +23,7 @@ namespace media_server
 
 class worker_context;
 
-struct rtsp_input_track_description
+struct rtsp_publish_track_description
 {
     std::string uri;
     media_track track;
@@ -33,11 +33,11 @@ struct rtsp_input_track_description
     std::string fmtp;
 };
 
-class rtsp_input_media final
+class rtsp_publish_media final
 {
    public:
-    rtsp_input_media(worker_context& worker, std::string stream_name, std::vector<rtsp_input_track_description> descriptions);
-    ~rtsp_input_media();
+    rtsp_publish_media(worker_context& worker, std::string stream_name, std::vector<rtsp_publish_track_description> descriptions);
+    ~rtsp_publish_media();
 
     [[nodiscard]] bool startup(const std::string& rtcp_cname);
     [[nodiscard]] bool start_recording();
@@ -45,7 +45,7 @@ class rtsp_input_media final
     [[nodiscard]] int generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer);
     void shutdown();
 
-    [[nodiscard]] const std::vector<rtsp_input_track_description>& descriptions() const noexcept;
+    [[nodiscard]] const std::vector<rtsp_publish_track_description>& descriptions() const noexcept;
     [[nodiscard]] const std::string& stream_name() const noexcept;
     [[nodiscard]] bool recording() const noexcept;
 
@@ -56,7 +56,7 @@ class rtsp_input_media final
 
     worker_context& worker_;
     std::string stream_name_;
-    std::vector<rtsp_input_track_description> descriptions_;
+    std::vector<rtsp_publish_track_description> descriptions_;
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> stream_;
     avpkt2bs_t bitstream_{};

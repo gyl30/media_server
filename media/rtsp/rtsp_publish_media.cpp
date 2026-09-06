@@ -7,7 +7,7 @@
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/rtsp/rtsp_input_media.h"
+#include "media/rtsp/rtsp_publish_media.h"
 
 extern "C"
 {
@@ -26,16 +26,16 @@ constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
-rtsp_input_media::rtsp_input_media(worker_context& worker,
+rtsp_publish_media::rtsp_publish_media(worker_context& worker,
                                    std::string stream_name,
-                                   std::vector<rtsp_input_track_description> descriptions)
+                                   std::vector<rtsp_publish_track_description> descriptions)
     : worker_(worker), stream_name_(std::move(stream_name)), descriptions_(std::move(descriptions))
 {
 }
 
-rtsp_input_media::~rtsp_input_media() = default;
+rtsp_publish_media::~rtsp_publish_media() = default;
 
-bool rtsp_input_media::startup(const std::string& rtcp_cname)
+bool rtsp_publish_media::startup(const std::string& rtcp_cname)
 {
     if (closed_ || stream_ || descriptions_.empty())
     {
@@ -48,7 +48,7 @@ bool rtsp_input_media::startup(const std::string& rtcp_cname)
     for (std::size_t index = 0; index < descriptions_.size(); ++index)
     {
         const auto& description = descriptions_[index];
-        auto* demuxer = rtsp_demuxer_create(static_cast<int>(index), 500, &rtsp_input_media::packet_callback, this);
+        auto* demuxer = rtsp_demuxer_create(static_cast<int>(index), 500, &rtsp_publish_media::packet_callback, this);
         if (demuxer == nullptr ||
             rtsp_demuxer_add_payload(demuxer,
                                      description.clock_rate,
@@ -69,7 +69,7 @@ bool rtsp_input_media::startup(const std::string& rtcp_cname)
     return true;
 }
 
-bool rtsp_input_media::start_recording()
+bool rtsp_publish_media::start_recording()
 {
     if (closed_ || recording_ || !stream_)
     {
@@ -91,7 +91,7 @@ bool rtsp_input_media::start_recording()
     return true;
 }
 
-bool rtsp_input_media::input_packet(std::size_t track_index, std::span<const std::uint8_t> data)
+bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const std::uint8_t> data)
 {
     if (closed_ || !recording_ || track_index >= demuxers_.size() || data.size() < 4)
     {
@@ -130,7 +130,7 @@ bool rtsp_input_media::input_packet(std::size_t track_index, std::span<const std
     return !fatal_codec_change_;
 }
 
-int rtsp_input_media::generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
+int rtsp_publish_media::generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
 {
     if (closed_ || !recording_ || track_index >= demuxers_.size() || demuxers_[track_index] == nullptr)
     {
@@ -139,7 +139,7 @@ int rtsp_input_media::generate_rtcp(std::size_t track_index, std::span<std::uint
     return rtsp_demuxer_rtcp(demuxers_[track_index], buffer.data(), static_cast<int>(buffer.size()));
 }
 
-void rtsp_input_media::shutdown()
+void rtsp_publish_media::shutdown()
 {
     if (closed_)
     {
@@ -165,15 +165,15 @@ void rtsp_input_media::shutdown()
     avpkt2bs_destroy(&bitstream_);
 }
 
-const std::vector<rtsp_input_track_description>& rtsp_input_media::descriptions() const noexcept { return descriptions_; }
+const std::vector<rtsp_publish_track_description>& rtsp_publish_media::descriptions() const noexcept { return descriptions_; }
 
-const std::string& rtsp_input_media::stream_name() const noexcept { return stream_name_; }
+const std::string& rtsp_publish_media::stream_name() const noexcept { return stream_name_; }
 
-bool rtsp_input_media::recording() const noexcept { return recording_; }
+bool rtsp_publish_media::recording() const noexcept { return recording_; }
 
-int rtsp_input_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_input_media*>(param)->on_demuxed_packet(packet); }
+int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_publish_media*>(param)->on_demuxed_packet(packet); }
 
-int rtsp_input_media::on_demuxed_packet(avpacket_t* packet)
+int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
 {
     if (packet == nullptr || packet->stream == nullptr || !recording_ || closed_ || !stream_)
     {
@@ -196,7 +196,7 @@ int rtsp_input_media::on_demuxed_packet(avpacket_t* packet)
                        : codecid == AVCODEC_AUDIO_G711A ? codec_id::g711a
                                                         : codec_id::g711u;
     const auto state = std::find_if(
-        descriptions_.begin(), descriptions_.end(), [codec](const rtsp_input_track_description& value) { return value.track.codec == codec; });
+        descriptions_.begin(), descriptions_.end(), [codec](const rtsp_publish_track_description& value) { return value.track.codec == codec; });
     if (state == descriptions_.end())
     {
         spdlog::warn("rtsp publish raw codec change {}", to_string(codec));
@@ -225,7 +225,7 @@ int rtsp_input_media::on_demuxed_packet(avpacket_t* packet)
     return 0;
 }
 
-bool rtsp_input_media::update_track_from_packet(const avpacket_t& packet)
+bool rtsp_publish_media::update_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
     auto track = media_track_from_avstream_config(input, video_track_id, audio_track_id);
@@ -244,7 +244,7 @@ bool rtsp_input_media::update_track_from_packet(const avpacket_t& packet)
     }
 
     const auto state = std::find_if(
-        descriptions_.begin(), descriptions_.end(), [track](const rtsp_input_track_description& value) { return value.track.codec == track->codec; });
+        descriptions_.begin(), descriptions_.end(), [track](const rtsp_publish_track_description& value) { return value.track.codec == track->codec; });
     if (state == descriptions_.end() || !stream_->update_track(*track))
     {
         return false;

@@ -70,7 +70,7 @@
 #include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_input_tcp_session.h"
 #include "media/rtsp/rtsp_input_udp_session.h"
-#include "media/rtsp/rtsp_input_media.h"
+#include "media/rtsp/rtsp_publish_media.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_server_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
@@ -129,28 +129,28 @@ static_assert(!std::is_constructible_v<rtsp_publish_session, boost::asio::any_io
 static_assert(std::is_constructible_v<rtsp_input_tcp_session,
                                       worker_context&,
                                       std::string,
-                                      std::vector<rtsp_input_track_description>,
+                                      std::vector<rtsp_publish_track_description>,
                                       rtsp_write_handler>);
 static_assert(!std::is_constructible_v<rtsp_input_tcp_session,
                                        boost::asio::any_io_executor,
                                        std::string,
-                                       std::vector<rtsp_input_track_description>,
+                                       std::vector<rtsp_publish_track_description>,
                                        rtsp_write_handler>);
 static_assert(std::is_constructible_v<rtsp_input_udp_session,
                                       worker_context&,
                                       boost::asio::ip::address,
                                       std::string,
-                                      std::vector<rtsp_input_track_description>>);
+                                      std::vector<rtsp_publish_track_description>>);
 static_assert(!std::is_constructible_v<rtsp_input_udp_session,
                                        boost::asio::any_io_executor,
                                        boost::asio::ip::address,
                                        std::string,
-                                       std::vector<rtsp_input_track_description>>);
-static_assert(std::is_constructible_v<rtsp_input_media, worker_context&, std::string, std::vector<rtsp_input_track_description>>);
-static_assert(!std::is_constructible_v<rtsp_input_media,
+                                       std::vector<rtsp_publish_track_description>>);
+static_assert(std::is_constructible_v<rtsp_publish_media, worker_context&, std::string, std::vector<rtsp_publish_track_description>>);
+static_assert(!std::is_constructible_v<rtsp_publish_media,
                                        boost::asio::any_io_executor,
                                        std::string,
-                                       std::vector<rtsp_input_track_description>>);
+                                       std::vector<rtsp_publish_track_description>>);
 static_assert(std::is_constructible_v<rtsp_play_session,
                                       worker_context&,
                                       output_video_codec,
@@ -4216,10 +4216,10 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
 
     auto video = make_video_track();
     auto audio = make_g711_track(codec_id::g711a);
-    rtsp_input_media media(worker,
+    rtsp_publish_media media(worker,
                            "live/rtcp-sync",
                            {
-                               rtsp_input_track_description{
+                               rtsp_publish_track_description{
                                    .uri = "video",
                                    .track = video,
                                    .clock_rate = 90'000,
@@ -4227,7 +4227,7 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
                                    .encoding = "H264",
                                    .fmtp = "packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==",
                                },
-                               rtsp_input_track_description{
+                               rtsp_publish_track_description{
                                    .uri = "audio",
                                    .track = audio,
                                    .clock_rate = 8'000,

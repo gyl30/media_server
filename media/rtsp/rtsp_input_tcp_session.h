@@ -13,7 +13,7 @@
 
 #include <boost/asio/steady_timer.hpp>
 
-#include "media/rtsp/rtsp_input_media.h"
+#include "media/rtsp/rtsp_publish_media.h"
 
 struct rtsp_server_t;
 struct rtsp_header_transport_t;
@@ -29,7 +29,7 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
    public:
     rtsp_input_tcp_session(worker_context& worker,
                            std::string stream_name,
-                           std::vector<rtsp_input_track_description> descriptions,
+                           std::vector<rtsp_publish_track_description> descriptions,
                            std::function<void(std::span<const std::uint8_t>)> write);
     ~rtsp_input_tcp_session();
 
@@ -54,7 +54,7 @@ class rtsp_input_tcp_session final : public std::enable_shared_from_this<rtsp_in
     worker_context& worker_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void(boost::system::error_code)> error_handler_;
-    rtsp_input_media media_;
+    rtsp_publish_media media_;
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;
     bool closed_{};

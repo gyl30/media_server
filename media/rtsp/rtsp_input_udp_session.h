@@ -17,7 +17,7 @@
 
 #include "media/net/port_manager.h"
 #include "media/net/udp_yield_transport.h"
-#include "media/rtsp/rtsp_input_media.h"
+#include "media/rtsp/rtsp_publish_media.h"
 
 struct rtsp_server_t;
 struct rtsp_header_transport_t;
@@ -34,7 +34,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     rtsp_input_udp_session(worker_context& worker,
                            boost::asio::ip::address bind_address,
                            std::string stream_name,
-                           std::vector<rtsp_input_track_description> descriptions);
+                           std::vector<rtsp_publish_track_description> descriptions);
 
     void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
 
@@ -61,7 +61,7 @@ class rtsp_input_udp_session final : public std::enable_shared_from_this<rtsp_in
     worker_context& worker_;
     std::function<void(boost::system::error_code)> error_handler_;
     boost::asio::ip::address bind_address_;
-    rtsp_input_media media_;
+    rtsp_publish_media media_;
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;
     bool closed_{};

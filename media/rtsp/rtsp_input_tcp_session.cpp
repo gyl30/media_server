@@ -18,7 +18,7 @@ namespace media_server
 
 rtsp_input_tcp_session::rtsp_input_tcp_session(worker_context& worker,
                                                std::string stream_name,
-                                               std::vector<rtsp_input_track_description> descriptions,
+                                               std::vector<rtsp_publish_track_description> descriptions,
                                                std::function<void(std::span<const std::uint8_t>)> write)
     : worker_(worker),
       write_handler_(std::move(write)),

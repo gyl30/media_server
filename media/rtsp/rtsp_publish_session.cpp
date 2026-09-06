@@ -89,7 +89,7 @@ int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view ur
     bool audio = false;
     for (const auto& description : media)
     {
-        std::optional<rtsp_input_track_description> selected;
+        std::optional<rtsp_publish_track_description> selected;
         for (int format_index = 0; format_index < description.avformat_count; ++format_index)
         {
             auto format = description.avformats[static_cast<std::size_t>(format_index)];
@@ -106,7 +106,7 @@ int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view ur
             {
                 continue;
             }
-            selected = rtsp_input_track_description{
+            selected = rtsp_publish_track_description{
                 .uri = description.uri,
                 .track = std::move(*track),
                 .clock_rate = format.rate,
@@ -153,7 +153,7 @@ int rtsp_publish_session::on_setup(
         return rtsp_server_reply_setup(server, 454, nullptr, nullptr);
     }
 
-    const auto description = std::ranges::find_if(descriptions_, [uri](const rtsp_input_track_description& value) { return uri == value.uri; });
+    const auto description = std::ranges::find_if(descriptions_, [uri](const rtsp_publish_track_description& value) { return uri == value.uri; });
     if (description == descriptions_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
