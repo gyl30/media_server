@@ -156,11 +156,10 @@ void http_session::shutdown()
 
 void http_session::safe_shutdown()
 {
-    if (closed_)
+    if (!stream_.socket().is_open())
     {
         return;
     }
-    closed_ = true;
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);
