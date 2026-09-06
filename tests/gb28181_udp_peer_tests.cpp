@@ -557,6 +557,41 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
     io.run();
 }
 
+void test_udp_session_rtcp_shutdown_releases_scheduler()
+{
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    auto& streams = media_server::registry::instance();
+    streams.clear();
+
+    constexpr std::uint8_t payload_type = 96;
+    constexpr std::uint32_t ssrc = 0x1234567aU;
+    const std::string stream_name = "live/gb-rtcp-shutdown";
+    const gb28181_description description{
+        .transport = gb28181_transport::udp,
+        .address = boost::asio::ip::address_v4::loopback(),
+        .payload_type = payload_type,
+        .ssrc = ssrc,
+    };
+    auto session =
+        std::make_shared<gb28181_udp_session>(worker, stream_name, description, std::chrono::milliseconds::zero());
+    require(streams.add_input_session(stream_name, session), "gb rtcp shutdown session registry add");
+    require(session->startup(), "gb rtcp shutdown session startup");
+
+    session->shutdown();
+    std::weak_ptr<gb28181_udp_session> weak_session = session;
+    session.reset();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!weak_session.expired() && std::chrono::steady_clock::now() < deadline)
+    {
+        io.run_for(std::chrono::milliseconds(20));
+        io.restart();
+    }
+    require(weak_session.expired(), "gb rtcp scheduler released after shutdown");
+}
+
 }    // namespace
 }    // namespace media_server
 
@@ -574,6 +609,8 @@ int main()
         std::cout << "[pass] input_audio_codec_change_is_fatal\n";
         media_server::test_udp_session_fatal_codec_change_unregisters();
         std::cout << "[pass] udp_session_fatal_codec_change_unregisters\n";
+        media_server::test_udp_session_rtcp_shutdown_releases_scheduler();
+        std::cout << "[pass] udp_session_rtcp_shutdown_releases_scheduler\n";
         media_server::test_output_same_codec_config_version_continues_ps_stream();
         std::cout << "[pass] output_same_codec_config_version_continues_ps_stream\n";
         media_server::test_rtcp_peer_learning_overrides_rtp_plus_one();
