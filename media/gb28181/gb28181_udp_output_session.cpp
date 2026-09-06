@@ -194,7 +194,7 @@ void gb28181_udp_output_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || self->rtcp_sender_ == nullptr)
+            if (error || self->rtcp_sender_ == nullptr)
             {
                 return;
             }

@@ -55,7 +55,7 @@ bool rtmp_input_session::startup()
     initial_tracks_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || self->tracks_initialized_)
+            if (error || self->tracks_initialized_)
             {
                 return;
             }
