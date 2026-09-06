@@ -58,7 +58,6 @@ class rtsp_publish_session final
     std::vector<rtsp_publish_track_description> descriptions_;
     std::string stream_name_;
     std::string session_id_;
-    bool closed_{};
 };
 
 }    // namespace media_server
