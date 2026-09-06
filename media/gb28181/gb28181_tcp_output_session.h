@@ -2,6 +2,7 @@
 #define MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
 
 #include <chrono>
+#include <cstddef>
 #include <deque>
 #include <memory>
 #include <string>
@@ -31,7 +32,8 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
                                std::string stream_name,
                                std::string output_id,
                                gb28181_description description,
-                               std::chrono::milliseconds establishment_timeout);
+                               std::chrono::milliseconds establishment_timeout,
+                               std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] bool startup();
     void shutdown() override;
@@ -48,9 +50,11 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
     std::string output_id_;
     gb28181_description description_;
     std::chrono::milliseconds establishment_timeout_{};
+    std::size_t max_write_queue_bytes_;
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::unique_ptr<tcp_yield_transport> transport_;
+    std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::shared_ptr<gb28181_output_media> media_;
     bool closed_{};
