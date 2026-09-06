@@ -30,7 +30,8 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     rtmp_session(worker_context& worker,
                  boost::asio::ip::tcp::socket socket,
                  output_video_config video = {},
-                 std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000});
+                 std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
+                 std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtmp_session();
 
     void startup();
@@ -57,6 +58,8 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 
     worker_context& worker_;
     tcp_yield_transport transport_;
+    std::size_t max_write_queue_bytes_;
+    std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::chrono::milliseconds initial_tracks_timeout_;
     output_video_config video_config_;
