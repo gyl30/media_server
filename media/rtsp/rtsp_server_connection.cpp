@@ -388,8 +388,6 @@ void rtsp_server_connection::safe_shutdown()
     closed_ = true;
     inactivity_timer_.cancel();
     transport_.shutdown();
-    write_queue_.clear();
-    queued_write_bytes_ = 0;
 }
 
 }    // namespace media_server
