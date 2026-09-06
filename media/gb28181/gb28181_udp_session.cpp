@@ -217,11 +217,10 @@ void gb28181_udp_session::schedule_rtcp()
 
 void gb28181_udp_session::safe_shutdown()
 {
-    if (closed_)
+    if (!local_ports_)
     {
         return;
     }
-    closed_ = true;
     registry::instance().remove_input_session(stream_name(), *this);
     rtcp_timer_.cancel();
     rtp_transport_.shutdown();
