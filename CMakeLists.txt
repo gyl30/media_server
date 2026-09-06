@@ -273,6 +273,10 @@ if(BUILD_TESTING)
     target_link_libraries(rtsp_server_connection_tests PRIVATE media_core media_server_link_options)
     add_test(NAME rtsp_server_connection_tests COMMAND rtsp_server_connection_tests)
 
+    add_executable(rtsp_publish_udp_scheduler_tests tests/rtsp_publish_udp_scheduler_tests.cpp)
+    target_link_libraries(rtsp_publish_udp_scheduler_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME rtsp_publish_udp_scheduler_tests COMMAND rtsp_publish_udp_scheduler_tests)
+
     add_executable(rtsp_write_backpressure_tests tests/rtsp_write_backpressure_tests.cpp)
     target_link_libraries(rtsp_write_backpressure_tests PRIVATE media_core media_server_link_options)
     add_test(NAME rtsp_write_backpressure_tests COMMAND rtsp_write_backpressure_tests)

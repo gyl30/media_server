@@ -1,6 +1,7 @@
 #ifndef MEDIA_RTSP_RTSP_PUBLISH_SESSION_H
 #define MEDIA_RTSP_RTSP_PUBLISH_SESSION_H
 
+#include <chrono>
 #include <span>
 #include <memory>
 #include <string>
@@ -30,7 +31,8 @@ class rtsp_publish_session final
    public:
     rtsp_publish_session(worker_context& worker,
                        boost::asio::ip::address bind_address,
-                       std::function<void(std::span<const std::uint8_t>)> write);
+                       std::function<void(std::span<const std::uint8_t>)> write,
+                       std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
 
@@ -48,6 +50,7 @@ class rtsp_publish_session final
    private:
     worker_context& worker_;
     boost::asio::ip::address bind_address_;
+    std::chrono::milliseconds rtcp_interval_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void(boost::system::error_code)> error_handler_;
     std::shared_ptr<rtsp_publish_tcp_session> tcp_session_;
