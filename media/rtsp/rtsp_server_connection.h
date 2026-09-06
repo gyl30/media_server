@@ -23,7 +23,8 @@ namespace media_server
 {
 
 class worker_context;
-class rtsp_server_session;
+class rtsp_publish_session;
+class rtsp_play_session;
 
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
@@ -57,7 +58,8 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     output_video_codec video_codec_;
     tcp_yield_transport transport_;
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
-    std::shared_ptr<rtsp_server_session> logical_session_;
+    std::shared_ptr<rtsp_publish_session> publish_session_;
+    std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;
     bool closed_{};
 };
