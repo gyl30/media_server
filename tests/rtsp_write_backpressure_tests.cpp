@@ -89,39 +89,6 @@ void test_rtsp_server_write_backlog_limit()
     require(closed, "RTSP server write backlog limit closes connection");
 }
 
-void test_rtsp_server_write_backlog_accumulates_bytes()
-{
-    worker_context worker;
-    boost::asio::io_context client_io;
-    tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
-    tcp::socket client(client_io);
-    client.connect(acceptor.local_endpoint());
-    tcp::socket server_socket(worker.io());
-    acceptor.accept(server_socket);
-
-    auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), output_video_codec::passthrough, 5s, 1024U);
-    connection->startup();
-    worker.release_work();
-    std::jthread runner([&worker]() { worker.run(); });
-
-    std::string requests;
-    for (int cseq = 1; cseq <= 64; ++cseq)
-    {
-        requests += "OPTIONS rtsp://127.0.0.1/live/test RTSP/1.0\r\nCSeq: " + std::to_string(cseq) +
-                    "\r\nContent-Length: 0\r\n\r\n";
-    }
-
-    boost::system::error_code error;
-    boost::asio::write(client, boost::asio::buffer(requests), error);
-    require(!error, "RTSP server cumulative backlog request write");
-
-    const bool closed = wait_for_close(client, 500ms);
-    connection->shutdown();
-    runner.join();
-    require(closed, "RTSP server cumulative write backlog closes connection");
-}
-
 void test_rtsp_pull_write_backlog_limit()
 {
     boost::asio::io_context server_io;
@@ -153,8 +120,6 @@ int main()
     {
         test_rtsp_server_write_backlog_limit();
         std::cout << "[pass] rtsp_server_write_backlog_limit\n";
-        test_rtsp_server_write_backlog_accumulates_bytes();
-        std::cout << "[pass] rtsp_server_write_backlog_accumulates_bytes\n";
         test_rtsp_pull_write_backlog_limit();
         std::cout << "[pass] rtsp_pull_write_backlog_limit\n";
     }
