@@ -6,7 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include "media/net/worker_context.h"
-#include "media/rtsp/rtsp_input_tcp_session.h"
+#include "media/rtsp/rtsp_publish_tcp_session.h"
 
 extern "C"
 {
@@ -16,7 +16,7 @@ extern "C"
 namespace media_server
 {
 
-rtsp_input_tcp_session::rtsp_input_tcp_session(worker_context& worker,
+rtsp_publish_tcp_session::rtsp_publish_tcp_session(worker_context& worker,
                                                std::string stream_name,
                                                std::vector<rtsp_publish_track_description> descriptions,
                                                std::function<void(std::span<const std::uint8_t>)> write)
@@ -28,9 +28,9 @@ rtsp_input_tcp_session::rtsp_input_tcp_session(worker_context& worker,
 {
 }
 
-rtsp_input_tcp_session::~rtsp_input_tcp_session() = default;
+rtsp_publish_tcp_session::~rtsp_publish_tcp_session() = default;
 
-int rtsp_input_tcp_session::startup(rtsp_server_t* server,
+int rtsp_publish_tcp_session::startup(rtsp_server_t* server,
                                     std::size_t track_index,
                                     const rtsp_header_transport_t& transport,
                                     const std::string& session_id)
@@ -47,7 +47,7 @@ int rtsp_input_tcp_session::startup(rtsp_server_t* server,
     return result;
 }
 
-void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
+void rtsp_publish_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
     if (data.empty())
     {
@@ -66,7 +66,7 @@ void rtsp_input_tcp_session::on_interleaved(std::uint8_t channel, std::span<cons
     }
 }
 
-int rtsp_input_tcp_session::on_setup(rtsp_server_t* server,
+int rtsp_publish_tcp_session::on_setup(rtsp_server_t* server,
                                      std::size_t track_index,
                                      const rtsp_header_transport_t& transport,
                                      const std::string& session_id)
@@ -94,7 +94,7 @@ int rtsp_input_tcp_session::on_setup(rtsp_server_t* server,
     return rtsp_server_reply_setup(server, 200, session_id.c_str(), response.c_str());
 }
 
-int rtsp_input_tcp_session::on_record(rtsp_server_t* server)
+int rtsp_publish_tcp_session::on_record(rtsp_server_t* server)
 {
     if (media_.recording())
     {
@@ -114,7 +114,7 @@ int rtsp_input_tcp_session::on_record(rtsp_server_t* server)
     return rtsp_server_reply_record(server, 200, nullptr, nullptr);
 }
 
-void rtsp_input_tcp_session::schedule_rtcp()
+void rtsp_publish_tcp_session::schedule_rtcp()
 {
     rtcp_timer_.expires_after(std::chrono::seconds(1));
     const auto self = shared_from_this();
@@ -147,7 +147,7 @@ void rtsp_input_tcp_session::schedule_rtcp()
         });
 }
 
-void rtsp_input_tcp_session::safe_shutdown()
+void rtsp_publish_tcp_session::safe_shutdown()
 {
     if (closed_)
     {
@@ -158,7 +158,7 @@ void rtsp_input_tcp_session::safe_shutdown()
     media_.shutdown();
     write_handler_ = {};
     error_handler_ = {};
-    spdlog::debug("rtsp input tcp shutdown {}", media_.stream_name());
+    spdlog::debug("rtsp publish tcp shutdown {}", media_.stream_name());
 }
 
 }    // namespace media_server
