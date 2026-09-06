@@ -121,7 +121,7 @@ void rtsp_publish_tcp_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_)
+            if (error)
             {
                 return;
             }
