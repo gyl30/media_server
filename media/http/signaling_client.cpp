@@ -1,3 +1,4 @@
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -14,6 +15,9 @@ namespace media_server
 
 namespace
 {
+
+namespace beast = boost::beast;
+using tcp = boost::asio::ip::tcp;
 
 std::string registration_body(const signaling_client_options& options)
 {
@@ -33,9 +37,22 @@ std::string heartbeat_body(const signaling_client_options& options)
     });
 }
 
+struct signaling_request_state
+{
+    signaling_request_state(boost::asio::io_context& io, std::chrono::milliseconds timeout) : resolver(io), stream(io), deadline(io)
+    {
+        deadline.expires_after(timeout);
+    }
+
+    tcp::resolver resolver;
+    beast::tcp_stream stream;
+    boost::asio::steady_timer deadline;
+    bool timed_out{};
+};
+
 }    // namespace
 
-signaling_client::signaling_client(signaling_client_options options) : options_(std::move(options))
+signaling_client::signaling_client(boost::asio::io_context& io, signaling_client_options options) : io_(io), options_(std::move(options))
 {
     const auto parsed = boost::urls::parse_uri(options_.signaling_url);
     if (!parsed || parsed->scheme() != "http" || parsed->host().empty() || parsed->has_userinfo() ||
@@ -47,199 +64,136 @@ signaling_client::signaling_client(signaling_client_options options) : options_(
     port_ = parsed->has_port() ? parsed->port() : "80";
 }
 
-signaling_client::~signaling_client() { shutdown(); }
-
-signaling_request_result signaling_client::register_once() const
+signaling_request_result signaling_client::register_once(boost::asio::yield_context& yield) const
 {
-    return request("/internal/media-servers/register", registration_body(options_));
+    return request("/internal/media-servers/register", registration_body(options_), yield);
 }
 
-signaling_request_result signaling_client::heartbeat_once() const
+signaling_request_result signaling_client::heartbeat_once(boost::asio::yield_context& yield) const
 {
-    return request("/internal/media-servers/heartbeat", heartbeat_body(options_));
+    return request("/internal/media-servers/heartbeat", heartbeat_body(options_), yield);
 }
 
-signaling_request_result signaling_client::request(std::string_view target, std::string body, std::stop_token stop) const
+signaling_request_result signaling_client::request(std::string_view target, std::string body, boost::asio::yield_context& yield) const
 {
-    namespace beast = boost::beast;
     namespace http = beast::http;
-    using tcp = boost::asio::ip::tcp;
 
-    boost::asio::io_context io;
-    tcp::resolver resolver(io);
-    beast::tcp_stream stream(io);
-    boost::asio::steady_timer deadline(io, options_.request_timeout);
-    signaling_request_result result;
-    bool timed_out = false;
-    const auto finish = [&deadline]()
-    {
-        static_cast<void>(deadline.cancel());
-    };
-    const auto fail = [&result, &timed_out, &finish](const boost::system::error_code& error)
-    {
-        result = {.kind = signaling_result_kind::network_error,
-                  .error = timed_out ? "request timeout" : error.message()};
-        finish();
-    };
-
-    deadline.async_wait(
-        [&resolver, &stream, &timed_out](const boost::system::error_code& error)
+    const auto state = std::make_shared<signaling_request_state>(io_, options_.request_timeout);
+    state->deadline.async_wait(
+        [state](const boost::system::error_code& error)
         {
             if (error)
             {
                 return;
             }
-            timed_out = true;
-            resolver.cancel();
+            state->timed_out = true;
+            state->resolver.cancel();
             boost::system::error_code ignored;
-            stream.socket().cancel(ignored);
+            state->stream.socket().cancel(ignored);
         });
-    std::stop_callback cancel_on_stop(
-        stop,
-        [&io, &resolver, &stream]()
-        {
-            boost::asio::post(
-                io,
-                [&resolver, &stream]()
-                {
-                    resolver.cancel();
-                    boost::system::error_code ignored;
-                    stream.socket().cancel(ignored);
-                });
-        });
-    boost::asio::co_spawn(
-        io,
-        [&]() -> boost::asio::awaitable<void>
-        {
-            boost::system::error_code error;
-            const auto endpoints = co_await resolver.async_resolve(
-                host_, port_, boost::asio::redirect_error(boost::asio::use_awaitable, error));
-            if (error)
-            {
-                fail(error);
-                co_return;
-            }
-            co_await stream.async_connect(endpoints, boost::asio::redirect_error(boost::asio::use_awaitable, error));
-            if (error)
-            {
-                fail(error);
-                co_return;
-            }
 
-            http::request<http::string_body> request{http::verb::post, target, 11};
-            request.set(http::field::host, host_);
-            request.set(http::field::user_agent, "media_server");
-            request.set(http::field::content_type, "application/json");
-            request.body() = std::move(body);
-            request.prepare_payload();
-            co_await http::async_write(stream, request, boost::asio::redirect_error(boost::asio::use_awaitable, error));
-            if (error)
-            {
-                fail(error);
-                co_return;
-            }
-
-            beast::flat_buffer buffer;
-            http::response<http::string_body> response;
-            co_await http::async_read(stream, buffer, response, boost::asio::redirect_error(boost::asio::use_awaitable, error));
-            if (error)
-            {
-                fail(error);
-                co_return;
-            }
-            stream.socket().shutdown(tcp::socket::shutdown_both, error);
-            const auto status = static_cast<unsigned int>(response.result_int());
-            if (response.result_int() < 200 || response.result_int() >= 300)
-            {
-                const auto kind = response.result_int() >= 500 && response.result_int() < 600
-                                      ? signaling_result_kind::temporary_failure
-                                      : signaling_result_kind::rejected;
-                result = {.kind = kind, .status = status, .error = {}};
-                finish();
-                co_return;
-            }
-
-            boost::system::error_code json_error;
-            const auto value = boost::json::parse(response.body(), json_error);
-            if (json_error || !value.is_object())
-            {
-                result = {.kind = signaling_result_kind::rejected, .status = status, .error = "invalid_response"};
-                finish();
-                co_return;
-            }
-            const auto* response_result = value.as_object().if_contains("result");
-            if (response_result == nullptr || !response_result->is_string() || response_result->as_string() != "ok")
-            {
-                result = {.kind = signaling_result_kind::rejected, .status = status, .error = "invalid_response"};
-                finish();
-                co_return;
-            }
-            result = {.kind = signaling_result_kind::accepted, .status = status, .error = {}};
-            finish();
-        },
-        boost::asio::detached);
-    io.run();
-    return result;
-}
-
-void signaling_client::startup_heartbeat(std::function<void()> fenced_handler)
-{
-    std::lock_guard startup_lock(heartbeat_mutex_);
-    if (heartbeat_thread_.joinable())
+    const auto finish = [&state]() { static_cast<void>(state->deadline.cancel()); };
+    const auto fail = [&state, &finish](const boost::system::error_code& error)
     {
-        return;
+        signaling_request_result result{
+            .kind = signaling_result_kind::network_error,
+            .error = state->timed_out ? "request timeout" : error.message(),
+        };
+        finish();
+        return result;
+    };
+
+    boost::system::error_code error;
+    const auto endpoints = state->resolver.async_resolve(host_, port_, yield[error]);
+    if (error)
+    {
+        return fail(error);
     }
-    heartbeat_thread_ = std::jthread(
-        [this, fenced_handler = std::move(fenced_handler)](std::stop_token stop)
-        {
-            for (;;)
-            {
-                std::unique_lock lock(heartbeat_mutex_);
-                heartbeat_condition_.wait_for(lock, options_.heartbeat_interval, [&stop]() { return stop.stop_requested(); });
-                if (stop.stop_requested())
-                {
-                    return;
-                }
-                lock.unlock();
-                const auto result = request("/internal/media-servers/heartbeat", heartbeat_body(options_), stop);
-                if (stop.stop_requested())
-                {
-                    return;
-                }
-                if (result.kind == signaling_result_kind::network_error)
-                {
-                    spdlog::warn("signaling heartbeat network error {}", result.error);
-                    continue;
-                }
-                if (result.kind == signaling_result_kind::temporary_failure)
-                {
-                    spdlog::warn("signaling heartbeat temporary failure status {}", result.status);
-                    continue;
-                }
-                if (result.kind == signaling_result_kind::rejected)
-                {
-                    spdlog::critical("signaling heartbeat rejected status {}", result.status);
-                    fenced_handler();
-                    return;
-                }
-            }
-        });
+    static_cast<void>(state->stream.async_connect(endpoints, yield[error]));
+    if (error)
+    {
+        return fail(error);
+    }
+
+    http::request<http::string_body> request{http::verb::post, target, 11};
+    request.set(http::field::host, host_);
+    request.set(http::field::user_agent, "media_server");
+    request.set(http::field::content_type, "application/json");
+    request.body() = std::move(body);
+    request.prepare_payload();
+    static_cast<void>(http::async_write(state->stream, request, yield[error]));
+    if (error)
+    {
+        return fail(error);
+    }
+
+    beast::flat_buffer buffer;
+    http::response<http::string_body> response;
+    static_cast<void>(http::async_read(state->stream, buffer, response, yield[error]));
+    if (error)
+    {
+        return fail(error);
+    }
+
+    state->stream.socket().shutdown(tcp::socket::shutdown_both, error);
+    const auto status = static_cast<unsigned int>(response.result_int());
+    if (response.result_int() < 200 || response.result_int() >= 300)
+    {
+        const auto kind = response.result_int() >= 500 && response.result_int() < 600 ? signaling_result_kind::temporary_failure
+                                                                                      : signaling_result_kind::rejected;
+        finish();
+        return {.kind = kind, .status = status, .error = {}};
+    }
+
+    boost::system::error_code json_error;
+    const auto value = boost::json::parse(response.body(), json_error);
+    if (json_error || !value.is_object())
+    {
+        finish();
+        return {.kind = signaling_result_kind::rejected, .status = status, .error = "invalid_response"};
+    }
+    const auto* response_result = value.as_object().if_contains("result");
+    if (response_result == nullptr || !response_result->is_string() || response_result->as_string() != "ok")
+    {
+        finish();
+        return {.kind = signaling_result_kind::rejected, .status = status, .error = "invalid_response"};
+    }
+
+    finish();
+    return {.kind = signaling_result_kind::accepted, .status = status, .error = {}};
 }
 
-void signaling_client::shutdown()
+void signaling_client::run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler) const
 {
-    std::jthread heartbeat;
+    boost::asio::steady_timer timer(io_);
+    for (;;)
     {
-        std::lock_guard lock(heartbeat_mutex_);
-        if (!heartbeat_thread_.joinable())
+        timer.expires_after(options_.heartbeat_interval);
+        boost::system::error_code error;
+        timer.async_wait(yield[error]);
+        if (error)
         {
             return;
         }
-        heartbeat_thread_.request_stop();
-        heartbeat_condition_.notify_all();
-        heartbeat = std::move(heartbeat_thread_);
+
+        const auto result = heartbeat_once(yield);
+        if (result.kind == signaling_result_kind::network_error)
+        {
+            spdlog::warn("signaling heartbeat network error {}", result.error);
+            continue;
+        }
+        if (result.kind == signaling_result_kind::temporary_failure)
+        {
+            spdlog::warn("signaling heartbeat temporary failure status {}", result.status);
+            continue;
+        }
+        if (result.kind == signaling_result_kind::rejected)
+        {
+            spdlog::critical("signaling heartbeat rejected status {}", result.status);
+            fenced_handler();
+            return;
+        }
     }
-    heartbeat.join();
 }
 
 }    // namespace media_server
