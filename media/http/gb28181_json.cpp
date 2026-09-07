@@ -187,7 +187,7 @@ bool optional_bool(const json_object& object, std::string_view key, bool& result
 
 }    // namespace
 
-std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view body)
+std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body)
 {
     const auto object = parse_object(body);
     if (!object || !has_only_fields(*object, {"stream_name", "transport", "address", "rtp_port", "payload_type", "ssrc"}))
@@ -223,7 +223,7 @@ std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view 
         return std::nullopt;
     }
 
-    return gb28181_input_config{.stream_name = std::move(*stream_name),
+    return gb28181_receiver_config{.stream_name = std::move(*stream_name),
                                 .description = gb28181_description{.transport = *transport,
                                                                    .address = *address,
                                                                    .rtp_port = rtp_port.value_or(0),
@@ -232,7 +232,7 @@ std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view 
                                                                    .ssrc = *ssrc}};
 }
 
-std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_view body)
+std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body)
 {
     const auto object = parse_object(body);
     if (!object ||
@@ -242,7 +242,7 @@ std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_vie
     }
 
     auto stream_name = required_string(*object, "stream_name");
-    auto output_id = required_string(*object, "output_id");
+    auto sender_id = required_string(*object, "output_id");
     auto transport = required_transport(*object);
     auto address = required_address(*object, "address");
     auto rtp_port = required_port(*object, "rtp_port");
@@ -250,7 +250,7 @@ std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_vie
     auto ssrc = required_ssrc(*object);
     std::optional<std::uint16_t> rtcp_port;
     bool rtcp = false;
-    if (!stream_name || !output_id || !transport || !address || !rtp_port || !payload_type || !ssrc ||
+    if (!stream_name || !sender_id || !transport || !address || !rtp_port || !payload_type || !ssrc ||
         !optional_port(*object, "rtcp_port", rtcp_port) || !optional_bool(*object, "rtcp", rtcp))
     {
         return std::nullopt;
@@ -272,8 +272,8 @@ std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_vie
         return std::nullopt;
     }
 
-    return gb28181_output_config{.stream_name = std::move(*stream_name),
-                                 .output_id = std::move(*output_id),
+    return gb28181_sender_config{.stream_name = std::move(*stream_name),
+                                 .sender_id = std::move(*sender_id),
                                  .description = gb28181_description{.transport = *transport,
                                                                     .address = *address,
                                                                     .rtp_port = *rtp_port,
@@ -283,7 +283,7 @@ std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_vie
                                  .rtcp = rtcp};
 }
 
-std::optional<std::string> parse_gb28181_input_delete(std::string_view body)
+std::optional<std::string> parse_gb28181_receiver_delete(std::string_view body)
 {
     const auto object = parse_object(body);
     if (!object || !has_only_fields(*object, {"stream_name"}))
@@ -293,7 +293,7 @@ std::optional<std::string> parse_gb28181_input_delete(std::string_view body)
     return required_string(*object, "stream_name");
 }
 
-std::optional<std::pair<std::string, std::string>> parse_gb28181_output_delete(std::string_view body)
+std::optional<std::pair<std::string, std::string>> parse_gb28181_sender_delete(std::string_view body)
 {
     const auto object = parse_object(body);
     if (!object || !has_only_fields(*object, {"stream_name", "output_id"}))
@@ -301,12 +301,12 @@ std::optional<std::pair<std::string, std::string>> parse_gb28181_output_delete(s
         return std::nullopt;
     }
     auto stream_name = required_string(*object, "stream_name");
-    auto output_id = required_string(*object, "output_id");
-    if (!stream_name || !output_id)
+    auto sender_id = required_string(*object, "output_id");
+    if (!stream_name || !sender_id)
     {
         return std::nullopt;
     }
-    return std::pair{std::move(*stream_name), std::move(*output_id)};
+    return std::pair{std::move(*stream_name), std::move(*sender_id)};
 }
 
 }    // namespace media_server

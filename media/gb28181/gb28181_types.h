@@ -26,16 +26,16 @@ struct gb28181_description
     std::uint32_t ssrc{};
 };
 
-struct gb28181_input_config
+struct gb28181_receiver_config
 {
     std::string stream_name;
     gb28181_description description;
 };
 
-struct gb28181_output_config
+struct gb28181_sender_config
 {
     std::string stream_name;
-    std::string output_id;
+    std::string sender_id;
     gb28181_description description;
     bool rtcp{};
 };

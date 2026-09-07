@@ -1,5 +1,5 @@
-#ifndef MEDIA_GB28181_GB28181_UDP_SESSION_H
-#define MEDIA_GB28181_GB28181_UDP_SESSION_H
+#ifndef MEDIA_GB28181_GB28181_UDP_RECEIVER_SESSION_H
+#define MEDIA_GB28181_GB28181_UDP_RECEIVER_SESSION_H
 
 #include <chrono>
 #include <memory>
@@ -15,16 +15,16 @@
 #include "media/net/udp_yield_transport.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
-#include "media/gb28181/gb28181_input_media.h"
+#include "media/gb28181/gb28181_rtp_receiver.h"
 
 namespace media_server
 {
 class worker_context;
 
-class gb28181_udp_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_session>
+class gb28181_udp_receiver_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_receiver_session>
 {
    public:
-    gb28181_udp_session(worker_context& worker,
+    gb28181_udp_receiver_session(worker_context& worker,
                         std::string stream_name,
                         gb28181_description description,
                         std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
@@ -44,7 +44,7 @@ class gb28181_udp_session final : public stream_session, public std::enable_shar
 
     worker_context& worker_;
     gb28181_description description_;
-    gb28181_input_media media_;
+    gb28181_rtp_receiver receiver_;
     udp_yield_transport rtp_transport_;
     udp_yield_transport rtcp_transport_;
     std::optional<port_manager_impl::port_pair> local_ports_;

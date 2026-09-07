@@ -1,5 +1,5 @@
-#ifndef MEDIA_GB28181_GB28181_INPUT_MEDIA_H
-#define MEDIA_GB28181_GB28181_INPUT_MEDIA_H
+#ifndef MEDIA_GB28181_GB28181_RTP_RECEIVER_H
+#define MEDIA_GB28181_GB28181_RTP_RECEIVER_H
 
 #include <span>
 #include <memory>
@@ -22,22 +22,22 @@ namespace media_server
 {
 class worker_context;
 
-enum class gb28181_rtp_input_result
+enum class gb28181_rtp_receive_result
 {
     ignored,
     accepted,
     fatal,
 };
 
-class gb28181_input_media final
+class gb28181_rtp_receiver final
 {
    public:
-    gb28181_input_media(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
-    ~gb28181_input_media();
+    gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
+    ~gb28181_rtp_receiver();
 
     [[nodiscard]] bool startup();
-    [[nodiscard]] gb28181_rtp_input_result input_rtp(std::span<const std::uint8_t> data);
-    [[nodiscard]] int input_rtcp(std::span<const std::uint8_t> data);
+    [[nodiscard]] gb28181_rtp_receive_result receive_rtp(std::span<const std::uint8_t> data);
+    [[nodiscard]] int receive_rtcp(std::span<const std::uint8_t> data);
     [[nodiscard]] int generate_rtcp(std::span<std::uint8_t> buffer);
     void shutdown();
 

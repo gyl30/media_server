@@ -63,13 +63,13 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/gb28181" || path.starts_with("/gb28181/"))
     {
-        write_response(request, media_server::handle_gb28181_input_request(request, workers_.next(), *parsed), yield);
+        write_response(request, media_server::handle_gb28181_receiver_request(request, workers_.next(), *parsed), yield);
         return;
     }
     if (path == "/play/gb28181" || path.starts_with("/play/gb28181/"))
     {
         write_response(request,
-                       media_server::handle_gb28181_output_request(
+                       media_server::handle_gb28181_sender_request(
                            request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
                        yield);
         return;

@@ -13,7 +13,7 @@
 
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_tcp_output_session.h"
+#include "media/gb28181/gb28181_tcp_sender_session.h"
 #include "media/net/worker_context.h"
 
 namespace media_server
@@ -60,7 +60,7 @@ bool wait_for_close(tcp::socket& socket, std::chrono::milliseconds timeout)
     return false;
 }
 
-void test_tcp_output_write_backlog_limit()
+void test_tcp_sender_write_backlog_limit()
 {
     worker_context worker;
     auto& io = worker.io();
@@ -93,14 +93,14 @@ void test_tcp_output_write_backlog_limit()
         .payload_type = 96,
         .ssrc = 0x12345678U,
     };
-    auto session = std::make_shared<gb28181_tcp_output_session>(worker,
+    auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
                                                                std::weak_ptr<media_stream>{source},
                                                                source->name(),
                                                                "backpressure",
                                                                description,
                                                                1s,
                                                                0U);
-    require(streams.add_output_session(source->name(), "backpressure", session), "gb tcp backpressure session registry");
+    require(streams.add_sender_session(source->name(), "backpressure", session), "gb tcp backpressure session registry");
     require(session->startup(), "gb tcp backpressure startup");
 
     worker.release_work();
@@ -140,15 +140,15 @@ int main()
     media_server::registry::init();
     try
     {
-        media_server::test_tcp_output_write_backlog_limit();
+        media_server::test_tcp_sender_write_backlog_limit();
         media_server::registry::destroy();
-        std::cout << "[pass] gb28181_tcp_output_write_backlog_limit\n";
+        std::cout << "[pass] gb28181_tcp_sender_write_backlog_limit\n";
         return 0;
     }
     catch (const std::exception& error)
     {
         media_server::registry::destroy();
-        std::cerr << "[fail] gb28181_tcp_output_write_backlog_limit: " << error.what() << '\n';
+        std::cerr << "[fail] gb28181_tcp_sender_write_backlog_limit: " << error.what() << '\n';
         return 1;
     }
 }

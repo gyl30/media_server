@@ -1,5 +1,5 @@
-#ifndef MEDIA_GB28181_GB28181_UDP_OUTPUT_SESSION_H
-#define MEDIA_GB28181_GB28181_UDP_OUTPUT_SESSION_H
+#ifndef MEDIA_GB28181_GB28181_UDP_SENDER_SESSION_H
+#define MEDIA_GB28181_GB28181_UDP_SENDER_SESSION_H
 
 #include <chrono>
 #include <deque>
@@ -22,16 +22,16 @@ namespace media_server
 {
 
 class worker_context;
-class gb28181_output_media;
+class gb28181_rtp_sender;
 
-class gb28181_udp_output_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_output_session>
+class gb28181_udp_sender_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_sender_session>
 {
    public:
-    gb28181_udp_output_session(worker_context& worker,
+    gb28181_udp_sender_session(worker_context& worker,
                                std::shared_ptr<media_stream> stream,
                                gb28181_description description,
                                boost::asio::ip::address bind_address,
-                               std::string output_id,
+                               std::string sender_id,
                                bool rtcp_enabled,
                                std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{25'000});
 
@@ -49,7 +49,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
-    std::string output_id_;
+    std::string sender_id_;
     gb28181_description description_;
     boost::asio::ip::address bind_address_;
     boost::asio::ip::udp::endpoint remote_rtp_endpoint_;
@@ -60,7 +60,7 @@ class gb28181_udp_output_session final : public stream_session, public std::enab
     std::chrono::milliseconds rtcp_interval_;
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::optional<port_manager_impl::port_pair> local_ports_;
-    std::shared_ptr<gb28181_output_media> media_;
+    std::shared_ptr<gb28181_rtp_sender> sender_;
     void* rtcp_sender_{};
     bool rtcp_enabled_{};
     bool rtcp_started_{};

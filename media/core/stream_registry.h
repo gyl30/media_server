@@ -30,13 +30,13 @@ class stream_registry final
     void remove(const media_stream& expected);
     [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view name) const;
 
-    bool add_input_session(std::string stream_name, std::shared_ptr<stream_session> session);
-    [[nodiscard]] std::shared_ptr<stream_session> take_input_session(std::string_view stream_name);
-    void remove_input_session(std::string_view stream_name, const stream_session& expected);
+    bool add_receiver_session(std::string stream_name, std::shared_ptr<stream_session> session);
+    [[nodiscard]] std::shared_ptr<stream_session> take_receiver_session(std::string_view stream_name);
+    void remove_receiver_session(std::string_view stream_name, const stream_session& expected);
 
-    bool add_output_session(std::string stream_name, std::string output_id, std::shared_ptr<stream_session> session);
-    [[nodiscard]] std::shared_ptr<stream_session> take_output_session(std::string_view stream_name, std::string_view output_id);
-    void remove_output_session(std::string_view stream_name, std::string_view output_id, const stream_session& expected);
+    bool add_sender_session(std::string stream_name, std::string sender_id, std::shared_ptr<stream_session> session);
+    [[nodiscard]] std::shared_ptr<stream_session> take_sender_session(std::string_view stream_name, std::string_view sender_id);
+    void remove_sender_session(std::string_view stream_name, std::string_view sender_id, const stream_session& expected);
 
     void clear();
 
@@ -44,8 +44,8 @@ class stream_registry final
     struct stream_entry
     {
         std::shared_ptr<media_stream> stream;
-        std::shared_ptr<stream_session> input_session;
-        std::map<std::string, std::shared_ptr<stream_session>, std::less<>> output_sessions;
+        std::shared_ptr<stream_session> receiver_session;
+        std::map<std::string, std::shared_ptr<stream_session>, std::less<>> sender_sessions;
     };
 
     stream_registry() = default;
