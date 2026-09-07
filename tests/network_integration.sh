@@ -133,8 +133,8 @@ probe_hls_ts hls_from_rtmp 'http://127.0.0.1:18080/play/hls/live/test'
     >"$work_dir/pull_server.log" 2>&1 &
 pull_pid=$!
 
-wait_log "$work_dir/pull_server.log" 'rtsp input connected stream relay/test'
-wait_log "$work_dir/pull_server.log" 'rtsp input tracks ready audio true'
+wait_log "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test'
+wait_log "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true'
 sleep 1
 
 probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18555/relay/test'
@@ -143,10 +143,10 @@ probe_streams "$work_dir/http_flv_from_rtsp.txt" 'http://127.0.0.1:18081/relay/t
 
 probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/play/hls/relay/test'
 
-# RTSP push TCP/UDP 使用独立 stream；UDP 连续建立两次，覆盖传输资源释放后的再次建链。
-for push_case in tcp udp udp-restart; do
-    transport="${push_case%%-*}"
-    stream_name="rtsp-push-$push_case"
+# RTSP publish TCP/UDP 使用独立 stream；UDP 连续建立两次，覆盖传输资源释放后的再次建链。
+for publish_case in tcp udp udp-restart; do
+    transport="${publish_case%%-*}"
+    stream_name="rtsp-publish-$publish_case"
     ffmpeg -nostdin -hide_banner -loglevel error -re \
         -f lavfi -i 'testsrc=size=320x180:rate=25' \
         -f lavfi -i 'sine=frequency=1200:sample_rate=44100' \
@@ -155,14 +155,14 @@ for push_case in tcp udp udp-restart; do
         -g 25 -keyint_min 25 -sc_threshold 0 \
         -c:a aac -b:a 96k -ac 2 \
         -t 24 -rtsp_transport "$transport" -f rtsp "rtsp://127.0.0.1:18554/live/$stream_name" \
-        >"$work_dir/rtsp_publish_${push_case}.log" 2>&1 &
+        >"$work_dir/rtsp_publish_${publish_case}.log" 2>&1 &
     rtsp_publish_pid=$!
 
-    wait_probe_streams "$work_dir/rtsp_push_${push_case}_rtsp.txt" h264 aac -rtsp_transport tcp \
+    wait_probe_streams "$work_dir/rtsp_publish_${publish_case}_rtsp.txt" h264 aac -rtsp_transport tcp \
         "rtsp://127.0.0.1:18554/live/$stream_name"
-    probe_streams "$work_dir/rtsp_push_${push_case}_rtmp.txt" "rtmp://127.0.0.1:19350/live/$stream_name"
-    probe_streams "$work_dir/rtsp_push_${push_case}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
-    probe_hls_ts "rtsp_push_${push_case}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
+    probe_streams "$work_dir/rtsp_publish_${publish_case}_rtmp.txt" "rtmp://127.0.0.1:19350/live/$stream_name"
+    probe_streams "$work_dir/rtsp_publish_${publish_case}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
+    probe_hls_ts "rtsp_publish_${publish_case}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
 
     kill "$rtsp_publish_pid" 2>/dev/null || true
     wait "$rtsp_publish_pid" 2>/dev/null || true
@@ -206,8 +206,8 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
 av1_publish_pid=$!
 
 wait_log "$work_dir/av1_server.log" 'rtmp publish live/av1'
-wait_log "$work_dir/av1_server.log" 'rtsp input connected stream relay/av1'
-wait_log "$work_dir/av1_server.log" 'rtsp input tracks ready audio true'
+wait_log "$work_dir/av1_server.log" 'rtsp pull connected stream relay/av1'
+wait_log "$work_dir/av1_server.log" 'rtsp pull tracks ready audio true'
 
 wait_probe_streams "$work_dir/rtsp_av1_from_rtmp.txt" av1 aac -rtsp_transport tcp \
     'rtsp://127.0.0.1:18556/live/av1'
@@ -253,7 +253,7 @@ curl -fsS "http://127.0.0.1:18082/play/hls/live/av1/$av1_segment" >"$work_dir/hl
 [[ -s "$work_dir/hls_av1_init.mp4" ]]
 [[ -s "$work_dir/hls_av1_segment.m4s" ]]
 
-# RTSP push TCP/UDP 继续以 H.264 输入，验证同一 RTSP 服务的 AV1 playback 输出。
+# RTSP publish TCP/UDP 继续以 H.264 输入，验证同一 RTSP 服务的 AV1 play。
 for transport in tcp udp; do
     stream_name="rtsp-av1-$transport"
     ffmpeg -nostdin -hide_banner -loglevel error -re \
@@ -288,21 +288,21 @@ if grep -Fq 'rtsp av1 transcode failed' "$work_dir/av1_server.log"; then
 fi
 
 cat >"$work_dir/summary.txt" <<SUMMARY
-rtmp input -> rtsp output: pass
+rtmp input -> rtsp play: pass
 rtmp input -> rtmp output: pass
 rtmp input -> http-flv output: pass
 rtmp input -> hls output: pass
-rtsp input -> rtsp output: pass
-rtsp input -> rtmp output: pass
-rtsp input -> http-flv output: pass
-rtsp input -> hls output: pass
-rtsp push tcp -> rtsp/rtmp/http-flv/hls outputs: pass
-rtsp push udp -> rtsp/rtmp/http-flv/hls outputs: pass
-rtsp push udp restart -> rtsp/rtmp/http-flv/hls outputs: pass
-rtmp input -> rtsp av1 output: pass
-rtsp pull input -> rtsp av1 output: pass
-rtsp push tcp -> rtsp av1 output: pass
-rtsp push udp -> rtsp av1 output: pass
+rtsp pull -> rtsp play: pass
+rtsp pull -> rtmp output: pass
+rtsp pull -> http-flv output: pass
+rtsp pull -> hls output: pass
+rtsp publish tcp -> rtsp/rtmp/http-flv/hls outputs: pass
+rtsp publish udp -> rtsp/rtmp/http-flv/hls outputs: pass
+rtsp publish udp restart -> rtsp/rtmp/http-flv/hls outputs: pass
+rtmp input -> rtsp av1 play: pass
+rtsp pull -> rtsp av1 play: pass
+rtsp publish tcp -> rtsp av1 play: pass
+rtsp publish udp -> rtsp av1 play: pass
 rtsp av1 client churn: pass
 rtmp explicit av1 output: pass
 rtmp av1 rejects peer without av01: pass

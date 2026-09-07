@@ -46,7 +46,7 @@ std::uint32_t random_u32()
     return (static_cast<std::uint32_t>(device()) << 16U) ^ static_cast<std::uint32_t>(device());
 }
 
-[[nodiscard]] bool rtsp_output_track_supported(const media_track& track)
+[[nodiscard]] bool rtsp_play_track_supported(const media_track& track)
 {
     return (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
            (track.kind == media_kind::audio && (track.codec == codec_id::aac ||
@@ -153,7 +153,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
                                                          encoded.key_frame ? 1 : 0);
                 if (mux_result < 0)
                 {
-                    spdlog::error("rtsp output av1 mux failed result {}", mux_result);
+                    spdlog::error("rtsp play av1 mux failed result {}", mux_result);
                 }
             }
             continue;
@@ -168,7 +168,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
                                                  entry.frame.key_frame ? 1 : 0);
         if (mux_result < 0)
         {
-            spdlog::error("rtsp output mux failed result {}", mux_result);
+            spdlog::error("rtsp play mux failed result {}", mux_result);
         }
     }
 
@@ -235,7 +235,7 @@ void rtsp_play_session::safe_shutdown()
     }
     if (stream_)
     {
-        spdlog::debug("rtsp output shutdown {}", stream_->name());
+        spdlog::debug("rtsp play shutdown {}", stream_->name());
     }
     if (muxer_ != nullptr)
     {
@@ -283,7 +283,7 @@ int rtsp_play_session::on_describe(rtsp_server_t* server, std::string_view uri)
         << "a=control:*\r\n"
         << media_sdp.str();
 
-    spdlog::info("rtsp output describe {}", stream_->name());
+    spdlog::info("rtsp play describe {}", stream_->name());
     return rtsp_server_reply_describe(server, 200, sdp.str().c_str());
 }
 
@@ -487,7 +487,7 @@ int rtsp_play_session::presentation_status() const
     std::size_t supported_count = 0;
     for (const auto& track : current)
     {
-        if (!rtsp_output_track_supported(track))
+        if (!rtsp_play_track_supported(track))
         {
             continue;
         }
@@ -565,7 +565,7 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
     int next_payload_type = 96;
     for (const auto& track : snapshot)
     {
-        if (!rtsp_output_track_supported(track))
+        if (!rtsp_play_track_supported(track))
         {
             continue;
         }
