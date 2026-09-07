@@ -5873,6 +5873,31 @@ void test_rtsp_play_session_contract()
     require(!peer.session_alive(), "rtsp play teardown releases session");
 }
 
+void test_rtsp_play_recreate_lifecycle()
+{
+    for (int iteration = 0; iteration < 10; ++iteration)
+    {
+        rtsp_play_test_peer peer;
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+        require(peer.request("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n").starts_with("RTSP/1.0 200"),
+                "rtsp play recreate describe");
+        const auto setup = peer.request("SETUP " + base +
+                                        "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
+        require(setup.starts_with("RTSP/1.0 200"), "rtsp play recreate setup");
+        const auto session = rtsp_header_value(setup, "Session:");
+        require(!session.empty(), "rtsp play recreate session");
+        require(peer.request("PLAY " + base + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n").starts_with("RTSP/1.0 200"),
+                "rtsp play recreate play");
+        require(peer.request("TEARDOWN " + base + " RTSP/1.0\r\nCSeq: 4\r\nSession: " + session + "\r\n\r\n").starts_with("RTSP/1.0 200"),
+                "rtsp play recreate teardown");
+        for (int attempt = 0; attempt < 100 && peer.session_alive(); ++attempt)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(!peer.session_alive(), "rtsp play recreate session released");
+    }
+}
+
 void test_rtsp_play_media_delivery()
 {
     rtsp_play_test_peer peer;
@@ -10168,6 +10193,8 @@ int main()
     std::cout << "[pass] rtsp_publish_server_contract\n";
     media_server::test_rtsp_play_session_contract();
     std::cout << "[pass] rtsp_play_session_contract\n";
+    media_server::test_rtsp_play_recreate_lifecycle();
+    std::cout << "[pass] rtsp_play_recreate_lifecycle\n";
     media_server::test_rtsp_play_media_delivery();
     std::cout << "[pass] rtsp_play_media_delivery\n";
     media_server::test_rtsp_play_audio_video_order();
