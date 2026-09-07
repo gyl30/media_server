@@ -109,7 +109,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
             constexpr std::int64_t nanoseconds_per_millisecond = 1'000'000;
             if ((entry.frame.pts_ns % nanoseconds_per_millisecond) != 0 || (entry.frame.dts_ns % nanoseconds_per_millisecond) != 0)
             {
-                spdlog::error("rtsp audio output timestamp precision unsupported track {} codec {} pts_ns {} dts_ns {}",
+                spdlog::error("rtsp play audio timestamp precision unsupported track {} codec {} pts_ns {} dts_ns {}",
                               entry.frame.track,
                               to_string(state.codec),
                               entry.frame.pts_ns,
@@ -121,7 +121,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
             const auto payload_capacity = packet_size - RTP_FIXED_HEADER;
             if (entry.frame.payload->size() > static_cast<std::size_t>(payload_capacity))
             {
-                spdlog::error("rtsp audio output packet too large track {} codec {} bytes {} capacity {}",
+                spdlog::error("rtsp play audio packet too large track {} codec {} bytes {} capacity {}",
                               entry.frame.track,
                               to_string(state.codec),
                               entry.frame.payload->size(),
