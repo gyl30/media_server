@@ -61,6 +61,7 @@ class hls_segmenter final : public media_sink
     static std::int64_t mov_tell(void* param);
 
     void recreate_muxer();
+    void discard_segment();
     void finish_segment(std::int64_t end_pts_ns);
     [[nodiscard]] int add_track_to_muxer(const media_track& track);
     void reset_fmp4(bool clear_segments, bool clear_video_config);
@@ -69,7 +70,8 @@ class hls_segmenter final : public media_sink
     void input_av1(const media_frame& frame);
     void write_av1_frame(const media_frame& frame);
     void input_fmp4_audio(const media_frame& frame, const media_track& track);
-    void finish_fmp4_segment(std::int64_t end_pts_ns);
+    bool reserve_fmp4_sample(std::size_t bytes);
+    bool finish_fmp4_segment(std::int64_t end_pts_ns);
 
     mutable std::mutex mutex_;
     video_transcode_config video_config_;
@@ -89,6 +91,8 @@ class hls_segmenter final : public media_sink
     std::unique_ptr<video_transcoder> video_transcoder_;
     track_id video_track_id_{};
     fmp4_writer_t* fmp4_{};
+    std::size_t fmp4_pending_bytes_{};
+    std::size_t fmp4_pending_samples_{};
     int fmp4_video_track_{-1};
     int fmp4_audio_track_{-1};
     track_id fmp4_audio_track_id_{};
