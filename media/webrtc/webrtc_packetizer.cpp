@@ -6,7 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
-#include "media/webrtc/webrtc_output.h"
+#include "media/webrtc/webrtc_packetizer.h"
 
 extern "C"
 {
@@ -37,17 +37,17 @@ bool rtcp_mux_payload_type_allowed(int payload_type) { return payload_type >= 0 
 
 }    // namespace
 
-webrtc_output::webrtc_output(webrtc_output_config config, packet_handler rtp_handler, packet_handler rtcp_handler)
+webrtc_packetizer::webrtc_packetizer(webrtc_packetizer_config config, packet_handler rtp_handler, packet_handler rtcp_handler)
     : config_(std::move(config)),
       rtp_handler_(std::move(rtp_handler)),
       rtcp_handler_(std::move(rtcp_handler)),
-      muxer_(rtsp_muxer_create(&webrtc_output::on_packet, this))
+      muxer_(rtsp_muxer_create(&webrtc_packetizer::on_packet, this))
 {
 }
 
-webrtc_output::~webrtc_output() = default;
+webrtc_packetizer::~webrtc_packetizer() = default;
 
-void webrtc_output::on_track(const media_track& track)
+void webrtc_packetizer::on_track(const media_track& track)
 {
     if (muxer_ == nullptr)
     {
@@ -87,7 +87,7 @@ void webrtc_output::on_track(const media_track& track)
     }
 }
 
-void webrtc_output::shutdown()
+void webrtc_packetizer::shutdown()
 {
     while (!track_states_.empty())
     {
@@ -102,9 +102,9 @@ void webrtc_output::shutdown()
     rtcp_handler_ = {};
 }
 
-bool webrtc_output::valid() const noexcept { return muxer_ != nullptr; }
+bool webrtc_packetizer::valid() const noexcept { return muxer_ != nullptr; }
 
-void webrtc_output::on_frame(const media_frame& frame)
+void webrtc_packetizer::on_frame(const media_frame& frame)
 {
     const auto iterator = track_states_.find(frame.track);
     if (iterator == track_states_.end() || iterator->second.media_id < 0 || !frame.payload)
@@ -123,9 +123,9 @@ void webrtc_output::on_frame(const media_frame& frame)
     }
 }
 
-int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
+int webrtc_packetizer::on_packet(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
 {
-    auto* self = static_cast<webrtc_output*>(param);
+    auto* self = static_cast<webrtc_packetizer*>(param);
     if (bytes <= 0 || data == nullptr)
     {
         return 0;
@@ -196,7 +196,7 @@ int webrtc_output::on_packet(void* param, int pid, const void* data, int bytes, 
     return 0;
 }
 
-bool webrtc_output::add_h264_track(const media_track& track)
+bool webrtc_packetizer::add_h264_track(const media_track& track)
 {
     if (!rtcp_mux_payload_type_allowed(config_.video_payload_type) || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
         config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
@@ -238,11 +238,11 @@ bool webrtc_output::add_h264_track(const media_track& track)
                               .payload_id = payload_index,
                               .waiting_key_frame = true,
                           });
-    spdlog::debug("webrtc h264 output track ready id {} pt {}", track.id, config_.video_payload_type);
+    spdlog::debug("webrtc h264 packetizer track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
 
-bool webrtc_output::add_h265_track(const media_track& track)
+bool webrtc_packetizer::add_h265_track(const media_track& track)
 {
     if (!rtcp_mux_payload_type_allowed(config_.video_payload_type) || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
         config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
@@ -284,11 +284,11 @@ bool webrtc_output::add_h265_track(const media_track& track)
                               .payload_id = payload_index,
                               .waiting_key_frame = true,
                           });
-    spdlog::debug("webrtc h265 output track ready id {} pt {}", track.id, config_.video_payload_type);
+    spdlog::debug("webrtc h265 packetizer track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
 
-bool webrtc_output::add_av1_track(const media_track& track)
+bool webrtc_packetizer::add_av1_track(const media_track& track)
 {
     if (!rtcp_mux_payload_type_allowed(config_.video_payload_type) || config_.video_mid.empty() || config_.video_mid.size() > max_mid_size ||
         config_.video_mid_extension_id <= 0 || config_.video_mid_extension_id > 255)
@@ -365,11 +365,11 @@ bool webrtc_output::add_av1_track(const media_track& track)
                               .payload_id = payload_index,
                               .waiting_key_frame = true,
                           });
-    spdlog::debug("webrtc av1 output track ready id {} pt {}", track.id, config_.video_payload_type);
+    spdlog::debug("webrtc av1 packetizer track ready id {} pt {}", track.id, config_.video_payload_type);
     return true;
 }
 
-bool webrtc_output::add_audio_track(const media_track& track)
+bool webrtc_packetizer::add_audio_track(const media_track& track)
 {
     if (!rtcp_mux_payload_type_allowed(config_.audio_payload_type) || config_.audio_mid.empty() || config_.audio_mid.size() > max_mid_size ||
         config_.audio_mid_extension_id <= 0 || config_.audio_mid_extension_id > 255)
@@ -382,7 +382,7 @@ bool webrtc_output::add_audio_track(const media_track& track)
          config_.opus_max_playback_rate > 48'000))
     {
         spdlog::error(
-            "webrtc invalid opus output config channels {} max_playback_rate {}", config_.opus_channel_count, config_.opus_max_playback_rate);
+            "webrtc invalid opus packetizer config channels {} max_playback_rate {}", config_.opus_channel_count, config_.opus_max_playback_rate);
         return false;
     }
 
@@ -491,11 +491,11 @@ bool webrtc_output::add_audio_track(const media_track& track)
             .waiting_key_frame = false,
         });
     spdlog::debug(
-        "webrtc audio output track ready id {} codec {} pt {} clock {}", track.id, to_string(track.codec), config_.audio_payload_type, clock_rate);
+        "webrtc audio packetizer track ready id {} codec {} pt {} clock {}", track.id, to_string(track.codec), config_.audio_payload_type, clock_rate);
     return true;
 }
 
-void webrtc_output::remove_track(track_id id)
+void webrtc_packetizer::remove_track(track_id id)
 {
     const auto iterator = track_states_.find(id);
     if (iterator == track_states_.end())
@@ -513,7 +513,7 @@ void webrtc_output::remove_track(track_id id)
     track_states_.erase(iterator);
 }
 
-bool webrtc_output::configure_rtcp(int payload_id)
+bool webrtc_packetizer::configure_rtcp(int payload_id)
 {
     if (!rtcp_handler_)
     {
@@ -534,7 +534,7 @@ bool webrtc_output::configure_rtcp(int payload_id)
     return true;
 }
 
-void webrtc_output::emit_rtcp(int payload_id)
+void webrtc_packetizer::emit_rtcp(int payload_id)
 {
     if (!rtcp_handler_ || muxer_ == nullptr)
     {
@@ -562,7 +562,7 @@ void webrtc_output::emit_rtcp(int payload_id)
     rtcp_handler_(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(bytes)));
 }
 
-void webrtc_output::input_video(track_state& state, const media_frame& frame)
+void webrtc_packetizer::input_video(track_state& state, const media_frame& frame)
 {
     if (state.video_transcoder_)
     {
@@ -629,7 +629,7 @@ void webrtc_output::input_video(track_state& state, const media_frame& frame)
     emit_rtcp(state.payload_id);
 }
 
-void webrtc_output::input_audio(track_state& state, const media_frame& frame)
+void webrtc_packetizer::input_audio(track_state& state, const media_frame& frame)
 {
     if (state.codec == codec_id::opus || state.codec == codec_id::g711a || state.codec == codec_id::g711u)
     {
