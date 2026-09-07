@@ -2,13 +2,12 @@
 #define MEDIA_HTTP_SIGNALING_CLIENT_H
 
 #include <chrono>
-#include <condition_variable>
 #include <functional>
-#include <mutex>
-#include <stop_token>
 #include <string>
 #include <string_view>
-#include <thread>
+
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/spawn.hpp>
 
 namespace media_server
 {
@@ -42,26 +41,22 @@ struct signaling_client_options
 class signaling_client
 {
    public:
-    explicit signaling_client(signaling_client_options options);
-    ~signaling_client();
+    signaling_client(boost::asio::io_context& io, signaling_client_options options);
 
     signaling_client(const signaling_client&) = delete;
     signaling_client& operator=(const signaling_client&) = delete;
 
-    signaling_request_result register_once() const;
-    signaling_request_result heartbeat_once() const;
-    void startup_heartbeat(std::function<void()> fenced_handler);
-    void shutdown();
+    signaling_request_result register_once(boost::asio::yield_context& yield) const;
+    signaling_request_result heartbeat_once(boost::asio::yield_context& yield) const;
+    void run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler) const;
 
    private:
-    signaling_request_result request(std::string_view target, std::string body, std::stop_token stop = {}) const;
+    signaling_request_result request(std::string_view target, std::string body, boost::asio::yield_context& yield) const;
 
+    boost::asio::io_context& io_;
     signaling_client_options options_;
     std::string host_;
     std::string port_;
-    std::mutex heartbeat_mutex_;
-    std::condition_variable_any heartbeat_condition_;
-    std::jthread heartbeat_thread_;
 };
 
 }    // namespace media_server
