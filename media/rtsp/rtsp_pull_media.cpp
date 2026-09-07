@@ -203,7 +203,7 @@ bool rtsp_pull_media::update_track_from_packet(const avpacket_t& packet)
         const bool changed = stream_->update_track(*track);
         if (changed)
         {
-            spdlog::info("rtsp input track {} {}", to_string(track->kind), to_string(track->codec));
+            spdlog::info("rtsp pull track {} {}", to_string(track->kind), to_string(track->codec));
         }
         return changed;
     }
@@ -241,11 +241,11 @@ bool rtsp_pull_media::try_initialize_tracks()
     }
     if (!registry::instance().add(stream_))
     {
-        spdlog::warn("rtsp input duplicate stream {}", stream_name_);
+        spdlog::warn("rtsp pull duplicate stream {}", stream_name_);
         fatal_ = true;
         return true;
     }
-    spdlog::info("rtsp input tracks ready audio {}", expected_audio_);
+    spdlog::info("rtsp pull tracks ready audio {}", expected_audio_);
     return true;
 }
 
