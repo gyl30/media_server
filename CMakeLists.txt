@@ -89,11 +89,27 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             -fno-optimize-sibling-calls
             -fno-common
         )
+        target_compile_options(ireader_media PRIVATE
+            -U_FORTIFY_SOURCE
+            -O1
+            -g
+            -fsanitize=address,undefined
+            -fno-sanitize-recover=all
+            -fno-omit-frame-pointer
+            -fno-optimize-sibling-calls
+            -fno-common
+        )
         target_link_options(media_server_link_options INTERFACE
             -fsanitize=address,undefined
         )
     elseif(MEDIA_SERVER_SANITIZER STREQUAL "thread")
         target_compile_options(media_server_build_options INTERFACE
+            -U_FORTIFY_SOURCE
+            -O2
+            -g
+            -fsanitize=thread
+        )
+        target_compile_options(ireader_media PRIVATE
             -U_FORTIFY_SOURCE
             -O2
             -g
@@ -325,7 +341,10 @@ if(BUILD_TESTING)
     add_test(NAME port_manager_tests COMMAND port_manager_tests)
 
     add_executable(ireader_rtcp_tests tests/ireader_rtcp_tests.cpp)
-    target_link_libraries(ireader_rtcp_tests PRIVATE ireader_media)
+    target_link_libraries(ireader_rtcp_tests PRIVATE
+        media_server_link_options
+        ireader_media
+    )
     add_test(NAME ireader_rtcp_tests COMMAND ireader_rtcp_tests)
 
     add_executable(webrtc_signaling_tests tests/webrtc_signaling_tests.cpp)
