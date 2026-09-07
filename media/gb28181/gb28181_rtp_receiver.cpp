@@ -6,7 +6,7 @@
 #include "media/codec/codec_utils.h"
 #include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
-#include "media/gb28181/gb28181_input_media.h"
+#include "media/gb28181/gb28181_rtp_receiver.h"
 
 extern "C"
 {
@@ -66,7 +66,7 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 
 }    // namespace
 
-gb28181_input_media::gb28181_input_media(worker_context& worker,
+gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker,
                                          std::string stream_name,
                                          std::uint8_t payload_type,
                                          std::uint32_t expected_ssrc)
@@ -74,9 +74,9 @@ gb28181_input_media::gb28181_input_media(worker_context& worker,
 {
 }
 
-gb28181_input_media::~gb28181_input_media() = default;
+gb28181_rtp_receiver::~gb28181_rtp_receiver() = default;
 
-bool gb28181_input_media::startup()
+bool gb28181_rtp_receiver::startup()
 {
     if (closed_ || demuxer_ != nullptr || stream_name_.empty())
     {
@@ -85,9 +85,9 @@ bool gb28181_input_media::startup()
 
     stream_ = std::make_shared<media_stream>(stream_name_, worker_.io());
     static_cast<void>(avpkt2bs_create(&bitstream_));
-    demuxer_ = rtsp_demuxer_create(0, 500, &gb28181_input_media::packet_callback, this);
+    demuxer_ = rtsp_demuxer_create(0, 500, &gb28181_rtp_receiver::packet_callback, this);
     if (demuxer_ == nullptr || rtsp_demuxer_add_payload(demuxer_, 90'000, payload_type_, "PS", nullptr) != 0 ||
-        rtsp_demuxer_set_ps_notify(demuxer_, &gb28181_input_media::stream_callback, this) != 0 ||
+        rtsp_demuxer_set_ps_notify(demuxer_, &gb28181_rtp_receiver::stream_callback, this) != 0 ||
         rtsp_demuxer_set_info(demuxer_, stream_name_.c_str(), "media_server") != 0)
     {
         shutdown();
@@ -96,29 +96,29 @@ bool gb28181_input_media::startup()
     return true;
 }
 
-gb28181_rtp_input_result gb28181_input_media::input_rtp(std::span<const std::uint8_t> data)
+gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std::uint8_t> data)
 {
     if (closed_)
     {
-        return gb28181_rtp_input_result::fatal;
+        return gb28181_rtp_receive_result::fatal;
     }
     if (demuxer_ == nullptr || data.size() < 12)
     {
-        return gb28181_rtp_input_result::ignored;
+        return gb28181_rtp_receive_result::ignored;
     }
 
     rtp_packet_t packet{};
     if (rtp_packet_deserialize(&packet, data.data(), static_cast<int>(data.size())) != 0 || packet.rtp.pt != payload_type_ ||
         packet.rtp.ssrc != expected_ssrc_)
     {
-        return gb28181_rtp_input_result::ignored;
+        return gb28181_rtp_receive_result::ignored;
     }
 
     static_cast<void>(rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size())));
-    return fatal_codec_change_ ? gb28181_rtp_input_result::fatal : gb28181_rtp_input_result::accepted;
+    return fatal_codec_change_ ? gb28181_rtp_receive_result::fatal : gb28181_rtp_receive_result::accepted;
 }
 
-int gb28181_input_media::input_rtcp(std::span<const std::uint8_t> data)
+int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
 {
     if (closed_ || demuxer_ == nullptr || data.size() < 4)
     {
@@ -127,7 +127,7 @@ int gb28181_input_media::input_rtcp(std::span<const std::uint8_t> data)
     return rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size()));
 }
 
-int gb28181_input_media::generate_rtcp(std::span<std::uint8_t> buffer)
+int gb28181_rtp_receiver::generate_rtcp(std::span<std::uint8_t> buffer)
 {
     if (closed_ || demuxer_ == nullptr)
     {
@@ -136,7 +136,7 @@ int gb28181_input_media::generate_rtcp(std::span<std::uint8_t> buffer)
     return rtsp_demuxer_rtcp(demuxer_, buffer.data(), static_cast<int>(buffer.size()));
 }
 
-void gb28181_input_media::shutdown()
+void gb28181_rtp_receiver::shutdown()
 {
     if (closed_)
     {
@@ -157,22 +157,22 @@ void gb28181_input_media::shutdown()
     avpkt2bs_destroy(&bitstream_);
 }
 
-const std::string& gb28181_input_media::stream_name() const noexcept { return stream_name_; }
+const std::string& gb28181_rtp_receiver::stream_name() const noexcept { return stream_name_; }
 
-int gb28181_input_media::packet_callback(void* param, avpacket_t* packet)
+int gb28181_rtp_receiver::packet_callback(void* param, avpacket_t* packet)
 {
-    return static_cast<gb28181_input_media*>(param)->on_demuxed_packet(packet);
+    return static_cast<gb28181_rtp_receiver*>(param)->on_demuxed_packet(packet);
 }
 
-void gb28181_input_media::stream_callback(void* param, int stream, int codecid, const void* extra, int bytes, int finish)
+void gb28181_rtp_receiver::stream_callback(void* param, int stream, int codecid, const void* extra, int bytes, int finish)
 {
     static_cast<void>(stream);
     static_cast<void>(extra);
     static_cast<void>(bytes);
-    static_cast<gb28181_input_media*>(param)->on_stream(codecid, finish != 0);
+    static_cast<gb28181_rtp_receiver*>(param)->on_stream(codecid, finish != 0);
 }
 
-void gb28181_input_media::on_stream(int codecid, bool finish)
+void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
 {
     if (closed_ || fatal_codec_change_)
     {
@@ -213,7 +213,7 @@ void gb28181_input_media::on_stream(int codecid, bool finish)
     }
 }
 
-void gb28181_input_media::apply_topology()
+void gb28181_rtp_receiver::apply_topology()
 {
     if (pending_topology_.invalid || !pending_topology_.video)
     {
@@ -256,7 +256,7 @@ void gb28181_input_media::apply_topology()
     static_cast<void>(try_start_recording());
 }
 
-int gb28181_input_media::on_demuxed_packet(avpacket_t* packet)
+int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
 {
     if (packet == nullptr || packet->stream == nullptr || closed_ || fatal_codec_change_)
     {
@@ -313,7 +313,7 @@ int gb28181_input_media::on_demuxed_packet(avpacket_t* packet)
     return 0;
 }
 
-bool gb28181_input_media::update_track_from_packet(const avpacket_t& packet)
+bool gb28181_rtp_receiver::update_track_from_packet(const avpacket_t& packet)
 {
     auto track = media_track_from_avstream_config(*packet.stream, video_track_id, audio_track_id);
     if (!track)
@@ -345,7 +345,7 @@ bool gb28181_input_media::update_track_from_packet(const avpacket_t& packet)
     return true;
 }
 
-bool gb28181_input_media::try_start_recording()
+bool gb28181_rtp_receiver::try_start_recording()
 {
     if (recording_)
     {

@@ -44,29 +44,29 @@ std::shared_ptr<media_stream> stream_registry::find(std::string_view name) const
     return iterator == streams_.end() ? nullptr : iterator->second.stream;
 }
 
-bool stream_registry::add_input_session(std::string stream_name, std::shared_ptr<stream_session> session)
+bool stream_registry::add_receiver_session(std::string stream_name, std::shared_ptr<stream_session> session)
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = streams_.try_emplace(std::move(stream_name)).first;
-    if (iterator->second.input_session)
+    if (iterator->second.receiver_session)
     {
         return false;
     }
-    iterator->second.input_session = std::move(session);
+    iterator->second.receiver_session = std::move(session);
     return true;
 }
 
-std::shared_ptr<stream_session> stream_registry::take_input_session(std::string_view stream_name)
+std::shared_ptr<stream_session> stream_registry::take_receiver_session(std::string_view stream_name)
 {
     std::shared_ptr<stream_session> session;
     {
         std::scoped_lock lock(mutex_);
         const auto iterator = streams_.find(stream_name);
-        if (iterator == streams_.end() || !iterator->second.input_session)
+        if (iterator == streams_.end() || !iterator->second.receiver_session)
         {
             return {};
         }
-        session = std::move(iterator->second.input_session);
+        session = std::move(iterator->second.receiver_session);
         if (empty(iterator->second))
         {
             streams_.erase(iterator);
@@ -75,29 +75,29 @@ std::shared_ptr<stream_session> stream_registry::take_input_session(std::string_
     return session;
 }
 
-void stream_registry::remove_input_session(std::string_view stream_name, const stream_session& expected)
+void stream_registry::remove_receiver_session(std::string_view stream_name, const stream_session& expected)
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = streams_.find(stream_name);
-    if (iterator == streams_.end() || iterator->second.input_session.get() != &expected)
+    if (iterator == streams_.end() || iterator->second.receiver_session.get() != &expected)
     {
         return;
     }
-    iterator->second.input_session.reset();
+    iterator->second.receiver_session.reset();
     if (empty(iterator->second))
     {
         streams_.erase(iterator);
     }
 }
 
-bool stream_registry::add_output_session(std::string stream_name, std::string output_id, std::shared_ptr<stream_session> session)
+bool stream_registry::add_sender_session(std::string stream_name, std::string sender_id, std::shared_ptr<stream_session> session)
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = streams_.try_emplace(std::move(stream_name)).first;
-    return iterator->second.output_sessions.emplace(std::move(output_id), std::move(session)).second;
+    return iterator->second.sender_sessions.emplace(std::move(sender_id), std::move(session)).second;
 }
 
-std::shared_ptr<stream_session> stream_registry::take_output_session(std::string_view stream_name, std::string_view output_id)
+std::shared_ptr<stream_session> stream_registry::take_sender_session(std::string_view stream_name, std::string_view sender_id)
 {
     std::shared_ptr<stream_session> session;
     {
@@ -107,13 +107,13 @@ std::shared_ptr<stream_session> stream_registry::take_output_session(std::string
         {
             return {};
         }
-        const auto output_iterator = stream_iterator->second.output_sessions.find(output_id);
-        if (output_iterator == stream_iterator->second.output_sessions.end())
+        const auto sender_iterator = stream_iterator->second.sender_sessions.find(sender_id);
+        if (sender_iterator == stream_iterator->second.sender_sessions.end())
         {
             return {};
         }
-        session = std::move(output_iterator->second);
-        stream_iterator->second.output_sessions.erase(output_iterator);
+        session = std::move(sender_iterator->second);
+        stream_iterator->second.sender_sessions.erase(sender_iterator);
         if (empty(stream_iterator->second))
         {
             streams_.erase(stream_iterator);
@@ -122,7 +122,7 @@ std::shared_ptr<stream_session> stream_registry::take_output_session(std::string
     return session;
 }
 
-void stream_registry::remove_output_session(std::string_view stream_name, std::string_view output_id, const stream_session& expected)
+void stream_registry::remove_sender_session(std::string_view stream_name, std::string_view sender_id, const stream_session& expected)
 {
     std::scoped_lock lock(mutex_);
     const auto stream_iterator = streams_.find(stream_name);
@@ -130,13 +130,13 @@ void stream_registry::remove_output_session(std::string_view stream_name, std::s
     {
         return;
     }
-    const auto output_iterator = stream_iterator->second.output_sessions.find(output_id);
-    if (output_iterator == stream_iterator->second.output_sessions.end() || output_iterator->second.get() != &expected)
+    const auto sender_iterator = stream_iterator->second.sender_sessions.find(sender_id);
+    if (sender_iterator == stream_iterator->second.sender_sessions.end() || sender_iterator->second.get() != &expected)
     {
         return;
     }
-    output_iterator->second.reset();
-    stream_iterator->second.output_sessions.erase(output_iterator);
+    sender_iterator->second.reset();
+    stream_iterator->second.sender_sessions.erase(sender_iterator);
     if (empty(stream_iterator->second))
     {
         streams_.erase(stream_iterator);
@@ -153,6 +153,6 @@ void stream_registry::clear()
     }
 }
 
-bool stream_registry::empty(const stream_entry& entry) { return !entry.stream && !entry.input_session && entry.output_sessions.empty(); }
+bool stream_registry::empty(const stream_entry& entry) { return !entry.stream && !entry.receiver_session && entry.sender_sessions.empty(); }
 
 }    // namespace media_server

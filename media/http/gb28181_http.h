@@ -12,10 +12,10 @@ class worker_context;
 using gb28181_http_request = boost::beast::http::request<boost::beast::http::string_body>;
 using gb28181_http_response = boost::beast::http::response<boost::beast::http::string_body>;
 
-[[nodiscard]] gb28181_http_response handle_gb28181_input_request(const gb28181_http_request& request,
+[[nodiscard]] gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request& request,
                                                                  worker_context& worker,
                                                                  const boost::urls::url_view& target);
-[[nodiscard]] gb28181_http_response handle_gb28181_output_request(const gb28181_http_request& request,
+[[nodiscard]] gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& request,
                                                                   worker_context& worker,
                                                                   const boost::urls::url_view& target,
                                                                   boost::asio::ip::address bind_address);

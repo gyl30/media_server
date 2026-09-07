@@ -1,5 +1,5 @@
-#ifndef MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
-#define MEDIA_GB28181_GB28181_TCP_OUTPUT_SESSION_H
+#ifndef MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
+#define MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 
 #include <chrono>
 #include <cstddef>
@@ -22,15 +22,15 @@ namespace media_server
 {
 class worker_context;
 
-class gb28181_output_media;
+class gb28181_rtp_sender;
 
-class gb28181_tcp_output_session final : public stream_session, public std::enable_shared_from_this<gb28181_tcp_output_session>
+class gb28181_tcp_sender_session final : public stream_session, public std::enable_shared_from_this<gb28181_tcp_sender_session>
 {
    public:
-    gb28181_tcp_output_session(worker_context& worker,
+    gb28181_tcp_sender_session(worker_context& worker,
                                std::weak_ptr<media_stream> stream,
                                std::string stream_name,
-                               std::string output_id,
+                               std::string sender_id,
                                gb28181_description description,
                                std::chrono::milliseconds establishment_timeout,
                                std::size_t max_write_queue_bytes = 1024U * 1024U);
@@ -47,7 +47,7 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
     worker_context& worker_;
     std::weak_ptr<media_stream> stream_;
     std::string stream_name_;
-    std::string output_id_;
+    std::string sender_id_;
     gb28181_description description_;
     std::chrono::milliseconds establishment_timeout_{};
     std::size_t max_write_queue_bytes_;
@@ -56,7 +56,7 @@ class gb28181_tcp_output_session final : public stream_session, public std::enab
     std::unique_ptr<tcp_yield_transport> transport_;
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
-    std::shared_ptr<gb28181_output_media> media_;
+    std::shared_ptr<gb28181_rtp_sender> sender_;
     bool closed_{};
 };
 

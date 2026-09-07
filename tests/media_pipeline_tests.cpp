@@ -50,12 +50,12 @@
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
 #include "media/webrtc/whep_session.h"
-#include "media/gb28181/gb28181_udp_session.h"
-#include "media/gb28181/gb28181_tcp_session.h"
-#include "media/gb28181/gb28181_input_media.h"
-#include "media/gb28181/gb28181_output_media.h"
-#include "media/gb28181/gb28181_udp_output_session.h"
-#include "media/gb28181/gb28181_tcp_output_session.h"
+#include "media/gb28181/gb28181_udp_receiver_session.h"
+#include "media/gb28181/gb28181_tcp_receiver_session.h"
+#include "media/gb28181/gb28181_rtp_receiver.h"
+#include "media/gb28181/gb28181_rtp_sender.h"
+#include "media/gb28181/gb28181_udp_sender_session.h"
+#include "media/gb28181/gb28181_tcp_sender_session.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtmp/rtmp_publish_session.h"
 #include "media/rtmp/rtmp_play_session.h"
@@ -187,29 +187,29 @@ static_assert(std::is_constructible_v<whep_session,
                                       std::shared_ptr<media_stream>,
                                       boost::asio::ip::address,
                                       std::shared_ptr<dtls_certificate>>);
-static_assert(std::is_constructible_v<gb28181_udp_session, worker_context&, std::string, gb28181_description>);
-static_assert(std::is_constructible_v<gb28181_tcp_session,
+static_assert(std::is_constructible_v<gb28181_udp_receiver_session, worker_context&, std::string, gb28181_description>);
+static_assert(std::is_constructible_v<gb28181_tcp_receiver_session,
                                       worker_context&,
                                       std::string,
                                       gb28181_description,
                                       std::chrono::milliseconds>);
-static_assert(std::is_constructible_v<gb28181_udp_output_session,
+static_assert(std::is_constructible_v<gb28181_udp_sender_session,
                                       worker_context&, std::shared_ptr<media_stream>, gb28181_description, boost::asio::ip::address, std::string, bool>);
-static_assert(std::is_constructible_v<gb28181_tcp_output_session,
+static_assert(std::is_constructible_v<gb28181_tcp_sender_session,
                                       worker_context&,
                                       std::weak_ptr<media_stream>,
                                       std::string,
                                       std::string,
                                       gb28181_description,
                                       std::chrono::milliseconds>);
-static_assert(std::is_constructible_v<gb28181_input_media, worker_context&, std::string, std::uint8_t, std::uint32_t>);
-static_assert(std::is_constructible_v<gb28181_output_media,
+static_assert(std::is_constructible_v<gb28181_rtp_receiver, worker_context&, std::string, std::uint8_t, std::uint32_t>);
+static_assert(std::is_constructible_v<gb28181_rtp_sender,
                                       worker_context&,
                                       std::shared_ptr<media_stream>,
                                       std::uint8_t,
                                       std::uint32_t,
-                                      gb28181_output_media::packet_handler,
-                                      gb28181_output_media::end_handler>);
+                                      gb28181_rtp_sender::packet_handler,
+                                      gb28181_rtp_sender::end_handler>);
 
 static_assert(std::is_constructible_v<rtmp_publish_session,
                                       worker_context&,
@@ -2334,13 +2334,13 @@ void test_gb28181_tcp_active_connect_successful()
                                           .rtp_port = acceptor.local_endpoint().port(),
                                           .payload_type = 96,
                                           .ssrc = 10'000'2101};
-    auto session = std::make_shared<gb28181_tcp_session>(worker, stream_name, description, std::chrono::seconds(2));
-    require(streams.add_input_session(stream_name, session), "gb28181 tcp active registry add");
+    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, stream_name, description, std::chrono::seconds(2));
+    require(streams.add_receiver_session(stream_name, session), "gb28181 tcp active registry add");
     require(session->startup(), "gb28181 tcp active startup");
 
     io.run_for(std::chrono::milliseconds(100));
     require(peer && peer->is_open(), "gb28181 tcp active connects to peer");
-    require(streams.take_input_session(stream_name) == session, "gb28181 tcp active remains registered after connect");
+    require(streams.take_receiver_session(stream_name) == session, "gb28181 tcp active remains registered after connect");
 
     session->shutdown();
     boost::system::error_code error;
@@ -2371,14 +2371,14 @@ void test_gb28181_tcp_active_connection_refused()
                                           .rtp_port = endpoint.port(),
                                           .payload_type = 96,
                                           .ssrc = 10'000'2102};
-    auto session = std::make_shared<gb28181_tcp_session>(worker, stream_name, description, std::chrono::seconds(5));
-    require(streams.add_input_session(stream_name, session), "gb28181 tcp active refusal registry add");
+    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, stream_name, description, std::chrono::seconds(5));
+    require(streams.add_receiver_session(stream_name, session), "gb28181 tcp active refusal registry add");
     require(session->startup(), "gb28181 tcp active refusal startup");
     const auto started_at = std::chrono::steady_clock::now();
 
     io.run();
 
-    require(!streams.take_input_session(stream_name), "gb28181 tcp active refusal unregisters session");
+    require(!streams.take_receiver_session(stream_name), "gb28181 tcp active refusal unregisters session");
     require(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(2),
             "gb28181 tcp active refusal does not wait for timeout");
     streams.clear();
@@ -2577,24 +2577,24 @@ void test_tcp_listener_shutdown_lifecycle()
     require(accept_error == boost::asio::error::operation_aborted, "tcp listener shutdown reports operation_aborted");
 }
 
-void test_gb28181_multi_output_identity()
+void test_gb28181_multi_sender_identity()
 {
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
     auto& streams = media_server::registry::instance();
     streams.clear();
-    auto first = std::make_shared<media_stream>("live/gb-output-first", io.get_executor());
-    auto second = std::make_shared<media_stream>("live/gb-output-second", io.get_executor());
-    require(first->set_tracks({make_video_track()}), "gb multi output first tracks");
-    require(second->set_tracks({make_video_track()}), "gb multi output second tracks");
-    require(streams.add(first) && streams.add(second), "gb multi output source registry");
+    auto first = std::make_shared<media_stream>("live/gb-sender-first", io.get_executor());
+    auto second = std::make_shared<media_stream>("live/gb-sender-second", io.get_executor());
+    require(first->set_tracks({make_video_track()}), "gb multi sender first tracks");
+    require(second->set_tracks({make_video_track()}), "gb multi sender second tracks");
+    require(streams.add(first) && streams.add(second), "gb multi sender source registry");
 
-    const auto create = [&worker](std::string_view stream_name, std::string_view output_id)
+    const auto create = [&worker](std::string_view stream_name, std::string_view sender_id)
     {
         boost::json::object body;
         body["stream_name"] = stream_name;
-        body["output_id"] = output_id;
+        body["output_id"] = sender_id;
         body["transport"] = "udp";
         body["address"] = "127.0.0.1";
         body["rtp_port"] = 29'000;
@@ -2608,32 +2608,32 @@ void test_gb28181_multi_output_identity()
         request.body() = boost::json::serialize(body);
         request.prepare_payload();
         const auto target = boost::urls::parse_origin_form(request.target());
-        require(target.has_value(), "gb multi output create target");
-        return handle_gb28181_output_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
+        require(target.has_value(), "gb multi sender create target");
+        return handle_gb28181_sender_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
     };
-    const auto remove = [&worker](std::string_view stream_name, std::string_view output_id)
+    const auto remove = [&worker](std::string_view stream_name, std::string_view sender_id)
     {
         boost::json::object body;
         body["stream_name"] = stream_name;
-        body["output_id"] = output_id;
+        body["output_id"] = sender_id;
 
         gb28181_http_request request{boost::beast::http::verb::post, "/play/gb28181/delete", 11};
         request.set(boost::beast::http::field::content_type, "application/json");
         request.body() = boost::json::serialize(body);
         request.prepare_payload();
         const auto target = boost::urls::parse_origin_form(request.target());
-        require(target.has_value(), "gb multi output delete target");
-        return handle_gb28181_output_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
+        require(target.has_value(), "gb multi sender delete target");
+        return handle_gb28181_sender_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
     };
 
-    require(create(first->name(), "a").result() == boost::beast::http::status::created, "gb multi output first identity");
-    require(create(first->name(), "b").result() == boost::beast::http::status::created, "gb multi output second identity");
-    require(create(first->name(), "a").result() == boost::beast::http::status::internal_server_error, "gb multi output duplicate identity");
-    require(create(second->name(), "a").result() == boost::beast::http::status::created, "gb multi output identity scoped by stream");
-    require(remove(first->name(), "a").result() == boost::beast::http::status::ok, "gb multi output remove first identity");
-    require(remove(first->name(), "b").result() == boost::beast::http::status::ok, "gb multi output remove second identity");
-    require(remove(second->name(), "a").result() == boost::beast::http::status::ok, "gb multi output remove other stream identity");
-    require(remove(first->name(), "missing").result() == boost::beast::http::status::internal_server_error, "gb multi output missing identity");
+    require(create(first->name(), "a").result() == boost::beast::http::status::created, "gb multi sender first identity");
+    require(create(first->name(), "b").result() == boost::beast::http::status::created, "gb multi sender second identity");
+    require(create(first->name(), "a").result() == boost::beast::http::status::internal_server_error, "gb multi sender duplicate identity");
+    require(create(second->name(), "a").result() == boost::beast::http::status::created, "gb multi sender identity scoped by stream");
+    require(remove(first->name(), "a").result() == boost::beast::http::status::ok, "gb multi sender remove first identity");
+    require(remove(first->name(), "b").result() == boost::beast::http::status::ok, "gb multi sender remove second identity");
+    require(remove(second->name(), "a").result() == boost::beast::http::status::ok, "gb multi sender remove other stream identity");
+    require(remove(first->name(), "missing").result() == boost::beast::http::status::internal_server_error, "gb multi sender missing identity");
 
     io.run();
 }
@@ -2838,7 +2838,7 @@ void test_hls_http_session_shutdown_lifecycle()
     client.close(error);
 }
 
-void test_gb28181_input_http_parameters()
+void test_gb28181_receiver_http_parameters()
 {
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
@@ -2853,7 +2853,7 @@ void test_gb28181_input_http_parameters()
     const auto delete_ = boost::beast::http::verb::delete_;
     const auto udp_body = [&]
     {
-        return std::string{"{\"stream_name\":\"live/gb-input-http\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"payload_type\":96,"
+        return std::string{"{\"stream_name\":\"live/gb-receiver-http\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"payload_type\":96,"
                            "\"ssrc\":100001002}"};
     };
     boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -2862,10 +2862,10 @@ void test_gb28181_input_http_parameters()
     const auto tcp_passive_port = tcp_probe.local_endpoint().port();
     tcp_probe.close();
     const auto tcp_active_body =
-        "{\"stream_name\":\"live/gb-input-http-active\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
+        "{\"stream_name\":\"live/gb-receiver-http-active\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
         std::to_string(tcp_active_port) + ",\"payload_type\":96,\"ssrc\":100001004}";
     const auto tcp_passive_body =
-        "{\"stream_name\":\"live/gb-input-http-passive\",\"transport\":\"tcp_passive\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
+        "{\"stream_name\":\"live/gb-receiver-http-passive\",\"transport\":\"tcp_passive\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
         std::to_string(tcp_passive_port) + ",\"payload_type\":96,\"ssrc\":100001005}";
     std::jthread worker_runner([&workers]() { workers.run(); });
     const auto check = [&](boost::beast::http::verb method,
@@ -2880,123 +2880,123 @@ void test_gb28181_input_http_parameters()
             acceptor, workers.context(0), workers, method, target, body, expected, message, request_content_type, "application/json", expected_body);
     };
 
-    check(post, "/gb28181/input/create", boost::beast::http::status::not_found, "gb input old route is gone", "{}", "{\"error\":\"not_found\"}");
+    check(post, "/gb28181/input/create", boost::beast::http::status::not_found, "gb receiver old route is gone", "{}", "{\"error\":\"not_found\"}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::unsupported_media_type,
-          "gb input requires json",
+          "gb receiver requires json",
           udp_body(),
           "{\"error\":\"unsupported_media_type\"}",
           "text/plain");
     check(delete_,
           "/gb28181/delete",
           boost::beast::http::status::method_not_allowed,
-          "gb input delete requires post",
+          "gb receiver delete requires post",
           "{}",
           "{\"error\":\"method_not_allowed\"}");
-    check(post, "/gb28181/create?transport=udp", boost::beast::http::status::bad_request, "gb input rejects query", udp_body());
-    check(post, "/gb28181/create", boost::beast::http::status::bad_request, "gb input rejects raw body", "v=0\r\n");
-    check(post, "/gb28181/create", boost::beast::http::status::bad_request, "gb input missing transport", "{\"stream_name\":\"missing-transport\"}");
+    check(post, "/gb28181/create?transport=udp", boost::beast::http::status::bad_request, "gb receiver rejects query", udp_body());
+    check(post, "/gb28181/create", boost::beast::http::status::bad_request, "gb receiver rejects raw body", "v=0\r\n");
+    check(post, "/gb28181/create", boost::beast::http::status::bad_request, "gb receiver missing transport", "{\"stream_name\":\"missing-transport\"}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input invalid transport",
+          "gb receiver invalid transport",
           "{\"stream_name\":\"invalid-transport\",\"transport\":\"TCP\",\"address\":\"127.0.0.1\",\"rtp_port\":31000,\"payload_type\":96,\"ssrc\":"
           "100001006}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input unknown field",
+          "gb receiver unknown field",
           udp_body().substr(0, udp_body().size() - 1) + ",\"unknown\":1}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input invalid address",
+          "gb receiver invalid address",
           "{\"stream_name\":\"invalid-address\",\"transport\":\"udp\",\"address\":\"bad\",\"payload_type\":96,\"ssrc\":100001009}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input rejects caller rtp port",
+          "gb receiver rejects caller rtp port",
           "{\"stream_name\":\"invalid-port\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":31000,\"payload_type\":96,"
           "\"ssrc\":100001011}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input invalid payload",
+          "gb receiver invalid payload",
           "{\"stream_name\":\"invalid-payload\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"payload_type\":128,\"ssrc\":100001014}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input missing ssrc",
+          "gb receiver missing ssrc",
           "{\"stream_name\":\"missing-ssrc\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"payload_type\":96}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input rejects caller rtcp port",
+          "gb receiver rejects caller rtcp port",
           udp_body().substr(0, udp_body().size() - 1) + ",\"rtcp_port\":31001}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input remote address without port",
+          "gb receiver remote address without port",
           udp_body().substr(0, udp_body().size() - 1) + ",\"remote_rtp_address\":\"127.0.0.1\"}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input remote port without address",
+          "gb receiver remote port without address",
           udp_body().substr(0, udp_body().size() - 1) + ",\"remote_rtp_port\":31998}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input rejects remote rtcp port",
+          "gb receiver rejects remote rtcp port",
           udp_body().substr(0, udp_body().size() - 1) + ",\"remote_rtcp_port\":31999}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input tcp rejects rtcp",
+          "gb receiver tcp rejects rtcp",
           tcp_active_body.substr(0, tcp_active_body.size() - 1) + ",\"rtcp_port\":31001}");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb input tcp rejects removed remote peer",
+          "gb receiver tcp rejects removed remote peer",
           tcp_active_body.substr(0, tcp_active_body.size() - 1) + ",\"remote_rtcp_port\":31999}");
 
-    check(post, "/gb28181/create", boost::beast::http::status::created, "gb input allocates UDP receiver", udp_body(), "");
+    check(post, "/gb28181/create", boost::beast::http::status::created, "gb receiver allocates UDP receiver", udp_body(), "");
     check(post,
           "/gb28181/create",
           boost::beast::http::status::internal_server_error,
-          "gb input duplicate stream",
+          "gb receiver duplicate stream",
           udp_body(),
           "{\"error\":\"operation_failed\"}");
     check(post,
           "/gb28181/delete",
           boost::beast::http::status::ok,
-          "gb input deletes UDP receiver",
-          "{\"stream_name\":\"live/gb-input-http\"}",
+          "gb receiver deletes UDP receiver",
+          "{\"stream_name\":\"live/gb-receiver-http\"}",
           "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/delete",
           boost::beast::http::status::bad_request,
-          "gb input delete rejects extra field",
-          "{\"stream_name\":\"live/gb-input-http\",\"transport\":\"udp\"}");
-    check(post, "/gb28181/create", boost::beast::http::status::created, "gb input tcp active", tcp_active_body, "{\"result\":\"ok\"}");
+          "gb receiver delete rejects extra field",
+          "{\"stream_name\":\"live/gb-receiver-http\",\"transport\":\"udp\"}");
+    check(post, "/gb28181/create", boost::beast::http::status::created, "gb receiver tcp active", tcp_active_body, "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/delete",
           boost::beast::http::status::ok,
-          "gb input deletes tcp active",
-          "{\"stream_name\":\"live/gb-input-http-active\"}",
+          "gb receiver deletes tcp active",
+          "{\"stream_name\":\"live/gb-receiver-http-active\"}",
           "{\"result\":\"ok\"}");
-    check(post, "/gb28181/create", boost::beast::http::status::created, "gb input tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
+    check(post, "/gb28181/create", boost::beast::http::status::created, "gb receiver tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/delete",
           boost::beast::http::status::ok,
-          "gb input deletes tcp passive",
-          "{\"stream_name\":\"live/gb-input-http-passive\"}",
+          "gb receiver deletes tcp passive",
+          "{\"stream_name\":\"live/gb-receiver-http-passive\"}",
           "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/delete",
           boost::beast::http::status::internal_server_error,
-          "gb input missing stream",
-          "{\"stream_name\":\"live/gb-input-http\"}",
+          "gb receiver missing stream",
+          "{\"stream_name\":\"live/gb-receiver-http\"}",
           "{\"error\":\"operation_failed\"}");
 
     work.reset();
@@ -3005,23 +3005,23 @@ void test_gb28181_input_http_parameters()
     worker_runner.join();
 }
 
-void test_gb28181_output_http_parameters()
+void test_gb28181_sender_http_parameters()
 {
     boost::asio::io_context io;
     auto& streams = media_server::registry::instance();
     streams.clear();
     io_context_pool workers(1);
 
-    auto stream = std::make_shared<media_stream>("live/gb-output-http", io.get_executor());
-    require(stream->set_tracks({make_video_track()}), "gb output http tracks");
-    require(streams.add(stream), "gb output http source registry");
+    auto stream = std::make_shared<media_stream>("live/gb-sender-http", io.get_executor());
+    require(stream->set_tracks({make_video_track()}), "gb sender http tracks");
+    require(streams.add(stream), "gb sender http source registry");
 
     const std::string udp_body =
         "{\"stream_name\":\"live/"
-        "gb-output-http\",\"output_id\":\"udp-default\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":29020,\"rtcp_port\":29021,"
+        "gb-sender-http\",\"output_id\":\"udp-default\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":29020,\"rtcp_port\":29021,"
         "\"payload_type\":96,\"ssrc\":100001002}";
     const std::string tcp_base =
-        "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-active\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":";
+        "{\"stream_name\":\"live/gb-sender-http\",\"output_id\":\"tcp-active\",\"transport\":\"tcp_active\",\"address\":\"127.0.0.1\",\"rtp_port\":";
     boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_active_port = tcp_active_probe.local_endpoint().port();
     boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 32112});
@@ -3029,7 +3029,7 @@ void test_gb28181_output_http_parameters()
     tcp_probe.close();
     const std::string tcp_active_body = tcp_base + std::to_string(tcp_active_port) + ",\"payload_type\":96,\"ssrc\":100001003}";
     const std::string tcp_passive_body =
-        "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-passive\",\"transport\":\"tcp_passive\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
+        "{\"stream_name\":\"live/gb-sender-http\",\"output_id\":\"tcp-passive\",\"transport\":\"tcp_passive\",\"address\":\"127.0.0.1\",\"rtp_port\":" +
         std::to_string(tcp_passive_port) + ",\"payload_type\":96,\"ssrc\":100001004}";
     std::jthread worker_runner([&workers]() { workers.run(); });
 
@@ -3051,103 +3051,103 @@ void test_gb28181_output_http_parameters()
             acceptor, workers.context(0), workers, method, target, body, expected, message, request_content_type, "application/json", expected_body);
     };
 
-    check(post, "/gb28181/output/create", boost::beast::http::status::not_found, "gb output old route is gone", "{}", "{\"error\":\"not_found\"}");
+    check(post, "/gb28181/output/create", boost::beast::http::status::not_found, "gb sender old route is gone", "{}", "{\"error\":\"not_found\"}");
     check(post,
           "/play/gb28181/create",
           boost::beast::http::status::unsupported_media_type,
-          "gb output requires json",
+          "gb sender requires json",
           udp_body,
           "{\"error\":\"unsupported_media_type\"}",
           "text/plain");
     check(delete_,
           "/play/gb28181/delete",
           boost::beast::http::status::method_not_allowed,
-          "gb output delete requires post",
+          "gb sender delete requires post",
           "{}",
           "{\"error\":\"method_not_allowed\"}");
-    check(post, "/play/gb28181/create?output_id=udp-default", boost::beast::http::status::bad_request, "gb output rejects query", udp_body);
-    check(post, "/play/gb28181/create", boost::beast::http::status::bad_request, "gb output rejects raw body", "v=0\r\n");
+    check(post, "/play/gb28181/create?output_id=udp-default", boost::beast::http::status::bad_request, "gb sender rejects query", udp_body);
+    check(post, "/play/gb28181/create", boost::beast::http::status::bad_request, "gb sender rejects raw body", "v=0\r\n");
     check(post,
           "/play/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb output unknown field",
+          "gb sender unknown field",
           udp_body.substr(0, udp_body.size() - 1) + ",\"unknown\":1}");
     check(post,
           "/play/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb output missing output id",
+          "gb sender missing output id",
           "{\"stream_name\":\"live/"
-          "gb-output-http\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":29020,\"rtcp_port\":29021,\"payload_type\":96,\"ssrc\":"
+          "gb-sender-http\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":29020,\"rtcp_port\":29021,\"payload_type\":96,\"ssrc\":"
           "100001002}");
     check(post,
           "/play/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb output unspecified destination",
+          "gb sender unspecified destination",
           "{\"stream_name\":\"live/"
-          "gb-output-http\",\"output_id\":\"unspecified\",\"transport\":\"udp\",\"address\":\"0.0.0.0\",\"rtp_port\":29020,\"rtcp_port\":29021,"
+          "gb-sender-http\",\"output_id\":\"unspecified\",\"transport\":\"udp\",\"address\":\"0.0.0.0\",\"rtp_port\":29020,\"rtcp_port\":29021,"
           "\"payload_type\":96,\"ssrc\":100001002}");
     check(post,
           "/play/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb output tcp rtcp is invalid",
+          "gb sender tcp rtcp is invalid",
           tcp_active_body.substr(0, tcp_active_body.size() - 1) + ",\"rtcp\":true}");
     check(post,
           "/play/gb28181/create",
           boost::beast::http::status::bad_request,
-          "gb output tcp rtcp port is invalid",
+          "gb sender tcp rtcp port is invalid",
           tcp_active_body.substr(0, tcp_active_body.size() - 1) + ",\"rtcp_port\":29021}");
 
-    check(post, "/play/gb28181/create", boost::beast::http::status::created, "gb output udp default rtcp", udp_body, "{\"result\":\"ok\"}");
+    check(post, "/play/gb28181/create", boost::beast::http::status::created, "gb sender udp default rtcp", udp_body, "{\"result\":\"ok\"}");
     check(post,
           "/play/gb28181/create",
           boost::beast::http::status::internal_server_error,
-          "gb output duplicate identity",
+          "gb sender duplicate identity",
           udp_body,
           "{\"error\":\"operation_failed\"}");
     check(post,
           "/play/gb28181/create",
           boost::beast::http::status::created,
-          "gb output udp rtcp",
+          "gb sender udp rtcp",
           "{\"stream_name\":\"live/"
-          "gb-output-http\",\"output_id\":\"udp-rtcp\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":29020,\"rtcp_port\":29021,"
+          "gb-sender-http\",\"output_id\":\"udp-rtcp\",\"transport\":\"udp\",\"address\":\"127.0.0.1\",\"rtp_port\":29020,\"rtcp_port\":29021,"
           "\"payload_type\":96,\"ssrc\":100001002,\"rtcp\":true}",
           "{\"result\":\"ok\"}");
     check(post,
           "/play/gb28181/delete",
           boost::beast::http::status::bad_request,
-          "gb output delete rejects extra field",
-          "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"udp-rtcp\",\"rtcp\":true}");
+          "gb sender delete rejects extra field",
+          "{\"stream_name\":\"live/gb-sender-http\",\"output_id\":\"udp-rtcp\",\"rtcp\":true}");
     check(post,
           "/play/gb28181/delete",
           boost::beast::http::status::ok,
-          "gb output deletes udp default",
-          "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"udp-default\"}",
+          "gb sender deletes udp default",
+          "{\"stream_name\":\"live/gb-sender-http\",\"output_id\":\"udp-default\"}",
           "{\"result\":\"ok\"}");
     check(post,
           "/play/gb28181/delete",
           boost::beast::http::status::ok,
-          "gb output deletes udp rtcp",
-          "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"udp-rtcp\"}",
+          "gb sender deletes udp rtcp",
+          "{\"stream_name\":\"live/gb-sender-http\",\"output_id\":\"udp-rtcp\"}",
           "{\"result\":\"ok\"}");
-    check(post, "/play/gb28181/create", boost::beast::http::status::created, "gb output tcp active", tcp_active_body, "{\"result\":\"ok\"}");
+    check(post, "/play/gb28181/create", boost::beast::http::status::created, "gb sender tcp active", tcp_active_body, "{\"result\":\"ok\"}");
     check(post,
           "/play/gb28181/delete",
           boost::beast::http::status::ok,
-          "gb output deletes tcp active",
-          "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-active\"}",
+          "gb sender deletes tcp active",
+          "{\"stream_name\":\"live/gb-sender-http\",\"output_id\":\"tcp-active\"}",
           "{\"result\":\"ok\"}");
-    check(post, "/play/gb28181/create", boost::beast::http::status::created, "gb output tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
+    check(post, "/play/gb28181/create", boost::beast::http::status::created, "gb sender tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
     check(post,
           "/play/gb28181/delete",
           boost::beast::http::status::ok,
-          "gb output deletes tcp passive",
-          "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"tcp-passive\"}",
+          "gb sender deletes tcp passive",
+          "{\"stream_name\":\"live/gb-sender-http\",\"output_id\":\"tcp-passive\"}",
           "{\"result\":\"ok\"}");
     check(post,
           "/play/gb28181/delete",
           boost::beast::http::status::internal_server_error,
-          "gb output missing identity",
-          "{\"stream_name\":\"live/gb-output-http\",\"output_id\":\"missing\"}",
+          "gb sender missing identity",
+          "{\"stream_name\":\"live/gb-sender-http\",\"output_id\":\"missing\"}",
           "{\"error\":\"operation_failed\"}");
 
     work.reset();
@@ -9882,12 +9882,12 @@ int main()
     std::cout << "[pass] tcp_listener_timeout_preserves_listener\n";
     media_server::test_tcp_listener_shutdown_lifecycle();
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
-    media_server::test_gb28181_multi_output_identity();
-    std::cout << "[pass] gb28181_multi_output_identity\n";
-    media_server::test_gb28181_input_http_parameters();
-    std::cout << "[pass] gb28181_input_http_parameters\n";
-    media_server::test_gb28181_output_http_parameters();
-    std::cout << "[pass] gb28181_output_http_parameters\n";
+    media_server::test_gb28181_multi_sender_identity();
+    std::cout << "[pass] gb28181_multi_sender_identity\n";
+    media_server::test_gb28181_receiver_http_parameters();
+    std::cout << "[pass] gb28181_receiver_http_parameters\n";
+    media_server::test_gb28181_sender_http_parameters();
+    std::cout << "[pass] gb28181_sender_http_parameters\n";
     media_server::test_rtmp_server_lifecycle();
     std::cout << "[pass] rtmp_server_lifecycle\n";
     media_server::test_http_server_lifecycle();
