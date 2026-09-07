@@ -3614,7 +3614,7 @@ void test_rtsp_pull_url_contract()
     require(weak_pull.expired(), "rtsp pull releases itself after shutdown");
 }
 
-void test_rtsp_input_establishment_timeout()
+void test_rtsp_pull_establishment_timeout()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -3652,7 +3652,7 @@ void test_rtsp_input_establishment_timeout()
     runner.join();
 }
 
-void test_rtsp_input_establishment_progress_timeout()
+void test_rtsp_pull_establishment_progress_timeout()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -3717,7 +3717,7 @@ void test_rtsp_input_establishment_progress_timeout()
     runner.join();
 }
 
-void test_rtsp_input_selects_single_audio_and_video()
+void test_rtsp_pull_selects_single_audio_and_video()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -3789,7 +3789,7 @@ void test_rtsp_input_selects_single_audio_and_video()
     require(!streams.find("relay/single-av"), "rtsp single audio video pull closes");
 }
 
-void test_rtsp_input_opus_passthrough_case(std::string_view fmtp, std::uint16_t expected_channels)
+void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t expected_channels)
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -3918,14 +3918,14 @@ void test_rtsp_input_opus_passthrough_case(std::string_view fmtp, std::uint16_t 
     runner.join();
 }
 
-void test_rtsp_input_opus_passthrough()
+void test_rtsp_pull_opus_passthrough()
 {
-    test_rtsp_input_opus_passthrough_case({}, 1);
-    test_rtsp_input_opus_passthrough_case("sprop-stereo=0", 1);
-    test_rtsp_input_opus_passthrough_case("sprop-stereo=1", 2);
+    test_rtsp_pull_opus_passthrough_case({}, 1);
+    test_rtsp_pull_opus_passthrough_case("sprop-stereo=0", 1);
+    test_rtsp_pull_opus_passthrough_case("sprop-stereo=1", 2);
 }
 
-void test_rtsp_input_rejects_invalid_opus_rate()
+void test_rtsp_pull_rejects_invalid_opus_rate()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -3987,7 +3987,7 @@ void test_rtsp_input_rejects_invalid_opus_rate()
     runner.join();
 }
 
-void test_rtsp_input_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
+void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
 {
     require(codec == codec_id::g711a || codec == codec_id::g711u, "rtsp g711 input codec");
     const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
@@ -4372,14 +4372,14 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
     io.run();
 }
 
-void test_rtsp_input_g711_passthrough()
+void test_rtsp_pull_g711_passthrough()
 {
-    test_rtsp_input_g711_passthrough_case(codec_id::g711a, false);
-    test_rtsp_input_g711_passthrough_case(codec_id::g711u, false);
-    test_rtsp_input_g711_passthrough_case(codec_id::g711a, true);
+    test_rtsp_pull_g711_passthrough_case(codec_id::g711a, false);
+    test_rtsp_pull_g711_passthrough_case(codec_id::g711u, false);
+    test_rtsp_pull_g711_passthrough_case(codec_id::g711a, true);
 }
 
-void test_rtsp_input_rejects_mismatched_g711_rtpmap()
+void test_rtsp_pull_rejects_mismatched_g711_rtpmap()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -4429,7 +4429,7 @@ void test_rtsp_input_rejects_mismatched_g711_rtpmap()
     runner.join();
 }
 
-void test_rtsp_input_rejects_audio_only_source()
+void test_rtsp_pull_rejects_audio_only_source()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -4481,7 +4481,7 @@ void test_rtsp_input_rejects_audio_only_source()
     runner.join();
 }
 
-void test_rtsp_input_uses_complete_sdp_topology_without_track_wait()
+void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -4580,7 +4580,7 @@ void test_rtsp_input_uses_complete_sdp_topology_without_track_wait()
     runner.join();
 }
 
-void test_rtsp_input_initial_tracks_timeout()
+void test_rtsp_pull_initial_tracks_timeout()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -4677,7 +4677,7 @@ void test_rtsp_input_initial_tracks_timeout()
     runner.join();
 }
 
-void test_rtsp_input_independent_keepalive()
+void test_rtsp_pull_independent_keepalive()
 {
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -5482,17 +5482,17 @@ void test_rtsp_publish_server_contract()
     runner.join();
 }
 
-class rtsp_output_test_peer final
+class rtsp_play_test_peer final
 {
    public:
-    explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()}, video_transcode_config video = {})
+    explicit rtsp_play_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()}, video_transcode_config video = {})
         : acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}), client_(worker_.io())
     {
         config_.rtsp_video = video;
         streams_.clear();
         stream_ = std::make_shared<media_stream>("live/test", worker_.io().get_executor());
-        require(stream_->set_tracks(std::move(tracks)), "rtsp output tracks");
-        require(streams_.add(stream_), "rtsp output registry add");
+        require(stream_->set_tracks(std::move(tracks)), "rtsp play tracks");
+        require(streams_.add(stream_), "rtsp play registry add");
 
         client_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
@@ -5502,7 +5502,7 @@ class rtsp_output_test_peer final
         runner_ = std::jthread([this]() { worker_.run(); });
     }
 
-    ~rtsp_output_test_peer()
+    ~rtsp_play_test_peer()
     {
         boost::system::error_code error;
         client_.close(error);
@@ -5542,7 +5542,7 @@ class rtsp_output_test_peer final
         boost::asio::post(worker_.io(),
                           [stream = stream_, track = std::move(track), promise]() mutable
                           { promise->set_value(stream->update_track(std::move(track))); });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp output track update");
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp play track update");
         return future.get();
     }
 
@@ -5556,7 +5556,7 @@ class rtsp_output_test_peer final
                               stream->publish(std::move(frame));
                               promise->set_value();
                           });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp output publish");
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp play publish");
         future.get();
     }
 
@@ -5571,7 +5571,7 @@ class rtsp_output_test_peer final
                               stream->end();
                               promise->set_value();
                           });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp output stream end");
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtsp play stream end");
         future.get();
     }
 
@@ -5639,15 +5639,15 @@ class rtsp_output_test_peer final
     std::jthread runner_;
 };
 
-void test_rtsp_output_session_contract()
+void test_rtsp_play_session_contract()
 {
-    rtsp_output_test_peer peer;
+    rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
 
     const auto options = peer.request(
         "OPTIONS * RTSP/1.0\r\n"
         "CSeq: 1\r\n\r\n");
-    require(options.starts_with("RTSP/1.0 200"), "rtsp output options");
+    require(options.starts_with("RTSP/1.0 200"), "rtsp play options");
     require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER",
             "rtsp pre role advertised methods");
 
@@ -5655,23 +5655,23 @@ void test_rtsp_output_session_contract()
                                        " RTSP/1.0\r\n"
                                        "CSeq: 2\r\n"
                                        "Accept: application/sdp\r\n\r\n");
-    require(describe.starts_with("RTSP/1.0 200"), "rtsp output describe");
-    require(describe.find("o=- 1 1 IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp output describe local address");
-    require(describe.find("c=IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp output describe connection address");
-    require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp output video control");
-    require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp output audio control");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp play describe");
+    require(describe.find("o=- 1 1 IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp play describe local address");
+    require(describe.find("c=IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp play describe connection address");
+    require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp play video control");
+    require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp play audio control");
 
     const auto play_before_setup = peer.request("PLAY " + base +
                                                 " RTSP/1.0\r\n"
                                                 "CSeq: 21\r\n"
                                                 "Session: invalid\r\n\r\n");
-    require(play_before_setup.starts_with("RTSP/1.0 454"), "rtsp output play before setup");
+    require(play_before_setup.starts_with("RTSP/1.0 454"), "rtsp play play before setup");
 
     const auto wrong_play_before_setup = peer.request("PLAY rtsp://127.0.0.1:" + std::to_string(peer.port()) +
                                                       "/live/other RTSP/1.0\r\n"
                                                       "CSeq: 22\r\n"
                                                       "Session: invalid\r\n\r\n");
-    require(wrong_play_before_setup.starts_with("RTSP/1.0 404"), "rtsp output play before setup stream identity");
+    require(wrong_play_before_setup.starts_with("RTSP/1.0 404"), "rtsp play play before setup stream identity");
 
     constexpr std::size_t parameter_body_size = 70U * 1024U;
     const auto parameter_header = "GET_PARAMETER " + base +
@@ -5680,7 +5680,7 @@ void test_rtsp_output_session_contract()
                                   "Content-Length: " +
                                   std::to_string(parameter_body_size) + "\r\n\r\n";
     constexpr std::size_t tcp_read_size = 64U * 1024U;
-    require(parameter_header.size() < tcp_read_size, "rtsp output fragmented request header size");
+    require(parameter_header.size() < tcp_read_size, "rtsp play fragmented request header size");
     const auto first_body_size = tcp_read_size - parameter_header.size();
     auto first_chunk = parameter_header + std::string(first_body_size, 'x');
     auto second_chunk = std::string(parameter_body_size - first_body_size, 'x');
@@ -5689,71 +5689,71 @@ void test_rtsp_output_session_contract()
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     peer.write(std::span{reinterpret_cast<const std::uint8_t*>(second_chunk.data()), second_chunk.size()});
     const auto get_parameter = peer.read_response();
-    require(get_parameter.starts_with("RTSP/1.0 200"), "rtsp output fragmented request body starting with interleaved marker");
+    require(get_parameter.starts_with("RTSP/1.0 200"), "rtsp play fragmented request body starting with interleaved marker");
 
     const auto pause = peer.request("PAUSE " + base +
                                     " RTSP/1.0\r\n"
                                     "CSeq: 4\r\n\r\n");
-    require(pause.starts_with("RTSP/1.0 501"), "rtsp output pause unsupported");
+    require(pause.starts_with("RTSP/1.0 501"), "rtsp play pause unsupported");
 
     const auto set_parameter = peer.request("SET_PARAMETER " + base +
                                             " RTSP/1.0\r\n"
                                             "CSeq: 5\r\n"
                                             "Content-Length: 0\r\n\r\n");
-    require(set_parameter.starts_with("RTSP/1.0 501"), "rtsp output set parameter unsupported");
+    require(set_parameter.starts_with("RTSP/1.0 501"), "rtsp play set parameter unsupported");
 
     const auto wrong_stream = peer.request("SETUP rtsp://127.0.0.1:" + std::to_string(peer.port()) +
                                            "/live/other/trackID=1 RTSP/1.0\r\n"
                                            "CSeq: 6\r\n"
                                            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
-    require(wrong_stream.starts_with("RTSP/1.0 404"), "rtsp output setup stream identity");
+    require(wrong_stream.starts_with("RTSP/1.0 404"), "rtsp play setup stream identity");
 
     const auto opaque_track = peer.request("SETUP " + base +
                                            "/trackID=01 RTSP/1.0\r\n"
                                            "CSeq: 60\r\n"
                                            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
-    require(opaque_track.starts_with("RTSP/1.0 404"), "rtsp output control uri is opaque");
+    require(opaque_track.starts_with("RTSP/1.0 404"), "rtsp play control uri is opaque");
 
     const auto record_setup = peer.request("SETUP " + base +
                                            "/trackID=1 RTSP/1.0\r\n"
                                            "CSeq: 61\r\n"
                                            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n");
-    require(record_setup.starts_with("RTSP/1.0 461"), "rtsp output setup record mode unsupported");
+    require(record_setup.starts_with("RTSP/1.0 461"), "rtsp play setup record mode unsupported");
 
     const auto multicast_setup = peer.request("SETUP " + base +
                                               "/trackID=1 RTSP/1.0\r\n"
                                               "CSeq: 62\r\n"
                                               "Transport: RTP/AVP/TCP;multicast;interleaved=0-1;mode=play\r\n\r\n");
-    require(multicast_setup.starts_with("RTSP/1.0 461"), "rtsp output setup multicast unsupported");
+    require(multicast_setup.starts_with("RTSP/1.0 461"), "rtsp play setup multicast unsupported");
 
     const auto invalid_channel_setup = peer.request("SETUP " + base +
                                                     "/trackID=1 RTSP/1.0\r\n"
                                                     "CSeq: 63\r\n"
                                                     "Transport: RTP/AVP/TCP;unicast;interleaved=300-301\r\n\r\n");
-    require(invalid_channel_setup.starts_with("RTSP/1.0 461"), "rtsp output invalid channel setup rejected");
+    require(invalid_channel_setup.starts_with("RTSP/1.0 461"), "rtsp play invalid channel setup rejected");
 
     auto updated_video = make_video_track();
     updated_video.codec_config = h264_config_updated;
-    require(peer.update_track(std::move(updated_video)), "rtsp output update after rejected setup");
+    require(peer.update_track(std::move(updated_video)), "rtsp play update after rejected setup");
     const auto stale_setup = peer.request("SETUP " + base +
                                           "/trackID=1 RTSP/1.0\r\n"
                                           "CSeq: 64\r\n"
                                           "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
-    require(stale_setup.starts_with("RTSP/1.0 455"), "rtsp output rejected setup keeps describe snapshot");
+    require(stale_setup.starts_with("RTSP/1.0 455"), "rtsp play rejected setup keeps describe snapshot");
 
     const auto refreshed_describe = peer.request("DESCRIBE " + base +
                                                  " RTSP/1.0\r\n"
                                                  "CSeq: 65\r\n"
                                                  "Accept: application/sdp\r\n\r\n");
-    require(refreshed_describe.starts_with("RTSP/1.0 200"), "rtsp output refresh describe after track update");
+    require(refreshed_describe.starts_with("RTSP/1.0 200"), "rtsp play refresh describe after track update");
 
     const auto video_setup = peer.request("SETUP " + base +
                                           "/trackID=1 RTSP/1.0\r\n"
                                           "CSeq: 7\r\n"
                                           "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
-    require(video_setup.starts_with("RTSP/1.0 200"), "rtsp output video setup");
+    require(video_setup.starts_with("RTSP/1.0 200"), "rtsp play video setup");
     const auto session = rtsp_header_value(video_setup, "Session:");
-    require(!session.empty(), "rtsp output session id");
+    require(!session.empty(), "rtsp play session id");
 
     const auto duplicate_setup = peer.request("SETUP " + base +
                                               "/trackID=1 RTSP/1.0\r\n"
@@ -5762,14 +5762,14 @@ void test_rtsp_output_session_contract()
                                               session +
                                               "\r\n"
                                               "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=play\r\n\r\n");
-    require(duplicate_setup.starts_with("RTSP/1.0 200"), "rtsp output idempotent setup");
+    require(duplicate_setup.starts_with("RTSP/1.0 200"), "rtsp play idempotent setup");
 
     const auto wrong_session = peer.request("SETUP " + base +
                                             "/trackID=2 RTSP/1.0\r\n"
                                             "CSeq: 9\r\n"
                                             "Session: wrong\r\n"
                                             "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
-    require(wrong_session.starts_with("RTSP/1.0 454"), "rtsp output setup session identity");
+    require(wrong_session.starts_with("RTSP/1.0 454"), "rtsp play setup session identity");
 
     const auto channel_conflict = peer.request("SETUP " + base +
                                                "/trackID=2 RTSP/1.0\r\n"
@@ -5778,7 +5778,7 @@ void test_rtsp_output_session_contract()
                                                session +
                                                "\r\n"
                                                "Transport: RTP/AVP/TCP;unicast;interleaved=1-2\r\n\r\n");
-    require(channel_conflict.starts_with("RTSP/1.0 461"), "rtsp output interleaved channel conflict");
+    require(channel_conflict.starts_with("RTSP/1.0 461"), "rtsp play interleaved channel conflict");
 
     const auto audio_setup = peer.request("SETUP " + base +
                                           "/trackID=2 RTSP/1.0\r\n"
@@ -5787,21 +5787,21 @@ void test_rtsp_output_session_contract()
                                           session +
                                           "\r\n"
                                           "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
-    require(audio_setup.starts_with("RTSP/1.0 200"), "rtsp output audio setup");
+    require(audio_setup.starts_with("RTSP/1.0 200"), "rtsp play audio setup");
 
     const auto wrong_play = peer.request("PLAY rtsp://127.0.0.1:" + std::to_string(peer.port()) +
                                          "/live/other RTSP/1.0\r\n"
                                          "CSeq: 12\r\n"
                                          "Session: " +
                                          session + "\r\n\r\n");
-    require(wrong_play.starts_with("RTSP/1.0 404"), "rtsp output play stream identity");
+    require(wrong_play.starts_with("RTSP/1.0 404"), "rtsp play play stream identity");
 
     const auto play = peer.request("PLAY " + base +
                                    " RTSP/1.0\r\n"
                                    "CSeq: 13\r\n"
                                    "Session: " +
                                    session + "\r\n\r\n");
-    require(play.starts_with("RTSP/1.0 200"), "rtsp output play");
+    require(play.starts_with("RTSP/1.0 200"), "rtsp play play");
 
     constexpr std::array<std::uint8_t, 12> receiver_report{
         0x24,
@@ -5824,7 +5824,7 @@ void test_rtsp_output_session_contract()
                                          "CSeq: 131\r\n"
                                          "Session: " +
                                          session + "\r\n\r\n");
-    require(after_rtcp.starts_with("RTSP/1.0 200"), "rtsp output accepts interleaved rtcp");
+    require(after_rtcp.starts_with("RTSP/1.0 200"), "rtsp play accepts interleaved rtcp");
 
     const auto late_setup = peer.request("SETUP " + base +
                                          "/trackID=1 RTSP/1.0\r\n"
@@ -5833,37 +5833,37 @@ void test_rtsp_output_session_contract()
                                          session +
                                          "\r\n"
                                          "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
-    require(late_setup.starts_with("RTSP/1.0 455"), "rtsp output reject setup after play");
+    require(late_setup.starts_with("RTSP/1.0 455"), "rtsp play reject setup after play");
 
     const auto teardown = peer.request("TEARDOWN " + base +
                                        " RTSP/1.0\r\n"
                                        "CSeq: 15\r\n"
                                        "Session: " +
                                        session + "\r\n\r\n");
-    require(teardown.starts_with("RTSP/1.0 200"), "rtsp output teardown");
+    require(teardown.starts_with("RTSP/1.0 200"), "rtsp play teardown");
     for (int attempt = 0; attempt < 100 && peer.session_alive(); ++attempt)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    require(!peer.session_alive(), "rtsp output teardown releases session");
+    require(!peer.session_alive(), "rtsp play teardown releases session");
 }
 
-void test_rtsp_output_pull_media()
+void test_rtsp_play_media_delivery()
 {
-    rtsp_output_test_peer peer;
+    rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
     const auto describe = peer.request("DESCRIBE " + base +
                                        " RTSP/1.0\r\n"
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
-    require(describe.starts_with("RTSP/1.0 200"), "rtsp pull describe");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp play describe");
 
     const auto video_setup = peer.request("SETUP " + base +
                                           "/trackID=1 RTSP/1.0\r\n"
                                           "CSeq: 2\r\n"
                                           "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
     const auto session = rtsp_header_value(video_setup, "Session:");
-    require(video_setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp pull video setup");
+    require(video_setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp play video setup");
 
     peer.publish(make_audio_frame(0));
     require(!peer.read_interleaved(std::chrono::milliseconds(50)).has_value(), "rtsp does not pull before play");
@@ -5873,7 +5873,7 @@ void test_rtsp_output_pull_media()
                                    "CSeq: 3\r\n"
                                    "Session: " +
                                    session + "\r\n\r\n");
-    require(play.starts_with("RTSP/1.0 200"), "rtsp pull play");
+    require(play.starts_with("RTSP/1.0 200"), "rtsp play request");
 
     peer.publish(make_audio_frame(20'000'000));
     require(!peer.read_interleaved(std::chrono::milliseconds(50)).has_value(), "rtsp skips unsetup audio");
@@ -5893,14 +5893,14 @@ void test_rtsp_output_pull_media()
     while (!marker)
     {
         const auto packet = peer.read_interleaved(std::chrono::seconds(1));
-        require(packet.has_value(), "rtsp pull interleaved packet");
+        require(packet.has_value(), "rtsp play interleaved packet");
         if (packet->channel == 1U)
         {
             continue;
         }
-        require(packet->channel == 0U, "rtsp pull setup video channel");
+        require(packet->channel == 0U, "rtsp play setup video channel");
         rtp_packet_t decoded{};
-        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0, "rtsp pull rtp packet");
+        require(rtp_packet_deserialize(&decoded, packet->payload.data(), static_cast<int>(packet->payload.size())) == 0, "rtsp play rtp packet");
         ++rtp_packets;
         marker = decoded.rtp.m != 0;
     }
@@ -5914,9 +5914,9 @@ void test_rtsp_output_pull_media()
     require(!peer.session_alive(), "rtsp stream end releases session");
 }
 
-void test_rtsp_output_audio_video_order()
+void test_rtsp_play_audio_video_order()
 {
-    rtsp_output_test_peer peer;
+    rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
     require(peer.request("DESCRIBE " + base +
                          " RTSP/1.0\r\n"
@@ -5972,9 +5972,9 @@ void test_rtsp_output_audio_video_order()
     require(frame_channels == std::vector<std::uint8_t>{0U, 2U, 0U, 2U}, "rtsp preserves audio video frame order");
 }
 
-void test_rtsp_output_h265()
+void test_rtsp_play_h265()
 {
-    rtsp_output_test_peer peer({make_h265_track(), make_audio_track()});
+    rtsp_play_test_peer peer({make_h265_track(), make_audio_track()});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
     const auto describe = peer.request("DESCRIBE " + base +
                                        " RTSP/1.0\r\n"
@@ -6035,14 +6035,14 @@ void test_rtsp_output_h265()
     require(capture.access_unit == *frame.payload, "rtsp h265 cached access unit");
 }
 
-void test_rtsp_output_av1()
+void test_rtsp_play_av1()
 {
     for (const auto input_codec : {codec_id::h264, codec_id::h265})
     {
         const auto source = make_video_transcoder_fixture(input_codec);
         auto video = input_codec == codec_id::h264 ? make_video_track() : make_h265_track();
         video.codec_config = source.codec_config;
-        rtsp_output_test_peer peer({std::move(video)}, video_transcode_config{.codec = video_transcode_codec::av1});
+        rtsp_play_test_peer peer({std::move(video)}, video_transcode_config{.codec = video_transcode_codec::av1});
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
         const auto describe = peer.request("DESCRIBE " + base +
                                            " RTSP/1.0\r\n"
@@ -6130,9 +6130,9 @@ void test_rtsp_output_av1()
     }
 }
 
-void test_rtsp_output_opus_passthrough_boundaries()
+void test_rtsp_play_opus_passthrough_boundaries()
 {
-    rtsp_output_test_peer peer({make_video_track(), make_opus_track(1)});
+    rtsp_play_test_peer peer({make_video_track(), make_opus_track(1)});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
     const auto describe = peer.request("DESCRIBE " + base +
                                        " RTSP/1.0\r\n"
@@ -6187,11 +6187,11 @@ void test_rtsp_output_opus_passthrough_boundaries()
     require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp opus output rejects oversized packet");
 }
 
-void test_rtsp_output_g711_passthrough_case(codec_id codec)
+void test_rtsp_play_g711_passthrough_case(codec_id codec)
 {
     require(codec == codec_id::g711a || codec == codec_id::g711u, "rtsp g711 output codec");
     const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
-    rtsp_output_test_peer peer({make_video_track(), make_g711_track(codec)});
+    rtsp_play_test_peer peer({make_video_track(), make_g711_track(codec)});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
     const auto describe = peer.request("DESCRIBE " + base +
                                        " RTSP/1.0\r\n"
@@ -6271,16 +6271,16 @@ void test_rtsp_output_g711_passthrough_case(codec_id codec)
     require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp g711 output rejects oversized packet");
 }
 
-void test_rtsp_output_g711_passthrough()
+void test_rtsp_play_g711_passthrough()
 {
-    test_rtsp_output_g711_passthrough_case(codec_id::g711a);
-    test_rtsp_output_g711_passthrough_case(codec_id::g711u);
+    test_rtsp_play_g711_passthrough_case(codec_id::g711a);
+    test_rtsp_play_g711_passthrough_case(codec_id::g711u);
 }
 
-void test_rtsp_output_setup_track_lifecycle()
+void test_rtsp_play_setup_track_lifecycle()
 {
     {
-        rtsp_output_test_peer peer({make_h265_track(), make_audio_track()});
+        rtsp_play_test_peer peer({make_h265_track(), make_audio_track()});
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
         const auto describe = peer.request("DESCRIBE " + base +
                                            " RTSP/1.0\r\n"
@@ -6320,7 +6320,7 @@ void test_rtsp_output_setup_track_lifecycle()
     }
 
     {
-        rtsp_output_test_peer peer;
+        rtsp_play_test_peer peer;
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
         const auto describe = peer.request("DESCRIBE " + base +
                                            " RTSP/1.0\r\n"
@@ -6360,9 +6360,9 @@ void test_rtsp_output_setup_track_lifecycle()
     }
 }
 
-void test_rtsp_output_unsetup_audio_update_keeps_video_continuity()
+void test_rtsp_play_unsetup_audio_update_keeps_video_continuity()
 {
-    rtsp_output_test_peer peer;
+    rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
     require(peer.request("DESCRIBE " + base +
                          " RTSP/1.0\r\n"
@@ -6425,9 +6425,9 @@ void test_rtsp_output_unsetup_audio_update_keeps_video_continuity()
     require(peer.session_alive(), "rtsp continuity session remains alive");
 }
 
-void test_rtsp_output_rejects_stale_description()
+void test_rtsp_play_rejects_stale_description()
 {
-    rtsp_output_test_peer peer;
+    rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
     const auto describe = peer.request("DESCRIBE " + base +
                                        " RTSP/1.0\r\n"
@@ -9921,32 +9921,32 @@ int main()
     std::cout << "[pass] http_flv_config_reset\n";
     media_server::test_rtsp_pull_url_contract();
     std::cout << "[pass] rtsp_pull_url_contract\n";
-    media_server::test_rtsp_input_establishment_timeout();
-    std::cout << "[pass] rtsp_input_establishment_timeout\n";
-    media_server::test_rtsp_input_establishment_progress_timeout();
-    std::cout << "[pass] rtsp_input_establishment_progress_timeout\n";
-    media_server::test_rtsp_input_selects_single_audio_and_video();
-    std::cout << "[pass] rtsp_input_selects_single_audio_and_video\n";
-    media_server::test_rtsp_input_opus_passthrough();
-    std::cout << "[pass] rtsp_input_opus_passthrough\n";
-    media_server::test_rtsp_input_rejects_invalid_opus_rate();
-    std::cout << "[pass] rtsp_input_rejects_invalid_opus_rate\n";
-    media_server::test_rtsp_input_g711_passthrough();
-    std::cout << "[pass] rtsp_input_g711_passthrough\n";
+    media_server::test_rtsp_pull_establishment_timeout();
+    std::cout << "[pass] rtsp_pull_establishment_timeout\n";
+    media_server::test_rtsp_pull_establishment_progress_timeout();
+    std::cout << "[pass] rtsp_pull_establishment_progress_timeout\n";
+    media_server::test_rtsp_pull_selects_single_audio_and_video();
+    std::cout << "[pass] rtsp_pull_selects_single_audio_and_video\n";
+    media_server::test_rtsp_pull_opus_passthrough();
+    std::cout << "[pass] rtsp_pull_opus_passthrough\n";
+    media_server::test_rtsp_pull_rejects_invalid_opus_rate();
+    std::cout << "[pass] rtsp_pull_rejects_invalid_opus_rate\n";
+    media_server::test_rtsp_pull_g711_passthrough();
+    std::cout << "[pass] rtsp_pull_g711_passthrough\n";
     media_server::test_rtsp_pull_rtp_info_aligns_media_timestamps();
     std::cout << "[pass] rtsp_pull_rtp_info_aligns_media_timestamps\n";
     media_server::test_rtsp_publish_rtcp_sender_reports_align_media_timestamps();
     std::cout << "[pass] rtsp_publish_rtcp_sender_reports_align_media_timestamps\n";
-    media_server::test_rtsp_input_rejects_mismatched_g711_rtpmap();
-    std::cout << "[pass] rtsp_input_rejects_mismatched_g711_rtpmap\n";
-    media_server::test_rtsp_input_rejects_audio_only_source();
-    std::cout << "[pass] rtsp_input_rejects_audio_only_source\n";
-    media_server::test_rtsp_input_uses_complete_sdp_topology_without_track_wait();
-    std::cout << "[pass] rtsp_input_uses_complete_sdp_topology_without_track_wait\n";
-    media_server::test_rtsp_input_initial_tracks_timeout();
-    std::cout << "[pass] rtsp_input_initial_tracks_timeout\n";
-    media_server::test_rtsp_input_independent_keepalive();
-    std::cout << "[pass] rtsp_input_independent_keepalive\n";
+    media_server::test_rtsp_pull_rejects_mismatched_g711_rtpmap();
+    std::cout << "[pass] rtsp_pull_rejects_mismatched_g711_rtpmap\n";
+    media_server::test_rtsp_pull_rejects_audio_only_source();
+    std::cout << "[pass] rtsp_pull_rejects_audio_only_source\n";
+    media_server::test_rtsp_pull_uses_complete_sdp_topology_without_track_wait();
+    std::cout << "[pass] rtsp_pull_uses_complete_sdp_topology_without_track_wait\n";
+    media_server::test_rtsp_pull_initial_tracks_timeout();
+    std::cout << "[pass] rtsp_pull_initial_tracks_timeout\n";
+    media_server::test_rtsp_pull_independent_keepalive();
+    std::cout << "[pass] rtsp_pull_independent_keepalive\n";
     media_server::test_rtsp_client_rejects_empty_media_selection();
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
     media_server::test_rtsp_sdp_contract();
@@ -9957,26 +9957,26 @@ int main()
     std::cout << "[pass] rtsp_uri_contract\n";
     media_server::test_rtsp_publish_server_contract();
     std::cout << "[pass] rtsp_publish_server_contract\n";
-    media_server::test_rtsp_output_session_contract();
-    std::cout << "[pass] rtsp_output_session_contract\n";
-    media_server::test_rtsp_output_pull_media();
-    std::cout << "[pass] rtsp_output_pull_media\n";
-    media_server::test_rtsp_output_audio_video_order();
-    std::cout << "[pass] rtsp_output_audio_video_order\n";
-    media_server::test_rtsp_output_h265();
-    std::cout << "[pass] rtsp_output_h265\n";
-    media_server::test_rtsp_output_av1();
-    std::cout << "[pass] rtsp_output_av1\n";
-    media_server::test_rtsp_output_opus_passthrough_boundaries();
-    std::cout << "[pass] rtsp_output_opus_passthrough_boundaries\n";
-    media_server::test_rtsp_output_g711_passthrough();
-    std::cout << "[pass] rtsp_output_g711_passthrough\n";
-    media_server::test_rtsp_output_setup_track_lifecycle();
-    std::cout << "[pass] rtsp_output_setup_track_lifecycle\n";
-    media_server::test_rtsp_output_unsetup_audio_update_keeps_video_continuity();
-    std::cout << "[pass] rtsp_output_unsetup_audio_update_keeps_video_continuity\n";
-    media_server::test_rtsp_output_rejects_stale_description();
-    std::cout << "[pass] rtsp_output_rejects_stale_description\n";
+    media_server::test_rtsp_play_session_contract();
+    std::cout << "[pass] rtsp_play_session_contract\n";
+    media_server::test_rtsp_play_media_delivery();
+    std::cout << "[pass] rtsp_play_media_delivery\n";
+    media_server::test_rtsp_play_audio_video_order();
+    std::cout << "[pass] rtsp_play_audio_video_order\n";
+    media_server::test_rtsp_play_h265();
+    std::cout << "[pass] rtsp_play_h265\n";
+    media_server::test_rtsp_play_av1();
+    std::cout << "[pass] rtsp_play_av1\n";
+    media_server::test_rtsp_play_opus_passthrough_boundaries();
+    std::cout << "[pass] rtsp_play_opus_passthrough_boundaries\n";
+    media_server::test_rtsp_play_g711_passthrough();
+    std::cout << "[pass] rtsp_play_g711_passthrough\n";
+    media_server::test_rtsp_play_setup_track_lifecycle();
+    std::cout << "[pass] rtsp_play_setup_track_lifecycle\n";
+    media_server::test_rtsp_play_unsetup_audio_update_keeps_video_continuity();
+    std::cout << "[pass] rtsp_play_unsetup_audio_update_keeps_video_continuity\n";
+    media_server::test_rtsp_play_rejects_stale_description();
+    std::cout << "[pass] rtsp_play_rejects_stale_description\n";
     media_server::test_media_stream_sink_lifecycle();
     std::cout << "[pass] media_stream_sink_lifecycle\n";
     media_server::test_media_stream_sink_gop_replay();

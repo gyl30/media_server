@@ -158,7 +158,7 @@ void rtsp_pull_session::schedule_establishment_timeout()
                 return;
             }
 
-            spdlog::warn("rtsp input establishment timeout stream {}", self->stream_name_);
+            spdlog::warn("rtsp pull establishment timeout stream {}", self->stream_name_);
             self->shutdown();
         });
 }
@@ -238,7 +238,7 @@ void rtsp_pull_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    spdlog::debug("rtsp input shutdown {}", stream_name_);
+    spdlog::debug("rtsp pull shutdown {}", stream_name_);
 }
 
 int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
@@ -266,7 +266,7 @@ int rtsp_pull_session::rtp_port_callback(void* param, int media, const char*, un
     if (!should_setup_media(self->client_, media))
     {
         const auto* encoding = rtsp_client_get_media_encoding(self->client_, media);
-        spdlog::debug("rtsp input ignore media {} encoding {}", media, encoding != nullptr ? encoding : "");
+        spdlog::debug("rtsp pull ignore media {} encoding {}", media, encoding != nullptr ? encoding : "");
         return 0;
     }
     port[0] = static_cast<unsigned short>(media * 2);
@@ -375,7 +375,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     }
     client_ = client;
 
-    spdlog::info("rtsp input connected stream {}", stream_name_);
+    spdlog::info("rtsp pull connected stream {}", stream_name_);
     bool stop = rtsp_client_describe(client_) != 0;
     std::vector<std::uint8_t> buffer(64 * 1024);
     while (!stop)
@@ -444,7 +444,7 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
 
 int rtsp_pull_session::on_describe(const char* sdp, int length)
 {
-    spdlog::debug("rtsp input describe {}", stream_name_);
+    spdlog::debug("rtsp pull describe {}", stream_name_);
     return rtsp_client_setup(client_, sdp, length);
 }
 
@@ -516,7 +516,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
             const auto now = std::chrono::steady_clock::now();
             if (now >= last_establishment_progress_ + establishment_timeout_)
             {
-                spdlog::warn("rtsp input establishment timeout stream {}", stream_name_);
+                spdlog::warn("rtsp pull establishment timeout stream {}", stream_name_);
                 shutdown();
                 return;
             }
@@ -535,7 +535,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
                         {
                             return;
                         }
-                        spdlog::warn("rtsp input initial tracks timeout stream {}", self->stream_name_);
+                        spdlog::warn("rtsp pull initial tracks timeout stream {}", self->stream_name_);
                         self->shutdown();
                     });
             }
