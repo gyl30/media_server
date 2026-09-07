@@ -9,7 +9,7 @@ namespace media_server
 rtmp_output_session::rtmp_output_session(worker_context& worker,
                                          std::shared_ptr<media_stream> stream,
                                          flv_output_muxer::output_handler output,
-                                         output_video_config video,
+                                         video_transcode_config video,
                                          end_handler on_end)
     : worker_(worker), stream_(std::move(stream)), output_muxer_(std::move(output), video), end_handler_(std::move(on_end))
 {

@@ -23,7 +23,7 @@ class rtmp_output_session final : public media_reader, public std::enable_shared
     rtmp_output_session(worker_context& worker,
                         std::shared_ptr<media_stream> stream,
                         flv_output_muxer::output_handler output,
-                        output_video_config video,
+                        video_transcode_config video,
                         end_handler on_end);
 
     void startup();

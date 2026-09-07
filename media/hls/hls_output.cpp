@@ -26,7 +26,7 @@ namespace media_server
 hls_output::hls_output(hls_config config)
     : video_config_(config.video), target_duration_seconds_(config.target_duration_seconds), window_size_(config.window_size)
 {
-    if (video_config_.codec == output_video_codec::passthrough)
+    if (video_config_.codec == video_transcode_codec::passthrough)
     {
         recreate_muxer();
     }
@@ -46,7 +46,7 @@ void hls_output::on_track(const media_track& track)
     const bool reconfigured = existing != tracks_.end() && existing->second.config_version != track.config_version;
     tracks_.insert_or_assign(track.id, track);
 
-    if (video_config_.codec == output_video_codec::av1)
+    if (video_config_.codec == video_transcode_codec::av1)
     {
         if (reconfigured)
         {
@@ -100,7 +100,7 @@ void hls_output::on_frame(const media_frame& frame)
         waiting_for_key_frame_ = false;
     }
 
-    if (video_config_.codec == output_video_codec::av1)
+    if (video_config_.codec == video_transcode_codec::av1)
     {
         if (track.kind == media_kind::video)
         {
@@ -158,7 +158,7 @@ void hls_output::on_end()
     {
         return;
     }
-    if (video_config_.codec == output_video_codec::av1)
+    if (video_config_.codec == video_transcode_codec::av1)
     {
         if (fmp4_ != nullptr && segment_start_pts_ns_)
         {
@@ -196,8 +196,8 @@ std::string hls_output::playlist(std::string_view base_path) const
     std::scoped_lock lock(mutex_);
     std::ostringstream output;
     output << "#EXTM3U\n";
-    output << (video_config_.codec == output_video_codec::av1 ? "#EXT-X-VERSION:7\n" : "#EXT-X-VERSION:3\n");
-    if (video_config_.codec == output_video_codec::av1)
+    output << (video_config_.codec == video_transcode_codec::av1 ? "#EXT-X-VERSION:7\n" : "#EXT-X-VERSION:3\n");
+    if (video_config_.codec == video_transcode_codec::av1)
     {
         output << "#EXT-X-MAP:URI=\"" << base_path << "/init.mp4?v=" << fmp4_init_revision_ << "\"\n";
     }
@@ -214,7 +214,7 @@ std::string hls_output::playlist(std::string_view base_path) const
 
     {
         output << "#EXTINF:" << std::fixed << std::setprecision(3) << item.duration << ",\n";
-        output << base_path << '/' << item.sequence << (video_config_.codec == output_video_codec::av1 ? ".m4s\n" : ".ts\n");
+        output << base_path << '/' << item.sequence << (video_config_.codec == video_transcode_codec::av1 ? ".m4s\n" : ".ts\n");
     }
 
     if (ended_at_.has_value())
@@ -228,7 +228,7 @@ std::string hls_output::playlist(std::string_view base_path) const
 std::optional<std::vector<std::uint8_t>> hls_output::init_segment() const
 {
     std::scoped_lock lock(mutex_);
-    if (video_config_.codec != output_video_codec::av1 || init_segment_.empty())
+    if (video_config_.codec != video_transcode_codec::av1 || init_segment_.empty())
     {
         return std::nullopt;
     }

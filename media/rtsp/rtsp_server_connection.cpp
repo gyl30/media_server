@@ -21,7 +21,7 @@ namespace media_server
 {
 rtsp_server_connection::rtsp_server_connection(worker_context& worker,
                                                    boost::asio::ip::tcp::socket socket,
-                                                   output_video_codec video_codec,
+                                                   video_transcode_codec video_codec,
                                                    std::chrono::milliseconds inactivity_timeout,
                                                    std::size_t max_write_queue_bytes)
     : worker_(worker),

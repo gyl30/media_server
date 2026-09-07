@@ -24,7 +24,7 @@ namespace
 
 using namespace std::chrono_literals;
 using boost::asio::ip::tcp;
-using media_server::output_video_config;
+using media_server::video_transcode_config;
 using media_server::rtmp_session;
 using media_server::worker_context;
 
@@ -75,7 +75,7 @@ void test_rtmp_write_backlog_limit()
     acceptor.accept(server_socket);
 
     auto session =
-        std::make_shared<rtmp_session>(worker, std::move(server_socket), output_video_config{}, 5s, 0U);
+        std::make_shared<rtmp_session>(worker, std::move(server_socket), video_transcode_config{}, 5s, 0U);
     session->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });

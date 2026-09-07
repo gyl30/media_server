@@ -851,7 +851,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
 
         if (can_receive && lower_copy(media.type) == "video" && video_track != nullptr && !video_payload_type.has_value())
         {
-            if (config.video.codec == output_video_codec::av1)
+            if (config.video.codec == video_transcode_codec::av1)
             {
                 codec = find_av1(media);
             }
@@ -912,7 +912,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
         accepted_mids.push_back(media.mid);
         if (lower_copy(media.type) == "video")
         {
-            video_codec = config.video.codec == output_video_codec::av1 ? codec_id::av1 : video_track->codec;
+            video_codec = config.video.codec == video_transcode_codec::av1 ? codec_id::av1 : video_track->codec;
             video_payload_type = codec->payload_type;
             video_mid = media.mid;
             video_mid_extension_id = media.mid_extension_id;
@@ -956,7 +956,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
 
         if (lower_copy(media.type) == "video")
         {
-            if (config.video.codec == output_video_codec::av1)
+            if (config.video.codec == video_transcode_codec::av1)
             {
                 media_answer << "a=rtpmap:" << codec->payload_type << " AV1/90000\r\n";
                 if (!codec->format_parameters.empty())

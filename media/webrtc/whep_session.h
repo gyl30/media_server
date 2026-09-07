@@ -24,7 +24,7 @@
 #include "media/webrtc/dtls_transport.h"
 #include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/dtls_certificate.h"
-#include "media/codec/output_video_config.h"
+#include "media/codec/video_transcode_config.h"
 
 namespace media_server
 {
@@ -51,7 +51,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
                  whep_session_timeouts timeouts = {},
-                 output_video_config video = {});
+                 video_transcode_config video = {});
 
     [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
     void shutdown();
@@ -97,7 +97,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
-    output_video_config video_config_;
+    video_transcode_config video_config_;
     whep_session_timeouts timeouts_;
     media_reader_handle reader_;
     std::map<track_id, std::uint64_t> track_versions_;

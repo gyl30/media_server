@@ -20,7 +20,7 @@ namespace
 
 using namespace std::chrono_literals;
 using boost::asio::ip::tcp;
-using media_server::output_video_codec;
+using media_server::video_transcode_codec;
 using media_server::rtsp_pull_session;
 using media_server::rtsp_server_connection;
 using media_server::worker_context;
@@ -72,7 +72,7 @@ void test_rtsp_server_write_backlog_limit()
     acceptor.accept(server_socket);
 
     auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), output_video_codec::passthrough, 5s, 0U);
+        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, 5s, 0U);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });

@@ -21,7 +21,7 @@ namespace media_server
 {
 rtmp_session::rtmp_session(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
-                           output_video_config video,
+                           video_transcode_config video,
                            std::chrono::milliseconds initial_tracks_timeout,
                            std::size_t max_write_queue_bytes)
     : worker_(worker),
@@ -216,7 +216,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
         spdlog::warn("rtmp play stream not found {}", stream_name_);
         return -1;
     }
-    if (video_config_.codec == output_video_codec::av1 && !rtmp_server_peer_supports_fourcc(rtmp_context_, "av01"))
+    if (video_config_.codec == video_transcode_codec::av1 && !rtmp_server_peer_supports_fourcc(rtmp_context_, "av01"))
     {
         spdlog::warn("rtmp play av1 unsupported by peer {}", stream_name_);
         return -1;

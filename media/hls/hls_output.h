@@ -14,7 +14,7 @@
 
 #include "media/core/media_sink.h"
 #include "media/codec/video_transcoder.h"
-#include "media/codec/output_video_config.h"
+#include "media/codec/video_transcode_config.h"
 
 struct fmp4_writer_t;
 
@@ -25,7 +25,7 @@ struct hls_config
 {
     double target_duration_seconds{2.0};
     std::size_t window_size{6};
-    output_video_config video;
+    video_transcode_config video;
 };
 
 struct hls_segment
@@ -72,7 +72,7 @@ class hls_output final : public media_sink
     void finish_fmp4_segment(std::int64_t end_pts_ns);
 
     mutable std::mutex mutex_;
-    output_video_config video_config_;
+    video_transcode_config video_config_;
     double target_duration_seconds_{};
     std::size_t window_size_{};
     std::map<track_id, media_track> tracks_;

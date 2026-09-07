@@ -29,16 +29,16 @@ bool parse_port(std::string_view text, std::uint16_t& value)
     return true;
 }
 
-bool parse_output_video_codec(std::string_view text, output_video_codec& codec)
+bool parse_video_transcode_codec(std::string_view text, video_transcode_codec& codec)
 {
     if (text == "passthrough")
     {
-        codec = output_video_codec::passthrough;
+        codec = video_transcode_codec::passthrough;
         return true;
     }
     if (text == "av1")
     {
-        codec = output_video_codec::av1;
+        codec = video_transcode_codec::av1;
         return true;
     }
     return false;
@@ -137,9 +137,9 @@ int parse_config(int argc, char** argv, config* cfg)
         return 1;
     }
 
-    if (!parse_output_video_codec(rtmp_video_codec, result.rtmp_video.codec) ||
-        !parse_output_video_codec(rtsp_video_codec, result.rtsp_video.codec) ||
-        !parse_output_video_codec(http_video_codec, result.http_video.codec) || !parse_output_video_codec(whep_video_codec, result.whep_video.codec))
+    if (!parse_video_transcode_codec(rtmp_video_codec, result.rtmp_video.codec) ||
+        !parse_video_transcode_codec(rtsp_video_codec, result.rtsp_video.codec) ||
+        !parse_video_transcode_codec(http_video_codec, result.http_video.codec) || !parse_video_transcode_codec(whep_video_codec, result.whep_video.codec))
     {
         print_usage(options);
         return 1;

@@ -45,7 +45,7 @@ whep_session::whep_session(worker_context& worker,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
                            whep_session_timeouts timeouts,
-                           output_video_config video)
+                           video_transcode_config video)
     : stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),

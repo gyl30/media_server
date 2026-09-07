@@ -14,7 +14,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/net/tcp_yield_transport.h"
-#include "media/codec/output_video_config.h"
+#include "media/codec/video_transcode_config.h"
 
 extern "C"
 {
@@ -33,7 +33,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
    public:
     rtsp_server_connection(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
-                           output_video_codec video_codec,
+                           video_transcode_codec video_codec,
                            std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
                            std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtsp_server_connection();
@@ -63,7 +63,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void schedule_inactivity_timeout();
 
     worker_context& worker_;
-    output_video_codec video_codec_;
+    video_transcode_codec video_codec_;
     tcp_yield_transport transport_;
     boost::asio::steady_timer inactivity_timer_;
     std::chrono::milliseconds inactivity_timeout_;

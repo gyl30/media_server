@@ -13,10 +13,10 @@ extern "C"
 namespace media_server
 {
 
-flv_output_muxer::flv_output_muxer(output_handler handler, output_video_config video)
+flv_output_muxer::flv_output_muxer(output_handler handler, video_transcode_config video)
     : output_handler_(std::move(handler)), video_config_(video), muxer_(flv_muxer_create(&flv_output_muxer::on_output, this))
 {
-    if (muxer_ != nullptr && video_config_.codec == output_video_codec::av1)
+    if (muxer_ != nullptr && video_config_.codec == video_transcode_codec::av1)
     {
         flv_muxer_set_enhanced_rtmp(muxer_, 1);
     }
@@ -60,14 +60,14 @@ void flv_output_muxer::on_track(const media_track& track)
 
     const bool reconfigured = existing != tracks_.end();
     tracks_.insert_or_assign(track.id, track);
-    if (video_config_.codec == output_video_codec::av1 && track.kind == media_kind::video)
+    if (video_config_.codec == video_transcode_codec::av1 && track.kind == media_kind::video)
     {
         startup_video_transcoder(track);
     }
 
     if (reconfigured)
     {
-        if (video_config_.codec == output_video_codec::av1 && track.kind == media_kind::audio)
+        if (video_config_.codec == video_transcode_codec::av1 && track.kind == media_kind::audio)
         {
             if (track.codec == codec_id::opus)
             {
@@ -86,7 +86,7 @@ void flv_output_muxer::on_track(const media_track& track)
 
 void flv_output_muxer::prime_video_config(const media_track& track, std::uint32_t timestamp)
 {
-    if (video_config_.codec == output_video_codec::av1 && track.kind == media_kind::video)
+    if (video_config_.codec == video_transcode_codec::av1 && track.kind == media_kind::video)
     {
         return;
     }
@@ -157,7 +157,7 @@ void flv_output_muxer::on_frame(const media_frame& frame)
         video_config_pending_ = false;
     }
 
-    if (video_config_.codec == output_video_codec::av1 && iterator->second.kind == media_kind::video)
+    if (video_config_.codec == video_transcode_codec::av1 && iterator->second.kind == media_kind::video)
     {
         input_av1(frame);
         return;
