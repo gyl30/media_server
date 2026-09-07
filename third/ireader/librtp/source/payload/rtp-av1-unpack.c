@@ -243,7 +243,8 @@ int rtp_av1_unpack_onframe(struct rtp_decode_av1_t* unpacker)
 	unpacker->lost = 0;
 	unpacker->ptr.len = 0;
 	unpacker->obu.num = 0;
-	memset(unpacker->obu.arr, 0, sizeof(struct rtp_decode_av1_obu_t) * unpacker->obu.cap);
+	if (unpacker->obu.cap > 0)
+		memset(unpacker->obu.arr, 0, sizeof(struct rtp_decode_av1_obu_t) * unpacker->obu.cap);
 	return r;
 }
 
