@@ -9229,7 +9229,7 @@ void test_hls_module_lifecycle()
 
     streams.remove(*first);
     const auto detached_playlist = hls::playlist("live/hls", application_config);
-    require(detached_playlist.has_value(), "hls output survives registry removal before source end");
+    require(detached_playlist.has_value(), "hls segmenter survives registry removal before source end");
 
     io.restart();
     boost::asio::post(io, [first]() { first->end(); });

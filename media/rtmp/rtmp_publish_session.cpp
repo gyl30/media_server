@@ -59,7 +59,7 @@ bool rtmp_publish_session::startup()
             {
                 return;
             }
-            spdlog::warn("rtmp input initial tracks timeout stream {}", self->stream_name_);
+            spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_name_);
             self->shutdown_handler_();
         });
     return true;
@@ -165,7 +165,7 @@ int rtmp_publish_session::handle_video_config(int codec, std::span<const std::ui
     const auto video_codec = codec == FLV_VIDEO_AVCC ? codec_id::h264 : codec_id::h265;
     if (initial_video_track_ && initial_video_track_->codec != video_codec)
     {
-        spdlog::warn("rtmp input video codec change {} {}", to_string(initial_video_track_->codec), to_string(video_codec));
+        spdlog::warn("rtmp publish video codec change {} {}", to_string(initial_video_track_->codec), to_string(video_codec));
         return -1;
     }
 
@@ -191,7 +191,7 @@ int rtmp_publish_session::handle_video_config(int codec, std::span<const std::ui
     }
     if (stream_->update_track(std::move(track)))
     {
-        spdlog::info("rtmp input track video {}", to_string(video_codec));
+        spdlog::info("rtmp publish track video {}", to_string(video_codec));
     }
     return 0;
 }
@@ -205,7 +205,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
     const auto audio_codec = codec == FLV_AUDIO_ASC ? codec_id::aac : codec_id::opus;
     if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
     {
-        spdlog::warn("rtmp input audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
+        spdlog::warn("rtmp publish audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
         return -1;
     }
 
@@ -233,7 +233,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
         }
         if (stream_->update_track(std::move(track)))
         {
-            spdlog::info("rtmp input track audio aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
+            spdlog::info("rtmp publish track audio aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
         }
         return 0;
     }
@@ -273,7 +273,7 @@ int rtmp_publish_session::initialize_g711_track(int codec)
     {
         if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
         {
-            spdlog::warn("rtmp input audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
+            spdlog::warn("rtmp publish audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
             return -1;
         }
         initial_audio_track_ = media_track{
@@ -314,7 +314,7 @@ int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t>
     const auto& fixed = id == video_track_id ? initial_video_track_ : initial_audio_track_;
     if (fixed && fixed->codec != incoming_codec)
     {
-        spdlog::warn("rtmp input raw codec change {} {}", to_string(fixed->codec), to_string(incoming_codec));
+        spdlog::warn("rtmp publish raw codec change {} {}", to_string(fixed->codec), to_string(incoming_codec));
         return -1;
     }
     if (!tracks_initialized_)
@@ -398,7 +398,7 @@ void rtmp_publish_session::try_initialize_tracks()
         return;
     }
     initial_tracks_timer_.cancel();
-    spdlog::info("rtmp input tracks ready audio {}", *expected_audio_);
+    spdlog::info("rtmp publish tracks ready audio {}", *expected_audio_);
 }
 
 }    // namespace media_server

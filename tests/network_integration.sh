@@ -118,7 +118,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
 publish_pid=$!
 
 wait_log "$work_dir/server.log" 'rtmp publish live/test'
-wait_log "$work_dir/server.log" 'rtmp input tracks ready audio true'
+wait_log "$work_dir/server.log" 'rtmp publish tracks ready audio true'
 sleep 1
 
 probe_streams "$work_dir/rtsp_from_rtmp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18554/live/test'
@@ -288,18 +288,18 @@ if grep -Fq 'rtsp av1 transcode failed' "$work_dir/av1_server.log"; then
 fi
 
 cat >"$work_dir/summary.txt" <<SUMMARY
-rtmp input -> rtsp play: pass
-rtmp input -> rtmp output: pass
-rtmp input -> http-flv output: pass
-rtmp input -> hls output: pass
+rtmp publish -> rtsp play: pass
+rtmp publish -> rtmp play: pass
+rtmp publish -> http-flv streamer: pass
+rtmp publish -> hls segmenter: pass
 rtsp pull -> rtsp play: pass
-rtsp pull -> rtmp output: pass
-rtsp pull -> http-flv output: pass
-rtsp pull -> hls output: pass
-rtsp publish tcp -> rtsp/rtmp/http-flv/hls outputs: pass
-rtsp publish udp -> rtsp/rtmp/http-flv/hls outputs: pass
-rtsp publish udp restart -> rtsp/rtmp/http-flv/hls outputs: pass
-rtmp input -> rtsp av1 play: pass
+rtsp pull -> rtmp play: pass
+rtsp pull -> http-flv streamer: pass
+rtsp pull -> hls segmenter: pass
+rtsp publish tcp -> rtsp play/rtmp play/http-flv streamer/hls segmenter: pass
+rtsp publish udp -> rtsp play/rtmp play/http-flv streamer/hls segmenter: pass
+rtsp publish udp restart -> rtsp play/rtmp play/http-flv streamer/hls segmenter: pass
+rtmp publish -> rtsp av1 play: pass
 rtsp pull -> rtsp av1 play: pass
 rtsp publish tcp -> rtsp av1 play: pass
 rtsp publish udp -> rtsp av1 play: pass
