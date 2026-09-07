@@ -11,10 +11,10 @@
 namespace media_server
 {
 
-[[nodiscard]] std::optional<gb28181_input_config> parse_gb28181_input_config(std::string_view body);
-[[nodiscard]] std::optional<gb28181_output_config> parse_gb28181_output_config(std::string_view body);
-[[nodiscard]] std::optional<std::string> parse_gb28181_input_delete(std::string_view body);
-[[nodiscard]] std::optional<std::pair<std::string, std::string>> parse_gb28181_output_delete(std::string_view body);
+[[nodiscard]] std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body);
+[[nodiscard]] std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body);
+[[nodiscard]] std::optional<std::string> parse_gb28181_receiver_delete(std::string_view body);
+[[nodiscard]] std::optional<std::pair<std::string, std::string>> parse_gb28181_sender_delete(std::string_view body);
 
 }    // namespace media_server
 

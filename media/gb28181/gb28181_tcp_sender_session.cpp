@@ -11,23 +11,23 @@
 #include <boost/asio/post.hpp>
 
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_output_media.h"
+#include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/net/worker_context.h"
-#include "media/gb28181/gb28181_tcp_output_session.h"
+#include "media/gb28181/gb28181_tcp_sender_session.h"
 
 namespace media_server
 {
-gb28181_tcp_output_session::gb28181_tcp_output_session(worker_context& worker,
+gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
                                                        std::weak_ptr<media_stream> stream,
                                                        std::string stream_name,
-                                                       std::string output_id,
+                                                       std::string sender_id,
                                                        gb28181_description description,
                                                        std::chrono::milliseconds establishment_timeout,
                                                        std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
-      output_id_(std::move(output_id)),
+      sender_id_(std::move(sender_id)),
       description_(std::move(description)),
       establishment_timeout_(establishment_timeout),
       max_write_queue_bytes_(max_write_queue_bytes),
@@ -35,7 +35,7 @@ gb28181_tcp_output_session::gb28181_tcp_output_session(worker_context& worker,
 {
 }
 
-bool gb28181_tcp_output_session::startup()
+bool gb28181_tcp_sender_session::startup()
 {
     if (description_.transport == gb28181_transport::tcp_passive)
     {
@@ -44,9 +44,9 @@ bool gb28181_tcp_output_session::startup()
         listener_->startup(error);
         if (error)
         {
-            spdlog::error("gb28181 tcp output listener startup failed stream {} output {} error {}",
+            spdlog::error("gb28181 tcp sender listener startup failed stream {} sender {} error {}",
                           stream_name_,
-                          output_id_,
+                          sender_id_,
                           error.message());
             listener_.reset();
             return false;
@@ -58,7 +58,7 @@ bool gb28181_tcp_output_session::startup()
     return true;
 }
 
-void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
+void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
 {
     boost::system::error_code error;
     if (description_.transport == gb28181_transport::tcp_passive)
@@ -81,7 +81,7 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
     {
         if (error != boost::asio::error::operation_aborted)
         {
-            spdlog::warn("gb28181 tcp output establishment failed stream {} output {} error {}", stream_name_, output_id_, error.message());
+            spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_name_, sender_id_, error.message());
         }
         shutdown();
         return;
@@ -96,7 +96,7 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
 
     transport_ = std::make_unique<tcp_yield_transport>(std::move(socket_));
     const auto weak = weak_from_this();
-    media_ = std::make_shared<gb28181_output_media>(
+    sender_ = std::make_shared<gb28181_rtp_sender>(
         worker_,
         stream,
         description_.payload_type,
@@ -115,13 +115,13 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
                 session->shutdown();
             }
         });
-    if (!media_->startup())
+    if (!sender_->startup())
     {
         shutdown();
         return;
     }
 
-    spdlog::info("gb28181 tcp output started stream {} output {}", stream_name_, output_id_);
+    spdlog::info("gb28181 tcp sender started stream {} sender {}", stream_name_, sender_id_);
 
     std::vector<std::uint8_t> buffer(64 * 1024);
     for (;;)
@@ -136,13 +136,13 @@ void gb28181_tcp_output_session::run(boost::asio::yield_context yield)
     shutdown();
 }
 
-void gb28181_tcp_output_session::shutdown()
+void gb28181_tcp_sender_session::shutdown()
 {
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
+void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
@@ -165,7 +165,7 @@ void gb28181_tcp_output_session::run_write(boost::asio::yield_context yield)
     }
 }
 
-void gb28181_tcp_output_session::send_packet(std::vector<std::uint8_t> packet)
+void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
     if (!transport_)
     {
@@ -200,14 +200,14 @@ void gb28181_tcp_output_session::send_packet(std::vector<std::uint8_t> packet)
     }
 }
 
-void gb28181_tcp_output_session::safe_shutdown()
+void gb28181_tcp_sender_session::safe_shutdown()
 {
     if (closed_)
     {
         return;
     }
     closed_ = true;
-    registry::instance().remove_output_session(stream_name_, output_id_, *this);
+    registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
     if (listener_)
     {
         listener_->shutdown();
@@ -215,16 +215,16 @@ void gb28181_tcp_output_session::safe_shutdown()
     boost::system::error_code error;
     socket_.cancel(error);
     socket_.close(error);
-    if (media_)
+    if (sender_)
     {
-        media_->shutdown();
-        media_.reset();
+        sender_->shutdown();
+        sender_.reset();
     }
     if (transport_)
     {
         transport_->shutdown();
     }
-    spdlog::debug("gb28181 tcp output shutdown {} output {}", stream_name_, output_id_);
+    spdlog::debug("gb28181 tcp sender shutdown {} sender {}", stream_name_, sender_id_);
 }
 
 }    // namespace media_server

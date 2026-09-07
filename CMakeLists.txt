@@ -173,12 +173,12 @@ add_library(media_core STATIC
     media/http/whep_http.cpp
     media/http/http_session.cpp
     media/http/http_server.cpp
-    media/gb28181/gb28181_input_media.cpp
-    media/gb28181/gb28181_output_media.cpp
-    media/gb28181/gb28181_udp_session.cpp
-    media/gb28181/gb28181_udp_output_session.cpp
-    media/gb28181/gb28181_tcp_output_session.cpp
-    media/gb28181/gb28181_tcp_session.cpp
+    media/gb28181/gb28181_rtp_receiver.cpp
+    media/gb28181/gb28181_rtp_sender.cpp
+    media/gb28181/gb28181_udp_receiver_session.cpp
+    media/gb28181/gb28181_udp_sender_session.cpp
+    media/gb28181/gb28181_tcp_sender_session.cpp
+    media/gb28181/gb28181_tcp_receiver_session.cpp
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
     media/webrtc/stun_message.cpp
@@ -297,13 +297,13 @@ if(BUILD_TESTING)
     target_link_libraries(gb28181_udp_peer_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_udp_peer_tests COMMAND gb28181_udp_peer_tests)
 
-    add_executable(gb28181_udp_output_tests tests/gb28181_udp_output_tests.cpp)
-    target_link_libraries(gb28181_udp_output_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME gb28181_udp_output_tests COMMAND gb28181_udp_output_tests)
+    add_executable(gb28181_udp_sender_tests tests/gb28181_udp_sender_tests.cpp)
+    target_link_libraries(gb28181_udp_sender_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb28181_udp_sender_tests COMMAND gb28181_udp_sender_tests)
 
-    add_executable(gb28181_tcp_output_backpressure_tests tests/gb28181_tcp_output_backpressure_tests.cpp)
-    target_link_libraries(gb28181_tcp_output_backpressure_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME gb28181_tcp_output_backpressure_tests COMMAND gb28181_tcp_output_backpressure_tests)
+    add_executable(gb28181_tcp_sender_backpressure_tests tests/gb28181_tcp_sender_backpressure_tests.cpp)
+    target_link_libraries(gb28181_tcp_sender_backpressure_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb28181_tcp_sender_backpressure_tests COMMAND gb28181_tcp_sender_backpressure_tests)
 
     add_executable(gb28181_rtp_fixture tests/gb28181_rtp_fixture.cpp)
     target_link_libraries(gb28181_rtp_fixture PRIVATE media_core media_server_link_options)

@@ -6,7 +6,7 @@
 
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
-#include "media/gb28181/gb28181_output_media.h"
+#include "media/gb28181/gb28181_rtp_sender.h"
 
 extern "C"
 {
@@ -17,7 +17,7 @@ extern "C"
 namespace media_server
 {
 
-gb28181_output_media::gb28181_output_media(worker_context& worker,
+gb28181_rtp_sender::gb28181_rtp_sender(worker_context& worker,
                                            std::shared_ptr<media_stream> stream,
                                            std::uint8_t payload_type,
                                            std::uint32_t ssrc,
@@ -32,9 +32,9 @@ gb28181_output_media::gb28181_output_media(worker_context& worker,
 {
 }
 
-gb28181_output_media::~gb28181_output_media() = default;
+gb28181_rtp_sender::~gb28181_rtp_sender() = default;
 
-bool gb28181_output_media::supported_tracks(const std::vector<media_track>& tracks)
+bool gb28181_rtp_sender::supported_tracks(const std::vector<media_track>& tracks)
 {
     if (tracks.empty())
     {
@@ -65,7 +65,7 @@ bool gb28181_output_media::supported_tracks(const std::vector<media_track>& trac
     return video_count == 1 && audio_count <= 1;
 }
 
-bool gb28181_output_media::startup()
+bool gb28181_rtp_sender::startup()
 {
     if (!stream_ || muxer_ != nullptr || !packet_handler_ || !create_muxer(stream_->tracks()))
     {
@@ -76,13 +76,13 @@ bool gb28181_output_media::startup()
     return true;
 }
 
-void gb28181_output_media::shutdown()
+void gb28181_rtp_sender::shutdown()
 {
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void gb28181_output_media::on_tracks(media_track_snapshot_ptr tracks)
+void gb28181_rtp_sender::on_tracks(media_track_snapshot_ptr tracks)
 {
     if (!packet_handler_)
     {
@@ -92,7 +92,7 @@ void gb28181_output_media::on_tracks(media_track_snapshot_ptr tracks)
     reader_handle().async_read(reader_cursor_);
 }
 
-void gb28181_output_media::on_read(media_read_batch batch)
+void gb28181_rtp_sender::on_read(media_read_batch batch)
 {
     if (!packet_handler_)
     {
@@ -128,7 +128,7 @@ void gb28181_output_media::on_read(media_read_batch batch)
                                              entry.frame.key_frame ? 1 : 0);
         if (result < 0)
         {
-            spdlog::error("gb28181 output mux failed stream {} result {}", stream_->name(), result);
+            spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
             if (end_handler_)
             {
                 end_handler_();
@@ -147,7 +147,7 @@ void gb28181_output_media::on_read(media_read_batch batch)
     }
 }
 
-void gb28181_output_media::on_end()
+void gb28181_rtp_sender::on_end()
 {
     if (end_handler_)
     {
@@ -155,12 +155,12 @@ void gb28181_output_media::on_end()
     }
 }
 
-int gb28181_output_media::muxer_packet_callback(void* param, int, const void* data, int bytes, std::uint32_t, int)
+int gb28181_rtp_sender::muxer_packet_callback(void* param, int, const void* data, int bytes, std::uint32_t, int)
 {
-    return static_cast<gb28181_output_media*>(param)->on_muxer_packet(data, bytes);
+    return static_cast<gb28181_rtp_sender*>(param)->on_muxer_packet(data, bytes);
 }
 
-void gb28181_output_media::safe_shutdown()
+void gb28181_rtp_sender::safe_shutdown()
 {
     if (!stream_)
     {
@@ -182,14 +182,14 @@ void gb28181_output_media::safe_shutdown()
     }
 }
 
-bool gb28181_output_media::create_muxer(const std::vector<media_track>& tracks)
+bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
 {
     if (!supported_tracks(tracks))
     {
         return false;
     }
 
-    muxer_ = rtsp_muxer_create(&gb28181_output_media::muxer_packet_callback, this);
+    muxer_ = rtsp_muxer_create(&gb28181_rtp_sender::muxer_packet_callback, this);
     if (muxer_ == nullptr)
     {
         return false;
@@ -243,7 +243,7 @@ bool gb28181_output_media::create_muxer(const std::vector<media_track>& tracks)
     return true;
 }
 
-void gb28181_output_media::apply_tracks(const media_track_snapshot_ptr& tracks)
+void gb28181_rtp_sender::apply_tracks(const media_track_snapshot_ptr& tracks)
 {
     if (!tracks || tracks->revision <= track_revision_)
     {
@@ -265,7 +265,7 @@ void gb28181_output_media::apply_tracks(const media_track_snapshot_ptr& tracks)
     waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
 }
 
-int gb28181_output_media::on_muxer_packet(const void* data, int bytes)
+int gb28181_rtp_sender::on_muxer_packet(const void* data, int bytes)
 {
     if (data == nullptr || bytes <= 0 || !packet_handler_)
     {
