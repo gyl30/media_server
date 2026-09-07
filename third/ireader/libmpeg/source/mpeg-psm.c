@@ -252,7 +252,8 @@ size_t psm_write(const struct psm_t *psm, uint8_t *data)
 		// elementary_stream_info_length:16
 		nbo_w16(data+j, psm->streams[i].esinfo_len);
 		// descriptor()
-		memcpy(data+j+2, psm->streams[i].esinfo, psm->streams[i].esinfo_len);
+		if (psm->streams[i].esinfo_len > 0)
+			memcpy(data+j+2, psm->streams[i].esinfo, psm->streams[i].esinfo_len);
 
 		j += 2 + psm->streams[i].esinfo_len;
 	}
