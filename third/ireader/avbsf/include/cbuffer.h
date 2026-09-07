@@ -69,6 +69,8 @@ static inline int cbuffer_insert(struct cbuffer_t* cb, size_t off, const void* d
 {
 	if (off > cb->len)
 		return -1;
+	if (0 == bytes)
+		return (int)cb->len;
 
 	if (cb->len + bytes > cb->cap && 0 != cbuffer_resize(cb, cb->len + bytes))
 		return -1;
