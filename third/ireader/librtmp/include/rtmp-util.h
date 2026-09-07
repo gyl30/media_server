@@ -36,7 +36,7 @@ static inline void be_read_uint24(const uint8_t* ptr, uint32_t* val)
 
 static inline void be_read_uint32(const uint8_t* ptr, uint32_t* val)
 {
-	*val = (ptr[0] << 24) | (ptr[1] << 16) | (ptr[2] << 8) | ptr[3];
+	*val = ((uint32_t)ptr[0] << 24) | ((uint32_t)ptr[1] << 16) | ((uint32_t)ptr[2] << 8) | ptr[3];
 }
 
 static inline void le_write_uint32(uint8_t* ptr, uint32_t val)
@@ -49,7 +49,7 @@ static inline void le_write_uint32(uint8_t* ptr, uint32_t val)
 
 static inline void le_read_uint32(const uint8_t* ptr, uint32_t* val)
 {
-	*val = ptr[0] | (ptr[1] << 8) | (ptr[2] << 16) | (ptr[3] << 24);
+	*val = ptr[0] | ((uint32_t)ptr[1] << 8) | ((uint32_t)ptr[2] << 16) | ((uint32_t)ptr[3] << 24);
 }
 
 #endif /* !_rtmp_util_h_ */
