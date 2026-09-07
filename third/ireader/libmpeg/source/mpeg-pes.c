@@ -177,20 +177,20 @@ size_t pes_write_header(const struct pes_t *pes, uint8_t* data, size_t bytes)
 
 	if(flags & 0x80)
 	{
-		*p++ = ((flags >> 2) & 0x30)/* 0011/0010 */ | (((pes->pts >> 30) & 0x07) << 1) /* PTS 30-32 */ | 0x01 /* marker_bit */;
-		*p++ = (pes->pts >> 22) & 0xFF; /* PTS 22-29 */
-		*p++ = ((pes->pts >> 14) & 0xFE) /* PTS 15-21 */ | 0x01 /* marker_bit */;
-		*p++ = (pes->pts >> 7) & 0xFF; /* PTS 7-14 */
-		*p++ = ((pes->pts << 1) & 0xFE) /* PTS 0-6 */ | 0x01 /* marker_bit */;
+		*p++ = ((flags >> 2) & 0x30)/* 0011/0010 */ | ((((uint64_t)pes->pts >> 30) & 0x07) << 1) /* PTS 30-32 */ | 0x01 /* marker_bit */;
+		*p++ = ((uint64_t)pes->pts >> 22) & 0xFF; /* PTS 22-29 */
+		*p++ = (((uint64_t)pes->pts >> 14) & 0xFE) /* PTS 15-21 */ | 0x01 /* marker_bit */;
+		*p++ = ((uint64_t)pes->pts >> 7) & 0xFF; /* PTS 7-14 */
+		*p++ = (((uint64_t)pes->pts << 1) & 0xFE) /* PTS 0-6 */ | 0x01 /* marker_bit */;
 	}
 
 	if(flags & 0x40)
 	{
-		*p++ = 0x10 /* 0001 */ | (((pes->dts >> 30) & 0x07) << 1) /* DTS 30-32 */ | 0x01 /* marker_bit */;
-		*p++ = (pes->dts >> 22) & 0xFF; /* DTS 22-29 */
-		*p++ = ((pes->dts >> 14) & 0xFE) /* DTS 15-21 */ | 0x01 /* marker_bit */;
-		*p++ = (pes->dts >> 7) & 0xFF; /* DTS 7-14 */
-		*p++ = ((pes->dts << 1) & 0xFE) /* DTS 0-6 */ | 0x01 /* marker_bit */;
+		*p++ = 0x10 /* 0001 */ | ((((uint64_t)pes->dts >> 30) & 0x07) << 1) /* DTS 30-32 */ | 0x01 /* marker_bit */;
+		*p++ = ((uint64_t)pes->dts >> 22) & 0xFF; /* DTS 22-29 */
+		*p++ = (((uint64_t)pes->dts >> 14) & 0xFE) /* DTS 15-21 */ | 0x01 /* marker_bit */;
+		*p++ = ((uint64_t)pes->dts >> 7) & 0xFF; /* DTS 7-14 */
+		*p++ = (((uint64_t)pes->dts << 1) & 0xFE) /* DTS 0-6 */ | 0x01 /* marker_bit */;
 	}
 
 	return p - data;
