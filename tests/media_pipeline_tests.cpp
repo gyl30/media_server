@@ -9184,6 +9184,188 @@ void test_hls_av1_fmp4_segmenter()
             "hls ended segmenter ignores late track update");
 }
 
+void test_hls_unfinished_segment_limits()
+{
+    enum class limit
+    {
+        payload_bytes,
+        sample_count,
+        fragment_bytes,
+    };
+    const auto source = make_video_transcoder_fixture(codec_id::h264);
+    for (const auto codec : {video_transcode_codec::passthrough, video_transcode_codec::av1})
+    {
+        for (const auto bound : {limit::payload_bytes, limit::sample_count, limit::fragment_bytes})
+        {
+            if (bound != limit::payload_bytes && codec == video_transcode_codec::passthrough)
+            {
+                continue;
+            }
+            for (const bool recover : {false, true})
+            {
+                if (bound == limit::fragment_bytes && recover)
+                {
+                    continue;
+                }
+                hls_segmenter segmenter(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {.codec = codec}});
+                auto video = make_video_track();
+                video.codec_config = source.codec_config;
+                segmenter.on_track(video);
+                segmenter.on_track(make_audio_track());
+                for (auto frame : source.frames)
+                {
+                    frame.pts_ns -= 5'000'000'000;
+                    frame.dts_ns -= 5'000'000'000;
+                    segmenter.on_frame(frame);
+                }
+                segmenter.on_frame(make_audio_frame(20'000'000));
+                for (auto frame : source.frames)
+                {
+                    frame.pts_ns -= 4'000'000'000;
+                    frame.dts_ns -= 4'000'000'000;
+                    segmenter.on_frame(frame);
+                }
+                require(segmenter.segment_count() == 1U, "hls limit fixture completes first segment");
+                const auto retained = segmenter.segment(0);
+                const auto retained_init = segmenter.init_segment();
+
+                auto audio = make_audio_frame(1'020'000'000);
+                if (bound != limit::sample_count)
+                {
+                    audio.payload =
+                        std::make_shared<const std::vector<std::uint8_t>>(make_adts_frame(aac_asc, std::vector<std::uint8_t>(2048, 0x55)));
+                }
+                require(audio.payload && !audio.payload->empty(), "hls limit fixture has valid adts framing");
+                const int input_sample_count = bound == limit::sample_count ? 65'537 : (bound == limit::fragment_bytes ? 8191 : 8193);
+                for (int index = 0; index < input_sample_count; ++index)
+                {
+                    // 相同时间戳也必须受内存限制，不能只依赖 segment 时长。
+                    segmenter.on_frame(audio);
+                }
+                require(segmenter.segment(0) == retained, "hls overflow preserves completed window");
+                require(segmenter.init_segment() == retained_init, "hls overflow preserves completed init segment");
+
+                audio = make_audio_frame(2'020'000'000);
+                segmenter.on_frame(audio);
+                auto delta = source.frames[1];
+                delta.pts_ns = delta.dts_ns = 2'040'000'000;
+                segmenter.on_frame(delta);
+                if (recover)
+                {
+                    for (auto frame : source.frames)
+                    {
+                        frame.pts_ns -= 2'000'000'000;
+                        frame.dts_ns -= 2'000'000'000;
+                        segmenter.on_frame(frame);
+                    }
+                    segmenter.on_frame(make_audio_frame(3'020'000'000));
+                }
+                segmenter.on_end();
+                segmenter.on_end();
+                require(segmenter.segment_count() == (recover ? 2U : 1U), "hls overflow never commits unfinished segment on end");
+                require(segmenter.segment(0) == retained, "hls recovered stream preserves completed window");
+                if (!recover)
+                {
+                    require(!segmenter.segment(1), "hls overflow waits for natural keyframe until end");
+                    continue;
+                }
+
+                const auto recovered = segmenter.segment(1);
+                require(recovered && recovered->size() < 16U * 1024U * 1024U, "hls recovery commits a bounded fresh segment");
+                if (codec == video_transcode_codec::passthrough)
+                {
+                    const auto capture = demux_ts_segment(*recovered);
+                    require(std::ranges::all_of(capture.packets, [](const demuxed_packet& packet) { return packet.pts >= 270'000; }),
+                            "hls recovered ts excludes discarded media");
+                    require(std::ranges::any_of(
+                                capture.packets,
+                                [](const demuxed_packet& packet)
+                                { return packet.codec == PSI_STREAM_H264 && packet.pts == 270'000 && (packet.flags & MPEG_FLAG_IDR_FRAME) != 0; }),
+                            "hls recovered ts begins with natural keyframe");
+                    require(std::ranges::any_of(capture.packets,
+                                                [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC && packet.pts == 271'800; }),
+                            "hls recovered ts resumes audio after keyframe");
+                    continue;
+                }
+
+                const auto init = segmenter.init_segment();
+                require(init && !init->empty(), "hls recovered fmp4 has init segment");
+                struct memory_reader
+                {
+                    std::vector<std::uint8_t> data;
+                    std::size_t position{};
+                } memory{.data = *init};
+                memory.data.insert(memory.data.end(), recovered->begin(), recovered->end());
+                const mov_buffer_t buffer{
+                    .read = [](void* param, void* data, std::uint64_t bytes) -> int
+                    {
+                        auto& input = *static_cast<memory_reader*>(param);
+                        if (bytes > input.data.size() - input.position)
+                        {
+                            return -1;
+                        }
+                        std::memcpy(data, input.data.data() + input.position, static_cast<std::size_t>(bytes));
+                        input.position += static_cast<std::size_t>(bytes);
+                        return 0;
+                    },
+                    .write = nullptr,
+                    .seek = [](void* param, std::int64_t offset) -> int
+                    {
+                        auto& input = *static_cast<memory_reader*>(param);
+                        const auto position = offset >= 0 ? offset : static_cast<std::int64_t>(input.data.size()) + offset;
+                        if (position < 0 || static_cast<std::uint64_t>(position) > input.data.size())
+                        {
+                            return -1;
+                        }
+                        input.position = static_cast<std::size_t>(position);
+                        return 0;
+                    },
+                    .tell = [](void* param) -> std::int64_t { return static_cast<std::int64_t>(static_cast<memory_reader*>(param)->position); },
+                };
+                auto reader = std::unique_ptr<mov_reader_t, decltype(&mov_reader_destroy)>(mov_reader_create(&buffer, &memory), &mov_reader_destroy);
+                require(reader != nullptr, "hls recovered fmp4 parses");
+                struct sample_capture
+                {
+                    std::uint32_t video_track{};
+                    std::uint32_t audio_track{};
+                    int count{};
+                    bool key{};
+                    bool audio{};
+                    bool old_sample{};
+                } capture;
+                mov_reader_trackinfo_t track_info{
+                    .onvideo = [](void* param, std::uint32_t track, std::uint8_t, int, int, const void*, std::size_t)
+                    { static_cast<sample_capture*>(param)->video_track = track; },
+                    .onaudio = [](void* param, std::uint32_t track, std::uint8_t, int, int, int, const void*, std::size_t)
+                    { static_cast<sample_capture*>(param)->audio_track = track; },
+                    .onsubtitle = nullptr,
+                };
+                require(mov_reader_getinfo(reader.get(), &track_info, &capture) == 0 && capture.video_track != 0 && capture.audio_track != 0,
+                        "hls recovered fmp4 retains video and audio tracks");
+                std::array<std::uint8_t, 65536> data{};
+                int result;
+                while ((result = mov_reader_read(
+                            reader.get(),
+                            data.data(),
+                            data.size(),
+                            [](void* param, std::uint32_t track, const void*, std::size_t, std::int64_t pts, std::int64_t, int flags)
+                            {
+                                auto& samples = *static_cast<sample_capture*>(param);
+                                ++samples.count;
+                                samples.key = samples.key || (track == samples.video_track && pts == 3000 && (flags & MOV_AV_FLAG_KEYFREAME) != 0);
+                                samples.audio = samples.audio || (track == samples.audio_track && pts == 3000);
+                                samples.old_sample = samples.old_sample || pts < 3000;
+                            },
+                            &capture)) > 0)
+                {
+                }
+                require(result == 0 && capture.count > 1 && capture.key && capture.audio && !capture.old_sample,
+                        "hls recovered fmp4 contains only natural keyframe and following audio");
+            }
+        }
+    }
+}
+
 void test_hls_g711_segmenter()
 {
     for (const auto codec : {codec_id::g711a, codec_id::g711u})
@@ -10011,6 +10193,8 @@ int main()
     std::cout << "[pass] hls_segmenter\n";
     media_server::test_hls_av1_fmp4_segmenter();
     std::cout << "[pass] hls_av1_fmp4_segmenter\n";
+    media_server::test_hls_unfinished_segment_limits();
+    std::cout << "[pass] hls_unfinished_segment_limits\n";
     media_server::test_hls_g711_segmenter();
     std::cout << "[pass] hls_g711_segmenter\n";
     media_server::test_hls_module_lifecycle();

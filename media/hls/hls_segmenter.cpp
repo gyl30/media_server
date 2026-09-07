@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cerrno>
 #include <limits>
 #include <cstdlib>
 #include <cstring>
@@ -22,6 +23,11 @@ extern "C"
 
 namespace media_server
 {
+namespace
+{
+constexpr std::size_t max_segment_bytes = 16U * 1024U * 1024U;
+constexpr std::size_t max_fmp4_samples = 65'536;
+}    // namespace
 
 hls_segmenter::hls_segmenter(hls_config config)
     : video_config_(config.video), target_duration_seconds_(config.target_duration_seconds), window_size_(config.window_size)
@@ -146,6 +152,11 @@ void hls_segmenter::on_frame(const media_frame& frame)
 
     if (result != 0)
     {
+        if (result == -ENOBUFS)
+        {
+            discard_segment();
+            return;
+        }
         spdlog::error("hls ts write failed track {} result {}", frame.track, result);
     }
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
@@ -265,6 +276,10 @@ void hls_segmenter::ts_free(void*, void* packet) { std::free(packet); }
 int hls_segmenter::ts_write(void* param, const void* packet, std::size_t bytes)
 {
     auto* self = static_cast<hls_segmenter*>(param);
+    if (bytes > max_segment_bytes - self->current_segment_.size())
+    {
+        return -ENOBUFS;
+    }
     const auto* begin = static_cast<const std::uint8_t*>(packet);
     self->current_segment_.insert(self->current_segment_.end(), begin, begin + bytes);
     return 0;
@@ -285,11 +300,21 @@ int hls_segmenter::mov_read(void* param, void* data, std::uint64_t bytes)
 int hls_segmenter::mov_write(void* param, const void* data, std::uint64_t bytes)
 {
     auto* self = static_cast<hls_segmenter*>(param);
-    if (self->mov_target_ == nullptr || bytes > std::numeric_limits<std::size_t>::max() - self->mov_position_)
+    if (bytes > std::numeric_limits<std::size_t>::max() - self->mov_position_)
     {
         return -1;
     }
     const auto size = self->mov_position_ + static_cast<std::size_t>(bytes);
+    if (self->mov_target_ == &self->current_segment_ && size > max_segment_bytes)
+    {
+        // 继续让 writer 释放 sample，但不再保存这个超限 fragment。
+        self->mov_target_ = nullptr;
+    }
+    if (self->mov_target_ == nullptr)
+    {
+        self->mov_position_ = size;
+        return 0;
+    }
     if (self->mov_target_->size() < size)
     {
         self->mov_target_->resize(size);
@@ -302,11 +327,12 @@ int hls_segmenter::mov_write(void* param, const void* data, std::uint64_t bytes)
 int hls_segmenter::mov_seek(void* param, std::int64_t offset)
 {
     auto* self = static_cast<hls_segmenter*>(param);
-    if (self->mov_target_ == nullptr || self->mov_target_->size() > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))
+    const auto target_size = self->mov_target_ != nullptr ? self->mov_target_->size() : self->mov_position_;
+    if (target_size > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))
     {
         return -1;
     }
-    const auto size = static_cast<std::int64_t>(self->mov_target_->size());
+    const auto size = static_cast<std::int64_t>(target_size);
     const auto position = offset >= 0 ? offset : size + offset;
     if (position < 0 || static_cast<std::uint64_t>(position) > std::numeric_limits<std::size_t>::max())
     {
@@ -325,11 +351,15 @@ std::int64_t hls_segmenter::mov_tell(void* param)
 
 void hls_segmenter::reset_fmp4(bool clear_segments, bool clear_video_config)
 {
+    // destroy 会 flush；reset 必须先断开输出，丢弃未完成 sample。
+    mov_target_ = nullptr;
     if (fmp4_ != nullptr)
     {
         fmp4_writer_destroy(fmp4_);
         fmp4_ = nullptr;
     }
+    fmp4_pending_bytes_ = 0;
+    fmp4_pending_samples_ = 0;
     fmp4_video_track_ = -1;
     fmp4_audio_track_ = -1;
     fmp4_audio_track_id_ = 0;
@@ -481,6 +511,10 @@ void hls_segmenter::input_av1(const media_frame& frame)
     for (const auto& encoded : output)
     {
         write_av1_frame(encoded);
+        if (waiting_for_key_frame_)
+        {
+            return;
+        }
     }
 }
 
@@ -499,9 +533,16 @@ void hls_segmenter::write_av1_frame(const media_frame& frame)
     const auto target_ns = static_cast<std::int64_t>(target_duration_seconds_ * 1'000'000'000.0);
     if (frame.key_frame && elapsed_ns >= target_ns)
     {
-        finish_fmp4_segment(frame.pts_ns);
+        if (!finish_fmp4_segment(frame.pts_ns))
+        {
+            return;
+        }
         segment_start_pts_ns_ = frame.pts_ns;
         segment_max_pts_ns_ = frame.pts_ns;
+    }
+    if (!reserve_fmp4_sample(frame.payload->size()))
+    {
+        return;
     }
     const auto flags = MOV_AV_FLAG_SEGMENT_DISABLE | (frame.key_frame ? MOV_AV_FLAG_KEYFREAME : 0);
     const auto result = fmp4_writer_write(fmp4_,
@@ -514,6 +555,7 @@ void hls_segmenter::write_av1_frame(const media_frame& frame)
     if (result != 0)
     {
         spdlog::error("hls av1 write failed result {}", result);
+        discard_segment();
         return;
     }
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
@@ -536,6 +578,10 @@ void hls_segmenter::input_fmp4_audio(const media_frame& frame, const media_track
     {
         return;
     }
+    if (!reserve_fmp4_sample(data.size() - header_size))
+    {
+        return;
+    }
     const auto result = fmp4_writer_write(fmp4_,
                                           fmp4_audio_track_,
                                           data.data() + header_size,
@@ -546,22 +592,38 @@ void hls_segmenter::input_fmp4_audio(const media_frame& frame, const media_track
     if (result != 0)
     {
         spdlog::error("hls fmp4 aac write failed track {} result {}", track.id, result);
+        discard_segment();
         return;
     }
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
 }
 
-void hls_segmenter::finish_fmp4_segment(std::int64_t end_pts_ns)
+bool hls_segmenter::reserve_fmp4_sample(std::size_t bytes)
+{
+    if (bytes > max_segment_bytes - fmp4_pending_bytes_ || fmp4_pending_samples_ >= max_fmp4_samples)
+    {
+        discard_segment();
+        return false;
+    }
+    fmp4_pending_bytes_ += bytes;
+    ++fmp4_pending_samples_;
+    return true;
+}
+
+bool hls_segmenter::finish_fmp4_segment(std::int64_t end_pts_ns)
 {
     if (fmp4_ == nullptr || !segment_start_pts_ns_)
     {
-        return;
+        return false;
     }
-    if (fmp4_writer_save_segment(fmp4_) != 0)
+    if (fmp4_writer_save_segment(fmp4_) != 0 || mov_target_ == nullptr)
     {
         spdlog::error("hls fmp4 segment save failed");
-        return;
+        discard_segment();
+        return false;
     }
+    fmp4_pending_bytes_ = 0;
+    fmp4_pending_samples_ = 0;
     if (!current_segment_.empty())
     {
         double duration = static_cast<double>(end_pts_ns - *segment_start_pts_ns_) / 1'000'000'000.0;
@@ -582,6 +644,32 @@ void hls_segmenter::finish_fmp4_segment(std::int64_t end_pts_ns)
     }
     mov_target_ = &current_segment_;
     mov_position_ = 0;
+    return true;
+}
+
+void hls_segmenter::discard_segment()
+{
+    spdlog::warn("hls discarding unfinished segment {}", next_sequence_);
+    if (video_config_.codec == video_transcode_codec::av1)
+    {
+        // 保存到丢弃出口以释放 sample，保留 writer 的时间线和已发布 init。
+        mov_target_ = nullptr;
+        mov_position_ = 0;
+        static_cast<void>(fmp4_writer_save_segment(fmp4_));
+        fmp4_pending_bytes_ = 0;
+        fmp4_pending_samples_ = 0;
+        mov_target_ = &current_segment_;
+        mov_position_ = 0;
+        startup_video_transcoder(tracks_.at(video_track_id_));
+    }
+    else
+    {
+        recreate_muxer();
+    }
+    std::vector<std::uint8_t>().swap(current_segment_);
+    segment_start_pts_ns_.reset();
+    segment_max_pts_ns_ = 0;
+    waiting_for_key_frame_ = true;
 }
 
 void hls_segmenter::recreate_muxer()
