@@ -25,12 +25,12 @@ include(cmake/ireader.cmake)
 include(cmake/srtp.cmake)
 
 option(MEDIA_SERVER_HARDENING "Enable production compiler and linker hardening" ON)
-set(MEDIA_SERVER_SANITIZER "none" CACHE STRING "Sanitizer: none, address, thread")
-set_property(CACHE MEDIA_SERVER_SANITIZER PROPERTY STRINGS none address thread)
+set(MEDIA_SERVER_SANITIZER "none" CACHE STRING "Sanitizer: none, address, undefined, thread")
+set_property(CACHE MEDIA_SERVER_SANITIZER PROPERTY STRINGS none address undefined thread)
 
-set(media_server_sanitizers none address thread)
+set(media_server_sanitizers none address undefined thread)
 if(NOT MEDIA_SERVER_SANITIZER IN_LIST media_server_sanitizers)
-    message(FATAL_ERROR "MEDIA_SERVER_SANITIZER must be none, address, or thread")
+    message(FATAL_ERROR "MEDIA_SERVER_SANITIZER must be none, address, undefined, or thread")
 endif()
 
 add_library(media_server_build_options INTERFACE)
@@ -78,12 +78,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(media_server_optimized_config
         "$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>")
 
-    if(MEDIA_SERVER_SANITIZER STREQUAL "address")
+    if(MEDIA_SERVER_SANITIZER STREQUAL "address" OR
+       MEDIA_SERVER_SANITIZER STREQUAL "undefined")
+        if(MEDIA_SERVER_SANITIZER STREQUAL "address")
+            set(media_server_sanitizer_flags address,undefined)
+        else()
+            set(media_server_sanitizer_flags undefined)
+        endif()
         target_compile_options(media_server_build_options INTERFACE
             -U_FORTIFY_SOURCE
             -O1
             -g
-            -fsanitize=address,undefined
+            -fsanitize=${media_server_sanitizer_flags}
             -fno-sanitize-recover=all
             -fno-omit-frame-pointer
             -fno-optimize-sibling-calls
@@ -93,14 +99,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             -U_FORTIFY_SOURCE
             -O1
             -g
-            -fsanitize=address,undefined
+            -fsanitize=${media_server_sanitizer_flags}
             -fno-sanitize-recover=all
             -fno-omit-frame-pointer
             -fno-optimize-sibling-calls
             -fno-common
         )
         target_link_options(media_server_link_options INTERFACE
-            -fsanitize=address,undefined
+            -fsanitize=${media_server_sanitizer_flags}
         )
     elseif(MEDIA_SERVER_SANITIZER STREQUAL "thread")
         target_compile_options(media_server_build_options INTERFACE
