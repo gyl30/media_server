@@ -182,11 +182,13 @@ static int rtmp_handshake_create_response(uint8_t* handshake, const uint8_t* key
 static void rtmp_handshake_random(uint8_t* p, uint32_t timestamp)
 {
 	int i;
+	uint32_t value;
 	
 	srand(timestamp);
 	for (i = 0; i * 4 < RTMP_HANDSHAKE_SIZE - 8; i++)
 	{
-		*((int*)p + i) = rand();
+		value = (uint32_t)rand();
+		memcpy(p + i * 4, &value, sizeof(value));
 	}
 }
 
