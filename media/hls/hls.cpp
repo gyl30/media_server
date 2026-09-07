@@ -6,7 +6,7 @@
 #include <algorithm>
 
 #include "media/hls/hls.h"
-#include "media/hls/hls_output.h"
+#include "media/hls/hls_segmenter.h"
 #include "media/core/stream_registry.h"
 
 namespace media_server::hls
@@ -17,13 +17,13 @@ namespace
 struct entry
 {
     std::weak_ptr<media_stream> stream;
-    std::shared_ptr<hls_output> output;
+    std::shared_ptr<hls_segmenter> segmenter;
 };
 
 struct state
 {
     std::mutex mutex;
-    std::map<std::string, entry, std::less<>> outputs;
+    std::map<std::string, entry, std::less<>> segmenters;
 };
 
 state& runtime()
@@ -32,7 +32,7 @@ state& runtime()
     return value;
 }
 
-hls_config output_config(const config& application_config) { return hls_config{.video = application_config.http_video}; }
+hls_config segmenter_config(const config& application_config) { return hls_config{.video = application_config.http_video}; }
 
 std::chrono::steady_clock::duration ended_retention()
 {
@@ -42,94 +42,94 @@ std::chrono::steady_clock::duration ended_retention()
     return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
 }
 
-void remove_expired_outputs(std::chrono::steady_clock::time_point now)
+void remove_expired_segmenters(std::chrono::steady_clock::time_point now)
 {
     const auto retention = ended_retention();
-    std::erase_if(runtime().outputs,
+    std::erase_if(runtime().segmenters,
                   [now, retention](const auto& item)
                   {
-                      const auto ended_at = item.second.output->ended_at();
+                      const auto ended_at = item.second.segmenter->ended_at();
                       return ended_at && now - *ended_at >= retention;
                   });
 }
 
-std::shared_ptr<hls_output> get_or_create(std::string_view stream_name, const config& application_config)
+std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const config& application_config)
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
     const auto now = std::chrono::steady_clock::now();
-    remove_expired_outputs(now);
+    remove_expired_segmenters(now);
 
-    auto existing = current.outputs.find(stream_name);
+    auto existing = current.segmenters.find(stream_name);
     auto stream = registry::instance().find(stream_name);
     if (!stream)
     {
-        if (existing == current.outputs.end())
+        if (existing == current.segmenters.end())
         {
             return {};
         }
 
-        const auto ended_at = existing->second.output->ended_at();
+        const auto ended_at = existing->second.segmenter->ended_at();
         if (ended_at && now - *ended_at >= ended_retention())
         {
-            current.outputs.erase(existing);
+            current.segmenters.erase(existing);
             return {};
         }
-        return existing->second.output;
+        return existing->second.segmenter;
     }
 
-    if (existing != current.outputs.end())
+    if (existing != current.segmenters.end())
     {
         if (const auto current_stream = existing->second.stream.lock(); current_stream && current_stream.get() == stream.get())
         {
-            return existing->second.output;
+            return existing->second.segmenter;
         }
-        existing->second.output->on_end();
-        current.outputs.erase(existing);
+        existing->second.segmenter->on_end();
+        current.segmenters.erase(existing);
     }
 
-    auto output = std::make_shared<hls_output>(output_config(application_config));
-    stream->add_sink(output);
-    current.outputs.emplace(std::string(stream_name), entry{.stream = stream, .output = output});
-    return output;
+    auto segmenter = std::make_shared<hls_segmenter>(segmenter_config(application_config));
+    stream->add_sink(segmenter);
+    current.segmenters.emplace(std::string(stream_name), entry{.stream = stream, .segmenter = segmenter});
+    return segmenter;
 }
 
 }    // namespace
 
 std::optional<std::string> playlist(std::string_view stream_name, const config& application_config)
 {
-    const auto output = get_or_create(stream_name, application_config);
-    return output ? std::optional<std::string>(output->playlist(".")) : std::nullopt;
+    const auto segmenter = get_or_create(stream_name, application_config);
+    return segmenter ? std::optional<std::string>(segmenter->playlist(".")) : std::nullopt;
 }
 
 std::optional<std::vector<std::uint8_t>> init_segment(std::string_view stream_name, const config& application_config)
 {
-    const auto output = get_or_create(stream_name, application_config);
-    return output ? output->init_segment() : std::nullopt;
+    const auto segmenter = get_or_create(stream_name, application_config);
+    return segmenter ? segmenter->init_segment() : std::nullopt;
 }
 
 std::optional<std::vector<std::uint8_t>> segment(std::string_view stream_name, std::uint64_t sequence, const config& application_config)
 {
-    const auto output = get_or_create(stream_name, application_config);
-    return output ? output->segment(sequence) : std::nullopt;
+    const auto segmenter = get_or_create(stream_name, application_config);
+    return segmenter ? segmenter->segment(sequence) : std::nullopt;
 }
 
 std::optional<std::size_t> segment_count(std::string_view stream_name, const config& application_config)
 {
-    const auto output = get_or_create(stream_name, application_config);
-    return output ? std::optional<std::size_t>(output->segment_count()) : std::nullopt;
+    const auto segmenter = get_or_create(stream_name, application_config);
+    return segmenter ? std::optional<std::size_t>(segmenter->segment_count()) : std::nullopt;
 }
 
 void shutdown()
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
-    for (auto& [stream_name, value] : current.outputs)
+    for (auto& [stream_name, value] : current.segmenters)
     {
         static_cast<void>(stream_name);
-        value.output->on_end();
+        value.segmenter->on_end();
     }
-    current.outputs.clear();
+    current.segmenters.clear();
 }
 
 }    // namespace media_server::hls
