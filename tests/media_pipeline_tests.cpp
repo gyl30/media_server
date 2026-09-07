@@ -2595,6 +2595,7 @@ void test_gb28181_multi_sender_identity()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
+    io.restart();
     auto& streams = media_server::registry::instance();
     streams.clear();
     auto first = std::make_shared<media_stream>("live/gb-sender-first", io.get_executor());
