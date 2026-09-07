@@ -2284,13 +2284,16 @@ void test_rtmp_play_config_reset_and_end()
 
 void test_rtmp_tcp_error_lifecycle()
 {
+    for (int iteration = 0; iteration < 10; ++iteration)
     {
-        rtmp_play_test_peer peer;
-        peer.disconnect_and_wait(false);
-    }
-    {
-        rtmp_play_test_peer peer;
-        peer.disconnect_and_wait(true);
+        {
+            rtmp_play_test_peer peer;
+            peer.disconnect_and_wait(false);
+        }
+        {
+            rtmp_play_test_peer peer;
+            peer.disconnect_and_wait(true);
+        }
     }
 }
 
