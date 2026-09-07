@@ -205,10 +205,10 @@ void whep_session::safe_shutdown()
     remote_ice_ufrag_.clear();
     reader_.remove();
     reader_ = {};
-    if (output_)
+    if (packetizer_)
     {
-        output_->shutdown();
-        output_.reset();
+        packetizer_->shutdown();
+        packetizer_.reset();
     }
     pending_tracks_.clear();
     track_versions_.clear();
@@ -270,7 +270,7 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
         shutdown();
         return;
     }
-    if (output_ && !start_media_read())
+    if (packetizer_ && !start_media_read())
     {
         shutdown();
     }
@@ -278,7 +278,7 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
 
 void whep_session::on_read(media_read_batch batch)
 {
-    if (!started_ || !output_)
+    if (!started_ || !packetizer_)
     {
         return;
     }
@@ -298,7 +298,7 @@ void whep_session::on_read(media_read_batch batch)
         {
             continue;
         }
-        output_->on_frame(entry.frame);
+        packetizer_->on_frame(entry.frame);
     }
 
     if (started_)
@@ -566,8 +566,8 @@ bool whep_session::startup_media()
     }
 
     const auto weak = weak_from_this();
-    auto output = std::make_shared<webrtc_output>(
-        webrtc_output_config{
+    auto packetizer = std::make_shared<webrtc_packetizer>(
+        webrtc_packetizer_config{
             .video_codec = answer_.video_codec.value_or(codec_id::h264),
             .audio_codec = answer_.audio_codec.value_or(codec_id::aac),
             .video_payload_type = answer_.video_payload_type.value_or(-1),
@@ -596,14 +596,14 @@ bool whep_session::startup_media()
             }
         });
 
-    if (!output->valid())
+    if (!packetizer->valid())
     {
         srtp->shutdown();
         return false;
     }
 
     srtp_ = std::move(srtp);
-    output_ = std::move(output);
+    packetizer_ = std::move(packetizer);
     if (track_revision_ != 0 && !start_media_read())
     {
         return false;
@@ -617,16 +617,16 @@ bool whep_session::startup_media()
 
 bool whep_session::start_media_read()
 {
-    if (!output_ || track_revision_ == 0)
+    if (!packetizer_ || track_revision_ == 0)
     {
         return false;
     }
 
     for (const auto& track : pending_tracks_)
     {
-        output_->on_track(track);
+        packetizer_->on_track(track);
     }
-    if (!output_->valid())
+    if (!packetizer_->valid())
     {
         return false;
     }

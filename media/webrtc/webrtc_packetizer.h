@@ -1,5 +1,5 @@
-#ifndef MEDIA_WEBRTC_OUTPUT_H
-#define MEDIA_WEBRTC_OUTPUT_H
+#ifndef MEDIA_WEBRTC_PACKETIZER_H
+#define MEDIA_WEBRTC_PACKETIZER_H
 
 #include <map>
 #include <span>
@@ -17,7 +17,7 @@ struct rtsp_muxer_t;
 namespace media_server
 {
 
-struct webrtc_output_config
+struct webrtc_packetizer_config
 {
     codec_id video_codec{codec_id::h264};
     codec_id audio_codec{codec_id::aac};
@@ -33,13 +33,13 @@ struct webrtc_output_config
     std::string rtcp_cname;
 };
 
-class webrtc_output final
+class webrtc_packetizer final
 {
    public:
     using packet_handler = std::function<void(std::span<const std::uint8_t>)>;
 
-    webrtc_output(webrtc_output_config config, packet_handler rtp_handler, packet_handler rtcp_handler = {});
-    ~webrtc_output();
+    webrtc_packetizer(webrtc_packetizer_config config, packet_handler rtp_handler, packet_handler rtcp_handler = {});
+    ~webrtc_packetizer();
 
     void on_track(const media_track& track);
     void on_frame(const media_frame& frame);
@@ -71,7 +71,7 @@ class webrtc_output final
     void input_video(track_state& state, const media_frame& frame);
     void input_audio(track_state& state, const media_frame& frame);
 
-    webrtc_output_config config_;
+    webrtc_packetizer_config config_;
     packet_handler rtp_handler_;
     packet_handler rtcp_handler_;
     rtsp_muxer_t* muxer_{};
