@@ -173,7 +173,10 @@ int main()
     media_server::registry::init();
     try
     {
-        media_server::test_rtcp_scheduler_releases_after_shutdown();
+        for (int iteration = 0; iteration < 10; ++iteration)
+        {
+            media_server::test_rtcp_scheduler_releases_after_shutdown();
+        }
         media_server::registry::destroy();
         media_server::port_manager::destroy();
         std::cout << "[pass] rtsp_publish_udp_rtcp_scheduler_shutdown\n";
