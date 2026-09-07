@@ -31,7 +31,8 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
                                std::weak_ptr<media_stream> stream,
                                std::string stream_name,
                                std::string sender_id,
-                               gb28181_description description,
+                               gb28181_transport_config config,
+                               boost::asio::ip::address bind_address,
                                std::chrono::milliseconds establishment_timeout,
                                std::size_t max_write_queue_bytes = 1024U * 1024U);
 
@@ -48,7 +49,8 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     std::weak_ptr<media_stream> stream_;
     std::string stream_name_;
     std::string sender_id_;
-    gb28181_description description_;
+    gb28181_transport_config config_;
+    boost::asio::ip::address bind_address_;
     std::chrono::milliseconds establishment_timeout_{};
     std::size_t max_write_queue_bytes_;
     boost::asio::ip::tcp::socket socket_;

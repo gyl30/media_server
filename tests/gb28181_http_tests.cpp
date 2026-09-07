@@ -51,7 +51,7 @@ gb28181_http_response receiver_request(worker_context& worker, gb28181_http_requ
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "receiver request target");
-    return handle_gb28181_receiver_request(request, worker, *target);
+    return handle_gb28181_receiver_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
 }
 
 gb28181_http_response sender_request(worker_context& worker, gb28181_http_request request)
@@ -82,11 +82,10 @@ void test_receiver_handlers()
     boost::json::object create_body;
     create_body["stream_name"] = "live/http-handler-receiver";
     create_body["transport"] = "udp";
-    create_body["address"] = "127.0.0.1";
     create_body["payload_type"] = 96;
     create_body["ssrc"] = 100;
 
-    const auto create_response = receiver_request(worker, request("/gb28181/create", create_body));
+    const auto create_response = receiver_request(worker, request("/gb28181/receiver/create", create_body));
     require(create_response.result() == boost::beast::http::status::created, "receiver create response status");
     const auto create_result = boost::json::parse(create_response.body()).as_object();
     require(create_result.at("result").as_string() == "ok", "receiver create response result");
@@ -109,16 +108,16 @@ void test_receiver_handlers()
     other_address_probe.bind({boost::asio::ip::make_address_v4("127.0.0.2"), rtp_port}, bind_error);
     require(!bind_error, "receiver create only binds configured local address");
 
-    const auto duplicate_response = receiver_request(worker, request("/gb28181/create", create_body));
+    const auto duplicate_response = receiver_request(worker, request("/gb28181/receiver/create", create_body));
     require_json_response(
         duplicate_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "receiver create failure response");
 
     boost::json::object delete_body;
     delete_body["stream_name"] = "live/http-handler-receiver";
-    const auto delete_response = receiver_request(worker, request("/gb28181/delete", delete_body));
+    const auto delete_response = receiver_request(worker, request("/gb28181/receiver/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "receiver delete response");
 
-    const auto closing_response = receiver_request(worker, request("/gb28181/delete", delete_body));
+    const auto closing_response = receiver_request(worker, request("/gb28181/receiver/delete", delete_body));
     require_json_response(closing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
@@ -130,7 +129,7 @@ void test_receiver_handlers()
     require(released && released->first == rtp_port && released->second == rtcp_port, "receiver delete releases returned port pair");
     port_manager::instance().release(*released);
 
-    const auto missing_response = receiver_request(worker, request("/gb28181/delete", delete_body));
+    const auto missing_response = receiver_request(worker, request("/gb28181/receiver/delete", delete_body));
     require_json_response(missing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
@@ -151,29 +150,27 @@ void test_sender_handlers()
 
     boost::json::object create_body;
     create_body["stream_name"] = stream->name();
-    create_body["output_id"] = "primary";
+    create_body["sender_id"] = "primary";
     create_body["transport"] = "udp";
-    create_body["address"] = "127.0.0.1";
-    create_body["rtp_port"] = 32000;
-    create_body["rtcp_port"] = 32001;
+    create_body["remote_address"] = "127.0.0.1";
+    create_body["remote_rtp_port"] = 32000;
     create_body["payload_type"] = 96;
     create_body["ssrc"] = 101;
-    create_body["rtcp"] = false;
 
-    const auto create_response = sender_request(worker, request("/play/gb28181/create", create_body));
+    const auto create_response = sender_request(worker, request("/gb28181/sender/create", create_body));
     require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "sender create response");
 
-    const auto duplicate_response = sender_request(worker, request("/play/gb28181/create", create_body));
+    const auto duplicate_response = sender_request(worker, request("/gb28181/sender/create", create_body));
     require_json_response(
         duplicate_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "sender create failure response");
 
     boost::json::object delete_body;
     delete_body["stream_name"] = stream->name();
-    delete_body["output_id"] = "primary";
-    const auto delete_response = sender_request(worker, request("/play/gb28181/delete", delete_body));
+    delete_body["sender_id"] = "primary";
+    const auto delete_response = sender_request(worker, request("/gb28181/sender/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "sender delete response");
 
-    const auto closing_response = sender_request(worker, request("/play/gb28181/delete", delete_body));
+    const auto closing_response = sender_request(worker, request("/gb28181/sender/delete", delete_body));
     require_json_response(closing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
@@ -181,7 +178,7 @@ void test_sender_handlers()
     io.run();
     io.restart();
 
-    const auto missing_response = sender_request(worker, request("/play/gb28181/delete", delete_body));
+    const auto missing_response = sender_request(worker, request("/gb28181/sender/delete", delete_body));
     require_json_response(missing_response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
@@ -194,10 +191,10 @@ void test_request_namespace_dispatch()
     worker_context worker;
     worker.release_work();
 
-    const auto receiver_response = receiver_request(worker, request("/gb28181/missing", {}));
+    const auto receiver_response = receiver_request(worker, request("/gb28181/receiver/missing", {}));
     require_json_response(receiver_response, boost::beast::http::status::not_found, R"({"error":"not_found"})", "receiver request route");
 
-    const auto sender_response = sender_request(worker, request("/play/gb28181/missing", {}));
+    const auto sender_response = sender_request(worker, request("/gb28181/sender/missing", {}));
     require_json_response(sender_response, boost::beast::http::status::not_found, R"({"error":"not_found"})", "sender request route");
 }
 

@@ -24,7 +24,8 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
    public:
     gb28181_tcp_receiver_session(worker_context& worker,
                         std::string stream_name,
-                        gb28181_description description,
+                        gb28181_transport_config config,
+                        boost::asio::ip::address bind_address,
                         std::chrono::milliseconds establishment_timeout);
 
     [[nodiscard]] bool startup();
@@ -38,7 +39,8 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
 
     worker_context& worker_;
     std::string stream_name_;
-    gb28181_description description_;
+    gb28181_transport_config config_;
+    boost::asio::ip::address bind_address_;
     gb28181_rtp_receiver receiver_;
     std::chrono::milliseconds establishment_timeout_{};
     boost::asio::ip::tcp::socket socket_;

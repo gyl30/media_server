@@ -63,7 +63,7 @@ wait_probe_streams() {
     return 1
 }
 
-post_gb28181_input() {
+post_gb28181_receiver() {
     local name="$1"
     local body="$2"
     local response="$work_dir/${name}.response"
@@ -72,9 +72,9 @@ post_gb28181_input() {
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
-        "http://${server_address}:${http_port}/gb28181/create")"
+        "http://${server_address}:${http_port}/gb28181/receiver/create")"
     if [[ "$code" != "201" ]]; then
-        echo "POST /gb28181/create returned $code" >&2
+        echo "POST /gb28181/receiver/create returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
@@ -95,7 +95,7 @@ print(rtp_port, rtcp_port)
 PY
 }
 
-post_gb28181_output() {
+post_gb28181_sender() {
     local name="$1"
     local body="$2"
     local response="$work_dir/${name}.response"
@@ -104,9 +104,9 @@ post_gb28181_output() {
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
-        "http://${server_address}:${http_port}/play/gb28181/create")"
+        "http://${server_address}:${http_port}/gb28181/sender/create")"
     if [[ "$code" != "201" ]]; then
-        echo "POST /play/gb28181/create returned $code" >&2
+        echo "POST /gb28181/sender/create returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
@@ -114,7 +114,7 @@ post_gb28181_output() {
     [[ "$(<"$response")" == '{"result":"ok"}' ]]
 }
 
-delete_gb28181_output() {
+delete_gb28181_sender() {
     local name="$1"
     local body="$2"
     local response="$work_dir/${name}.response"
@@ -123,9 +123,9 @@ delete_gb28181_output() {
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
-        "http://${server_address}:${http_port}/play/gb28181/delete")"
+        "http://${server_address}:${http_port}/gb28181/sender/delete")"
     if [[ "$code" != "200" ]]; then
-        echo "POST /play/gb28181/delete returned $code" >&2
+        echo "POST /gb28181/sender/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
@@ -133,7 +133,7 @@ delete_gb28181_output() {
     [[ "$(<"$response")" == '{"result":"ok"}' ]]
 }
 
-delete_gb28181_input() {
+delete_gb28181_receiver() {
     local name="$1"
     local body="$2"
     local allow_peer_closed="${3:-false}"
@@ -143,13 +143,13 @@ delete_gb28181_input() {
     code="$(curl -sS -o "$response" -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
-        "http://${server_address}:${http_port}/gb28181/delete")"
+        "http://${server_address}:${http_port}/gb28181/receiver/delete")"
     if [[ "$code" == "500" && "$allow_peer_closed" == "true" ]]; then
         [[ "$(<"$response")" == '{"error":"operation_failed"}' ]]
         return
     fi
     if [[ "$code" != "200" ]]; then
-        echo "POST /gb28181/delete returned $code" >&2
+        echo "POST /gb28181/receiver/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
@@ -157,7 +157,7 @@ delete_gb28181_input() {
     [[ "$(<"$response")" == '{"result":"ok"}' ]]
 }
 
-wait_tcp_input_shutdown() {
+wait_tcp_receiver_shutdown() {
     local stream_name="$1"
     local first_line="$2"
 
@@ -168,7 +168,7 @@ wait_tcp_input_shutdown() {
         sleep 0.1
     done
 
-    echo "GB28181 TCP input did not close after peer shutdown: $stream_name" >&2
+    echo "GB28181 TCP receiver did not close after peer shutdown: $stream_name" >&2
     cat "$work_dir/server.log" >&2 2>/dev/null || true
     return 1
 }
@@ -190,27 +190,30 @@ run_udp_case() {
     local video_codec="$4"
     local audio_codec="$5"
     local ssrc="$6"
-    local output_id="$7"
-    local input_body
-    local output_body
+    local sender_id="$7"
+    local receiver_body
+    local sender_body
     local ports
     local rtp_port
     local rtcp_port
-    input_body="$(printf '{\"stream_name\":\"%s\",\"transport\":\"udp\",\"address\":\"%s\",\"payload_type\":96,\"ssrc\":%s}' \
-        "$target" "$server_address" "$ssrc")"
-    ports="$(post_gb28181_input "${name}_input_post" "$input_body")"
-    read -r rtp_port rtcp_port <<<"$ports"
-    output_body="$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\",\"transport\":\"udp\",\"address\":\"%s\",\"rtp_port\":%s,\"rtcp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' \
-        "$source" "$output_id" "$server_address" "$rtp_port" "$rtcp_port" "$ssrc")"
 
-    post_gb28181_output "${name}_output_post" "$output_body"
+    receiver_body="$(printf '{"stream_name":"%s","transport":"udp","payload_type":96,"ssrc":%s}' \
+        "$target" "$ssrc")"
+    ports="$(post_gb28181_receiver "${name}_receiver_post" "$receiver_body")"
+    read -r rtp_port rtcp_port <<<"$ports"
+    sender_body="$(printf '{"stream_name":"%s","sender_id":"%s","transport":"udp","remote_address":"%s","remote_rtp_port":%s,"payload_type":96,"ssrc":%s}' \
+        "$source" "$sender_id" "$server_address" "$rtp_port" "$ssrc")"
+
+    post_gb28181_sender "${name}_sender_post" "$sender_body"
 
     wait_probe_streams "$work_dir/${name}_probe.txt" "$video_codec" "$audio_codec" \
         "rtsp://${server_address}:${rtsp_port}/${target}"
     assert_specific_sockets
 
-    delete_gb28181_output "${name}_output_delete" "$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\"}' "$source" "$output_id")"
-    delete_gb28181_input "${name}_input_delete" "$(printf '{\"stream_name\":\"%s\"}' "$target")"
+    delete_gb28181_sender "${name}_sender_delete" \
+        "$(printf '{"stream_name":"%s","sender_id":"%s"}' "$source" "$sender_id")"
+    delete_gb28181_receiver "${name}_receiver_delete" \
+        "$(printf '{"stream_name":"%s"}' "$target")"
     kill -0 "$main_pid"
 }
 
@@ -220,21 +223,25 @@ run_tcp_case() {
     local target="$3"
     local port="$4"
     local ssrc="$5"
-    local output_id="$6"
+    local sender_id="$6"
     local mode="$7"
-    local input_body
-    local output_body
+    local receiver_body
+    local sender_body
 
-    if [[ "$mode" == "output-active" ]]; then
-        input_body="$(printf '{\"stream_name\":\"%s\",\"transport\":\"tcp_passive\",\"address\":\"%s\",\"rtp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' "$target" "$server_address" "$port" "$ssrc")"
-        output_body="$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\",\"transport\":\"tcp_active\",\"address\":\"%s\",\"rtp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' "$source" "$output_id" "$server_address" "$port" "$ssrc")"
-        post_gb28181_input "${name}_input_post" "$input_body"
-        post_gb28181_output "${name}_output_post" "$output_body"
+    if [[ "$mode" == "sender-active" ]]; then
+        receiver_body="$(printf '{"stream_name":"%s","transport":"tcp_passive","listen_port":%s,"payload_type":96,"ssrc":%s}' \
+            "$target" "$port" "$ssrc")"
+        sender_body="$(printf '{"stream_name":"%s","sender_id":"%s","transport":"tcp_active","remote_address":"%s","remote_port":%s,"payload_type":96,"ssrc":%s}' \
+            "$source" "$sender_id" "$server_address" "$port" "$ssrc")"
+        post_gb28181_receiver "${name}_receiver_post" "$receiver_body"
+        post_gb28181_sender "${name}_sender_post" "$sender_body"
     else
-        input_body="$(printf '{\"stream_name\":\"%s\",\"transport\":\"tcp_active\",\"address\":\"%s\",\"rtp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' "$target" "$server_address" "$port" "$ssrc")"
-        output_body="$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\",\"transport\":\"tcp_passive\",\"address\":\"%s\",\"rtp_port\":%s,\"payload_type\":96,\"ssrc\":%s}' "$source" "$output_id" "$server_address" "$port" "$ssrc")"
-        post_gb28181_output "${name}_output_post" "$output_body"
-        post_gb28181_input "${name}_input_post" "$input_body"
+        receiver_body="$(printf '{"stream_name":"%s","transport":"tcp_active","remote_address":"%s","remote_port":%s,"payload_type":96,"ssrc":%s}' \
+            "$target" "$server_address" "$port" "$ssrc")"
+        sender_body="$(printf '{"stream_name":"%s","sender_id":"%s","transport":"tcp_passive","listen_port":%s,"payload_type":96,"ssrc":%s}' \
+            "$source" "$sender_id" "$port" "$ssrc")"
+        post_gb28181_sender "${name}_sender_post" "$sender_body"
+        post_gb28181_receiver "${name}_receiver_post" "$receiver_body"
     fi
 
     wait_probe_streams "$work_dir/${name}_probe.txt" h264 aac \
@@ -243,9 +250,11 @@ run_tcp_case() {
 
     local shutdown_log_line
     shutdown_log_line="$(($(wc -l <"$work_dir/server.log") + 1))"
-    delete_gb28181_output "${name}_output_delete" "$(printf '{\"stream_name\":\"%s\",\"output_id\":\"%s\"}' "$source" "$output_id")"
-    wait_tcp_input_shutdown "$target" "$shutdown_log_line"
-    delete_gb28181_input "${name}_input_delete" "$(printf '{\"stream_name\":\"%s\"}' "$target")" true
+    delete_gb28181_sender "${name}_sender_delete" \
+        "$(printf '{"stream_name":"%s","sender_id":"%s"}' "$source" "$sender_id")"
+    wait_tcp_receiver_shutdown "$target" "$shutdown_log_line"
+    delete_gb28181_receiver "${name}_receiver_delete" \
+        "$(printf '{"stream_name":"%s"}' "$target")" true
     kill -0 "$main_pid"
 }
 
@@ -271,10 +280,10 @@ wait_probe_streams "$work_dir/source_h264_aac.txt" h264 aac \
     "rtsp://${server_address}:${rtsp_port}/live/gb-h264-aac"
 
 run_udp_case udp_h264_aac live/gb-h264-aac relay/gb-udp-h264-aac h264 aac 100002001 udp-h264-aac
-run_tcp_case tcp_output_active live/gb-h264-aac relay/gb-tcp-output-active 31100 100002004 tcp-output-active output-active
-run_tcp_case tcp_output_passive live/gb-h264-aac relay/gb-tcp-output-passive 31110 100002005 tcp-output-passive output-passive
+run_tcp_case tcp_sender_active live/gb-h264-aac relay/gb-tcp-sender-active 31100 100002004 tcp-sender-active sender-active
+run_tcp_case tcp_sender_passive live/gb-h264-aac relay/gb-tcp-sender-passive 31110 100002005 tcp-sender-passive sender-passive
 
-# RTCP relay 保持 output/input 对端身份独立，同时保留真实 RTP 数据路径。
+# RTCP relay 保持 sender/receiver 对端身份独立，同时保留真实 RTP 数据路径。
 rtcp_relay_rtp_port=31200
 rtcp_relay_rtcp_port=31201
 rtcp_status="$work_dir/rtcp_status.txt"
@@ -283,11 +292,11 @@ rtcp_rr_packet="$work_dir/rtcp_rr.bin"
 : >"$rtcp_status"
 rm -f "$rtcp_sr_packet" "$rtcp_rr_packet"
 
-rtcp_input_ports="$(post_gb28181_input rtcp_input_post \
-    "$(printf '{\"stream_name\":\"relay/gb-udp-rtcp\",\"transport\":\"udp\",\"address\":\"%s\",\"payload_type\":96,\"ssrc\":100002006}' "$server_address")")"
-read -r rtcp_input_rtp_port rtcp_input_rtcp_port <<<"$rtcp_input_ports"
+rtcp_receiver_ports="$(post_gb28181_receiver rtcp_receiver_post \
+    '{"stream_name":"relay/gb-udp-rtcp","transport":"udp","payload_type":96,"ssrc":100002006}')"
+read -r rtcp_receiver_rtp_port rtcp_receiver_rtcp_port <<<"$rtcp_receiver_ports"
 
-python3 - "$rtcp_relay_rtp_port" "$rtcp_relay_rtcp_port" "$rtcp_input_rtp_port" "$rtcp_input_rtcp_port" \
+python3 - "$rtcp_relay_rtp_port" "$rtcp_relay_rtcp_port" "$rtcp_receiver_rtp_port" "$rtcp_receiver_rtcp_port" \
     "$rtcp_status" "$rtcp_sr_packet" "$rtcp_rr_packet" "$server_address" >"$work_dir/rtcp_relay.log" 2>&1 <<'PY' &
 import selectors
 import socket
@@ -296,8 +305,8 @@ import time
 
 relay_rtp_port = int(sys.argv[1])
 relay_rtcp_port = int(sys.argv[2])
-input_rtp_port = int(sys.argv[3])
-input_rtcp_port = int(sys.argv[4])
+receiver_rtp_port = int(sys.argv[3])
+receiver_rtcp_port = int(sys.argv[4])
 status_path = sys.argv[5]
 sr_path = sys.argv[6]
 rr_path = sys.argv[7]
@@ -319,12 +328,12 @@ with open(status_path, "a", encoding="utf-8", buffering=1) as status:
         for key, _ in selector.select(timeout=1.0):
             data, peer = key.fileobj.recvfrom(65535)
             if key.data == "rtp":
-                rtp.sendto(data, (server_address, input_rtp_port))
+                rtp.sendto(data, (server_address, receiver_rtp_port))
                 continue
             if len(data) < 2:
                 continue
             packet_type = data[1]
-            if peer[1] == input_rtcp_port:
+            if peer[1] == receiver_rtcp_port:
                 if seen_sr and packet_type == 201:
                     with open(rr_path, "wb") as packet:
                         packet.write(data)
@@ -337,7 +346,7 @@ with open(status_path, "a", encoding="utf-8", buffering=1) as status:
                         packet.write(data)
                     status.write("sr\n")
                     seen_sr = True
-                rtcp.sendto(data, (server_address, input_rtcp_port))
+                rtcp.sendto(data, (server_address, receiver_rtcp_port))
 
 sys.exit(1)
 PY
@@ -345,7 +354,7 @@ rtcp_relay_pid=$!
 sleep 0.2
 kill -0 "$rtcp_relay_pid"
 
-post_gb28181_output rtcp_output_post "$(printf '{\"stream_name\":\"live/gb-h264-aac\",\"output_id\":\"udp-rtcp\",\"transport\":\"udp\",\"address\":\"%s\",\"rtp_port\":%s,\"rtcp_port\":%s,\"payload_type\":96,\"ssrc\":100002006,\"rtcp\":true}' \
+post_gb28181_sender rtcp_sender_post "$(printf '{"stream_name":"live/gb-h264-aac","sender_id":"udp-rtcp","transport":"udp","remote_address":"%s","remote_rtp_port":%s,"remote_rtcp_port":%s,"payload_type":96,"ssrc":100002006,"rtcp_enabled":true}' \
     "$server_address" "$rtcp_relay_rtp_port" "$rtcp_relay_rtcp_port")"
 wait_probe_streams "$work_dir/rtcp_probe.txt" h264 aac \
     "rtsp://${server_address}:${rtsp_port}/relay/gb-udp-rtcp"
@@ -363,8 +372,8 @@ grep -qx 'sr' "$rtcp_status"
 grep -qx 'rr' "$rtcp_status"
 [[ -s "$rtcp_sr_packet" ]]
 [[ -s "$rtcp_rr_packet" ]]
-delete_gb28181_output rtcp_output_delete '{"stream_name":"live/gb-h264-aac","output_id":"udp-rtcp"}'
-delete_gb28181_input rtcp_input_delete '{"stream_name":"relay/gb-udp-rtcp"}'
+delete_gb28181_sender rtcp_sender_delete '{"stream_name":"live/gb-h264-aac","sender_id":"udp-rtcp"}'
+delete_gb28181_receiver rtcp_receiver_delete '{"stream_name":"relay/gb-udp-rtcp"}'
 kill -0 "$main_pid"
 stop_publisher
 
@@ -404,8 +413,8 @@ cat >"$work_dir/summary.txt" <<'EOF_SUMMARY'
 gb28181 udp h264+aac loopback: pass
 gb28181 udp h265+g711a loopback: pass
 gb28181 udp h264+g711u loopback: pass
-gb28181 tcp output-active/input-passive h264+aac loopback: pass
-gb28181 tcp output-passive/input-active h264+aac loopback: pass
+gb28181 tcp sender-active/receiver-passive h264+aac loopback: pass
+gb28181 tcp sender-passive/receiver-active h264+aac loopback: pass
 gb28181 udp rtcp sender-report/receiver-report evidence: pass
 EOF_SUMMARY
 cat "$work_dir/summary.txt"

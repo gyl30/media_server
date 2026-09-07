@@ -165,12 +165,12 @@ func TestLiveSessionStopWhilePreparingReleasesSessionAndSSRC(t *testing.T) {
 	defer close(releaseCreate)
 	deletes := &atomic.Int32{}
 	mediaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/gb28181/create" {
+		if request.URL.Path == "/gb28181/receiver/create" {
 			close(createStarted)
 			<-releaseCreate
 			return
 		}
-		if request.URL.Path == "/gb28181/delete" {
+		if request.URL.Path == "/gb28181/receiver/delete" {
 			deletes.Add(1)
 			_, _ = io.WriteString(writer, `{"result":"ok"}`)
 			return
@@ -606,11 +606,11 @@ func startLiveTestMediaServer(t *testing.T) (*mediaServerRegistry, *httptest.Ser
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
-		case "/gb28181/create":
+		case "/gb28181/receiver/create":
 			creates.Add(1)
 			writer.WriteHeader(http.StatusCreated)
 			_, _ = io.WriteString(writer, `{"result":"ok","rtp_port":40000,"rtcp_port":40001}`)
-		case "/gb28181/delete":
+		case "/gb28181/receiver/delete":
 			deletes.Add(1)
 			_, _ = io.WriteString(writer, `{"result":"ok"}`)
 		default:

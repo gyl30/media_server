@@ -22,7 +22,7 @@ namespace media_server
 {
 gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
                                                        std::shared_ptr<media_stream> stream,
-                                                       gb28181_description description,
+                                                       gb28181_transport_config config,
                                                        boost::asio::ip::address bind_address,
                                                        std::string sender_id,
                                                        bool rtcp_enabled,
@@ -31,10 +31,10 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
       stream_(std::move(stream)),
       stream_name_(stream_ ? stream_->name() : std::string{}),
       sender_id_(std::move(sender_id)),
-      description_(std::move(description)),
+      config_(std::move(config)),
       bind_address_(std::move(bind_address)),
-      remote_rtp_endpoint_(description_.address, description_.rtp_port),
-      remote_rtcp_endpoint_(description_.address, description_.rtcp_port),
+      remote_rtp_endpoint_(config_.remote_address, config_.remote_rtp_port),
+      remote_rtcp_endpoint_(config_.remote_address, config_.remote_rtcp_port),
       rtp_transport_(worker_.io()),
       rtcp_transport_(worker_.io()),
       rtcp_timer_(worker_.io()),
@@ -84,7 +84,7 @@ void gb28181_udp_sender_session::shutdown_udp_transports()
 
 bool gb28181_udp_sender_session::startup()
 {
-    if (local_ports_ || sender_ || !stream_ || description_.transport != gb28181_transport::udp || description_.address.is_unspecified() ||
+    if (local_ports_ || sender_ || !stream_ || config_.mode != gb28181_transport::udp || config_.remote_address.is_unspecified() ||
         bind_address_.is_unspecified())
     {
         return false;
@@ -100,7 +100,7 @@ bool gb28181_udp_sender_session::startup()
     if (rtcp_enabled_)
     {
         rtp_event_t handler{};
-        rtcp_sender_ = rtp_create(&handler, nullptr, description_.ssrc, 0, 90'000, 2 * 1024 * 1024, 1);
+        rtcp_sender_ = rtp_create(&handler, nullptr, config_.ssrc, 0, 90'000, 2 * 1024 * 1024, 1);
         if (rtcp_sender_ == nullptr)
         {
             shutdown_udp_transports();
@@ -112,8 +112,8 @@ bool gb28181_udp_sender_session::startup()
     sender_ = std::make_shared<gb28181_rtp_sender>(
         worker_,
         stream_,
-        description_.payload_type,
-        description_.ssrc,
+        config_.payload_type,
+        config_.ssrc,
         [weak](std::vector<std::uint8_t> packet)
         {
             if (const auto session = weak.lock())
@@ -145,10 +145,10 @@ bool gb28181_udp_sender_session::startup()
                  stream_name_,
                  local_ports_->first,
                  local_ports_->second,
-                 description_.address.to_string(),
-                 description_.rtp_port,
-                 description_.address.to_string(),
-                 description_.rtcp_port,
+                 config_.remote_address.to_string(),
+                 config_.remote_rtp_port,
+                 config_.remote_address.to_string(),
+                 config_.remote_rtcp_port,
                  rtcp_enabled_);
     return true;
 }

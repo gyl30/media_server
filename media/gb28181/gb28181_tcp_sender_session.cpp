@@ -21,14 +21,16 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
                                                        std::weak_ptr<media_stream> stream,
                                                        std::string stream_name,
                                                        std::string sender_id,
-                                                       gb28181_description description,
+                                                       gb28181_transport_config config,
+                                                       boost::asio::ip::address bind_address,
                                                        std::chrono::milliseconds establishment_timeout,
                                                        std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
       stream_name_(std::move(stream_name)),
       sender_id_(std::move(sender_id)),
-      description_(std::move(description)),
+      config_(std::move(config)),
+      bind_address_(std::move(bind_address)),
       establishment_timeout_(establishment_timeout),
       max_write_queue_bytes_(max_write_queue_bytes),
       socket_(worker_.io())
@@ -37,9 +39,9 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
 
 bool gb28181_tcp_sender_session::startup()
 {
-    if (description_.transport == gb28181_transport::tcp_passive)
+    if (config_.mode == gb28181_transport::tcp_passive)
     {
-        listener_ = std::make_unique<tcp_listener>(worker_.io(), description_.rtp_port, description_.address);
+        listener_ = std::make_unique<tcp_listener>(worker_.io(), config_.listen_port, bind_address_);
         boost::system::error_code error;
         listener_->startup(error);
         if (error)
@@ -61,7 +63,7 @@ bool gb28181_tcp_sender_session::startup()
 void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
 {
     boost::system::error_code error;
-    if (description_.transport == gb28181_transport::tcp_passive)
+    if (config_.mode == gb28181_transport::tcp_passive)
     {
         listener_->accept(socket_, establishment_timeout_, yield, error);
         listener_->shutdown();
@@ -69,7 +71,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     }
     else
     {
-        socket_.async_connect(boost::asio::ip::tcp::endpoint{description_.address, description_.rtp_port},
+        socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port},
                               boost::asio::cancel_after(establishment_timeout_, yield[error]));
         if (error == boost::asio::error::operation_aborted && socket_.is_open())
         {
@@ -99,8 +101,8 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     sender_ = std::make_shared<gb28181_rtp_sender>(
         worker_,
         stream,
-        description_.payload_type,
-        description_.ssrc,
+        config_.payload_type,
+        config_.ssrc,
         [weak](std::vector<std::uint8_t> packet)
         {
             if (const auto session = weak.lock())

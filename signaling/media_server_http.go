@@ -12,13 +12,13 @@ import (
 	"time"
 )
 
-type mediaInputRequest struct {
+type gb28181ReceiverRequest struct {
 	streamName  string
 	payloadType uint8
 	ssrc        uint32
 }
 
-type mediaEndpoint struct {
+type gb28181ReceiverEndpoint struct {
 	streamName  string
 	address     string
 	rtpPort     uint16
@@ -44,45 +44,48 @@ func newMediaServerHTTPClient(timeout time.Duration) *mediaServerHTTPClient {
 	return &mediaServerHTTPClient{client: &http.Client{Timeout: timeout}}
 }
 
-func (c *mediaServerHTTPClient) createUDPInput(ctx context.Context, server mediaServerInstance, input mediaInputRequest) (mediaEndpoint, error) {
+func (c *mediaServerHTTPClient) createUDPReceiver(
+	ctx context.Context,
+	server mediaServerInstance,
+	receiver gb28181ReceiverRequest,
+) (gb28181ReceiverEndpoint, error) {
 	requestBody := struct {
 		StreamName  string `json:"stream_name"`
 		Transport   string `json:"transport"`
-		Address     string `json:"address"`
 		PayloadType uint8  `json:"payload_type"`
 		SSRC        uint32 `json:"ssrc"`
 	}{
-		StreamName: input.streamName, Transport: "udp", Address: server.mediaIP, PayloadType: input.payloadType, SSRC: input.ssrc,
+		StreamName: receiver.streamName, Transport: "udp", PayloadType: receiver.payloadType, SSRC: receiver.ssrc,
 	}
 	responseBody := struct {
 		Result   string `json:"result"`
 		RTPPort  uint16 `json:"rtp_port"`
 		RTCPPort uint16 `json:"rtcp_port"`
 	}{}
-	if err := c.post(ctx, server.controlURL+"/gb28181/create", requestBody, http.StatusCreated, &responseBody); err != nil {
-		return mediaEndpoint{}, err
+	if err := c.post(ctx, server.controlURL+"/gb28181/receiver/create", requestBody, http.StatusCreated, &responseBody); err != nil {
+		return gb28181ReceiverEndpoint{}, err
 	}
 	if responseBody.Result != "ok" || responseBody.RTPPort == 0 || responseBody.RTPPort%2 != 0 || responseBody.RTCPPort != responseBody.RTPPort+1 {
-		return mediaEndpoint{}, fmt.Errorf("invalid media server create response")
+		return gb28181ReceiverEndpoint{}, fmt.Errorf("invalid media server create response")
 	}
-	return mediaEndpoint{
-		streamName:  input.streamName,
+	return gb28181ReceiverEndpoint{
+		streamName:  receiver.streamName,
 		address:     server.mediaIP,
 		rtpPort:     responseBody.RTPPort,
 		rtcpPort:    responseBody.RTCPPort,
-		payloadType: input.payloadType,
-		ssrc:        input.ssrc,
+		payloadType: receiver.payloadType,
+		ssrc:        receiver.ssrc,
 	}, nil
 }
 
-func (c *mediaServerHTTPClient) deleteInput(ctx context.Context, server mediaServerInstance, streamName string) error {
+func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, server mediaServerInstance, streamName string) error {
 	requestBody := struct {
 		StreamName string `json:"stream_name"`
 	}{StreamName: streamName}
 	responseBody := struct {
 		Result string `json:"result"`
 	}{}
-	if err := c.post(ctx, server.controlURL+"/gb28181/delete", requestBody, http.StatusOK, &responseBody); err != nil {
+	if err := c.post(ctx, server.controlURL+"/gb28181/receiver/delete", requestBody, http.StatusOK, &responseBody); err != nil {
 		return err
 	}
 	if responseBody.Result != "ok" {

@@ -163,7 +163,7 @@ std::optional<boost::asio::ip::address> required_address(const json_object& obje
     }
     boost::system::error_code error;
     auto address = boost::asio::ip::make_address(value->as_string(), error);
-    if (error)
+    if (error || address.is_unspecified())
     {
         return std::nullopt;
     }
@@ -190,97 +190,165 @@ bool optional_bool(const json_object& object, std::string_view key, bool& result
 std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_name", "transport", "address", "rtp_port", "payload_type", "ssrc"}))
+    if (!object)
     {
         return std::nullopt;
     }
 
     auto stream_name = required_string(*object, "stream_name");
     auto transport = required_transport(*object);
-    auto address = required_address(*object, "address");
     auto payload_type = required_payload_type(*object);
     auto ssrc = required_ssrc(*object);
-    std::optional<std::uint16_t> rtp_port;
-    if (!stream_name || !transport || !address || !payload_type || !ssrc || !optional_port(*object, "rtp_port", rtp_port))
+    if (!stream_name || !transport || !payload_type || !ssrc)
     {
         return std::nullopt;
     }
 
-    if (*transport == gb28181_transport::udp)
+    gb28181_transport_config config;
+    config.mode = *transport;
+    config.payload_type = *payload_type;
+    config.ssrc = *ssrc;
+
+    switch (*transport)
     {
-        if (rtp_port)
+        case gb28181_transport::udp:
+            if (!has_only_fields(*object, {"stream_name", "transport", "payload_type", "ssrc"}))
+            {
+                return std::nullopt;
+            }
+            break;
+
+        case gb28181_transport::tcp_active:
         {
-            return std::nullopt;
+            if (!has_only_fields(*object, {"stream_name", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
+            {
+                return std::nullopt;
+            }
+            auto remote_address = required_address(*object, "remote_address");
+            auto remote_port = required_port(*object, "remote_port");
+            if (!remote_address || !remote_port)
+            {
+                return std::nullopt;
+            }
+            config.remote_address = std::move(*remote_address);
+            config.remote_port = *remote_port;
+            break;
+        }
+
+        case gb28181_transport::tcp_passive:
+        {
+            if (!has_only_fields(*object, {"stream_name", "transport", "listen_port", "payload_type", "ssrc"}))
+            {
+                return std::nullopt;
+            }
+            auto listen_port = required_port(*object, "listen_port");
+            if (!listen_port)
+            {
+                return std::nullopt;
+            }
+            config.listen_port = *listen_port;
+            break;
         }
     }
-    else if (!rtp_port)
-    {
-        return std::nullopt;
-    }
 
-    if (address->is_unspecified())
-    {
-        return std::nullopt;
-    }
-
-    return gb28181_receiver_config{.stream_name = std::move(*stream_name),
-                                .description = gb28181_description{.transport = *transport,
-                                                                   .address = *address,
-                                                                   .rtp_port = rtp_port.value_or(0),
-                                                                   .rtcp_port = 0,
-                                                                   .payload_type = *payload_type,
-                                                                   .ssrc = *ssrc}};
+    return gb28181_receiver_config{.stream_name = std::move(*stream_name), .transport = std::move(config)};
 }
 
 std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object ||
-        !has_only_fields(*object, {"stream_name", "output_id", "transport", "address", "rtp_port", "rtcp_port", "payload_type", "ssrc", "rtcp"}))
+    if (!object)
     {
         return std::nullopt;
     }
 
     auto stream_name = required_string(*object, "stream_name");
-    auto sender_id = required_string(*object, "output_id");
+    auto sender_id = required_string(*object, "sender_id");
     auto transport = required_transport(*object);
-    auto address = required_address(*object, "address");
-    auto rtp_port = required_port(*object, "rtp_port");
     auto payload_type = required_payload_type(*object);
     auto ssrc = required_ssrc(*object);
-    std::optional<std::uint16_t> rtcp_port;
-    bool rtcp = false;
-    if (!stream_name || !sender_id || !transport || !address || !rtp_port || !payload_type || !ssrc ||
-        !optional_port(*object, "rtcp_port", rtcp_port) || !optional_bool(*object, "rtcp", rtcp))
+    if (!stream_name || !sender_id || !transport || !payload_type || !ssrc)
     {
         return std::nullopt;
     }
-    if (*transport == gb28181_transport::udp)
+
+    gb28181_transport_config config;
+    config.mode = *transport;
+    config.payload_type = *payload_type;
+    config.ssrc = *ssrc;
+    bool rtcp_enabled = false;
+
+    switch (*transport)
     {
-        if (!rtcp_port || *rtcp_port == *rtp_port || address->is_unspecified())
+        case gb28181_transport::udp:
         {
-            return std::nullopt;
+            if (!has_only_fields(*object,
+                                 {"stream_name",
+                                  "sender_id",
+                                  "transport",
+                                  "remote_address",
+                                  "remote_rtp_port",
+                                  "remote_rtcp_port",
+                                  "payload_type",
+                                  "ssrc",
+                                  "rtcp_enabled"}))
+            {
+                return std::nullopt;
+            }
+            auto remote_address = required_address(*object, "remote_address");
+            auto remote_rtp_port = required_port(*object, "remote_rtp_port");
+            std::optional<std::uint16_t> remote_rtcp_port;
+            if (!remote_address || !remote_rtp_port || !optional_port(*object, "remote_rtcp_port", remote_rtcp_port) ||
+                !optional_bool(*object, "rtcp_enabled", rtcp_enabled) || rtcp_enabled != remote_rtcp_port.has_value() ||
+                (remote_rtcp_port && *remote_rtcp_port == *remote_rtp_port))
+            {
+                return std::nullopt;
+            }
+            config.remote_address = std::move(*remote_address);
+            config.remote_rtp_port = *remote_rtp_port;
+            config.remote_rtcp_port = remote_rtcp_port.value_or(0);
+            break;
+        }
+
+        case gb28181_transport::tcp_active:
+        {
+            if (!has_only_fields(*object,
+                                 {"stream_name", "sender_id", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
+            {
+                return std::nullopt;
+            }
+            auto remote_address = required_address(*object, "remote_address");
+            auto remote_port = required_port(*object, "remote_port");
+            if (!remote_address || !remote_port)
+            {
+                return std::nullopt;
+            }
+            config.remote_address = std::move(*remote_address);
+            config.remote_port = *remote_port;
+            break;
+        }
+
+        case gb28181_transport::tcp_passive:
+        {
+            if (!has_only_fields(*object, {"stream_name", "sender_id", "transport", "listen_port", "payload_type", "ssrc"}))
+            {
+                return std::nullopt;
+            }
+            auto listen_port = required_port(*object, "listen_port");
+            if (!listen_port)
+            {
+                return std::nullopt;
+            }
+            config.listen_port = *listen_port;
+            break;
         }
     }
-    else if (rtcp_port || rtcp)
-    {
-        return std::nullopt;
-    }
 
-    if (address->is_unspecified())
-    {
-        return std::nullopt;
-    }
-
-    return gb28181_sender_config{.stream_name = std::move(*stream_name),
-                                 .sender_id = std::move(*sender_id),
-                                 .description = gb28181_description{.transport = *transport,
-                                                                    .address = *address,
-                                                                    .rtp_port = *rtp_port,
-                                                                    .rtcp_port = rtcp_port.value_or(0),
-                                                                    .payload_type = *payload_type,
-                                                                    .ssrc = *ssrc},
-                                 .rtcp = rtcp};
+    return gb28181_sender_config{
+        .stream_name = std::move(*stream_name),
+        .sender_id = std::move(*sender_id),
+        .transport = std::move(config),
+        .rtcp_enabled = rtcp_enabled};
 }
 
 std::optional<std::string> parse_gb28181_receiver_delete(std::string_view body)
@@ -296,12 +364,12 @@ std::optional<std::string> parse_gb28181_receiver_delete(std::string_view body)
 std::optional<std::pair<std::string, std::string>> parse_gb28181_sender_delete(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_name", "output_id"}))
+    if (!object || !has_only_fields(*object, {"stream_name", "sender_id"}))
     {
         return std::nullopt;
     }
     auto stream_name = required_string(*object, "stream_name");
-    auto sender_id = required_string(*object, "output_id");
+    auto sender_id = required_string(*object, "sender_id");
     if (!stream_name || !sender_id)
     {
         return std::nullopt;
