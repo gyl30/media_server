@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "media/codec/output_video_config.h"
+#include "media/codec/video_transcode_config.h"
 
 namespace media_server
 {
@@ -27,10 +27,10 @@ struct config
     std::string server_id;
     std::string control_url;
     std::string media_ip;
-    output_video_config rtmp_video;
-    output_video_config rtsp_video;
-    output_video_config http_video;
-    output_video_config whep_video;
+    video_transcode_config rtmp_video;
+    video_transcode_config rtsp_video;
+    video_transcode_config http_video;
+    video_transcode_config whep_video;
     bool help{};
 };
 

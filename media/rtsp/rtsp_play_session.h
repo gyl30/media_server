@@ -15,7 +15,7 @@
 
 #include "media/core/media_reader.h"
 #include "media/codec/video_transcoder.h"
-#include "media/codec/output_video_config.h"
+#include "media/codec/video_transcode_config.h"
 
 struct rtsp_muxer_t;
 struct rtsp_server_t;
@@ -30,7 +30,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 {
    public:
     rtsp_play_session(worker_context& worker,
-                        output_video_codec video_codec,
+                        video_transcode_codec video_codec,
                         boost::asio::ip::address local_address,
                         std::function<void(std::span<const std::uint8_t>)> write);
 
@@ -71,7 +71,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
     worker_context& worker_;
-    output_video_codec video_codec_;
+    video_transcode_codec video_codec_;
     boost::asio::ip::address local_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void(boost::system::error_code)> error_handler_;

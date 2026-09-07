@@ -131,7 +131,7 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
 
     const bool transport_stream = file.ends_with(".ts");
     const bool fragmented_mp4 = file.ends_with(".m4s");
-    const bool fmp4_mode = config_.http_video.codec == output_video_codec::av1;
+    const bool fmp4_mode = config_.http_video.codec == video_transcode_codec::av1;
     if ((!transport_stream && !fragmented_mp4) || (transport_stream && fmp4_mode) || (fragmented_mp4 && !fmp4_mode))
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
