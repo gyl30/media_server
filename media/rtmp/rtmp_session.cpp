@@ -8,8 +8,8 @@
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/rtmp/rtmp_input_session.h"
-#include "media/rtmp/rtmp_output_session.h"
+#include "media/rtmp/rtmp_publish_session.h"
+#include "media/rtmp/rtmp_play_session.h"
 
 extern "C"
 {
@@ -76,15 +76,15 @@ void rtmp_session::run(boost::asio::yield_context yield)
         }
     }
 
-    if (input_)
+    if (publish_)
     {
-        input_->shutdown();
-        input_.reset();
+        publish_->shutdown();
+        publish_.reset();
     }
-    if (output_)
+    if (play_)
     {
-        output_->shutdown();
-        output_.reset();
+        play_->shutdown();
+        play_.reset();
     }
     rtmp_context_ = nullptr;
     rtmp_server_destroy(context);
@@ -128,23 +128,23 @@ int rtmp_session::publish_callback(void* param, const char* app, const char* str
 int rtmp_session::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    return self->input_ ? self->input_->on_video(data, bytes, timestamp) : -1;
+    return self->publish_ ? self->publish_->on_video(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    return self->input_ ? self->input_->on_audio(data, bytes, timestamp) : -1;
+    return self->publish_ ? self->publish_->on_audio(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    if (!self->input_)
+    if (!self->publish_)
     {
         return 0;
     }
-    return self->input_->on_script(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes));
+    return self->publish_->on_script(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes));
 }
 
 int rtmp_session::duration_callback(void*, const char*, const char*, double* duration)
@@ -204,7 +204,7 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
 
 int rtmp_session::on_play(std::string app, std::string stream)
 {
-    if (input_ || output_)
+    if (publish_ || play_)
     {
         return -1;
     }
@@ -223,7 +223,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     }
 
     const std::weak_ptr<rtmp_session> weak = shared_from_this();
-    output_ = std::make_shared<rtmp_output_session>(
+    play_ = std::make_shared<rtmp_play_session>(
         worker_,
         std::move(media),
         [weak](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
@@ -255,7 +255,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     boost::asio::post(worker_.io(),
                       [self]()
                       {
-                          if (self->rtmp_context_ == nullptr || !self->output_)
+                          if (self->rtmp_context_ == nullptr || !self->play_)
                           {
                               return;
                           }
@@ -264,7 +264,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
                               self->shutdown();
                               return;
                           }
-                          self->output_->startup();
+                          self->play_->startup();
                           spdlog::info("rtmp play {}", self->stream_name_);
                       });
 
@@ -273,14 +273,14 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
 int rtmp_session::on_publish(std::string app, std::string stream)
 {
-    if (input_ || output_)
+    if (publish_ || play_)
     {
         return -1;
     }
 
     stream_name_ = make_stream_name(app, stream);
     const std::weak_ptr<rtmp_session> weak = shared_from_this();
-    auto input = std::make_shared<rtmp_input_session>(worker_,
+    auto publish = std::make_shared<rtmp_publish_session>(worker_,
                                                       stream_name_,
                                                       initial_tracks_timeout_,
                                                       [weak]()
@@ -290,11 +290,11 @@ int rtmp_session::on_publish(std::string app, std::string stream)
                                                               self->shutdown();
                                                           }
                                                       });
-    if (!input->startup())
+    if (!publish->startup())
     {
         return -1;
     }
-    input_ = std::move(input);
+    publish_ = std::move(publish);
     spdlog::info("rtmp publish {}", stream_name_);
     return 0;
 }
