@@ -1,5 +1,5 @@
-#ifndef MEDIA_RTMP_RTMP_INPUT_SESSION_H
-#define MEDIA_RTMP_RTMP_INPUT_SESSION_H
+#ifndef MEDIA_RTMP_RTMP_PUBLISH_SESSION_H
+#define MEDIA_RTMP_RTMP_PUBLISH_SESSION_H
 
 #include <span>
 #include <chrono>
@@ -22,16 +22,16 @@ namespace media_server
 
 class worker_context;
 
-class rtmp_input_session final : public std::enable_shared_from_this<rtmp_input_session>
+class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publish_session>
 {
    public:
     using shutdown_handler = std::function<void()>;
 
-    rtmp_input_session(worker_context& worker,
+    rtmp_publish_session(worker_context& worker,
                        std::string stream_name,
                        std::chrono::milliseconds initial_tracks_timeout,
                        shutdown_handler on_shutdown);
-    ~rtmp_input_session();
+    ~rtmp_publish_session();
 
     bool startup();
     void shutdown();

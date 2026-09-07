@@ -57,8 +57,8 @@
 #include "media/gb28181/gb28181_udp_output_session.h"
 #include "media/gb28181/gb28181_tcp_output_session.h"
 #include "media/rtmp/rtmp_session.h"
-#include "media/rtmp/rtmp_input_session.h"
-#include "media/rtmp/rtmp_output_session.h"
+#include "media/rtmp/rtmp_publish_session.h"
+#include "media/rtmp/rtmp_play_session.h"
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/core/stream_registry.h"
@@ -211,17 +211,17 @@ static_assert(std::is_constructible_v<gb28181_output_media,
                                       gb28181_output_media::packet_handler,
                                       gb28181_output_media::end_handler>);
 
-static_assert(std::is_constructible_v<rtmp_input_session,
+static_assert(std::is_constructible_v<rtmp_publish_session,
                                       worker_context&,
                                       std::string,
                                       std::chrono::milliseconds,
-                                      rtmp_input_session::shutdown_handler>);
-static_assert(std::is_constructible_v<rtmp_output_session,
+                                      rtmp_publish_session::shutdown_handler>);
+static_assert(std::is_constructible_v<rtmp_play_session,
                                       worker_context&,
                                       std::shared_ptr<media_stream>,
                                       flv_muxer::packet_handler,
                                       video_transcode_config,
-                                      rtmp_output_session::end_handler>);
+                                      rtmp_play_session::end_handler>);
 static_assert(std::is_constructible_v<rtmp_session,
                                       worker_context&,
                                       boost::asio::ip::tcp::socket,
@@ -1384,10 +1384,10 @@ rtmp_status parse_rtmp_status(std::span<const std::uint8_t> payload)
     return rtmp_status{.level = level.data(), .code = code.data()};
 }
 
-class rtmp_input_test_peer final
+class rtmp_publish_test_peer final
 {
    public:
-    explicit rtmp_input_test_peer(std::string stream_name, std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000})
+    explicit rtmp_publish_test_peer(std::string stream_name, std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000})
         : acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}),
           client_socket_(worker_.io()),
           stream_name_(std::move(stream_name))
@@ -1401,19 +1401,19 @@ class rtmp_input_test_peer final
         runner_ = std::jthread([this]() { worker_.run(); });
 
         const auto separator = stream_name_.find('/');
-        require(separator != std::string::npos, "rtmp input stream name");
+        require(separator != std::string::npos, "rtmp publish stream name");
         const auto app = stream_name_.substr(0, separator);
         const auto stream = stream_name_.substr(separator + 1);
         rtmp_client_handler_t handler{};
-        handler.send = &rtmp_input_test_peer::send_callback;
+        handler.send = &rtmp_publish_test_peer::send_callback;
         const auto tc_url = "rtmp://127.0.0.1:" + std::to_string(acceptor_.local_endpoint().port()) + '/' + app;
         client_ = rtmp_client_create(app.c_str(), stream.c_str(), tc_url.c_str(), this, &handler);
-        require(client_ != nullptr, "rtmp input client");
-        require(rtmp_client_start(client_, 0) == 0, "rtmp input client start");
+        require(client_ != nullptr, "rtmp publish client");
+        require(rtmp_client_start(client_, 0) == 0, "rtmp publish client start");
         receive_until_started();
     }
 
-    ~rtmp_input_test_peer()
+    ~rtmp_publish_test_peer()
     {
         rtmp_client_destroy(client_);
         client_ = nullptr;
@@ -1435,14 +1435,14 @@ class rtmp_input_test_peer final
             current = AMFWriteNamedDouble(current, data.data() + data.size(), "audiocodecid", 12, FLV_AUDIO_AAC >> 4);
         }
         current = AMFWriteObjectEnd(current, data.data() + data.size());
-        require(current != nullptr, "rtmp input metadata encode");
-        require(rtmp_client_push_script(client_, data.data(), static_cast<std::size_t>(current - data.data()), 0) == 0, "rtmp input push metadata");
+        require(current != nullptr, "rtmp publish metadata encode");
+        require(rtmp_client_push_script(client_, data.data(), static_cast<std::size_t>(current - data.data()), 0) == 0, "rtmp publish push metadata");
     }
 
     void push_video_config(media_track track)
     {
         const auto packet = make_rtmp_video_sequence_header(std::move(track));
-        require(rtmp_client_push_video(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push video config");
+        require(rtmp_client_push_video(client_, packet.data(), packet.size(), 0) == 0, "rtmp publish push video config");
     }
 
     void push_raw_video(codec_id codec)
@@ -1459,16 +1459,16 @@ class rtmp_input_test_peer final
         muxer.on_track(codec == codec_id::h264 ? make_video_track() : make_h265_track());
         packet.clear();
         muxer.on_frame(codec == codec_id::h264 ? make_video_frame(0, true) : make_h265_frame(0, true));
-        require(!packet.empty(), "rtmp input raw video packet");
+        require(!packet.empty(), "rtmp publish raw video packet");
         muxer.shutdown();
-        require(rtmp_client_push_video(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push raw video");
+        require(rtmp_client_push_video(client_, packet.data(), packet.size(), 0) == 0, "rtmp publish push raw video");
     }
 
     void push_audio_config(std::span<const std::uint8_t> asc)
     {
         std::vector<std::uint8_t> packet{0xaf, FLV_SEQUENCE_HEADER};
         packet.insert(packet.end(), asc.begin(), asc.end());
-        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push audio config");
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp publish push audio config");
     }
 
     void push_opus_config(std::uint16_t channel_count = 2)
@@ -1483,9 +1483,9 @@ class rtmp_input_test_peer final
                 }
             });
         muxer.on_track(make_opus_track(channel_count));
-        require(!packet.empty(), "rtmp input opus config");
+        require(!packet.empty(), "rtmp publish opus config");
         muxer.shutdown();
-        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push opus config");
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp publish push opus config");
     }
 
     void push_raw_opus(std::uint32_t timestamp, std::vector<std::uint8_t> payload = {0xf8, 0xff, 0xfe})
@@ -1502,9 +1502,9 @@ class rtmp_input_test_peer final
         muxer.on_track(make_opus_track(1));
         packet.clear();
         muxer.on_frame(make_opus_frame(static_cast<std::int64_t>(timestamp) * 1'000'000, std::move(payload)));
-        require(!packet.empty(), "rtmp input raw opus packet");
+        require(!packet.empty(), "rtmp publish raw opus packet");
         muxer.shutdown();
-        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), timestamp) == 0, "rtmp input push raw opus");
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), timestamp) == 0, "rtmp publish push raw opus");
     }
 
     void push_g711(codec_id codec, std::uint32_t timestamp = 0)
@@ -1526,15 +1526,15 @@ class rtmp_input_test_peer final
             .key_frame = false,
             .payload = std::make_shared<const std::vector<std::uint8_t>>(160U, codec == codec_id::g711a ? 0xd5U : 0xffU),
         });
-        require(!packet.empty(), "rtmp input g711 packet");
+        require(!packet.empty(), "rtmp publish g711 packet");
         muxer.shutdown();
-        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), timestamp) == 0, "rtmp input push g711");
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), timestamp) == 0, "rtmp publish push g711");
     }
 
     void push_raw_aac()
     {
         const std::array<std::uint8_t, 4> packet{0xaf, FLV_AVPACKET, 0x11, 0x22};
-        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp input push raw aac");
+        require(rtmp_client_push_audio(client_, packet.data(), packet.size(), 0) == 0, "rtmp publish push raw aac");
     }
 
     void wait_track(const media_track& expected, std::uint64_t config_version)
@@ -1551,7 +1551,7 @@ class rtmp_input_test_peer final
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        fail("rtmp input track update");
+        fail("rtmp publish track update");
     }
 
     std::size_t track_count()
@@ -1564,7 +1564,7 @@ class rtmp_input_test_peer final
                               const auto stream = streams_.find(stream_name_);
                               promise.set_value(stream ? stream->tracks().size() : 0U);
                           });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtmp input track count query");
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtmp publish track count query");
         return future.get();
     }
 
@@ -1585,7 +1585,7 @@ class rtmp_input_test_peer final
                               }
                               promise.set_value(static_cast<bool>(stream));
                           });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp input attach audio capture");
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp publish attach audio capture");
         return sink;
     }
 
@@ -1600,7 +1600,7 @@ class rtmp_input_test_peer final
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        fail("rtmp input audio frame capture");
+        fail("rtmp publish audio frame capture");
     }
 
     void wait_session_closed()
@@ -1610,7 +1610,7 @@ class rtmp_input_test_peer final
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        require(session_.expired(), "rtmp input session closed");
+        require(session_.expired(), "rtmp publish session closed");
     }
 
     void wait_stream_removed()
@@ -1624,13 +1624,13 @@ class rtmp_input_test_peer final
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        fail("rtmp input stream removed");
+        fail("rtmp publish stream removed");
     }
 
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
     {
-        auto* self = static_cast<rtmp_input_test_peer*>(param);
+        auto* self = static_cast<rtmp_publish_test_peer*>(param);
         boost::system::error_code error;
         if (header_bytes != 0)
         {
@@ -1649,7 +1649,7 @@ class rtmp_input_test_peer final
         while (rtmp_client_getstate(client_) != RTMP_STATE_START)
         {
             const auto bytes = client_socket_.read_some(boost::asio::buffer(data));
-            require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp input client input");
+            require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp publish client input");
         }
     }
 
@@ -1674,7 +1674,7 @@ class rtmp_input_test_peer final
                               }
                               promise.set_value(std::nullopt);
                           });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtmp input track query");
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtmp publish track query");
         return future.get();
     }
 
@@ -1683,7 +1683,7 @@ class rtmp_input_test_peer final
         std::promise<bool> promise;
         auto future = promise.get_future();
         boost::asio::post(worker_.io(), [this, &promise]() { promise.set_value(static_cast<bool>(streams_.find(stream_name_))); });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtmp input stream query");
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready, "rtmp publish stream query");
         return future.get();
     }
 
@@ -1697,10 +1697,10 @@ class rtmp_input_test_peer final
     std::jthread runner_;
 };
 
-class rtmp_output_test_peer final
+class rtmp_play_test_peer final
 {
    public:
-    explicit rtmp_output_test_peer(media_track video_track = make_video_track(), bool with_audio = false)
+    explicit rtmp_play_test_peer(media_track video_track = make_video_track(), bool with_audio = false)
         : acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}),
           client_socket_(worker_.io()),
           expected_video_codec_(video_track.codec)
@@ -1713,8 +1713,8 @@ class rtmp_output_test_peer final
         {
             tracks.push_back(make_audio_track());
         }
-        require(stream_->set_tracks(std::move(tracks)), "rtmp output tracks");
-        require(streams_.add(stream_), "rtmp output registry add");
+        require(stream_->set_tracks(std::move(tracks)), "rtmp play tracks");
+        require(streams_.add(stream_), "rtmp play registry add");
 
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
@@ -1723,18 +1723,18 @@ class rtmp_output_test_peer final
         runner_ = std::jthread([this]() { worker_.run(); });
 
         rtmp_client_handler_t handler{};
-        handler.send = &rtmp_output_test_peer::send_callback;
-        handler.onvideo = &rtmp_output_test_peer::video_callback;
-        handler.onaudio = &rtmp_output_test_peer::audio_callback;
-        handler.onscript = &rtmp_output_test_peer::media_callback;
+        handler.send = &rtmp_play_test_peer::send_callback;
+        handler.onvideo = &rtmp_play_test_peer::video_callback;
+        handler.onaudio = &rtmp_play_test_peer::audio_callback;
+        handler.onscript = &rtmp_play_test_peer::media_callback;
         const auto tc_url = "rtmp://127.0.0.1:" + std::to_string(acceptor_.local_endpoint().port()) + "/live";
         client_ = rtmp_client_create("live", "camera", tc_url.c_str(), this, &handler);
-        require(client_ != nullptr, "rtmp output client");
-        require(rtmp_client_start(client_, 2) == 0, "rtmp output client start");
+        require(client_ != nullptr, "rtmp play client");
+        require(rtmp_client_start(client_, 2) == 0, "rtmp play client start");
         receive_until_video_config();
     }
 
-    ~rtmp_output_test_peer()
+    ~rtmp_play_test_peer()
     {
         rtmp_client_destroy(client_);
         client_ = nullptr;
@@ -1767,7 +1767,7 @@ class rtmp_output_test_peer final
         while (media_order_.size() < count)
         {
             const auto bytes = client_socket_.read_some(boost::asio::buffer(data));
-            require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp output media input");
+            require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp play media input");
         }
     }
 
@@ -1782,7 +1782,7 @@ class rtmp_output_test_peer final
         boost::asio::post(worker_.io(),
                           [stream = stream_, track = std::move(track), &promise]() mutable
                           { promise.set_value(stream->update_track(std::move(track))); });
-        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp output config reset");
+        require(future.wait_for(std::chrono::seconds(1)) == std::future_status::ready && future.get(), "rtmp play config reset");
     }
 
     void end_stream()
@@ -1821,7 +1821,7 @@ class rtmp_output_test_peer final
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
     {
-        auto* self = static_cast<rtmp_output_test_peer*>(param);
+        auto* self = static_cast<rtmp_play_test_peer*>(param);
         boost::system::error_code error;
         if (header_bytes != 0)
         {
@@ -1837,10 +1837,10 @@ class rtmp_output_test_peer final
     static int video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
     {
         flv_video_tag_header_t video{};
-        require(flv_video_tag_header_read(&video, static_cast<const std::uint8_t*>(data), bytes) > 0, "rtmp output video header");
-        auto* self = static_cast<rtmp_output_test_peer*>(param);
+        require(flv_video_tag_header_read(&video, static_cast<const std::uint8_t*>(data), bytes) > 0, "rtmp play video header");
+        auto* self = static_cast<rtmp_play_test_peer*>(param);
         const auto expected = self->expected_video_codec_ == codec_id::h264 ? FLV_VIDEO_H264 : FLV_VIDEO_H265;
-        require(video.codecid == expected, "rtmp output video codec");
+        require(video.codecid == expected, "rtmp play video codec");
         if (video.avpacket == FLV_SEQUENCE_HEADER)
         {
             ++self->video_config_count_;
@@ -1856,7 +1856,7 @@ class rtmp_output_test_peer final
     {
         if (data != nullptr && bytes >= 2U)
         {
-            auto* self = static_cast<rtmp_output_test_peer*>(param);
+            auto* self = static_cast<rtmp_play_test_peer*>(param);
             if (static_cast<const std::uint8_t*>(data)[1] == FLV_SEQUENCE_HEADER)
             {
                 ++self->audio_config_count_;
@@ -1879,7 +1879,7 @@ class rtmp_output_test_peer final
         while (video_config_count_ < count)
         {
             const auto bytes = client_socket_.read_some(boost::asio::buffer(data));
-            require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp output client input");
+            require(rtmp_client_input(client_, data.data(), bytes) == 0, "rtmp play client input");
         }
     }
 
@@ -1924,10 +1924,10 @@ class rtmp_output_test_peer final
     std::jthread runner_;
 };
 
-void test_rtmp_input_initial_topology()
+void test_rtmp_publish_initial_topology()
 {
     {
-        rtmp_input_test_peer peer("live/metadata-first");
+        rtmp_publish_test_peer peer("live/metadata-first");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         require(!peer.stream_exists(), "rtmp metadata first keeps incomplete stream hidden");
@@ -1938,7 +1938,7 @@ void test_rtmp_input_initial_topology()
     }
 
     {
-        rtmp_input_test_peer peer("live/config-first");
+        rtmp_publish_test_peer peer("live/config-first");
         peer.push_video_config(make_video_track());
         peer.push_audio_config(aac_asc);
         require(!peer.stream_exists(), "rtmp config first waits for metadata before publish");
@@ -1949,7 +1949,7 @@ void test_rtmp_input_initial_topology()
     }
 
     {
-        rtmp_input_test_peer peer("live/h265-av");
+        rtmp_publish_test_peer peer("live/h265-av");
         peer.push_metadata(true, codec_id::h265);
         peer.push_video_config(make_h265_track());
         require(!peer.stream_exists(), "rtmp h265 keeps incomplete stream hidden");
@@ -1960,7 +1960,7 @@ void test_rtmp_input_initial_topology()
     }
 
     {
-        rtmp_input_test_peer peer("live/video-only-fixed");
+        rtmp_publish_test_peer peer("live/video-only-fixed");
         const auto video = make_video_track();
         peer.push_metadata(false);
         peer.push_video_config(video);
@@ -1971,9 +1971,9 @@ void test_rtmp_input_initial_topology()
     }
 }
 
-void test_rtmp_input_initial_tracks_timeout()
+void test_rtmp_publish_initial_tracks_timeout()
 {
-    rtmp_input_test_peer peer("live/initial-tracks-timeout", std::chrono::milliseconds(100));
+    rtmp_publish_test_peer peer("live/initial-tracks-timeout", std::chrono::milliseconds(100));
     peer.push_metadata(true);
     peer.push_video_config(make_video_track());
     require(!peer.stream_exists(), "rtmp incomplete stream never enters registry");
@@ -1981,10 +1981,10 @@ void test_rtmp_input_initial_tracks_timeout()
     require(!peer.stream_exists(), "rtmp initial tracks timeout leaves registry empty");
 }
 
-void test_rtmp_input_codec_configuration_updates()
+void test_rtmp_publish_codec_configuration_updates()
 {
     {
-        rtmp_input_test_peer peer("live/h264-config");
+        rtmp_publish_test_peer peer("live/h264-config");
         const auto initial = make_video_track();
         peer.push_metadata(false);
         peer.push_video_config(initial);
@@ -1996,7 +1996,7 @@ void test_rtmp_input_codec_configuration_updates()
     }
 
     {
-        rtmp_input_test_peer peer("live/h265-config");
+        rtmp_publish_test_peer peer("live/h265-config");
         const auto initial = make_h265_track();
         peer.push_metadata(false, codec_id::h265);
         peer.push_video_config(initial);
@@ -2008,7 +2008,7 @@ void test_rtmp_input_codec_configuration_updates()
     }
 
     {
-        rtmp_input_test_peer peer("live/aac-config");
+        rtmp_publish_test_peer peer("live/aac-config");
         const auto video = make_video_track();
         const auto initial = make_audio_track();
         peer.push_metadata(true);
@@ -2024,10 +2024,10 @@ void test_rtmp_input_codec_configuration_updates()
     }
 }
 
-void test_rtmp_input_rejects_video_codec_change()
+void test_rtmp_publish_rejects_video_codec_change()
 {
     {
-        rtmp_input_test_peer peer("live/pending-switch");
+        rtmp_publish_test_peer peer("live/pending-switch");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         require(!peer.stream_exists(), "rtmp pending codec switch keeps incomplete stream hidden");
@@ -2036,7 +2036,7 @@ void test_rtmp_input_rejects_video_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/h264-switch");
+        rtmp_publish_test_peer peer("live/h264-switch");
         const auto h264 = make_video_track();
         peer.push_metadata(false);
         peer.push_video_config(h264);
@@ -2046,7 +2046,7 @@ void test_rtmp_input_rejects_video_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/h265-switch");
+        rtmp_publish_test_peer peer("live/h265-switch");
         const auto h265 = make_h265_track();
         peer.push_metadata(false, codec_id::h265);
         peer.push_video_config(h265);
@@ -2056,14 +2056,14 @@ void test_rtmp_input_rejects_video_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/raw-video-pending-switch");
+        rtmp_publish_test_peer peer("live/raw-video-pending-switch");
         peer.push_video_config(make_video_track());
         peer.push_raw_video(codec_id::h265);
         peer.wait_session_closed();
     }
 
     {
-        rtmp_input_test_peer peer("live/raw-video-switch");
+        rtmp_publish_test_peer peer("live/raw-video-switch");
         peer.push_metadata(false);
         peer.push_video_config(make_video_track());
         peer.wait_track(make_video_track(), 1);
@@ -2072,45 +2072,45 @@ void test_rtmp_input_rejects_video_codec_change()
     }
 }
 
-void test_rtmp_input_rejects_audio_codec_change()
+void test_rtmp_publish_rejects_audio_codec_change()
 {
     {
-        rtmp_input_test_peer peer("live/g711a-aac-pending");
+        rtmp_publish_test_peer peer("live/g711a-aac-pending");
         peer.push_g711(codec_id::g711a);
         peer.push_audio_config(aac_asc);
         peer.wait_session_closed();
     }
 
     {
-        rtmp_input_test_peer peer("live/g711a-raw-aac-pending");
+        rtmp_publish_test_peer peer("live/g711a-raw-aac-pending");
         peer.push_g711(codec_id::g711a);
         peer.push_raw_aac();
         peer.wait_session_closed();
     }
 
     {
-        rtmp_input_test_peer peer("live/aac-raw-opus-pending");
+        rtmp_publish_test_peer peer("live/aac-raw-opus-pending");
         peer.push_audio_config(aac_asc);
         peer.push_raw_opus(0);
         peer.wait_session_closed();
     }
 
     {
-        rtmp_input_test_peer peer("live/aac-opus-pending");
+        rtmp_publish_test_peer peer("live/aac-opus-pending");
         peer.push_audio_config(aac_asc);
         peer.push_opus_config();
         peer.wait_session_closed();
     }
 
     {
-        rtmp_input_test_peer peer("live/opus-g711u-pending");
+        rtmp_publish_test_peer peer("live/opus-g711u-pending");
         peer.push_opus_config();
         peer.push_g711(codec_id::g711u);
         peer.wait_session_closed();
     }
 
     {
-        rtmp_input_test_peer peer("live/aac-opus-established");
+        rtmp_publish_test_peer peer("live/aac-opus-established");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         peer.push_audio_config(aac_asc);
@@ -2120,7 +2120,7 @@ void test_rtmp_input_rejects_audio_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/opus-aac-established");
+        rtmp_publish_test_peer peer("live/opus-aac-established");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         peer.push_opus_config();
@@ -2130,7 +2130,7 @@ void test_rtmp_input_rejects_audio_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/g711a-aac-established");
+        rtmp_publish_test_peer peer("live/g711a-aac-established");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         peer.push_g711(codec_id::g711a);
@@ -2140,7 +2140,7 @@ void test_rtmp_input_rejects_audio_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/g711a-raw-aac-established");
+        rtmp_publish_test_peer peer("live/g711a-raw-aac-established");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         peer.push_g711(codec_id::g711a);
@@ -2150,7 +2150,7 @@ void test_rtmp_input_rejects_audio_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/g711a-g711u-established");
+        rtmp_publish_test_peer peer("live/g711a-g711u-established");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         peer.push_g711(codec_id::g711a);
@@ -2160,7 +2160,7 @@ void test_rtmp_input_rejects_audio_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/video-only-opus");
+        rtmp_publish_test_peer peer("live/video-only-opus");
         peer.push_metadata(false);
         peer.push_video_config(make_video_track());
         peer.wait_track(make_video_track(), 1);
@@ -2169,7 +2169,7 @@ void test_rtmp_input_rejects_audio_codec_change()
     }
 
     {
-        rtmp_input_test_peer peer("live/valid-opus");
+        rtmp_publish_test_peer peer("live/valid-opus");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         peer.push_opus_config(1);
@@ -2183,11 +2183,11 @@ void test_rtmp_input_rejects_audio_codec_change()
         peer.wait_track(make_opus_track(2), 2);
         peer.wait_audio_frames(capture, 2);
         const auto frames = capture->frames();
-        require(*frames[0].payload == first && *frames[1].payload == second, "rtmp input raw opus payloads");
+        require(*frames[0].payload == first && *frames[1].payload == second, "rtmp publish raw opus payloads");
     }
 
     {
-        rtmp_input_test_peer peer("live/g711-first-frame");
+        rtmp_publish_test_peer peer("live/g711-first-frame");
         peer.push_metadata(true);
         peer.push_video_config(make_video_track());
         constexpr std::uint32_t near_wrap = 0xfffffff0U;
@@ -2198,37 +2198,37 @@ void test_rtmp_input_rejects_audio_codec_change()
         peer.wait_audio_frames(capture, 1);
         const auto frames = capture->frames();
         require(frames.front().pts_ns == milliseconds_to_ns(static_cast<std::int64_t>(near_wrap) + 36),
-                "rtmp input g711 first frame advances shared timeline");
+                "rtmp publish g711 first frame advances shared timeline");
     }
 }
 
 void test_rtmp_rejects_live_playback_control()
 {
-    rtmp_output_test_peer peer;
+    rtmp_play_test_peer peer;
     const auto pause = peer.pause();
     const auto seek = peer.seek();
     require(pause.level == "error" && pause.code == "NetStream.Pause.Failed", "rtmp live pause rejected");
     require(seek.level == "error" && seek.code == "NetStream.Seek.Failed", "rtmp live seek rejected");
 }
 
-void test_rtmp_output_pull_codecs_and_order()
+void test_rtmp_play_pull_codecs_and_order()
 {
     {
-        rtmp_output_test_peer peer;
+        rtmp_play_test_peer peer;
         peer.publish(make_video_frame(0, true));
         peer.receive_media(1);
         require(peer.media_order() == std::vector<char>{'v'}, "rtmp h264 pull media");
     }
 
     {
-        rtmp_output_test_peer peer(make_h265_track());
+        rtmp_play_test_peer peer(make_h265_track());
         peer.publish(make_h265_frame(0, true));
         peer.receive_media(1);
         require(peer.media_order() == std::vector<char>{'v'}, "rtmp h265 pull media");
     }
 
     {
-        rtmp_output_test_peer peer(make_video_track(), true);
+        rtmp_play_test_peer peer(make_video_track(), true);
         peer.publish(make_video_frame(0, true));
         peer.publish(make_audio_frame(20'000'000));
         peer.publish(make_video_frame(40'000'000, false));
@@ -2238,9 +2238,9 @@ void test_rtmp_output_pull_codecs_and_order()
     }
 }
 
-void test_rtmp_output_config_reset_and_end()
+void test_rtmp_play_config_reset_and_end()
 {
-    rtmp_output_test_peer peer;
+    rtmp_play_test_peer peer;
     auto updated = make_video_track();
     updated.codec_config = h264_config_updated;
     peer.update_video_track(std::move(updated));
@@ -2253,11 +2253,11 @@ void test_rtmp_output_config_reset_and_end()
 void test_rtmp_tcp_error_lifecycle()
 {
     {
-        rtmp_output_test_peer peer;
+        rtmp_play_test_peer peer;
         peer.disconnect_and_wait(false);
     }
     {
-        rtmp_output_test_peer peer;
+        rtmp_play_test_peer peer;
         peer.disconnect_and_wait(true);
     }
 }
@@ -9806,22 +9806,22 @@ int main()
     std::cout << "[pass] internal_format_contract\n";
     media_server::test_rtmp_aac_asc_adts_contract();
     std::cout << "[pass] rtmp_aac_asc_adts_contract\n";
-    media_server::test_rtmp_input_initial_topology();
-    std::cout << "[pass] rtmp_input_initial_topology\n";
-    media_server::test_rtmp_input_initial_tracks_timeout();
-    std::cout << "[pass] rtmp_input_initial_tracks_timeout\n";
-    media_server::test_rtmp_input_codec_configuration_updates();
-    std::cout << "[pass] rtmp_input_codec_configuration_updates\n";
-    media_server::test_rtmp_input_rejects_video_codec_change();
-    std::cout << "[pass] rtmp_input_rejects_video_codec_change\n";
-    media_server::test_rtmp_input_rejects_audio_codec_change();
-    std::cout << "[pass] rtmp_input_rejects_audio_codec_change\n";
+    media_server::test_rtmp_publish_initial_topology();
+    std::cout << "[pass] rtmp_publish_initial_topology\n";
+    media_server::test_rtmp_publish_initial_tracks_timeout();
+    std::cout << "[pass] rtmp_publish_initial_tracks_timeout\n";
+    media_server::test_rtmp_publish_codec_configuration_updates();
+    std::cout << "[pass] rtmp_publish_codec_configuration_updates\n";
+    media_server::test_rtmp_publish_rejects_video_codec_change();
+    std::cout << "[pass] rtmp_publish_rejects_video_codec_change\n";
+    media_server::test_rtmp_publish_rejects_audio_codec_change();
+    std::cout << "[pass] rtmp_publish_rejects_audio_codec_change\n";
     media_server::test_rtmp_rejects_live_playback_control();
     std::cout << "[pass] rtmp_rejects_live_playback_control\n";
-    media_server::test_rtmp_output_pull_codecs_and_order();
-    std::cout << "[pass] rtmp_output_pull_codecs_and_order\n";
-    media_server::test_rtmp_output_config_reset_and_end();
-    std::cout << "[pass] rtmp_output_config_reset_and_end\n";
+    media_server::test_rtmp_play_pull_codecs_and_order();
+    std::cout << "[pass] rtmp_play_pull_codecs_and_order\n";
+    media_server::test_rtmp_play_config_reset_and_end();
+    std::cout << "[pass] rtmp_play_config_reset_and_end\n";
     media_server::test_rtmp_tcp_error_lifecycle();
     std::cout << "[pass] rtmp_tcp_error_lifecycle\n";
     media_server::test_rtmp_session_shutdown_lifecycle();
