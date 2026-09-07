@@ -40,7 +40,7 @@ type liveSession struct {
 	key         liveKey
 	streamName  string
 	server      mediaServerInstance
-	endpoint    mediaEndpoint
+	endpoint    gb28181ReceiverEndpoint
 	ssrc        uint32
 	state       liveState
 	dialog      *sipgo.DialogClientSession
@@ -139,14 +139,14 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		return liveView{}, errNoMediaServer
 	}
 
-	endpoint, err := s.media.createUDPInput(operationContext, server, mediaInputRequest{
+	endpoint, err := s.media.createUDPReceiver(operationContext, server, gb28181ReceiverRequest{
 		streamName: session.streamName, payloadType: 96, ssrc: ssrc,
 	})
 	if err != nil {
 		var rejection *mediaServerHTTPRejection
 		if !errors.As(err, &rejection) && s.shouldDeleteMedia(session) {
 			cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
-			_ = s.media.deleteInput(cleanupContext, server, session.streamName)
+			_ = s.media.deleteReceiver(cleanupContext, server, session.streamName)
 			cleanupCancel()
 		}
 		s.remove(session)
@@ -345,7 +345,7 @@ func (s *liveService) cleanup(session *liveSession, sendBye, deleteMedia bool) e
 	}
 	if deleteMedia && s.shouldDeleteMedia(session) && session.endpoint.rtpPort != 0 {
 		cleanupContext, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
-		if err := s.media.deleteInput(cleanupContext, session.server, session.streamName); err != nil {
+		if err := s.media.deleteReceiver(cleanupContext, session.server, session.streamName); err != nil {
 			result = errors.Join(result, err)
 		}
 		cancel()

@@ -19,11 +19,13 @@ namespace media_server
 
 gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worker,
                                          std::string stream_name,
-                                         gb28181_description description,
+                                         gb28181_transport_config config,
+                                         boost::asio::ip::address bind_address,
                                          std::chrono::milliseconds rtcp_interval)
     : worker_(worker),
-      description_(std::move(description)),
-      receiver_(worker_, std::move(stream_name), description_.payload_type, description_.ssrc),
+      config_(std::move(config)),
+      bind_address_(std::move(bind_address)),
+      receiver_(worker_, std::move(stream_name), config_.payload_type, config_.ssrc),
       rtp_transport_(worker_.io()),
       rtcp_transport_(worker_.io()),
       rtcp_timer_(worker_.io()),
@@ -61,13 +63,12 @@ std::optional<port_manager_impl::port_pair> gb28181_udp_receiver_session::prepar
 
 bool gb28181_udp_receiver_session::startup()
 {
-    if (description_.transport != gb28181_transport::udp || description_.rtp_port != 0 || description_.rtcp_port != 0 || local_ports_ ||
-        description_.address.is_unspecified() || !receiver_.startup())
+    if (config_.mode != gb28181_transport::udp || local_ports_ || bind_address_.is_unspecified() || !receiver_.startup())
     {
         return false;
     }
 
-    auto local_ports = prepare_udp_transports(description_.address);
+    auto local_ports = prepare_udp_transports(bind_address_);
     if (!local_ports)
     {
         receiver_.shutdown();
