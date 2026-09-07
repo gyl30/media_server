@@ -58,7 +58,7 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_play_session::rtsp_play_session(worker_context& worker,
-                                         output_video_codec video_codec,
+                                         video_transcode_codec video_codec,
                                          boost::asio::ip::address local_address,
                                          std::function<void(std::span<const std::uint8_t>)> write)
     : worker_(worker), video_codec_(video_codec), local_address_(std::move(local_address)), write_handler_(std::move(write))
@@ -575,7 +575,7 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
         int rtp_codec{-1};
         int frequency{};
         int payload_type{-1};
-        if (track.kind == media_kind::video && video_codec_ == output_video_codec::av1)
+        if (track.kind == media_kind::video && video_codec_ == video_transcode_codec::av1)
         {
             aom_av1_t av1{};
             av1.marker = 1;

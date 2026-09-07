@@ -39,10 +39,10 @@ void test_defaults()
     require(cfg.threads > 0, "default threads");
     require(cfg.rtsp_pulls.empty(), "default rtsp pulls");
     require(cfg.signaling_url.empty(), "default signaling disabled");
-    require(cfg.rtmp_video.codec == media_server::output_video_codec::passthrough, "default rtmp video codec");
-    require(cfg.rtsp_video.codec == media_server::output_video_codec::passthrough, "default rtsp video codec");
-    require(cfg.http_video.codec == media_server::output_video_codec::passthrough, "default http video codec");
-    require(cfg.whep_video.codec == media_server::output_video_codec::passthrough, "default whep video codec");
+    require(cfg.rtmp_video.codec == media_server::video_transcode_codec::passthrough, "default rtmp video codec");
+    require(cfg.rtsp_video.codec == media_server::video_transcode_codec::passthrough, "default rtsp video codec");
+    require(cfg.http_video.codec == media_server::video_transcode_codec::passthrough, "default http video codec");
+    require(cfg.whep_video.codec == media_server::video_transcode_codec::passthrough, "default whep video codec");
     require(!cfg.help, "default help");
 }
 
@@ -81,10 +81,10 @@ void test_values()
     require(cfg.rtsp_pulls ==
                 std::vector<std::pair<std::string, std::string>>{{"live/one", "rtsp://127.0.0.1/one"}, {"live/two", "rtsp://127.0.0.1/two"}},
             "explicit rtsp pulls");
-    require(cfg.rtmp_video.codec == media_server::output_video_codec::av1, "explicit rtmp video codec");
-    require(cfg.rtsp_video.codec == media_server::output_video_codec::av1, "explicit rtsp video codec");
-    require(cfg.http_video.codec == media_server::output_video_codec::av1, "explicit http video codec");
-    require(cfg.whep_video.codec == media_server::output_video_codec::av1, "explicit whep video codec");
+    require(cfg.rtmp_video.codec == media_server::video_transcode_codec::av1, "explicit rtmp video codec");
+    require(cfg.rtsp_video.codec == media_server::video_transcode_codec::av1, "explicit rtsp video codec");
+    require(cfg.http_video.codec == media_server::video_transcode_codec::av1, "explicit http video codec");
+    require(cfg.whep_video.codec == media_server::video_transcode_codec::av1, "explicit whep video codec");
 
     media_server::config signaling_cfg;
     require(parse({"media_server",

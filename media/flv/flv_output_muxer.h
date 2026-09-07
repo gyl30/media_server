@@ -9,7 +9,7 @@
 
 #include "media/core/media_types.h"
 #include "media/codec/video_transcoder.h"
-#include "media/codec/output_video_config.h"
+#include "media/codec/video_transcode_config.h"
 
 struct flv_muxer_t;
 
@@ -21,7 +21,7 @@ class flv_output_muxer final
    public:
     using output_handler = std::function<void(int, std::span<const std::uint8_t>, std::uint32_t)>;
 
-    explicit flv_output_muxer(output_handler handler, output_video_config video = {});
+    explicit flv_output_muxer(output_handler handler, video_transcode_config video = {});
     ~flv_output_muxer();
 
     void shutdown();
@@ -36,7 +36,7 @@ class flv_output_muxer final
     void input_av1(const media_frame& frame);
 
     output_handler output_handler_;
-    output_video_config video_config_;
+    video_transcode_config video_config_;
     flv_muxer_t* muxer_{};
     std::map<track_id, media_track> tracks_;
     std::unique_ptr<video_transcoder> video_transcoder_;

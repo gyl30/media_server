@@ -1215,7 +1215,7 @@ void test_webrtc_av1_sdp_answer()
                                       .ice_ufrag = "serverufrag",
                                       .ice_pwd = "serverpassword1234567890",
                                       .fingerprint = "AA:BB:CC:DD",
-                                      .video = output_video_config{.codec = output_video_codec::av1},
+                                      .video = video_transcode_config{.codec = video_transcode_codec::av1},
                                   });
     };
 

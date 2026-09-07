@@ -147,12 +147,12 @@ static_assert(!std::is_constructible_v<rtsp_publish_media,
                                        std::vector<rtsp_publish_track_description>>);
 static_assert(std::is_constructible_v<rtsp_play_session,
                                       worker_context&,
-                                      output_video_codec,
+                                      video_transcode_codec,
                                       boost::asio::ip::address,
                                       rtsp_write_handler>);
 static_assert(!std::is_constructible_v<rtsp_play_session,
                                        boost::asio::any_io_executor,
-                                       output_video_codec,
+                                       video_transcode_codec,
                                        boost::asio::ip::address,
                                        rtsp_write_handler>);
 static_assert(std::is_constructible_v<rtsp_pull_session,
@@ -220,14 +220,14 @@ static_assert(std::is_constructible_v<rtmp_output_session,
                                       worker_context&,
                                       std::shared_ptr<media_stream>,
                                       flv_output_muxer::output_handler,
-                                      output_video_config,
+                                      video_transcode_config,
                                       rtmp_output_session::end_handler>);
 static_assert(std::is_constructible_v<rtmp_session,
                                       worker_context&,
                                       boost::asio::ip::tcp::socket,
-                                      output_video_config,
+                                      video_transcode_config,
                                       std::chrono::milliseconds>);
-static_assert(std::is_constructible_v<rtsp_server_connection, worker_context&, boost::asio::ip::tcp::socket, output_video_codec>);
+static_assert(std::is_constructible_v<rtsp_server_connection, worker_context&, boost::asio::ip::tcp::socket, video_transcode_codec>);
 
 [[noreturn]] void fail(std::string_view message);
 void require(bool condition, std::string_view message);
@@ -1395,7 +1395,7 @@ class rtmp_input_test_peer final
         streams_.clear();
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto session = std::make_shared<rtmp_session>(worker_, std::move(server_socket), output_video_config{}, initial_tracks_timeout);
+        auto session = std::make_shared<rtmp_session>(worker_, std::move(server_socket), video_transcode_config{}, initial_tracks_timeout);
         session_ = session;
         session->startup();
         runner_ = std::jthread([this]() { worker_.run(); });
@@ -5478,7 +5478,7 @@ void test_rtsp_publish_server_contract()
 class rtsp_output_test_peer final
 {
    public:
-    explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()}, output_video_config video = {})
+    explicit rtsp_output_test_peer(std::vector<media_track> tracks = {make_video_track(), make_audio_track()}, video_transcode_config video = {})
         : acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}), client_(worker_.io())
     {
         config_.rtsp_video = video;
@@ -6035,7 +6035,7 @@ void test_rtsp_output_av1()
         const auto source = make_video_transcoder_fixture(input_codec);
         auto video = input_codec == codec_id::h264 ? make_video_track() : make_h265_track();
         video.codec_config = source.codec_config;
-        rtsp_output_test_peer peer({std::move(video)}, output_video_config{.codec = output_video_codec::av1});
+        rtsp_output_test_peer peer({std::move(video)}, video_transcode_config{.codec = video_transcode_codec::av1});
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
         const auto describe = peer.request("DESCRIBE " + base +
                                            " RTSP/1.0\r\n"
@@ -6989,8 +6989,8 @@ void test_flv_av1_transcode_round_trip()
         require(demuxer != nullptr, "flv av1 demuxer create");
         flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
                                 { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 demux input"); },
-                                output_video_config{
-                                    .codec = output_video_codec::av1,
+                                video_transcode_config{
+                                    .codec = video_transcode_codec::av1,
                                 });
         output.on_track(media_track{
             .id = video_track_id,
@@ -7150,8 +7150,8 @@ void test_flv_opus_adapter_round_trip()
     flv_output_muxer av1_output(
         [&av1_demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         { require(flv_demuxer_input(av1_demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 opus adapter demux"); },
-        output_video_config{
-            .codec = output_video_codec::av1,
+        video_transcode_config{
+            .codec = video_transcode_codec::av1,
         });
     auto video = make_video_track();
     video.config_version = 1;
@@ -8968,8 +8968,8 @@ void test_hls_av1_fmp4_output()
             .target_duration_seconds = 1.0,
             .window_size = 4,
             .video =
-                output_video_config{
-                    .codec = output_video_codec::av1,
+                video_transcode_config{
+                    .codec = video_transcode_codec::av1,
                 },
         });
         output.on_track(media_track{
@@ -9137,8 +9137,8 @@ void test_hls_av1_fmp4_output()
         .target_duration_seconds = 1.0,
         .window_size = 4,
         .video =
-            output_video_config{
-                .codec = output_video_codec::av1,
+            video_transcode_config{
+                .codec = video_transcode_codec::av1,
             },
     });
     media_track video_track{
