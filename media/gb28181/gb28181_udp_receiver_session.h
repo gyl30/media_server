@@ -26,7 +26,8 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
    public:
     gb28181_udp_receiver_session(worker_context& worker,
                         std::string stream_name,
-                        gb28181_description description,
+                        gb28181_transport_config config,
+                        boost::asio::ip::address bind_address,
                         std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     [[nodiscard]] bool startup();
@@ -43,7 +44,8 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     void safe_shutdown();
 
     worker_context& worker_;
-    gb28181_description description_;
+    gb28181_transport_config config_;
+    boost::asio::ip::address bind_address_;
     gb28181_rtp_receiver receiver_;
     udp_yield_transport rtp_transport_;
     udp_yield_transport rtcp_transport_;

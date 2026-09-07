@@ -29,7 +29,7 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
    public:
     gb28181_udp_sender_session(worker_context& worker,
                                std::shared_ptr<media_stream> stream,
-                               gb28181_description description,
+                               gb28181_transport_config config,
                                boost::asio::ip::address bind_address,
                                std::string sender_id,
                                bool rtcp_enabled,
@@ -50,7 +50,7 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     std::string sender_id_;
-    gb28181_description description_;
+    gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
     boost::asio::ip::udp::endpoint remote_rtp_endpoint_;
     boost::asio::ip::udp::endpoint remote_rtcp_endpoint_;

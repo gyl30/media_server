@@ -17,12 +17,14 @@ namespace media_server
 {
 gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worker,
                                          std::string stream_name,
-                                         gb28181_description description,
+                                         gb28181_transport_config config,
+                                         boost::asio::ip::address bind_address,
                                          std::chrono::milliseconds establishment_timeout)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
-      description_(std::move(description)),
-      receiver_(worker_, stream_name_, description_.payload_type, description_.ssrc),
+      config_(std::move(config)),
+      bind_address_(std::move(bind_address)),
+      receiver_(worker_, stream_name_, config_.payload_type, config_.ssrc),
       establishment_timeout_(establishment_timeout),
       socket_(worker_.io())
 {
@@ -30,9 +32,9 @@ gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worke
 
 bool gb28181_tcp_receiver_session::startup()
 {
-    if (description_.transport == gb28181_transport::tcp_passive)
+    if (config_.mode == gb28181_transport::tcp_passive)
     {
-        listener_ = std::make_unique<tcp_listener>(worker_.io(), description_.rtp_port, description_.address);
+        listener_ = std::make_unique<tcp_listener>(worker_.io(), config_.listen_port, bind_address_);
         boost::system::error_code error;
         listener_->startup(error);
         if (error)
@@ -59,7 +61,7 @@ const std::string& gb28181_tcp_receiver_session::stream_name() const noexcept { 
 void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
 {
     boost::system::error_code error;
-    if (description_.transport == gb28181_transport::tcp_passive)
+    if (config_.mode == gb28181_transport::tcp_passive)
     {
         listener_->accept(socket_, establishment_timeout_, yield, error);
         listener_->shutdown();
@@ -67,7 +69,7 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
     }
     else
     {
-        socket_.async_connect(boost::asio::ip::tcp::endpoint{description_.address, description_.rtp_port},
+        socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port},
                               boost::asio::cancel_after(establishment_timeout_, yield[error]));
         if (error == boost::asio::error::operation_aborted && socket_.is_open())
         {

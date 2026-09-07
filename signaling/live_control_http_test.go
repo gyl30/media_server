@@ -25,14 +25,14 @@ func TestLiveControlHTTPStartCancellationCancelsMediaCreate(t *testing.T) {
 	mediaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
-		case "/gb28181/create":
+		case "/gb28181/receiver/create":
 			close(createStarted)
 			select {
 			case <-request.Context().Done():
 			case <-releaseCreate:
 				writeHTTPError(writer, http.StatusInternalServerError, "released")
 			}
-		case "/gb28181/delete":
+		case "/gb28181/receiver/delete":
 			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
 		default:
 			http.NotFound(writer, request)

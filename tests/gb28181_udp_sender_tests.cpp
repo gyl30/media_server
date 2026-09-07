@@ -64,11 +64,11 @@ void test_udp_sender_session_sends_rtp()
             "gb udp sender source tracks");
     require(streams.add(source), "gb udp sender source registry");
 
-    const gb28181_description description{
-        .transport = gb28181_transport::udp,
-        .address = boost::asio::ip::address_v4::loopback(),
-        .rtp_port = rtp_receiver.local_endpoint().port(),
-        .rtcp_port = rtcp_receiver.local_endpoint().port(),
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::udp,
+        .remote_address = boost::asio::ip::address_v4::loopback(),
+        .remote_rtp_port = rtp_receiver.local_endpoint().port(),
+        .remote_rtcp_port = rtcp_receiver.local_endpoint().port(),
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
@@ -139,11 +139,11 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
             "gb udp sender rtcp source tracks");
     require(streams.add(source), "gb udp sender rtcp source registry");
 
-    const gb28181_description description{
-        .transport = gb28181_transport::udp,
-        .address = boost::asio::ip::address_v4::loopback(),
-        .rtp_port = rtp_receiver.local_endpoint().port(),
-        .rtcp_port = rtcp_receiver.local_endpoint().port(),
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::udp,
+        .remote_address = boost::asio::ip::address_v4::loopback(),
+        .remote_rtp_port = rtp_receiver.local_endpoint().port(),
+        .remote_rtcp_port = rtcp_receiver.local_endpoint().port(),
         .payload_type = payload_type,
         .ssrc = ssrc,
     };

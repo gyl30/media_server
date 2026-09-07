@@ -235,13 +235,12 @@ void test_udp_session_fatal_codec_change_unregisters()
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
     const std::string stream_name = "live/gb-fatal-codec-session";
-    const gb28181_description description{
-        .transport = gb28181_transport::udp,
-        .address = boost::asio::ip::address_v4::loopback(),
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::udp,
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session = std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, description);
+    auto session = std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, description, boost::asio::ip::address_v4::loopback());
     require(streams.add_receiver_session(stream_name, session), "gb fatal codec session registry add");
     require(session->startup(), "gb fatal codec session startup");
     const auto local_ports = session->local_ports();
@@ -439,13 +438,13 @@ void test_rtcp_peer_learning_overrides_rtp_plus_one()
 
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    const gb28181_description description{
-        .transport = gb28181_transport::udp,
-        .address = boost::asio::ip::address_v4::loopback(),
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::udp,
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session = std::make_shared<gb28181_udp_receiver_session>(worker, "live/gb-rtcp-peer", description);
+    auto session = std::make_shared<gb28181_udp_receiver_session>(
+        worker, "live/gb-rtcp-peer", description, boost::asio::ip::address_v4::loopback());
     require(session->startup(), "gb rtcp peer startup");
     const auto local_ports = session->local_ports();
     require(local_ports.has_value(), "gb rtcp peer local ports");
@@ -514,13 +513,13 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
     boost::asio::ip::udp::socket wrong(io, {boost::asio::ip::address_v4::loopback(), 0});
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
-    const gb28181_description description{
-        .transport = gb28181_transport::udp,
-        .address = boost::asio::ip::address_v4::loopback(),
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::udp,
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session = std::make_shared<gb28181_udp_receiver_session>(worker, "live/gb-peer-learned", description);
+    auto session = std::make_shared<gb28181_udp_receiver_session>(
+        worker, "live/gb-peer-learned", description, boost::asio::ip::address_v4::loopback());
     require(session->startup(), "gb peer learned startup");
     const auto local_ports = session->local_ports();
     require(local_ports.has_value(), "gb peer learned local ports");
@@ -568,14 +567,14 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x1234567aU;
     const std::string stream_name = "live/gb-rtcp-shutdown";
-    const gb28181_description description{
-        .transport = gb28181_transport::udp,
-        .address = boost::asio::ip::address_v4::loopback(),
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::udp,
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
     auto session =
-        std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, description, std::chrono::milliseconds::zero());
+        std::make_shared<gb28181_udp_receiver_session>(
+            worker, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds::zero());
     require(streams.add_receiver_session(stream_name, session), "gb rtcp shutdown session registry add");
     require(session->startup(), "gb rtcp shutdown session startup");
 

@@ -86,10 +86,10 @@ void test_tcp_sender_write_backlog_limit()
 
     boost::asio::io_context peer_io;
     tcp::acceptor receiver(peer_io, {boost::asio::ip::address_v4::loopback(), 0});
-    const gb28181_description description{
-        .transport = gb28181_transport::tcp_active,
-        .address = boost::asio::ip::address_v4::loopback(),
-        .rtp_port = receiver.local_endpoint().port(),
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::tcp_active,
+        .remote_address = boost::asio::ip::address_v4::loopback(),
+        .remote_port = receiver.local_endpoint().port(),
         .payload_type = 96,
         .ssrc = 0x12345678U,
     };
@@ -98,6 +98,7 @@ void test_tcp_sender_write_backlog_limit()
                                                                source->name(),
                                                                "backpressure",
                                                                description,
+                                                               boost::asio::ip::address_v4::loopback(),
                                                                1s,
                                                                0U);
     require(streams.add_sender_session(source->name(), "backpressure", session), "gb tcp backpressure session registry");

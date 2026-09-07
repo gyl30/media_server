@@ -61,12 +61,15 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
         send_text_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
         return;
     }
-    if (path == "/gb28181" || path.starts_with("/gb28181/"))
+    if (path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/"))
     {
-        write_response(request, media_server::handle_gb28181_receiver_request(request, workers_.next(), *parsed), yield);
+        write_response(request,
+                       media_server::handle_gb28181_receiver_request(
+                           request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
+                       yield);
         return;
     }
-    if (path == "/play/gb28181" || path.starts_with("/play/gb28181/"))
+    if (path == "/gb28181/sender" || path.starts_with("/gb28181/sender/"))
     {
         write_response(request,
                        media_server::handle_gb28181_sender_request(
