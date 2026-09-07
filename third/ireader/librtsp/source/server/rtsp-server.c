@@ -100,7 +100,8 @@ int rtsp_server_reply2(struct rtsp_server_t *rtsp, int code, const char* header,
 
 	if (len < 0 || bytes < 0 || len + bytes >= sizeof(rtsp->reply))
 		return rtsp_server_reply(rtsp, 513 /*Message Too Large*/);
-	memcpy(rtsp->reply + len, data, bytes);
+	if (bytes > 0)
+		memcpy(rtsp->reply + len, data, bytes);
 	return rtsp->handler.send(rtsp->sendparam, rtsp->reply, len + bytes);
 }
 
