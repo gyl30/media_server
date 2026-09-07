@@ -1638,6 +1638,14 @@ class rtmp_publish_test_peer final
         fail("rtmp publish stream removed");
     }
 
+    void disconnect_and_wait()
+    {
+        boost::system::error_code error;
+        client_socket_.close(error);
+        wait_session_closed();
+        wait_stream_removed();
+    }
+
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
     {
@@ -1990,6 +1998,19 @@ void test_rtmp_publish_initial_tracks_timeout()
     require(!peer.stream_exists(), "rtmp incomplete stream never enters registry");
     peer.wait_session_closed();
     require(!peer.stream_exists(), "rtmp initial tracks timeout leaves registry empty");
+}
+
+void test_rtmp_publish_recreate_lifecycle()
+{
+    for (int iteration = 0; iteration < 10; ++iteration)
+    {
+        rtmp_publish_test_peer peer("live/recreate");
+        const auto video = make_video_track();
+        peer.push_metadata(false);
+        peer.push_video_config(video);
+        peer.wait_track(video, 1);
+        peer.disconnect_and_wait();
+    }
 }
 
 void test_rtmp_publish_codec_configuration_updates()
@@ -10000,6 +10021,8 @@ int main()
     std::cout << "[pass] rtmp_publish_initial_topology\n";
     media_server::test_rtmp_publish_initial_tracks_timeout();
     std::cout << "[pass] rtmp_publish_initial_tracks_timeout\n";
+    media_server::test_rtmp_publish_recreate_lifecycle();
+    std::cout << "[pass] rtmp_publish_recreate_lifecycle\n";
     media_server::test_rtmp_publish_codec_configuration_updates();
     std::cout << "[pass] rtmp_publish_codec_configuration_updates\n";
     media_server::test_rtmp_publish_rejects_video_codec_change();
