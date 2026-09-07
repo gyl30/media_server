@@ -9,7 +9,7 @@
 
 #include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
-#include "media/http/http_flv_output.h"
+#include "media/http/http_flv_streamer.h"
 #include "media/http/http_flv_session.h"
 
 namespace media_server
@@ -132,7 +132,7 @@ void http_flv_session::send_text_response(boost::beast::http::status status,
 void http_flv_session::startup_flv(std::shared_ptr<media_stream> media_stream)
 {
     const auto weak = weak_from_this();
-    output_ = std::make_shared<http_flv_output>(
+    streamer_ = std::make_shared<http_flv_streamer>(
         [weak](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         {
             if (const auto self = weak.lock())
@@ -149,7 +149,7 @@ void http_flv_session::startup_flv(std::shared_ptr<media_stream> media_stream)
         },
         config_.http_video);
 
-    reader_ = media_stream->add_reader(output_, worker_.io());
+    reader_ = media_stream->add_reader(streamer_, worker_.io());
 }
 
 void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -169,7 +169,7 @@ void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_
 
     if (data.empty())
     {
-        output_->write_complete(generation);
+        streamer_->write_complete(generation);
         return;
     }
 
@@ -198,7 +198,7 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
         if (!pending_bootstrap_ready_)
         {
             write_in_progress_ = false;
-            output_->write_complete(generation);
+            streamer_->write_complete(generation);
             return;
         }
 
@@ -208,7 +208,7 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
         if (data.empty())
         {
             write_in_progress_ = false;
-            output_->write_complete(generation);
+            streamer_->write_complete(generation);
             return;
         }
     }
@@ -228,10 +228,10 @@ void http_flv_session::safe_shutdown()
     }
     reader_.remove();
     reader_ = {};
-    if (output_)
+    if (streamer_)
     {
-        output_->shutdown();
-        output_.reset();
+        streamer_->shutdown();
+        streamer_.reset();
     }
     pending_bootstrap_.clear();
     pending_bootstrap_ready_ = false;

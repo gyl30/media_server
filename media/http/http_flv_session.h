@@ -17,7 +17,7 @@
 namespace media_server
 {
 class worker_context;
-class http_flv_output;
+class http_flv_streamer;
 class media_stream;
 
 class http_flv_session final : public std::enable_shared_from_this<http_flv_session>
@@ -47,7 +47,7 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     boost::beast::tcp_stream stream_;
     request_type request_;
     const config& config_;
-    std::shared_ptr<http_flv_output> output_;
+    std::shared_ptr<http_flv_streamer> streamer_;
     media_reader_handle reader_;
     std::vector<std::uint8_t> pending_bootstrap_;
     std::uint64_t pending_generation_{};
