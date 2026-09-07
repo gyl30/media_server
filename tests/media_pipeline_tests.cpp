@@ -36,7 +36,7 @@
 #include "media/hls/hls.h"
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
-#include "media/hls/hls_output.h"
+#include "media/hls/hls_segmenter.h"
 #include "media/core/media_sink.h"
 #include "media/net/port_manager.h"
 #include "media/net/tcp_listener.h"
@@ -7221,7 +7221,7 @@ void test_h265_output_paths()
     require(media != capture.packets.end() && media->payload == *hevc_frame.payload, "flv h265 media payload");
     require(media->pts == 40 && media->dts == 40 && media->flags == 1, "flv h265 media timing and key frame");
 
-    hls_output hls(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    hls_segmenter hls(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
     hls.on_track(make_h265_track());
     hls.on_frame(make_h265_frame(0, true));
     hls.on_frame(make_h265_frame(1'000'000'000, true));
@@ -8832,9 +8832,9 @@ void test_stream_registry_generation_lifecycle()
     require(!streams.find("live/generation"), "registry replacement removed");
 }
 
-void test_hls_output()
+void test_hls_segmenter()
 {
-    hls_output output(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    hls_segmenter output(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
     output.on_track(make_video_track());
     output.on_track(make_audio_track());
 
@@ -8888,7 +8888,7 @@ void test_hls_output()
     require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls endlist");
 
     boost::asio::io_context reconfigured_io;
-    auto reconfigured = std::make_shared<hls_output>(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    auto reconfigured = std::make_shared<hls_segmenter>(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
     auto reconfigured_stream = std::make_shared<media_stream>("live/hls-reconfigured", reconfigured_io.get_executor());
     boost::asio::post(reconfigured_io,
                       [reconfigured, reconfigured_stream]()
@@ -8938,14 +8938,14 @@ void test_hls_output()
                                 [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC && packet.pts == 91'800; }),
             "hls config audio resumes after key frame");
 
-    hls_output signed_timeline(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    hls_segmenter signed_timeline(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
     signed_timeline.on_track(make_video_track());
     signed_timeline.on_frame(make_video_frame(-500'000'000, true));
     signed_timeline.on_frame(make_video_frame(500'000'000, true));
     require(signed_timeline.segment_count() == 1U, "hls signed pts reaches target duration");
     signed_timeline.on_end();
 
-    hls_output reordered_video(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    hls_segmenter reordered_video(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
     reordered_video.on_track(make_video_track());
     reordered_video.on_frame(make_video_frame(0, true));
     auto future = make_video_frame(80'000'000, false);
@@ -8964,7 +8964,7 @@ void test_hls_av1_fmp4_output()
     for (const auto input_codec : {codec_id::h264, codec_id::h265})
     {
         const auto source = make_video_transcoder_fixture(input_codec);
-        hls_output output(hls_config{
+        hls_segmenter output(hls_config{
             .target_duration_seconds = 1.0,
             .window_size = 4,
             .video =
@@ -9133,7 +9133,7 @@ void test_hls_av1_fmp4_output()
     }
 
     const auto source = make_video_transcoder_fixture(codec_id::h264);
-    hls_output reconfigured(hls_config{
+    hls_segmenter reconfigured(hls_config{
         .target_duration_seconds = 1.0,
         .window_size = 4,
         .video =
@@ -9181,7 +9181,7 @@ void test_hls_g711_output()
 {
     for (const auto codec : {codec_id::g711a, codec_id::g711u})
     {
-        hls_output output(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+        hls_segmenter output(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
         output.on_track(make_video_track());
         output.on_track(make_g711_track(codec));
         output.on_frame(make_video_frame(0, true));
@@ -10000,8 +10000,8 @@ int main()
     std::cout << "[pass] io_context_pool_stop\n";
     media_server::test_stream_registry_generation_lifecycle();
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
-    media_server::test_hls_output();
-    std::cout << "[pass] hls_output\n";
+    media_server::test_hls_segmenter();
+    std::cout << "[pass] hls_segmenter\n";
     media_server::test_hls_av1_fmp4_output();
     std::cout << "[pass] hls_av1_fmp4_output\n";
     media_server::test_hls_g711_output();

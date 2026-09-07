@@ -8,7 +8,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "media/hls/hls_output.h"
+#include "media/hls/hls_segmenter.h"
 #include "media/codec/codec_utils.h"
 
 extern "C"
@@ -23,7 +23,7 @@ extern "C"
 namespace media_server
 {
 
-hls_output::hls_output(hls_config config)
+hls_segmenter::hls_segmenter(hls_config config)
     : video_config_(config.video), target_duration_seconds_(config.target_duration_seconds), window_size_(config.window_size)
 {
     if (video_config_.codec == video_transcode_codec::passthrough)
@@ -32,9 +32,9 @@ hls_output::hls_output(hls_config config)
     }
 }
 
-hls_output::~hls_output() = default;
+hls_segmenter::~hls_segmenter() = default;
 
-void hls_output::on_track(const media_track& track)
+void hls_segmenter::on_track(const media_track& track)
 {
     std::scoped_lock lock(mutex_);
     if (ended_at_.has_value())
@@ -76,7 +76,7 @@ void hls_output::on_track(const media_track& track)
     waiting_for_key_frame_ = true;
 }
 
-void hls_output::on_frame(const media_frame& frame)
+void hls_segmenter::on_frame(const media_frame& frame)
 {
     std::scoped_lock lock(mutex_);
     if (ended_at_.has_value() || !frame.payload)
@@ -151,7 +151,7 @@ void hls_output::on_frame(const media_frame& frame)
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
 }
 
-void hls_output::on_end()
+void hls_segmenter::on_end()
 {
     std::scoped_lock lock(mutex_);
     if (ended_at_.has_value())
@@ -191,7 +191,7 @@ void hls_output::on_end()
     ended_at_ = std::chrono::steady_clock::now();
 }
 
-std::string hls_output::playlist(std::string_view base_path) const
+std::string hls_segmenter::playlist(std::string_view base_path) const
 {
     std::scoped_lock lock(mutex_);
     std::ostringstream output;
@@ -225,7 +225,7 @@ std::string hls_output::playlist(std::string_view base_path) const
     return output.str();
 }
 
-std::optional<std::vector<std::uint8_t>> hls_output::init_segment() const
+std::optional<std::vector<std::uint8_t>> hls_segmenter::init_segment() const
 {
     std::scoped_lock lock(mutex_);
     if (video_config_.codec != video_transcode_codec::av1 || init_segment_.empty())
@@ -235,7 +235,7 @@ std::optional<std::vector<std::uint8_t>> hls_output::init_segment() const
     return init_segment_;
 }
 
-std::optional<std::vector<std::uint8_t>> hls_output::segment(std::uint64_t sequence) const
+std::optional<std::vector<std::uint8_t>> hls_segmenter::segment(std::uint64_t sequence) const
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = std::find_if(segments_.begin(), segments_.end(), [sequence](const hls_segment& item) { return item.sequence == sequence; });
@@ -246,33 +246,33 @@ std::optional<std::vector<std::uint8_t>> hls_output::segment(std::uint64_t seque
     return iterator->data;
 }
 
-std::size_t hls_output::segment_count() const
+std::size_t hls_segmenter::segment_count() const
 {
     std::scoped_lock lock(mutex_);
     return segments_.size();
 }
 
-std::optional<std::chrono::steady_clock::time_point> hls_output::ended_at() const
+std::optional<std::chrono::steady_clock::time_point> hls_segmenter::ended_at() const
 {
     std::scoped_lock lock(mutex_);
     return ended_at_;
 }
 
-void* hls_output::ts_alloc(void*, std::size_t bytes) { return std::malloc(bytes); }
+void* hls_segmenter::ts_alloc(void*, std::size_t bytes) { return std::malloc(bytes); }
 
-void hls_output::ts_free(void*, void* packet) { std::free(packet); }
+void hls_segmenter::ts_free(void*, void* packet) { std::free(packet); }
 
-int hls_output::ts_write(void* param, const void* packet, std::size_t bytes)
+int hls_segmenter::ts_write(void* param, const void* packet, std::size_t bytes)
 {
-    auto* self = static_cast<hls_output*>(param);
+    auto* self = static_cast<hls_segmenter*>(param);
     const auto* begin = static_cast<const std::uint8_t*>(packet);
     self->current_segment_.insert(self->current_segment_.end(), begin, begin + bytes);
     return 0;
 }
 
-int hls_output::mov_read(void* param, void* data, std::uint64_t bytes)
+int hls_segmenter::mov_read(void* param, void* data, std::uint64_t bytes)
 {
-    auto* self = static_cast<hls_output*>(param);
+    auto* self = static_cast<hls_segmenter*>(param);
     if (self->mov_target_ == nullptr || bytes > self->mov_target_->size() - std::min(self->mov_position_, self->mov_target_->size()))
     {
         return -1;
@@ -282,9 +282,9 @@ int hls_output::mov_read(void* param, void* data, std::uint64_t bytes)
     return 0;
 }
 
-int hls_output::mov_write(void* param, const void* data, std::uint64_t bytes)
+int hls_segmenter::mov_write(void* param, const void* data, std::uint64_t bytes)
 {
-    auto* self = static_cast<hls_output*>(param);
+    auto* self = static_cast<hls_segmenter*>(param);
     if (self->mov_target_ == nullptr || bytes > std::numeric_limits<std::size_t>::max() - self->mov_position_)
     {
         return -1;
@@ -299,9 +299,9 @@ int hls_output::mov_write(void* param, const void* data, std::uint64_t bytes)
     return 0;
 }
 
-int hls_output::mov_seek(void* param, std::int64_t offset)
+int hls_segmenter::mov_seek(void* param, std::int64_t offset)
 {
-    auto* self = static_cast<hls_output*>(param);
+    auto* self = static_cast<hls_segmenter*>(param);
     if (self->mov_target_ == nullptr || self->mov_target_->size() > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()))
     {
         return -1;
@@ -316,14 +316,14 @@ int hls_output::mov_seek(void* param, std::int64_t offset)
     return 0;
 }
 
-std::int64_t hls_output::mov_tell(void* param)
+std::int64_t hls_segmenter::mov_tell(void* param)
 {
-    const auto* self = static_cast<hls_output*>(param);
+    const auto* self = static_cast<hls_segmenter*>(param);
     return self->mov_position_ <= static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ? static_cast<std::int64_t>(self->mov_position_)
                                                                                                      : -1;
 }
 
-void hls_output::reset_fmp4(bool clear_segments, bool clear_video_config)
+void hls_segmenter::reset_fmp4(bool clear_segments, bool clear_video_config)
 {
     if (fmp4_ != nullptr)
     {
@@ -351,7 +351,7 @@ void hls_output::reset_fmp4(bool clear_segments, bool clear_video_config)
     }
 }
 
-void hls_output::startup_video_transcoder(const media_track& track)
+void hls_segmenter::startup_video_transcoder(const media_track& track)
 {
     if (video_transcoder_)
     {
@@ -377,7 +377,7 @@ void hls_output::startup_video_transcoder(const media_track& track)
     video_transcoder_ = std::move(transcoder);
 }
 
-bool hls_output::ensure_fmp4(const media_frame& frame)
+bool hls_segmenter::ensure_fmp4(const media_frame& frame)
 {
     if (fmp4_ != nullptr)
     {
@@ -410,10 +410,10 @@ bool hls_output::ensure_fmp4(const media_frame& frame)
     }
 
     const mov_buffer_t buffer{
-        .read = &hls_output::mov_read,
-        .write = &hls_output::mov_write,
-        .seek = &hls_output::mov_seek,
-        .tell = &hls_output::mov_tell,
+        .read = &hls_segmenter::mov_read,
+        .write = &hls_segmenter::mov_write,
+        .seek = &hls_segmenter::mov_seek,
+        .tell = &hls_segmenter::mov_tell,
     };
     init_segment_.clear();
     mov_target_ = &init_segment_;
@@ -466,7 +466,7 @@ bool hls_output::ensure_fmp4(const media_frame& frame)
     return true;
 }
 
-void hls_output::input_av1(const media_frame& frame)
+void hls_segmenter::input_av1(const media_frame& frame)
 {
     if (!video_transcoder_ || frame.track != video_track_id_)
     {
@@ -484,7 +484,7 @@ void hls_output::input_av1(const media_frame& frame)
     }
 }
 
-void hls_output::write_av1_frame(const media_frame& frame)
+void hls_segmenter::write_av1_frame(const media_frame& frame)
 {
     if (!frame.payload || !ensure_fmp4(frame))
     {
@@ -519,7 +519,7 @@ void hls_output::write_av1_frame(const media_frame& frame)
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
 }
 
-void hls_output::input_fmp4_audio(const media_frame& frame, const media_track& track)
+void hls_segmenter::input_fmp4_audio(const media_frame& frame, const media_track& track)
 {
     if (fmp4_ == nullptr || fmp4_audio_track_ < 0 || frame.track != fmp4_audio_track_id_ || !frame.payload)
     {
@@ -551,7 +551,7 @@ void hls_output::input_fmp4_audio(const media_frame& frame, const media_track& t
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
 }
 
-void hls_output::finish_fmp4_segment(std::int64_t end_pts_ns)
+void hls_segmenter::finish_fmp4_segment(std::int64_t end_pts_ns)
 {
     if (fmp4_ == nullptr || !segment_start_pts_ns_)
     {
@@ -584,7 +584,7 @@ void hls_output::finish_fmp4_segment(std::int64_t end_pts_ns)
     mov_position_ = 0;
 }
 
-void hls_output::recreate_muxer()
+void hls_segmenter::recreate_muxer()
 {
     if (muxer_ != nullptr)
     {
@@ -592,9 +592,9 @@ void hls_output::recreate_muxer()
     }
 
     const mpeg_ts_func_t functions{
-        .alloc = &hls_output::ts_alloc,
-        .free = &hls_output::ts_free,
-        .write = &hls_output::ts_write,
+        .alloc = &hls_segmenter::ts_alloc,
+        .free = &hls_segmenter::ts_free,
+        .write = &hls_segmenter::ts_write,
     };
     muxer_ = mpeg_ts_create(&functions, this);
     stream_ids_.clear();
@@ -610,7 +610,7 @@ void hls_output::recreate_muxer()
     }
 }
 
-void hls_output::finish_segment(std::int64_t end_pts_ns)
+void hls_segmenter::finish_segment(std::int64_t end_pts_ns)
 {
     if (current_segment_.empty())
     {
@@ -641,7 +641,7 @@ void hls_output::finish_segment(std::int64_t end_pts_ns)
     }
 }
 
-int hls_output::add_track_to_muxer(const media_track& track)
+int hls_segmenter::add_track_to_muxer(const media_track& track)
 {
     switch (track.codec)
     {
