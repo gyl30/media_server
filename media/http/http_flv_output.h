@@ -6,7 +6,7 @@
 #include <functional>
 
 #include "media/core/media_reader.h"
-#include "media/flv/flv_output_muxer.h"
+#include "media/flv/flv_muxer.h"
 
 extern "C"
 {
@@ -42,7 +42,7 @@ class http_flv_output final : public media_reader
     media_read_batch batch_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
-    flv_output_muxer muxer_;
+    flv_muxer muxer_;
     std::uint64_t generation_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};

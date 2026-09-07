@@ -8,10 +8,10 @@ namespace media_server
 
 rtmp_output_session::rtmp_output_session(worker_context& worker,
                                          std::shared_ptr<media_stream> stream,
-                                         flv_output_muxer::output_handler output,
+                                         flv_muxer::packet_handler packet_handler,
                                          video_transcode_config video,
                                          end_handler on_end)
-    : worker_(worker), stream_(std::move(stream)), output_muxer_(std::move(output), video), end_handler_(std::move(on_end))
+    : worker_(worker), stream_(std::move(stream)), muxer_(std::move(packet_handler), video), end_handler_(std::move(on_end))
 {
 }
 
@@ -37,7 +37,7 @@ void rtmp_output_session::shutdown()
     reader_tracks_.clear();
     track_revision_ = 0;
     waiting_for_key_frame_ = false;
-    output_muxer_.shutdown();
+    muxer_.shutdown();
     stream_.reset();
 }
 
@@ -85,7 +85,7 @@ void rtmp_output_session::on_read(media_read_batch batch)
             }
             waiting_for_key_frame_ = false;
         }
-        output_muxer_.on_frame(entry.frame);
+        muxer_.on_frame(entry.frame);
     }
 
     reader_handle().async_read(reader_cursor_);
@@ -123,7 +123,7 @@ void rtmp_output_session::apply_tracks(const media_track_snapshot_ptr& tracks)
     for (const auto& track : tracks->tracks)
     {
         reader_tracks_.emplace(track.id, track);
-        output_muxer_.on_track(track);
+        muxer_.on_track(track);
     }
     track_revision_ = tracks->revision;
     waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;

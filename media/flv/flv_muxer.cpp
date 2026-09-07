@@ -1,7 +1,7 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
-#include "media/flv/flv_output_muxer.h"
+#include "media/flv/flv_muxer.h"
 
 extern "C"
 {
@@ -13,8 +13,8 @@ extern "C"
 namespace media_server
 {
 
-flv_output_muxer::flv_output_muxer(output_handler handler, video_transcode_config video)
-    : output_handler_(std::move(handler)), video_config_(video), muxer_(flv_muxer_create(&flv_output_muxer::on_output, this))
+flv_muxer::flv_muxer(packet_handler handler, video_transcode_config video)
+    : packet_handler_(std::move(handler)), video_config_(video), muxer_(flv_muxer_create(&flv_muxer::on_packet, this))
 {
     if (muxer_ != nullptr && video_config_.codec == video_transcode_codec::av1)
     {
@@ -22,9 +22,9 @@ flv_output_muxer::flv_output_muxer(output_handler handler, video_transcode_confi
     }
 }
 
-flv_output_muxer::~flv_output_muxer() = default;
+flv_muxer::~flv_muxer() = default;
 
-void flv_output_muxer::shutdown()
+void flv_muxer::shutdown()
 {
     if (video_transcoder_)
     {
@@ -40,7 +40,7 @@ void flv_output_muxer::shutdown()
     }
 }
 
-void flv_output_muxer::on_track(const media_track& track)
+void flv_muxer::on_track(const media_track& track)
 {
     if ((track.codec == codec_id::g711a || track.codec == codec_id::g711u) &&
         (track.clock_rate != 8'000 || track.channel_count != 1 || !track.codec_config.empty()))
@@ -84,7 +84,7 @@ void flv_output_muxer::on_track(const media_track& track)
     prime_video_config(track, 0);
 }
 
-void flv_output_muxer::prime_video_config(const media_track& track, std::uint32_t timestamp)
+void flv_muxer::prime_video_config(const media_track& track, std::uint32_t timestamp)
 {
     if (video_config_.codec == video_transcode_codec::av1 && track.kind == media_kind::video)
     {
@@ -137,7 +137,7 @@ void flv_output_muxer::prime_video_config(const media_track& track, std::uint32_
     }
 }
 
-void flv_output_muxer::on_frame(const media_frame& frame)
+void flv_muxer::on_frame(const media_frame& frame)
 {
     const auto iterator = tracks_.find(frame.track);
     if (iterator == tracks_.end() || !frame.payload)
@@ -197,7 +197,7 @@ void flv_output_muxer::on_frame(const media_frame& frame)
     }
 }
 
-void flv_output_muxer::startup_video_transcoder(const media_track& track)
+void flv_muxer::startup_video_transcoder(const media_track& track)
 {
     if (video_transcoder_)
     {
@@ -223,7 +223,7 @@ void flv_output_muxer::startup_video_transcoder(const media_track& track)
     video_transcoder_ = std::move(transcoder);
 }
 
-void flv_output_muxer::input_av1(const media_frame& frame)
+void flv_muxer::input_av1(const media_frame& frame)
 {
     if (!video_transcoder_ || frame.track != video_track_id_)
     {
@@ -254,15 +254,15 @@ void flv_output_muxer::input_av1(const media_frame& frame)
     }
 }
 
-int flv_output_muxer::on_output(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp)
+int flv_muxer::on_packet(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
-    auto* self = static_cast<flv_output_muxer*>(param);
-    if (!self->output_handler_ || data == nullptr)
+    auto* self = static_cast<flv_muxer*>(param);
+    if (!self->packet_handler_ || data == nullptr)
     {
         return 0;
     }
 
-    self->output_handler_(type, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), timestamp);
+    self->packet_handler_(type, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), timestamp);
     return 0;
 }
 

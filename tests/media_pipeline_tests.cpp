@@ -219,7 +219,7 @@ static_assert(std::is_constructible_v<rtmp_input_session,
 static_assert(std::is_constructible_v<rtmp_output_session,
                                       worker_context&,
                                       std::shared_ptr<media_stream>,
-                                      flv_output_muxer::output_handler,
+                                      flv_muxer::packet_handler,
                                       video_transcode_config,
                                       rtmp_output_session::end_handler>);
 static_assert(std::is_constructible_v<rtmp_session,
@@ -1341,7 +1341,7 @@ std::string read_rtsp_headers_until(boost::asio::ip::tcp::socket& socket, std::c
 std::vector<std::uint8_t> make_rtmp_video_sequence_header(media_track track)
 {
     std::vector<std::uint8_t> packet;
-    flv_output_muxer muxer(
+    flv_muxer muxer(
         [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
         {
             if (type == FLV_TYPE_VIDEO && packet.empty())
@@ -1448,7 +1448,7 @@ class rtmp_input_test_peer final
     void push_raw_video(codec_id codec)
     {
         std::vector<std::uint8_t> packet;
-        flv_output_muxer muxer(
+        flv_muxer muxer(
             [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
             {
                 if (type == FLV_TYPE_VIDEO)
@@ -1474,7 +1474,7 @@ class rtmp_input_test_peer final
     void push_opus_config(std::uint16_t channel_count = 2)
     {
         std::vector<std::uint8_t> packet;
-        flv_output_muxer muxer(
+        flv_muxer muxer(
             [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
             {
                 if (type == FLV_TYPE_AUDIO && packet.empty())
@@ -1491,7 +1491,7 @@ class rtmp_input_test_peer final
     void push_raw_opus(std::uint32_t timestamp, std::vector<std::uint8_t> payload = {0xf8, 0xff, 0xfe})
     {
         std::vector<std::uint8_t> packet;
-        flv_output_muxer muxer(
+        flv_muxer muxer(
             [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
             {
                 if (type == FLV_TYPE_AUDIO)
@@ -1510,7 +1510,7 @@ class rtmp_input_test_peer final
     void push_g711(codec_id codec, std::uint32_t timestamp = 0)
     {
         std::vector<std::uint8_t> packet;
-        flv_output_muxer muxer(
+        flv_muxer muxer(
             [&packet](int type, std::span<const std::uint8_t> data, std::uint32_t)
             {
                 if (type == FLV_TYPE_AUDIO)
@@ -6882,7 +6882,7 @@ void test_flv_config_cache_lifecycle()
     std::vector<std::uint32_t> video_sequence_header_timestamps;
     std::optional<std::int32_t> video_composition_time;
     std::optional<std::uint32_t> video_timestamp;
-    flv_output_muxer output(
+    flv_muxer output(
         [&capture,
          &demuxer,
          &video_sequence_headers,
@@ -6987,7 +6987,7 @@ void test_flv_av1_transcode_round_trip()
         const auto demuxer =
             std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
         require(demuxer != nullptr, "flv av1 demuxer create");
-        flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        flv_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
                                 { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 demux input"); },
                                 video_transcode_config{
                                     .codec = video_transcode_codec::av1,
@@ -7110,7 +7110,7 @@ void test_flv_g711_round_trip()
         const auto demuxer =
             std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
         require(demuxer != nullptr, "flv g711 demuxer create");
-        flv_output_muxer output(
+        flv_muxer output(
             [&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
             { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv g711 demux input"); });
         output.on_track(make_g711_track(codec));
@@ -7135,7 +7135,7 @@ void test_flv_opus_adapter_round_trip()
     flv_demux_capture capture;
     const auto demuxer =
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
-    flv_output_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+    flv_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
                             { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv opus adapter demux"); });
     output.on_track(make_opus_track(2));
     const std::vector<std::uint8_t> payload{0xf8, 0xff, 0xfe};
@@ -7147,7 +7147,7 @@ void test_flv_opus_adapter_round_trip()
     flv_demux_capture av1_capture;
     const auto av1_demuxer =
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &av1_capture), &flv_demuxer_destroy);
-    flv_output_muxer av1_output(
+    flv_muxer av1_output(
         [&av1_demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         { require(flv_demuxer_input(av1_demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 opus adapter demux"); },
         video_transcode_config{
@@ -7186,7 +7186,7 @@ void test_h265_output_paths()
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
     require(demuxer != nullptr, "flv h265 demuxer create");
     std::vector<std::uint32_t> hevc_sequence_header_timestamps;
-    flv_output_muxer flv(
+    flv_muxer flv(
         [&demuxer, &hevc_sequence_header_timestamps](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
             require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv h265 demuxer input");

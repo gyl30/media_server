@@ -1,5 +1,5 @@
-#ifndef MEDIA_FLV_OUTPUT_MUXER_H
-#define MEDIA_FLV_OUTPUT_MUXER_H
+#ifndef MEDIA_FLV_MUXER_H
+#define MEDIA_FLV_MUXER_H
 
 #include <map>
 #include <span>
@@ -16,26 +16,26 @@ struct flv_muxer_t;
 namespace media_server
 {
 
-class flv_output_muxer final
+class flv_muxer final
 {
    public:
-    using output_handler = std::function<void(int, std::span<const std::uint8_t>, std::uint32_t)>;
+    using packet_handler = std::function<void(int, std::span<const std::uint8_t>, std::uint32_t)>;
 
-    explicit flv_output_muxer(output_handler handler, video_transcode_config video = {});
-    ~flv_output_muxer();
+    explicit flv_muxer(packet_handler handler, video_transcode_config video = {});
+    ~flv_muxer();
 
     void shutdown();
     void on_track(const media_track& track);
     void on_frame(const media_frame& frame);
 
    private:
-    static int on_output(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp);
+    static int on_packet(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp);
 
     void prime_video_config(const media_track& track, std::uint32_t timestamp);
     void startup_video_transcoder(const media_track& track);
     void input_av1(const media_frame& frame);
 
-    output_handler output_handler_;
+    packet_handler packet_handler_;
     video_transcode_config video_config_;
     flv_muxer_t* muxer_{};
     std::map<track_id, media_track> tracks_;

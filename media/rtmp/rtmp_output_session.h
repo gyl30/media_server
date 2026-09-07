@@ -8,7 +8,7 @@
 
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
-#include "media/flv/flv_output_muxer.h"
+#include "media/flv/flv_muxer.h"
 
 namespace media_server
 {
@@ -22,7 +22,7 @@ class rtmp_output_session final : public media_reader, public std::enable_shared
 
     rtmp_output_session(worker_context& worker,
                         std::shared_ptr<media_stream> stream,
-                        flv_output_muxer::output_handler output,
+                        flv_muxer::packet_handler packet_handler,
                         video_transcode_config video,
                         end_handler on_end);
 
@@ -38,7 +38,7 @@ class rtmp_output_session final : public media_reader, public std::enable_shared
 
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
-    flv_output_muxer output_muxer_;
+    flv_muxer muxer_;
     end_handler end_handler_;
     media_reader_handle reader_;
     std::map<track_id, media_track> reader_tracks_;
