@@ -1,5 +1,5 @@
-#ifndef MEDIA_RTMP_RTMP_OUTPUT_SESSION_H
-#define MEDIA_RTMP_RTMP_OUTPUT_SESSION_H
+#ifndef MEDIA_RTMP_RTMP_PLAY_SESSION_H
+#define MEDIA_RTMP_RTMP_PLAY_SESSION_H
 
 #include <map>
 #include <memory>
@@ -15,12 +15,12 @@ namespace media_server
 
 class worker_context;
 
-class rtmp_output_session final : public media_reader, public std::enable_shared_from_this<rtmp_output_session>
+class rtmp_play_session final : public media_reader, public std::enable_shared_from_this<rtmp_play_session>
 {
    public:
     using end_handler = std::function<void()>;
 
-    rtmp_output_session(worker_context& worker,
+    rtmp_play_session(worker_context& worker,
                         std::shared_ptr<media_stream> stream,
                         flv_muxer::packet_handler packet_handler,
                         video_transcode_config video,

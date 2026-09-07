@@ -187,8 +187,8 @@ add_library(media_core STATIC
     media/webrtc/whep_session.cpp
     media/webrtc/whep.cpp
     media/webrtc/webrtc_output.cpp
-    media/rtmp/rtmp_input_session.cpp
-    media/rtmp/rtmp_output_session.cpp
+    media/rtmp/rtmp_publish_session.cpp
+    media/rtmp/rtmp_play_session.cpp
     media/rtmp/rtmp_session.cpp
     media/rtmp/rtmp_server.cpp
     media/rtsp/rtsp_sdp.cpp

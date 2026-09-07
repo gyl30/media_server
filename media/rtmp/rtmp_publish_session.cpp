@@ -8,7 +8,7 @@
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/rtmp/rtmp_input_session.h"
+#include "media/rtmp/rtmp_publish_session.h"
 
 extern "C"
 {
@@ -27,7 +27,7 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 }    // namespace
 
-rtmp_input_session::rtmp_input_session(worker_context& worker,
+rtmp_publish_session::rtmp_publish_session(worker_context& worker,
                                        std::string stream_name,
                                        std::chrono::milliseconds initial_tracks_timeout,
                                        shutdown_handler on_shutdown)
@@ -40,11 +40,11 @@ rtmp_input_session::rtmp_input_session(worker_context& worker,
 {
 }
 
-rtmp_input_session::~rtmp_input_session() = default;
+rtmp_publish_session::~rtmp_publish_session() = default;
 
-bool rtmp_input_session::startup()
+bool rtmp_publish_session::startup()
 {
-    demuxer_ = flv_demuxer_create(&rtmp_input_session::demux_callback, this);
+    demuxer_ = flv_demuxer_create(&rtmp_publish_session::demux_callback, this);
     if (demuxer_ == nullptr)
     {
         return false;
@@ -65,7 +65,7 @@ bool rtmp_input_session::startup()
     return true;
 }
 
-void rtmp_input_session::shutdown()
+void rtmp_publish_session::shutdown()
 {
     if (closed_)
     {
@@ -86,7 +86,7 @@ void rtmp_input_session::shutdown()
     }
 }
 
-int rtmp_input_session::on_video(const void* data, std::size_t bytes, std::uint32_t timestamp)
+int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     if (closed_ || demuxer_ == nullptr)
     {
@@ -95,7 +95,7 @@ int rtmp_input_session::on_video(const void* data, std::size_t bytes, std::uint3
     return flv_demuxer_input(demuxer_, FLV_TYPE_VIDEO, data, bytes, timestamp);
 }
 
-int rtmp_input_session::on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp)
+int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     if (closed_ || demuxer_ == nullptr)
     {
@@ -104,7 +104,7 @@ int rtmp_input_session::on_audio(const void* data, std::size_t bytes, std::uint3
     return flv_demuxer_input(demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp);
 }
 
-int rtmp_input_session::on_script(std::span<const std::uint8_t> data)
+int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
 {
     if (closed_ || data.empty())
     {
@@ -150,17 +150,17 @@ int rtmp_input_session::on_script(std::span<const std::uint8_t> data)
     return 0;
 }
 
-int rtmp_input_session::demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
+int rtmp_publish_session::demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
 {
     if (data == nullptr)
     {
         return -1;
     }
-    return static_cast<rtmp_input_session*>(param)->on_flv_demux(
+    return static_cast<rtmp_publish_session*>(param)->on_flv_demux(
         codec, std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), bytes), pts, dts, flags);
 }
 
-int rtmp_input_session::handle_video_config(int codec, std::span<const std::uint8_t> data)
+int rtmp_publish_session::handle_video_config(int codec, std::span<const std::uint8_t> data)
 {
     const auto video_codec = codec == FLV_VIDEO_AVCC ? codec_id::h264 : codec_id::h265;
     if (initial_video_track_ && initial_video_track_->codec != video_codec)
@@ -196,7 +196,7 @@ int rtmp_input_session::handle_video_config(int codec, std::span<const std::uint
     return 0;
 }
 
-int rtmp_input_session::handle_audio_config(int codec, std::span<const std::uint8_t> data)
+int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::uint8_t> data)
 {
     if (expected_audio_.has_value() && !*expected_audio_)
     {
@@ -262,7 +262,7 @@ int rtmp_input_session::handle_audio_config(int codec, std::span<const std::uint
     return 0;
 }
 
-int rtmp_input_session::initialize_g711_track(int codec)
+int rtmp_publish_session::initialize_g711_track(int codec)
 {
     if (expected_audio_.has_value() && !*expected_audio_)
     {
@@ -289,7 +289,7 @@ int rtmp_input_session::initialize_g711_track(int codec)
     return 0;
 }
 
-int rtmp_input_session::publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
+int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
 {
     track_id id{};
     if (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265)
@@ -341,7 +341,7 @@ int rtmp_input_session::publish_media(int codec, std::span<const std::uint8_t> d
     return 0;
 }
 
-int rtmp_input_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
+int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
 {
     if (closed_ || !stream_)
     {
@@ -367,7 +367,7 @@ int rtmp_input_session::on_flv_demux(int codec, std::span<const std::uint8_t> da
     return publish_media(codec, data, pts, dts, flags);
 }
 
-void rtmp_input_session::try_initialize_tracks()
+void rtmp_publish_session::try_initialize_tracks()
 {
     if (tracks_initialized_ || !expected_audio_.has_value() || !initial_video_track_ || (*expected_audio_ && !initial_audio_track_))
     {

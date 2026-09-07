@@ -1,12 +1,12 @@
 #include <utility>
 
-#include "media/rtmp/rtmp_output_session.h"
+#include "media/rtmp/rtmp_play_session.h"
 #include "media/net/worker_context.h"
 
 namespace media_server
 {
 
-rtmp_output_session::rtmp_output_session(worker_context& worker,
+rtmp_play_session::rtmp_play_session(worker_context& worker,
                                          std::shared_ptr<media_stream> stream,
                                          flv_muxer::packet_handler packet_handler,
                                          video_transcode_config video,
@@ -15,7 +15,7 @@ rtmp_output_session::rtmp_output_session(worker_context& worker,
 {
 }
 
-void rtmp_output_session::startup()
+void rtmp_play_session::startup()
 {
     if (closed_ || !stream_)
     {
@@ -24,7 +24,7 @@ void rtmp_output_session::startup()
     reader_ = stream_->add_reader(shared_from_this(), worker_.io());
 }
 
-void rtmp_output_session::shutdown()
+void rtmp_play_session::shutdown()
 {
     if (closed_)
     {
@@ -41,7 +41,7 @@ void rtmp_output_session::shutdown()
     stream_.reset();
 }
 
-void rtmp_output_session::on_tracks(media_track_snapshot_ptr tracks)
+void rtmp_play_session::on_tracks(media_track_snapshot_ptr tracks)
 {
     if (closed_)
     {
@@ -55,7 +55,7 @@ void rtmp_output_session::on_tracks(media_track_snapshot_ptr tracks)
     }
 }
 
-void rtmp_output_session::on_read(media_read_batch batch)
+void rtmp_play_session::on_read(media_read_batch batch)
 {
     if (closed_)
     {
@@ -91,7 +91,7 @@ void rtmp_output_session::on_read(media_read_batch batch)
     reader_handle().async_read(reader_cursor_);
 }
 
-void rtmp_output_session::on_end()
+void rtmp_play_session::on_end()
 {
     if (!closed_)
     {
@@ -99,7 +99,7 @@ void rtmp_output_session::on_end()
     }
 }
 
-void rtmp_output_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+void rtmp_play_session::apply_tracks(const media_track_snapshot_ptr& tracks)
 {
     if (!tracks || tracks->revision <= track_revision_)
     {

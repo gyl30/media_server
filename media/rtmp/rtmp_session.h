@@ -21,8 +21,8 @@ namespace media_server
 {
 
 class worker_context;
-class rtmp_input_session;
-class rtmp_output_session;
+class rtmp_publish_session;
+class rtmp_play_session;
 
 class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 {
@@ -64,8 +64,8 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     std::chrono::milliseconds initial_tracks_timeout_;
     video_transcode_config video_config_;
     rtmp_server_t* rtmp_context_{};
-    std::shared_ptr<rtmp_input_session> input_;
-    std::shared_ptr<rtmp_output_session> output_;
+    std::shared_ptr<rtmp_publish_session> publish_;
+    std::shared_ptr<rtmp_play_session> play_;
     std::string stream_name_;
 };
 
