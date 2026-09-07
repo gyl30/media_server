@@ -601,7 +601,11 @@ int main()
     media_server::registry::init();
     try
     {
-        media_server::test_ps_fixture_creates_stream();
+        for (int iteration = 0; iteration < 10; ++iteration)
+        {
+            media_server::test_ps_fixture_creates_stream();
+            media_server::test_udp_session_rtcp_shutdown_releases_scheduler();
+        }
         std::cout << "[pass] ps_fixture_creates_stream\n";
         media_server::test_receiver_video_codec_change_is_fatal();
         std::cout << "[pass] receiver_video_codec_change_is_fatal\n";
@@ -609,7 +613,6 @@ int main()
         std::cout << "[pass] receiver_audio_codec_change_is_fatal\n";
         media_server::test_udp_session_fatal_codec_change_unregisters();
         std::cout << "[pass] udp_session_fatal_codec_change_unregisters\n";
-        media_server::test_udp_session_rtcp_shutdown_releases_scheduler();
         std::cout << "[pass] udp_session_rtcp_shutdown_releases_scheduler\n";
         media_server::test_sender_same_codec_config_version_continues_ps_stream();
         std::cout << "[pass] sender_same_codec_config_version_continues_ps_stream\n";
