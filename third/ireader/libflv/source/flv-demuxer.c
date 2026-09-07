@@ -38,6 +38,7 @@ struct flv_demuxer_t
 
 	uint8_t* ptr;
 	int capacity;
+	int aac_configured;
 };
 
 struct flv_demuxer_t* flv_demuxer_create(flv_demuxer_handler handler, void* param)
@@ -100,11 +101,16 @@ static int flv_demuxer_audio(struct flv_demuxer_t* flv, const uint8_t* data, int
 			flv->a.aac.channels = 2;
 			flv->a.aac.sampling_frequency = 44100;
 			flv->a.aac.extension_frequency = 44100;
-			mpeg4_aac_audio_specific_config_load(data + n, bytes - n, &flv->a.aac);
+			r = mpeg4_aac_audio_specific_config_load(data + n, bytes - n, &flv->a.aac);
+			if (r < 0)
+				return r;
+			flv->aac_configured = 1;
 			return flv->handler(flv->param, FLV_AUDIO_ASC, data + n, bytes - n, timestamp, timestamp, 0);
 		}
 		else if (FLV_AVPACKET == audio.avpacket)
 		{
+			if (!flv->aac_configured)
+				return -EINVAL;
 			if (0 != flv_demuxer_check_and_alloc(flv, bytes + 7 + 1 + flv->a.aac.npce))
 				return -ENOMEM;
 
