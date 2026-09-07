@@ -3799,7 +3799,7 @@ void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t e
     const auto stream_name = "relay/opus-" + std::to_string(expected_channels) + "-" + std::to_string(fmtp.size());
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, stream_name, request_url);
-    require(pull->startup(), "rtsp opus input startup");
+    require(pull->startup(), "rtsp pull opus startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -3827,7 +3827,7 @@ void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t e
     boost::asio::write(socket, boost::asio::buffer(describe_response));
 
     const auto video_setup = read_rtsp_headers(socket);
-    require(video_setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp opus input video setup");
+    require(video_setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp pull opus video setup");
     const auto video_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(video_setup, "CSeq:") +
                                 "\r\nSession: opus-input;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
     boost::asio::write(socket, boost::asio::buffer(video_response));
@@ -3854,12 +3854,12 @@ void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t e
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    require(stream != nullptr, "rtsp opus input publishes stream");
+    require(stream != nullptr, "rtsp pull opus publishes stream");
     const auto tracks = stream->tracks();
-    require(tracks.size() == 2U, "rtsp opus input complete topology");
+    require(tracks.size() == 2U, "rtsp pull opus complete topology");
     require(tracks[1].codec == codec_id::opus && tracks[1].clock_rate == 48'000 && tracks[1].channel_count == expected_channels &&
                 tracks[1].codec_config.empty(),
-            "rtsp opus input core track contract");
+            "rtsp pull opus core track contract");
 
     auto sink = std::make_shared<raw_audio_capture_sink>();
     stream->add_sink(sink);
@@ -3868,7 +3868,7 @@ void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t e
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    require(sink->tracks().size() == 2U, "rtsp opus input sink ready");
+    require(sink->tracks().size() == 2U, "rtsp pull opus sink ready");
 
     const std::array<std::vector<std::uint8_t>, 3> opus_payloads{
         std::vector<std::uint8_t>{0xf8, 0xff, 0xfe},
@@ -3904,12 +3904,12 @@ void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t e
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     const auto frames = sink->frames();
-    require(frames.size() == opus_payloads.size(), "rtsp opus input frame count");
+    require(frames.size() == opus_payloads.size(), "rtsp pull opus frame count");
     for (std::size_t index = 0; index < frames.size(); ++index)
     {
-        require(*frames[index].payload == opus_payloads[index], "rtsp opus input raw payload");
+        require(*frames[index].payload == opus_payloads[index], "rtsp pull opus raw payload");
         require(frames[index].pts_ns == static_cast<std::int64_t>(index) * 20'000'000 && frames[index].dts_ns == frames[index].pts_ns,
-                "rtsp opus input 20ms timeline");
+                "rtsp pull opus 20ms timeline");
     }
 
     pull->shutdown();
@@ -3989,7 +3989,7 @@ void test_rtsp_pull_rejects_invalid_opus_rate()
 
 void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
 {
-    require(codec == codec_id::g711a || codec == codec_id::g711u, "rtsp g711 input codec");
+    require(codec == codec_id::g711a || codec == codec_id::g711u, "rtsp pull g711 codec");
     const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
     const auto encoding = codec == codec_id::g711a ? "PCMA" : "PCMU";
 
@@ -4001,7 +4001,7 @@ void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     const auto stream_name = "relay/" + std::string(to_string(codec)) + (explicit_rtpmap ? "-rtpmap" : "-static");
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, stream_name, request_url);
-    require(pull->startup(), "rtsp g711 input startup");
+    require(pull->startup(), "rtsp pull g711 startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
     boost::asio::ip::tcp::socket socket(server_io);
@@ -4029,7 +4029,7 @@ void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     boost::asio::write(socket, boost::asio::buffer(describe_response));
 
     const auto video_setup = read_rtsp_headers(socket);
-    require(video_setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp g711 input video setup");
+    require(video_setup.starts_with("SETUP " + request_url + "/video RTSP/1.0\r\n"), "rtsp pull g711 video setup");
     const auto video_response = "RTSP/1.0 200 OK\r\nCSeq: " + rtsp_header_value(video_setup, "CSeq:") +
                                 "\r\nSession: g711-input;timeout=60\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nContent-Length: 0\r\n\r\n";
     boost::asio::write(socket, boost::asio::buffer(video_response));
@@ -4056,11 +4056,11 @@ void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    require(stream != nullptr, "rtsp g711 input publishes stream");
+    require(stream != nullptr, "rtsp pull g711 publishes stream");
     const auto tracks = stream->tracks();
     require(tracks.size() == 2U && tracks[1].codec == codec && tracks[1].clock_rate == 8'000 && tracks[1].channel_count == 1 &&
                 tracks[1].codec_config.empty(),
-            "rtsp g711 input core track contract");
+            "rtsp pull g711 core track contract");
 
     auto sink = std::make_shared<raw_audio_capture_sink>();
     stream->add_sink(sink);
@@ -4069,7 +4069,7 @@ void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    require(sink->tracks().size() == 2U, "rtsp g711 input sink ready");
+    require(sink->tracks().size() == 2U, "rtsp pull g711 sink ready");
 
     std::array<std::vector<std::uint8_t>, 3> payloads;
     for (std::size_t index = 0; index < payloads.size(); ++index)
@@ -4102,12 +4102,12 @@ void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     const auto frames = sink->frames();
-    require(frames.size() == payloads.size(), "rtsp g711 input frame count");
+    require(frames.size() == payloads.size(), "rtsp pull g711 frame count");
     for (std::size_t index = 0; index < frames.size(); ++index)
     {
-        require(*frames[index].payload == payloads[index], "rtsp g711 input raw payload");
+        require(*frames[index].payload == payloads[index], "rtsp pull g711 raw payload");
         require(frames[index].pts_ns == static_cast<std::int64_t>(index) * 20'000'000 && frames[index].dts_ns == frames[index].pts_ns,
-                "rtsp g711 input 20ms timeline");
+                "rtsp pull g711 20ms timeline");
     }
 
     pull->shutdown();
@@ -6138,24 +6138,24 @@ void test_rtsp_play_opus_passthrough_boundaries()
                                        " RTSP/1.0\r\n"
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
-    require(describe.starts_with("RTSP/1.0 200"), "rtsp opus output describe");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp play opus describe");
     require(describe.find("m=audio ") != std::string::npos && describe.find(" RTP/AVP 97\n") != std::string::npos,
-            "rtsp opus output dynamic payload type");
-    require(describe.find("a=rtpmap:97 opus/48000/2\n") != std::string::npos, "rtsp opus output rtpmap");
+            "rtsp play opus dynamic payload type");
+    require(describe.find("a=rtpmap:97 opus/48000/2\n") != std::string::npos, "rtsp play opus rtpmap");
 
     const auto setup = peer.request("SETUP " + base +
                                     "/trackID=2 RTSP/1.0\r\n"
                                     "CSeq: 2\r\n"
                                     "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
     const auto session = rtsp_header_value(setup, "Session:");
-    require(setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp opus output setup");
+    require(setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp play opus setup");
     require(peer.request("PLAY " + base +
                          " RTSP/1.0\r\n"
                          "CSeq: 3\r\n"
                          "Session: " +
                          session + "\r\n\r\n")
                 .starts_with("RTSP/1.0 200"),
-            "rtsp opus output play");
+            "rtsp play opus play");
 
     peer.publish(make_video_frame(0, true));
     const auto opus = make_opus_frame(20'000'000, {0x78, 0x11, 0x22, 0x33, 0x44});
@@ -6168,28 +6168,28 @@ void test_rtsp_play_opus_passthrough_boundaries()
         {
             continue;
         }
-        require(interleaved->channel == 2U, "rtsp opus output rtp channel");
+        require(interleaved->channel == 2U, "rtsp play opus rtp channel");
         rtp_packet_t packet{};
         require(rtp_packet_deserialize(&packet, interleaved->payload.data(), static_cast<int>(interleaved->payload.size())) == 0,
-                "rtsp opus output rtp packet");
-        require(packet.rtp.pt == 97U, "rtsp opus output negotiated payload type");
+                "rtsp play opus rtp packet");
+        require(packet.rtp.pt == 97U, "rtsp play opus negotiated payload type");
         const auto* begin = static_cast<const std::uint8_t*>(packet.payload);
         received_payload.assign(begin, begin + packet.payloadlen);
         ++rtp_packets;
     }
-    require(rtp_packets == 1U && received_payload == *opus.payload, "rtsp opus output one packet raw payload");
+    require(rtp_packets == 1U && received_payload == *opus.payload, "rtsp play opus one packet raw payload");
 
     peer.publish(make_opus_frame(40'000'001));
-    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp opus output rejects fractional millisecond");
+    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp play opus rejects fractional millisecond");
 
     const auto capacity = static_cast<std::size_t>(rtp_packet_getsize() - RTP_FIXED_HEADER);
     peer.publish(make_opus_frame(60'000'000, std::vector<std::uint8_t>(capacity + 1U, 0x55)));
-    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp opus output rejects oversized packet");
+    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp play opus rejects oversized packet");
 }
 
 void test_rtsp_play_g711_passthrough_case(codec_id codec)
 {
-    require(codec == codec_id::g711a || codec == codec_id::g711u, "rtsp g711 output codec");
+    require(codec == codec_id::g711a || codec == codec_id::g711u, "rtsp play g711 codec");
     const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
     rtsp_play_test_peer peer({make_video_track(), make_g711_track(codec)});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
@@ -6197,23 +6197,23 @@ void test_rtsp_play_g711_passthrough_case(codec_id codec)
                                        " RTSP/1.0\r\n"
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
-    require(describe.starts_with("RTSP/1.0 200"), "rtsp g711 output describe");
-    require(describe.find("m=audio 0 RTP/AVP " + std::to_string(payload_type) + "\n") != std::string::npos, "rtsp g711 output static payload type");
-    require(describe.find("a=rtpmap:" + std::to_string(payload_type)) == std::string::npos, "rtsp g711 output does not require rtpmap");
+    require(describe.starts_with("RTSP/1.0 200"), "rtsp play g711 describe");
+    require(describe.find("m=audio 0 RTP/AVP " + std::to_string(payload_type) + "\n") != std::string::npos, "rtsp play g711 static payload type");
+    require(describe.find("a=rtpmap:" + std::to_string(payload_type)) == std::string::npos, "rtsp play g711 does not require rtpmap");
 
     const auto setup = peer.request("SETUP " + base +
                                     "/trackID=2 RTSP/1.0\r\n"
                                     "CSeq: 2\r\n"
                                     "Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n");
     const auto session = rtsp_header_value(setup, "Session:");
-    require(setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp g711 output setup");
+    require(setup.starts_with("RTSP/1.0 200") && !session.empty(), "rtsp play g711 setup");
     require(peer.request("PLAY " + base +
                          " RTSP/1.0\r\n"
                          "CSeq: 3\r\n"
                          "Session: " +
                          session + "\r\n\r\n")
                 .starts_with("RTSP/1.0 200"),
-            "rtsp g711 output play");
+            "rtsp play g711 play");
 
     peer.publish(make_video_frame(0, true));
     std::array<std::vector<std::uint8_t>, 2> payloads;
@@ -6230,20 +6230,20 @@ void test_rtsp_play_g711_passthrough_case(codec_id codec)
         {
             continue;
         }
-        require(interleaved->channel == 2U, "rtsp g711 output rtp channel");
+        require(interleaved->channel == 2U, "rtsp play g711 rtp channel");
         rtp_packet_t packet{};
         require(rtp_packet_deserialize(&packet, interleaved->payload.data(), static_cast<int>(interleaved->payload.size())) == 0,
-                "rtsp g711 output rtp packet");
-        require(packet.rtp.pt == static_cast<unsigned int>(payload_type), "rtsp g711 output static rtp payload type");
+                "rtsp play g711 rtp packet");
+        require(packet.rtp.pt == static_cast<unsigned int>(payload_type), "rtsp play g711 static rtp payload type");
         const auto* begin = static_cast<const std::uint8_t*>(packet.payload);
         received_payloads.emplace_back(begin, begin + packet.payloadlen);
         packets.push_back(packet);
     }
-    require(received_payloads == std::vector<std::vector<std::uint8_t>>(payloads.begin(), payloads.end()), "rtsp g711 output raw payload");
-    require(packets.size() == 2U && packets[1].rtp.timestamp - packets[0].rtp.timestamp == 160U, "rtsp g711 output 20ms timestamp step");
+    require(received_payloads == std::vector<std::vector<std::uint8_t>>(payloads.begin(), payloads.end()), "rtsp play g711 raw payload");
+    require(packets.size() == 2U && packets[1].rtp.timestamp - packets[0].rtp.timestamp == 160U, "rtsp play g711 20ms timestamp step");
 
     peer.publish(make_raw_audio_frame(60'000'001, std::vector<std::uint8_t>(160U, 0x33)));
-    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp g711 output rejects fractional millisecond");
+    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp play g711 rejects fractional millisecond");
 
     const auto capacity = static_cast<std::size_t>(rtp_packet_getsize() - RTP_FIXED_HEADER);
     peer.publish(make_raw_audio_frame(80'000'000, std::vector<std::uint8_t>(capacity, 0x44)));
@@ -6257,18 +6257,18 @@ void test_rtsp_play_g711_passthrough_case(codec_id codec)
         maximum = interleaved;
         break;
     }
-    require(maximum.has_value() && maximum->channel == 2U, "rtsp g711 output accepts maximum payload");
+    require(maximum.has_value() && maximum->channel == 2U, "rtsp play g711 accepts maximum payload");
     rtp_packet_t maximum_packet{};
     require(rtp_packet_deserialize(&maximum_packet, maximum->payload.data(), static_cast<int>(maximum->payload.size())) == 0 &&
                 maximum_packet.payloadlen == static_cast<int>(capacity),
-            "rtsp g711 output maximum payload size");
+            "rtsp play g711 maximum payload size");
     while (const auto interleaved = peer.read_interleaved(std::chrono::milliseconds(20)))
     {
-        require(interleaved->channel == 3U, "rtsp g711 output drains rtcp after maximum payload");
+        require(interleaved->channel == 3U, "rtsp play g711 drains rtcp after maximum payload");
     }
 
     peer.publish(make_raw_audio_frame(100'000'000, std::vector<std::uint8_t>(capacity + 1U, 0x55)));
-    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp g711 output rejects oversized packet");
+    require(!peer.read_interleaved(std::chrono::milliseconds(100)).has_value(), "rtsp play g711 rejects oversized packet");
 }
 
 void test_rtsp_play_g711_passthrough()
@@ -6889,7 +6889,7 @@ void test_flv_config_cache_lifecycle()
     std::vector<std::uint32_t> video_sequence_header_timestamps;
     std::optional<std::int32_t> video_composition_time;
     std::optional<std::uint32_t> video_timestamp;
-    flv_muxer output(
+    flv_muxer muxer(
         [&capture,
          &demuxer,
          &video_sequence_headers,
@@ -6929,19 +6929,19 @@ void test_flv_config_cache_lifecycle()
 
     auto video = make_video_track();
     video.config_version = 1;
-    output.on_track(video);
+    muxer.on_track(video);
     require(video_sequence_headers == 1U && video_sequence_header_timestamps == std::vector<std::uint32_t>{0U},
             "flv initial video sequence header timestamp");
     auto reordered_video = make_video_frame(-40'000'000, true);
     reordered_video.dts_ns = 0;
-    output.on_frame(reordered_video);
+    muxer.on_frame(reordered_video);
     require(video_timestamp == 0U, "flv video dts stays on unsigned tag timeline");
     require(video_composition_time == -40, "flv video keeps negative composition time");
 
     auto audio = make_audio_track();
     audio.config_version = 1;
-    output.on_track(audio);
-    output.on_frame(make_audio_frame(0));
+    muxer.on_track(audio);
+    muxer.on_frame(make_audio_frame(0));
     require(audio_sequence_headers == 1U, "flv initial audio sequence header");
 
     const std::vector<std::uint8_t> updated_asc{0x11, 0x90};
@@ -6949,13 +6949,13 @@ void test_flv_config_cache_lifecycle()
     updated_audio.clock_rate = 48'000;
     updated_audio.codec_config = updated_asc;
     updated_audio.config_version = 2;
-    output.on_track(updated_audio);
+    muxer.on_track(updated_audio);
     require(video_sequence_headers == 1U, "flv config reset defers video sequence header");
 
     const std::vector<std::uint8_t> raw{0x21, 0x10, 0x56, 0xe5, 0x00, 0x11, 0x22, 0x33};
     auto updated_adts = make_adts_frame(updated_asc, raw);
     require(!updated_adts.empty(), "flv updated aac adts");
-    output.on_frame(media_frame{
+    muxer.on_frame(media_frame{
         .track = audio_track_id,
         .dts_ns = 1'000'000'000,
         .pts_ns = 1'000'000'000,
@@ -6969,9 +6969,9 @@ void test_flv_config_cache_lifecycle()
     auto updated_video = video;
     updated_video.codec_config = h264_config_updated;
     updated_video.config_version = 2;
-    output.on_track(updated_video);
+    muxer.on_track(updated_video);
     require(video_sequence_headers == 2U, "flv video config reset defers sequence header");
-    output.on_frame(make_video_frame(2'000'000'000, true, h264_config_updated));
+    muxer.on_frame(make_video_frame(2'000'000'000, true, h264_config_updated));
     require(video_sequence_headers == 3U && video_sequence_header_timestamps.back() == 2'000U,
             "flv video config reset reprimes header at next media dts");
     const auto avcc_count = std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AVCC; });
@@ -6982,7 +6982,7 @@ void test_flv_config_cache_lifecycle()
     require(first_avcc != capture.packets.end() && h264_avcc_to_annex_b(first_avcc->payload) == h264_config, "flv initial h264 config content");
     require(last_avcc != capture.packets.rend() && h264_avcc_to_annex_b(last_avcc->payload) == h264_config_updated,
             "flv updated h264 config content");
-    output.shutdown();
+    muxer.shutdown();
 }
 
 void test_flv_av1_transcode_round_trip()
@@ -6994,12 +6994,12 @@ void test_flv_av1_transcode_round_trip()
         const auto demuxer =
             std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
         require(demuxer != nullptr, "flv av1 demuxer create");
-        flv_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        flv_muxer muxer([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
                                 { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 demux input"); },
                                 video_transcode_config{
                                     .codec = video_transcode_codec::av1,
                                 });
-        output.on_track(media_track{
+        muxer.on_track(media_track{
             .id = video_track_id,
             .kind = media_kind::video,
             .codec = codec,
@@ -7009,16 +7009,16 @@ void test_flv_av1_transcode_round_trip()
         });
         auto malformed = fixture.frames.front();
         malformed.payload = std::make_shared<const std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{0x01, 0x02, 0x03, 0x04});
-        output.on_frame(malformed);
+        muxer.on_frame(malformed);
         if (codec == codec_id::h264)
         {
             auto audio = make_audio_track();
             audio.config_version = 1;
-            output.on_track(audio);
-            output.on_frame(make_audio_frame(fixture.frames.front().pts_ns + 10'000'000));
+            muxer.on_track(audio);
+            muxer.on_frame(make_audio_frame(fixture.frames.front().pts_ns + 10'000'000));
             for (std::size_t index = 0; index + 1U < fixture.frames.size(); ++index)
             {
-                output.on_frame(fixture.frames[index]);
+                muxer.on_frame(fixture.frames[index]);
             }
             require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AV1C; }) == 1,
                     "flv av1 initial configuration before audio update");
@@ -7028,25 +7028,25 @@ void test_flv_av1_transcode_round_trip()
             updated_audio.clock_rate = 48'000;
             updated_audio.codec_config = updated_asc;
             updated_audio.config_version = 2;
-            output.on_track(updated_audio);
+            muxer.on_track(updated_audio);
             const std::vector<std::uint8_t> raw{0x21, 0x10, 0x56, 0xe5, 0x00, 0x11, 0x22, 0x33};
             auto updated_adts = make_adts_frame(updated_asc, raw);
             require(!updated_adts.empty(), "flv av1 updated aac adts");
-            output.on_frame(media_frame{
+            muxer.on_frame(media_frame{
                 .track = audio_track_id,
                 .dts_ns = fixture.frames.back().dts_ns - 10'000'000,
                 .pts_ns = fixture.frames.back().pts_ns - 10'000'000,
                 .key_frame = false,
                 .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(updated_adts)),
             });
-            output.on_frame(fixture.frames.back());
+            muxer.on_frame(fixture.frames.back());
             require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AV1C; }) == 1,
                     "flv av1 audio update keeps video configuration");
             require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_AUDIO_ASC; }) == 2,
                     "flv av1 audio update refreshes aac configuration");
 
             const auto updated_fixture = make_video_transcoder_fixture(codec_id::h264, 96, 64);
-            output.on_track(media_track{
+            muxer.on_track(media_track{
                 .id = video_track_id,
                 .kind = media_kind::video,
                 .codec = codec_id::h264,
@@ -7058,7 +7058,7 @@ void test_flv_av1_transcode_round_trip()
             {
                 frame.dts_ns += 10'000'000'000;
                 frame.pts_ns += 10'000'000'000;
-                output.on_frame(frame);
+                muxer.on_frame(frame);
             }
             require(std::ranges::count_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AV1C; }) == 2,
                     "flv av1 video config update restarts configuration");
@@ -7080,7 +7080,7 @@ void test_flv_av1_transcode_round_trip()
         {
             for (const auto& frame : fixture.frames)
             {
-                output.on_frame(frame);
+                muxer.on_frame(frame);
             }
         }
 
@@ -7105,7 +7105,7 @@ void test_flv_av1_transcode_round_trip()
                     sequence.seq_profile == av1.seq_profile && sequence.seq_level_idx_0 == av1.seq_level_idx_0 &&
                     sequence.seq_tier_0 == av1.seq_tier_0,
                 "flv av1 configuration record parses stream properties");
-        output.shutdown();
+        muxer.shutdown();
     }
 }
 
@@ -7117,12 +7117,12 @@ void test_flv_g711_round_trip()
         const auto demuxer =
             std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
         require(demuxer != nullptr, "flv g711 demuxer create");
-        flv_muxer output(
+        flv_muxer muxer(
             [&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
             { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv g711 demux input"); });
-        output.on_track(make_g711_track(codec));
+        muxer.on_track(make_g711_track(codec));
         const std::vector<std::uint8_t> payload(160, codec == codec_id::g711a ? 0xd5 : 0xff);
-        output.on_frame(media_frame{
+        muxer.on_frame(media_frame{
             .track = audio_track_id,
             .dts_ns = 40'000'000,
             .pts_ns = 40'000'000,
@@ -7133,7 +7133,7 @@ void test_flv_g711_round_trip()
         require(capture.packets.front().codec == (codec == codec_id::g711a ? FLV_AUDIO_G711A : FLV_AUDIO_G711U), "flv g711 codec identity");
         require(capture.packets.front().pts == 40 && capture.packets.front().dts == 40 && capture.packets.front().payload == payload,
                 "flv g711 raw payload timestamp");
-        output.shutdown();
+        muxer.shutdown();
     }
 }
 
@@ -7142,11 +7142,11 @@ void test_flv_opus_adapter_round_trip()
     flv_demux_capture capture;
     const auto demuxer =
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &capture), &flv_demuxer_destroy);
-    flv_muxer output([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+    flv_muxer muxer([&demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
                             { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv opus adapter demux"); });
-    output.on_track(make_opus_track(2));
+    muxer.on_track(make_opus_track(2));
     const std::vector<std::uint8_t> payload{0xf8, 0xff, 0xfe};
-    output.on_frame(make_opus_frame(20'000'000, payload));
+    muxer.on_frame(make_opus_frame(20'000'000, payload));
     require(capture.packets.size() == 2U && capture.packets[0].codec == FLV_AUDIO_OPUS_HEAD && capture.packets[1].codec == FLV_AUDIO_OPUS &&
                 capture.packets[1].payload == payload && capture.packets[1].pts == 20,
             "flv opus sequence then raw packet");
@@ -7154,7 +7154,7 @@ void test_flv_opus_adapter_round_trip()
     flv_demux_capture av1_capture;
     const auto av1_demuxer =
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &av1_capture), &flv_demuxer_destroy);
-    flv_muxer av1_output(
+    flv_muxer av1_muxer(
         [&av1_demuxer](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         { require(flv_demuxer_input(av1_demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv av1 opus adapter demux"); },
         video_transcode_config{
@@ -7162,15 +7162,15 @@ void test_flv_opus_adapter_round_trip()
         });
     auto video = make_video_track();
     video.config_version = 1;
-    av1_output.on_track(video);
+    av1_muxer.on_track(video);
     auto mono = make_opus_track(1);
     mono.config_version = 1;
-    av1_output.on_track(mono);
-    av1_output.on_frame(make_opus_frame(20'000'000, payload));
+    av1_muxer.on_track(mono);
+    av1_muxer.on_frame(make_opus_frame(20'000'000, payload));
     auto stereo = make_opus_track(2);
     stereo.config_version = 2;
-    av1_output.on_track(stereo);
-    av1_output.on_frame(make_opus_frame(40'000'000, payload));
+    av1_muxer.on_track(stereo);
+    av1_muxer.on_frame(make_opus_frame(40'000'000, payload));
 
     require(av1_capture.packets.size() == 4U && av1_capture.packets[0].codec == FLV_AUDIO_OPUS_HEAD &&
                 av1_capture.packets[1].codec == FLV_AUDIO_OPUS && av1_capture.packets[2].codec == FLV_AUDIO_OPUS_HEAD &&
@@ -7182,8 +7182,8 @@ void test_flv_opus_adapter_round_trip()
                 opus_head_load(av1_capture.packets[2].payload.data(), av1_capture.packets[2].payload.size(), &second_head) > 0 &&
                 first_head.channels == 1 && second_head.channels == 2,
             "flv av1 opus config generation channels");
-    av1_output.shutdown();
-    output.shutdown();
+    av1_muxer.shutdown();
+    muxer.shutdown();
 }
 
 void test_h265_output_paths()
@@ -8841,30 +8841,30 @@ void test_stream_registry_generation_lifecycle()
 
 void test_hls_segmenter()
 {
-    hls_segmenter output(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
-    output.on_track(make_video_track());
-    output.on_track(make_audio_track());
+    hls_segmenter segmenter(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    segmenter.on_track(make_video_track());
+    segmenter.on_track(make_audio_track());
 
     // 开始前的音频必须等待自然视频关键帧。
-    output.on_frame(make_audio_frame(0));
-    output.on_frame(make_video_frame(0, true));
-    output.on_frame(make_audio_frame(20'000'000));
-    output.on_frame(make_video_frame(500'000'000, false));
-    output.on_frame(make_audio_frame(520'000'000));
-    output.on_frame(make_video_frame(1'000'000'000, true));
-    output.on_frame(make_audio_frame(1'020'000'000));
-    output.on_frame(make_video_frame(1'500'000'000, false));
-    output.on_frame(make_video_frame(2'000'000'000, true));
-    output.on_end();
-    const auto ended_at = output.ended_at();
+    segmenter.on_frame(make_audio_frame(0));
+    segmenter.on_frame(make_video_frame(0, true));
+    segmenter.on_frame(make_audio_frame(20'000'000));
+    segmenter.on_frame(make_video_frame(500'000'000, false));
+    segmenter.on_frame(make_audio_frame(520'000'000));
+    segmenter.on_frame(make_video_frame(1'000'000'000, true));
+    segmenter.on_frame(make_audio_frame(1'020'000'000));
+    segmenter.on_frame(make_video_frame(1'500'000'000, false));
+    segmenter.on_frame(make_video_frame(2'000'000'000, true));
+    segmenter.on_end();
+    const auto ended_at = segmenter.ended_at();
     require(ended_at.has_value(), "hls end timestamp");
-    const auto ended_segment_count = output.segment_count();
-    output.on_end();
-    output.on_frame(make_video_frame(3'000'000'000, true));
-    require(output.segment_count() == ended_segment_count && output.ended_at() == ended_at, "hls end is terminal and idempotent");
+    const auto ended_segment_count = segmenter.segment_count();
+    segmenter.on_end();
+    segmenter.on_frame(make_video_frame(3'000'000'000, true));
+    require(segmenter.segment_count() == ended_segment_count && segmenter.ended_at() == ended_at, "hls end is terminal and idempotent");
 
-    require(output.segment_count() >= 2, "hls segment count");
-    const auto first = output.segment(0);
+    require(segmenter.segment_count() >= 2, "hls segment count");
+    const auto first = segmenter.segment(0);
     require(first.has_value() && !first->empty(), "first hls segment");
     const auto first_capture = demux_ts_segment(*first);
     require(first_capture.stream_codecs == std::vector<int>{PSI_STREAM_AAC, PSI_STREAM_H264}, "hls audio video pmt stream types");
@@ -8890,7 +8890,7 @@ void test_hls_segmenter()
     require(audio_second != first_capture.packets.end() && audio_second->payload == *make_audio_frame(520'000'000).payload,
             "hls second aac frame payload");
 
-    const auto playlist = output.playlist(".");
+    const auto playlist = segmenter.playlist(".");
     require(playlist.find("#EXTM3U") != std::string::npos, "hls playlist header");
     require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls endlist");
 
@@ -8966,12 +8966,12 @@ void test_hls_segmenter()
     require(reordered_playlist.find("#EXTINF:0.080,") != std::string::npos, "hls final segment duration uses maximum presentation timestamp");
 }
 
-void test_hls_av1_fmp4_output()
+void test_hls_av1_fmp4_segmenter()
 {
     for (const auto input_codec : {codec_id::h264, codec_id::h265})
     {
         const auto source = make_video_transcoder_fixture(input_codec);
-        hls_segmenter output(hls_config{
+        hls_segmenter segmenter(hls_config{
             .target_duration_seconds = 1.0,
             .window_size = 4,
             .video =
@@ -8979,7 +8979,7 @@ void test_hls_av1_fmp4_output()
                     .codec = video_transcode_codec::av1,
                 },
         });
-        output.on_track(media_track{
+        segmenter.on_track(media_track{
             .id = video_track_id,
             .kind = media_kind::video,
             .codec = input_codec,
@@ -8989,26 +8989,26 @@ void test_hls_av1_fmp4_output()
         });
         auto malformed = source.frames.front();
         malformed.payload = std::make_shared<const std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{0x01, 0x02, 0x03, 0x04});
-        output.on_frame(malformed);
+        segmenter.on_frame(malformed);
         if (input_codec == codec_id::h264)
         {
-            output.on_track(make_audio_track());
+            segmenter.on_track(make_audio_track());
         }
         for (const auto& frame : source.frames)
         {
-            output.on_frame(frame);
+            segmenter.on_frame(frame);
         }
         if (input_codec == codec_id::h264)
         {
-            output.on_frame(make_audio_frame(source.frames.back().pts_ns + 20'000'000));
+            segmenter.on_frame(make_audio_frame(source.frames.back().pts_ns + 20'000'000));
         }
-        output.on_end();
+        segmenter.on_end();
 
-        const auto init = output.init_segment();
-        const auto segment = output.segment(0);
+        const auto init = segmenter.init_segment();
+        const auto segment = segmenter.segment(0);
         require(init.has_value() && !init->empty(), "hls av1 init segment");
         require(segment.has_value() && !segment->empty(), "hls av1 media segment");
-        const auto playlist = output.playlist("/play/hls/av1");
+        const auto playlist = segmenter.playlist("/play/hls/av1");
         require(playlist.find("#EXT-X-VERSION:7") != std::string::npos, "hls av1 playlist version");
         require(playlist.find("#EXT-X-MAP:URI=\"/play/hls/av1/init.mp4?v=0\"") != std::string::npos, "hls av1 init map");
         require(playlist.find("/play/hls/av1/0.m4s") != std::string::npos, "hls av1 media uri");
@@ -9181,23 +9181,23 @@ void test_hls_av1_fmp4_output()
     video_track.config_version = 3;
     reconfigured.on_track(video_track);
     require(reconfigured.segment_count() == ended_segment_count && reconfigured.ended_at() == ended_at,
-            "hls ended output ignores late track update");
+            "hls ended segmenter ignores late track update");
 }
 
-void test_hls_g711_output()
+void test_hls_g711_segmenter()
 {
     for (const auto codec : {codec_id::g711a, codec_id::g711u})
     {
-        hls_segmenter output(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
-        output.on_track(make_video_track());
-        output.on_track(make_g711_track(codec));
-        output.on_frame(make_video_frame(0, true));
+        hls_segmenter segmenter(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+        segmenter.on_track(make_video_track());
+        segmenter.on_track(make_g711_track(codec));
+        segmenter.on_frame(make_video_frame(0, true));
         const auto payload = std::make_shared<const std::vector<std::uint8_t>>(160, codec == codec_id::g711a ? 0xd5 : 0xff);
-        output.on_frame(media_frame{.track = audio_track_id, .dts_ns = 20'000'000, .pts_ns = 20'000'000, .key_frame = false, .payload = payload});
-        output.on_frame(make_video_frame(1'000'000'000, true));
-        output.on_end();
-        require(output.segment_count() >= 1U && output.playlist(".").find("#EXTM3U") != std::string::npos, "hls g711 segment lifecycle");
-        const auto segment = output.segment(0);
+        segmenter.on_frame(media_frame{.track = audio_track_id, .dts_ns = 20'000'000, .pts_ns = 20'000'000, .key_frame = false, .payload = payload});
+        segmenter.on_frame(make_video_frame(1'000'000'000, true));
+        segmenter.on_end();
+        require(segmenter.segment_count() >= 1U && segmenter.playlist(".").find("#EXTM3U") != std::string::npos, "hls g711 segment lifecycle");
+        const auto segment = segmenter.segment(0);
         require(segment.has_value(), "hls g711 segment");
         const auto capture = demux_ts_segment(*segment);
         const auto stream_type = codec == codec_id::g711a ? PSI_STREAM_AUDIO_G711A : PSI_STREAM_AUDIO_G711U;
@@ -9221,7 +9221,7 @@ void test_hls_module_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls::segment_count("live/hls", application_config) == 0U, "hls first output create");
+                          require(hls::segment_count("live/hls", application_config) == 0U, "hls first segmenter create");
                           first->publish(make_video_frame(0, true));
                           first->publish(make_video_frame(1'000'000'000, true));
                       });
@@ -9248,7 +9248,7 @@ void test_hls_module_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls::segment_count("live/hls", application_config) == 0U, "hls replacement output reset");
+                          require(hls::segment_count("live/hls", application_config) == 0U, "hls replacement segmenter reset");
                           require(!hls::segment("live/hls", 0, application_config).has_value(), "hls replacement drops old segment");
                       });
     io.run();
@@ -9260,7 +9260,7 @@ void test_hls_module_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls::segment_count("live/hls-overlap", application_config) == 0U, "hls overlap first output create");
+                          require(hls::segment_count("live/hls-overlap", application_config) == 0U, "hls overlap first segmenter create");
                           overlap_first->publish(make_video_frame(0, true));
                           overlap_first->publish(make_video_frame(1'000'000'000, true));
                       });
@@ -9274,7 +9274,7 @@ void test_hls_module_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls::segment_count("live/hls-overlap", application_config) == 0U, "hls overlap replacement output create");
+                          require(hls::segment_count("live/hls-overlap", application_config) == 0U, "hls overlap replacement segmenter create");
                           overlap_first->end();
                       });
     io.run();
@@ -9293,7 +9293,7 @@ void test_hls_module_lifecycle()
                       {
                           late->publish(make_video_frame(0, true));
                           late->publish(make_video_frame(500'000'000, false));
-                          require(hls::segment_count("live/hls-late", application_config) == 0U, "hls late output replays current gop");
+                          require(hls::segment_count("live/hls-late", application_config) == 0U, "hls late segmenter replays current gop");
                           late->publish(make_video_frame(2'000'000'000, true));
                           require(hls::segment_count("live/hls-late", application_config) == 1U, "hls late replay participates in first segment");
                           streams.remove(*late);
@@ -9301,7 +9301,7 @@ void test_hls_module_lifecycle()
                       });
     io.run();
     const auto late_playlist = hls::playlist("live/hls-late", application_config);
-    require(late_playlist.has_value() && late_playlist->find("#EXT-X-ENDLIST") != std::string::npos, "hls late output finalizes");
+    require(late_playlist.has_value() && late_playlist->find("#EXT-X-ENDLIST") != std::string::npos, "hls late segmenter finalizes");
 
     hls::shutdown();
 }
@@ -10009,10 +10009,10 @@ int main()
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_segmenter();
     std::cout << "[pass] hls_segmenter\n";
-    media_server::test_hls_av1_fmp4_output();
-    std::cout << "[pass] hls_av1_fmp4_output\n";
-    media_server::test_hls_g711_output();
-    std::cout << "[pass] hls_g711_output\n";
+    media_server::test_hls_av1_fmp4_segmenter();
+    std::cout << "[pass] hls_av1_fmp4_segmenter\n";
+    media_server::test_hls_g711_segmenter();
+    std::cout << "[pass] hls_g711_segmenter\n";
     media_server::test_hls_module_lifecycle();
     std::cout << "[pass] hls_module_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
