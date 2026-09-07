@@ -192,8 +192,11 @@ int main()
     media_server::registry::init();
     try
     {
-        media_server::test_udp_sender_session_sends_rtp();
-        media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
+        for (int iteration = 0; iteration < 10; ++iteration)
+        {
+            media_server::test_udp_sender_session_sends_rtp();
+            media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
+        }
         media_server::registry::destroy();
         media_server::port_manager::destroy();
         std::cout << "[pass] gb28181_udp_sender_tests\n";
