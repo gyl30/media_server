@@ -1,5 +1,5 @@
-#ifndef MEDIA_HLS_OUTPUT_H
-#define MEDIA_HLS_OUTPUT_H
+#ifndef MEDIA_HLS_SEGMENTER_H
+#define MEDIA_HLS_SEGMENTER_H
 
 #include <map>
 #include <deque>
@@ -35,11 +35,11 @@ struct hls_segment
     std::vector<std::uint8_t> data;
 };
 
-class hls_output final : public media_sink
+class hls_segmenter final : public media_sink
 {
    public:
-    explicit hls_output(hls_config config = {});
-    ~hls_output() override;
+    explicit hls_segmenter(hls_config config = {});
+    ~hls_segmenter() override;
 
     void on_track(const media_track& track) override;
     void on_frame(const media_frame& frame) override;
