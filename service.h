@@ -3,6 +3,7 @@
 
 #include <memory>
 
+#include <boost/asio/spawn.hpp>
 #include <boost/asio/steady_timer.hpp>
 
 #include "config.h"
@@ -25,6 +26,7 @@ class service
     int run();
 
    private:
+    void run_control(boost::asio::yield_context yield);
     void stop();
     void schedule_signaling_abort();
 
@@ -35,6 +37,7 @@ class service
     std::shared_ptr<http_server> http_;
     std::shared_ptr<signaling_client> signaling_;
     std::unique_ptr<boost::asio::steady_timer> signaling_abort_timer_;
+    int exit_code_{};
 };
 
 }    // namespace media_server
