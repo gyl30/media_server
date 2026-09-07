@@ -164,7 +164,7 @@ add_library(media_core STATIC
     media/flv/flv_muxer.cpp
     media/hls/hls_output.cpp
     media/hls/hls.cpp
-    media/http/http_flv_output.cpp
+    media/http/http_flv_streamer.cpp
     media/http/http_flv_session.cpp
     media/http/hls_http_session.cpp
     media/http/gb28181_json.cpp
