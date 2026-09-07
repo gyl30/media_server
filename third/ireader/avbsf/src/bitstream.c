@@ -91,7 +91,8 @@ int bitstream_read_bit(bitstream_t* stream)
 
 int64_t bitstream_read_bits(bitstream_t* stream, int num)
 {
-	int i, bit, value;
+	int i, bit;
+	uint64_t value;
 
 	assert(stream && num >= 0 && num <= 64);
 	value = 0;
