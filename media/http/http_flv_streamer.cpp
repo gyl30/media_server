@@ -1,11 +1,11 @@
 #include <span>
 #include <utility>
 
-#include "media/http/http_flv_output.h"
+#include "media/http/http_flv_streamer.h"
 
 namespace media_server
 {
-http_flv_output::http_flv_output(write_handler on_write, end_handler on_end, video_transcode_config video)
+http_flv_streamer::http_flv_streamer(write_handler on_write, end_handler on_end, video_transcode_config video)
     : write_handler_(std::move(on_write)),
       end_handler_(std::move(on_end)),
       muxer_(
@@ -21,9 +21,9 @@ http_flv_output::http_flv_output(write_handler on_write, end_handler on_end, vid
 {
 }
 
-http_flv_output::~http_flv_output() = default;
+http_flv_streamer::~http_flv_streamer() = default;
 
-void http_flv_output::on_tracks(media_track_snapshot_ptr tracks)
+void http_flv_streamer::on_tracks(media_track_snapshot_ptr tracks)
 {
     if (ended_)
     {
@@ -32,7 +32,7 @@ void http_flv_output::on_tracks(media_track_snapshot_ptr tracks)
     static_cast<void>(apply_tracks(tracks));
 }
 
-void http_flv_output::on_read(media_read_batch batch)
+void http_flv_streamer::on_read(media_read_batch batch)
 {
     if (ended_)
     {
@@ -50,9 +50,9 @@ void http_flv_output::on_read(media_read_batch batch)
     process_batch();
 }
 
-void http_flv_output::on_end() { finish(); }
+void http_flv_streamer::on_end() { finish(); }
 
-void http_flv_output::shutdown()
+void http_flv_streamer::shutdown()
 {
     ended_ = true;
     write_handler_ = {};
@@ -68,7 +68,7 @@ void http_flv_output::shutdown()
     output_buffer_.clear();
 }
 
-void http_flv_output::write_complete(std::uint64_t generation)
+void http_flv_streamer::write_complete(std::uint64_t generation)
 {
     if (ended_ || generation_ != generation)
     {
@@ -77,7 +77,7 @@ void http_flv_output::write_complete(std::uint64_t generation)
     process_batch();
 }
 
-bool http_flv_output::apply_tracks(const media_track_snapshot_ptr& tracks)
+bool http_flv_streamer::apply_tracks(const media_track_snapshot_ptr& tracks)
 {
     if (!tracks || tracks->revision <= track_revision_)
     {
@@ -100,7 +100,7 @@ bool http_flv_output::apply_tracks(const media_track_snapshot_ptr& tracks)
     output_buffer_.clear();
     if (writer_ == nullptr)
     {
-        writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_output::writer_callback, this);
+        writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_streamer::writer_callback, this);
     }
     for (const auto& track : tracks->tracks)
     {
@@ -118,7 +118,7 @@ bool http_flv_output::apply_tracks(const media_track_snapshot_ptr& tracks)
     return true;
 }
 
-void http_flv_output::process_batch()
+void http_flv_streamer::process_batch()
 {
     if (ended_)
     {
@@ -166,7 +166,7 @@ void http_flv_output::process_batch()
     reader_handle().async_read(reader_cursor_);
 }
 
-void http_flv_output::finish()
+void http_flv_streamer::finish()
 {
     if (ended_)
     {
@@ -179,9 +179,9 @@ void http_flv_output::finish()
     }
 }
 
-int http_flv_output::writer_callback(void* param, const flv_vec_t* vectors, int count)
+int http_flv_streamer::writer_callback(void* param, const flv_vec_t* vectors, int count)
 {
-    auto* self = static_cast<http_flv_output*>(param);
+    auto* self = static_cast<http_flv_streamer*>(param);
     if (!self->write_handler_ || vectors == nullptr || count <= 0)
     {
         return 0;

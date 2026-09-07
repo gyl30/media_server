@@ -1,5 +1,5 @@
-#ifndef MEDIA_HTTP_HTTP_FLV_OUTPUT_H
-#define MEDIA_HTTP_HTTP_FLV_OUTPUT_H
+#ifndef MEDIA_HTTP_HTTP_FLV_STREAMER_H
+#define MEDIA_HTTP_HTTP_FLV_STREAMER_H
 
 #include <map>
 #include <vector>
@@ -15,14 +15,14 @@ extern "C"
 
 namespace media_server
 {
-class http_flv_output final : public media_reader
+class http_flv_streamer final : public media_reader
 {
    public:
     using write_handler = std::function<void(std::uint64_t, std::vector<std::uint8_t>, bool)>;
     using end_handler = std::function<void()>;
 
-    http_flv_output(write_handler on_write, end_handler on_end, video_transcode_config video = {});
-    ~http_flv_output() override;
+    http_flv_streamer(write_handler on_write, end_handler on_end, video_transcode_config video = {});
+    ~http_flv_streamer() override;
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;
