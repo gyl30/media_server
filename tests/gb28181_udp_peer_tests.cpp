@@ -275,6 +275,7 @@ void test_sender_same_codec_config_version_continues_ps_stream()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
+    io.restart();
     auto& streams = media_server::registry::instance();
     streams.clear();
 
