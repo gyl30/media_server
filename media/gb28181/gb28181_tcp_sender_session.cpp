@@ -18,8 +18,7 @@
 namespace media_server
 {
 gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
-                                                       std::weak_ptr<media_stream> stream,
-                                                       std::string stream_name,
+                                                       std::shared_ptr<media_stream> stream,
                                                        std::string sender_id,
                                                        gb28181_transport_config config,
                                                        boost::asio::ip::address bind_address,
@@ -27,7 +26,6 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
                                                        std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
-      stream_name_(std::move(stream_name)),
       sender_id_(std::move(sender_id)),
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
@@ -47,7 +45,7 @@ bool gb28181_tcp_sender_session::startup()
         if (error)
         {
             spdlog::error("gb28181 tcp sender listener startup failed stream {} sender {} error {}",
-                          stream_name_,
+                          stream_->name(),
                           sender_id_,
                           error.message());
             listener_.reset();
@@ -83,47 +81,31 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     {
         if (error != boost::asio::error::operation_aborted)
         {
-            spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_name_, sender_id_, error.message());
+            spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}",
+                         stream_->name(),
+                         sender_id_,
+                         error.message());
         }
         shutdown();
         return;
     }
 
-    const auto stream = stream_.lock();
-    if (!stream)
-    {
-        shutdown();
-        return;
-    }
-
     transport_ = std::make_unique<tcp_yield_transport>(std::move(socket_));
-    const auto weak = weak_from_this();
+    const auto self = shared_from_this();
     sender_ = std::make_shared<gb28181_rtp_sender>(
         worker_,
-        stream,
+        stream_,
         config_.payload_type,
         config_.ssrc,
-        [weak](std::vector<std::uint8_t> packet)
-        {
-            if (const auto session = weak.lock())
-            {
-                session->send_packet(std::move(packet));
-            }
-        },
-        [weak]()
-        {
-            if (const auto session = weak.lock())
-            {
-                session->shutdown();
-            }
-        });
+        [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
+        [self]() { self->shutdown(); });
     if (!sender_->startup())
     {
         shutdown();
         return;
     }
 
-    spdlog::info("gb28181 tcp sender started stream {} sender {}", stream_name_, sender_id_);
+    spdlog::info("gb28181 tcp sender started stream {} sender {}", stream_->name(), sender_id_);
 
     std::vector<std::uint8_t> buffer(64 * 1024);
     for (;;)
@@ -209,7 +191,7 @@ void gb28181_tcp_sender_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    stream_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
+    stream_registry::instance().remove_sender_session(stream_->name(), sender_id_, *this);
     if (listener_)
     {
         listener_->shutdown();
@@ -226,7 +208,8 @@ void gb28181_tcp_sender_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    spdlog::debug("gb28181 tcp sender shutdown {} sender {}", stream_name_, sender_id_);
+    spdlog::debug("gb28181 tcp sender shutdown {} sender {}", stream_->name(), sender_id_);
+    stream_.reset();
 }
 
 }    // namespace media_server

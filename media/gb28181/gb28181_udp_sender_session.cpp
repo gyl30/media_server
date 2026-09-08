@@ -29,7 +29,6 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
                                                        std::chrono::milliseconds rtcp_interval)
     : worker_(worker),
       stream_(std::move(stream)),
-      stream_name_(stream_ ? stream_->name() : std::string{}),
       sender_id_(std::move(sender_id)),
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
@@ -108,26 +107,14 @@ bool gb28181_udp_sender_session::startup()
         }
     }
 
-    const auto weak = weak_from_this();
+    const auto self = shared_from_this();
     sender_ = std::make_shared<gb28181_rtp_sender>(
         worker_,
         stream_,
         config_.payload_type,
         config_.ssrc,
-        [weak](std::vector<std::uint8_t> packet)
-        {
-            if (const auto session = weak.lock())
-            {
-                session->send_packet(std::move(packet));
-            }
-        },
-        [weak]()
-        {
-            if (const auto session = weak.lock())
-            {
-                session->shutdown();
-            }
-        });
+        [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
+        [self]() { self->shutdown(); });
     if (!sender_->startup())
     {
         sender_->shutdown();
@@ -142,7 +129,7 @@ bool gb28181_udp_sender_session::startup()
     }
 
     spdlog::info("gb28181 udp sender started stream {} local_rtp_port {} local_rtcp_port {} remote_rtp {}:{} remote_rtcp {}:{} rtcp {}",
-                 stream_name_,
+                 stream_->name(),
                  local_ports_->first,
                  local_ports_->second,
                  config_.remote_address.to_string(),
@@ -259,7 +246,7 @@ void gb28181_udp_sender_session::safe_shutdown()
     {
         return;
     }
-    stream_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
+    stream_registry::instance().remove_sender_session(stream_->name(), sender_id_, *this);
     rtcp_timer_.cancel();
     if (sender_)
     {
@@ -273,8 +260,8 @@ void gb28181_udp_sender_session::safe_shutdown()
         rtcp_sender_ = nullptr;
     }
     rtcp_started_ = false;
+    spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream_->name(), sender_id_);
     stream_.reset();
-    spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream_name_, sender_id_);
 }
 
 }    // namespace media_server
