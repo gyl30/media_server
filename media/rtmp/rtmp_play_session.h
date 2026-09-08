@@ -40,7 +40,6 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
     std::shared_ptr<media_stream> stream_;
     flv_muxer muxer_;
     end_handler end_handler_;
-    media_reader_handle reader_;
     std::map<track_id, media_track> reader_tracks_;
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
