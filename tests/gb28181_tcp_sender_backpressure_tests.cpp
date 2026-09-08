@@ -94,8 +94,7 @@ void test_tcp_sender_write_backlog_limit()
         .ssrc = 0x12345678U,
     };
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
-                                                               std::weak_ptr<media_stream>{source},
-                                                               source->name(),
+                                                               source,
                                                                "backpressure",
                                                                description,
                                                                boost::asio::ip::address_v4::loopback(),
