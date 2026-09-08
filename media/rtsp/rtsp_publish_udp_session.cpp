@@ -286,7 +286,7 @@ void rtsp_publish_udp_session::safe_shutdown()
             state.local_ports.reset();
         }
     }
-    spdlog::debug("rtsp publish udp shutdown {}", media_.stream_name());
+    spdlog::debug("rtsp publish udp shutdown {}", media_.media_stream_name());
 }
 
 }    // namespace media_server

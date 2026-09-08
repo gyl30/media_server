@@ -27,9 +27,9 @@ constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
 rtsp_publish_media::rtsp_publish_media(worker_context& worker,
-                                   std::string stream_name,
+                                   std::string media_stream_name,
                                    std::vector<rtsp_publish_track_description> descriptions)
-    : worker_(worker), stream_name_(std::move(stream_name)), descriptions_(std::move(descriptions))
+    : worker_(worker), media_stream_name_(std::move(media_stream_name)), descriptions_(std::move(descriptions))
 {
 }
 
@@ -37,12 +37,12 @@ rtsp_publish_media::~rtsp_publish_media() = default;
 
 bool rtsp_publish_media::startup(const std::string& rtcp_cname)
 {
-    if (closed_ || stream_ || descriptions_.empty())
+    if (closed_ || media_stream_ || descriptions_.empty())
     {
         return false;
     }
 
-    stream_ = std::make_shared<media_stream>(stream_name_, worker_);
+    media_stream_ = std::make_shared<media_stream>(media_stream_name_, worker_);
     static_cast<void>(avpkt2bs_create(&bitstream_));
     demuxers_.resize(descriptions_.size());
     for (std::size_t index = 0; index < descriptions_.size(); ++index)
@@ -71,7 +71,7 @@ bool rtsp_publish_media::startup(const std::string& rtcp_cname)
 
 bool rtsp_publish_media::start_recording()
 {
-    if (closed_ || recording_ || !stream_)
+    if (closed_ || recording_ || !media_stream_)
     {
         return false;
     }
@@ -83,7 +83,7 @@ bool rtsp_publish_media::start_recording()
         tracks.push_back(description.track);
     }
     std::ranges::sort(tracks, [](const media_track& left, const media_track& right) { return left.id < right.id; });
-    if (!stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(stream_))
+    if (!media_stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(media_stream_))
     {
         return false;
     }
@@ -146,11 +146,11 @@ void rtsp_publish_media::shutdown()
         return;
     }
     closed_ = true;
-    if (stream_)
+    if (media_stream_)
     {
-        stream_registry::instance().remove(*stream_);
-        stream_->end();
-        stream_.reset();
+        stream_registry::instance().remove(*media_stream_);
+        media_stream_->end();
+        media_stream_.reset();
     }
     for (auto*& demuxer : demuxers_)
     {
@@ -167,7 +167,7 @@ void rtsp_publish_media::shutdown()
 
 const std::vector<rtsp_publish_track_description>& rtsp_publish_media::descriptions() const noexcept { return descriptions_; }
 
-const std::string& rtsp_publish_media::stream_name() const noexcept { return stream_name_; }
+const std::string& rtsp_publish_media::media_stream_name() const noexcept { return media_stream_name_; }
 
 bool rtsp_publish_media::recording() const noexcept { return recording_; }
 
@@ -175,7 +175,7 @@ int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet) { retur
 
 int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || !recording_ || closed_ || !stream_)
+    if (packet == nullptr || packet->stream == nullptr || !recording_ || closed_ || !media_stream_)
     {
         return -1;
     }
@@ -215,7 +215,7 @@ int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
         return bytes < 0 ? bytes : 0;
     }
     auto payload = std::make_shared<const std::vector<std::uint8_t>>(bitstream_.ptr, bitstream_.ptr + bytes);
-    stream_->publish(media_frame{
+    media_stream_->publish(media_frame{
         .track = id,
         .dts_ns = milliseconds_to_ns(packet->dts),
         .pts_ns = milliseconds_to_ns(packet->pts),
@@ -245,7 +245,7 @@ bool rtsp_publish_media::update_track_from_packet(const avpacket_t& packet)
 
     const auto state = std::find_if(
         descriptions_.begin(), descriptions_.end(), [track](const rtsp_publish_track_description& value) { return value.track.codec == track->codec; });
-    if (state == descriptions_.end() || !stream_->update_track(*track))
+    if (state == descriptions_.end() || !media_stream_->update_track(*track))
     {
         return false;
     }
