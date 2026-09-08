@@ -72,7 +72,7 @@ bool gb28181_rtp_sender::startup()
         return false;
     }
 
-    reader_ = stream_->add_reader(shared_from_this(), worker_.io().get_executor());
+    static_cast<void>(stream_->add_reader(shared_from_this(), worker_.io().get_executor()));
     return true;
 }
 
@@ -168,8 +168,7 @@ void gb28181_rtp_sender::safe_shutdown()
     }
     packet_handler_ = {};
     end_handler_ = {};
-    reader_.remove();
-    reader_ = {};
+    reader_handle().remove();
     reader_cursor_.reset();
     track_revision_ = 0;
     track_states_.clear();
