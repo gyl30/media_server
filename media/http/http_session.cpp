@@ -63,23 +63,23 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/"))
     {
-        write_response(request,
-                       media_server::handle_gb28181_receiver_request(
-                           request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
-                       yield);
+        write_string_response(request,
+                              media_server::handle_gb28181_receiver_request(
+                                  request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
+                              yield);
         return;
     }
     if (path == "/gb28181/sender" || path.starts_with("/gb28181/sender/"))
     {
-        write_response(request,
-                       media_server::handle_gb28181_sender_request(
-                           request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
-                       yield);
+        write_string_response(request,
+                              media_server::handle_gb28181_sender_request(
+                                  request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
+                              yield);
         return;
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))
     {
-        write_response(request, media_server::handle_whep_request(request, worker_, *parsed, config_), yield);
+        write_string_response(request, media_server::handle_whep_request(request, worker_, *parsed, config_), yield);
         return;
     }
     if (path == "/play/hls" || path.starts_with("/play/hls/"))
@@ -104,13 +104,6 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
 
     send_text_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
-}
-
-void http_session::write_response(boost::beast::http::request<boost::beast::http::string_body>& request,
-                                  boost::beast::http::response<boost::beast::http::string_body> response,
-                                  boost::asio::yield_context yield)
-{
-    write_string_response(request, std::move(response), yield);
 }
 
 void http_session::write_string_response(boost::beast::http::request<boost::beast::http::string_body>& request,
