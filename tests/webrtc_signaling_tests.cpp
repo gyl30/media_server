@@ -931,7 +931,7 @@ class whep_http_test_peer final
     }
 
     config config_;
-    stream_registry& streams_ = registry::instance();
+    stream_registry& streams_ = stream_registry::instance();
     io_context_pool workers_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::io_context client_io_;
@@ -2105,7 +2105,7 @@ void test_whep_session_lifecycle()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
     auto stream = std::make_shared<media_stream>("live/test", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
@@ -2172,7 +2172,7 @@ void test_whep_opus_source_session_lifecycle()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
     auto stream = std::make_shared<media_stream>("live/opus", worker);
     require(stream->set_tracks({make_video_track(), make_opus_track(1)}), "whep opus source tracks");
@@ -3009,7 +3009,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
 int main()
 {
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
-    media_server::registry::init();
+    media_server::stream_registry::instance().clear();
     media_server::test_webrtc_sdp_answer();
     std::cout << "[pass] webrtc_sdp_answer\n";
     media_server::test_webrtc_h265_sdp_answer();
@@ -3077,7 +3077,7 @@ int main()
     media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AES128_CM_SHA1_80", false);
     std::cout << "[pass] whep_dtls_h264_sha1_80\n";
     std::cout << "all tests passed\n";
-    media_server::registry::destroy();
+    media_server::stream_registry::instance().clear();
     media_server::port_manager::destroy();
     return 0;
 }

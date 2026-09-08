@@ -41,7 +41,7 @@ create_result create(worker_context& worker,
 {
     spdlog::debug("whep create stream {} offer_bytes {}", stream_name, offer_sdp.size());
 
-    auto stream = registry::instance().find(stream_name);
+    auto stream = stream_registry::instance().find(stream_name);
     if (!stream)
     {
         spdlog::debug("whep create stream not found {}", stream_name);

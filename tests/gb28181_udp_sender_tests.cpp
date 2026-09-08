@@ -40,7 +40,7 @@ void test_udp_sender_session_sends_rtp()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
 
     boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -115,7 +115,7 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
 
     boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -189,7 +189,7 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
 int main()
 {
     media_server::port_manager::init(32'500, 32'599);
-    media_server::registry::init();
+    media_server::stream_registry::instance().clear();
     try
     {
         for (int iteration = 0; iteration < 10; ++iteration)
@@ -197,14 +197,14 @@ int main()
             media_server::test_udp_sender_session_sends_rtp();
             media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
         }
-        media_server::registry::destroy();
+        media_server::stream_registry::instance().clear();
         media_server::port_manager::destroy();
         std::cout << "[pass] gb28181_udp_sender_tests\n";
         return 0;
     }
     catch (const std::exception& error)
     {
-        media_server::registry::destroy();
+        media_server::stream_registry::instance().clear();
         media_server::port_manager::destroy();
         std::cerr << "[fail] gb28181_udp_sender_tests: " << error.what() << '\n';
         return 1;

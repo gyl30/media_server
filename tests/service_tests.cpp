@@ -217,7 +217,7 @@ void test_signal_stops_registration_wait()
 
 int main()
 {
-    media_server::registry::init();
+    media_server::stream_registry::instance().clear();
     {
         media_server::config cfg;
         cfg.bind_address = "0.0.0.0";
@@ -236,6 +236,6 @@ int main()
     test_signal_stops_registration_wait();
 
     std::cout << "[pass] service tests\n";
-    media_server::registry::destroy();
+    media_server::stream_registry::instance().clear();
     return 0;
 }
