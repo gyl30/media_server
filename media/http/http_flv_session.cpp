@@ -131,22 +131,11 @@ void http_flv_session::send_text_response(boost::beast::http::status status,
 
 void http_flv_session::startup_flv(std::shared_ptr<media_stream> media_stream)
 {
-    const auto weak = weak_from_this();
+    const auto self = shared_from_this();
     streamer_ = std::make_shared<http_flv_streamer>(
-        [weak](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        {
-            if (const auto self = weak.lock())
-            {
-                self->enqueue(generation, std::move(data), bootstrap);
-            }
-        },
-        [weak]()
-        {
-            if (const auto self = weak.lock())
-            {
-                self->shutdown();
-            }
-        },
+        [self](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
+        { self->enqueue(generation, std::move(data), bootstrap); },
+        [self]() { self->shutdown(); },
         config_.http_video);
 
     reader_ = media_stream->add_reader(streamer_, worker_);
