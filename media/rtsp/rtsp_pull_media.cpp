@@ -25,9 +25,9 @@ constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
 rtsp_pull_media::rtsp_pull_media(worker_context& worker,
-                                 std::string stream_name,
+                                 std::string media_stream_name,
                                  std::vector<rtsp_pull_track_description> descriptions)
-    : worker_(worker), stream_name_(std::move(stream_name)), descriptions_(std::move(descriptions))
+    : worker_(worker), media_stream_name_(std::move(media_stream_name)), descriptions_(std::move(descriptions))
 {
 }
 
@@ -35,12 +35,12 @@ rtsp_pull_media::~rtsp_pull_media() = default;
 
 bool rtsp_pull_media::startup()
 {
-    if (closed_ || stream_ || descriptions_.empty())
+    if (closed_ || media_stream_ || descriptions_.empty())
     {
         return false;
     }
 
-    stream_ = std::make_shared<media_stream>(stream_name_, worker_);
+    media_stream_ = std::make_shared<media_stream>(media_stream_name_, worker_);
     static_cast<void>(avpkt2bs_create(&bitstream_));
     demuxers_.resize(descriptions_.size());
     for (std::size_t index = 0; index < descriptions_.size(); ++index)
@@ -60,7 +60,7 @@ bool rtsp_pull_media::startup()
                                      description.payload_type,
                                      description.encoding.c_str(),
                                      description.fmtp.empty() ? nullptr : description.fmtp.c_str()) != 0 ||
-            rtsp_demuxer_set_info(demuxer, stream_name_.c_str(), rtcp_name) != 0)
+            rtsp_demuxer_set_info(demuxer, media_stream_name_.c_str(), rtcp_name) != 0)
         {
             if (demuxer != nullptr)
             {
@@ -76,7 +76,7 @@ bool rtsp_pull_media::startup()
 
 bool rtsp_pull_media::input_packet(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
-    if (closed_ || !stream_)
+    if (closed_ || !media_stream_)
     {
         return false;
     }
@@ -123,11 +123,11 @@ void rtsp_pull_media::shutdown()
         return;
     }
     closed_ = true;
-    if (stream_)
+    if (media_stream_)
     {
-        stream_registry::instance().remove(*stream_);
-        stream_->end();
-        stream_.reset();
+        stream_registry::instance().remove(*media_stream_);
+        media_stream_->end();
+        media_stream_.reset();
     }
     for (auto*& demuxer : demuxers_)
     {
@@ -145,7 +145,7 @@ int rtsp_pull_media::packet_callback(void* param, avpacket_t* packet) { return s
 
 int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || closed_ || !stream_)
+    if (packet == nullptr || packet->stream == nullptr || closed_ || !media_stream_)
     {
         return -1;
     }
@@ -179,7 +179,7 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
     }
 
     auto payload = std::make_shared<const std::vector<std::uint8_t>>(bitstream_.ptr, bitstream_.ptr + bytes);
-    stream_->publish(media_frame{
+    media_stream_->publish(media_frame{
         .track = id,
         .dts_ns = milliseconds_to_ns(packet->dts),
         .pts_ns = milliseconds_to_ns(packet->pts),
@@ -200,7 +200,7 @@ bool rtsp_pull_media::update_track_from_packet(const avpacket_t& packet)
 
     if (tracks_initialized_)
     {
-        const bool changed = stream_->update_track(*track);
+        const bool changed = media_stream_->update_track(*track);
         if (changed)
         {
             spdlog::info("rtsp pull track {} {}", to_string(track->kind), to_string(track->codec));
@@ -232,16 +232,16 @@ bool rtsp_pull_media::try_initialize_tracks()
     {
         tracks.push_back(std::move(*initial_audio_track_));
     }
-    tracks_initialized_ = stream_->set_tracks(std::move(tracks));
+    tracks_initialized_ = media_stream_->set_tracks(std::move(tracks));
     initial_video_track_.reset();
     initial_audio_track_.reset();
     if (!tracks_initialized_)
     {
         return false;
     }
-    if (!stream_registry::instance().add(stream_))
+    if (!stream_registry::instance().add(media_stream_))
     {
-        spdlog::warn("rtsp pull duplicate stream {}", stream_name_);
+        spdlog::warn("rtsp pull duplicate stream {}", media_stream_name_);
         fatal_ = true;
         return true;
     }
