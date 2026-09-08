@@ -144,9 +144,6 @@ void service::run_control(boost::asio::yield_context yield)
     spdlog::info("rtmp publish play path app/stream");
     spdlog::info("rtsp play path app/stream");
     spdlog::info("http flv path app/stream.flv");
-    spdlog::info("hls path hls/app/stream/index.m3u8");
-    spdlog::info("whep path whep/app/stream");
-    spdlog::info("gb28181 path gb28181/app/stream");
 
     if (signaling)
     {
