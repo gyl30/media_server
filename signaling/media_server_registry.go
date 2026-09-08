@@ -29,21 +29,19 @@ type mediaServerKey struct {
 }
 
 type mediaServerInstance struct {
-	serverID          string
-	instanceID        string
-	controlURL        string
-	mediaIP           string
-	lastHeartbeat     time.Time
-	online            bool
-	registrationOrder uint64
+	serverID      string
+	instanceID    string
+	controlURL    string
+	mediaIP       string
+	lastHeartbeat time.Time
+	online        bool
 }
 
 type mediaServerRegistry struct {
 	mu        sync.RWMutex
 	instances map[mediaServerKey]mediaServerInstance
 	current   map[string]mediaServerKey
-	order     []mediaServerKey
-	nextOrder uint64
+	online    []mediaServerKey
 }
 
 func newMediaServerRegistry() *mediaServerRegistry {
@@ -63,19 +61,17 @@ func (r *mediaServerRegistry) register(registration mediaServerRegistration, now
 	if currentKey, exists := r.current[registration.ServerID]; exists && r.instances[currentKey].online {
 		return errMediaServerConflict
 	}
-	r.nextOrder++
 	instance := mediaServerInstance{
-		serverID:          registration.ServerID,
-		instanceID:        registration.InstanceID,
-		controlURL:        registration.ControlURL,
-		mediaIP:           registration.MediaIP,
-		lastHeartbeat:     now,
-		online:            true,
-		registrationOrder: r.nextOrder,
+		serverID:      registration.ServerID,
+		instanceID:    registration.InstanceID,
+		controlURL:    registration.ControlURL,
+		mediaIP:       registration.MediaIP,
+		lastHeartbeat: now,
+		online:        true,
 	}
 	r.instances[key] = instance
 	r.current[registration.ServerID] = key
-	r.order = append(r.order, key)
+	r.online = append(r.online, key)
 	return nil
 }
 
@@ -96,26 +92,28 @@ func (r *mediaServerRegistry) expire(now time.Time, timeout time.Duration) []med
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var offline []mediaServerInstance
-	for key, instance := range r.instances {
-		if instance.online && !now.Before(instance.lastHeartbeat.Add(timeout)) {
+	active := r.online[:0]
+	for _, key := range r.online {
+		instance := r.instances[key]
+		if !now.Before(instance.lastHeartbeat.Add(timeout)) {
 			instance.online = false
 			r.instances[key] = instance
 			offline = append(offline, instance)
+			continue
 		}
+		active = append(active, key)
 	}
+	r.online = active
 	return offline
 }
 
 func (r *mediaServerRegistry) selectOnline() (mediaServerInstance, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for _, key := range r.order {
-		instance := r.instances[key]
-		if instance.online {
-			return instance, true
-		}
+	if len(r.online) == 0 {
+		return mediaServerInstance{}, false
 	}
-	return mediaServerInstance{}, false
+	return r.instances[r.online[0]], true
 }
 
 func (r *mediaServerRegistry) isOnline(server mediaServerInstance) bool {
@@ -128,11 +126,5 @@ func (r *mediaServerRegistry) isOnline(server mediaServerInstance) bool {
 func (r *mediaServerRegistry) onlineCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	count := 0
-	for _, instance := range r.instances {
-		if instance.online {
-			count++
-		}
-	}
-	return count
+	return len(r.online)
 }
