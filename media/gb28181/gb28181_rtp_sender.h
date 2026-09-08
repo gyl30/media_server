@@ -61,7 +61,6 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
     packet_handler packet_handler_;
     end_handler end_handler_;
     rtsp_muxer_t* muxer_{};
-    media_reader_handle reader_;
     std::map<track_id, track_state> track_states_;
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
