@@ -227,10 +227,12 @@ void rtsp_play_session::safe_shutdown()
     if (video_transcoder_)
     {
         video_transcoder_->shutdown();
+        video_transcoder_.reset();
     }
     if (stream_)
     {
         spdlog::debug("rtsp play shutdown {}", stream_->name());
+        stream_.reset();
     }
     if (muxer_ != nullptr)
     {
