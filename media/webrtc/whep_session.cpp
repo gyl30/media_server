@@ -137,7 +137,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
                                              {
                                                  if (const auto self = weak.lock())
                                                  {
-                                                     self->send_dtls(packet);
+                                                     self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end()));
                                                  }
                                              });
     if (!dtls_->startup())
@@ -633,8 +633,6 @@ bool whep_session::start_media_read()
     reader_handle().async_read(reader_cursor_);
     return true;
 }
-
-void whep_session::send_dtls(std::span<const std::uint8_t> packet) { send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); }
 
 void whep_session::send_rtp(std::span<const std::uint8_t> packet)
 {

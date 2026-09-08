@@ -84,7 +84,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     bool startup_media();
     bool apply_tracks(const media_track_snapshot_ptr& tracks);
     bool start_media_read();
-    void send_dtls(std::span<const std::uint8_t> packet);
     void send_rtp(std::span<const std::uint8_t> packet);
     void send_rtcp(std::span<const std::uint8_t> packet);
     void send_udp(std::vector<std::uint8_t> packet);
