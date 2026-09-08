@@ -38,7 +38,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
                            std::vector<rtsp_publish_track_description> descriptions,
                            std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
-    void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
+    void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
    private:
     friend class rtsp_publish_session;
@@ -62,7 +62,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     void safe_shutdown();
 
     worker_context& worker_;
-    std::function<void(boost::system::error_code)> error_handler_;
+    std::function<void()> shutdown_handler_;
     boost::asio::ip::address bind_address_;
     rtsp_publish_media media_;
     std::vector<track_state> track_states_;

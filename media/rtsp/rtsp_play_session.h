@@ -11,8 +11,6 @@
 #include <string_view>
 
 #include <boost/asio/ip/address.hpp>
-#include <boost/system/error_code.hpp>
-
 #include "media/core/media_reader.h"
 #include "media/codec/video_transcoder.h"
 #include "media/codec/video_transcode_config.h"
@@ -34,9 +32,9 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
                         boost::asio::ip::address local_address,
                         std::function<void(std::span<const std::uint8_t>)> write);
 
-    void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
+    void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
-    void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
+    [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_describe(rtsp_server_t* server, std::string_view uri);
     int on_setup(rtsp_server_t* server,
                  std::string_view uri,
@@ -74,7 +72,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     video_transcode_codec video_codec_;
     boost::asio::ip::address local_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
-    std::function<void(boost::system::error_code)> error_handler_;
+    std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
     std::map<track_id, track_state> track_states_;
     std::unique_ptr<video_transcoder> video_transcoder_;

@@ -9,7 +9,6 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/asio/error.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
 #include "media/net/worker_context.h"
@@ -74,7 +73,7 @@ void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
 
     if (!apply_tracks(tracks))
     {
-        error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+        shutdown_handler_();
         return;
     }
     reader_handle().async_read(reader_cursor_);
@@ -90,7 +89,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
     reader_cursor_ = batch.next_cursor;
     if (!apply_tracks(batch.tracks))
     {
-        error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+        shutdown_handler_();
         return;
     }
 
@@ -135,7 +134,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
             if (!video_transcoder_->transcode(entry.frame, output))
             {
                 spdlog::error("rtsp av1 transcode failed track {}", entry.frame.track);
-                error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+                shutdown_handler_();
                 return;
             }
             for (const auto& encoded : output)
@@ -179,7 +178,7 @@ void rtsp_play_session::on_end()
 {
     if (!closed_)
     {
-        error_handler_(boost::asio::error::eof);
+        shutdown_handler_();
     }
 }
 
@@ -188,16 +187,15 @@ int rtsp_play_session::muxer_packet_callback(void* param, int pid, const void* d
     return static_cast<rtsp_play_session*>(param)->on_muxer_packet(pid, data, bytes);
 }
 
-void rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
+bool rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
     if (session_id_.empty())
     {
-        error_handler_(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
-        return;
+        return false;
     }
     if (muxer_ == nullptr || data.empty())
     {
-        return;
+        return true;
     }
 
     for (const auto& [id, state] : track_states_)
@@ -207,12 +205,9 @@ void rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std
         {
             continue;
         }
-        if (rtsp_muxer_onrtcp(muxer_, state.payload_index, data.data(), static_cast<int>(data.size())) < 0)
-        {
-            error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
-        }
-        return;
+        return rtsp_muxer_onrtcp(muxer_, state.payload_index, data.data(), static_cast<int>(data.size())) >= 0;
     }
+    return true;
 }
 
 void rtsp_play_session::shutdown()
@@ -243,7 +238,7 @@ void rtsp_play_session::safe_shutdown()
         muxer_ = nullptr;
     }
     write_handler_ = {};
-    error_handler_ = {};
+    shutdown_handler_ = {};
 }
 
 int rtsp_play_session::on_describe(rtsp_server_t* server, std::string_view uri)
@@ -409,8 +404,7 @@ int rtsp_play_session::on_teardown(rtsp_server_t* server, std::string_view, std:
     }
 
     const auto result = rtsp_server_reply_teardown(server, 200);
-    error_handler_(boost::asio::error::eof);
-    return result;
+    return result == 0 ? -1 : result;
 }
 
 int rtsp_play_session::on_muxer_packet(int pid, const void* data, int bytes)

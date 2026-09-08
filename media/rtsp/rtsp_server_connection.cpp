@@ -173,12 +173,18 @@ void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t chan
     auto* self = static_cast<rtsp_server_connection*>(param);
     if (self->publish_session_)
     {
-        self->publish_session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes));
+        if (!self->publish_session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes)))
+        {
+            self->shutdown();
+        }
         return;
     }
     if (self->play_session_)
     {
-        self->play_session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes));
+        if (!self->play_session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes)))
+        {
+            self->shutdown();
+        }
         return;
     }
     self->shutdown();
@@ -199,7 +205,7 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
                                                                 self->video_codec_,
                                                                 self->local_address_,
                                                                 [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        next_session->set_error_handler([owner](boost::system::error_code) { owner->shutdown(); });
+        next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
         self->play_session_ = std::move(next_session);
     }
     return self->play_session_->on_describe(server, uri != nullptr ? uri : "");
@@ -221,7 +227,7 @@ int rtsp_server_connection::setup_callback(
                                                                 self->video_codec_,
                                                                 self->local_address_,
                                                                 [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        next_session->set_error_handler([owner](boost::system::error_code) { owner->shutdown(); });
+        next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
         self->play_session_ = std::move(next_session);
     }
     return self->play_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
@@ -271,7 +277,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
         const auto owner = self->shared_from_this();
         auto next_session = std::make_shared<rtsp_publish_session>(
             self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        next_session->set_error_handler([owner](boost::system::error_code) { owner->shutdown(); });
+        next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
         self->publish_session_ = std::move(next_session);
     }
     return self->publish_session_->on_announce(server, uri != nullptr ? uri : "", sdp, length);

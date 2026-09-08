@@ -3,8 +3,6 @@
 #include <utility>
 #include <algorithm>
 
-#include <boost/asio/error.hpp>
-
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
 #include "media/rtsp/rtsp_publish_session.h"
@@ -46,14 +44,13 @@ rtsp_publish_session::rtsp_publish_session(worker_context& worker,
 {
 }
 
-void rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
+bool rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
     if (!tcp_session_)
     {
-        error_handler_(boost::system::errc::make_error_code(boost::system::errc::protocol_error));
-        return;
+        return false;
     }
-    tcp_session_->on_interleaved(channel, data);
+    return tcp_session_->on_interleaved(channel, data);
 }
 
 int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
@@ -203,7 +200,6 @@ int rtsp_publish_session::on_setup(
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
         auto child = std::make_shared<rtsp_publish_tcp_session>(worker_, stream_name_, descriptions_, write_handler_);
-        child->set_error_handler(error_handler_);
         const auto result = child->startup(server, track_index, *selected, session_id_);
         if (!child->closed_)
         {
@@ -216,7 +212,7 @@ int rtsp_publish_session::on_setup(
 
     auto child =
         std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_, rtcp_interval_);
-    child->set_error_handler(error_handler_);
+    child->set_shutdown_handler(shutdown_handler_);
     const auto result = child->startup(server, track_index, *selected, session_id_);
     if (!child->closed_)
     {
@@ -251,8 +247,7 @@ int rtsp_publish_session::on_teardown(rtsp_server_t* server, std::string_view, s
         return rtsp_server_reply_teardown(server, 454);
     }
     const auto result = rtsp_server_reply_teardown(server, 200);
-    error_handler_(boost::asio::error::eof);
-    return result;
+    return result == 0 ? -1 : result;
 }
 
 void rtsp_publish_session::shutdown()
@@ -268,7 +263,7 @@ void rtsp_publish_session::shutdown()
         udp_session_.reset();
     }
     write_handler_ = {};
-    error_handler_ = {};
+    shutdown_handler_ = {};
 }
 
 }    // namespace media_server
