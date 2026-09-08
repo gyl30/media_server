@@ -208,8 +208,7 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
     const auto stream = add_video_stream(worker, "live/gb-sender-repeated-shutdown");
     const auto description = make_tcp_passive_transport(0, 10'000'2008);
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
-                                                                std::weak_ptr<media_stream>{stream},
-                                                                stream->name(),
+                                                                stream,
                                                                 "repeated-shutdown",
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),
@@ -256,8 +255,7 @@ void test_tcp_timeout_unregisters_sender_session()
     const auto stream = add_video_stream(worker, "live/gb-sender-timeout");
     const auto description = make_tcp_passive_transport(0, 10'000'2006);
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
-                                                                std::weak_ptr<media_stream>{stream},
-                                                                stream->name(),
+                                                                stream,
                                                                 "timeout",
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),

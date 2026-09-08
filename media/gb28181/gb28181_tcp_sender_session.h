@@ -28,8 +28,7 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
 {
    public:
     gb28181_tcp_sender_session(worker_context& worker,
-                               std::weak_ptr<media_stream> stream,
-                               std::string stream_name,
+                               std::shared_ptr<media_stream> stream,
                                std::string sender_id,
                                gb28181_transport_config config,
                                boost::asio::ip::address bind_address,
@@ -46,8 +45,7 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     void safe_shutdown();
 
     worker_context& worker_;
-    std::weak_ptr<media_stream> stream_;
-    std::string stream_name_;
+    std::shared_ptr<media_stream> stream_;
     std::string sender_id_;
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;

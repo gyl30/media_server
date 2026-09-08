@@ -159,8 +159,7 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
     else
     {
         auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
-                                                                    std::weak_ptr<media_stream>{stream},
-                                                                    stream_name,
+                                                                    stream,
                                                                     sender_id,
                                                                     config.transport,
                                                                     std::move(bind_address),
