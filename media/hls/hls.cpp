@@ -61,7 +61,7 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const
     remove_expired_segmenters(now);
 
     auto existing = current.segmenters.find(stream_name);
-    auto stream = registry::instance().find(stream_name);
+    auto stream = stream_registry::instance().find(stream_name);
     if (!stream)
     {
         return existing != current.segmenters.end() ? existing->second.segmenter : std::shared_ptr<hls_segmenter>{};

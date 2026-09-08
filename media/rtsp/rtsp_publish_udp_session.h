@@ -49,7 +49,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
         std::optional<udp_yield_transport> rtcp_transport;
         boost::asio::ip::udp::endpoint rtp_endpoint;
         boost::asio::ip::udp::endpoint rtcp_endpoint;
-        std::optional<port_manager_impl::port_pair> local_ports;
+        std::optional<port_manager::port_pair> local_ports;
     };
 
     int startup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);

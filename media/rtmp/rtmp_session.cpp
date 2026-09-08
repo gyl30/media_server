@@ -210,7 +210,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     }
 
     stream_name_ = make_stream_name(app, stream);
-    auto media = registry::instance().find(stream_name_);
+    auto media = stream_registry::instance().find(stream_name_);
     if (!media)
     {
         spdlog::warn("rtmp play stream not found {}", stream_name_);

@@ -209,7 +209,7 @@ void gb28181_tcp_sender_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
+    stream_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
     if (listener_)
     {
         listener_->shutdown();

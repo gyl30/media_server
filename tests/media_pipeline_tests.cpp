@@ -1711,7 +1711,7 @@ class rtmp_publish_test_peer final
     }
 
     worker_context worker_;
-    stream_registry& streams_ = registry::instance();
+    stream_registry& streams_ = stream_registry::instance();
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_socket_;
     std::string stream_name_;
@@ -1934,7 +1934,7 @@ class rtmp_play_test_peer final
     }
 
     worker_context worker_;
-    stream_registry& streams_ = registry::instance();
+    stream_registry& streams_ = stream_registry::instance();
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_socket_;
@@ -2007,7 +2007,7 @@ void test_rtmp_publish_initial_tracks_timeout()
 void test_rtmp_coroutine_publish_client()
 {
     worker_context server_worker;
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
 
@@ -2051,7 +2051,7 @@ void test_rtmp_coroutine_publish_client()
 void test_rtmp_coroutine_play_client()
 {
     worker_context server_worker;
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
     const auto stream = std::make_shared<media_stream>("live/coroutine-play", server_worker);
     require(stream->set_tracks({make_video_track()}), "rtmp coroutine play tracks");
@@ -2083,7 +2083,7 @@ void test_rtmp_coroutine_play_client()
 void test_rtsp_coroutine_publish_client()
 {
     worker_context server_worker;
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
 
@@ -2128,7 +2128,7 @@ void test_rtsp_coroutine_publish_client()
 void test_rtsp_coroutine_play_client()
 {
     worker_context server_worker;
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
     const auto stream = std::make_shared<media_stream>("live/coroutine-play", server_worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "rtsp coroutine play tracks");
@@ -2516,7 +2516,7 @@ void test_gb28181_tcp_active_connect_successful()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
 
     boost::asio::ip::tcp::acceptor acceptor(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -2557,7 +2557,7 @@ void test_gb28181_tcp_active_connection_refused()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
 
     boost::asio::ip::tcp::acceptor reserved(io);
@@ -2785,7 +2785,7 @@ void test_gb28181_multi_sender_identity()
     worker.release_work();
     auto& io = worker.io();
     io.restart();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     auto first = std::make_shared<media_stream>("live/gb-sender-first", worker);
     auto second = std::make_shared<media_stream>("live/gb-sender-second", worker);
@@ -2842,7 +2842,7 @@ void test_gb28181_multi_sender_identity()
 void test_rtmp_server_lifecycle()
 {
     io_context_pool workers(1);
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     config application_config;
     application_config.rtmp_port = 0;
@@ -3042,7 +3042,7 @@ void test_hls_http_session_shutdown_lifecycle()
 void test_gb28181_receiver_http_parameters()
 {
     boost::asio::io_context io;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     io_context_pool workers(1);
 
@@ -3210,7 +3210,7 @@ void test_gb28181_sender_http_parameters()
     source_worker.release_work();
     auto& io = source_worker.io();
     io.restart();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     io_context_pool workers(1);
 
@@ -3360,7 +3360,7 @@ void test_http_flv_client_disconnect()
 {
     io_context_pool workers(1);
     auto& io = workers.context(0).io();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
 
     auto stream = std::make_shared<media_stream>("live/http-flv-disconnect", workers.context(0));
@@ -3396,7 +3396,7 @@ void test_http_flv_stream_end_during_write()
 {
     io_context_pool workers(1);
     auto& io = workers.context(0).io();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
 
     auto stream = std::make_shared<media_stream>("live/http-flv-end-write", workers.context(0));
@@ -3431,7 +3431,7 @@ void test_http_flv_pending_bootstrap_end()
 {
     io_context_pool workers(1);
     auto& io = workers.context(0).io();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
 
     auto stream = std::make_shared<media_stream>("live/http-flv-pending-end", workers.context(0));
@@ -3761,7 +3761,7 @@ void test_rtsp_pull_url_contract()
     boost::asio::ip::tcp::acceptor acceptor(server_io, boost::asio::ip::tcp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
 
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     auto invalid = std::make_shared<rtsp_pull_session>(client_worker, "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
     require(!invalid->startup(), "rtsp invalid port rejected");
@@ -3822,7 +3822,7 @@ void test_rtsp_pull_establishment_timeout()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/timeout";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/timeout", request_url, std::chrono::milliseconds(100));
@@ -3860,7 +3860,7 @@ void test_rtsp_pull_establishment_progress_timeout()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-timeout";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/play-timeout", request_url, std::chrono::milliseconds(800));
@@ -3925,7 +3925,7 @@ void test_rtsp_pull_selects_single_audio_and_video()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/multi";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/single-av", request_url);
@@ -3997,7 +3997,7 @@ void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t e
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto stream_name = "relay/opus-" + std::to_string(expected_channels) + "-" + std::to_string(fmtp.size());
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus";
@@ -4133,7 +4133,7 @@ void test_rtsp_pull_rejects_invalid_opus_rate()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus-rate";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/opus-rate", request_url);
@@ -4199,7 +4199,7 @@ void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto stream_name = "relay/" + std::string(to_string(codec)) + (explicit_rtpmap ? "-rtpmap" : "-static");
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711";
@@ -4324,7 +4324,7 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto stream_name = std::string("relay/rtp-info");
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/rtp-info";
@@ -4444,7 +4444,7 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
 {
     worker_context worker;
     auto& io = worker.io();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
 
     auto video = make_video_track();
@@ -4587,7 +4587,7 @@ void test_rtsp_pull_rejects_mismatched_g711_rtpmap()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711-mismatch";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/g711-mismatch", request_url);
@@ -4637,7 +4637,7 @@ void test_rtsp_pull_rejects_audio_only_source()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/audio-only";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/audio-only", request_url);
@@ -4689,7 +4689,7 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/topology";
     auto pull =
@@ -4788,7 +4788,7 @@ void test_rtsp_pull_initial_tracks_timeout()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/initial-tracks-timeout";
     auto pull = std::make_shared<rtsp_pull_session>(
@@ -4885,7 +4885,7 @@ void test_rtsp_pull_independent_keepalive()
     boost::asio::io_context server_io;
     boost::asio::ip::tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/keepalive";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/keepalive", request_url, std::chrono::milliseconds(750));
@@ -4981,7 +4981,7 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32114});
     const auto port = probe.local_endpoint().port();
     probe.close();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     config application_config;
     application_config.rtsp_port = port;
@@ -5075,7 +5075,7 @@ void test_rtsp_publish_server_contract()
         boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32116});
         const auto port = probe.local_endpoint().port();
         probe.close();
-        auto& streams = media_server::registry::instance();
+        auto& streams = media_server::stream_registry::instance();
         streams.clear();
         config application_config;
         application_config.rtsp_port = port;
@@ -5137,7 +5137,7 @@ void test_rtsp_publish_server_contract()
     boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32120});
     const auto port = probe.local_endpoint().port();
     probe.close();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     config application_config;
     application_config.rtsp_port = port;
@@ -5833,7 +5833,7 @@ class rtsp_play_test_peer final
    private:
     worker_context worker_;
     config config_;
-    stream_registry& streams_ = registry::instance();
+    stream_registry& streams_ = stream_registry::instance();
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_;
@@ -9086,7 +9086,7 @@ void test_stream_registry_generation_lifecycle()
     worker.release_work();
     auto& io = worker.io();
     io.restart();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
 
     auto first = std::make_shared<media_stream>("live/generation", worker);
@@ -9672,7 +9672,7 @@ void test_hls_module_lifecycle()
     worker.release_work();
     auto& io = worker.io();
     io.restart();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const config application_config;
     hls::shutdown();
@@ -10262,7 +10262,7 @@ void test_webrtc_opus_packetizer()
 int main()
 {
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
-    media_server::registry::init();
+    media_server::stream_registry::instance().clear();
     media_server::test_avstream_g711_track_config_conversion();
     std::cout << "[pass] avstream_g711_track_config_conversion\n";
     media_server::test_timebase_conversions();
@@ -10506,7 +10506,7 @@ int main()
     media_server::test_webrtc_rtcp_sender();
     std::cout << "[pass] webrtc_rtcp_sender\n";
     std::cout << "all tests passed\n";
-    media_server::registry::destroy();
+    media_server::stream_registry::instance().clear();
     media_server::port_manager::destroy();
     return 0;
 }
