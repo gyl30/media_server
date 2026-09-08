@@ -154,7 +154,7 @@ void rtsp_publish_tcp_session::safe_shutdown()
     rtcp_timer_.cancel();
     media_.shutdown();
     write_handler_ = {};
-    spdlog::debug("rtsp publish tcp shutdown {}", media_.stream_name());
+    spdlog::debug("rtsp publish tcp shutdown {}", media_.media_stream_name());
 }
 
 }    // namespace media_server
