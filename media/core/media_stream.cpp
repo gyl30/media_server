@@ -339,8 +339,7 @@ void media_stream::add_reader_on_owner(const std::shared_ptr<media_reader_state>
 
 void media_stream::request_read_on_owner(const std::shared_ptr<media_reader_state>& state, media_reader_cursor cursor)
 {
-    if (ended_ || !state->registered || state->pending_read || !state->active.load(std::memory_order_acquire) ||
-        state->terminal.load(std::memory_order_acquire))
+    if (ended_ || !state->registered || state->pending_read || !state->active.load(std::memory_order_acquire))
     {
         release_read_outstanding(state);
         return;
@@ -443,7 +442,7 @@ void media_stream::dispatch_pending_readers()
     remove_inactive_readers();
     for (const auto& state : readers_)
     {
-        if (state->pending_read && state->active.load(std::memory_order_acquire) && !state->terminal.load(std::memory_order_acquire))
+        if (state->pending_read && state->active.load(std::memory_order_acquire))
         {
             complete_reader_from_history(state);
         }
@@ -498,7 +497,7 @@ void media_stream::complete_reader_from_history(const std::shared_ptr<media_read
 
 void media_stream::deliver_reader_batch(const std::shared_ptr<media_reader_state>& state, media_read_batch batch)
 {
-    if (!state->active.load(std::memory_order_acquire) || state->terminal.load(std::memory_order_acquire))
+    if (!state->active.load(std::memory_order_acquire))
     {
         release_read_outstanding(state);
         return;
@@ -548,7 +547,7 @@ void media_stream::dispatch_reader_end(const std::shared_ptr<media_reader_state>
     boost::asio::post(state->worker->io(),
                       [state]()
                       {
-                          if (!state->active.load(std::memory_order_acquire) || !state->terminal.load(std::memory_order_acquire))
+                          if (!state->active.load(std::memory_order_acquire))
                           {
                               return;
                           }
