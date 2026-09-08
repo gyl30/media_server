@@ -38,7 +38,7 @@ bool gb28181_tcp_receiver_session::startup()
         listener_->startup(error);
         if (error)
         {
-            spdlog::error("gb28181 tcp listener startup failed stream {} error {}", stream_name(), error.message());
+            spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_name(), error.message());
             listener_.reset();
             return false;
         }
@@ -54,8 +54,6 @@ void gb28181_tcp_receiver_session::shutdown()
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
-
-const std::string& gb28181_tcp_receiver_session::stream_name() const noexcept { return receiver_.stream_name(); }
 
 void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
 {
@@ -80,7 +78,7 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
     {
         if (error != boost::asio::error::operation_aborted)
         {
-            spdlog::warn("gb28181 tcp establishment failed stream {} error {}", stream_name(), error.message());
+            spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_name(), error.message());
         }
         shutdown();
         return;
@@ -89,12 +87,12 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
     transport_ = std::make_unique<tcp_yield_transport>(std::move(socket_));
     if (!receiver_.startup())
     {
-        spdlog::error("gb28181 tcp receiver startup failed stream {}", stream_name());
+        spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
         shutdown();
         return;
     }
 
-    spdlog::info("gb28181 tcp session started stream {}", stream_name());
+    spdlog::info("gb28181 tcp session started stream {}", receiver_.stream_name());
 
     std::vector<std::uint8_t> buffer(64 * 1024);
     std::vector<std::uint8_t> input_buffer;
@@ -150,7 +148,7 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    stream_registry::instance().remove_receiver_session(stream_name(), *this);
+    stream_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)
     {
         listener_->shutdown();
@@ -163,7 +161,7 @@ void gb28181_tcp_receiver_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    spdlog::debug("gb28181 tcp session shutdown {}", stream_name());
+    spdlog::debug("gb28181 tcp session shutdown {}", receiver_.stream_name());
 }
 
 }    // namespace media_server
