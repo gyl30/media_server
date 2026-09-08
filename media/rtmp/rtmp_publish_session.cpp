@@ -35,7 +35,7 @@ rtmp_publish_session::rtmp_publish_session(worker_context& worker,
       initial_tracks_timer_(worker_.io()),
       initial_tracks_timeout_(initial_tracks_timeout),
       stream_name_(std::move(stream_name)),
-      stream_(std::make_shared<media_stream>(stream_name_, worker_.io())),
+      stream_(std::make_shared<media_stream>(stream_name_, worker_.io().get_executor())),
       shutdown_handler_(std::move(on_shutdown))
 {
 }
