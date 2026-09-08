@@ -33,7 +33,6 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     [[nodiscard]] bool startup();
     void shutdown() override;
 
-    [[nodiscard]] const std::string& stream_name() const noexcept;
     [[nodiscard]] std::optional<port_manager::port_pair> local_ports() const noexcept;
 
    private:
