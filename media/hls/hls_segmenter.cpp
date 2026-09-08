@@ -365,7 +365,6 @@ void hls_segmenter::reset_fmp4(bool clear_segments, bool clear_video_config)
     fmp4_audio_track_id_ = 0;
     init_segment_.clear();
     current_segment_.clear();
-    mov_target_ = nullptr;
     mov_position_ = 0;
     segment_start_pts_ns_.reset();
     segment_max_pts_ns_ = 0;
