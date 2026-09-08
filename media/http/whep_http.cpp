@@ -73,11 +73,6 @@ whep_http_string_response handle_whep_options(const whep_http_request& request, 
     return response;
 }
 
-whep_http_string_response handle_whep_endpoint_get(const whep_http_request& request)
-{
-    return make_empty_response(request, boost::beast::http::status::ok, "application/sdp");
-}
-
 whep_http_string_response handle_whep_session_get(const whep_http_request& request, std::string_view session_id)
 {
     if (!whep::contains(session_id))
@@ -157,7 +152,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
         {
             return handle_whep_session_get(request, segments[1]);
         }
-        return handle_whep_endpoint_get(request);
+        return make_empty_response(request, boost::beast::http::status::ok, "application/sdp");
     }
     if (request.method() == boost::beast::http::verb::post && endpoint_resource)
     {
