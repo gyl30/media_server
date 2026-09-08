@@ -29,7 +29,9 @@
 #include <boost/asio/write.hpp>
 #include <boost/asio/read_until.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/co_spawn.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/use_future.hpp>
 #include <boost/beast/http/read.hpp>
 #include <boost/beast/http/write.hpp>
 
@@ -73,6 +75,8 @@
 #include "media/rtsp/rtsp_publish_media.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
+#include "tests/clients/rtmp_test_client.h"
+#include "tests/clients/rtsp_test_client.h"
 
 extern "C"
 {
@@ -1998,6 +2002,167 @@ void test_rtmp_publish_initial_tracks_timeout()
     require(!peer.stream_exists(), "rtmp incomplete stream never enters registry");
     peer.wait_session_closed();
     require(!peer.stream_exists(), "rtmp initial tracks timeout leaves registry empty");
+}
+
+void test_rtmp_coroutine_publish_client()
+{
+    worker_context server_worker;
+    auto& streams = registry::instance();
+    streams.clear();
+    boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+
+    boost::asio::io_context client_io;
+    test::rtmp_test_client client(client_io.get_executor(), "live", "coroutine-publish");
+    std::array<std::uint8_t, 128> metadata{};
+    auto* metadata_end = AMFWriteString(metadata.data(), metadata.data() + metadata.size(), "onMetaData", 10);
+    metadata_end = AMFWriteECMAArarry(metadata_end, metadata.data() + metadata.size());
+    metadata_end = AMFWriteNamedDouble(metadata_end, metadata.data() + metadata.size(), "videocodecid", 12, FLV_VIDEO_H264);
+    metadata_end = AMFWriteObjectEnd(metadata_end, metadata.data() + metadata.size());
+    require(metadata_end != nullptr, "rtmp coroutine publish metadata encode");
+    auto future = boost::asio::co_spawn(
+        client_io,
+        client.publish("127.0.0.1",
+                       acceptor.local_endpoint().port(),
+                       std::vector<std::uint8_t>(metadata.data(), metadata_end),
+                       make_rtmp_video_sequence_header(make_video_track())),
+        boost::asio::use_future);
+    std::jthread client_runner([&client_io]() { client_io.run(); });
+
+    auto session = std::make_shared<rtmp_session>(server_worker, acceptor.accept());
+    session->startup();
+    std::jthread server_runner([&server_worker]() { server_worker.run(); });
+
+    require(!future.get(), "rtmp coroutine publish client completes");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!streams.find("live/coroutine-publish") && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    const auto stream = streams.find("live/coroutine-publish");
+    require(stream != nullptr && stream->tracks().size() == 1U && stream->tracks().front().codec == codec_id::h264,
+            "rtmp coroutine publish creates video stream");
+
+    session->shutdown();
+    server_worker.release_work();
+    server_runner.join();
+    client_runner.join();
+}
+
+void test_rtmp_coroutine_play_client()
+{
+    worker_context server_worker;
+    auto& streams = registry::instance();
+    streams.clear();
+    const auto stream = std::make_shared<media_stream>("live/coroutine-play", server_worker.io().get_executor());
+    require(stream->set_tracks({make_video_track()}), "rtmp coroutine play tracks");
+    require(streams.add(stream), "rtmp coroutine play registry add");
+    boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+
+    boost::asio::io_context client_io;
+    test::rtmp_test_client client(client_io.get_executor(), "live", "coroutine-play");
+    auto future = boost::asio::co_spawn(
+        client_io, client.play("127.0.0.1", acceptor.local_endpoint().port()), boost::asio::use_future);
+    std::jthread client_runner([&client_io]() { client_io.run(); });
+
+    auto session = std::make_shared<rtmp_session>(server_worker, acceptor.accept());
+    session->startup();
+    std::jthread server_runner([&server_worker]() { server_worker.run(); });
+
+    require(!future.get(), "rtmp coroutine play client completes");
+    flv_video_tag_header_t video{};
+    require(flv_video_tag_header_read(&video, client.video().data(), client.video().size()) > 0 &&
+                video.codecid == FLV_VIDEO_H264 && video.avpacket == FLV_SEQUENCE_HEADER,
+            "rtmp coroutine play receives video config");
+
+    session->shutdown();
+    server_worker.release_work();
+    server_runner.join();
+    client_runner.join();
+}
+
+void test_rtsp_coroutine_publish_client()
+{
+    worker_context server_worker;
+    auto& streams = registry::instance();
+    streams.clear();
+    boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+
+    boost::asio::io_context client_io;
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/coroutine-publish";
+    const auto sdp = std::string("v=0\r\n") +
+                     "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                     "s=publish\r\n"
+                     "c=IN IP4 127.0.0.1\r\n"
+                     "t=0 0\r\n"
+                     "m=video 0 RTP/AVP 96\r\n"
+                     "a=rtpmap:96 H264/90000\r\n"
+                     "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                     "a=control:" +
+                     base + "/trackID=1\r\n";
+    test::rtsp_test_client client(client_io.get_executor(), "/live/coroutine-publish");
+    const std::vector<std::uint8_t> rtp{0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0};
+    auto future = boost::asio::co_spawn(
+        client_io, client.publish("127.0.0.1", acceptor.local_endpoint().port(), sdp, rtp), boost::asio::use_future);
+    std::jthread client_runner([&client_io]() { client_io.run(); });
+
+    auto connection = std::make_shared<rtsp_server_connection>(server_worker, acceptor.accept(), video_transcode_codec{});
+    connection->startup();
+    std::jthread server_runner([&server_worker]() { server_worker.run(); });
+
+    require(!future.get(), "rtsp coroutine publish client completes");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    std::shared_ptr<media_stream> stream;
+    while (!(stream = streams.find("live/coroutine-publish")) && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    require(stream != nullptr && stream->tracks().size() == 1U && stream->tracks().front().codec == codec_id::h264,
+            "rtsp coroutine publish creates video stream");
+
+    connection->shutdown();
+    server_worker.release_work();
+    server_runner.join();
+    client_runner.join();
+}
+
+void test_rtsp_coroutine_play_client()
+{
+    worker_context server_worker;
+    auto& streams = registry::instance();
+    streams.clear();
+    const auto stream = std::make_shared<media_stream>("live/coroutine-play", server_worker.io().get_executor());
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "rtsp coroutine play tracks");
+    require(streams.add(stream), "rtsp coroutine play registry add");
+    boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+
+    boost::asio::io_context client_io;
+    test::rtsp_test_client client(client_io.get_executor(), "/live/coroutine-play");
+    auto future = boost::asio::co_spawn(
+        client_io, client.play("127.0.0.1", acceptor.local_endpoint().port()), boost::asio::use_future);
+    std::jthread client_runner([&client_io]() { client_io.run(); });
+
+    auto connection = std::make_shared<rtsp_server_connection>(server_worker, acceptor.accept(), video_transcode_codec{});
+    connection->startup();
+    boost::asio::steady_timer media_timer(server_worker.io());
+    media_timer.expires_after(std::chrono::milliseconds(100));
+    media_timer.async_wait([stream](const boost::system::error_code& error)
+                           {
+                               if (!error)
+                               {
+                                   stream->publish(make_video_frame(0, true));
+                               }
+                           });
+    std::jthread server_runner([&server_worker]() { server_worker.run(); });
+
+    require(!future.get(), "rtsp coroutine play client completes");
+    rtp_packet_t packet{};
+    require(rtp_packet_deserialize(&packet, client.rtp().data(), static_cast<int>(client.rtp().size())) == 0 && packet.rtp.pt == 96,
+            "rtsp coroutine play receives video rtp");
+
+    connection->shutdown();
+    server_worker.release_work();
+    server_runner.join();
+    client_runner.join();
 }
 
 void test_rtmp_publish_recreate_lifecycle()
@@ -10049,6 +10214,10 @@ int main()
     std::cout << "[pass] rtmp_publish_initial_topology\n";
     media_server::test_rtmp_publish_initial_tracks_timeout();
     std::cout << "[pass] rtmp_publish_initial_tracks_timeout\n";
+    media_server::test_rtmp_coroutine_publish_client();
+    std::cout << "[pass] rtmp_coroutine_publish_client\n";
+    media_server::test_rtmp_coroutine_play_client();
+    std::cout << "[pass] rtmp_coroutine_play_client\n";
     media_server::test_rtmp_publish_recreate_lifecycle();
     std::cout << "[pass] rtmp_publish_recreate_lifecycle\n";
     media_server::test_rtmp_publish_codec_configuration_updates();
@@ -10191,8 +10360,12 @@ int main()
     std::cout << "[pass] rtsp_uri_contract\n";
     media_server::test_rtsp_publish_server_contract();
     std::cout << "[pass] rtsp_publish_server_contract\n";
+    media_server::test_rtsp_coroutine_publish_client();
+    std::cout << "[pass] rtsp_coroutine_publish_client\n";
     media_server::test_rtsp_play_session_contract();
     std::cout << "[pass] rtsp_play_session_contract\n";
+    media_server::test_rtsp_coroutine_play_client();
+    std::cout << "[pass] rtsp_coroutine_play_client\n";
     media_server::test_rtsp_play_recreate_lifecycle();
     std::cout << "[pass] rtsp_play_recreate_lifecycle\n";
     media_server::test_rtsp_play_media_delivery();

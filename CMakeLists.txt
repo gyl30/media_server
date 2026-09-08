@@ -287,7 +287,11 @@ if(BUILD_TESTING)
     target_link_libraries(service_tests PRIVATE media_core media_server_link_options)
     add_test(NAME service_tests COMMAND service_tests)
 
-    add_executable(media_pipeline_tests tests/media_pipeline_tests.cpp)
+    add_executable(media_pipeline_tests
+        tests/media_pipeline_tests.cpp
+        tests/clients/rtmp_test_client.cpp
+        tests/clients/rtsp_test_client.cpp
+    )
     target_link_libraries(media_pipeline_tests PRIVATE media_core media_server_link_options)
     add_test(NAME media_pipeline_tests COMMAND media_pipeline_tests)
 
