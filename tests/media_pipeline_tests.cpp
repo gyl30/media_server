@@ -123,14 +123,14 @@ constexpr track_id audio_track_id = 2;
 
 using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
 static_assert(std::is_constructible_v<rtsp_publish_session, worker_context&, boost::asio::ip::address, rtsp_write_handler>);
-static_assert(!std::is_constructible_v<rtsp_publish_session, boost::asio::any_io_executor, boost::asio::ip::address, rtsp_write_handler>);
+static_assert(!std::is_constructible_v<rtsp_publish_session, boost::asio::io_context::executor_type, boost::asio::ip::address, rtsp_write_handler>);
 static_assert(std::is_constructible_v<rtsp_publish_tcp_session,
                                       worker_context&,
                                       std::string,
                                       std::vector<rtsp_publish_track_description>,
                                       rtsp_write_handler>);
 static_assert(!std::is_constructible_v<rtsp_publish_tcp_session,
-                                       boost::asio::any_io_executor,
+                                       boost::asio::io_context::executor_type,
                                        std::string,
                                        std::vector<rtsp_publish_track_description>,
                                        rtsp_write_handler>);
@@ -140,13 +140,13 @@ static_assert(std::is_constructible_v<rtsp_publish_udp_session,
                                       std::string,
                                       std::vector<rtsp_publish_track_description>>);
 static_assert(!std::is_constructible_v<rtsp_publish_udp_session,
-                                       boost::asio::any_io_executor,
+                                       boost::asio::io_context::executor_type,
                                        boost::asio::ip::address,
                                        std::string,
                                        std::vector<rtsp_publish_track_description>>);
 static_assert(std::is_constructible_v<rtsp_publish_media, worker_context&, std::string, std::vector<rtsp_publish_track_description>>);
 static_assert(!std::is_constructible_v<rtsp_publish_media,
-                                       boost::asio::any_io_executor,
+                                       boost::asio::io_context::executor_type,
                                        std::string,
                                        std::vector<rtsp_publish_track_description>>);
 static_assert(std::is_constructible_v<rtsp_play_session,
@@ -155,7 +155,7 @@ static_assert(std::is_constructible_v<rtsp_play_session,
                                       boost::asio::ip::address,
                                       rtsp_write_handler>);
 static_assert(!std::is_constructible_v<rtsp_play_session,
-                                       boost::asio::any_io_executor,
+                                       boost::asio::io_context::executor_type,
                                        video_transcode_codec,
                                        boost::asio::ip::address,
                                        rtsp_write_handler>);
@@ -1729,7 +1729,7 @@ class rtmp_play_test_peer final
           expected_video_codec_(video_track.codec)
     {
         streams_.clear();
-        stream_ = std::make_shared<media_stream>("live/camera", worker_.io().get_executor());
+        stream_ = std::make_shared<media_stream>("live/camera", worker_);
         std::vector<media_track> tracks;
         tracks.push_back(std::move(video_track));
         if (with_audio)
@@ -2012,7 +2012,7 @@ void test_rtmp_coroutine_publish_client()
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
 
     boost::asio::io_context client_io;
-    test::rtmp_test_client client(client_io.get_executor(), "live", "coroutine-publish");
+    test::rtmp_test_client client(client_io, "live", "coroutine-publish");
     std::array<std::uint8_t, 128> metadata{};
     auto* metadata_end = AMFWriteString(metadata.data(), metadata.data() + metadata.size(), "onMetaData", 10);
     metadata_end = AMFWriteECMAArarry(metadata_end, metadata.data() + metadata.size());
@@ -2053,13 +2053,13 @@ void test_rtmp_coroutine_play_client()
     worker_context server_worker;
     auto& streams = registry::instance();
     streams.clear();
-    const auto stream = std::make_shared<media_stream>("live/coroutine-play", server_worker.io().get_executor());
+    const auto stream = std::make_shared<media_stream>("live/coroutine-play", server_worker);
     require(stream->set_tracks({make_video_track()}), "rtmp coroutine play tracks");
     require(streams.add(stream), "rtmp coroutine play registry add");
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
 
     boost::asio::io_context client_io;
-    test::rtmp_test_client client(client_io.get_executor(), "live", "coroutine-play");
+    test::rtmp_test_client client(client_io, "live", "coroutine-play");
     auto future = boost::asio::co_spawn(
         client_io, client.play("127.0.0.1", acceptor.local_endpoint().port()), boost::asio::use_future);
     std::jthread client_runner([&client_io]() { client_io.run(); });
@@ -2099,7 +2099,7 @@ void test_rtsp_coroutine_publish_client()
                      "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
                      "a=control:" +
                      base + "/trackID=1\r\n";
-    test::rtsp_test_client client(client_io.get_executor(), "/live/coroutine-publish");
+    test::rtsp_test_client client(client_io, "/live/coroutine-publish");
     const std::vector<std::uint8_t> rtp{0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0};
     auto future = boost::asio::co_spawn(
         client_io, client.publish("127.0.0.1", acceptor.local_endpoint().port(), sdp, rtp), boost::asio::use_future);
@@ -2130,13 +2130,13 @@ void test_rtsp_coroutine_play_client()
     worker_context server_worker;
     auto& streams = registry::instance();
     streams.clear();
-    const auto stream = std::make_shared<media_stream>("live/coroutine-play", server_worker.io().get_executor());
+    const auto stream = std::make_shared<media_stream>("live/coroutine-play", server_worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "rtsp coroutine play tracks");
     require(streams.add(stream), "rtsp coroutine play registry add");
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
 
     boost::asio::io_context client_io;
-    test::rtsp_test_client client(client_io.get_executor(), "/live/coroutine-play");
+    test::rtsp_test_client client(client_io, "/live/coroutine-play");
     auto future = boost::asio::co_spawn(
         client_io, client.play("127.0.0.1", acceptor.local_endpoint().port()), boost::asio::use_future);
     std::jthread client_runner([&client_io]() { client_io.run(); });
@@ -2787,8 +2787,8 @@ void test_gb28181_multi_sender_identity()
     io.restart();
     auto& streams = media_server::registry::instance();
     streams.clear();
-    auto first = std::make_shared<media_stream>("live/gb-sender-first", io.get_executor());
-    auto second = std::make_shared<media_stream>("live/gb-sender-second", io.get_executor());
+    auto first = std::make_shared<media_stream>("live/gb-sender-first", worker);
+    auto second = std::make_shared<media_stream>("live/gb-sender-second", worker);
     require(first->set_tracks({make_video_track()}), "gb multi sender first tracks");
     require(second->set_tracks({make_video_track()}), "gb multi sender second tracks");
     require(streams.add(first) && streams.add(second), "gb multi sender source registry");
@@ -3206,12 +3206,15 @@ void test_gb28181_receiver_http_parameters()
 
 void test_gb28181_sender_http_parameters()
 {
-    boost::asio::io_context io;
+    worker_context source_worker;
+    source_worker.release_work();
+    auto& io = source_worker.io();
+    io.restart();
     auto& streams = media_server::registry::instance();
     streams.clear();
     io_context_pool workers(1);
 
-    auto stream = std::make_shared<media_stream>("live/gb-sender-http", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/gb-sender-http", source_worker);
     require(stream->set_tracks({make_video_track()}), "gb sender http tracks");
     require(streams.add(stream), "gb sender http source registry");
 
@@ -3360,7 +3363,7 @@ void test_http_flv_client_disconnect()
     auto& streams = media_server::registry::instance();
     streams.clear();
 
-    auto stream = std::make_shared<media_stream>("live/http-flv-disconnect", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-flv-disconnect", workers.context(0));
     require(stream->set_tracks({make_video_track()}), "http flv disconnect track");
     require(streams.add(stream), "http flv disconnect stream");
 
@@ -3396,7 +3399,7 @@ void test_http_flv_stream_end_during_write()
     auto& streams = media_server::registry::instance();
     streams.clear();
 
-    auto stream = std::make_shared<media_stream>("live/http-flv-end-write", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-flv-end-write", workers.context(0));
     require(stream->set_tracks({make_video_track()}), "http flv end write track");
     require(streams.add(stream), "http flv end write stream");
 
@@ -3431,7 +3434,7 @@ void test_http_flv_pending_bootstrap_end()
     auto& streams = media_server::registry::instance();
     streams.clear();
 
-    auto stream = std::make_shared<media_stream>("live/http-flv-pending-end", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-flv-pending-end", workers.context(0));
     require(stream->set_tracks({make_video_track()}), "http flv pending end track");
     require(streams.add(stream), "http flv pending end stream");
 
@@ -3469,7 +3472,9 @@ void test_http_flv_pending_bootstrap_end()
 
 void test_http_flv_batch_consumption_and_overrun()
 {
-    boost::asio::io_context reader_worker(1);
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [&reader_worker]()
     {
         reader_worker.restart();
@@ -3478,14 +3483,14 @@ void test_http_flv_batch_consumption_and_overrun()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/http-flv-pull", reader_worker.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-flv-pull", reader_worker_context);
     require(stream->set_tracks({make_video_track()}), "http flv pull video track");
     http_flv_capture capture;
     auto streamer = std::make_shared<http_flv_streamer>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&capture]() { ++capture.ends; });
-    static_cast<void>(stream->add_reader(streamer, reader_worker.get_executor()));
+    static_cast<void>(stream->add_reader(streamer, reader_worker_context));
     drain();
 
     require(capture.writes.size() == 1U && capture.writes.front().bootstrap, "http flv bootstrap is first logical write");
@@ -3534,7 +3539,9 @@ void test_http_flv_batch_consumption_and_overrun()
 
 void test_http_flv_h265_pull()
 {
-    boost::asio::io_context reader_worker(1);
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [&reader_worker]()
     {
         reader_worker.restart();
@@ -3543,14 +3550,14 @@ void test_http_flv_h265_pull()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/http-flv-h265", reader_worker.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-flv-h265", reader_worker_context);
     require(stream->set_tracks({make_h265_track()}), "http flv h265 track");
     http_flv_capture capture;
     auto streamer = std::make_shared<http_flv_streamer>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&capture]() { ++capture.ends; });
-    static_cast<void>(stream->add_reader(streamer, reader_worker.get_executor()));
+    static_cast<void>(stream->add_reader(streamer, reader_worker_context));
     drain();
     require(capture.writes.size() == 1U && capture.writes.front().bootstrap, "http flv h265 bootstrap");
 
@@ -3569,7 +3576,9 @@ void test_http_flv_h265_pull()
 
 void test_http_flv_fast_and_slow_readers()
 {
-    boost::asio::io_context reader_worker(1);
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [&reader_worker]()
     {
         reader_worker.restart();
@@ -3578,7 +3587,7 @@ void test_http_flv_fast_and_slow_readers()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/http-flv-fast-slow", reader_worker.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-flv-fast-slow", reader_worker_context);
     require(stream->set_tracks({make_video_track()}), "http flv fast slow track");
     http_flv_capture fast_capture;
     http_flv_capture slow_capture;
@@ -3590,8 +3599,8 @@ void test_http_flv_fast_and_slow_readers()
         [&slow_capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { slow_capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&slow_capture]() { ++slow_capture.ends; });
-    static_cast<void>(stream->add_reader(fast, reader_worker.get_executor()));
-    static_cast<void>(stream->add_reader(slow, reader_worker.get_executor()));
+    static_cast<void>(stream->add_reader(fast, reader_worker_context));
+    static_cast<void>(stream->add_reader(slow, reader_worker_context));
     drain();
     fast->write_complete(1);
     slow->write_complete(1);
@@ -3631,7 +3640,9 @@ void test_http_flv_fast_and_slow_readers()
 
 void test_http_flv_audio_video_order()
 {
-    boost::asio::io_context reader_worker(1);
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [&reader_worker]()
     {
         reader_worker.restart();
@@ -3640,14 +3651,14 @@ void test_http_flv_audio_video_order()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/http-flv-av", reader_worker.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-flv-av", reader_worker_context);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "http flv av tracks");
     http_flv_capture capture;
     auto streamer = std::make_shared<http_flv_streamer>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&capture]() { ++capture.ends; });
-    static_cast<void>(stream->add_reader(streamer, reader_worker.get_executor()));
+    static_cast<void>(stream->add_reader(streamer, reader_worker_context));
     drain();
     require((capture.writes.front().data[4] & 0x05U) == 0x05U, "http flv audio video header flags");
     streamer->write_complete(1);
@@ -3678,7 +3689,9 @@ void test_http_flv_audio_video_order()
 
 void test_http_flv_config_reset()
 {
-    boost::asio::io_context reader_worker(1);
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [&reader_worker]()
     {
         reader_worker.restart();
@@ -3687,14 +3700,14 @@ void test_http_flv_config_reset()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/http-flv-reset", reader_worker.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-flv-reset", reader_worker_context);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "http flv reset initial tracks");
     http_flv_capture capture;
     auto streamer = std::make_shared<http_flv_streamer>(
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&capture]() { ++capture.ends; });
-    static_cast<void>(stream->add_reader(streamer, reader_worker.get_executor()));
+    static_cast<void>(stream->add_reader(streamer, reader_worker_context));
     drain();
 
     require(capture.writes.size() == 1U && capture.writes.back().bootstrap && capture.writes.back().generation == 1,
@@ -4401,8 +4414,8 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
 
     auto video_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{video_track_id});
     auto audio_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{audio_track_id});
-    auto video_handle = stream->add_reader(video_reader, client_worker.io().get_executor());
-    auto audio_handle = stream->add_reader(audio_reader, client_worker.io().get_executor());
+    auto video_handle = stream->add_reader(video_reader, client_worker);
+    auto audio_handle = stream->add_reader(audio_reader, client_worker);
     require(video_reader->wait_for_ready(1) && audio_reader->wait_for_ready(1), "rtsp rtp-info readers ready");
 
     send_rtp(0, make_rtp(0x60, 2, video_rtp_time, video_pps));
@@ -4467,8 +4480,8 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
                           require(media.start_recording(), "rtsp rtcp sync recording");
                           const auto stream = streams.find("live/rtcp-sync");
                           require(stream != nullptr, "rtsp rtcp sync stream");
-                          video_handle = stream->add_reader(video_reader, io.get_executor());
-                          audio_handle = stream->add_reader(audio_reader, io.get_executor());
+                          video_handle = stream->add_reader(video_reader, worker);
+                          audio_handle = stream->add_reader(audio_reader, worker);
                       });
     worker.release_work();
     io.run();
@@ -5680,7 +5693,7 @@ class rtsp_play_test_peer final
     {
         config_.rtsp_video = video;
         streams_.clear();
-        stream_ = std::make_shared<media_stream>("live/test", worker_.io().get_executor());
+        stream_ = std::make_shared<media_stream>("live/test", worker_);
         require(stream_->set_tracks(std::move(tracks)), "rtsp play tracks");
         require(streams_.add(stream_), "rtsp play registry add");
 
@@ -8240,11 +8253,14 @@ void test_video_transcoder_h26x_av1()
 
 void test_media_stream_configless_audio_track()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    io.restart();
     boost::asio::post(io,
                       [&]()
                       {
-                          auto stream = std::make_shared<media_stream>("live/configless-audio", io.get_executor());
+                          auto stream = std::make_shared<media_stream>("live/configless-audio", worker);
                           media_track track{
                               .id = audio_track_id,
                               .kind = media_kind::audio,
@@ -8271,11 +8287,14 @@ void test_media_stream_configless_audio_track()
 
 void test_media_stream_sink_lifecycle()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    io.restart();
     boost::asio::post(io,
                       [&]()
                       {
-                          auto stream = std::make_shared<media_stream>("live/test", io.get_executor());
+                          auto stream = std::make_shared<media_stream>("live/test", worker);
                           auto first_track = make_video_track();
                           first_track.config_version = 99;
                           require(stream->set_tracks({std::move(first_track)}), "sink lifecycle video track");
@@ -8290,7 +8309,7 @@ void test_media_stream_sink_lifecycle()
                           stream->add_sink(duplicate);
                           require(duplicate->tracks == 0, "stream keeps one source-owner sink");
 
-                          auto owned_stream = std::make_shared<media_stream>("live/owned-sink", io.get_executor());
+                          auto owned_stream = std::make_shared<media_stream>("live/owned-sink", worker);
                           require(owned_stream->set_tracks({make_video_track()}), "owned sink track");
                           std::weak_ptr<media_sink> owned_sink;
                           {
@@ -8337,12 +8356,15 @@ void test_media_stream_sink_lifecycle()
 
 void test_media_stream_sink_gop_replay()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    io.restart();
     boost::asio::post(
         io,
         [&]()
         {
-            auto stream = std::make_shared<media_stream>("live/gop", io.get_executor());
+            auto stream = std::make_shared<media_stream>("live/gop", worker);
             require(stream->set_tracks({make_video_track(), make_audio_track()}), "gop tracks");
             stream->publish(make_audio_frame(-20'000'000));
             stream->publish(make_video_frame(0, true));
@@ -8360,7 +8382,7 @@ void test_media_stream_sink_gop_replay()
                         },
                     "gop replays frames from current key frame");
 
-            auto latest_stream = std::make_shared<media_stream>("live/gop-latest", io.get_executor());
+            auto latest_stream = std::make_shared<media_stream>("live/gop-latest", worker);
             require(latest_stream->set_tracks({make_video_track(), make_audio_track()}), "latest gop tracks");
             latest_stream->publish(make_video_frame(0, true));
             latest_stream->publish(make_video_frame(40'000'000, false));
@@ -8377,7 +8399,7 @@ void test_media_stream_sink_gop_replay()
                         },
                     "late sink receives only current gop");
 
-            auto blocked_stream = std::make_shared<media_stream>("live/gop-blocked", io.get_executor());
+            auto blocked_stream = std::make_shared<media_stream>("live/gop-blocked", worker);
             require(blocked_stream->set_tracks({make_video_track(), make_audio_track()}), "blocked gop tracks");
             blocked_stream->publish(make_video_frame(0, true));
             blocked_stream->publish(make_audio_frame(20'000'000));
@@ -8387,7 +8409,7 @@ void test_media_stream_sink_gop_replay()
             blocked_stream->add_sink(blocked_sink);
             require(blocked_sink->frames == 0, "sink replay blocked after track config change");
 
-            auto resumed_stream = std::make_shared<media_stream>("live/gop-resumed", io.get_executor());
+            auto resumed_stream = std::make_shared<media_stream>("live/gop-resumed", worker);
             require(resumed_stream->set_tracks({make_video_track(), make_audio_track()}), "resumed gop tracks");
             resumed_stream->publish(make_video_frame(0, true));
             resumed_stream->publish(make_video_frame(40'000'000, false));
@@ -8406,7 +8428,7 @@ void test_media_stream_sink_gop_replay()
                         },
                     "sink replay resumes from next key frame after track config change");
 
-            auto overflow_stream = std::make_shared<media_stream>("live/gop-overflow", io.get_executor());
+            auto overflow_stream = std::make_shared<media_stream>("live/gop-overflow", worker);
             require(overflow_stream->set_tracks({make_video_track()}), "gop overflow track");
             overflow_stream->publish(make_video_frame(0, true));
             for (std::int64_t index = 1; index <= 2500; ++index)
@@ -8417,7 +8439,7 @@ void test_media_stream_sink_gop_replay()
             overflow_stream->add_sink(overflow_sink);
             require(overflow_sink->frames == 0, "gop overflow drops incomplete cache");
 
-            auto h265_stream = std::make_shared<media_stream>("live/gop-h265", io.get_executor());
+            auto h265_stream = std::make_shared<media_stream>("live/gop-h265", worker);
             require(h265_stream->set_tracks({make_h265_track()}), "gop h265 track");
             h265_stream->publish(make_h265_frame(0, true));
             h265_stream->publish(make_h265_frame(40'000'000, false));
@@ -8432,7 +8454,7 @@ void test_media_stream_sink_gop_replay()
 void test_media_stream_sink_owner_affinity()
 {
     io_context_pool workers(2);
-    auto stream = std::make_shared<media_stream>("live/threaded", workers.context(0).io().get_executor());
+    auto stream = std::make_shared<media_stream>("live/threaded", workers.context(0));
 
     std::atomic_int ended_count{};
     auto sink = std::make_shared<worker_sink>(ended_count, workers);
@@ -8468,7 +8490,7 @@ void test_media_stream_sink_owner_affinity()
 void test_media_stream_pull_reader_overrun()
 {
     io_context_pool workers(2);
-    auto stream = std::make_shared<media_stream>("live/pull-overrun", workers.context(0).io().get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-overrun", workers.context(0));
     auto fast = std::make_shared<pull_test_reader>(true);
     auto stalled = std::make_shared<pull_test_reader>(false);
     std::thread::id owner_thread;
@@ -8478,8 +8500,8 @@ void test_media_stream_pull_reader_overrun()
                       {
                           owner_thread = std::this_thread::get_id();
                           require(stream->set_tracks({make_video_track()}), "pull overrun track");
-                          static_cast<void>(stream->add_reader(fast, workers.context(1).io().get_executor()));
-                          static_cast<void>(stream->add_reader(stalled, workers.context(1).io().get_executor()));
+                          static_cast<void>(stream->add_reader(fast, workers.context(1)));
+                          static_cast<void>(stream->add_reader(stalled, workers.context(1)));
                       });
 
     std::thread runner([&workers]() { workers.run(); });
@@ -8525,8 +8547,12 @@ void test_media_stream_pull_reader_overrun()
 
 void test_media_stream_pull_reader_duplicate_read()
 {
-    boost::asio::io_context owner(1);
-    boost::asio::io_context reader_worker(1);
+    worker_context owner_context;
+    owner_context.release_work();
+    auto& owner = owner_context.io();
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [](boost::asio::io_context& io)
     {
         io.restart();
@@ -8535,13 +8561,13 @@ void test_media_stream_pull_reader_duplicate_read()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/pull-duplicate", owner.get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-duplicate", owner_context);
     auto reader = std::make_shared<pull_test_reader>(false, false);
     boost::asio::post(owner,
-                      [stream, reader, &reader_worker]()
+                      [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track()}), "pull duplicate track");
-                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
                       });
     drain(owner);
     drain(reader_worker);
@@ -8579,8 +8605,12 @@ void test_media_stream_pull_reader_duplicate_read()
 
 void test_media_stream_pull_reader_batch_limit_and_worker_filtering()
 {
-    boost::asio::io_context owner(1);
-    boost::asio::io_context reader_worker(1);
+    worker_context owner_context;
+    owner_context.release_work();
+    auto& owner = owner_context.io();
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [](boost::asio::io_context& io)
     {
         io.restart();
@@ -8589,13 +8619,13 @@ void test_media_stream_pull_reader_batch_limit_and_worker_filtering()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/pull-batch", owner.get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-batch", owner_context);
     auto reader = std::make_shared<pull_test_reader>(false, false, std::vector<track_id>{video_track_id});
     boost::asio::post(owner,
-                      [stream, reader, &reader_worker]()
+                      [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track(), make_audio_track()}), "pull batch tracks");
-                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
                           for (std::size_t index = 0; index < 300; ++index)
                           {
                               const auto pts = static_cast<std::int64_t>(index) * 20'000'000;
@@ -8633,8 +8663,12 @@ void test_media_stream_pull_reader_batch_limit_and_worker_filtering()
 
 void test_media_stream_pull_reader_initial_cursor_starts_current_gop()
 {
-    boost::asio::io_context owner(1);
-    boost::asio::io_context reader_worker(1);
+    worker_context owner_context;
+    owner_context.release_work();
+    auto& owner = owner_context.io();
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [](boost::asio::io_context& io)
     {
         io.restart();
@@ -8643,17 +8677,17 @@ void test_media_stream_pull_reader_initial_cursor_starts_current_gop()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/pull-initial-cursor", owner.get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-initial-cursor", owner_context);
     auto reader = std::make_shared<pull_test_reader>(false);
     boost::asio::post(owner,
-                      [stream, reader, &reader_worker]()
+                      [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track()}), "pull initial cursor track");
                           stream->publish(make_video_frame(0, true));
                           stream->publish(make_video_frame(40'000'000, false));
                           stream->publish(make_video_frame(1'000'000'000, true));
                           stream->publish(make_video_frame(1'040'000'000, false));
-                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
                       });
     drain(owner);
     drain(reader_worker);
@@ -8666,8 +8700,12 @@ void test_media_stream_pull_reader_initial_cursor_starts_current_gop()
 
 void test_media_stream_pull_reader_previous_gop_continuity()
 {
-    boost::asio::io_context owner(1);
-    boost::asio::io_context reader_worker(1);
+    worker_context owner_context;
+    owner_context.release_work();
+    auto& owner = owner_context.io();
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [](boost::asio::io_context& io)
     {
         io.restart();
@@ -8676,15 +8714,15 @@ void test_media_stream_pull_reader_previous_gop_continuity()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/pull-continuity", owner.get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-continuity", owner_context);
     auto continuity_reader = std::make_shared<pull_test_reader>(false, false);
     auto overrun_reader = std::make_shared<pull_test_reader>(false, false);
     boost::asio::post(owner,
-                      [stream, continuity_reader, overrun_reader, &reader_worker]()
+                      [stream, continuity_reader, overrun_reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track()}), "pull continuity track");
-                          static_cast<void>(stream->add_reader(continuity_reader, reader_worker.get_executor()));
-                          static_cast<void>(stream->add_reader(overrun_reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(continuity_reader, reader_worker_context));
+                          static_cast<void>(stream->add_reader(overrun_reader, reader_worker_context));
                           stream->publish(make_video_frame(0, true));
                       });
     drain(owner);
@@ -8737,9 +8775,15 @@ void test_media_stream_pull_reader_previous_gop_continuity()
 
 void test_media_stream_add_reader_after_end()
 {
-    boost::asio::io_context owner(1);
-    boost::asio::io_context consumer_worker(1);
-    boost::asio::io_context reader_worker(1);
+    worker_context owner_context;
+    owner_context.release_work();
+    auto& owner = owner_context.io();
+    worker_context consumer_context;
+    consumer_context.release_work();
+    auto& consumer_worker = consumer_context.io();
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [](boost::asio::io_context& io)
     {
         io.restart();
@@ -8748,11 +8792,11 @@ void test_media_stream_add_reader_after_end()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/pull-ended", owner.get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-ended", owner_context);
     auto reader = std::make_shared<pull_test_reader>(false, false);
     boost::asio::post(owner, [stream]() { stream->end(); });
     boost::asio::post(consumer_worker,
-                      [stream, reader, &reader_worker]() { static_cast<void>(stream->add_reader(reader, reader_worker.get_executor())); });
+                      [stream, reader, &reader_worker_context]() { static_cast<void>(stream->add_reader(reader, reader_worker_context)); });
 
     drain(consumer_worker);
     drain(owner);
@@ -8766,8 +8810,12 @@ void test_media_stream_add_reader_after_end()
 
 void test_media_stream_pull_reader_track_snapshot_order()
 {
-    boost::asio::io_context owner(1);
-    boost::asio::io_context reader_worker(1);
+    worker_context owner_context;
+    owner_context.release_work();
+    auto& owner = owner_context.io();
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [](boost::asio::io_context& io)
     {
         io.restart();
@@ -8776,13 +8824,13 @@ void test_media_stream_pull_reader_track_snapshot_order()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/pull-generation", owner.get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-generation", owner_context);
     auto reader = std::make_shared<pull_test_reader>(true);
     boost::asio::post(owner,
-                      [stream, reader, &reader_worker]()
+                      [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track()}), "pull generation initial track");
-                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
                       });
     drain(owner);
     drain(reader_worker);
@@ -8819,13 +8867,13 @@ void test_media_stream_pull_reader_track_snapshot_order()
     require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {2, 1'000'000'000}}, "end suppresses old posted batch");
     require(reader->ends() == 1 && reader->end_generation() == 3, "end is one terminal reader event");
 
-    auto remove_stream = std::make_shared<media_stream>("live/pull-remove", owner.get_executor());
+    auto remove_stream = std::make_shared<media_stream>("live/pull-remove", owner_context);
     auto removed_reader = std::make_shared<pull_test_reader>(true);
     boost::asio::post(owner,
-                      [remove_stream, removed_reader, &reader_worker]()
+                      [remove_stream, removed_reader, &reader_worker_context]()
                       {
                           require(remove_stream->set_tracks({make_video_track()}), "pull remove track");
-                          static_cast<void>(remove_stream->add_reader(removed_reader, reader_worker.get_executor()));
+                          static_cast<void>(remove_stream->add_reader(removed_reader, reader_worker_context));
                       });
     drain(owner);
     drain(reader_worker);
@@ -8840,8 +8888,12 @@ void test_media_stream_pull_reader_track_snapshot_order()
 
 void test_media_stream_reader_track_interest()
 {
-    boost::asio::io_context owner(1);
-    boost::asio::io_context reader_worker(1);
+    worker_context owner_context;
+    owner_context.release_work();
+    auto& owner = owner_context.io();
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [](boost::asio::io_context& io)
     {
         io.restart();
@@ -8858,16 +8910,16 @@ void test_media_stream_reader_track_interest()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/pull-interest", owner.get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-interest", owner_context);
     auto video_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{video_track_id});
     auto full_reader = std::make_shared<pull_test_reader>(true);
     auto late_reader = std::make_shared<pull_test_reader>(true);
     boost::asio::post(owner,
-                      [stream, video_reader, full_reader, &reader_worker]()
+                      [stream, video_reader, full_reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track(), make_audio_track()}), "pull interest tracks");
-                          static_cast<void>(stream->add_reader(video_reader, reader_worker.get_executor()));
-                          static_cast<void>(stream->add_reader(full_reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(video_reader, reader_worker_context));
+                          static_cast<void>(stream->add_reader(full_reader, reader_worker_context));
                       });
     drain_all();
 
@@ -8881,13 +8933,13 @@ void test_media_stream_reader_track_interest()
     drain_all();
 
     boost::asio::post(owner,
-                      [stream, late_reader, &reader_worker]()
+                      [stream, late_reader, &reader_worker_context]()
                       {
                           require(stream->update_track(make_audio_track(2)), "pull interest audio config update");
                           stream->publish(make_video_frame(80'000'000, false));
                           stream->publish(make_audio_frame(100'000'000));
                           stream->publish(make_video_frame(120'000'000, false));
-                          static_cast<void>(stream->add_reader(late_reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(late_reader, reader_worker_context));
                       });
     drain_all();
 
@@ -8909,8 +8961,12 @@ void test_media_stream_reader_track_interest()
 
 void test_media_stream_video_keyframe_barrier_is_sticky()
 {
-    boost::asio::io_context owner(1);
-    boost::asio::io_context reader_worker(1);
+    worker_context owner_context;
+    owner_context.release_work();
+    auto& owner = owner_context.io();
+    worker_context reader_worker_context;
+    reader_worker_context.release_work();
+    auto& reader_worker = reader_worker_context.io();
     const auto drain = [](boost::asio::io_context& io)
     {
         io.restart();
@@ -8927,13 +8983,13 @@ void test_media_stream_video_keyframe_barrier_is_sticky()
         }
     };
 
-    auto stream = std::make_shared<media_stream>("live/pull-sticky-keyframe", owner.get_executor());
+    auto stream = std::make_shared<media_stream>("live/pull-sticky-keyframe", owner_context);
     auto reader = std::make_shared<pull_test_reader>(true);
     boost::asio::post(owner,
-                      [stream, reader, &reader_worker]()
+                      [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track(), make_audio_track()}), "sticky barrier initial tracks");
-                          static_cast<void>(stream->add_reader(reader, reader_worker.get_executor()));
+                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
                       });
     drain_all();
 
@@ -9026,12 +9082,15 @@ void test_io_context_pool_stop()
 
 void test_stream_registry_generation_lifecycle()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    io.restart();
     auto& streams = media_server::registry::instance();
     streams.clear();
 
-    auto first = std::make_shared<media_stream>("live/generation", io.get_executor());
-    auto second = std::make_shared<media_stream>("live/generation", io.get_executor());
+    auto first = std::make_shared<media_stream>("live/generation", worker);
+    auto second = std::make_shared<media_stream>("live/generation", worker);
     require(!streams.add(first), "registry rejects stream without tracks");
     require(first->set_tracks({make_video_track()}), "registry first generation track");
     require(second->set_tracks({make_video_track()}), "registry second generation track");
@@ -9109,9 +9168,12 @@ void test_hls_segmenter()
     require(playlist.find("#EXTM3U") != std::string::npos, "hls playlist header");
     require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls endlist");
 
-    boost::asio::io_context reconfigured_io;
+    worker_context reconfigured_worker;
+    reconfigured_worker.release_work();
+    auto& reconfigured_io = reconfigured_worker.io();
+    reconfigured_io.restart();
     auto reconfigured = std::make_shared<hls_segmenter>(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
-    auto reconfigured_stream = std::make_shared<media_stream>("live/hls-reconfigured", reconfigured_io.get_executor());
+    auto reconfigured_stream = std::make_shared<media_stream>("live/hls-reconfigured", reconfigured_worker);
     boost::asio::post(reconfigured_io,
                       [reconfigured, reconfigured_stream]()
                       {
@@ -9606,13 +9668,16 @@ void test_hls_g711_segmenter()
 
 void test_hls_module_lifecycle()
 {
-    boost::asio::io_context io;
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    io.restart();
     auto& streams = media_server::registry::instance();
     streams.clear();
     const config application_config;
     hls::shutdown();
 
-    auto first = std::make_shared<media_stream>("live/hls", io.get_executor());
+    auto first = std::make_shared<media_stream>("live/hls", worker);
     require(first->set_tracks({make_video_track()}), "hls first track");
     require(streams.add(first), "hls first stream add");
     boost::asio::post(io,
@@ -9639,7 +9704,7 @@ void test_hls_module_lifecycle()
     require(ended_segment.has_value() && !ended_segment->empty(), "hls ended segment retained");
 
     io.restart();
-    auto second = std::make_shared<media_stream>("live/hls", io.get_executor());
+    auto second = std::make_shared<media_stream>("live/hls", worker);
     require(second->set_tracks({make_video_track()}), "hls replacement track");
     require(streams.add(second), "hls replacement stream add");
     boost::asio::post(io,
@@ -9651,7 +9716,7 @@ void test_hls_module_lifecycle()
     io.run();
 
     io.restart();
-    auto overlap_first = std::make_shared<media_stream>("live/hls-overlap", io.get_executor());
+    auto overlap_first = std::make_shared<media_stream>("live/hls-overlap", worker);
     require(overlap_first->set_tracks({make_video_track()}), "hls overlap first track");
     require(streams.add(overlap_first), "hls overlap first stream add");
     boost::asio::post(io,
@@ -9664,7 +9729,7 @@ void test_hls_module_lifecycle()
     io.run();
 
     streams.remove(*overlap_first);
-    auto overlap_second = std::make_shared<media_stream>("live/hls-overlap", io.get_executor());
+    auto overlap_second = std::make_shared<media_stream>("live/hls-overlap", worker);
     require(overlap_second->set_tracks({make_video_track()}), "hls overlap replacement track");
     require(streams.add(overlap_second), "hls overlap replacement stream add");
     io.restart();
@@ -9682,7 +9747,7 @@ void test_hls_module_lifecycle()
     require(!hls::segment("live/hls-overlap", 0, application_config).has_value(), "hls overlap replacement does not expose old segment");
 
     io.restart();
-    auto late = std::make_shared<media_stream>("live/hls-late", io.get_executor());
+    auto late = std::make_shared<media_stream>("live/hls-late", worker);
     require(late->set_tracks({make_video_track()}), "hls late track");
     require(streams.add(late), "hls late stream add");
     boost::asio::post(io,

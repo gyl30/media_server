@@ -145,7 +145,7 @@ void test_udp_sender_releases_pair_after_shutdown()
     worker.io().restart();
     auto& io = worker.io();
     port_manager::init(32'400, 32'401);
-    auto stream = std::make_shared<media_stream>("live/port-release", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/port-release", worker);
     require(stream->set_tracks({make_video_track()}), "port release stream tracks");
     require(registry::instance().add(stream), "port release stream registry");
     auto session = std::make_shared<gb28181_udp_sender_session>(
@@ -177,7 +177,7 @@ void test_udp_sender_releases_pair_after_bind_failure()
     auto& io = worker.io();
     port_manager::init(32'410, 32'411);
     boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 32'410});
-    auto stream = std::make_shared<media_stream>("live/port-bind-failure", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/port-bind-failure", worker);
     require(stream->set_tracks({make_video_track()}), "port bind failure stream tracks");
     require(registry::instance().add(stream), "port bind failure stream registry");
     auto session = std::make_shared<gb28181_udp_sender_session>(

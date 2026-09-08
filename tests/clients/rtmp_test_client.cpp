@@ -17,8 +17,8 @@ extern "C"
 namespace media_server::test
 {
 
-rtmp_test_client::rtmp_test_client(boost::asio::any_io_executor executor, std::string app, std::string stream)
-    : resolver_(executor), socket_(executor), app_(std::move(app)), stream_(std::move(stream))
+rtmp_test_client::rtmp_test_client(boost::asio::io_context& io, std::string app, std::string stream)
+    : resolver_(io), socket_(io), app_(std::move(app)), stream_(std::move(stream))
 {
 }
 
