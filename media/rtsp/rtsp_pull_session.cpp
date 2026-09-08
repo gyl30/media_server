@@ -474,7 +474,6 @@ int rtsp_pull_session::on_setup(int timeout, std::int64_t)
         const auto payload = rtsp_client_get_media_payload(client_, media);
         const auto id = media_type == SDP_M_MEDIA_VIDEO ? video_track_id : audio_track_id;
         descriptions.push_back(rtsp_pull_track_description{
-            .media = static_cast<std::size_t>(media),
             .kind = media_type == SDP_M_MEDIA_VIDEO ? media_kind::video : media_kind::audio,
             .clock_rate = rate,
             .payload_type = payload,
