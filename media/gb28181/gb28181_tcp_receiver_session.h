@@ -38,7 +38,6 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
     void safe_shutdown();
 
     worker_context& worker_;
-    std::string stream_name_;
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
     gb28181_rtp_receiver receiver_;
