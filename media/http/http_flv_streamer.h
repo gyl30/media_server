@@ -22,7 +22,6 @@ class http_flv_streamer final : public media_reader
     using end_handler = std::function<void()>;
 
     http_flv_streamer(write_handler on_write, end_handler on_end, video_transcode_config video = {});
-    ~http_flv_streamer() override;
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;

@@ -21,8 +21,6 @@ http_flv_streamer::http_flv_streamer(write_handler on_write, end_handler on_end,
 {
 }
 
-http_flv_streamer::~http_flv_streamer() = default;
-
 void http_flv_streamer::on_tracks(media_track_snapshot_ptr tracks)
 {
     if (ended_)
