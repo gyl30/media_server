@@ -99,7 +99,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::shared_ptr<dtls_certificate> certificate_;
     video_transcode_config video_config_;
     whep_session_timeouts timeouts_;
-    media_reader_handle reader_;
     std::map<track_id, std::uint64_t> track_versions_;
     std::vector<media_track> pending_tracks_;
     std::unique_ptr<dtls_transport> dtls_;
