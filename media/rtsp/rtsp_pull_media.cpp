@@ -53,7 +53,7 @@ bool rtsp_pull_media::startup()
             pending = std::move(*description.initial_track);
         }
 
-        auto* demuxer = rtsp_demuxer_create(static_cast<int>(description.media), 500, &rtsp_pull_media::packet_callback, this);
+        auto* demuxer = rtsp_demuxer_create(static_cast<int>(index), 500, &rtsp_pull_media::packet_callback, this);
         if (demuxer == nullptr ||
             rtsp_demuxer_add_payload(demuxer,
                                      description.clock_rate,

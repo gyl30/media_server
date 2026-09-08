@@ -26,7 +26,6 @@ class worker_context;
 
 struct rtsp_pull_track_description
 {
-    std::size_t media{};
     media_kind kind{};
     int clock_rate{};
     int payload_type{};
