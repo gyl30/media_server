@@ -188,17 +188,19 @@ bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
         return false;
     }
 
-    muxer_ = rtsp_muxer_create(&gb28181_rtp_sender::muxer_packet_callback, this);
-    if (muxer_ == nullptr)
+    auto* muxer = rtsp_muxer_create(&gb28181_rtp_sender::muxer_packet_callback, this);
+    if (muxer == nullptr)
     {
         return false;
     }
 
     std::random_device device;
     const auto payload =
-        rtsp_muxer_add_payload(muxer_, "RTP/AVP", 90'000, payload_type_, "PS", static_cast<std::uint16_t>(device()), ssrc_, 0, nullptr, 0);
+        rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, payload_type_, "PS", static_cast<std::uint16_t>(device()), ssrc_, 0, nullptr, 0);
     if (payload < 0)
     {
+        static_cast<void>(rtsp_muxer_destroy(muxer));
+        track_states_.clear();
         return false;
     }
 
@@ -224,12 +226,16 @@ bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
                 break;
             case codec_id::av1:
             case codec_id::opus:
+                static_cast<void>(rtsp_muxer_destroy(muxer));
+                track_states_.clear();
                 return false;
         }
 
-        const auto media = rtsp_muxer_add_media(muxer_, payload, codec, track.codec_config.data(), static_cast<int>(track.codec_config.size()));
+        const auto media = rtsp_muxer_add_media(muxer, payload, codec, track.codec_config.data(), static_cast<int>(track.codec_config.size()));
         if (media < 0)
         {
+            static_cast<void>(rtsp_muxer_destroy(muxer));
+            track_states_.clear();
             return false;
         }
         track_states_.emplace(track.id,
@@ -239,6 +245,7 @@ bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
                                   .media_id = media,
                               });
     }
+    muxer_ = muxer;
     return true;
 }
 
