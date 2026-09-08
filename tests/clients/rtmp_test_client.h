@@ -7,7 +7,7 @@
 #include <vector>
 
 #include <boost/asio/awaitable.hpp>
-#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
 struct rtmp_client_t;
@@ -18,7 +18,7 @@ namespace media_server::test
 class rtmp_test_client final
 {
    public:
-    rtmp_test_client(boost::asio::any_io_executor executor, std::string app, std::string stream);
+    rtmp_test_client(boost::asio::io_context& io, std::string app, std::string stream);
     ~rtmp_test_client();
 
     boost::asio::awaitable<boost::system::error_code> publish(

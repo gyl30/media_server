@@ -5,13 +5,14 @@
 #include <boost/asio/dispatch.hpp>
 
 #include "media/core/media_stream.h"
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
 struct media_reader_state
 {
     std::weak_ptr<media_reader> reader;
-    boost::asio::any_io_executor executor;
+    worker_context* worker{};
     std::atomic_bool active{true};
     std::atomic_bool terminal{};
     std::atomic_bool read_outstanding{};
@@ -72,8 +73,8 @@ void media_reader_handle::remove() const
     }
 }
 
-media_stream::media_stream(std::string name, boost::asio::any_io_executor owner_executor)
-    : name_(std::move(name)), owner_executor_(std::move(owner_executor))
+media_stream::media_stream(std::string name, worker_context& worker)
+    : name_(std::move(name)), worker_(worker)
 {
 }
 
@@ -96,25 +97,25 @@ void media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
     {
         return;
     }
-    boost::asio::dispatch(owner_executor_, [self, sink]() { self->add_sink_on_owner(sink); });
+    boost::asio::dispatch(worker_.io(), [self, sink]() { self->add_sink_on_owner(sink); });
 }
 
-media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader, boost::asio::any_io_executor executor)
+media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader, worker_context& worker)
 {
     const auto self = weak_from_this().lock();
-    if (!reader || !executor || !self)
+    if (!reader || !self)
     {
         return {};
     }
 
     auto state = std::make_shared<media_reader_state>();
     state->reader = reader;
-    state->executor = std::move(executor);
+    state->worker = &worker;
 
     media_reader_handle handle(self, state);
     reader->handle_ = handle;
 
-    boost::asio::dispatch(owner_executor_, [self, state]() { self->add_reader_on_owner(state); });
+    boost::asio::dispatch(worker_.io(), [self, state]() { self->add_reader_on_owner(state); });
     return handle;
 }
 
@@ -295,7 +296,7 @@ void media_stream::request_read(const std::shared_ptr<media_reader_state>& state
         release_read_outstanding(state);
         return;
     }
-    boost::asio::dispatch(owner_executor_, [self, state, cursor]() { self->request_read_on_owner(state, cursor); });
+    boost::asio::dispatch(worker_.io(), [self, state, cursor]() { self->request_read_on_owner(state, cursor); });
 }
 
 void media_stream::remove_reader(const std::shared_ptr<media_reader_state>& state)
@@ -309,7 +310,7 @@ void media_stream::remove_reader(const std::shared_ptr<media_reader_state>& stat
     {
         return;
     }
-    boost::asio::dispatch(owner_executor_, [self, state]() { self->remove_reader_on_owner(state); });
+    boost::asio::dispatch(worker_.io(), [self, state]() { self->remove_reader_on_owner(state); });
 }
 
 void media_stream::add_reader_on_owner(const std::shared_ptr<media_reader_state>& state)
@@ -503,7 +504,7 @@ void media_stream::deliver_reader_batch(const std::shared_ptr<media_reader_state
         return;
     }
 
-    boost::asio::post(state->executor,
+    boost::asio::post(state->worker->io(),
                       [state, batch = std::move(batch)]() mutable
                       {
                           if (!state->active.load(std::memory_order_acquire) || state->terminal.load(std::memory_order_acquire))
@@ -528,7 +529,7 @@ void media_stream::dispatch_reader_tracks(const std::shared_ptr<media_reader_sta
         return;
     }
 
-    boost::asio::post(state->executor,
+    boost::asio::post(state->worker->io(),
                       [state, tracks = std::move(tracks)]()
                       {
                           if (!state->active.load(std::memory_order_acquire) || state->terminal.load(std::memory_order_acquire))
@@ -544,7 +545,7 @@ void media_stream::dispatch_reader_tracks(const std::shared_ptr<media_reader_sta
 
 void media_stream::dispatch_reader_end(const std::shared_ptr<media_reader_state>& state)
 {
-    boost::asio::post(state->executor,
+    boost::asio::post(state->worker->io(),
                       [state]()
                       {
                           if (!state->active.load(std::memory_order_acquire) || !state->terminal.load(std::memory_order_acquire))

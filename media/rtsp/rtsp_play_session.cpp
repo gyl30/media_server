@@ -397,7 +397,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
 
     static_cast<void>(rtsp_server_reply_play(server, 200, npt, nullptr, nullptr));
     playing_ = true;
-    static_cast<void>(stream_->add_reader(shared_from_this(), worker_.io().get_executor()));
+    static_cast<void>(stream_->add_reader(shared_from_this(), worker_));
     return 0;
 }
 

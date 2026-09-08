@@ -144,7 +144,7 @@ void test_sender_handlers()
     worker.io().restart();
     auto& io = worker.io();
     registry::instance().clear();
-    auto stream = std::make_shared<media_stream>("live/http-handler-sender", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/http-handler-sender", worker);
     require(stream->set_tracks({make_video_track()}), "sender handler tracks");
     require(registry::instance().add(stream), "sender handler stream");
 

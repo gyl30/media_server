@@ -167,7 +167,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
             track_versions_.emplace(track.id, track.config_version);
         }
     }
-    static_cast<void>(stream_->add_reader(shared_from_this(), worker_.io().get_executor()));
+    static_cast<void>(stream_->add_reader(shared_from_this(), worker_));
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
     spdlog::debug(

@@ -42,7 +42,7 @@ bool rtsp_publish_media::startup(const std::string& rtcp_cname)
         return false;
     }
 
-    stream_ = std::make_shared<media_stream>(stream_name_, worker_.io().get_executor());
+    stream_ = std::make_shared<media_stream>(stream_name_, worker_);
     static_cast<void>(avpkt2bs_create(&bitstream_));
     demuxers_.resize(descriptions_.size());
     for (std::size_t index = 0; index < descriptions_.size(); ++index)

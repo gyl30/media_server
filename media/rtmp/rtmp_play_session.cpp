@@ -21,7 +21,7 @@ void rtmp_play_session::startup()
     {
         return;
     }
-    static_cast<void>(stream_->add_reader(shared_from_this(), worker_.io().get_executor()));
+    static_cast<void>(stream_->add_reader(shared_from_this(), worker_));
 }
 
 void rtmp_play_session::shutdown()
