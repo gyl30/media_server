@@ -92,21 +92,17 @@ void media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
     {
         return;
     }
-    const auto self = weak_from_this().lock();
-    if (!self)
-    {
-        return;
-    }
+    const auto self = shared_from_this();
     boost::asio::dispatch(worker_.io(), [self, sink]() { self->add_sink_on_owner(sink); });
 }
 
 media_reader_handle media_stream::add_reader(const std::shared_ptr<media_reader>& reader, worker_context& worker)
 {
-    const auto self = weak_from_this().lock();
-    if (!reader || !self)
+    if (!reader)
     {
         return {};
     }
+    const auto self = shared_from_this();
 
     auto state = std::make_shared<media_reader_state>();
     state->reader = reader;
@@ -290,12 +286,7 @@ void media_stream::request_read(const std::shared_ptr<media_reader_state>& state
         }
         return;
     }
-    const auto self = weak_from_this().lock();
-    if (!self)
-    {
-        release_read_outstanding(state);
-        return;
-    }
+    const auto self = shared_from_this();
     boost::asio::dispatch(worker_.io(), [self, state, cursor]() { self->request_read_on_owner(state, cursor); });
 }
 
@@ -305,11 +296,7 @@ void media_stream::remove_reader(const std::shared_ptr<media_reader_state>& stat
     {
         return;
     }
-    const auto self = weak_from_this().lock();
-    if (!self)
-    {
-        return;
-    }
+    const auto self = shared_from_this();
     boost::asio::dispatch(worker_.io(), [self, state]() { self->remove_reader_on_owner(state); });
 }
 
