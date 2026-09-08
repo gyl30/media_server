@@ -39,7 +39,6 @@ class hls_segmenter final : public media_sink
 {
    public:
     explicit hls_segmenter(hls_config config = {});
-    ~hls_segmenter() override;
 
     void on_track(const media_track& track) override;
     void on_frame(const media_frame& frame) override;

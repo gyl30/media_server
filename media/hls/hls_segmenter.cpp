@@ -38,8 +38,6 @@ hls_segmenter::hls_segmenter(hls_config config)
     }
 }
 
-hls_segmenter::~hls_segmenter() = default;
-
 void hls_segmenter::on_track(const media_track& track)
 {
     std::scoped_lock lock(mutex_);
