@@ -34,8 +34,7 @@ rtmp_publish_session::rtmp_publish_session(worker_context& worker,
     : worker_(worker),
       initial_tracks_timer_(worker_.io()),
       initial_tracks_timeout_(initial_tracks_timeout),
-      stream_name_(std::move(stream_name)),
-      stream_(std::make_shared<media_stream>(stream_name_, worker_)),
+      stream_(std::make_shared<media_stream>(std::move(stream_name), worker_)),
       shutdown_handler_(std::move(on_shutdown))
 {
 }
@@ -59,7 +58,7 @@ bool rtmp_publish_session::startup()
             {
                 return;
             }
-            spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_name_);
+            spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_->name());
             self->shutdown_handler_();
         });
     return true;
@@ -393,7 +392,7 @@ void rtmp_publish_session::try_initialize_tracks()
     }
     if (!registry::instance().add(stream_))
     {
-        spdlog::warn("rtmp publish duplicate stream {}", stream_name_);
+        spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
         shutdown_handler_();
         return;
     }
