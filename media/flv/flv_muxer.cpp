@@ -26,6 +26,7 @@ flv_muxer::~flv_muxer() = default;
 
 void flv_muxer::shutdown()
 {
+    packet_handler_ = {};
     if (video_transcoder_)
     {
         video_transcoder_->shutdown();
