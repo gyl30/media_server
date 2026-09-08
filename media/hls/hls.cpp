@@ -32,8 +32,6 @@ state& runtime()
     return value;
 }
 
-hls_config segmenter_config(const config& application_config) { return hls_config{.video = application_config.http_video}; }
-
 std::chrono::steady_clock::duration ended_retention()
 {
     const hls_config config;
@@ -77,7 +75,7 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const
         current.segmenters.erase(existing);
     }
 
-    auto segmenter = std::make_shared<hls_segmenter>(segmenter_config(application_config));
+    auto segmenter = std::make_shared<hls_segmenter>(hls_config{.video = application_config.http_video});
     stream->add_sink(segmenter);
     current.segmenters.emplace(std::string(stream_name), entry{.stream = stream, .segmenter = segmenter});
     return segmenter;
