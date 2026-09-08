@@ -83,7 +83,7 @@ bool gb28181_rtp_receiver::startup()
         return false;
     }
 
-    stream_ = std::make_shared<media_stream>(stream_name_, worker_.io());
+    stream_ = std::make_shared<media_stream>(stream_name_, worker_.io().get_executor());
     static_cast<void>(avpkt2bs_create(&bitstream_));
     demuxer_ = rtsp_demuxer_create(0, 500, &gb28181_rtp_receiver::packet_callback, this);
     if (demuxer_ == nullptr || rtsp_demuxer_add_payload(demuxer_, 90'000, payload_type_, "PS", nullptr) != 0 ||

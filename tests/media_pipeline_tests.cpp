@@ -4401,8 +4401,8 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
 
     auto video_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{video_track_id});
     auto audio_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{audio_track_id});
-    auto video_handle = stream->add_reader(video_reader, client_worker.io());
-    auto audio_handle = stream->add_reader(audio_reader, client_worker.io());
+    auto video_handle = stream->add_reader(video_reader, client_worker.io().get_executor());
+    auto audio_handle = stream->add_reader(audio_reader, client_worker.io().get_executor());
     require(video_reader->wait_for_ready(1) && audio_reader->wait_for_ready(1), "rtsp rtp-info readers ready");
 
     send_rtp(0, make_rtp(0x60, 2, video_rtp_time, video_pps));
