@@ -197,7 +197,7 @@ int service::run()
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
     hls::shutdown();
-    registry::instance().clear();
+    stream_registry::instance().clear();
     return exit_code_;
 }
 

@@ -64,7 +64,7 @@ void test_tcp_sender_write_backlog_limit()
 {
     worker_context worker;
     auto& io = worker.io();
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     streams.clear();
 
     constexpr track_id video_track_id = 1;
@@ -138,17 +138,17 @@ void test_tcp_sender_write_backlog_limit()
 
 int main()
 {
-    media_server::registry::init();
+    media_server::stream_registry::instance().clear();
     try
     {
         media_server::test_tcp_sender_write_backlog_limit();
-        media_server::registry::destroy();
+        media_server::stream_registry::instance().clear();
         std::cout << "[pass] gb28181_tcp_sender_write_backlog_limit\n";
         return 0;
     }
     catch (const std::exception& error)
     {
-        media_server::registry::destroy();
+        media_server::stream_registry::instance().clear();
         std::cerr << "[fail] gb28181_tcp_sender_write_backlog_limit: " << error.what() << '\n';
         return 1;
     }

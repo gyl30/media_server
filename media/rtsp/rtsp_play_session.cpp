@@ -473,7 +473,7 @@ bool rtsp_play_session::apply_tracks(const media_track_snapshot_ptr& tracks)
 
 int rtsp_play_session::presentation_status() const
 {
-    const auto current_stream = registry::instance().find(stream_->name());
+    const auto current_stream = stream_registry::instance().find(stream_->name());
     if (!current_stream)
     {
         return 503;
@@ -538,7 +538,7 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
         muxer_ = nullptr;
     }
 
-    auto stream = registry::instance().find(rtsp_path_from_uri(uri));
+    auto stream = stream_registry::instance().find(rtsp_path_from_uri(uri));
     if (!stream)
     {
         return 404;

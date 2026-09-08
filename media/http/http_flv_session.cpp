@@ -63,7 +63,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         stream_name.append(segment);
     }
 
-    auto media_stream = registry::instance().find(stream_name);
+    auto media_stream = stream_registry::instance().find(stream_name);
     if (!media_stream)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);

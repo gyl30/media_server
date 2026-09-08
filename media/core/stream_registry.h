@@ -7,7 +7,6 @@
 #include <string>
 #include <string_view>
 
-#include "media/core/singleton.h"
 #include "media/core/media_stream.h"
 
 namespace media_server
@@ -23,9 +22,9 @@ class stream_session
 
 class stream_registry final
 {
-    friend class singleton<stream_registry>;
-
    public:
+    [[nodiscard]] static stream_registry& instance();
+
     bool add(const std::shared_ptr<media_stream>& stream);
     void remove(const media_stream& expected);
     [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view name) const;
@@ -55,8 +54,6 @@ class stream_registry final
     mutable std::mutex mutex_;
     std::map<std::string, stream_entry, std::less<>> streams_;
 };
-
-using registry = singleton<stream_registry>;
 
 }    // namespace media_server
 

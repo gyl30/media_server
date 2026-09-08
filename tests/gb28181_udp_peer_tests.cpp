@@ -140,7 +140,7 @@ void test_ps_fixture_creates_stream()
 {
     worker_context worker;
     worker.release_work();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
@@ -159,7 +159,7 @@ void test_receiver_video_codec_change_is_fatal()
 {
     worker_context worker;
     worker.release_work();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
@@ -193,7 +193,7 @@ void test_receiver_audio_codec_change_is_fatal()
 {
     worker_context worker;
     worker.release_work();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
@@ -229,7 +229,7 @@ void test_udp_session_fatal_codec_change_unregisters()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     boost::asio::ip::udp::socket sender(io, {boost::asio::ip::address_v4::loopback(), 0});
     constexpr std::uint8_t payload_type = 96;
@@ -276,7 +276,7 @@ void test_sender_same_codec_config_version_continues_ps_stream()
     worker.release_work();
     auto& io = worker.io();
     io.restart();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
 
     constexpr std::uint8_t payload_type = 96;
@@ -406,7 +406,7 @@ void test_rtcp_peer_learning_overrides_rtp_plus_one()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     boost::asio::ip::udp::socket sender(io);
     boost::asio::ip::udp::socket default_rtcp(io);
@@ -508,7 +508,7 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
     boost::asio::ip::udp::socket expected(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket wrong(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -562,7 +562,7 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = media_server::registry::instance();
+    auto& streams = media_server::stream_registry::instance();
     streams.clear();
 
     constexpr std::uint8_t payload_type = 96;
@@ -598,7 +598,7 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
 int main()
 {
     media_server::port_manager::init(32'200, 32'399);
-    media_server::registry::init();
+    media_server::stream_registry::instance().clear();
     try
     {
         for (int iteration = 0; iteration < 10; ++iteration)
@@ -620,12 +620,12 @@ int main()
         std::cout << "[pass] rtcp_peer_learning_overrides_rtp_plus_one\n";
         media_server::test_first_valid_rtp_packet_pins_peer_when_unsignaled();
         std::cout << "[pass] first_valid_rtp_packet_pins_peer_when_unsignaled\n";
-        media_server::registry::destroy();
+        media_server::stream_registry::instance().clear();
         media_server::port_manager::destroy();
     }
     catch (const std::exception& error)
     {
-        media_server::registry::destroy();
+        media_server::stream_registry::instance().clear();
         media_server::port_manager::destroy();
         std::cerr << "[fail] " << error.what() << '\n';
         return 1;
