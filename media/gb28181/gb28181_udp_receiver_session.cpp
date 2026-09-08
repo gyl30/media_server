@@ -33,7 +33,7 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
 {
 }
 
-std::optional<port_manager_impl::port_pair> gb28181_udp_receiver_session::prepare_udp_transports(boost::asio::ip::address bind_address)
+std::optional<port_manager::port_pair> gb28181_udp_receiver_session::prepare_udp_transports(boost::asio::ip::address bind_address)
 {
     const auto reserved = port_manager::instance().acquire_pair();
     if (!reserved)
@@ -96,7 +96,7 @@ void gb28181_udp_receiver_session::shutdown()
 
 const std::string& gb28181_udp_receiver_session::stream_name() const noexcept { return receiver_.stream_name(); }
 
-std::optional<port_manager_impl::port_pair> gb28181_udp_receiver_session::local_ports() const noexcept { return local_ports_; }
+std::optional<port_manager::port_pair> gb28181_udp_receiver_session::local_ports() const noexcept { return local_ports_; }
 
 void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
 {
@@ -222,7 +222,7 @@ void gb28181_udp_receiver_session::safe_shutdown()
     {
         return;
     }
-    registry::instance().remove_receiver_session(stream_name(), *this);
+    stream_registry::instance().remove_receiver_session(stream_name(), *this);
     rtcp_timer_.cancel();
     rtp_transport_.shutdown();
     rtcp_transport_.shutdown();

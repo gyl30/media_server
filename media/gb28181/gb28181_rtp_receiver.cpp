@@ -145,7 +145,7 @@ void gb28181_rtp_receiver::shutdown()
     closed_ = true;
     if (stream_)
     {
-        registry::instance().remove(*stream_);
+        stream_registry::instance().remove(*stream_);
         stream_->end();
         stream_.reset();
     }
@@ -362,7 +362,7 @@ bool gb28181_rtp_receiver::try_start_recording()
     {
         tracks.push_back(*audio_track_);
     }
-    if (!stream_->set_tracks(std::move(tracks)) || !registry::instance().add(stream_))
+    if (!stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(stream_))
     {
         spdlog::warn("gb28181 stream register failed {}", stream_name_);
         fatal_codec_change_ = true;

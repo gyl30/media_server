@@ -43,7 +43,7 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
 {
 }
 
-std::optional<port_manager_impl::port_pair> gb28181_udp_sender_session::prepare_udp_transports(boost::asio::ip::address bind_address)
+std::optional<port_manager::port_pair> gb28181_udp_sender_session::prepare_udp_transports(boost::asio::ip::address bind_address)
 {
     const auto reserved = port_manager::instance().acquire_pair();
     if (!reserved)
@@ -259,7 +259,7 @@ void gb28181_udp_sender_session::safe_shutdown()
     {
         return;
     }
-    registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
+    stream_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
     rtcp_timer_.cancel();
     if (sender_)
     {

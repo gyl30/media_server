@@ -1,3 +1,4 @@
+#include <exception>
 #include <limits>
 #include <stdexcept>
 
@@ -6,7 +7,29 @@
 namespace media_server
 {
 
-port_manager_impl::port_manager_impl(int start_port, int end_port)
+std::unique_ptr<port_manager> port_manager::instance_;
+
+void port_manager::init(int start_port, int end_port)
+{
+    if (instance_)
+    {
+        std::terminate();
+    }
+    instance_.reset(new port_manager(start_port, end_port));
+}
+
+port_manager& port_manager::instance()
+{
+    if (!instance_)
+    {
+        std::terminate();
+    }
+    return *instance_;
+}
+
+void port_manager::destroy() { instance_.reset(); }
+
+port_manager::port_manager(int start_port, int end_port)
 {
     if (start_port <= 0 || start_port > end_port || end_port > std::numeric_limits<std::uint16_t>::max())
     {
@@ -16,7 +39,7 @@ port_manager_impl::port_manager_impl(int start_port, int end_port)
     end_port_ = static_cast<std::uint16_t>(end_port);
 }
 
-std::optional<std::uint16_t> port_manager_impl::acquire()
+std::optional<std::uint16_t> port_manager::acquire()
 {
     std::scoped_lock lock(mutex_);
     for (std::uint32_t port = start_port_; port <= end_port_; ++port)
@@ -30,7 +53,7 @@ std::optional<std::uint16_t> port_manager_impl::acquire()
     return std::nullopt;
 }
 
-std::optional<port_manager_impl::port_pair> port_manager_impl::acquire_pair()
+std::optional<port_manager::port_pair> port_manager::acquire_pair()
 {
     std::scoped_lock lock(mutex_);
     std::uint32_t first = start_port_;
@@ -53,13 +76,13 @@ std::optional<port_manager_impl::port_pair> port_manager_impl::acquire_pair()
     return std::nullopt;
 }
 
-void port_manager_impl::release(std::uint16_t port)
+void port_manager::release(std::uint16_t port)
 {
     std::scoped_lock lock(mutex_);
     reserved_.erase(port);
 }
 
-void port_manager_impl::release(port_pair pair)
+void port_manager::release(port_pair pair)
 {
     std::scoped_lock lock(mutex_);
     reserved_.erase(pair.first);

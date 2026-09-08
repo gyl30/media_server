@@ -75,7 +75,7 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
                                              boost::asio::ip::address bind_address)
 {
     const auto stream_name = config.stream_name;
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     if (streams.find(stream_name))
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -134,7 +134,7 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
 {
     const auto stream_name = config.stream_name;
     const auto sender_id = config.sender_id;
-    auto& streams = registry::instance();
+    auto& streams = stream_registry::instance();
     auto stream = streams.find(stream_name);
     if (!stream || !gb28181_rtp_sender::supported_tracks(stream->tracks()))
     {
@@ -214,7 +214,7 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = registry::instance().take_receiver_session(*stream_name);
+    auto session = stream_registry::instance().take_receiver_session(*stream_name);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -256,7 +256,7 @@ gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& 
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = registry::instance().take_sender_session(identity->first, identity->second);
+    auto session = stream_registry::instance().take_sender_session(identity->first, identity->second);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");

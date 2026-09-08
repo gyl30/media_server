@@ -83,7 +83,7 @@ bool rtsp_publish_media::start_recording()
         tracks.push_back(description.track);
     }
     std::ranges::sort(tracks, [](const media_track& left, const media_track& right) { return left.id < right.id; });
-    if (!stream_->set_tracks(std::move(tracks)) || !registry::instance().add(stream_))
+    if (!stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(stream_))
     {
         return false;
     }
@@ -148,7 +148,7 @@ void rtsp_publish_media::shutdown()
     closed_ = true;
     if (stream_)
     {
-        registry::instance().remove(*stream_);
+        stream_registry::instance().remove(*stream_);
         stream_->end();
         stream_.reset();
     }

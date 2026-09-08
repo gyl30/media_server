@@ -125,7 +125,7 @@ void rtsp_pull_media::shutdown()
     closed_ = true;
     if (stream_)
     {
-        registry::instance().remove(*stream_);
+        stream_registry::instance().remove(*stream_);
         stream_->end();
         stream_.reset();
     }
@@ -239,7 +239,7 @@ bool rtsp_pull_media::try_initialize_tracks()
     {
         return false;
     }
-    if (!registry::instance().add(stream_))
+    if (!stream_registry::instance().add(stream_))
     {
         spdlog::warn("rtsp pull duplicate stream {}", stream_name_);
         fatal_ = true;

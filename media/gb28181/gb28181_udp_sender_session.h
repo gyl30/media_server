@@ -39,7 +39,7 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     void shutdown() override;
 
    private:
-    [[nodiscard]] std::optional<port_manager_impl::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
+    [[nodiscard]] std::optional<port_manager::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
     void shutdown_udp_transports();
     void run_rtp_write(boost::asio::yield_context yield);
     void schedule_rtcp();
@@ -59,7 +59,7 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     boost::asio::steady_timer rtcp_timer_;
     std::chrono::milliseconds rtcp_interval_;
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
-    std::optional<port_manager_impl::port_pair> local_ports_;
+    std::optional<port_manager::port_pair> local_ports_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
     void* rtcp_sender_{};
     bool rtcp_enabled_{};

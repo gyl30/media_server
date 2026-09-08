@@ -74,7 +74,7 @@ void rtmp_publish_session::shutdown()
     initial_tracks_timer_.cancel();
     if (stream_)
     {
-        registry::instance().remove(*stream_);
+        stream_registry::instance().remove(*stream_);
         stream_->end();
         stream_.reset();
     }
@@ -390,7 +390,7 @@ void rtmp_publish_session::try_initialize_tracks()
     {
         return;
     }
-    if (!registry::instance().add(stream_))
+    if (!stream_registry::instance().add(stream_))
     {
         spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
         shutdown_handler_();

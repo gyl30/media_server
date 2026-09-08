@@ -4,6 +4,7 @@
 #include <set>
 #include <stdexcept>
 #include <thread>
+#include <concepts>
 #include <vector>
 
 #include <boost/asio/io_context.hpp>
@@ -21,6 +22,9 @@ namespace media_server
 {
 namespace
 {
+
+static_assert(std::same_as<decltype(port_manager::instance()), port_manager&>);
+static_assert(std::same_as<decltype(stream_registry::instance()), stream_registry&>);
 
 void require(bool condition, const char* message)
 {
@@ -147,10 +151,10 @@ void test_udp_sender_releases_pair_after_shutdown()
     port_manager::init(32'400, 32'401);
     auto stream = std::make_shared<media_stream>("live/port-release", worker);
     require(stream->set_tracks({make_video_track()}), "port release stream tracks");
-    require(registry::instance().add(stream), "port release stream registry");
+    require(stream_registry::instance().add(stream), "port release stream registry");
     auto session = std::make_shared<gb28181_udp_sender_session>(
         worker, stream, make_udp_sender_transport(), boost::asio::ip::address_v4::loopback(), "sender", false);
-    require(registry::instance().add_sender_session(stream->name(), "sender", session), "port release sender registry");
+    require(stream_registry::instance().add_sender_session(stream->name(), "sender", session), "port release sender registry");
     require(session->startup(), "port release sender startup");
 
     boost::system::error_code bind_error;
@@ -166,7 +170,7 @@ void test_udp_sender_releases_pair_after_shutdown()
     const auto pair = port_manager::instance().acquire_pair();
     require(pair && pair->first == 32'400 && pair->second == 32'401, "port release after shutdown");
     port_manager::instance().release(*pair);
-    registry::instance().clear();
+    stream_registry::instance().clear();
     port_manager::destroy();
 }
 
@@ -179,7 +183,7 @@ void test_udp_sender_releases_pair_after_bind_failure()
     boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 32'410});
     auto stream = std::make_shared<media_stream>("live/port-bind-failure", worker);
     require(stream->set_tracks({make_video_track()}), "port bind failure stream tracks");
-    require(registry::instance().add(stream), "port bind failure stream registry");
+    require(stream_registry::instance().add(stream), "port bind failure stream registry");
     auto session = std::make_shared<gb28181_udp_sender_session>(
         worker, stream, make_udp_sender_transport(), boost::asio::ip::address_v4::loopback(), "sender", false);
     require(!session->startup(), "port bind failure sender startup");
@@ -187,7 +191,7 @@ void test_udp_sender_releases_pair_after_bind_failure()
     const auto pair = port_manager::instance().acquire_pair();
     require(pair && pair->first == 32'410 && pair->second == 32'411, "port release after bind failure");
     port_manager::instance().release(*pair);
-    registry::instance().clear();
+    stream_registry::instance().clear();
     port_manager::destroy();
 }
 
@@ -240,12 +244,12 @@ int main()
         media_server::test_pair_reservation();
         media_server::test_exhaustion();
         media_server::test_concurrent_reservation();
-        media_server::registry::init();
+        media_server::stream_registry::instance().clear();
         media_server::test_udp_sender_releases_pair_after_shutdown();
         media_server::test_udp_sender_releases_pair_after_bind_failure();
         media_server::test_udp_receiver_releases_pair_after_bind_failure();
         media_server::test_udp_receiver_rejects_unavailable_local_address();
-        media_server::registry::destroy();
+        media_server::stream_registry::instance().clear();
         std::cout << "[pass] port_manager_tests\n";
         return 0;
     }

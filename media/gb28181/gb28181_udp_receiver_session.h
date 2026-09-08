@@ -34,10 +34,10 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     void shutdown() override;
 
     [[nodiscard]] const std::string& stream_name() const noexcept;
-    [[nodiscard]] std::optional<port_manager_impl::port_pair> local_ports() const noexcept;
+    [[nodiscard]] std::optional<port_manager::port_pair> local_ports() const noexcept;
 
    private:
-    [[nodiscard]] std::optional<port_manager_impl::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
+    [[nodiscard]] std::optional<port_manager::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
     void run_rtp(boost::asio::yield_context yield);
     void run_rtcp(boost::asio::yield_context yield);
     void schedule_rtcp();
@@ -49,7 +49,7 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     gb28181_rtp_receiver receiver_;
     udp_yield_transport rtp_transport_;
     udp_yield_transport rtcp_transport_;
-    std::optional<port_manager_impl::port_pair> local_ports_;
+    std::optional<port_manager::port_pair> local_ports_;
     boost::asio::steady_timer rtcp_timer_;
     std::chrono::milliseconds rtcp_interval_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint_;

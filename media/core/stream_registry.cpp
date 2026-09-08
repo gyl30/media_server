@@ -5,6 +5,12 @@
 namespace media_server
 {
 
+stream_registry& stream_registry::instance()
+{
+    static stream_registry registry;
+    return registry;
+}
+
 bool stream_registry::add(const std::shared_ptr<media_stream>& stream)
 {
     if (!stream || stream->name().empty() || stream->tracks().empty())
