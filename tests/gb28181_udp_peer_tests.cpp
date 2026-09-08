@@ -311,7 +311,7 @@ void test_sender_same_codec_config_version_continues_ps_stream()
         };
     };
 
-    auto source = std::make_shared<media_stream>("live/gb-sender-config-source", io.get_executor());
+    auto source = std::make_shared<media_stream>("live/gb-sender-config-source", worker);
     require(source->set_tracks({media_track{
                 .id = video_track_id,
                 .kind = media_kind::video,

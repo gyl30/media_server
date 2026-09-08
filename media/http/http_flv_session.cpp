@@ -149,7 +149,7 @@ void http_flv_session::startup_flv(std::shared_ptr<media_stream> media_stream)
         },
         config_.http_video);
 
-    reader_ = media_stream->add_reader(streamer_, worker_.io().get_executor());
+    reader_ = media_stream->add_reader(streamer_, worker_);
 }
 
 void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)

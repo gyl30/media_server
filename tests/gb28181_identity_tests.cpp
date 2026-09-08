@@ -106,9 +106,9 @@ media_track make_video_track()
                        .config_version = 0};
 }
 
-std::shared_ptr<media_stream> add_video_stream(boost::asio::io_context& io, std::string name)
+std::shared_ptr<media_stream> add_video_stream(worker_context& worker, std::string name)
 {
-    auto stream = std::make_shared<media_stream>(std::move(name), io.get_executor());
+    auto stream = std::make_shared<media_stream>(std::move(name), worker);
     require(stream->set_tracks({make_video_track()}), "gb sender tracks");
     require(registry::instance().add(stream), "gb sender registry");
     return stream;
@@ -164,7 +164,7 @@ void test_sender_identity_is_reusable_after_shutdown()
     worker.io().restart();
     auto& io = worker.io();
     clear_state();
-    const auto stream = add_video_stream(io, "live/gb-sender-identity");
+    const auto stream = add_video_stream(worker, "live/gb-sender-identity");
     const auto description = make_tcp_active_transport(65'000, 10'000'2002);
 
     require_status(create_sender(worker, *stream, "primary", description), boost::beast::http::status::created, "gb sender first create");
@@ -205,7 +205,7 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
     worker.io().restart();
     auto& io = worker.io();
     clear_state();
-    const auto stream = add_video_stream(io, "live/gb-sender-repeated-shutdown");
+    const auto stream = add_video_stream(worker, "live/gb-sender-repeated-shutdown");
     const auto description = make_tcp_passive_transport(0, 10'000'2008);
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
                                                                 std::weak_ptr<media_stream>{stream},
@@ -253,7 +253,7 @@ void test_tcp_timeout_unregisters_sender_session()
     worker.io().restart();
     auto& io = worker.io();
     clear_state();
-    const auto stream = add_video_stream(io, "live/gb-sender-timeout");
+    const auto stream = add_video_stream(worker, "live/gb-sender-timeout");
     const auto description = make_tcp_passive_transport(0, 10'000'2006);
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
                                                                 std::weak_ptr<media_stream>{stream},

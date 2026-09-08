@@ -17,8 +17,8 @@ extern "C"
 namespace media_server::test
 {
 
-rtsp_test_client::rtsp_test_client(boost::asio::any_io_executor executor, std::string path)
-    : resolver_(executor), socket_(executor), path_(std::move(path))
+rtsp_test_client::rtsp_test_client(boost::asio::io_context& io, std::string path)
+    : resolver_(io), socket_(io), path_(std::move(path))
 {
 }
 

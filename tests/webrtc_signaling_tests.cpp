@@ -838,7 +838,7 @@ class whep_http_test_peer final
     whep_http_test_peer() : workers_(1), acceptor_(workers_.context(0).io(), {boost::asio::ip::address_v4::loopback(), 0})
     {
         streams_.clear();
-        stream_ = std::make_shared<media_stream>("live/camera", workers_.context(0).io().get_executor());
+        stream_ = std::make_shared<media_stream>("live/camera", workers_.context(0));
         require(stream_->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
         require(streams_.add(stream_), "whep http registry add");
         runner_ = std::jthread([this]() { workers_.run(); });
@@ -2060,8 +2060,7 @@ void test_whep_session_startup_errors()
     worker_context worker;
     worker.release_work();
     worker.io().restart();
-    auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/startup-errors", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/startup-errors", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -2108,7 +2107,7 @@ void test_whep_session_lifecycle()
     auto& io = worker.io();
     auto& streams = registry::instance();
     streams.clear();
-    auto stream = std::make_shared<media_stream>("live/test", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/test", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(streams.add(stream), "whep registry add");
 
@@ -2146,7 +2145,7 @@ void test_whep_session_lifecycle()
     drain_io(io);
     require(!whep::remove(third.session_id), "whep source end releases session");
 
-    auto replacement = std::make_shared<media_stream>("live/test", io.get_executor());
+    auto replacement = std::make_shared<media_stream>("live/test", worker);
     require(replacement->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(streams.add(replacement), "whep replacement registry add");
 
@@ -2175,7 +2174,7 @@ void test_whep_opus_source_session_lifecycle()
     auto& io = worker.io();
     auto& streams = registry::instance();
     streams.clear();
-    auto stream = std::make_shared<media_stream>("live/opus", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/opus", worker);
     require(stream->set_tracks({make_video_track(), make_opus_track(1)}), "whep opus source tracks");
     require(streams.add(stream), "whep opus source registry add");
 
@@ -2203,7 +2202,7 @@ void test_whep_negotiated_track_lifecycle()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/negotiated-tracks", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/negotiated-tracks", worker);
     require(stream->set_tracks({make_h265_track(), make_audio_track()}), "initial tracks");
 
     auto certificate = dtls_certificate::create();
@@ -2265,7 +2264,7 @@ void test_whep_self_owned_lifecycle()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/self-owned", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/self-owned", worker);
     require(stream->set_tracks({make_video_track()}), "self owned video track");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -2290,7 +2289,7 @@ void test_whep_multi_session_isolation()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/multi", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/multi", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -2357,7 +2356,7 @@ void test_whep_establishment_timeout()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/establishment-timeout", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/establishment-timeout", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -2393,7 +2392,7 @@ void test_whep_ice_activity_timeout()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/ice-activity-timeout", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/ice-activity-timeout", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -2501,7 +2500,7 @@ void test_whep_stun_unknown_attribute_contract()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/stun-unknown", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/stun-unknown", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "stun unknown initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -2570,7 +2569,7 @@ void test_whep_udp_send_queue()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/udp-send-queue", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/udp-send-queue", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "udp send queue initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -2644,7 +2643,7 @@ void test_whep_ice_lite()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/ice", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/ice", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
 
     const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
@@ -2704,7 +2703,7 @@ void test_whep_selected_bundle_transport()
     require(certificate != nullptr, "selected transport certificate");
     const auto check = [&worker, &io, &certificate](std::vector<media_track> tracks, const std::string& sdp, std::string_view remote_ufrag, std::uint8_t id)
     {
-        auto stream = std::make_shared<media_stream>("live/selected-transport", io.get_executor());
+        auto stream = std::make_shared<media_stream>("live/selected-transport", worker);
         require(stream->set_tracks(std::move(tracks)), "selected transport tracks");
         const auto offer = parse_webrtc_offer(sdp);
         require(offer.has_value(), "selected transport offer");
@@ -2747,7 +2746,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto stream = std::make_shared<media_stream>("live/dtls", io.get_executor());
+    auto stream = std::make_shared<media_stream>("live/dtls", worker);
     require(stream->set_tracks({h265 ? make_h265_track() : make_video_track(), make_audio_track()}), "initial tracks");
 
     auto server_certificate = dtls_certificate::create();
