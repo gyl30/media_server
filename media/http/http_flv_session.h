@@ -38,7 +38,6 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
                             std::string body,
                             boost::asio::yield_context& yield,
                             std::string_view allow = {});
-    void startup_flv(std::shared_ptr<media_stream> stream);
     void enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
     void run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield);
     void safe_shutdown();
