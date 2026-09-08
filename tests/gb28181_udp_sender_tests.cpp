@@ -52,7 +52,7 @@ void test_udp_sender_session_sends_rtp()
         0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
         0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80,
     };
-    auto source = std::make_shared<media_stream>("live/gb-udp-sender-session", io.get_executor());
+    auto source = std::make_shared<media_stream>("live/gb-udp-sender-session", worker);
     require(source->set_tracks({media_track{
                 .id = video_track_id,
                 .kind = media_kind::video,
@@ -127,7 +127,7 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
         0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
         0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80,
     };
-    auto source = std::make_shared<media_stream>("live/gb-udp-sender-rtcp-shutdown", io.get_executor());
+    auto source = std::make_shared<media_stream>("live/gb-udp-sender-rtcp-shutdown", worker);
     require(source->set_tracks({media_track{
                 .id = video_track_id,
                 .kind = media_kind::video,

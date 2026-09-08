@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
 struct rtsp_client_t;
@@ -19,7 +19,7 @@ namespace media_server::test
 class rtsp_test_client final
 {
    public:
-    rtsp_test_client(boost::asio::any_io_executor executor, std::string path);
+    rtsp_test_client(boost::asio::io_context& io, std::string path);
     ~rtsp_test_client();
 
     boost::asio::awaitable<boost::system::error_code> publish(
