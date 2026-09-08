@@ -94,8 +94,6 @@ void gb28181_udp_receiver_session::shutdown()
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-const std::string& gb28181_udp_receiver_session::stream_name() const noexcept { return receiver_.stream_name(); }
-
 std::optional<port_manager::port_pair> gb28181_udp_receiver_session::local_ports() const noexcept { return local_ports_; }
 
 void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
@@ -222,7 +220,7 @@ void gb28181_udp_receiver_session::safe_shutdown()
     {
         return;
     }
-    stream_registry::instance().remove_receiver_session(stream_name(), *this);
+    stream_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     rtcp_timer_.cancel();
     rtp_transport_.shutdown();
     rtcp_transport_.shutdown();
