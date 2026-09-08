@@ -80,7 +80,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         return whep_session_startup_error::internal_error;
     }
     local_port_reservation_ = *reserved;
-    const auto weak = weak_from_this();
+    const auto self = shared_from_this();
     boost::system::error_code udp_error;
     udp_transport_.startup(advertised_address_, local_port_reservation_, udp_error);
     if (udp_error)
@@ -133,13 +133,8 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     remote_ice_ufrag_ = media->ice_ufrag;
     dtls_ = std::make_unique<dtls_transport>(certificate_,
                                              media->fingerprint,
-                                             [weak](std::span<const std::uint8_t> packet)
-                                             {
-                                                 if (const auto self = weak.lock())
-                                                 {
-                                                     self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end()));
-                                                 }
-                                             });
+                                             [self](std::span<const std::uint8_t> packet)
+                                             { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
     if (!dtls_->startup())
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
@@ -152,7 +147,6 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     answer_ = std::move(*answer);
     started_ = true;
 
-    const auto self = shared_from_this();
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_udp(yield); }, boost::asio::detached);
 
     for (const auto& track : source_tracks)
@@ -564,7 +558,7 @@ bool whep_session::startup_media()
         return false;
     }
 
-    const auto weak = weak_from_this();
+    const auto self = shared_from_this();
     auto packetizer = std::make_shared<webrtc_packetizer>(
         webrtc_packetizer_config{
             .video_codec = answer_.video_codec.value_or(codec_id::h264),
@@ -580,20 +574,8 @@ bool whep_session::startup_media()
             .audio_mid_extension_id = answer_.audio_mid_extension_id.value_or(-1),
             .rtcp_cname = id_,
         },
-        [weak](std::span<const std::uint8_t> packet)
-        {
-            if (const auto self = weak.lock())
-            {
-                self->send_rtp(packet);
-            }
-        },
-        [weak](std::span<const std::uint8_t> packet)
-        {
-            if (const auto self = weak.lock())
-            {
-                self->send_rtcp(packet);
-            }
-        });
+        [self](std::span<const std::uint8_t> packet) { self->send_rtp(packet); },
+        [self](std::span<const std::uint8_t> packet) { self->send_rtcp(packet); });
 
     if (!packetizer->valid())
     {
