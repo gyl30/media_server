@@ -109,7 +109,7 @@ void test_rtcp_scheduler_releases_after_shutdown()
                                  boost::asio::ip::address_v4::loopback(),
                                  [](std::span<const std::uint8_t>) {},
                                  0ms);
-    publish.set_error_handler([](boost::system::error_code) {});
+    publish.set_shutdown_handler([]() {});
 
     server_fixture fixture{.publish = &publish, .response = {}};
     rtsp_handler_t handler{};

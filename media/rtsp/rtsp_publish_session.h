@@ -12,8 +12,6 @@
 #include <string_view>
 
 #include <boost/asio/ip/address.hpp>
-#include <boost/system/error_code.hpp>
-
 #include "media/rtsp/rtsp_publish_media.h"
 
 struct rtsp_server_t;
@@ -34,9 +32,9 @@ class rtsp_publish_session final
                        std::function<void(std::span<const std::uint8_t>)> write,
                        std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
-    void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
+    void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
-    void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
+    [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_setup(rtsp_server_t* server,
                  std::string_view uri,
                  std::string_view session,
@@ -52,7 +50,7 @@ class rtsp_publish_session final
     boost::asio::ip::address bind_address_;
     std::chrono::milliseconds rtcp_interval_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
-    std::function<void(boost::system::error_code)> error_handler_;
+    std::function<void()> shutdown_handler_;
     std::shared_ptr<rtsp_publish_tcp_session> tcp_session_;
     std::shared_ptr<rtsp_publish_udp_session> udp_session_;
     std::vector<rtsp_publish_track_description> descriptions_;
