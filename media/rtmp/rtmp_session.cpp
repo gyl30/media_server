@@ -76,19 +76,9 @@ void rtmp_session::run(boost::asio::yield_context yield)
         }
     }
 
-    if (publish_)
-    {
-        publish_->shutdown();
-        publish_.reset();
-    }
-    if (play_)
-    {
-        play_->shutdown();
-        play_.reset();
-    }
     rtmp_context_ = nullptr;
     rtmp_server_destroy(context);
-    shutdown();
+    safe_shutdown();
     spdlog::debug("rtmp shutdown {}", stream_name_);
 }
 
@@ -222,14 +212,13 @@ int rtmp_session::on_play(std::string app, std::string stream)
         return -1;
     }
 
-    const std::weak_ptr<rtmp_session> weak = shared_from_this();
+    const auto self = shared_from_this();
     play_ = std::make_shared<rtmp_play_session>(
         worker_,
         std::move(media),
-        [weak](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        [self](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
-            const auto self = weak.lock();
-            if (!self || self->rtmp_context_ == nullptr)
+            if (self->rtmp_context_ == nullptr)
             {
                 return;
             }
@@ -243,15 +232,8 @@ int rtmp_session::on_play(std::string app, std::string stream)
             }
         },
         video_config_,
-        [weak]()
-        {
-            if (const auto self = weak.lock())
-            {
-                self->shutdown();
-            }
-        });
+        [self]() { self->shutdown(); });
 
-    const auto self = shared_from_this();
     boost::asio::post(worker_.io(),
                       [self]()
                       {
@@ -279,17 +261,9 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     }
 
     stream_name_ = make_stream_name(app, stream);
-    const std::weak_ptr<rtmp_session> weak = shared_from_this();
-    auto publish = std::make_shared<rtmp_publish_session>(worker_,
-                                                      stream_name_,
-                                                      initial_tracks_timeout_,
-                                                      [weak]()
-                                                      {
-                                                          if (const auto self = weak.lock())
-                                                          {
-                                                              self->shutdown();
-                                                          }
-                                                      });
+    const auto self = shared_from_this();
+    auto publish = std::make_shared<rtmp_publish_session>(
+        worker_, stream_name_, initial_tracks_timeout_, [self]() { self->shutdown(); });
     if (!publish->startup())
     {
         return -1;
@@ -308,7 +282,16 @@ void rtmp_session::shutdown()
 void rtmp_session::safe_shutdown()
 {
     rtmp_context_ = nullptr;
-
+    if (publish_)
+    {
+        publish_->shutdown();
+        publish_.reset();
+    }
+    if (play_)
+    {
+        play_->shutdown();
+        play_.reset();
+    }
     transport_.shutdown();
 }
 
