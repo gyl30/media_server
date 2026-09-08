@@ -88,7 +88,14 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         }
     }
 
-    startup_flv(std::move(media_stream));
+    const auto self = shared_from_this();
+    streamer_ = std::make_shared<http_flv_streamer>(
+        [self](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
+        { self->enqueue(generation, std::move(data), bootstrap); },
+        [self]() { self->shutdown(); },
+        config_.http_video);
+
+    reader_ = media_stream->add_reader(streamer_, worker_);
 
     std::array<std::uint8_t, 1> read_buffer{};
     for (;;)
@@ -127,18 +134,6 @@ void http_flv_session::send_text_response(boost::beast::http::status status,
         return;
     }
     static_cast<void>(boost::beast::http::async_write(stream_, response, yield[error]));
-}
-
-void http_flv_session::startup_flv(std::shared_ptr<media_stream> media_stream)
-{
-    const auto self = shared_from_this();
-    streamer_ = std::make_shared<http_flv_streamer>(
-        [self](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        { self->enqueue(generation, std::move(data), bootstrap); },
-        [self]() { self->shutdown(); },
-        config_.http_video);
-
-    reader_ = media_stream->add_reader(streamer_, worker_);
 }
 
 void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
