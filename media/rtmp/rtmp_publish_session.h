@@ -53,7 +53,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     worker_context& worker_;
     boost::asio::steady_timer initial_tracks_timer_;
     std::chrono::milliseconds initial_tracks_timeout_;
-    std::string stream_name_;
     std::shared_ptr<media_stream> stream_;
     shutdown_handler shutdown_handler_;
     flv_demuxer_t* demuxer_{};
