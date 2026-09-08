@@ -37,33 +37,31 @@ int rtsp_publish_tcp_session::startup(rtsp_server_t* server,
 {
     if (!media_.startup(session_id))
     {
+        safe_shutdown();
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
     }
     const auto result = on_setup(server, track_index, transport, session_id);
-    if (result != 0)
+    if (track_states_[track_index].rtp_channel < 0)
     {
         safe_shutdown();
     }
     return result;
 }
 
-void rtsp_publish_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
+bool rtsp_publish_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
     if (data.empty())
     {
-        return;
+        return true;
     }
     for (std::size_t index = 0; index < track_states_.size(); ++index)
     {
         if (track_states_[index].rtp_channel == channel || track_states_[index].rtcp_channel == channel)
         {
-            if (!media_.input_packet(index, data))
-            {
-                error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
-            }
-            return;
+            return media_.input_packet(index, data);
         }
     }
+    return true;
 }
 
 int rtsp_publish_tcp_session::on_setup(rtsp_server_t* server,
@@ -106,9 +104,8 @@ int rtsp_publish_tcp_session::on_record(rtsp_server_t* server)
     }
     if (!media_.start_recording())
     {
-        rtsp_server_reply_record(server, 453, nullptr, nullptr);
-        error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
-        return 0;
+        const auto result = rtsp_server_reply_record(server, 453, nullptr, nullptr);
+        return result == 0 ? -1 : result;
     }
     schedule_rtcp();
     return rtsp_server_reply_record(server, 200, nullptr, nullptr);
@@ -157,7 +154,6 @@ void rtsp_publish_tcp_session::safe_shutdown()
     rtcp_timer_.cancel();
     media_.shutdown();
     write_handler_ = {};
-    error_handler_ = {};
     spdlog::debug("rtsp publish tcp shutdown {}", media_.stream_name());
 }
 

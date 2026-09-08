@@ -9,8 +9,6 @@
 #include <functional>
 #include <utility>
 
-#include <boost/system/error_code.hpp>
-
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/rtsp/rtsp_publish_media.h"
@@ -33,8 +31,6 @@ class rtsp_publish_tcp_session final : public std::enable_shared_from_this<rtsp_
                            std::function<void(std::span<const std::uint8_t>)> write);
     ~rtsp_publish_tcp_session();
 
-    void set_error_handler(std::function<void(boost::system::error_code)> handler) { error_handler_ = std::move(handler); }
-
    private:
     friend class rtsp_publish_session;
 
@@ -45,7 +41,7 @@ class rtsp_publish_tcp_session final : public std::enable_shared_from_this<rtsp_
     };
 
     int startup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
-    void on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
+    [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     int on_record(rtsp_server_t* server);
     void schedule_rtcp();
@@ -53,7 +49,6 @@ class rtsp_publish_tcp_session final : public std::enable_shared_from_this<rtsp_
 
     worker_context& worker_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
-    std::function<void(boost::system::error_code)> error_handler_;
     rtsp_publish_media media_;
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;

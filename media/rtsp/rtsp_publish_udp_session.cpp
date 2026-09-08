@@ -40,11 +40,12 @@ int rtsp_publish_udp_session::startup(rtsp_server_t* server,
 {
     if (!media_.startup(session_id))
     {
+        safe_shutdown();
         return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
     }
 
     const auto result = on_setup(server, track_index, transport, session_id);
-    if (result != 0)
+    if (!track_states_[track_index].local_ports)
     {
         safe_shutdown();
     }
@@ -62,9 +63,9 @@ void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yie
         const auto bytes = transport.read(buffer, endpoint, yield, error);
         if (error)
         {
-            if (error != boost::asio::error::operation_aborted && error_handler_)
+            if (error != boost::asio::error::operation_aborted && shutdown_handler_)
             {
-                error_handler_(error);
+                shutdown_handler_();
             }
             return;
         }
@@ -74,9 +75,9 @@ void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yie
         }
         if (!media_.input_packet(track_index, std::span<const std::uint8_t>{buffer.data(), bytes}))
         {
-            if (error_handler_)
+            if (shutdown_handler_)
             {
-                error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+                shutdown_handler_();
             }
             return;
         }
@@ -94,9 +95,9 @@ void rtsp_publish_udp_session::run_rtcp(std::size_t track_index, boost::asio::yi
         const auto bytes = transport.read(buffer, endpoint, yield, error);
         if (error)
         {
-            if (error != boost::asio::error::operation_aborted && error_handler_)
+            if (error != boost::asio::error::operation_aborted && shutdown_handler_)
             {
-                error_handler_(error);
+                shutdown_handler_();
             }
             return;
         }
@@ -106,9 +107,9 @@ void rtsp_publish_udp_session::run_rtcp(std::size_t track_index, boost::asio::yi
         }
         if (!media_.input_packet(track_index, std::span<const std::uint8_t>{buffer.data(), bytes}))
         {
-            if (error_handler_)
+            if (shutdown_handler_)
             {
-                error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
+                shutdown_handler_();
             }
             return;
         }
@@ -171,8 +172,8 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     if (network_error)
     {
         cleanup();
-        error_handler_(network_error);
-        return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
+        const auto result = rtsp_server_reply_setup(server, 500, nullptr, nullptr);
+        return result == 0 ? -1 : result;
     }
     state.local_ports = local_ports;
 
@@ -199,9 +200,8 @@ int rtsp_publish_udp_session::on_record(rtsp_server_t* server)
     }
     if (!media_.start_recording())
     {
-        rtsp_server_reply_record(server, 453, nullptr, nullptr);
-        error_handler_(boost::system::errc::make_error_code(boost::system::errc::io_error));
-        return 0;
+        const auto result = rtsp_server_reply_record(server, 453, nullptr, nullptr);
+        return result == 0 ? -1 : result;
     }
 
     schedule_rtcp();
@@ -249,9 +249,9 @@ void rtsp_publish_udp_session::run_rtcp_write(boost::asio::yield_context yield)
             std::span{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint, yield, error));
         if (error)
         {
-            if (error != boost::asio::error::operation_aborted && error_handler_)
+            if (error != boost::asio::error::operation_aborted && shutdown_handler_)
             {
-                error_handler_(error);
+                shutdown_handler_();
             }
             return;
         }
@@ -269,7 +269,7 @@ void rtsp_publish_udp_session::safe_shutdown()
     closed_ = true;
     rtcp_timer_.cancel();
     media_.shutdown();
-    error_handler_ = {};
+    shutdown_handler_ = {};
     for (auto& state : track_states_)
     {
         if (state.rtp_transport)
