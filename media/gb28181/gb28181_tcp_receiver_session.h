@@ -31,8 +31,6 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
     [[nodiscard]] bool startup();
     void shutdown() override;
 
-    [[nodiscard]] const std::string& stream_name() const noexcept;
-
    private:
     void run(boost::asio::yield_context yield);
     void safe_shutdown();
