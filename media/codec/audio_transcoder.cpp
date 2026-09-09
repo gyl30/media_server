@@ -82,7 +82,6 @@ struct audio_transcoder::state
     std::int64_t next_encoder_pts{};
     std::int64_t next_output_pts_ns{};
     track_id output_track{};
-    int encoder_frame_samples{};
     int encoded_frame_capacity{};
     bool timeline_started{};
 };
@@ -171,10 +170,9 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
         return false;
     }
 
-    state_->encoder_frame_samples = state_->encoder->frame_size;
-    if (state_->encoder_frame_samples <= 0 && (encoder->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE) == 0)
+    if (state_->encoder->frame_size <= 0 && (encoder->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE) == 0)
     {
-        spdlog::error("audio transcoder encoder invalid frame size {}", state_->encoder_frame_samples);
+        spdlog::error("audio transcoder encoder invalid frame size {}", state_->encoder->frame_size);
         return false;
     }
     return true;
@@ -183,7 +181,7 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
 bool audio_transcoder::allocate_buffers()
 {
     state_->fifo =
-        av_audio_fifo_alloc(state_->encoder->sample_fmt, state_->encoder->ch_layout.nb_channels, std::max(state_->encoder_frame_samples, 1));
+        av_audio_fifo_alloc(state_->encoder->sample_fmt, state_->encoder->ch_layout.nb_channels, std::max(state_->encoder->frame_size, 1));
     state_->decoded_frame = av_frame_alloc();
     state_->encoded_frame = av_frame_alloc();
     state_->input_packet = av_packet_alloc();
@@ -235,7 +233,7 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
                   config.output.sample_rate,
                   config.output.channel_count,
                   state_->encoder->codec->name,
-                  state_->encoder_frame_samples,
+                  state_->encoder->frame_size,
                   state_->encoder->bit_rate,
                   state_->encoder->cutoff);
     return true;
@@ -496,7 +494,7 @@ bool audio_transcoder::encode_available(std::vector<media_frame>& output)
     while (true)
     {
         const int available = av_audio_fifo_size(state_->fifo);
-        const int sample_count = state_->encoder_frame_samples > 0 ? state_->encoder_frame_samples : available;
+        const int sample_count = state_->encoder->frame_size > 0 ? state_->encoder->frame_size : available;
         if (available < sample_count || sample_count <= 0)
         {
             return true;
