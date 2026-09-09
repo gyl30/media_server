@@ -265,7 +265,6 @@ struct video_transcoder::state
     int width{};
     int height{};
     AVPixelFormat decoded_format{AV_PIX_FMT_NONE};
-    AVPixelFormat encoder_format{AV_PIX_FMT_NONE};
     bool timeline_started{};
 };
 
@@ -491,7 +490,6 @@ bool video_transcoder::startup_encoder()
     state_->width = width;
     state_->height = height;
     state_->decoded_format = decoded_format;
-    state_->encoder_format = encoder_format;
     state_->encoder = encoder_context;
     state_->scaler = scaler;
     state_->converted_frame = converted_frame;
@@ -501,7 +499,7 @@ bool video_transcoder::startup_encoder()
                   state_->width,
                   state_->height,
                   av_get_pix_fmt_name(state_->decoded_format),
-                  av_get_pix_fmt_name(state_->encoder_format));
+                  av_get_pix_fmt_name(encoder_format));
     return true;
 }
 
