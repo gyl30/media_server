@@ -559,7 +559,7 @@ bool whep_session::startup_media()
     }
 
     const auto self = shared_from_this();
-    auto packetizer = std::make_shared<webrtc_packetizer>(
+    auto packetizer = std::make_unique<webrtc_packetizer>(
         webrtc_packetizer_config{
             .video_codec = answer_.video_codec.value_or(codec_id::h264),
             .audio_codec = answer_.audio_codec.value_or(codec_id::aac),
