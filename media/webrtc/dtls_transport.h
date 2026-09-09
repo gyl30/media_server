@@ -68,8 +68,6 @@ class dtls_transport final
     send_handler send_handler_;
     ssl_context_ptr context_;
     ssl_ptr ssl_;
-    BIO* read_bio_{};
-    BIO* write_bio_{};
     std::optional<dtls_srtp_keying_material> srtp_keying_material_;
 };
 

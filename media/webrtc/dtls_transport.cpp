@@ -153,28 +153,26 @@ bool dtls_transport::startup()
     SSL_set_mtu(ssl_.get(), 1200);
     SSL_set_options(ssl_.get(), SSL_OP_NO_QUERY_MTU);
 
-    read_bio_ = BIO_new(BIO_s_mem());
-    write_bio_ = BIO_new(BIO_s_mem());
-    if (read_bio_ == nullptr || write_bio_ == nullptr)
+    auto* read_bio = BIO_new(BIO_s_mem());
+    auto* write_bio = BIO_new(BIO_s_mem());
+    if (read_bio == nullptr || write_bio == nullptr)
     {
-        if (read_bio_ != nullptr)
+        if (read_bio != nullptr)
         {
-            BIO_free(read_bio_);
-            read_bio_ = nullptr;
+            BIO_free(read_bio);
         }
-        if (write_bio_ != nullptr)
+        if (write_bio != nullptr)
         {
-            BIO_free(write_bio_);
-            write_bio_ = nullptr;
+            BIO_free(write_bio);
         }
         reset();
         return false;
     }
 
-    BIO_set_mem_eof_return(read_bio_, -1);
-    BIO_set_mem_eof_return(write_bio_, -1);
-    SSL_set0_rbio(ssl_.get(), read_bio_);
-    SSL_set0_wbio(ssl_.get(), write_bio_);
+    BIO_set_mem_eof_return(read_bio, -1);
+    BIO_set_mem_eof_return(write_bio, -1);
+    SSL_set0_rbio(ssl_.get(), read_bio);
+    SSL_set0_wbio(ssl_.get(), write_bio);
     SSL_set_accept_state(ssl_.get());
 
     spdlog::debug("webrtc dtls transport started");
@@ -199,19 +197,17 @@ void dtls_transport::reset()
     srtp_keying_material_.reset();
     ssl_.reset();
     context_.reset();
-    read_bio_ = nullptr;
-    write_bio_ = nullptr;
 }
 
 bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
 {
-    if (!ssl_ || read_bio_ == nullptr || packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
+    if (!ssl_ || SSL_get_rbio(ssl_.get()) == nullptr || packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
     {
         return false;
     }
 
     spdlog::trace("webrtc dtls datagram input size {} content_type {}", packet.size(), packet.front());
-    const auto written = BIO_write(read_bio_, packet.data(), static_cast<int>(packet.size()));
+    const auto written = BIO_write(SSL_get_rbio(ssl_.get()), packet.data(), static_cast<int>(packet.size()));
     if (written != static_cast<int>(packet.size()))
     {
         reset();
@@ -381,21 +377,22 @@ std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_mate
 
 bool dtls_transport::pump_outgoing()
 {
-    if (write_bio_ == nullptr)
+    auto* write_bio = SSL_get_wbio(ssl_.get());
+    if (write_bio == nullptr)
     {
         return false;
     }
 
-    while (BIO_ctrl_pending(write_bio_) > 0)
+    while (BIO_ctrl_pending(write_bio) > 0)
     {
-        const auto pending = BIO_ctrl_pending(write_bio_);
+        const auto pending = BIO_ctrl_pending(write_bio);
         if (pending == 0 || pending > static_cast<std::size_t>(INT_MAX))
         {
             return false;
         }
 
         std::vector<std::uint8_t> output(pending);
-        const auto read = BIO_read(write_bio_, output.data(), static_cast<int>(output.size()));
+        const auto read = BIO_read(write_bio, output.data(), static_cast<int>(output.size()));
         if (read <= 0 || static_cast<std::size_t>(read) != output.size())
         {
             return false;
