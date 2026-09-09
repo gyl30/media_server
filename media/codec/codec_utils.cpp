@@ -114,26 +114,6 @@ std::optional<aac_config> parse_aac_asc(std::span<const std::uint8_t> asc)
     };
 }
 
-std::optional<aac_config> parse_aac_adts(std::span<const std::uint8_t> adts)
-{
-    mpeg4_aac_t configuration{};
-    if (mpeg4_aac_adts_load(adts.data(), adts.size(), &configuration) < 0)
-    {
-        return std::nullopt;
-    }
-
-    const auto channels = mpeg4_aac_channel_count(configuration.channel_configuration);
-    if (configuration.sampling_frequency == 0 || channels == 0)
-    {
-        return std::nullopt;
-    }
-
-    return aac_config{
-        .sample_rate = configuration.sampling_frequency,
-        .channel_count = channels,
-    };
-}
-
 std::vector<std::uint8_t> make_adts_frame(std::span<const std::uint8_t> asc, std::span<const std::uint8_t> raw_aac)
 {
     mpeg4_aac_t configuration{};
