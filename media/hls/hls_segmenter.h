@@ -68,7 +68,7 @@ class hls_segmenter final : public media_sink
     bool ensure_fmp4(const media_frame& frame);
     void input_av1(const media_frame& frame);
     void write_av1_frame(const media_frame& frame);
-    void input_fmp4_audio(const media_frame& frame, const media_track& track);
+    void input_fmp4_audio(const media_frame& frame);
     bool reserve_fmp4_sample(std::size_t bytes);
     bool finish_fmp4_segment(std::int64_t end_pts_ns);
 
