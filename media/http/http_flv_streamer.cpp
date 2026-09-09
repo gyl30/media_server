@@ -40,7 +40,6 @@ void http_flv_streamer::on_read(media_read_batch batch)
     reader_cursor_ = batch.next_cursor;
     batch_ = std::move(batch);
     batch_index_ = 0;
-    batch_active_ = true;
     if (apply_tracks(batch_.tracks))
     {
         return;
@@ -122,12 +121,6 @@ void http_flv_streamer::process_batch()
     {
         return;
     }
-    if (!batch_active_)
-    {
-        reader_handle().async_read(reader_cursor_);
-        return;
-    }
-
     while (batch_index_ < batch_.entries.size())
     {
         auto& entry = batch_.entries[batch_index_++];
@@ -160,7 +153,6 @@ void http_flv_streamer::process_batch()
 
     batch_ = {};
     batch_index_ = 0;
-    batch_active_ = false;
     reader_handle().async_read(reader_cursor_);
 }
 
