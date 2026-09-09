@@ -29,8 +29,6 @@ struct aac_config
 
 [[nodiscard]] std::optional<aac_config> parse_aac_asc(std::span<const std::uint8_t> asc);
 
-[[nodiscard]] std::optional<aac_config> parse_aac_adts(std::span<const std::uint8_t> adts);
-
 [[nodiscard]] std::vector<std::uint8_t> make_adts_frame(std::span<const std::uint8_t> asc, std::span<const std::uint8_t> raw_aac);
 
 [[nodiscard]] std::optional<media_track> media_track_from_avstream_config(const avstream_t& input, track_id video_track_id, track_id audio_track_id);
