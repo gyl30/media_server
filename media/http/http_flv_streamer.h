@@ -46,7 +46,6 @@ class http_flv_streamer final : public media_reader
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     std::size_t batch_index_{};
-    bool batch_active_{};
     bool waiting_for_key_frame_{};
     bool ended_{};
 };
