@@ -225,11 +225,8 @@ void gb28181_udp_receiver_session::safe_shutdown()
     rtp_transport_.shutdown();
     rtcp_transport_.shutdown();
     receiver_.shutdown();
-    if (local_ports_)
-    {
-        port_manager::instance().release(*local_ports_);
-        local_ports_.reset();
-    }
+    port_manager::instance().release(*local_ports_);
+    local_ports_.reset();
     remote_rtp_endpoint_.reset();
     remote_rtcp_endpoint_.reset();
     spdlog::debug("gb28181 udp session shutdown {}", receiver_.stream_name());
