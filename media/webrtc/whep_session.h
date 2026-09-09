@@ -102,7 +102,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::vector<media_track> pending_tracks_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
-    std::shared_ptr<webrtc_packetizer> packetizer_;
+    std::unique_ptr<webrtc_packetizer> packetizer_;
     worker_context& worker_;
     udp_yield_transport udp_transport_;
     std::deque<pending_datagram> udp_write_queue_;
