@@ -112,7 +112,7 @@ void hls_segmenter::on_frame(const media_frame& frame)
         }
         else if (track.codec == codec_id::aac)
         {
-            input_fmp4_audio(frame, track);
+            input_fmp4_audio(frame);
         }
         return;
     }
@@ -558,7 +558,7 @@ void hls_segmenter::write_av1_frame(const media_frame& frame)
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
 }
 
-void hls_segmenter::input_fmp4_audio(const media_frame& frame, const media_track& track)
+void hls_segmenter::input_fmp4_audio(const media_frame& frame)
 {
     if (fmp4_ == nullptr || fmp4_audio_track_ < 0 || frame.track != fmp4_audio_track_id_ || !frame.payload)
     {
@@ -567,7 +567,7 @@ void hls_segmenter::input_fmp4_audio(const media_frame& frame, const media_track
     const auto& data = *frame.payload;
     if (data.size() < 7U || data[0] != 0xffU || (data[1] & 0xf6U) != 0xf0U)
     {
-        spdlog::error("hls fmp4 invalid aac adts track {}", track.id);
+        spdlog::error("hls fmp4 invalid aac adts track {}", frame.track);
         return;
     }
     const std::size_t header_size = (data[1] & 0x01U) != 0U ? 7U : 9U;
@@ -588,7 +588,7 @@ void hls_segmenter::input_fmp4_audio(const media_frame& frame, const media_track
                                           MOV_AV_FLAG_SEGMENT_DISABLE);
     if (result != 0)
     {
-        spdlog::error("hls fmp4 aac write failed track {} result {}", track.id, result);
+        spdlog::error("hls fmp4 aac write failed track {} result {}", frame.track, result);
         discard_segment();
         return;
     }
