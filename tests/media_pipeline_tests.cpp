@@ -83,6 +83,7 @@ extern "C"
 #include "amf0.h"
 #include "avpbs.h"
 #include "aom-av1.h"
+#include "mpeg4-aac.h"
 #include "mpeg-ts.h"
 #include "rtp-ext.h"
 #include "flv-muxer.h"
@@ -6815,9 +6816,9 @@ void test_internal_format_contract()
     const std::vector<std::uint8_t> raw{0x11, 0x22, 0x33, 0x44};
     const auto adts = make_adts_frame(aac_asc, raw);
     require(adts.size() > raw.size(), "adts header exists");
-    const auto aac = parse_aac_adts(adts);
-    require(aac.has_value(), "parse adts");
-    require(aac->sample_rate == 44'100 && aac->channel_count == 2, "adts aac config");
+    mpeg4_aac_t aac{};
+    require(mpeg4_aac_adts_load(adts.data(), adts.size(), &aac) >= 0, "parse adts");
+    require(aac.sampling_frequency == 44'100 && mpeg4_aac_channel_count(aac.channel_configuration) == 2, "adts aac config");
 }
 
 void test_rtmp_aac_asc_adts_contract()
