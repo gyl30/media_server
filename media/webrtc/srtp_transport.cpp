@@ -57,7 +57,7 @@ std::vector<std::uint8_t> make_master_key(const std::vector<std::uint8_t>& key, 
     return result;
 }
 
-bool create_session(std::string_view profile, std::vector<std::uint8_t>& master_key, srtp_t& session)
+bool create_session(std::string_view profile, std::vector<std::uint8_t>& master_key, srtp_ssrc_type_t ssrc_type, srtp_t& session)
 {
     srtp_policy_t policy{};
     if (!set_crypto_policy(profile, policy) || master_key.empty())
@@ -65,7 +65,7 @@ bool create_session(std::string_view profile, std::vector<std::uint8_t>& master_
         return false;
     }
 
-    policy.ssrc.type = ssrc_any_outbound;
+    policy.ssrc.type = ssrc_type;
     policy.ssrc.value = 0;
     policy.key = master_key.data();
     policy.window_size = 1024;
@@ -78,6 +78,7 @@ bool create_session(std::string_view profile, std::vector<std::uint8_t>& master_
 struct srtp_transport::context
 {
     srtp_t outbound{};
+    srtp_t inbound{};
 };
 
 srtp_transport::srtp_transport() = default;
@@ -95,10 +96,18 @@ bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
     spdlog::debug("webrtc srtp transport startup profile {}", keying_material.profile);
 
     auto state = std::make_unique<struct context>();
-    auto master_key = make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
-    if (!create_session(keying_material.profile, master_key, state->outbound))
+    auto outbound_master_key = make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
+    if (!create_session(keying_material.profile, outbound_master_key, ssrc_any_outbound, state->outbound))
     {
         spdlog::debug("webrtc srtp outbound context create failed profile {}", keying_material.profile);
+        return false;
+    }
+
+    auto inbound_master_key = make_master_key(keying_material.client_write_key, keying_material.client_write_salt);
+    if (!create_session(keying_material.profile, inbound_master_key, ssrc_any_inbound, state->inbound))
+    {
+        spdlog::debug("webrtc srtp inbound context create failed profile {}", keying_material.profile);
+        srtp_dealloc(state->outbound);
         return false;
     }
 
@@ -117,6 +126,10 @@ void srtp_transport::shutdown()
     if (context_->outbound != nullptr)
     {
         srtp_dealloc(context_->outbound);
+    }
+    if (context_->inbound != nullptr)
+    {
+        srtp_dealloc(context_->inbound);
     }
     context_.reset();
 }
@@ -167,6 +180,44 @@ std::optional<std::vector<std::uint8_t>> srtp_transport::protect_rtcp(std::span<
     if (status != srtp_err_status_ok || size < 0)
     {
         spdlog::debug("webrtc srtcp protect failed status {}", static_cast<int>(status));
+        return std::nullopt;
+    }
+    output.resize(static_cast<std::size_t>(size));
+    return output;
+}
+
+std::optional<std::vector<std::uint8_t>> srtp_transport::unprotect_rtp(std::span<const std::uint8_t> packet)
+{
+    if (!context_ || packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
+    {
+        return std::nullopt;
+    }
+
+    std::vector<std::uint8_t> output(packet.begin(), packet.end());
+    int size = static_cast<int>(output.size());
+    const auto status = srtp_unprotect(context_->inbound, output.data(), &size);
+    if (status != srtp_err_status_ok || size < 0)
+    {
+        spdlog::debug("webrtc srtp unprotect failed status {}", static_cast<int>(status));
+        return std::nullopt;
+    }
+    output.resize(static_cast<std::size_t>(size));
+    return output;
+}
+
+std::optional<std::vector<std::uint8_t>> srtp_transport::unprotect_rtcp(std::span<const std::uint8_t> packet)
+{
+    if (!context_ || packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
+    {
+        return std::nullopt;
+    }
+
+    std::vector<std::uint8_t> output(packet.begin(), packet.end());
+    int size = static_cast<int>(output.size());
+    const auto status = srtp_unprotect_rtcp(context_->inbound, output.data(), &size);
+    if (status != srtp_err_status_ok || size < 0)
+    {
+        spdlog::debug("webrtc srtcp unprotect failed status {}", static_cast<int>(status));
         return std::nullopt;
     }
     output.resize(static_cast<std::size_t>(size));

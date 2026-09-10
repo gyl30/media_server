@@ -211,21 +211,22 @@ std::optional<dtls_test_client> make_dtls_test_client(const std::shared_ptr<dtls
     return client;
 }
 
-bool send_dtls_client_output(dtls_test_client& client, boost::asio::ip::udp::socket& socket, const boost::asio::ip::udp::endpoint& server_endpoint)
+std::optional<std::vector<std::vector<std::uint8_t>>> take_dtls_client_output(dtls_test_client& client)
 {
+    std::vector<std::vector<std::uint8_t>> packets;
     while (BIO_ctrl_pending(client.write_bio) > 0)
     {
         const auto pending = BIO_ctrl_pending(client.write_bio);
         if (pending == 0 || pending > static_cast<std::size_t>(INT_MAX))
         {
-            return false;
+            return std::nullopt;
         }
 
         std::vector<std::uint8_t> output(pending);
         const auto read = BIO_read(client.write_bio, output.data(), static_cast<int>(output.size()));
         if (read <= 0 || static_cast<std::size_t>(read) != output.size())
         {
-            return false;
+            return std::nullopt;
         }
 
         std::size_t offset = 0;
@@ -234,17 +235,32 @@ bool send_dtls_client_output(dtls_test_client& client, boost::asio::ip::udp::soc
             constexpr std::size_t record_header_size = 13;
             if (output.size() - offset < record_header_size)
             {
-                return false;
+                return std::nullopt;
             }
             const auto payload_size = (static_cast<std::size_t>(output[offset + 11U]) << 8U) | static_cast<std::size_t>(output[offset + 12U]);
             const auto record_size = record_header_size + payload_size;
             if (record_size > output.size() - offset)
             {
-                return false;
+                return std::nullopt;
             }
-            static_cast<void>(socket.send_to(boost::asio::buffer(output.data() + offset, record_size), server_endpoint));
+            packets.emplace_back(output.begin() + static_cast<std::ptrdiff_t>(offset),
+                                 output.begin() + static_cast<std::ptrdiff_t>(offset + record_size));
             offset += record_size;
         }
+    }
+    return packets;
+}
+
+bool send_dtls_client_output(dtls_test_client& client, boost::asio::ip::udp::socket& socket, const boost::asio::ip::udp::endpoint& server_endpoint)
+{
+    auto packets = take_dtls_client_output(client);
+    if (!packets)
+    {
+        return false;
+    }
+    for (const auto& packet : *packets)
+    {
+        static_cast<void>(socket.send_to(boost::asio::buffer(packet), server_endpoint));
     }
     return true;
 }
@@ -356,6 +372,8 @@ std::optional<test_srtp_keying_material> make_peer_srtp_material(SSL* ssl)
         .outbound =
             dtls_srtp_keying_material{
                 .profile = std::string(name),
+                .client_write_key = std::vector<std::uint8_t>(server_key, client_salt),
+                .client_write_salt = std::vector<std::uint8_t>(server_salt, material.end()),
                 .server_write_key = std::vector<std::uint8_t>(client_key, server_key),
                 .server_write_salt = std::vector<std::uint8_t>(client_salt, server_salt),
             },
@@ -376,6 +394,129 @@ void require(bool condition, std::string_view message)
     {
         fail(message);
     }
+}
+
+void test_srtp_bidirectional_transport()
+{
+    struct profile_case
+    {
+        std::string_view name;
+        std::size_t key_size;
+        std::size_t salt_size;
+    };
+
+    constexpr std::array profiles{
+        profile_case{"SRTP_AEAD_AES_128_GCM", 16, 12},
+        profile_case{"SRTP_AEAD_AES_256_GCM", 32, 12},
+        profile_case{"SRTP_AES128_CM_SHA1_80", 16, 14},
+    };
+    constexpr std::array<std::uint8_t, 15> rtp_packet{
+        0x80, 96, 0x12, 0x34, 0, 0, 0, 1, 0x11, 0x22, 0x33, 0x44, 0xaa, 0xbb, 0xcc,
+    };
+    constexpr std::array<std::uint8_t, 8> rtcp_packet{
+        0x80, 201, 0, 1, 0x11, 0x22, 0x33, 0x44,
+    };
+
+    for (const auto& profile : profiles)
+    {
+        dtls_srtp_keying_material server_material{
+            .profile = std::string(profile.name),
+            .client_write_key = std::vector<std::uint8_t>(profile.key_size, 0x11),
+            .client_write_salt = std::vector<std::uint8_t>(profile.salt_size, 0x22),
+            .server_write_key = std::vector<std::uint8_t>(profile.key_size, 0x33),
+            .server_write_salt = std::vector<std::uint8_t>(profile.salt_size, 0x44),
+        };
+        dtls_srtp_keying_material peer_material{
+            .profile = server_material.profile,
+            .client_write_key = server_material.server_write_key,
+            .client_write_salt = server_material.server_write_salt,
+            .server_write_key = server_material.client_write_key,
+            .server_write_salt = server_material.client_write_salt,
+        };
+
+        srtp_transport server;
+        srtp_transport peer;
+        require(server.startup(server_material), "srtp bidirectional server startup");
+        require(peer.startup(peer_material), "srtp bidirectional peer startup");
+
+        const auto server_rtp = server.protect_rtp(rtp_packet);
+        require(server_rtp.has_value(), "srtp bidirectional server protect rtp");
+        const auto peer_rtp = peer.unprotect_rtp(*server_rtp);
+        require(peer_rtp == std::vector<std::uint8_t>(rtp_packet.begin(), rtp_packet.end()), "srtp bidirectional peer unprotect rtp");
+        require(!peer.unprotect_rtp(*server_rtp).has_value(), "srtp bidirectional peer reject replay rtp");
+
+        const auto peer_rtp_protected = peer.protect_rtp(rtp_packet);
+        require(peer_rtp_protected.has_value(), "srtp bidirectional peer protect rtp");
+        const auto server_rtp_clear = server.unprotect_rtp(*peer_rtp_protected);
+        require(server_rtp_clear == std::vector<std::uint8_t>(rtp_packet.begin(), rtp_packet.end()), "srtp bidirectional server unprotect rtp");
+
+        const auto server_rtcp = server.protect_rtcp(rtcp_packet);
+        require(server_rtcp.has_value(), "srtp bidirectional server protect rtcp");
+        const auto peer_rtcp = peer.unprotect_rtcp(*server_rtcp);
+        require(peer_rtcp == std::vector<std::uint8_t>(rtcp_packet.begin(), rtcp_packet.end()), "srtp bidirectional peer unprotect rtcp");
+
+        const auto peer_rtcp_protected = peer.protect_rtcp(rtcp_packet);
+        require(peer_rtcp_protected.has_value(), "srtp bidirectional peer protect rtcp");
+        const auto server_rtcp_clear = server.unprotect_rtcp(*peer_rtcp_protected);
+        require(server_rtcp_clear == std::vector<std::uint8_t>(rtcp_packet.begin(), rtcp_packet.end()), "srtp bidirectional server unprotect rtcp");
+
+        server.shutdown();
+        peer.shutdown();
+    }
+}
+
+void test_dtls_srtp_key_export()
+{
+    auto server_certificate = dtls_certificate::create();
+    auto client_certificate = dtls_certificate::create();
+    require(server_certificate != nullptr && client_certificate != nullptr, "dtls key export certificates");
+
+    std::vector<std::vector<std::uint8_t>> server_output;
+    dtls_transport server(
+        server_certificate,
+        "sha-256 " + client_certificate->sha256_fingerprint(),
+        [&server_output](std::span<const std::uint8_t> packet)
+        { server_output.emplace_back(packet.begin(), packet.end()); });
+    require(server.startup(), "dtls key export server startup");
+
+    auto client = make_dtls_test_client(client_certificate, "SRTP_AEAD_AES_128_GCM");
+    require(client.has_value(), "dtls key export client create");
+
+    for (int iteration = 0; iteration < 100 && (!server.connected() || SSL_is_init_finished(client->ssl.get()) == 0); ++iteration)
+    {
+        const auto result = SSL_do_handshake(client->ssl.get());
+        if (result != 1)
+        {
+            const auto ssl_error = SSL_get_error(client->ssl.get(), result);
+            require(ssl_error == SSL_ERROR_WANT_READ || ssl_error == SSL_ERROR_WANT_WRITE, "dtls key export client handshake");
+        }
+
+        auto client_output = take_dtls_client_output(*client);
+        require(client_output.has_value(), "dtls key export client output");
+        for (const auto& packet : *client_output)
+        {
+            require(server.handle_datagram(packet), "dtls key export server input");
+        }
+
+        for (const auto& packet : server_output)
+        {
+            require(BIO_write(client->read_bio, packet.data(), static_cast<int>(packet.size())) == static_cast<int>(packet.size()),
+                    "dtls key export client input");
+        }
+        server_output.clear();
+    }
+
+    require(server.connected() && SSL_is_init_finished(client->ssl.get()) != 0, "dtls key export handshake complete");
+    const auto expected = make_peer_srtp_material(client->ssl.get());
+    require(expected.has_value(), "dtls key export expected material");
+    const auto& actual = server.srtp_keying_material();
+    require(actual.has_value(), "dtls key export server material");
+    require(actual->profile == expected->outbound.profile, "dtls key export profile");
+    require(actual->client_write_key == expected->outbound.server_write_key, "dtls key export client key");
+    require(actual->client_write_salt == expected->outbound.server_write_salt, "dtls key export client salt");
+    require(actual->server_write_key == expected->inbound_key, "dtls key export server key");
+    require(actual->server_write_salt == expected->inbound_salt, "dtls key export server salt");
+    server.shutdown();
 }
 
 std::string make_h265_offer(std::string offer)
@@ -3014,6 +3155,10 @@ int main()
 {
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::stream_registry::instance().clear();
+    media_server::test_srtp_bidirectional_transport();
+    std::cout << "[pass] srtp_bidirectional_transport\n";
+    media_server::test_dtls_srtp_key_export();
+    std::cout << "[pass] dtls_srtp_key_export\n";
     media_server::test_webrtc_sdp_answer();
     std::cout << "[pass] webrtc_sdp_answer\n";
     media_server::test_webrtc_h265_sdp_answer();
