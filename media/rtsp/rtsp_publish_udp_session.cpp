@@ -40,16 +40,10 @@ int rtsp_publish_udp_session::startup(rtsp_server_t* server,
 {
     if (!media_.startup(session_id))
     {
-        safe_shutdown();
-        return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
+        return -1;
     }
 
-    const auto result = on_setup(server, track_index, transport, session_id);
-    if (!track_states_[track_index].local_ports)
-    {
-        safe_shutdown();
-    }
-    return result;
+    return on_setup(server, track_index, transport, session_id);
 }
 
 void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yield_context yield)
@@ -130,13 +124,13 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     const auto client_address = boost::asio::ip::make_address(rtsp_server_get_client(server, nullptr), address_error);
     if (address_error)
     {
-        return rtsp_server_reply_setup(server, 461, nullptr, nullptr);
+        return -1;
     }
 
     const auto reserved = port_manager::instance().acquire_pair();
     if (!reserved)
     {
-        return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
+        return -1;
     }
     const auto local_ports = *reserved;
     state.rtp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport.rtp.u.client_port1);
@@ -172,8 +166,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     if (network_error)
     {
         cleanup();
-        const auto result = rtsp_server_reply_setup(server, 500, nullptr, nullptr);
-        return result == 0 ? -1 : result;
+        return -1;
     }
     state.local_ports = local_ports;
 
@@ -200,8 +193,7 @@ int rtsp_publish_udp_session::on_record(rtsp_server_t* server)
     }
     if (!media_.start_recording())
     {
-        const auto result = rtsp_server_reply_record(server, 453, nullptr, nullptr);
-        return result == 0 ? -1 : result;
+        return -1;
     }
 
     schedule_rtcp();
