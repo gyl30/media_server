@@ -158,7 +158,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
             answer_.audio_payload_type && answer_.audio_codec && track.kind == media_kind::audio && track.codec == *answer_.audio_codec;
         if (negotiated_video || negotiated_audio)
         {
-            track_versions_.emplace(track.id, track.config_version);
+            negotiated_tracks_.emplace(track.id, track);
         }
     }
     static_cast<void>(stream_->add_reader(shared_from_this(), worker_));
@@ -203,8 +203,7 @@ void whep_session::safe_shutdown()
         packetizer_->shutdown();
         packetizer_.reset();
     }
-    pending_tracks_.clear();
-    track_versions_.clear();
+    negotiated_tracks_.clear();
     reader_cursor_.reset();
     track_revision_ = 0;
     stream_.reset();
@@ -257,13 +256,14 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
     {
         return;
     }
+    const bool initial_snapshot = track_revision_ == 0;
     if (!apply_tracks(tracks))
     {
         spdlog::info("webrtc negotiated track changed session {}", id_);
         shutdown();
         return;
     }
-    if (packetizer_ && !start_media_read())
+    if (packetizer_ && initial_snapshot && !start_media_read())
     {
         shutdown();
     }
@@ -286,8 +286,8 @@ void whep_session::on_read(media_read_batch batch)
 
     for (auto& entry : batch.entries)
     {
-        const auto expected = track_versions_.find(entry.frame.track);
-        if (expected == track_versions_.end() || expected->second != entry.config_version)
+        const auto expected = negotiated_tracks_.find(entry.frame.track);
+        if (expected == negotiated_tracks_.end() || expected->second.config_version != entry.config_version)
         {
             continue;
         }
@@ -317,21 +317,13 @@ bool whep_session::apply_tracks(const media_track_snapshot_ptr& tracks)
         return true;
     }
 
-    std::vector<media_track> negotiated_tracks;
-    negotiated_tracks.reserve(track_versions_.size());
-    for (const auto& [id, version] : track_versions_)
+    for (const auto& [id, expected] : negotiated_tracks_)
     {
         const auto track = std::ranges::find_if(tracks->tracks, [id](const media_track& current) { return current.id == id; });
-        if (track == tracks->tracks.end() || track->config_version != version)
+        if (track == tracks->tracks.end() || track->config_version != expected.config_version)
         {
             return false;
         }
-        negotiated_tracks.push_back(*track);
-    }
-
-    if (track_revision_ == 0)
-    {
-        pending_tracks_ = std::move(negotiated_tracks);
     }
     track_revision_ = tracks->revision;
     return true;
@@ -607,14 +599,14 @@ bool whep_session::start_media_read()
         return false;
     }
 
-    for (const auto& track : pending_tracks_)
+    for (const auto& [id, track] : negotiated_tracks_)
     {
+        static_cast<void>(id);
         if (!packetizer_->on_track(track))
         {
             return false;
         }
     }
-    pending_tracks_.clear();
     reader_handle().async_read(reader_cursor_);
     return true;
 }
