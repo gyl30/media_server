@@ -137,16 +137,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
         }
     }
 
-    const auto publish_session = std::move(publish_session_);
-    const auto play_session = std::move(play_session_);
-    if (publish_session)
-    {
-        publish_session->shutdown();
-    }
-    if (play_session)
-    {
-        play_session->shutdown();
-    }
     rtsp_server_destroy(rtsp_context);
     if (interleaved.data != nullptr)
     {
@@ -388,6 +378,16 @@ void rtsp_server_connection::schedule_inactivity_timeout()
 void rtsp_server_connection::safe_shutdown()
 {
     inactivity_timer_.cancel();
+    if (publish_session_)
+    {
+        publish_session_->shutdown();
+        publish_session_.reset();
+    }
+    if (play_session_)
+    {
+        play_session_->shutdown();
+        play_session_.reset();
+    }
     transport_.shutdown();
 }
 

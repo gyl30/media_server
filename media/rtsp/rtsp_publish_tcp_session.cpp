@@ -37,15 +37,9 @@ int rtsp_publish_tcp_session::startup(rtsp_server_t* server,
 {
     if (!media_.startup(session_id))
     {
-        safe_shutdown();
-        return rtsp_server_reply_setup(server, 500, nullptr, nullptr);
+        return -1;
     }
-    const auto result = on_setup(server, track_index, transport, session_id);
-    if (track_states_[track_index].rtp_channel < 0)
-    {
-        safe_shutdown();
-    }
-    return result;
+    return on_setup(server, track_index, transport, session_id);
 }
 
 bool rtsp_publish_tcp_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
@@ -104,8 +98,7 @@ int rtsp_publish_tcp_session::on_record(rtsp_server_t* server)
     }
     if (!media_.start_recording())
     {
-        const auto result = rtsp_server_reply_record(server, 453, nullptr, nullptr);
-        return result == 0 ? -1 : result;
+        return -1;
     }
     schedule_rtcp();
     return rtsp_server_reply_record(server, 200, nullptr, nullptr);
