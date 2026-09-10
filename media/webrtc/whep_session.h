@@ -98,8 +98,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::shared_ptr<dtls_certificate> certificate_;
     video_transcode_config video_config_;
     whep_session_timeouts timeouts_;
-    std::map<track_id, std::uint64_t> track_versions_;
-    std::vector<media_track> pending_tracks_;
+    std::map<track_id, media_track> negotiated_tracks_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<webrtc_packetizer> packetizer_;

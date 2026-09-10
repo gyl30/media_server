@@ -2227,6 +2227,10 @@ void test_whep_negotiated_track_lifecycle()
     drain_io(io);
     require(video_session->local_port() != 0, "unselected audio keeps video session");
 
+    require(stream->update_track(make_audio_track()), "negotiated tracks repeated unselected audio update");
+    drain_io(io);
+    require(video_session->local_port() != 0, "repeated unselected audio keeps video session");
+
     auto updated_video = make_h265_track();
     updated_video.codec_config.push_back(0x01);
     require(stream->update_track(std::move(updated_video)), "negotiated tracks selected video update");
