@@ -5400,10 +5400,38 @@ void test_rtsp_publish_server_contract()
     {
         duplicate_session.resize(separator);
     }
-    const auto duplicate_record = duplicate_request("RECORD " + base + " RTSP/1.0\r\nCSeq: 22\r\nSession: " + duplicate_session + "\r\n\r\n");
-    require(duplicate_record.starts_with("RTSP/1.0 453"), "rtsp duplicate publisher loses first publication race");
-    require(streams.find("live/publish") == stream, "rtsp duplicate publisher cleanup keeps winner");
+    const auto duplicate_record =
+        "RECORD " + base + " RTSP/1.0\r\nCSeq: 22\r\nSession: " + duplicate_session + "\r\n\r\n";
+    boost::asio::write(duplicate, boost::asio::buffer(duplicate_record));
+
     boost::system::error_code duplicate_error;
+    duplicate.non_blocking(true, duplicate_error);
+    require(!duplicate_error, "rtsp duplicate publisher non blocking");
+    std::array<char, 1'024> duplicate_buffer{};
+    bool duplicate_closed = false;
+    const auto duplicate_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!duplicate_closed && std::chrono::steady_clock::now() < duplicate_deadline)
+    {
+        const auto bytes = duplicate.read_some(boost::asio::buffer(duplicate_buffer), duplicate_error);
+        if (!duplicate_error)
+        {
+            require(bytes == 0, "rtsp duplicate publisher record sends no response");
+        }
+        else if (duplicate_error == boost::asio::error::eof || duplicate_error == boost::asio::error::connection_reset)
+        {
+            duplicate_closed = true;
+        }
+        else if (duplicate_error != boost::asio::error::would_block && duplicate_error != boost::asio::error::try_again)
+        {
+            fail("rtsp duplicate publisher read");
+        }
+        if (!duplicate_closed)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    require(duplicate_closed, "rtsp duplicate publisher closes after publication conflict");
+    require(streams.find("live/publish") == stream, "rtsp duplicate publisher cleanup keeps winner");
     duplicate.close(duplicate_error);
 
     class frame_sink final : public media_sink
