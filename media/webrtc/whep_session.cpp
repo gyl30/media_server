@@ -291,7 +291,11 @@ void whep_session::on_read(media_read_batch batch)
         {
             continue;
         }
-        packetizer_->on_frame(entry.frame);
+        if (!packetizer_->on_frame(entry.frame))
+        {
+            shutdown();
+            return;
+        }
     }
 
     if (started_)

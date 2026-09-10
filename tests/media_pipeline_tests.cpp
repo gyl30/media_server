@@ -10067,7 +10067,7 @@ void test_webrtc_opus_passthrough()
     require(require_rtcp_sender_report(rtcp_packets.back(), cname) == rtp_ssrc(rtp_packets.back()), "webrtc opus passthrough rtcp sender state");
 
     const auto packet_count = rtp_packets.size();
-    packetizer.on_frame(make_opus_frame(60'000'001));
+    require(packetizer.on_frame(make_opus_frame(60'000'001)), "webrtc opus passthrough fractional millisecond nonfatal");
     require(rtp_packets.size() == packet_count, "webrtc opus passthrough rejects fractional millisecond");
 
     const auto extension_data_size = (2U + mid.size() + 3U) & ~std::size_t{3U};
@@ -10079,7 +10079,8 @@ void test_webrtc_opus_passthrough()
     require(std::ranges::equal(require_rtp_mid(rtp_packets.back(), mid, mid_extension_id), maximum_payload),
             "webrtc opus passthrough maximum raw payload");
 
-    packetizer.on_frame(make_opus_frame(100'000'000, std::vector<std::uint8_t>(payload_capacity + 1U, 0x66)));
+    require(packetizer.on_frame(make_opus_frame(100'000'000, std::vector<std::uint8_t>(payload_capacity + 1U, 0x66))),
+            "webrtc opus passthrough oversized packet nonfatal");
     require(rtp_packets.size() == packet_count + 1U, "webrtc opus passthrough rejects oversized packet");
     packetizer.shutdown();
 }
@@ -10165,6 +10166,24 @@ void test_webrtc_g711_passthrough()
 {
     test_webrtc_g711_passthrough_case(codec_id::g711a);
     test_webrtc_g711_passthrough_case(codec_id::g711u);
+}
+
+void test_webrtc_packetizer_runtime_failure()
+{
+    webrtc_packetizer packetizer(
+        webrtc_packetizer_config{.audio_payload_type = 111, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
+        [](std::span<const std::uint8_t>) {});
+    require(packetizer.on_track(make_audio_track()), "webrtc runtime failure audio track");
+    require(!packetizer.on_frame(media_frame{
+                .track = audio_track_id,
+                .dts_ns = 0,
+                .pts_ns = 0,
+                .key_frame = false,
+                .payload = std::make_shared<const std::vector<std::uint8_t>>(std::vector<std::uint8_t>{0x00}),
+            }),
+            "webrtc audio transcode failure reported");
+    require(packetizer.valid(), "webrtc runtime failure keeps packetizer valid");
+    packetizer.shutdown();
 }
 
 void test_webrtc_packetizer_initialization_failure()
@@ -10535,6 +10554,8 @@ int main()
     std::cout << "[pass] webrtc_opus_packetizer\n";
     media_server::test_webrtc_g711_passthrough();
     std::cout << "[pass] webrtc_g711_passthrough\n";
+    media_server::test_webrtc_packetizer_runtime_failure();
+    std::cout << "[pass] webrtc_packetizer_runtime_failure\n";
     media_server::test_webrtc_packetizer_initialization_failure();
     std::cout << "[pass] webrtc_packetizer_initialization_failure\n";
     media_server::test_webrtc_rtcp_sender();
