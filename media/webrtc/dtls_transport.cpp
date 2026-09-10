@@ -365,13 +365,19 @@ std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_mate
 
     dtls_srtp_keying_material result{
         .profile = profile,
+        .client_write_key = {},
+        .client_write_salt = {},
         .server_write_key = {},
         .server_write_salt = {},
     };
-    const auto* current = raw.data() + sizes->key_size;
-    result.server_write_key.assign(current, current + sizes->key_size);
-    current += sizes->key_size + sizes->salt_size;
-    result.server_write_salt.assign(current, current + sizes->salt_size);
+    const auto* client_key = raw.data();
+    const auto* server_key = client_key + sizes->key_size;
+    const auto* client_salt = server_key + sizes->key_size;
+    const auto* server_salt = client_salt + sizes->salt_size;
+    result.client_write_key.assign(client_key, server_key);
+    result.client_write_salt.assign(client_salt, server_salt);
+    result.server_write_key.assign(server_key, client_salt);
+    result.server_write_salt.assign(server_salt, server_salt + sizes->salt_size);
     return result;
 }
 
