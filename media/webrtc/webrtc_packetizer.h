@@ -42,7 +42,7 @@ class webrtc_packetizer final
     ~webrtc_packetizer();
 
     bool on_track(const media_track& track);
-    void on_frame(const media_frame& frame);
+    bool on_frame(const media_frame& frame);
     void shutdown();
 
     [[nodiscard]] bool valid() const noexcept;
@@ -68,8 +68,8 @@ class webrtc_packetizer final
     bool configure_rtcp(int payload_id);
     void remove_track(track_id id);
     void emit_rtcp(int payload_id);
-    void input_video(track_state& state, const media_frame& frame);
-    void input_audio(track_state& state, const media_frame& frame);
+    bool input_video(track_state& state, const media_frame& frame);
+    bool input_audio(track_state& state, const media_frame& frame);
 
     webrtc_packetizer_config config_;
     packet_handler rtp_handler_;
