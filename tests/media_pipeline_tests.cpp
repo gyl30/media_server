@@ -10173,39 +10173,45 @@ void test_webrtc_packetizer_initialization_failure()
                                 [](std::span<const std::uint8_t>) {});
     auto video = make_video_track();
     video.codec_config.clear();
-    invalid_video.on_track(video);
-    require(!invalid_video.valid(), "webrtc invalid h264 packetizer rejected");
+    require(!invalid_video.on_track(video), "webrtc invalid h264 packetizer rejected");
+    require(invalid_video.valid(), "webrtc invalid h264 packetizer remains valid");
+    invalid_video.shutdown();
 
     webrtc_packetizer invalid_audio(
         webrtc_packetizer_config{.audio_payload_type = 111, .opus_channel_count = 3, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
-    invalid_audio.on_track(make_audio_track());
-    require(!invalid_audio.valid(), "webrtc invalid opus packetizer rejected");
+    require(!invalid_audio.on_track(make_audio_track()), "webrtc invalid opus packetizer rejected");
+    require(invalid_audio.valid(), "webrtc invalid opus packetizer remains valid");
+    invalid_audio.shutdown();
 
     webrtc_packetizer invalid_mid(
         webrtc_packetizer_config{.video_payload_type = 102, .video_mid = "0123456789abcdef0", .video_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
-    invalid_mid.on_track(make_video_track());
-    require(!invalid_mid.valid(), "webrtc long mid packetizer rejected");
+    require(!invalid_mid.on_track(make_video_track()), "webrtc long mid packetizer rejected");
+    require(invalid_mid.valid(), "webrtc long mid packetizer remains valid");
+    invalid_mid.shutdown();
 
     webrtc_packetizer invalid_h264_payload(
         webrtc_packetizer_config{.video_payload_type = 72, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
-    invalid_h264_payload.on_track(make_video_track());
-    require(!invalid_h264_payload.valid(), "webrtc rtcp mux h264 payload rejected");
+    require(!invalid_h264_payload.on_track(make_video_track()), "webrtc rtcp mux h264 payload rejected");
+    require(invalid_h264_payload.valid(), "webrtc rtcp mux h264 packetizer remains valid");
+    invalid_h264_payload.shutdown();
 
     webrtc_packetizer invalid_h265_payload(
         webrtc_packetizer_config{
             .video_codec = codec_id::h265, .video_payload_type = 72, .video_mid = "0", .video_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
-    invalid_h265_payload.on_track(make_h265_track());
-    require(!invalid_h265_payload.valid(), "webrtc rtcp mux h265 payload rejected");
+    require(!invalid_h265_payload.on_track(make_h265_track()), "webrtc rtcp mux h265 payload rejected");
+    require(invalid_h265_payload.valid(), "webrtc rtcp mux h265 packetizer remains valid");
+    invalid_h265_payload.shutdown();
 
     webrtc_packetizer invalid_opus_payload(
         webrtc_packetizer_config{.audio_payload_type = 95, .opus_channel_count = 2, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
-    invalid_opus_payload.on_track(make_audio_track());
-    require(!invalid_opus_payload.valid(), "webrtc rtcp mux opus payload rejected");
+    require(!invalid_opus_payload.on_track(make_audio_track()), "webrtc rtcp mux opus payload rejected");
+    require(invalid_opus_payload.valid(), "webrtc rtcp mux opus packetizer remains valid");
+    invalid_opus_payload.shutdown();
 }
 
 void test_webrtc_rtcp_sender()

@@ -605,11 +605,10 @@ bool whep_session::start_media_read()
 
     for (const auto& track : pending_tracks_)
     {
-        packetizer_->on_track(track);
-    }
-    if (!packetizer_->valid())
-    {
-        return false;
+        if (!packetizer_->on_track(track))
+        {
+            return false;
+        }
     }
     pending_tracks_.clear();
     reader_handle().async_read(reader_cursor_);
