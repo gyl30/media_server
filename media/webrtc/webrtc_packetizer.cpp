@@ -47,11 +47,11 @@ webrtc_packetizer::webrtc_packetizer(webrtc_packetizer_config config, packet_han
 
 webrtc_packetizer::~webrtc_packetizer() = default;
 
-void webrtc_packetizer::on_track(const media_track& track)
+bool webrtc_packetizer::on_track(const media_track& track)
 {
     if (muxer_ == nullptr)
     {
-        return;
+        return false;
     }
 
     bool negotiated = false;
@@ -81,10 +81,7 @@ void webrtc_packetizer::on_track(const media_track& track)
         added = add_audio_track(track);
     }
 
-    if (negotiated && !added)
-    {
-        shutdown();
-    }
+    return !negotiated || added;
 }
 
 void webrtc_packetizer::shutdown()

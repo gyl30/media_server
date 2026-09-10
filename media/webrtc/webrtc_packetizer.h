@@ -41,7 +41,7 @@ class webrtc_packetizer final
     webrtc_packetizer(webrtc_packetizer_config config, packet_handler rtp_handler, packet_handler rtcp_handler = {});
     ~webrtc_packetizer();
 
-    void on_track(const media_track& track);
+    bool on_track(const media_track& track);
     void on_frame(const media_frame& frame);
     void shutdown();
 
