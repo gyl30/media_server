@@ -101,23 +101,24 @@ void webrtc_packetizer::shutdown()
 
 bool webrtc_packetizer::valid() const noexcept { return muxer_ != nullptr; }
 
-void webrtc_packetizer::on_frame(const media_frame& frame)
+bool webrtc_packetizer::on_frame(const media_frame& frame)
 {
     const auto iterator = track_states_.find(frame.track);
     if (iterator == track_states_.end() || iterator->second.media_id < 0 || !frame.payload)
     {
-        return;
+        return true;
     }
 
     auto& state = iterator->second;
     if (state.codec == codec_id::h264 || state.codec == codec_id::h265 || state.codec == codec_id::av1)
     {
-        input_video(state, frame);
+        return input_video(state, frame);
     }
-    else if (state.codec == codec_id::aac || state.codec == codec_id::opus || state.codec == codec_id::g711a || state.codec == codec_id::g711u)
+    if (state.codec == codec_id::aac || state.codec == codec_id::opus || state.codec == codec_id::g711a || state.codec == codec_id::g711u)
     {
-        input_audio(state, frame);
+        return input_audio(state, frame);
     }
+    return true;
 }
 
 int webrtc_packetizer::on_packet(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
@@ -559,7 +560,7 @@ void webrtc_packetizer::emit_rtcp(int payload_id)
     rtcp_handler_(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(bytes)));
 }
 
-void webrtc_packetizer::input_video(track_state& state, const media_frame& frame)
+bool webrtc_packetizer::input_video(track_state& state, const media_frame& frame)
 {
     if (state.video_transcoder_)
     {
@@ -567,7 +568,7 @@ void webrtc_packetizer::input_video(track_state& state, const media_frame& frame
         if (!state.video_transcoder_->transcode(frame, output))
         {
             spdlog::error("webrtc av1 video transcode failed track {}", frame.track);
-            return;
+            return false;
         }
 
         bool sent = false;
@@ -587,7 +588,7 @@ void webrtc_packetizer::input_video(track_state& state, const media_frame& frame
             if (result < 0)
             {
                 spdlog::error("webrtc av1 rtp packetize failed result {}", result);
-                return;
+                return false;
             }
             sent = true;
             if (encoded.key_frame)
@@ -599,14 +600,14 @@ void webrtc_packetizer::input_video(track_state& state, const media_frame& frame
         {
             emit_rtcp(state.payload_id);
         }
-        return;
+        return true;
     }
 
     if (state.waiting_key_frame)
     {
         if (!frame.key_frame)
         {
-            return;
+            return true;
         }
         state.waiting_key_frame = false;
     }
@@ -621,12 +622,13 @@ void webrtc_packetizer::input_video(track_state& state, const media_frame& frame
     if (result < 0)
     {
         spdlog::error("webrtc video rtp packetize failed codec {} result {}", to_string(state.codec), result);
-        return;
+        return false;
     }
     emit_rtcp(state.payload_id);
+    return true;
 }
 
-void webrtc_packetizer::input_audio(track_state& state, const media_frame& frame)
+bool webrtc_packetizer::input_audio(track_state& state, const media_frame& frame)
 {
     if (state.codec == codec_id::opus || state.codec == codec_id::g711a || state.codec == codec_id::g711u)
     {
@@ -635,7 +637,7 @@ void webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
         {
             spdlog::error(
                 "webrtc audio passthrough timestamp precision unsupported track {} pts_ns {} dts_ns {}", frame.track, frame.pts_ns, frame.dts_ns);
-            return;
+            return true;
         }
 
         const auto packet_size = rtp_packet_getsize();
@@ -644,7 +646,7 @@ void webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
         {
             spdlog::error(
                 "webrtc audio passthrough packet too large track {} bytes {} capacity {}", frame.track, frame.payload->size(), payload_capacity);
-            return;
+            return true;
         }
 
         const auto result = rtsp_muxer_input(muxer_,
@@ -657,21 +659,21 @@ void webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
         if (result < 0)
         {
             spdlog::error("webrtc audio rtp packetize failed codec {} result {}", to_string(state.codec), result);
-            return;
+            return false;
         }
         emit_rtcp(state.payload_id);
-        return;
+        return true;
     }
 
     if (!state.transcoder)
     {
-        return;
+        return true;
     }
     std::vector<media_frame> packets;
     if (!state.transcoder->transcode(frame, packets))
     {
         spdlog::error("webrtc audio transcode failed track {}", frame.track);
-        return;
+        return false;
     }
 
     bool sent = false;
@@ -683,7 +685,7 @@ void webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
         if (result < 0)
         {
             spdlog::error("webrtc opus rtp packetize failed result {}", result);
-            return;
+            return false;
         }
         sent = true;
     }
@@ -692,6 +694,7 @@ void webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
     {
         emit_rtcp(state.payload_id);
     }
+    return true;
 }
 
 }    // namespace media_server
