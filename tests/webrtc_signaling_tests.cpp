@@ -3180,8 +3180,10 @@ media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
     };
 }
 
-void test_whip_session_ingest()
+void test_whip_session_ingest(codec_id video_codec)
 {
+    require(video_codec == codec_id::h264 || video_codec == codec_id::h265, "whip input video codec");
+    const bool h265 = video_codec == codec_id::h265;
     worker_context worker;
     worker.release_work();
     worker.io().restart();
@@ -3193,13 +3195,31 @@ void test_whip_session_ingest()
     auto client_certificate = dtls_certificate::create();
     require(server_certificate != nullptr && client_certificate != nullptr, "whip dtls certificates");
 
-    const auto offer = parse_webrtc_offer(make_whip_offer(offer_with_fingerprint(client_certificate->sha256_fingerprint())));
+    auto offer_sdp = offer_with_fingerprint(client_certificate->sha256_fingerprint());
+    if (h265)
+    {
+        offer_sdp = make_h265_offer(std::move(offer_sdp));
+        const auto audio_offset = offer_sdp.find("m=audio ");
+        require(audio_offset != std::string::npos, "whip h265 video only audio section");
+        offer_sdp.erase(audio_offset);
+        constexpr std::string_view bundle = "a=group:BUNDLE 0 1\r\n";
+        const auto bundle_offset = offer_sdp.find(bundle);
+        require(bundle_offset != std::string::npos, "whip h265 video only bundle");
+        offer_sdp.replace(bundle_offset, bundle.size(), "a=group:BUNDLE 0\r\n");
+    }
+    const auto offer = parse_webrtc_offer(make_whip_offer(std::move(offer_sdp)));
     require(offer.has_value(), "whip session parse offer");
 
+    const std::string stream_name = h265 ? "live/whip-dtls-h265" : "live/whip-dtls";
     auto session = std::make_shared<whip_session>(
-        worker, "live/whip-dtls", boost::asio::ip::make_address("127.0.0.1"), server_certificate);
+        worker, stream_name, boost::asio::ip::make_address("127.0.0.1"), server_certificate);
     require(session->startup(*offer) == whip_session_startup_error::none, "whip session startup");
     require(session->answer_sdp().find("a=recvonly\r\n") != std::string::npos, "whip session recvonly answer");
+    if (h265)
+    {
+        require(session->answer_sdp().find("a=rtpmap:102 H265/90000\r\n") != std::string::npos, "whip h265 session answer");
+        require(session->answer_sdp().find("m=audio ") == std::string::npos, "whip h265 session video only answer");
+    }
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
     const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
@@ -3227,17 +3247,17 @@ void test_whip_session_ingest()
     std::size_t rtcp_packets = 0;
     webrtc_packetizer packetizer(
         webrtc_packetizer_config{
-            .video_codec = codec_id::h264,
+            .video_codec = video_codec,
             .audio_codec = codec_id::aac,
             .video_payload_type = 102,
-            .audio_payload_type = 111,
+            .audio_payload_type = h265 ? -1 : 111,
             .opus_channel_count = 2,
             .opus_bitrate = 128'000,
             .opus_max_playback_rate = 48'000,
             .video_mid = "0",
-            .audio_mid = "1",
+            .audio_mid = h265 ? "" : "1",
             .video_mid_extension_id = 4,
-            .audio_mid_extension_id = 4,
+            .audio_mid_extension_id = h265 ? -1 : 4,
             .rtcp_cname = "whip-test-client",
         },
         [&](std::span<const std::uint8_t> packet)
@@ -3260,23 +3280,32 @@ void test_whip_session_ingest()
             }
         });
     require(packetizer.valid(), "whip input packetizer valid");
-    require(packetizer.on_track(make_video_track()), "whip input video track");
-    require(packetizer.on_track(make_audio_track()), "whip input audio track");
+    require(packetizer.on_track(h265 ? make_h265_track() : make_video_track()), "whip input video track");
+    if (!h265)
+    {
+        require(packetizer.on_track(make_audio_track()), "whip input audio track");
+    }
 
-    auto key_video = make_video_key_frame(codec_id::h264);
-    auto key_payload = std::make_shared<std::vector<std::uint8_t>>(h264_config);
+    auto key_video = make_video_key_frame(video_codec);
+    auto key_payload = std::make_shared<std::vector<std::uint8_t>>(h265 ? h265_config : h264_config);
     key_payload->insert(key_payload->end(), key_video.payload->begin(), key_video.payload->end());
     key_video.payload = std::move(key_payload);
     require(packetizer.on_frame(key_video), "whip input video key frame");
-    auto next_video = make_video_key_frame(codec_id::h264);
+    auto next_video = make_video_key_frame(video_codec);
     next_video.pts_ns = 40'000'000;
     next_video.dts_ns = 40'000'000;
-    next_video.key_frame = false;
-    next_video.payload = std::make_shared<const std::vector<std::uint8_t>>(
-        std::initializer_list<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x11});
+    if (!h265)
+    {
+        next_video.key_frame = false;
+        next_video.payload = std::make_shared<const std::vector<std::uint8_t>>(
+            std::initializer_list<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x11});
+    }
     require(packetizer.on_frame(next_video), "whip input video flush frame");
     require(packetize_ok, "whip input srtp protect");
-    require(rtcp_packets > 0U, "whip input srtcp generated");
+    if (!h265)
+    {
+        require(rtcp_packets > 0U, "whip input srtcp generated");
+    }
 
     const auto publish_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     std::shared_ptr<media_stream> published;
@@ -3284,12 +3313,16 @@ void test_whip_session_ingest()
     {
         io.run_for(std::chrono::milliseconds(10));
         io.restart();
-        published = streams.find("live/whip-dtls");
+        published = streams.find(stream_name);
     }
     require(published != nullptr, "whip session publishes received stream");
     const auto tracks = published->tracks();
-    require(tracks.size() == 2U && tracks[0].codec == codec_id::h264 && tracks[1].codec == codec_id::aac,
-            "whip session internal track contract");
+    require(tracks.size() == (h265 ? 1U : 2U) && tracks[0].codec == video_codec && !tracks[0].codec_config.empty(),
+            "whip session internal video track contract");
+    if (!h265)
+    {
+        require(tracks[1].codec == codec_id::aac, "whip session internal audio track contract");
+    }
 
     session->shutdown();
     const auto shutdown_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -3299,7 +3332,7 @@ void test_whip_session_ingest()
         io.restart();
     }
     require(session->local_port() == 0U, "whip session shutdown port");
-    require(streams.find("live/whip-dtls") == nullptr, "whip session shutdown removes stream");
+    require(streams.find(stream_name) == nullptr, "whip session shutdown removes stream");
 
     packetizer.shutdown();
     peer_srtp.shutdown();
@@ -3655,8 +3688,10 @@ int main()
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();
     std::cout << "[pass] whep_selected_bundle_transport\n";
-    media_server::test_whip_session_ingest();
+    media_server::test_whip_session_ingest(media_server::codec_id::h264);
     std::cout << "[pass] whip_session_ingest\n";
+    media_server::test_whip_session_ingest(media_server::codec_id::h265);
+    std::cout << "[pass] whip_h265_session_ingest\n";
     media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AEAD_AES_128_GCM", true);
     std::cout << "[pass] whep_dtls_h264_gcm128\n";
     media_server::test_whep_dtls(media_server::codec_id::h265, "SRTP_AEAD_AES_256_GCM", false);
