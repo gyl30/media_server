@@ -1016,4 +1016,203 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     };
 }
 
+
+std::optional<webrtc_answer> make_whip_answer(const webrtc_offer& offer, const webrtc_answer_config& config)
+{
+    if (config.port == 0 || config.ice_ufrag.empty() || config.ice_pwd.empty() || config.fingerprint.empty())
+    {
+        return std::nullopt;
+    }
+
+    const auto transport = select_bundle_transport(offer);
+    if (!transport)
+    {
+        return std::nullopt;
+    }
+    const auto& transport_mid = transport->mid;
+    const auto address_type = config.address.is_v6() ? "IP6" : "IP4";
+
+    const auto h264_supported = [](const webrtc_codec_offer& codec)
+    {
+        if (!rtcp_mux_payload_type_allowed(codec.payload_type) || lower_copy(codec.encoding_name) != "h264" || codec.clock_rate != 90'000U ||
+            !has_parameter(codec.format_parameters, "packetization-mode", "1"))
+        {
+            return false;
+        }
+        const auto profile_level_id = parameter_value(codec.format_parameters, "profile-level-id");
+        if (!profile_level_id)
+        {
+            return true;
+        }
+        std::uint32_t value = 0;
+        const auto [pointer, error] = std::from_chars(profile_level_id->data(), profile_level_id->data() + profile_level_id->size(), value, 16);
+        return profile_level_id->size() == 6U && error == std::errc{} && pointer == profile_level_id->data() + profile_level_id->size();
+    };
+    const auto h265_supported = [](const webrtc_codec_offer& codec)
+    {
+        const auto encoding = lower_copy(codec.encoding_name);
+        if (!rtcp_mux_payload_type_allowed(codec.payload_type) || (encoding != "h265" && encoding != "hevc") || codec.clock_rate != 90'000U)
+        {
+            return false;
+        }
+        const auto profile_space = decimal_parameter(codec.format_parameters, "profile-space", 0, 3);
+        const auto profile = decimal_parameter(codec.format_parameters, "profile-id", 1, 31);
+        const auto tier = decimal_parameter(codec.format_parameters, "tier-flag", 0, 1);
+        const auto level = decimal_parameter(codec.format_parameters, "level-id", 93, 255);
+        const auto tx_mode = parameter_value(codec.format_parameters, "tx-mode");
+        return profile_space && profile && tier && level && (!tx_mode || lower_copy(*tx_mode) == "srst");
+    };
+
+    std::vector<std::string> media_answers(offer.media.size());
+    std::vector<std::string> accepted_mids;
+    std::optional<codec_id> video_codec;
+    std::optional<int> video_payload_type;
+    std::optional<int> audio_payload_type;
+    std::optional<std::string> video_mid;
+    std::optional<std::string> audio_mid;
+    std::optional<int> video_mid_extension_id;
+    std::optional<int> audio_mid_extension_id;
+    std::optional<int> bundle_mid_extension_id;
+
+    for (const auto media_index : transport->negotiation_order)
+    {
+        const auto& media = offer.media[media_index];
+        std::ostringstream media_answer;
+        const auto media_direction = lower_copy(media.direction);
+        const bool can_send = bundle_contains(offer, media.mid) && bundle_media_supported(media) &&
+                              (!bundle_mid_extension_id || *bundle_mid_extension_id == *media.mid_extension_id) &&
+                              (media_direction == "sendrecv" || media_direction == "sendonly");
+        const webrtc_codec_offer* codec = nullptr;
+        std::optional<codec_id> selected_video_codec;
+
+        if (can_send && lower_copy(media.type) == "video" && !video_payload_type)
+        {
+            for (const auto payload_type : media.payload_types)
+            {
+                const auto iterator = std::find_if(media.codecs.begin(),
+                                                   media.codecs.end(),
+                                                   [payload_type](const webrtc_codec_offer& offered)
+                                                   { return offered.payload_type == payload_type; });
+                if (iterator == media.codecs.end())
+                {
+                    continue;
+                }
+                if (h264_supported(*iterator))
+                {
+                    codec = &*iterator;
+                    selected_video_codec = codec_id::h264;
+                    break;
+                }
+                if (h265_supported(*iterator))
+                {
+                    codec = &*iterator;
+                    selected_video_codec = codec_id::h265;
+                    break;
+                }
+            }
+        }
+        else if (can_send && lower_copy(media.type) == "audio" && !audio_payload_type)
+        {
+            codec = find_opus(media);
+        }
+
+        if (codec != nullptr && ((video_payload_type && *video_payload_type == codec->payload_type) ||
+                                 (audio_payload_type && *audio_payload_type == codec->payload_type)))
+        {
+            codec = nullptr;
+            selected_video_codec.reset();
+        }
+
+        if (codec == nullptr)
+        {
+            if (media.mid == transport_mid)
+            {
+                return std::nullopt;
+            }
+            media_answer << "m=" << media.type << " 0 " << media.protocol;
+            for (const auto& format : media.formats)
+            {
+                media_answer << ' ' << format;
+            }
+            media_answer << "\r\n";
+            media_answer << "c=IN " << address_type << ' ' << (config.address.is_v6() ? "::" : "0.0.0.0") << "\r\n";
+            media_answer << "a=mid:" << media.mid << "\r\n";
+            media_answers[media_index] = media_answer.str();
+            continue;
+        }
+
+        accepted_mids.push_back(media.mid);
+        if (selected_video_codec)
+        {
+            video_codec = selected_video_codec;
+            video_payload_type = codec->payload_type;
+            video_mid = media.mid;
+            video_mid_extension_id = media.mid_extension_id;
+            bundle_mid_extension_id = media.mid_extension_id;
+        }
+        else
+        {
+            audio_payload_type = codec->payload_type;
+            audio_mid = media.mid;
+            audio_mid_extension_id = media.mid_extension_id;
+            bundle_mid_extension_id = media.mid_extension_id;
+        }
+
+        media_answer << "m=" << media.type << ' ' << config.port << ' ' << media.protocol << ' ' << codec->payload_type << "\r\n";
+        media_answer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";
+        media_answer << "a=mid:" << media.mid << "\r\n";
+        media_answer << "a=extmap:" << *media.mid_extension_id << ' ' << mid_extension_uri << "\r\n";
+        media_answer << "a=recvonly\r\n";
+
+        if (selected_video_codec == codec_id::h264)
+        {
+            media_answer << "a=rtpmap:" << codec->payload_type << " H264/90000\r\n";
+            media_answer << "a=fmtp:" << codec->payload_type << " packetization-mode=1";
+            if (has_parameter(codec->format_parameters, "level-asymmetry-allowed", "1"))
+            {
+                media_answer << ";level-asymmetry-allowed=1";
+            }
+            if (const auto profile_level_id = parameter_value(codec->format_parameters, "profile-level-id"))
+            {
+                media_answer << ";profile-level-id=" << *profile_level_id;
+            }
+            media_answer << "\r\n";
+        }
+        else if (selected_video_codec == codec_id::h265)
+        {
+            media_answer << "a=rtpmap:" << codec->payload_type << " H265/90000\r\n";
+            if (!codec->format_parameters.empty())
+            {
+                media_answer << "a=fmtp:" << codec->payload_type << ' ' << codec->format_parameters << "\r\n";
+            }
+        }
+        else
+        {
+            media_answer << "a=rtpmap:" << codec->payload_type << " opus/48000/2\r\n";
+        }
+        media_answers[media_index] = media_answer.str();
+    }
+
+    if (!video_payload_type)
+    {
+        return std::nullopt;
+    }
+
+    return webrtc_answer{
+        .sdp = build_answer_sdp(offer, config, address_type, transport_mid, accepted_mids, media_answers),
+        .transport_mid = transport_mid,
+        .video_codec = video_codec,
+        .audio_codec = audio_payload_type ? std::optional<codec_id>{codec_id::opus} : std::nullopt,
+        .video_payload_type = video_payload_type,
+        .audio_payload_type = audio_payload_type,
+        .video_mid = video_mid,
+        .audio_mid = audio_mid,
+        .video_mid_extension_id = video_mid_extension_id,
+        .audio_mid_extension_id = audio_mid_extension_id,
+        .audio_channel_count = audio_payload_type ? std::optional<int>{2} : std::nullopt,
+        .audio_bitrate = std::nullopt,
+        .audio_max_playback_rate = std::nullopt,
+    };
+}
+
 }    // namespace media_server
