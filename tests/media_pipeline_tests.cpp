@@ -10152,6 +10152,71 @@ void test_whip_media_receiver()
             require(audio_frame != sink->frames().end() && audio_frame->payload && audio_frame->payload->size() > 7U &&
                         (*audio_frame->payload)[0] == 0xffU && ((*audio_frame->payload)[1] & 0xf6U) == 0xf0U,
                     "whip media receiver publishes aac adts");
+
+            worker_context rtsp_worker;
+            boost::asio::ip::tcp::acceptor acceptor(rtsp_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+            boost::asio::io_context client_io;
+            test::rtsp_test_client client(client_io, "/" + stream_name);
+            auto future = boost::asio::co_spawn(
+                client_io, client.play("127.0.0.1", acceptor.local_endpoint().port(), 2), boost::asio::use_future);
+            std::jthread client_runner([&client_io]() { client_io.run(); });
+
+            auto connection = std::make_shared<rtsp_server_connection>(
+                rtsp_worker, acceptor.accept(), video_transcode_codec{});
+            connection->startup();
+            std::jthread rtsp_runner([&rtsp_worker]() { rtsp_worker.run(); });
+
+            boost::asio::post(io,
+                              [&]()
+                              {
+                                  require(packetizer.on_frame(make_video_frame(300'000'000, true)), "whip rtsp video key frame");
+                                  require(packetizer.on_frame(make_video_frame(340'000'000, false)), "whip rtsp video flush frame");
+                                  std::int64_t pts_ns = 300'000'000;
+                                  for (const auto& adts : valid_aac_adts_frames)
+                                  {
+                                      require(packetizer.on_frame(media_frame{
+                                                  .track = audio_track_id,
+                                                  .dts_ns = pts_ns,
+                                                  .pts_ns = pts_ns,
+                                                  .key_frame = false,
+                                                  .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                                              }),
+                                              "whip rtsp audio frame");
+                                      pts_ns += 23'219'954;
+                                  }
+                              });
+
+            const auto rtsp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            while (future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready &&
+                   std::chrono::steady_clock::now() < rtsp_deadline)
+            {
+                io.run_for(std::chrono::milliseconds(10));
+                io.restart();
+            }
+            require(future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready && !future.get(), "whip rtsp play");
+            require(client.sdp().find("H264/90000") != std::string::npos, "whip rtsp h264 sdp");
+            require(client.sdp().find("mpeg4-generic/48000/2") != std::string::npos && client.sdp().find("config=") != std::string::npos,
+                    "whip rtsp aac sdp");
+
+            const auto& rtsp_rtp = client.rtp_by_channel();
+            require(rtsp_rtp.contains(0) && rtsp_rtp.contains(2), "whip rtsp receives video and audio rtp");
+            rtp_packet_t video_rtp{};
+            rtp_packet_t audio_rtp{};
+            require(rtp_packet_deserialize(&video_rtp, rtsp_rtp.at(0).data(), static_cast<int>(rtsp_rtp.at(0).size())) == 0 &&
+                        video_rtp.payloadlen > 0 &&
+                        client.sdp().find("a=rtpmap:" + std::to_string(video_rtp.rtp.pt) + " H264/90000") != std::string::npos,
+                    "whip rtsp video rtp");
+            require(rtp_packet_deserialize(&audio_rtp, rtsp_rtp.at(2).data(), static_cast<int>(rtsp_rtp.at(2).size())) == 0 &&
+                        audio_rtp.payloadlen > 0 &&
+                        client.sdp().find("a=rtpmap:" + std::to_string(audio_rtp.rtp.pt) + " mpeg4-generic/48000/2") != std::string::npos,
+                    "whip rtsp audio rtp");
+
+            connection->shutdown();
+            rtsp_worker.release_work();
+            rtsp_runner.join();
+            client_runner.join();
+            io.run();
+            io.restart();
         }
 
         const auto initial_video_version = stream->tracks().front().config_version;
