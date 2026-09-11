@@ -43,8 +43,10 @@ boost::asio::awaitable<boost::system::error_code> rtsp_test_client::publish(
     co_return error;
 }
 
-boost::asio::awaitable<boost::system::error_code> rtsp_test_client::play(std::string host, std::uint16_t port)
+boost::asio::awaitable<boost::system::error_code> rtsp_test_client::play(std::string host, std::uint16_t port, std::size_t rtp_media_count)
 {
+    rtp_.clear();
+    rtp_by_channel_.clear();
     auto error = co_await start(std::move(host), port, mode::play);
     if (error)
     {
@@ -52,7 +54,7 @@ boost::asio::awaitable<boost::system::error_code> rtsp_test_client::play(std::st
     }
 
     std::array<std::uint8_t, 8192> read_buffer{};
-    while (rtp_.empty())
+    while (rtp_by_channel_.size() < rtp_media_count)
     {
         const auto bytes = co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
         if (error || rtsp_client_input(client_, read_buffer.data(), bytes) != 0)
@@ -141,7 +143,8 @@ int rtsp_test_client::announce_callback(void* param)
 int rtsp_test_client::describe_callback(void* param, const char* sdp, int len)
 {
     auto* self = static_cast<rtsp_test_client*>(param);
-    return rtsp_client_setup(self->client_, sdp, len);
+    self->sdp_.assign(sdp, static_cast<std::size_t>(len));
+    return rtsp_client_setup(self->client_, self->sdp_.c_str(), static_cast<int>(self->sdp_.size()));
 }
 
 int rtsp_test_client::setup_callback(void* param, int, std::int64_t)
@@ -190,8 +193,10 @@ void rtsp_test_client::rtp_callback(void* param, std::uint8_t channel, const voi
 {
     if ((channel % 2U) == 0U && bytes != 0)
     {
+        auto* self = static_cast<rtsp_test_client*>(param);
         const auto* rtp = static_cast<const std::uint8_t*>(data);
-        static_cast<rtsp_test_client*>(param)->rtp_.assign(rtp, rtp + bytes);
+        self->rtp_.assign(rtp, rtp + bytes);
+        self->rtp_by_channel_[channel] = self->rtp_;
     }
 }
 
