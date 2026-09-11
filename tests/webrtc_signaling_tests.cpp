@@ -7,6 +7,7 @@
 #include <vector>
 #include <climits>
 #include <cstdlib>
+#include <charconv>
 #include <utility>
 #include <iostream>
 #include <string_view>
@@ -1339,6 +1340,100 @@ void test_whip_http_lifecycle()
     require(recreated.result() == boost::beast::http::status::created, "whip reservation released after delete");
     require(peer.remove(std::string(recreated[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
             "whip recreated delete");
+}
+
+void test_whip_http_self_shutdown_releases_reservation()
+{
+    whep_http_test_peer peer;
+    const auto offer = make_whip_offer(webrtc_offer_sdp);
+    const std::string stream_path = "/publish/whip/live/whip-self-shutdown";
+
+    const auto created = peer.post(stream_path, offer);
+    require(created.result() == boost::beast::http::status::created, "whip self shutdown create");
+    const auto location = std::string(created[boost::beast::http::field::location]);
+    require(location.starts_with("/publish/whip/session/"), "whip self shutdown location");
+
+    const auto local_ufrag = sdp_attribute(created.body(), "ice-ufrag");
+    const auto local_pwd = sdp_attribute(created.body(), "ice-pwd");
+    const auto remote_ufrag = sdp_attribute(offer, "ice-ufrag");
+    require(!local_ufrag.empty() && !local_pwd.empty() && !remote_ufrag.empty(), "whip self shutdown ice credentials");
+
+    constexpr std::string_view video_prefix = "m=video ";
+    const auto video_offset = created.body().find(video_prefix);
+    require(video_offset != std::string::npos, "whip self shutdown video mline");
+    const auto port_begin = video_offset + video_prefix.size();
+    const auto port_end = created.body().find(' ', port_begin);
+    require(port_end != std::string::npos, "whip self shutdown video port range");
+    unsigned int port = 0;
+    const auto [port_pointer, port_error] =
+        std::from_chars(created.body().data() + port_begin, created.body().data() + port_end, port);
+    require(port_error == std::errc{} && port_pointer == created.body().data() + port_end && port > 0U && port <= 65'535U,
+            "whip self shutdown video port");
+
+    boost::asio::io_context io;
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::address_v4::loopback(), static_cast<std::uint16_t>(port));
+    const std::array<std::uint8_t, 12> nominate_id{8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8};
+    require_stun_success(
+        exchange_stun(io, client, server_endpoint, make_stun_request(local_ufrag + ":" + remote_ufrag, local_pwd, nominate_id, true)), nominate_id);
+
+    const std::array<std::uint8_t, 15> fatal_dtls_alert{
+        21, 0xfe, 0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x28,
+    };
+    static_cast<void>(client.send_to(boost::asio::buffer(fatal_dtls_alert), server_endpoint));
+
+    boost::beast::http::response<boost::beast::http::string_body> replacement;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    do
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        replacement = peer.post(stream_path, offer);
+        if (replacement.result() == boost::beast::http::status::created)
+        {
+            break;
+        }
+        require(replacement.result() == boost::beast::http::status::conflict, "whip self shutdown reservation pending");
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    require(replacement.result() == boost::beast::http::status::created, "whip self shutdown releases reservation");
+    require(peer.remove(location).result() == boost::beast::http::status::not_found, "whip self shutdown old session missing");
+    require(peer.remove(std::string(replacement[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
+            "whip self shutdown replacement delete");
+}
+
+void test_whip_establishment_timeout()
+{
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
+
+    const auto offer = parse_webrtc_offer(make_whip_offer(webrtc_offer_sdp));
+    require(offer.has_value(), "whip establishment timeout parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "whip establishment timeout certificate");
+
+    auto session = std::make_shared<whip_session>(worker,
+                                                  "live/whip-establishment-timeout",
+                                                  boost::asio::ip::make_address("127.0.0.1"),
+                                                  certificate,
+                                                  whip_session_timeouts{
+                                                      .establishment = std::chrono::milliseconds(20),
+                                                      .ice_activity = std::chrono::seconds(1),
+                                                  });
+    require(session->startup(*offer) == whip_session_startup_error::none, "whip establishment timeout session startup");
+    require(session->local_port() != 0, "whip establishment timeout socket open");
+
+    io.run_for(std::chrono::milliseconds(80));
+    io.restart();
+
+    require(session->local_port() == 0, "whip establishment timeout closes socket");
+    require(!session->ice_connected(), "whip establishment timeout clears ice");
+    require(!session->dtls_connected() && !session->srtp_started(), "whip establishment timeout clears media transport");
+
+    session->shutdown();
+    drain_io(io);
+    require(session->local_port() == 0, "whip establishment timeout repeated shutdown ignored");
 }
 
 void test_whip_sdp_answer()
@@ -3540,10 +3635,14 @@ int main()
     std::cout << "[pass] whep_http_cors\n";
     media_server::test_whip_http_lifecycle();
     std::cout << "[pass] whip_http_lifecycle\n";
+    media_server::test_whip_http_self_shutdown_releases_reservation();
+    std::cout << "[pass] whip_http_self_shutdown_releases_reservation\n";
     media_server::test_whep_multi_session_isolation();
     std::cout << "[pass] whep_multi_session_isolation\n";
     media_server::test_whep_establishment_timeout();
     std::cout << "[pass] whep_establishment_timeout\n";
+    media_server::test_whip_establishment_timeout();
+    std::cout << "[pass] whip_establishment_timeout\n";
     media_server::test_whep_ice_activity_timeout();
     std::cout << "[pass] whep_ice_activity_timeout\n";
     media_server::test_stun_ice_connectivity_check_contract();
