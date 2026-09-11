@@ -6,6 +6,7 @@
 #include <boost/url/parse.hpp>
 
 #include "media/http/whep_http.h"
+#include "media/http/whip_http.h"
 #include "media/http/gb28181_http.h"
 #include "media/http/http_session.h"
 #include "media/net/io_context_pool.h"
@@ -80,6 +81,11 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     if (path == "/play/whep" || path.starts_with("/play/whep/"))
     {
         write_string_response(request, media_server::handle_whep_request(request, worker_, *parsed, config_), yield);
+        return;
+    }
+    if (path == "/publish/whip" || path.starts_with("/publish/whip/"))
+    {
+        write_string_response(request, media_server::handle_whip_request(request, worker_, *parsed, config_), yield);
         return;
     }
     if (path == "/play/hls" || path.starts_with("/play/hls/"))
