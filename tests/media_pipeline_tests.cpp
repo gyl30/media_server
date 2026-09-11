@@ -7851,6 +7851,97 @@ void test_audio_transcoder_aac_opus()
     transcoder.shutdown();
 }
 
+void test_audio_transcoder_opus_aac()
+{
+    const audio_transcoder_config opus_config{
+        .input =
+            audio_transcoder_format{
+                .codec = codec_id::aac,
+                .sample_rate = 44'100,
+                .channel_count = 2,
+            },
+        .output =
+            audio_transcoder_format{
+                .codec = codec_id::opus,
+                .sample_rate = 48'000,
+                .channel_count = 2,
+            },
+        .input_codec_config = aac_asc,
+        .output_bit_rate = 128'000,
+        .output_cutoff = 20'000,
+    };
+
+    audio_transcoder opus_encoder;
+    require(opus_encoder.startup(opus_config), "opus aac fixture encoder startup");
+
+    std::vector<media_frame> opus_frames;
+    std::int64_t pts_ns = 37'000'000;
+    for (const auto& adts : valid_aac_adts_frames)
+    {
+        require(opus_encoder.transcode(
+                    media_frame{
+                        .track = audio_track_id,
+                        .dts_ns = pts_ns,
+                        .pts_ns = pts_ns,
+                        .key_frame = false,
+                        .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                    },
+                    opus_frames),
+                "opus aac fixture encode");
+        pts_ns += 23'219'954;
+    }
+    require(!opus_frames.empty(), "opus aac fixture packets");
+
+    audio_transcoder aac_encoder;
+    require(aac_encoder.startup(audio_transcoder_config{
+                .input =
+                    audio_transcoder_format{
+                        .codec = codec_id::opus,
+                        .sample_rate = 48'000,
+                        .channel_count = 2,
+                    },
+                .output =
+                    audio_transcoder_format{
+                        .codec = codec_id::aac,
+                        .sample_rate = 48'000,
+                        .channel_count = 2,
+                    },
+                .input_codec_config = {},
+                .output_bit_rate = 128'000,
+                .output_cutoff = 20'000,
+            }),
+            "opus aac transcoder startup");
+
+    const auto output_config = aac_encoder.output_codec_config();
+    const auto aac_config = parse_aac_asc(output_config);
+    require(aac_config && aac_config->sample_rate == 48'000 && aac_config->channel_count == 2, "opus aac output asc");
+
+    std::vector<media_frame> aac_frames;
+    for (const auto& opus : opus_frames)
+    {
+        require(aac_encoder.transcode(opus, aac_frames), "opus aac transcode");
+    }
+    require(!aac_frames.empty(), "opus aac streaming output");
+    require(aac_frames.front().track == audio_track_id && aac_frames.front().pts_ns == opus_frames.front().pts_ns,
+            "opus aac output timeline origin");
+
+    for (std::size_t index = 0; index < aac_frames.size(); ++index)
+    {
+        const auto& frame = aac_frames[index];
+        require(frame.payload && !frame.payload->empty(), "opus aac adts payload");
+        require(frame.dts_ns == frame.pts_ns, "opus aac output dts");
+        if (index > 0)
+        {
+            require(frame.pts_ns > aac_frames[index - 1U].pts_ns, "opus aac continuous output timeline");
+        }
+
+        mpeg4_aac_t aac{};
+        require(mpeg4_aac_adts_load(frame.payload->data(), frame.payload->size(), &aac) >= 0, "opus aac output adts");
+        require(aac.profile == MPEG4_AAC_LC && aac.sampling_frequency == 48'000 && mpeg4_aac_channel_count(aac.channel_configuration) == 2,
+                "opus aac output format");
+    }
+}
+
 void test_audio_transcoder_timestamp_compensation()
 {
     const audio_transcoder_config config{
@@ -10388,6 +10479,8 @@ int main()
     std::cout << "[pass] rtsp_aac_adts_round_trip\n";
     media_server::test_audio_transcoder_aac_opus();
     std::cout << "[pass] audio_transcoder_aac_opus\n";
+    media_server::test_audio_transcoder_opus_aac();
+    std::cout << "[pass] audio_transcoder_opus_aac\n";
     media_server::test_audio_transcoder_timestamp_compensation();
     std::cout << "[pass] audio_transcoder_timestamp_compensation\n";
     media_server::test_video_transcoder_h26x_av1();

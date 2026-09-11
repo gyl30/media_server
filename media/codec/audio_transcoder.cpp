@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/audio_transcoder.h"
+#include "media/codec/codec_utils.h"
 
 extern "C"
 {
@@ -82,6 +83,9 @@ struct audio_transcoder::state
     std::int64_t next_encoder_pts{};
     std::int64_t next_output_pts_ns{};
     track_id output_track{};
+    codec_id input_codec{};
+    codec_id output_codec{};
+    std::vector<std::uint8_t> output_codec_config;
     int encoded_frame_capacity{};
     bool timeline_started{};
 };
@@ -92,10 +96,11 @@ audio_transcoder::~audio_transcoder() = default;
 
 bool audio_transcoder::initialize_decoder(const audio_transcoder_config& config)
 {
-    const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_AAC);
+    const auto decoder_id = config.input.codec == codec_id::aac ? AV_CODEC_ID_AAC : AV_CODEC_ID_OPUS;
+    const AVCodec* decoder = avcodec_find_decoder(decoder_id);
     if (decoder == nullptr)
     {
-        spdlog::error("audio transcoder aac decoder not found");
+        spdlog::error("audio transcoder {} decoder not found", to_string(config.input.codec));
         return false;
     }
 
@@ -109,16 +114,19 @@ bool audio_transcoder::initialize_decoder(const audio_transcoder_config& config)
     state_->decoder->sample_rate = static_cast<int>(config.input.sample_rate);
     state_->decoder->pkt_timebase = AVRational{1, state_->decoder->sample_rate};
     av_channel_layout_default(&state_->decoder->ch_layout, config.input.channel_count);
-    state_->decoder->extradata = static_cast<std::uint8_t*>(av_mallocz(config.input_codec_config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
-    if (state_->decoder->extradata == nullptr)
+    if (!config.input_codec_config.empty())
     {
-        spdlog::error("audio transcoder decoder extradata allocate failed");
-        return false;
+        state_->decoder->extradata = static_cast<std::uint8_t*>(av_mallocz(config.input_codec_config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
+        if (state_->decoder->extradata == nullptr)
+        {
+            spdlog::error("audio transcoder decoder extradata allocate failed");
+            return false;
+        }
+        state_->decoder->extradata_size = static_cast<int>(config.input_codec_config.size());
+        std::memcpy(state_->decoder->extradata, config.input_codec_config.data(), config.input_codec_config.size());
     }
-    state_->decoder->extradata_size = static_cast<int>(config.input_codec_config.size());
-    std::memcpy(state_->decoder->extradata, config.input_codec_config.data(), config.input_codec_config.size());
 
-    int result = avcodec_open2(state_->decoder, decoder, nullptr);
+    const int result = avcodec_open2(state_->decoder, decoder, nullptr);
     if (result < 0)
     {
         spdlog::error("audio transcoder decoder open failed {}", ffmpeg_error(result));
@@ -129,14 +137,22 @@ bool audio_transcoder::initialize_decoder(const audio_transcoder_config& config)
 
 bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
 {
-    const AVCodec* encoder = avcodec_find_encoder_by_name("libopus");
-    if (encoder == nullptr)
+    const AVCodec* encoder{};
+    if (config.output.codec == codec_id::opus)
     {
-        encoder = avcodec_find_encoder(AV_CODEC_ID_OPUS);
+        encoder = avcodec_find_encoder_by_name("libopus");
+        if (encoder == nullptr)
+        {
+            encoder = avcodec_find_encoder(AV_CODEC_ID_OPUS);
+        }
+    }
+    else
+    {
+        encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
     }
     if (encoder == nullptr)
     {
-        spdlog::error("audio transcoder opus encoder not found");
+        spdlog::error("audio transcoder {} encoder not found", to_string(config.output.codec));
         return false;
     }
 
@@ -161,7 +177,14 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
     state_->encoder->bit_rate = config.output_bit_rate;
     state_->encoder->cutoff = config.output_cutoff;
     state_->encoder->time_base = AVRational{1, state_->encoder->sample_rate};
-    state_->encoder->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
+    if (config.output.codec == codec_id::opus)
+    {
+        state_->encoder->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
+    }
+    else
+    {
+        state_->encoder->profile = AV_PROFILE_AAC_LOW;
+    }
 
     result = avcodec_open2(state_->encoder, encoder, nullptr);
     if (result < 0)
@@ -174,6 +197,22 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
     {
         spdlog::error("audio transcoder encoder invalid frame size {}", state_->encoder->frame_size);
         return false;
+    }
+
+    if (config.output.codec == codec_id::aac)
+    {
+        if (state_->encoder->extradata == nullptr || state_->encoder->extradata_size <= 0)
+        {
+            spdlog::error("audio transcoder aac encoder missing codec config");
+            return false;
+        }
+        state_->output_codec_config.assign(state_->encoder->extradata, state_->encoder->extradata + state_->encoder->extradata_size);
+        const auto aac = parse_aac_asc(state_->output_codec_config);
+        if (!aac || aac->sample_rate != config.output.sample_rate || aac->channel_count != config.output.channel_count)
+        {
+            spdlog::error("audio transcoder aac encoder invalid codec config");
+            return false;
+        }
     }
     return true;
 }
@@ -199,10 +238,16 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
 {
     shutdown();
 
-    if (config.input.codec != codec_id::aac || config.output.codec != codec_id::opus || config.input.sample_rate == 0 ||
+    const bool aac_to_opus = config.input.codec == codec_id::aac && config.output.codec == codec_id::opus;
+    const bool opus_to_aac = config.input.codec == codec_id::opus && config.output.codec == codec_id::aac;
+    const bool input_codec_config_valid =
+        (config.input.codec == codec_id::aac && !config.input_codec_config.empty()) ||
+        (config.input.codec == codec_id::opus && config.input_codec_config.empty());
+    if ((!aac_to_opus && !opus_to_aac) || config.input.sample_rate == 0 ||
         config.input.sample_rate > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || config.input.channel_count == 0 ||
+        (config.input.codec == codec_id::opus && (config.input.sample_rate != 48'000 || config.input.channel_count > 2)) ||
         config.output.sample_rate == 0 || config.output.sample_rate > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
-        (config.output.channel_count != 1 && config.output.channel_count != 2) || config.input_codec_config.empty() ||
+        (config.output.channel_count != 1 && config.output.channel_count != 2) || !input_codec_config_valid ||
         config.input_codec_config.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) || config.output_bit_rate < 6'000 ||
         config.output_bit_rate > 510'000 || config.output_cutoff < 4'000 || config.output_cutoff > 20'000)
     {
@@ -219,6 +264,8 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
     }
 
     state_ = std::make_unique<state>();
+    state_->input_codec = config.input.codec;
+    state_->output_codec = config.output.codec;
     if (!initialize_decoder(config) || !initialize_encoder(config) || !allocate_buffers())
     {
         shutdown();
@@ -281,6 +328,15 @@ void audio_transcoder::shutdown()
     state_.reset();
 }
 
+std::span<const std::uint8_t> audio_transcoder::output_codec_config() const noexcept
+{
+    if (!state_)
+    {
+        return {};
+    }
+    return state_->output_codec_config;
+}
+
 bool audio_transcoder::transcode(const media_frame& input, std::vector<media_frame>& output)
 {
     if (!state_ || !input.payload || input.payload->empty() || input.payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
@@ -288,21 +344,30 @@ bool audio_transcoder::transcode(const media_frame& input, std::vector<media_fra
         return false;
     }
 
-    const auto payload = adts_payload(*input.payload);
-    if (!payload || payload->size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    std::span<const std::uint8_t> payload(*input.payload);
+    if (state_->input_codec == codec_id::aac)
     {
-        spdlog::debug("audio transcoder invalid aac adts frame size {}", input.payload->size());
+        const auto aac_payload = adts_payload(payload);
+        if (!aac_payload)
+        {
+            spdlog::debug("audio transcoder invalid aac adts frame size {}", input.payload->size());
+            return false;
+        }
+        payload = *aac_payload;
+    }
+    if (payload.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
         return false;
     }
 
     av_packet_unref(state_->input_packet);
-    int result = av_new_packet(state_->input_packet, static_cast<int>(payload->size()));
+    int result = av_new_packet(state_->input_packet, static_cast<int>(payload.size()));
     if (result < 0)
     {
         spdlog::error("audio transcoder input packet allocate failed {}", ffmpeg_error(result));
         return false;
     }
-    std::memcpy(state_->input_packet->data, payload->data(), payload->size());
+    std::memcpy(state_->input_packet->data, payload.data(), payload.size());
     state_->input_packet->pts = av_rescale_q(input.pts_ns, nanoseconds_time_base, state_->decoder->pkt_timebase);
     state_->input_packet->dts = av_rescale_q(input.dts_ns, nanoseconds_time_base, state_->decoder->pkt_timebase);
 
@@ -605,6 +670,23 @@ bool audio_transcoder::receive_encoded(std::vector<media_frame>& output)
             return false;
         }
 
+        std::vector<std::uint8_t> payload;
+        if (state_->output_codec == codec_id::aac)
+        {
+            payload = make_adts_frame(
+                state_->output_codec_config,
+                std::span<const std::uint8_t>(state_->output_packet->data, static_cast<std::size_t>(state_->output_packet->size)));
+            if (payload.empty())
+            {
+                spdlog::error("audio transcoder aac adts frame create failed");
+                return false;
+            }
+        }
+        else
+        {
+            payload.assign(state_->output_packet->data, state_->output_packet->data + state_->output_packet->size);
+        }
+
         const auto pts_ns = state_->next_output_pts_ns;
         state_->next_output_pts_ns += av_rescale_q(sample_count, AVRational{1, state_->encoder->sample_rate}, AVRational{1, 1'000'000'000});
         output.push_back(media_frame{
@@ -612,8 +694,7 @@ bool audio_transcoder::receive_encoded(std::vector<media_frame>& output)
             .dts_ns = pts_ns,
             .pts_ns = pts_ns,
             .key_frame = false,
-            .payload = std::make_shared<const std::vector<std::uint8_t>>(state_->output_packet->data,
-                                                                         state_->output_packet->data + state_->output_packet->size),
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(payload)),
         });
         spdlog::trace("audio transcoder packet encoded bytes {} samples {} pts_ns {}", state_->output_packet->size, sample_count, pts_ns);
     }
