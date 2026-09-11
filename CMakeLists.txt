@@ -206,6 +206,7 @@ add_library(media_core STATIC
     media/webrtc/stun_message.cpp
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
+    media/webrtc/whip_session.cpp
     media/webrtc/whip_media_receiver.cpp
     media/webrtc/whep_session.cpp
     media/webrtc/whep.cpp
