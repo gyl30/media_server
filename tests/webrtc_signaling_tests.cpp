@@ -30,7 +30,9 @@
 
 #include "media/hls/hls.h"
 #include "media/webrtc/whep.h"
+#include "media/webrtc/whip.h"
 #include "media/http/whep_http.h"
+#include "media/http/whip_http.h"
 #include "media/core/media_stream.h"
 #include "media/http/http_session.h"
 #include "media/webrtc/webrtc_sdp.h"
@@ -1019,13 +1021,13 @@ class whep_http_test_peer final
         return send(std::move(request));
     }
 
-    boost::beast::http::response<boost::beast::http::string_body> post(std::string target)
+    boost::beast::http::response<boost::beast::http::string_body> post(std::string target, std::string body = webrtc_offer_sdp)
     {
         boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::post, std::move(target), 11};
         request.set(boost::beast::http::field::host, "127.0.0.1");
         request.set(boost::beast::http::field::origin, "https://player.example");
         request.set(boost::beast::http::field::content_type, "application/sdp");
-        request.body() = webrtc_offer_sdp;
+        request.body() = std::move(body);
         request.prepare_payload();
         return send(std::move(request));
     }
@@ -1267,6 +1269,76 @@ void test_whep_http_cors()
     const auto missing = peer.remove(location);
     require(missing.result() == boost::beast::http::status::not_found, "whep cors error status");
     require(missing["Access-Control-Allow-Origin"] == "*", "whep error allow origin");
+}
+
+void require_whip_options(const boost::beast::http::response<boost::beast::http::string_body>& response,
+                          std::string_view methods,
+                          bool accept_post)
+{
+    require(response.result() == boost::beast::http::status::ok, "whip options status");
+    require(response["Access-Control-Allow-Origin"] == "*", "whip options allow origin");
+    require(response["Access-Control-Allow-Methods"] == methods, "whip options allow methods");
+    require(response["Access-Control-Allow-Headers"] == "Content-Type", "whip options allow headers");
+    require((response["Accept-Post"] == "application/sdp") == accept_post, "whip options accept post");
+    require(response[boost::beast::http::field::content_length] == "0", "whip options content length");
+    require(response.body().empty(), "whip options empty body");
+}
+
+void test_whip_http_lifecycle()
+{
+    whep_http_test_peer peer;
+    const auto offer = make_whip_offer(webrtc_offer_sdp);
+
+    const auto old_route = peer.request(boost::beast::http::verb::options, "/whip/live/camera");
+    require(old_route.result() == boost::beast::http::status::method_not_allowed || old_route.result() == boost::beast::http::status::not_found,
+            "whip old route unavailable");
+
+    require_whip_options(peer.options("/publish/whip/live/whip-camera", "POST"), "POST, OPTIONS", true);
+
+    const auto endpoint_get = peer.request(boost::beast::http::verb::get, "/publish/whip/live/whip-camera");
+    require(endpoint_get.result() == boost::beast::http::status::method_not_allowed, "whip endpoint get status");
+    require(endpoint_get[boost::beast::http::field::allow] == "POST, OPTIONS", "whip endpoint get allow");
+
+    const auto existing = peer.post("/publish/whip/live/camera", offer);
+    require(existing.result() == boost::beast::http::status::conflict, "whip existing stream conflict");
+
+    const auto invalid = peer.post("/publish/whip/live/whip-invalid", webrtc_offer_sdp);
+    require(invalid.result() == boost::beast::http::status::bad_request, "whip invalid offer status");
+    const auto after_invalid = peer.post("/publish/whip/live/whip-invalid", offer);
+    require(after_invalid.result() == boost::beast::http::status::created, "whip invalid offer releases reservation");
+    require(peer.remove(std::string(after_invalid[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
+            "whip invalid offer replacement delete");
+
+    const auto created = peer.post("/publish/whip/live/whip-camera", offer);
+    require(created.result() == boost::beast::http::status::created, "whip create status");
+    require(created[boost::beast::http::field::content_type] == "application/sdp", "whip create content type");
+    require(created[boost::beast::http::field::cache_control] == "no-store", "whip create cache control");
+    require(created["Access-Control-Allow-Origin"] == "*", "whip create allow origin");
+    require(created["Access-Control-Expose-Headers"] == "Location", "whip create expose location");
+    require(created.body().find("a=recvonly\r\n") != std::string::npos, "whip create recvonly answer");
+    const auto location = std::string(created[boost::beast::http::field::location]);
+    require(location.starts_with("/publish/whip/session/"), "whip create location");
+
+    const auto duplicate = peer.post("/publish/whip/live/whip-camera", offer);
+    require(duplicate.result() == boost::beast::http::status::conflict, "whip pending publisher conflict");
+
+    require_whip_options(peer.options(location, "DELETE"), "DELETE, OPTIONS", false);
+
+    const auto patch = peer.request(boost::beast::http::verb::patch, location);
+    require(patch.result() == boost::beast::http::status::method_not_allowed, "whip patch disabled");
+    require(patch[boost::beast::http::field::allow] == "DELETE, OPTIONS", "whip session patch allow");
+
+    const auto removed = peer.remove(location);
+    require(removed.result() == boost::beast::http::status::no_content, "whip delete status");
+    require(removed["Access-Control-Allow-Origin"] == "*", "whip delete allow origin");
+
+    const auto missing = peer.remove(location);
+    require(missing.result() == boost::beast::http::status::not_found, "whip deleted session missing");
+
+    const auto recreated = peer.post("/publish/whip/live/whip-camera", offer);
+    require(recreated.result() == boost::beast::http::status::created, "whip reservation released after delete");
+    require(peer.remove(std::string(recreated[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
+            "whip recreated delete");
 }
 
 void test_whip_sdp_answer()
@@ -3466,6 +3538,8 @@ int main()
     std::cout << "[pass] whep_http_namespace_dispatch\n";
     media_server::test_whep_http_cors();
     std::cout << "[pass] whep_http_cors\n";
+    media_server::test_whip_http_lifecycle();
+    std::cout << "[pass] whip_http_lifecycle\n";
     media_server::test_whep_multi_session_isolation();
     std::cout << "[pass] whep_multi_session_isolation\n";
     media_server::test_whep_establishment_timeout();

@@ -193,6 +193,7 @@ add_library(media_core STATIC
     media/http/gb28181_http.cpp
     media/http/signaling_client.cpp
     media/http/whep_http.cpp
+    media/http/whip_http.cpp
     media/http/http_session.cpp
     media/http/http_server.cpp
     media/gb28181/gb28181_rtp_receiver.cpp
@@ -207,6 +208,7 @@ add_library(media_core STATIC
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
     media/webrtc/whip_session.cpp
+    media/webrtc/whip.cpp
     media/webrtc/whip_media_receiver.cpp
     media/webrtc/whep_session.cpp
     media/webrtc/whep.cpp
