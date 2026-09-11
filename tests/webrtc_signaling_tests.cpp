@@ -34,6 +34,8 @@
 #include "media/core/media_stream.h"
 #include "media/http/http_session.h"
 #include "media/webrtc/webrtc_sdp.h"
+#include "media/webrtc/webrtc_packetizer.h"
+#include "media/webrtc/whip_session.h"
 #include "media/net/io_context_pool.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/stun_message.h"
@@ -265,10 +267,11 @@ bool send_dtls_client_output(dtls_test_client& client, boost::asio::ip::udp::soc
     return true;
 }
 
+template <typename Session>
 bool drive_dtls_client(boost::asio::io_context& io,
                        boost::asio::ip::udp::socket& socket,
                        const boost::asio::ip::udp::endpoint& server_endpoint,
-                       whep_session& session,
+                       Session& session,
                        dtls_test_client& client)
 {
     boost::system::error_code error;
@@ -3010,6 +3013,133 @@ media_frame make_audio_frame(std::size_t index, std::int64_t pts_ns)
     };
 }
 
+void test_whip_session_ingest()
+{
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
+    auto& streams = stream_registry::instance();
+    streams.clear();
+
+    auto server_certificate = dtls_certificate::create();
+    auto client_certificate = dtls_certificate::create();
+    require(server_certificate != nullptr && client_certificate != nullptr, "whip dtls certificates");
+
+    const auto offer = parse_webrtc_offer(make_whip_offer(offer_with_fingerprint(client_certificate->sha256_fingerprint())));
+    require(offer.has_value(), "whip session parse offer");
+
+    auto session = std::make_shared<whip_session>(
+        worker, "live/whip-dtls", boost::asio::ip::make_address("127.0.0.1"), server_certificate);
+    require(session->startup(*offer) == whip_session_startup_error::none, "whip session startup");
+    require(session->answer_sdp().find("a=recvonly\r\n") != std::string::npos, "whip session recvonly answer");
+
+    const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
+    const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
+    require(!local_ufrag.empty() && !local_pwd.empty(), "whip session ice credentials");
+
+    boost::asio::ip::udp::socket client_socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::make_address("127.0.0.1"), session->local_port());
+    const std::array<std::uint8_t, 12> nominate_id{7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4};
+    const auto nominate_response =
+        exchange_stun(io, client_socket, server_endpoint, make_stun_request(local_ufrag + ":remotevideo", local_pwd, nominate_id, true));
+    require_stun_success(nominate_response, nominate_id);
+    require(session->ice_connected(), "whip session ice connected");
+
+    auto client = make_dtls_test_client(client_certificate, "SRTP_AEAD_AES_128_GCM");
+    require(client.has_value(), "whip dtls client create");
+    require(drive_dtls_client(io, client_socket, server_endpoint, *session, *client), "whip dtls handshake");
+    require(session->dtls_connected() && session->srtp_started(), "whip dtls srtp started");
+
+    const auto peer_material = make_peer_srtp_material(client->ssl.get());
+    require(peer_material.has_value(), "whip client srtp material");
+    srtp_transport peer_srtp;
+    require(peer_srtp.startup(peer_material->outbound), "whip peer srtp startup");
+
+    bool packetize_ok = true;
+    std::size_t rtcp_packets = 0;
+    webrtc_packetizer packetizer(
+        webrtc_packetizer_config{
+            .video_codec = codec_id::h264,
+            .audio_codec = codec_id::aac,
+            .video_payload_type = 102,
+            .audio_payload_type = 111,
+            .opus_channel_count = 2,
+            .opus_bitrate = 128'000,
+            .opus_max_playback_rate = 48'000,
+            .video_mid = "0",
+            .audio_mid = "1",
+            .video_mid_extension_id = 4,
+            .audio_mid_extension_id = 4,
+            .rtcp_cname = "whip-test-client",
+        },
+        [&](std::span<const std::uint8_t> packet)
+        {
+            auto protected_packet = peer_srtp.protect_rtp(packet);
+            packetize_ok = protected_packet.has_value() && packetize_ok;
+            if (protected_packet)
+            {
+                static_cast<void>(client_socket.send_to(boost::asio::buffer(*protected_packet), server_endpoint));
+            }
+        },
+        [&](std::span<const std::uint8_t> packet)
+        {
+            auto protected_packet = peer_srtp.protect_rtcp(packet);
+            packetize_ok = protected_packet.has_value() && packetize_ok;
+            if (protected_packet)
+            {
+                ++rtcp_packets;
+                static_cast<void>(client_socket.send_to(boost::asio::buffer(*protected_packet), server_endpoint));
+            }
+        });
+    require(packetizer.valid(), "whip input packetizer valid");
+    require(packetizer.on_track(make_video_track()), "whip input video track");
+    require(packetizer.on_track(make_audio_track()), "whip input audio track");
+
+    auto key_video = make_video_key_frame(codec_id::h264);
+    auto key_payload = std::make_shared<std::vector<std::uint8_t>>(h264_config);
+    key_payload->insert(key_payload->end(), key_video.payload->begin(), key_video.payload->end());
+    key_video.payload = std::move(key_payload);
+    require(packetizer.on_frame(key_video), "whip input video key frame");
+    auto next_video = make_video_key_frame(codec_id::h264);
+    next_video.pts_ns = 40'000'000;
+    next_video.dts_ns = 40'000'000;
+    next_video.key_frame = false;
+    next_video.payload = std::make_shared<const std::vector<std::uint8_t>>(
+        std::initializer_list<std::uint8_t>{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x11});
+    require(packetizer.on_frame(next_video), "whip input video flush frame");
+    require(packetize_ok, "whip input srtp protect");
+    require(rtcp_packets > 0U, "whip input srtcp generated");
+
+    const auto publish_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    std::shared_ptr<media_stream> published;
+    while (!published && std::chrono::steady_clock::now() < publish_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(10));
+        io.restart();
+        published = streams.find("live/whip-dtls");
+    }
+    require(published != nullptr, "whip session publishes received stream");
+    const auto tracks = published->tracks();
+    require(tracks.size() == 2U && tracks[0].codec == codec_id::h264 && tracks[1].codec == codec_id::aac,
+            "whip session internal track contract");
+
+    session->shutdown();
+    const auto shutdown_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (session->local_port() != 0U && std::chrono::steady_clock::now() < shutdown_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(10));
+        io.restart();
+    }
+    require(session->local_port() == 0U, "whip session shutdown port");
+    require(streams.find("live/whip-dtls") == nullptr, "whip session shutdown removes stream");
+
+    packetizer.shutdown();
+    peer_srtp.shutdown();
+    boost::system::error_code error;
+    client_socket.close(error);
+}
+
 void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_shutdown)
 {
     require(video_codec == codec_id::h264 || video_codec == codec_id::h265, "dtls video codec");
@@ -3352,6 +3482,8 @@ int main()
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();
     std::cout << "[pass] whep_selected_bundle_transport\n";
+    media_server::test_whip_session_ingest();
+    std::cout << "[pass] whip_session_ingest\n";
     media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AEAD_AES_128_GCM", true);
     std::cout << "[pass] whep_dtls_h264_gcm128\n";
     media_server::test_whep_dtls(media_server::codec_id::h265, "SRTP_AEAD_AES_256_GCM", false);
