@@ -82,6 +82,7 @@ struct webrtc_answer_config
 [[nodiscard]] std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer,
                                                               const std::vector<media_track>& tracks,
                                                               const webrtc_answer_config& config);
+[[nodiscard]] std::optional<webrtc_answer> make_whip_answer(const webrtc_offer& offer, const webrtc_answer_config& config);
 
 }    // namespace media_server
 

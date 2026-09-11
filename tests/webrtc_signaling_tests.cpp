@@ -531,6 +531,19 @@ std::string make_h265_offer(std::string offer)
     return offer;
 }
 
+std::string make_whip_offer(std::string offer)
+{
+    constexpr std::string_view receive = "a=recvonly\r\n";
+    constexpr std::string_view send = "a=sendonly\r\n";
+    std::size_t offset = 0;
+    while ((offset = offer.find(receive, offset)) != std::string::npos)
+    {
+        offer.replace(offset, receive.size(), send);
+        offset += send.size();
+    }
+    return offer;
+}
+
 std::string make_audio_tag_offer(std::string offer)
 {
     constexpr std::string_view bundle = "a=group:BUNDLE 0 1\r\n";
@@ -1251,6 +1264,120 @@ void test_whep_http_cors()
     const auto missing = peer.remove(location);
     require(missing.result() == boost::beast::http::status::not_found, "whep cors error status");
     require(missing["Access-Control-Allow-Origin"] == "*", "whep error allow origin");
+}
+
+void test_whip_sdp_answer()
+{
+    const auto offer = parse_webrtc_offer(make_whip_offer(webrtc_offer_sdp));
+    require(offer.has_value(), "parse whip offer");
+
+    const auto answer = make_whip_answer(*offer,
+                                         webrtc_answer_config{
+                                             .address = boost::asio::ip::make_address("127.0.0.1"),
+                                             .port = 40000,
+                                             .stream_id = {},
+                                             .ice_ufrag = "serverufrag",
+                                             .ice_pwd = "serverpassword1234567890",
+                                             .fingerprint = "AA:BB:CC:DD",
+                                             .video = {},
+                                         });
+    require(answer.has_value(), "make whip answer");
+    require(answer->video_codec == codec_id::h264 && answer->video_payload_type == 102, "whip negotiated h264");
+    require(answer->audio_codec == codec_id::opus && answer->audio_payload_type == 111, "whip negotiated opus");
+    require(answer->video_mid == "0" && answer->audio_mid == "1", "whip negotiated media mids");
+    require(answer->video_mid_extension_id == 4 && answer->audio_mid_extension_id == 4, "whip negotiated mid extension ids");
+    require(answer->sdp.find("a=ice-lite\r\n") != std::string::npos, "whip ice lite");
+    require(answer->sdp.find("a=end-of-candidates\r\n") != std::string::npos, "whip complete candidates");
+    require(answer->sdp.find("trickle") == std::string::npos, "whip no trickle");
+    require(answer->sdp.find("m=video 40000 UDP/TLS/RTP/SAVPF 102\r\n") != std::string::npos, "whip h264 payload selection");
+    require(answer->sdp.find("a=rtpmap:102 H264/90000\r\n") != std::string::npos, "whip h264 rtpmap");
+    require(answer->sdp.find("packetization-mode=1") != std::string::npos, "whip h264 packetization mode");
+    require(answer->sdp.find("profile-level-id=42e01f") != std::string::npos, "whip h264 profile");
+    require(answer->sdp.find("m=audio 40000 UDP/TLS/RTP/SAVPF 111\r\n") != std::string::npos, "whip opus payload selection");
+    require(answer->sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos, "whip opus rtpmap");
+    require(answer->sdp.find("a=recvonly\r\n") != std::string::npos, "whip recvonly");
+    require(answer->sdp.find("a=sendonly\r\n") == std::string::npos, "whip answer not sendonly");
+    require(answer->sdp.find("a=msid:") == std::string::npos, "whip answer no sender msid");
+}
+
+void test_whip_h265_sdp_answer()
+{
+    const auto offer = parse_webrtc_offer(make_whip_offer(make_h265_offer(webrtc_offer_sdp)));
+    require(offer.has_value(), "parse whip h265 offer");
+    const auto answer = make_whip_answer(*offer,
+                                         webrtc_answer_config{
+                                             .address = boost::asio::ip::make_address("127.0.0.1"),
+                                             .port = 40000,
+                                             .stream_id = {},
+                                             .ice_ufrag = "serverufrag",
+                                             .ice_pwd = "serverpassword1234567890",
+                                             .fingerprint = "AA:BB:CC:DD",
+                                             .video = {},
+                                         });
+    require(answer.has_value(), "make whip h265 answer");
+    require(answer->video_codec == codec_id::h265 && answer->video_payload_type == 102, "whip negotiated h265");
+    require(answer->sdp.find("a=rtpmap:102 H265/90000\r\n") != std::string::npos, "whip h265 rtpmap");
+    require(answer->sdp.find("profile-id=1") != std::string::npos && answer->sdp.find("level-id=120") != std::string::npos,
+            "whip h265 parameters");
+    require(answer->sdp.find("H264/90000") == std::string::npos, "whip h265 answer excludes h264");
+}
+
+void test_whip_sdp_media_contract()
+{
+    const auto config = webrtc_answer_config{
+        .address = boost::asio::ip::make_address("127.0.0.1"),
+        .port = 40000,
+        .stream_id = {},
+        .ice_ufrag = "serverufrag",
+        .ice_pwd = "serverpassword1234567890",
+        .fingerprint = "AA:BB:CC:DD",
+        .video = {},
+    };
+
+    auto video_only_sdp = make_whip_offer(webrtc_offer_sdp);
+    const auto audio_offset = video_only_sdp.find("m=audio ");
+    require(audio_offset != std::string::npos, "whip video only audio section");
+    video_only_sdp.erase(audio_offset);
+    const auto bundle_offset = video_only_sdp.find("a=group:BUNDLE 0 1\r\n");
+    require(bundle_offset != std::string::npos, "whip video only bundle");
+    video_only_sdp.replace(bundle_offset, std::string_view("a=group:BUNDLE 0 1\r\n").size(), "a=group:BUNDLE 0\r\n");
+    const auto video_only_offer = parse_webrtc_offer(video_only_sdp);
+    require(video_only_offer.has_value(), "parse whip video only offer");
+    const auto video_only_answer = make_whip_answer(*video_only_offer, config);
+    require(video_only_answer.has_value() && video_only_answer->video_codec == codec_id::h264 && !video_only_answer->audio_codec,
+            "whip accepts video without audio");
+
+    auto g711_sdp = make_whip_offer(webrtc_offer_sdp);
+    const std::string opus_formats = "m=audio 9 UDP/TLS/RTP/SAVPF 111 0 8\r\n";
+    const auto formats_offset = g711_sdp.find(opus_formats);
+    require(formats_offset != std::string::npos, "whip g711 formats");
+    g711_sdp.replace(formats_offset, opus_formats.size(), "m=audio 9 UDP/TLS/RTP/SAVPF 0 8\r\n");
+    const std::string opus_rtpmap = "a=rtpmap:111 opus/48000/2\r\n";
+    const auto opus_rtpmap_offset = g711_sdp.find(opus_rtpmap);
+    require(opus_rtpmap_offset != std::string::npos, "whip g711 opus rtpmap");
+    g711_sdp.erase(opus_rtpmap_offset, opus_rtpmap.size());
+    const std::string opus_fmtp = "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n";
+    const auto opus_fmtp_offset = g711_sdp.find(opus_fmtp);
+    require(opus_fmtp_offset != std::string::npos, "whip g711 opus fmtp");
+    g711_sdp.erase(opus_fmtp_offset, opus_fmtp.size());
+    const auto g711_offer = parse_webrtc_offer(g711_sdp);
+    require(g711_offer.has_value(), "parse whip g711 audio offer");
+    const auto g711_answer = make_whip_answer(*g711_offer, config);
+    require(g711_answer.has_value() && !g711_answer->audio_codec &&
+                g711_answer->sdp.find("m=audio 0 UDP/TLS/RTP/SAVPF 0 8\r\n") != std::string::npos,
+            "whip rejects non opus audio");
+
+    auto unsupported_video_sdp = make_whip_offer(webrtc_offer_sdp);
+    const auto h264_offset = unsupported_video_sdp.find("H264/90000");
+    require(h264_offset != std::string::npos, "whip unsupported video source");
+    unsupported_video_sdp.replace(h264_offset, std::string_view("H264/90000").size(), "VP8/90000");
+    const auto unsupported_video_offer = parse_webrtc_offer(unsupported_video_sdp);
+    require(unsupported_video_offer.has_value(), "parse whip unsupported video offer");
+    require(!make_whip_answer(*unsupported_video_offer, config).has_value(), "whip requires h264 or h265 video");
+
+    const auto wrong_direction_offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(wrong_direction_offer.has_value(), "parse whip wrong direction offer");
+    require(!make_whip_answer(*wrong_direction_offer, config).has_value(), "whip requires sender media direction");
 }
 
 void test_webrtc_sdp_answer()
@@ -3159,6 +3286,12 @@ int main()
     std::cout << "[pass] srtp_bidirectional_transport\n";
     media_server::test_dtls_srtp_key_export();
     std::cout << "[pass] dtls_srtp_key_export\n";
+    media_server::test_whip_sdp_answer();
+    std::cout << "[pass] whip_sdp_answer\n";
+    media_server::test_whip_h265_sdp_answer();
+    std::cout << "[pass] whip_h265_sdp_answer\n";
+    media_server::test_whip_sdp_media_contract();
+    std::cout << "[pass] whip_sdp_media_contract\n";
     media_server::test_webrtc_sdp_answer();
     std::cout << "[pass] webrtc_sdp_answer\n";
     media_server::test_webrtc_h265_sdp_answer();
