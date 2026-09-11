@@ -66,6 +66,7 @@
 #include "media/core/stream_registry.h"
 #include "media/http/http_flv_streamer.h"
 #include "media/webrtc/webrtc_packetizer.h"
+#include "media/webrtc/whip_media_receiver.h"
 #include "media/codec/audio_transcoder.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_pull_session.h"
@@ -187,6 +188,7 @@ using http_request = boost::beast::http::request<boost::beast::http::string_body
 static_assert(std::is_constructible_v<hls_http_session, worker_context&, boost::beast::tcp_stream, http_request, const config&>);
 static_assert(std::is_constructible_v<http_flv_session, worker_context&, boost::beast::tcp_stream, http_request, const config&>);
 
+static_assert(std::is_constructible_v<whip_media_receiver, worker_context&, std::string, whip_media_receiver_config>);
 static_assert(std::is_constructible_v<whep_session,
                                       worker_context&,
                                       std::shared_ptr<media_stream>,
@@ -908,6 +910,23 @@ class worker_sink final : public media_sink
     std::size_t ends_{};
     std::vector<std::int64_t> frames_;
     std::vector<const void*> payloads_;
+};
+
+class whip_media_capture_sink final : public media_sink
+{
+   public:
+    void on_track(const media_track& track) override { tracks_.push_back(track); }
+    void on_frame(const media_frame& frame) override { frames_.push_back(frame); }
+    void on_end() override { ++ends_; }
+
+    [[nodiscard]] const std::vector<media_track>& tracks() const noexcept { return tracks_; }
+    [[nodiscard]] const std::vector<media_frame>& frames() const noexcept { return frames_; }
+    [[nodiscard]] std::size_t ends() const noexcept { return ends_; }
+
+   private:
+    std::vector<media_track> tracks_;
+    std::vector<media_frame> frames_;
+    std::size_t ends_{};
 };
 
 class pull_test_reader final : public media_reader
@@ -9994,6 +10013,178 @@ void test_webrtc_rtp_packetizer()
     packetizer.shutdown();
 }
 
+void test_whip_media_receiver()
+{
+    for (const auto video_codec : {codec_id::h264, codec_id::h265})
+    {
+        worker_context worker;
+        auto& io = worker.io();
+        auto& streams = stream_registry::instance();
+        streams.clear();
+        const bool with_audio = video_codec == codec_id::h264;
+        const std::string stream_name = video_codec == codec_id::h264 ? "live/whip-h264-opus" : "live/whip-h265";
+        whip_media_receiver receiver(worker,
+                                     stream_name,
+                                     whip_media_receiver_config{
+                                         .video_codec = video_codec,
+                                         .video_payload_type = 102,
+                                         .audio_payload_type = with_audio ? 111 : -1,
+                                         .audio_channel_count = 2,
+                                     });
+        bool receiver_ok = true;
+        webrtc_packetizer packetizer(
+            webrtc_packetizer_config{
+                .video_codec = video_codec,
+                .audio_codec = codec_id::aac,
+                .video_payload_type = 102,
+                .audio_payload_type = with_audio ? 111 : -1,
+                .opus_channel_count = 2,
+                .opus_bitrate = 128'000,
+                .opus_max_playback_rate = 48'000,
+                .video_mid = "0",
+                .audio_mid = "1",
+                .video_mid_extension_id = 4,
+                .audio_mid_extension_id = 4,
+                .rtcp_cname = "whip-media-receiver",
+            },
+            [&receiver, &receiver_ok](std::span<const std::uint8_t> packet) { receiver_ok = receiver.input_rtp(packet) && receiver_ok; },
+            [&receiver, &receiver_ok](std::span<const std::uint8_t> packet) { receiver_ok = receiver.input_rtcp(packet) && receiver_ok; });
+
+        boost::asio::post(io,
+                          [&]()
+                          {
+                              require(receiver.startup(), "whip media receiver startup");
+                              require(packetizer.on_track(video_codec == codec_id::h264 ? make_video_track() : make_h265_track()),
+                                      "whip media receiver packetizer video track");
+                              if (with_audio)
+                              {
+                                  require(packetizer.on_track(make_audio_track()), "whip media receiver packetizer audio track");
+                                  std::int64_t pts_ns = 0;
+                                  for (const auto& adts : valid_aac_adts_frames)
+                                  {
+                                      require(packetizer.on_frame(media_frame{
+                                                  .track = audio_track_id,
+                                                  .dts_ns = pts_ns,
+                                                  .pts_ns = pts_ns,
+                                                  .key_frame = false,
+                                                  .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                                              }),
+                                              "whip media receiver pre-video audio");
+                                      pts_ns += 23'219'954;
+                                  }
+                              }
+                          });
+        worker.release_work();
+        io.run();
+        io.restart();
+        require(receiver_ok, "whip media receiver accepts generated pre-video packets");
+        require(streams.find(stream_name) == nullptr, "whip media receiver waits for video config");
+
+        boost::asio::post(io,
+                          [&]()
+                          {
+                              require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(100'000'000, true)
+                                                                                       : make_h265_frame(100'000'000, true)),
+                                      "whip media receiver video key frame");
+                              require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(140'000'000, false)
+                                                                                       : make_h265_frame(140'000'000, false)),
+                                      "whip media receiver video flush frame");
+                          });
+        io.run();
+        io.restart();
+        require(receiver_ok, "whip media receiver accepts video rtp and rtcp");
+
+        const auto stream = streams.find(stream_name);
+        require(stream != nullptr, "whip media receiver publishes configured stream");
+        const auto tracks = stream->tracks();
+        require(tracks.size() == (with_audio ? 2U : 1U), "whip media receiver track count");
+        require(tracks[0].id == video_track_id && tracks[0].codec == video_codec && tracks[0].clock_rate == 90'000 && !tracks[0].codec_config.empty(),
+                "whip media receiver video track contract");
+        if (with_audio)
+        {
+            const auto aac = parse_aac_asc(tracks[1].codec_config);
+            require(tracks[1].id == audio_track_id && tracks[1].codec == codec_id::aac && tracks[1].clock_rate == 48'000 &&
+                        tracks[1].channel_count == 2 && aac && aac->sample_rate == 48'000 && aac->channel_count == 2,
+                    "whip media receiver opus becomes aac track");
+        }
+
+        auto sink = std::make_shared<whip_media_capture_sink>();
+        stream->add_sink(sink);
+        io.run();
+        io.restart();
+        require(sink->tracks().size() == tracks.size(), "whip media receiver sink tracks");
+        require(!sink->frames().empty(), "whip media receiver replays first video gop");
+        const auto video_frame = std::ranges::find_if(sink->frames(), [](const media_frame& frame) { return frame.track == video_track_id; });
+        require(video_frame != sink->frames().end() && video_frame->key_frame && video_frame->payload && video_frame->payload->size() >= 5U &&
+                    (*video_frame->payload)[0] == 0 && (*video_frame->payload)[1] == 0 && (*video_frame->payload)[2] == 0 &&
+                    (*video_frame->payload)[3] == 1,
+                "whip media receiver video annex-b access unit");
+
+        boost::asio::post(io,
+                          [&]()
+                          {
+                              require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(180'000'000, false)
+                                                                                       : make_h265_frame(180'000'000, false)),
+                                      "whip media receiver next video frame");
+                              if (with_audio)
+                              {
+                                  std::int64_t pts_ns = 100'000'000;
+                                  for (const auto& adts : valid_aac_adts_frames)
+                                  {
+                                      require(packetizer.on_frame(media_frame{
+                                                  .track = audio_track_id,
+                                                  .dts_ns = pts_ns,
+                                                  .pts_ns = pts_ns,
+                                                  .key_frame = false,
+                                                  .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                                              }),
+                                              "whip media receiver post-video audio");
+                                      pts_ns += 23'219'954;
+                                  }
+                              }
+                          });
+        io.run();
+        io.restart();
+        require(receiver_ok, "whip media receiver accepts continued media");
+        if (with_audio)
+        {
+            const auto audio_frame = std::ranges::find_if(sink->frames(), [](const media_frame& frame) { return frame.track == audio_track_id; });
+            require(audio_frame != sink->frames().end() && audio_frame->payload && audio_frame->payload->size() > 7U &&
+                        (*audio_frame->payload)[0] == 0xffU && ((*audio_frame->payload)[1] & 0xf6U) == 0xf0U,
+                    "whip media receiver publishes aac adts");
+        }
+
+        const auto initial_video_version = stream->tracks().front().config_version;
+        boost::asio::post(io,
+                          [&]()
+                          {
+                              require(packetizer.on_frame(video_codec == codec_id::h264
+                                                              ? make_video_frame(220'000'000, true, h264_config_updated)
+                                                              : make_h265_frame(220'000'000, true, h265_config_updated)),
+                                      "whip media receiver updated video config");
+                              require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(260'000'000, false, h264_config_updated)
+                                                                                       : make_h265_frame(260'000'000, false, h265_config_updated)),
+                                      "whip media receiver updated video flush frame");
+                          });
+        io.run();
+        io.restart();
+        require(receiver_ok, "whip media receiver accepts video config update");
+        const auto updated_tracks = stream->tracks();
+        require(updated_tracks.front().config_version == initial_video_version + 1U && updated_tracks.front().codec_config != tracks.front().codec_config,
+                "whip media receiver updates video track config");
+
+        boost::asio::post(io,
+                          [&]()
+                          {
+                              receiver.shutdown();
+                              packetizer.shutdown();
+                          });
+        io.run();
+        require(streams.find(stream_name) == nullptr, "whip media receiver removes stream on shutdown");
+        require(sink->ends() == 1U, "whip media receiver ends stream on shutdown");
+    }
+}
+
 void test_webrtc_video_access_unit_marker()
 {
     for (const bool h265 : std::array{false, true})
@@ -10639,6 +10830,8 @@ int main()
     std::cout << "[pass] hls_module_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
+    media_server::test_whip_media_receiver();
+    std::cout << "[pass] whip_media_receiver\n";
     media_server::test_webrtc_video_access_unit_marker();
     std::cout << "[pass] webrtc_video_access_unit_marker\n";
     media_server::test_webrtc_av1_packetizer();
