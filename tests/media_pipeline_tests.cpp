@@ -10262,6 +10262,76 @@ void test_rtsp_input_output_boundaries()
     }
 }
 
+void test_rtmp_input_output_boundaries()
+{
+    for (const auto codec : {codec_id::h264, codec_id::h265})
+    {
+        worker_context worker;
+        worker.release_work();
+        auto& io = worker.io();
+        io.restart();
+        auto& streams = stream_registry::instance();
+        streams.clear();
+        auto input = std::make_shared<rtmp_publish_session>(
+            worker, "live/rtmp-outputs", std::chrono::seconds(1), []() { require(false, "rtmp input unexpected shutdown"); });
+        flv_muxer muxer(
+            [&](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+            {
+                const auto result = type == FLV_TYPE_VIDEO ? input->on_video(data.data(), data.size(), timestamp)
+                                                           : input->on_audio(data.data(), data.size(), timestamp);
+                require(result == 0, "rtmp input accepts actual flv packet");
+            });
+        boost::asio::post(io,
+                          [&]()
+                          {
+                              require(input->startup(), "rtmp input startup");
+                              std::array<std::uint8_t, 128> metadata{};
+                              auto* end = AMFWriteString(metadata.data(), metadata.data() + metadata.size(), "onMetaData", 10);
+                              end = AMFWriteECMAArarry(end, metadata.data() + metadata.size());
+                              end = AMFWriteNamedDouble(end, metadata.data() + metadata.size(), "audiocodecid", 12, FLV_AUDIO_AAC >> 4);
+                              end = AMFWriteObjectEnd(end, metadata.data() + metadata.size());
+                              require(end && input->on_script(std::span<const std::uint8_t>(metadata.data(), end)) == 0,
+                                      "rtmp input audio video topology");
+                              muxer.on_track(codec == codec_id::h264 ? make_video_track() : make_h265_track());
+                              muxer.on_track(make_audio_track());
+                              muxer.on_frame({.track = audio_track_id,
+                                              .dts_ns = 0,
+                                              .pts_ns = 0,
+                                              .key_frame = false,
+                                              .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front())});
+                              require(streams.find("live/rtmp-outputs") != nullptr, "rtmp input configured before media");
+                              for (const auto pts : {0, 40, 80})
+                              {
+                                  muxer.on_frame(codec == codec_id::h264 ? make_video_frame(pts * 1'000'000LL, pts == 0)
+                                                                         : make_h265_frame(pts * 1'000'000LL, pts == 0));
+                              }
+                              std::int64_t pts = 0;
+                              for (const auto& adts : valid_aac_adts_frames)
+                              {
+                                  muxer.on_frame({.track = audio_track_id,
+                                                  .dts_ns = pts,
+                                                  .pts_ns = pts,
+                                                  .key_frame = false,
+                                                  .payload = std::make_shared<const std::vector<std::uint8_t>>(adts)});
+                                  pts += 23'219'954;
+                              }
+                          });
+        io.run();
+        io.restart();
+        const auto stream = streams.find("live/rtmp-outputs");
+        require(stream && stream->tracks().size() == 2U, "rtmp actual input stream");
+        require_input_output_boundaries(stream, worker, codec);
+        boost::asio::post(io,
+                          [&]()
+                          {
+                              input->shutdown();
+                              muxer.shutdown();
+                          });
+        io.run();
+        require(!streams.find("live/rtmp-outputs"), "rtmp input cleanup");
+    }
+}
+
 void test_whip_media_receiver_rejects_invalid_packets()
 {
     const std::vector<std::vector<std::uint8_t>> invalid_rtp{
@@ -11538,6 +11608,8 @@ int main()
     std::cout << "[pass] hls_module_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
+    media_server::test_rtmp_input_output_boundaries();
+    std::cout << "[pass] rtmp_input_output_boundaries\n";
     media_server::test_rtsp_input_output_boundaries();
     std::cout << "[pass] rtsp_input_output_boundaries\n";
     media_server::test_whip_media_receiver_rejects_invalid_packets();
