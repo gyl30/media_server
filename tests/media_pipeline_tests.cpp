@@ -10217,6 +10217,40 @@ void test_whip_media_receiver()
             client_runner.join();
             io.run();
             io.restart();
+
+            http_flv_capture flv_capture;
+            std::shared_ptr<http_flv_streamer> flv_streamer;
+            flv_streamer = std::make_shared<http_flv_streamer>(
+                [&flv_capture, &flv_streamer, &io](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
+                {
+                    flv_capture.writes.push_back(http_flv_write{
+                        .generation = generation,
+                        .bootstrap = bootstrap,
+                        .data = std::move(data),
+                    });
+                    boost::asio::post(io, [&flv_streamer, generation]() { flv_streamer->write_complete(generation); });
+                },
+                [&flv_capture]() { ++flv_capture.ends; });
+            static_cast<void>(stream->add_reader(flv_streamer, worker));
+            io.run();
+            io.restart();
+
+            const auto flv = demux_http_flv(flv_capture);
+            const auto flv_video_config =
+                std::ranges::find_if(flv.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_AVCC; });
+            require(flv_video_config != flv.packets.end() && h264_avcc_to_annex_b(flv_video_config->payload) == h264_config,
+                    "whip http flv h264 config");
+            const auto flv_audio_config =
+                std::ranges::find_if(flv.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_AUDIO_ASC; });
+            const auto flv_aac = flv_audio_config == flv.packets.end() ? std::optional<aac_config>{} : parse_aac_asc(flv_audio_config->payload);
+            require(flv_aac && flv_aac->sample_rate == 48'000 && flv_aac->channel_count == 2, "whip http flv aac config");
+            const auto flv_video =
+                std::ranges::find_if(flv.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_H264; });
+            require(flv_video != flv.packets.end() && flv_video->flags == 1 && !flv_video->payload.empty(), "whip http flv h264 media");
+            const auto flv_audio =
+                std::ranges::find_if(flv.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_AUDIO_AAC; });
+            require(flv_audio != flv.packets.end() && !flv_audio->payload.empty(), "whip http flv aac media");
+            flv_streamer->shutdown();
         }
 
         const auto initial_video_version = stream->tracks().front().config_version;
