@@ -9283,6 +9283,56 @@ void test_stream_registry_generation_lifecycle()
     require(!streams.find("live/generation"), "registry replacement removed");
 }
 
+void test_stream_registry_session_identity_lifecycle()
+{
+    struct session final : stream_session
+    {
+        void shutdown() override {}
+    };
+    worker_context worker;
+    auto& streams = stream_registry::instance();
+    streams.clear();
+    const std::string name = "live/session-generation";
+    auto stream = std::make_shared<media_stream>(name, worker);
+    require(stream->set_tracks({make_video_track()}), "session registry track");
+    auto receiver = std::make_shared<session>();
+    auto replacement = std::make_shared<session>();
+    auto sender_a = std::make_shared<session>();
+    auto sender_b = std::make_shared<session>();
+    require(streams.add_receiver_session(name, receiver), "registry reserves receiver before publication");
+    require(streams.add_sender_session(name, "a", sender_a) && streams.add_sender_session(name, "b", sender_b), "registry independent senders");
+    require(streams.add(stream), "registry publishes alongside sessions");
+    require(!streams.add_receiver_session(name, replacement), "registry duplicate receiver preserves owner");
+    require(!streams.add_sender_session(name, "a", replacement), "registry duplicate sender preserves owner");
+
+    require(streams.take_receiver_session(name) == receiver, "registry takes original receiver");
+    require(streams.add_receiver_session(name, replacement), "registry receiver replacement");
+    streams.remove_receiver_session(name, *receiver);
+    require(streams.take_sender_session(name, "a") == sender_a, "registry takes original sender");
+    require(streams.add_sender_session(name, "a", replacement), "registry sender replacement");
+    streams.remove_sender_session(name, "a", *sender_a);
+    require(streams.find(name) == stream, "session removal preserves published stream");
+
+    streams.remove(*stream);
+    require(!streams.find(name), "stream removal hides publication");
+    require(streams.take_receiver_session(name) == replacement, "stale receiver cleanup and stream removal preserve replacement");
+    require(streams.take_sender_session(name, "a") == replacement, "stale sender cleanup and stream removal preserve replacement");
+    require(streams.take_sender_session(name, "b") == sender_b, "other sender survives sibling and stream removal");
+    require(!streams.take_receiver_session(name) && !streams.take_sender_session(name, "a") && !streams.take_sender_session(name, "b"),
+            "taken registry sessions cannot be taken twice");
+
+    require(streams.add(stream) && streams.add_receiver_session(name, receiver) && streams.add_sender_session(name, "a", sender_a),
+            "registry name reusable after cleanup");
+    const std::weak_ptr<session> weak_receiver = receiver;
+    const std::weak_ptr<session> weak_sender = sender_a;
+    const std::weak_ptr<media_stream> weak_stream = stream;
+    receiver.reset();
+    sender_a.reset();
+    stream.reset();
+    streams.clear();
+    require(weak_receiver.expired() && weak_sender.expired() && weak_stream.expired(), "registry clear releases stream and sessions");
+}
+
 void test_hls_segmenter()
 {
     hls_segmenter segmenter(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
@@ -11594,6 +11644,8 @@ int main()
     std::cout << "[pass] io_context_pool_concurrent_next\n";
     media_server::test_io_context_pool_stop();
     std::cout << "[pass] io_context_pool_stop\n";
+    media_server::test_stream_registry_session_identity_lifecycle();
+    std::cout << "[pass] stream_registry_session_identity_lifecycle\n";
     media_server::test_stream_registry_generation_lifecycle();
     std::cout << "[pass] stream_registry_generation_lifecycle\n";
     media_server::test_hls_segmenter();
