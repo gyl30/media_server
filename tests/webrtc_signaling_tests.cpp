@@ -1300,8 +1300,10 @@ void test_whip_http_lifecycle()
     require(endpoint_get.result() == boost::beast::http::status::method_not_allowed, "whip endpoint get status");
     require(endpoint_get[boost::beast::http::field::allow] == "POST, OPTIONS", "whip endpoint get allow");
 
+    const auto original = stream_registry::instance().find("live/camera");
     const auto existing = peer.post("/publish/whip/live/camera", offer);
     require(existing.result() == boost::beast::http::status::conflict, "whip existing stream conflict");
+    require(original && stream_registry::instance().find("live/camera") == original, "whip collision preserves original publisher");
 
     const auto invalid = peer.post("/publish/whip/live/whip-invalid", webrtc_offer_sdp);
     require(invalid.result() == boost::beast::http::status::bad_request, "whip invalid offer status");
@@ -3244,6 +3246,7 @@ void test_whip_session_ingest(codec_id video_codec)
     require(peer_srtp.startup(peer_material->outbound), "whip peer srtp startup");
 
     bool packetize_ok = true;
+    std::vector<std::uint8_t> last_rtp;
     std::size_t rtcp_packets = 0;
     webrtc_packetizer packetizer(
         webrtc_packetizer_config{
@@ -3266,6 +3269,11 @@ void test_whip_session_ingest(codec_id video_codec)
             packetize_ok = protected_packet.has_value() && packetize_ok;
             if (protected_packet)
             {
+                last_rtp.assign(packet.begin(), packet.end());
+                auto corrupted = *protected_packet;
+                corrupted.back() ^= 1U;
+                static_cast<void>(client_socket.send_to(boost::asio::buffer(corrupted), server_endpoint));
+                static_cast<void>(client_socket.send_to(boost::asio::buffer(*protected_packet), server_endpoint));
                 static_cast<void>(client_socket.send_to(boost::asio::buffer(*protected_packet), server_endpoint));
             }
         },
@@ -3324,16 +3332,55 @@ void test_whip_session_ingest(codec_id video_codec)
         require(tracks[1].codec == codec_id::aac, "whip session internal audio track contract");
     }
 
-    session->shutdown();
+    struct capture_sink final : media_sink
+    {
+        void on_track(const media_track&) override {}
+        void on_frame(const media_frame& frame) override { frames.push_back(frame); }
+        void on_end() override { ++ends; }
+        std::vector<media_frame> frames;
+        int ends{};
+    };
+    const auto sink = std::make_shared<capture_sink>();
+    published->add_sink(sink);
+    const auto media_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (sink->frames.empty() && std::chrono::steady_clock::now() < media_deadline)
+    {
+        io.run_for(std::chrono::milliseconds(10));
+        io.restart();
+    }
+    require(!sink->frames.empty() && sink->frames.front().key_frame && sink->frames.front().payload &&
+                sink->frames.front().payload->size() > 4U,
+            "whip delivers valid media despite auth failures and replays");
+    require(session->srtp_started(), "whip auth failures and replays preserve receiving session");
+    if (h265)
+    {
+        const std::array<std::uint8_t, 8> malformed_rtcp{0x80, 200, 0, 6, 0, 0, 0, 1};
+        const auto protected_packet = peer_srtp.protect_rtcp(malformed_rtcp);
+        require(protected_packet.has_value(), "whip malformed rtcp authenticated fixture");
+        static_cast<void>(client_socket.send_to(boost::asio::buffer(*protected_packet), server_endpoint));
+    }
+    else
+    {
+        require(last_rtp.size() >= 12U, "whip last rtp header");
+        const auto next_sequence = static_cast<std::uint16_t>((last_rtp[2] << 8U | last_rtp[3]) + 1U);
+        last_rtp[2] = static_cast<std::uint8_t>(next_sequence >> 8U);
+        last_rtp[3] = static_cast<std::uint8_t>(next_sequence);
+        last_rtp[1] = 103;
+        const auto protected_packet = peer_srtp.protect_rtp(last_rtp);
+        require(protected_packet.has_value(), "whip unknown payload authenticated fixture");
+        static_cast<void>(client_socket.send_to(boost::asio::buffer(*protected_packet), server_endpoint));
+    }
     const auto shutdown_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (session->local_port() != 0U && std::chrono::steady_clock::now() < shutdown_deadline)
     {
         io.run_for(std::chrono::milliseconds(10));
         io.restart();
     }
-    require(session->local_port() == 0U, "whip session shutdown port");
+    require(session->local_port() == 0U, "whip authenticated invalid media shuts down session");
     require(streams.find(stream_name) == nullptr, "whip session shutdown removes stream");
+    require(sink->ends == 1, "whip invalid media ends consumer exactly once");
 
+    session->shutdown();
     packetizer.shutdown();
     peer_srtp.shutdown();
     boost::system::error_code error;
