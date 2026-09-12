@@ -10394,6 +10394,157 @@ void test_whip_hls_output()
     hls::shutdown();
 }
 
+void test_whip_rtmp_output()
+{
+    worker_context worker;
+    auto& io = worker.io();
+    auto& streams = stream_registry::instance();
+    streams.clear();
+    constexpr std::string_view stream_name = "live/whip-rtmp";
+
+    whip_media_receiver receiver(worker,
+                                 std::string(stream_name),
+                                 whip_media_receiver_config{
+                                     .video_codec = codec_id::h264,
+                                     .video_payload_type = 102,
+                                     .audio_payload_type = 111,
+                                     .audio_channel_count = 2,
+                                 });
+    bool receiver_ok = true;
+    webrtc_packetizer packetizer(
+        webrtc_packetizer_config{
+            .video_codec = codec_id::h264,
+            .audio_codec = codec_id::aac,
+            .video_payload_type = 102,
+            .audio_payload_type = 111,
+            .opus_channel_count = 2,
+            .opus_bitrate = 128'000,
+            .opus_max_playback_rate = 48'000,
+            .video_mid = "0",
+            .audio_mid = "1",
+            .video_mid_extension_id = 4,
+            .audio_mid_extension_id = 4,
+            .rtcp_cname = "whip-rtmp",
+        },
+        [&receiver, &receiver_ok](std::span<const std::uint8_t> packet) { receiver_ok = receiver.input_rtp(packet) && receiver_ok; },
+        [&receiver, &receiver_ok](std::span<const std::uint8_t> packet) { receiver_ok = receiver.input_rtcp(packet) && receiver_ok; });
+
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          require(receiver.startup(), "whip rtmp receiver startup");
+                          require(packetizer.on_track(make_video_track()), "whip rtmp packetizer video track");
+                          require(packetizer.on_track(make_audio_track()), "whip rtmp packetizer audio track");
+                          require(packetizer.on_frame(make_video_frame(0, true)), "whip rtmp initial video key frame");
+                          require(packetizer.on_frame(make_video_frame(40'000'000, false)), "whip rtmp initial video flush frame");
+                      });
+    worker.release_work();
+    io.run();
+    io.restart();
+    require(receiver_ok, "whip rtmp accepts initial media");
+
+    const auto stream = streams.find(stream_name);
+    require(stream != nullptr, "whip rtmp stream published");
+    const auto tracks = stream->tracks();
+    require(tracks.size() == 2U && tracks[0].codec == codec_id::h264 && tracks[1].codec == codec_id::aac,
+            "whip rtmp internal tracks");
+
+    std::vector<std::pair<int, std::vector<std::uint8_t>>> packets;
+    bool ended = false;
+    auto play = std::make_shared<rtmp_play_session>(
+        worker,
+        stream,
+        [&packets](int type, std::span<const std::uint8_t> data, std::uint32_t)
+        {
+            packets.emplace_back(type, std::vector<std::uint8_t>(data.begin(), data.end()));
+        },
+        video_transcode_config{},
+        [&ended]() { ended = true; });
+    boost::asio::post(io, [play]() { play->startup(); });
+    io.run();
+    io.restart();
+
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          std::int64_t pts_ns = 100'000'000;
+                          for (const auto& adts : valid_aac_adts_frames)
+                          {
+                              require(packetizer.on_frame(media_frame{
+                                          .track = audio_track_id,
+                                          .dts_ns = pts_ns,
+                                          .pts_ns = pts_ns,
+                                          .key_frame = false,
+                                          .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                                      }),
+                                      "whip rtmp audio frame");
+                              pts_ns += 23'219'954;
+                          }
+                          require(packetizer.on_frame(make_video_frame(300'000'000, true)), "whip rtmp video key frame");
+                          require(packetizer.on_frame(make_video_frame(340'000'000, false)), "whip rtmp video flush frame");
+                      });
+    io.run();
+    io.restart();
+    require(receiver_ok, "whip rtmp accepts continued media");
+
+    bool video_config = false;
+    bool video_media = false;
+    bool audio_config = false;
+    bool audio_media = false;
+    for (const auto& [type, data] : packets)
+    {
+        if (type == FLV_TYPE_VIDEO)
+        {
+            flv_video_tag_header_t header{};
+            const auto header_bytes = flv_video_tag_header_read(&header, data.data(), data.size());
+            require(header_bytes > 0 && header.codecid == FLV_VIDEO_H264, "whip rtmp h264 header");
+            if (header.avpacket == FLV_SEQUENCE_HEADER)
+            {
+                video_config = true;
+            }
+            else if (header.avpacket == FLV_AVPACKET && header.keyframe == FLV_VIDEO_KEY_FRAME &&
+                     data.size() > static_cast<std::size_t>(header_bytes))
+            {
+                video_media = true;
+            }
+        }
+        else if (type == FLV_TYPE_AUDIO)
+        {
+            flv_audio_tag_header_t header{};
+            const auto header_bytes = flv_audio_tag_header_read(&header, data.data(), data.size());
+            require(header_bytes > 0 && header.codecid == FLV_AUDIO_AAC, "whip rtmp aac header");
+            if (header.avpacket == FLV_SEQUENCE_HEADER)
+            {
+                const auto asc = parse_aac_asc(
+                    std::span<const std::uint8_t>(data).subspan(static_cast<std::size_t>(header_bytes)));
+                audio_config = audio_config || (asc && asc->sample_rate == 48'000 && asc->channel_count == 2);
+            }
+            else if (header.avpacket == FLV_AVPACKET && data.size() > static_cast<std::size_t>(header_bytes))
+            {
+                audio_media = true;
+            }
+        }
+    }
+    require(video_config, "whip rtmp h264 config");
+    require(video_media, "whip rtmp h264 media");
+    require(audio_config, "whip rtmp aac config");
+    require(audio_media, "whip rtmp aac media");
+
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          receiver.shutdown();
+                          packetizer.shutdown();
+                      });
+    io.run();
+    require(ended, "whip rtmp ends with source");
+    require(streams.find(stream_name) == nullptr, "whip rtmp stream removed");
+
+    io.restart();
+    boost::asio::post(io, [play]() { play->shutdown(); });
+    io.run();
+}
+
 void test_webrtc_video_access_unit_marker()
 {
     for (const bool h265 : std::array{false, true})
@@ -11043,6 +11194,8 @@ int main()
     std::cout << "[pass] whip_media_receiver\n";
     media_server::test_whip_hls_output();
     std::cout << "[pass] whip_hls_output\n";
+    media_server::test_whip_rtmp_output();
+    std::cout << "[pass] whip_rtmp_output\n";
     media_server::test_webrtc_video_access_unit_marker();
     std::cout << "[pass] webrtc_video_access_unit_marker\n";
     media_server::test_webrtc_av1_packetizer();
