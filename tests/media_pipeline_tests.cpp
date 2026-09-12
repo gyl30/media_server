@@ -929,6 +929,37 @@ class whip_media_capture_sink final : public media_sink
     std::size_t ends_{};
 };
 
+class packetizer_test_reader final : public media_reader
+{
+   public:
+    explicit packetizer_test_reader(webrtc_packetizer& packetizer) : packetizer_(packetizer) {}
+
+    void on_tracks(media_track_snapshot_ptr tracks) override
+    {
+        for (const auto& track : tracks->tracks)
+        {
+            require(packetizer_.on_track(track), "output packetizer accepts input track");
+        }
+        reader_handle().async_read(cursor_);
+    }
+
+    void on_read(media_read_batch batch) override
+    {
+        for (const auto& entry : batch.entries)
+        {
+            require(packetizer_.on_frame(entry.frame), "output packetizer accepts input frame");
+        }
+        cursor_ = batch.next_cursor;
+        reader_handle().async_read(cursor_);
+    }
+
+    void on_end() override { packetizer_.shutdown(); }
+
+   private:
+    webrtc_packetizer& packetizer_;
+    media_reader_cursor cursor_;
+};
+
 class pull_test_reader final : public media_reader
 {
    public:
@@ -10251,6 +10282,52 @@ void test_whip_media_receiver()
                 std::ranges::find_if(flv.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_AUDIO_AAC; });
             require(flv_audio != flv.packets.end() && !flv_audio->payload.empty(), "whip http flv aac media");
             flv_streamer->shutdown();
+        }
+
+        if (with_audio)
+        {
+            std::vector<std::vector<std::uint8_t>> packets;
+            webrtc_packetizer output(
+                webrtc_packetizer_config{
+                    .video_payload_type = 104,
+                    .audio_payload_type = 109,
+                    .opus_channel_count = 2,
+                    .video_mid = "video",
+                    .audio_mid = "audio",
+                    .video_mid_extension_id = 4,
+                    .audio_mid_extension_id = 4,
+                    .rtcp_cname = {},
+                },
+                [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
+            const auto reader = std::make_shared<packetizer_test_reader>(output);
+            const auto handle = stream->add_reader(reader, worker);
+            io.run();
+            io.restart();
+
+            bool idr = false;
+            std::vector<std::uint32_t> audio_timestamps;
+            for (const auto& packet : packets)
+            {
+                const auto pt = packet[1] & 0x7fU;
+                require(pt == 104U || pt == 109U, "whip whep negotiated payload types");
+                const auto payload = require_rtp_mid(packet, pt == 104U ? "video" : "audio", 4);
+                require(!payload.empty(), "whip whep media payload");
+                if (pt == 104U)
+                {
+                    idr = idr || (payload.front() & 0x1fU) == 5U;
+                }
+                else
+                {
+                    audio_timestamps.push_back(rtp_timestamp(packet));
+                }
+            }
+            require(idr, "whip whep h264 idr payload");
+            require(audio_timestamps.size() >= 2U && audio_timestamps[1] - audio_timestamps[0] == 960U,
+                    "whip whep transcoded opus 20ms media");
+            handle.remove();
+            output.shutdown();
+            io.run();
+            io.restart();
         }
 
         const auto initial_video_version = stream->tracks().front().config_version;
