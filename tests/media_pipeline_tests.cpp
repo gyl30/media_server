@@ -86,6 +86,7 @@ extern "C"
 #include "aom-av1.h"
 #include "mpeg4-aac.h"
 #include "mpeg-ts.h"
+#include "mpeg-ps.h"
 #include "rtp-ext.h"
 #include "flv-muxer.h"
 #include "flv-proto.h"
@@ -10044,6 +10045,223 @@ void test_webrtc_rtp_packetizer()
     packetizer.shutdown();
 }
 
+void require_input_output_boundaries(const std::shared_ptr<media_stream>& stream, worker_context& worker, codec_id codec)
+{
+    auto& io = worker.io();
+    std::vector<std::vector<std::uint8_t>> rtp;
+    webrtc_packetizer output({.video_codec = codec,
+                              .video_payload_type = 104,
+                              .audio_payload_type = 109,
+                              .opus_channel_count = 2,
+                              .video_mid = "video",
+                              .audio_mid = "audio",
+                              .video_mid_extension_id = 4,
+                              .audio_mid_extension_id = 4,
+                              .rtcp_cname = {}},
+                             [&rtp](std::span<const std::uint8_t> packet) { rtp.emplace_back(packet.begin(), packet.end()); });
+    const auto reader = std::make_shared<packetizer_test_reader>(output);
+    const auto handle = stream->add_reader(reader, worker);
+
+    flv_demux_capture flv;
+    const auto demuxer =
+        std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &flv), &flv_demuxer_destroy);
+    auto play = std::make_shared<rtmp_play_session>(
+        worker,
+        stream,
+        [&](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "input output flv demux"); },
+        video_transcode_config{},
+        []() {});
+    auto hls = std::make_shared<hls_segmenter>(hls_config{.target_duration_seconds = 1.0, .window_size = 4, .video = {}});
+    stream->add_sink(hls);
+
+    std::vector<std::uint8_t> ps;
+    auto sender = std::make_shared<gb28181_rtp_sender>(
+        worker,
+        stream,
+        96,
+        0x12345678U,
+        [&](std::vector<std::uint8_t> packet)
+        {
+            rtp_packet_t parsed{};
+            require(rtp_packet_deserialize(&parsed, packet.data(), static_cast<int>(packet.size())) == 0 && parsed.rtp.pt == 96 &&
+                        parsed.rtp.ssrc == 0x12345678U && parsed.payloadlen > 0,
+                    "input output gb28181 rtp contract");
+            const auto* data = static_cast<const std::uint8_t*>(parsed.payload);
+            ps.insert(ps.end(), data, data + parsed.payloadlen);
+        },
+        []() {});
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          play->startup();
+                          require(sender->startup(), "input output gb sender startup");
+                      });
+    io.run();
+    io.restart();
+
+    bool idr = false;
+    std::vector<std::uint32_t> audio_timestamps;
+    for (const auto& packet : rtp)
+    {
+        const auto pt = packet[1] & 0x7fU;
+        require(pt == 104U || pt == 109U, "input output whep negotiated payload types");
+        const auto payload = require_rtp_mid(packet, pt == 104U ? "video" : "audio", 4);
+        require(!payload.empty(), "input output whep payload");
+        if (pt == 104U)
+        {
+            idr = idr || (codec == codec_id::h264 ? (payload.front() & 0x1fU) == 5U : ((payload.front() >> 1U) & 0x3fU) == 19U);
+        }
+        else
+        {
+            audio_timestamps.push_back(rtp_timestamp(packet));
+        }
+    }
+    require(idr, "input output whep video idr");
+    require(audio_timestamps.size() >= 2U && audio_timestamps[1] - audio_timestamps[0] == 960U, "input output whep aac to opus");
+
+    const auto flv_config_codec = codec == codec_id::h264 ? FLV_VIDEO_AVCC : FLV_VIDEO_HVCC;
+    const auto config_packet = std::ranges::find_if(flv.packets, [=](const demuxed_packet& packet) { return packet.codec == flv_config_codec; });
+    require(config_packet != flv.packets.end() && (codec == codec_id::h264 ? h264_avcc_to_annex_b(config_packet->payload) == h264_config
+                                                                           : h265_hvcc_to_annex_b(config_packet->payload) == h265_config),
+            "input output flv codec config");
+    const auto flv_video_codec = codec == codec_id::h264 ? FLV_VIDEO_H264 : FLV_VIDEO_H265;
+    require(std::ranges::any_of(flv.packets,
+                                [=](const demuxed_packet& packet)
+                                { return packet.codec == flv_video_codec && packet.flags == 1 && !packet.payload.empty(); }),
+            "input output flv video keyframe");
+    require(std::ranges::any_of(flv.packets,
+                                [](const demuxed_packet& packet)
+                                { return packet.codec == FLV_AUDIO_AAC && packet.payload.size() > 7U && packet.payload[0] == 0xff; }),
+            "input output flv aac media");
+
+    ts_demux_capture ps_capture;
+    const auto ps_demux = std::unique_ptr<ps_demuxer_t, decltype(&ps_demuxer_destroy)>(
+        ps_demuxer_create(
+            +[](void* param, int stream_id, int codec_id, int flags, std::int64_t pts, std::int64_t dts, const void* data, std::size_t bytes)
+            { return capture_ts_packet(param, 0, stream_id, codec_id, flags, pts, dts, data, bytes); },
+            &ps_capture),
+        &ps_demuxer_destroy);
+    require(!ps.empty() && ps_demuxer_input(ps_demux.get(), ps.data(), ps.size()) >= 0, "input output ps demux");
+    const auto mpeg_video_codec = codec == codec_id::h264 ? PSI_STREAM_H264 : PSI_STREAM_H265;
+    require(std::ranges::any_of(ps_capture.packets,
+                                [=](const demuxed_packet& packet) { return packet.codec == mpeg_video_codec && !packet.payload.empty(); }),
+            "input output ps video");
+    require(std::ranges::any_of(ps_capture.packets,
+                                [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC && !packet.payload.empty(); }),
+            "input output ps aac");
+
+    boost::asio::post(io, [&]() { stream->end(); });
+    io.run();
+    io.restart();
+    const auto segment = hls->segment(0);
+    require(segment.has_value(), "input output hls segment");
+    const auto ts = demux_ts_segment(*segment);
+    require(std::ranges::find(ts.stream_codecs, mpeg_video_codec) != ts.stream_codecs.end() &&
+                std::ranges::find(ts.stream_codecs, PSI_STREAM_AAC) != ts.stream_codecs.end(),
+            "input output hls pmt codecs");
+    require(
+        std::ranges::any_of(ts.packets, [=](const demuxed_packet& packet) { return packet.codec == mpeg_video_codec && !packet.payload.empty(); }) &&
+            std::ranges::any_of(ts.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC && !packet.payload.empty(); }),
+        "input output hls pes media");
+    require(hls->playlist("/hls").find("#EXT-X-ENDLIST") != std::string::npos, "input output hls endlist");
+    handle.remove();
+    output.shutdown();
+    play->shutdown();
+    sender->shutdown();
+    io.run();
+    io.restart();
+}
+
+void test_rtsp_input_output_boundaries()
+{
+    for (const auto codec : {codec_id::h264, codec_id::h265})
+    {
+        worker_context worker;
+        worker.release_work();
+        auto& io = worker.io();
+        io.restart();
+        auto& streams = stream_registry::instance();
+        streams.clear();
+        const auto video = codec == codec_id::h264 ? make_video_track() : make_h265_track();
+        const auto audio = make_audio_track();
+        const std::string encoding = codec == codec_id::h264 ? "H264" : "H265";
+        rtsp_publish_media input(
+            worker,
+            "live/rtsp-outputs",
+            {
+                {.uri = "video", .track = video, .clock_rate = 90'000, .payload_type = 96, .encoding = encoding, .fmtp = {}},
+                {.uri = "audio",
+                 .track = audio,
+                 .clock_rate = 44'100,
+                 .payload_type = 97,
+                 .encoding = "MPEG4-GENERIC",
+                 .fmtp = "97 streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1210"},
+            });
+        const auto muxer = std::unique_ptr<rtsp_muxer_t, decltype(&rtsp_muxer_destroy)>(
+            rtsp_muxer_create(
+                +[](void* param, int, const void* data, int bytes, std::uint32_t, int)
+                {
+                    const auto packet = std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes));
+                    const auto index = (packet[1] & 0x7fU) == 96 ? 0U : 1U;
+                    require(static_cast<rtsp_publish_media*>(param)->input_packet(index, packet), "rtsp input generated rtp");
+                    return 0;
+                },
+                &input),
+            &rtsp_muxer_destroy);
+        boost::asio::post(
+            io,
+            [&]()
+            {
+                require(input.startup("rtsp-outputs") && input.start_recording(), "rtsp input startup recording");
+                const auto video_payload = rtsp_muxer_add_payload(muxer.get(),
+                                                                  "RTP/AVP",
+                                                                  90'000,
+                                                                  96,
+                                                                  encoding.c_str(),
+                                                                  0,
+                                                                  1,
+                                                                  0,
+                                                                  video.codec_config.data(),
+                                                                  static_cast<int>(video.codec_config.size()));
+                const auto audio_payload = rtsp_muxer_add_payload(
+                    muxer.get(), "RTP/AVP", 44'100, 97, "MPEG4-GENERIC", 0, 2, 0, aac_asc.data(), static_cast<int>(aac_asc.size()));
+                require(video_payload >= 0 && audio_payload >= 0, "rtsp input payloads");
+                const auto video_id = rtsp_muxer_add_media(muxer.get(),
+                                                           video_payload,
+                                                           codec == codec_id::h264 ? RTP_PAYLOAD_H264 : RTP_PAYLOAD_H265,
+                                                           video.codec_config.data(),
+                                                           static_cast<int>(video.codec_config.size()));
+                const auto audio_id =
+                    rtsp_muxer_add_media(muxer.get(), audio_payload, RTP_PAYLOAD_MP4A, aac_asc.data(), static_cast<int>(aac_asc.size()));
+                require(video_id >= 0 && audio_id >= 0, "rtsp input media tracks");
+                for (const auto pts : {0, 40, 80})
+                {
+                    const auto frame =
+                        codec == codec_id::h264 ? make_video_frame(pts * 1'000'000LL, pts == 0) : make_h265_frame(pts * 1'000'000LL, pts == 0);
+                    require(rtsp_muxer_input(
+                                muxer.get(), video_id, pts, pts, frame.payload->data(), static_cast<int>(frame.payload->size()), pts == 0) == 0,
+                            "rtsp input video access unit");
+                }
+                int pts = 0;
+                for (const auto& adts : valid_aac_adts_frames)
+                {
+                    require(rtsp_muxer_input(muxer.get(), audio_id, pts, pts, adts.data(), static_cast<int>(adts.size()), 0) == 0,
+                            "rtsp input aac access unit");
+                    pts += 23;
+                }
+            });
+        io.run();
+        io.restart();
+        const auto stream = streams.find("live/rtsp-outputs");
+        require(stream && stream->tracks().size() == 2U, "rtsp actual input stream");
+        require_input_output_boundaries(stream, worker, codec);
+        boost::asio::post(io, [&]() { input.shutdown(); });
+        io.run();
+        require(!streams.find("live/rtsp-outputs"), "rtsp input cleanup");
+    }
+}
+
 void test_whip_media_receiver_rejects_invalid_packets()
 {
     const std::vector<std::vector<std::uint8_t>> invalid_rtp{
@@ -11320,6 +11538,8 @@ int main()
     std::cout << "[pass] hls_module_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
+    media_server::test_rtsp_input_output_boundaries();
+    std::cout << "[pass] rtsp_input_output_boundaries\n";
     media_server::test_whip_media_receiver_rejects_invalid_packets();
     std::cout << "[pass] whip_media_receiver_rejects_invalid_packets\n";
     media_server::test_whip_media_receiver();
