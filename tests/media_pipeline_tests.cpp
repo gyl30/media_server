@@ -10044,6 +10044,38 @@ void test_webrtc_rtp_packetizer()
     packetizer.shutdown();
 }
 
+void test_whip_media_receiver_rejects_invalid_packets()
+{
+    const std::vector<std::vector<std::uint8_t>> invalid_rtp{
+        {0x80, 102},
+        {0x40, 102, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0x65},
+        {0x80, 103, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0x65},
+    };
+    const std::vector<std::vector<std::uint8_t>> invalid_rtcp{
+        {0x80, 200, 0, 6},
+        {0x40, 200, 0, 1, 0, 0, 0, 1},
+        {0x80, 200, 0, 6, 0, 0, 0, 1},
+    };
+    for (const bool rtcp : {false, true})
+    {
+        for (const auto& packet : rtcp ? invalid_rtcp : invalid_rtp)
+        {
+            worker_context worker;
+            worker.release_work();
+            worker.io().restart();
+            whip_media_receiver receiver(worker, "live/whip-invalid", {.video_payload_type = 102});
+            boost::asio::post(worker.io(), [&]()
+            {
+                require(receiver.startup(), "whip invalid input receiver startup");
+                require(!(rtcp ? receiver.input_rtcp(packet) : receiver.input_rtp(packet)), "whip malformed packet reports failure");
+                receiver.shutdown();
+            });
+            worker.io().run();
+            require(!stream_registry::instance().find("live/whip-invalid"), "whip malformed input never publishes");
+        }
+    }
+}
+
 void test_whip_media_receiver()
 {
     for (const auto video_codec : {codec_id::h264, codec_id::h265})
@@ -10084,6 +10116,9 @@ void test_whip_media_receiver()
                           [&]()
                           {
                               require(receiver.startup(), "whip media receiver startup");
+                              std::array<std::uint8_t, 28> unknown_sr{0x80, 200, 0, 6};
+                              unknown_sr[4] = 0x7f;
+                              require(receiver.input_rtcp(unknown_sr), "whip ignores sender report before learning ssrc");
                               require(packetizer.on_track(video_codec == codec_id::h264 ? make_video_track() : make_h265_track()),
                                       "whip media receiver packetizer video track");
                               {
@@ -10142,6 +10177,8 @@ void test_whip_media_receiver()
         io.restart();
         require(sink->tracks().size() == tracks.size(), "whip media receiver sink tracks");
         require(!sink->frames().empty(), "whip media receiver replays first video gop");
+        require(std::ranges::none_of(sink->frames(), [](const media_frame& frame) { return frame.track == audio_track_id; }),
+                "whip does not replay pre-publication audio");
         const auto video_frame = std::ranges::find_if(sink->frames(), [](const media_frame& frame) { return frame.track == video_track_id; });
         require(video_frame != sink->frames().end() && video_frame->key_frame && video_frame->payload && video_frame->payload->size() >= 5U &&
                     (*video_frame->payload)[0] == 0 && (*video_frame->payload)[1] == 0 && (*video_frame->payload)[2] == 0 &&
@@ -10335,6 +10372,7 @@ void test_whip_media_receiver()
         }
 
         const auto initial_video_version = stream->tracks().front().config_version;
+        const auto frames_before_update = sink->frames().size();
         boost::asio::post(io,
                           [&]()
                           {
@@ -10353,6 +10391,8 @@ void test_whip_media_receiver()
         require(updated_tracks.front().config_version == initial_video_version + 1U && updated_tracks.front().codec_config != tracks.front().codec_config,
                 "whip media receiver updates video track config");
 
+        require(sink->frames().size() > frames_before_update && sink->frames().back().track == video_track_id && sink->frames().back().key_frame,
+                "whip config update continues with new keyframe");
         boost::asio::post(io,
                           [&]()
                           {
@@ -11280,6 +11320,8 @@ int main()
     std::cout << "[pass] hls_module_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
+    media_server::test_whip_media_receiver_rejects_invalid_packets();
+    std::cout << "[pass] whip_media_receiver_rejects_invalid_packets\n";
     media_server::test_whip_media_receiver();
     std::cout << "[pass] whip_media_receiver\n";
     media_server::test_whip_hls_output(media_server::codec_id::h264);
