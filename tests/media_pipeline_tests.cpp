@@ -10284,6 +10284,116 @@ void test_whip_media_receiver()
     }
 }
 
+void test_whip_hls_output()
+{
+    worker_context worker;
+    auto& io = worker.io();
+    auto& streams = stream_registry::instance();
+    streams.clear();
+    hls::shutdown();
+    const config application_config;
+    constexpr std::string_view stream_name = "live/whip-hls";
+
+    whip_media_receiver receiver(worker,
+                                 std::string(stream_name),
+                                 whip_media_receiver_config{
+                                     .video_codec = codec_id::h264,
+                                     .video_payload_type = 102,
+                                     .audio_payload_type = 111,
+                                     .audio_channel_count = 2,
+                                 });
+    bool receiver_ok = true;
+    webrtc_packetizer packetizer(
+        webrtc_packetizer_config{
+            .video_codec = codec_id::h264,
+            .audio_codec = codec_id::aac,
+            .video_payload_type = 102,
+            .audio_payload_type = 111,
+            .opus_channel_count = 2,
+            .opus_bitrate = 128'000,
+            .opus_max_playback_rate = 48'000,
+            .video_mid = "0",
+            .audio_mid = "1",
+            .video_mid_extension_id = 4,
+            .audio_mid_extension_id = 4,
+            .rtcp_cname = "whip-hls",
+        },
+        [&receiver, &receiver_ok](std::span<const std::uint8_t> packet) { receiver_ok = receiver.input_rtp(packet) && receiver_ok; },
+        [&receiver, &receiver_ok](std::span<const std::uint8_t> packet) { receiver_ok = receiver.input_rtcp(packet) && receiver_ok; });
+
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          require(receiver.startup(), "whip hls receiver startup");
+                          require(packetizer.on_track(make_video_track()), "whip hls packetizer video track");
+                          require(packetizer.on_track(make_audio_track()), "whip hls packetizer audio track");
+                          require(packetizer.on_frame(make_video_frame(0, true)), "whip hls initial video key frame");
+                          require(packetizer.on_frame(make_video_frame(40'000'000, false)), "whip hls initial video flush frame");
+                      });
+    worker.release_work();
+    io.run();
+    io.restart();
+    require(receiver_ok, "whip hls accepts initial media");
+
+    const auto stream = streams.find(stream_name);
+    require(stream != nullptr, "whip hls stream published");
+    const auto tracks = stream->tracks();
+    require(tracks.size() == 2U && tracks[0].codec == codec_id::h264 && tracks[1].codec == codec_id::aac,
+            "whip hls internal tracks");
+
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          const auto count = hls::segment_count(stream_name, application_config);
+                          require(count.has_value() && *count == 0U, "whip hls segmenter created");
+
+                          std::int64_t pts_ns = 100'000'000;
+                          for (const auto& adts : valid_aac_adts_frames)
+                          {
+                              require(packetizer.on_frame(media_frame{
+                                          .track = audio_track_id,
+                                          .dts_ns = pts_ns,
+                                          .pts_ns = pts_ns,
+                                          .key_frame = false,
+                                          .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+                                      }),
+                                      "whip hls audio frame");
+                              pts_ns += 23'219'954;
+                          }
+
+                          require(packetizer.on_frame(make_video_frame(2'500'000'000, true)), "whip hls boundary key frame");
+                          require(packetizer.on_frame(make_video_frame(2'540'000'000, false)), "whip hls boundary flush frame");
+                      });
+    io.run();
+    io.restart();
+    require(receiver_ok, "whip hls accepts continued media");
+
+    const auto count = hls::segment_count(stream_name, application_config);
+    require(count.has_value() && *count >= 1U, "whip hls segment created");
+    const auto segment = hls::segment(stream_name, 0, application_config);
+    require(segment.has_value() && !segment->empty(), "whip hls first segment");
+    const auto capture = demux_ts_segment(*segment);
+    require(std::ranges::find(capture.stream_codecs, PSI_STREAM_H264) != capture.stream_codecs.end(), "whip hls h264 pmt");
+    require(std::ranges::find(capture.stream_codecs, PSI_STREAM_AAC) != capture.stream_codecs.end(), "whip hls aac pmt");
+    const auto video = std::ranges::find_if(
+        capture.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_H264 && (packet.flags & MPEG_FLAG_IDR_FRAME) != 0; });
+    require(video != capture.packets.end() && !video->payload.empty(), "whip hls h264 media");
+    const auto audio = std::ranges::find_if(capture.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC; });
+    require(audio != capture.packets.end() && !audio->payload.empty(), "whip hls aac media");
+
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          receiver.shutdown();
+                          packetizer.shutdown();
+                      });
+    io.run();
+    const auto playlist = hls::playlist(stream_name, application_config);
+    require(playlist.has_value() && playlist->find("#EXT-X-ENDLIST") != std::string::npos, "whip hls ends with source");
+    require(streams.find(stream_name) == nullptr, "whip hls stream removed");
+    hls::shutdown();
+}
+
 void test_webrtc_video_access_unit_marker()
 {
     for (const bool h265 : std::array{false, true})
@@ -10931,6 +11041,8 @@ int main()
     std::cout << "[pass] webrtc_rtp_packetizer\n";
     media_server::test_whip_media_receiver();
     std::cout << "[pass] whip_media_receiver\n";
+    media_server::test_whip_hls_output();
+    std::cout << "[pass] whip_hls_output\n";
     media_server::test_webrtc_video_access_unit_marker();
     std::cout << "[pass] webrtc_video_access_unit_marker\n";
     media_server::test_webrtc_av1_packetizer();
