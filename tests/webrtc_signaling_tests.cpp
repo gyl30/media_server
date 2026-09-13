@@ -3395,7 +3395,7 @@ void test_whip_session_ingest(codec_id video_codec)
     else
     {
         require(last_rtp.size() >= 12U, "whip last rtp header");
-        const auto next_sequence = static_cast<std::uint16_t>((last_rtp[2] << 8U | last_rtp[3]) + 1U);
+        const auto next_sequence = static_cast<std::uint16_t>((static_cast<unsigned int>(last_rtp[2]) << 8U | last_rtp[3]) + 1U);
         last_rtp[2] = static_cast<std::uint8_t>(next_sequence >> 8U);
         last_rtp[3] = static_cast<std::uint8_t>(next_sequence);
         last_rtp[1] = 103;

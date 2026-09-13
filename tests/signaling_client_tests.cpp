@@ -286,26 +286,36 @@ void test_heartbeat_rejection()
         std::unique_lock lock(mutex);
         require(condition.wait_for(lock, 2s, [&]() { return fenced; }), "heartbeat rejection callback");
     }
-    io.stop();
     runner.join();
 }
 
-void test_control_io_stop_cancels_heartbeat_wait()
+void test_control_cancellation_ends_heartbeat_wait()
 {
     test_http_server server;
     auto options = client_options(server.url());
     options.heartbeat_interval = 1h;
     boost::asio::io_context io;
     auto client = std::make_shared<media_server::signaling_client>(io, std::move(options));
-    boost::asio::spawn(io, [client](boost::asio::yield_context yield) { client->run_heartbeat(yield, []() {}); }, boost::asio::detached);
+    boost::asio::cancellation_signal cancellation;
+    bool completed = false;
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            yield.throw_if_cancelled(false);
+            client->run_heartbeat(yield, []() {});
+            completed = true;
+        },
+        boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::detached));
     std::jthread runner([&]() { io.run(); });
     const auto started = std::chrono::steady_clock::now();
-    io.stop();
+    boost::asio::post(io, [&]() { cancellation.emit(boost::asio::cancellation_type::all); });
     runner.join();
-    require(std::chrono::steady_clock::now() - started < 500ms, "control io stop cancels heartbeat wait");
+    require(completed, "heartbeat coroutine completes after timer cancellation");
+    require(std::chrono::steady_clock::now() - started < 500ms, "control cancellation ends heartbeat wait");
 }
 
-void test_control_io_stop_cancels_in_flight_heartbeat()
+void test_control_cancellation_ends_in_flight_heartbeat()
 {
     test_http_server server(boost::beast::http::status::ok, R"({"result":"ok"})", 2s);
     auto options = client_options(server.url());
@@ -313,13 +323,24 @@ void test_control_io_stop_cancels_in_flight_heartbeat()
     options.request_timeout = 5s;
     boost::asio::io_context io;
     auto client = std::make_shared<media_server::signaling_client>(io, std::move(options));
-    boost::asio::spawn(io, [client](boost::asio::yield_context yield) { client->run_heartbeat(yield, []() {}); }, boost::asio::detached);
+    boost::asio::cancellation_signal cancellation;
+    bool completed = false;
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            yield.throw_if_cancelled(false);
+            client->run_heartbeat(yield, []() {});
+            completed = true;
+        },
+        boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::detached));
     std::jthread runner([&]() { io.run(); });
     server.wait_requests(1);
     const auto started = std::chrono::steady_clock::now();
-    io.stop();
+    boost::asio::post(io, [&]() { cancellation.emit(boost::asio::cancellation_type::all); });
     runner.join();
-    require(std::chrono::steady_clock::now() - started < 500ms, "control io stop cancels in-flight heartbeat");
+    require(completed, "heartbeat coroutine completes after request cancellation");
+    require(std::chrono::steady_clock::now() - started < 500ms, "control cancellation ends in-flight heartbeat");
 }
 
 }    // namespace
@@ -332,7 +353,7 @@ int main()
     test_constructor_rejects_non_base_urls();
     test_request_timeout();
     test_heartbeat_rejection();
-    test_control_io_stop_cancels_heartbeat_wait();
-    test_control_io_stop_cancels_in_flight_heartbeat();
+    test_control_cancellation_ends_heartbeat_wait();
+    test_control_cancellation_ends_in_flight_heartbeat();
     return 0;
 }
