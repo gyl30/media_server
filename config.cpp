@@ -69,10 +69,10 @@ int parse_config(int argc, char** argv, config* cfg)
     std::string rtsp_port{std::to_string(result.rtsp_port)};
     std::string http_port{std::to_string(result.http_port)};
     std::string threads{std::to_string(result.threads)};
-    std::string rtmp_video_codec{"passthrough"};
-    std::string rtsp_video_codec{"passthrough"};
-    std::string http_video_codec{"passthrough"};
-    std::string whep_video_codec{"passthrough"};
+    std::string rtmp_video_codec;
+    std::string rtsp_video_codec;
+    std::string http_video_codec;
+    std::string whep_video_codec;
     std::vector<std::string> rtsp_pulls;
 
     po::options_description options("options");
@@ -137,9 +137,10 @@ int parse_config(int argc, char** argv, config* cfg)
         return 1;
     }
 
-    if (!parse_video_transcode_codec(rtmp_video_codec, result.rtmp_video.codec) ||
-        !parse_video_transcode_codec(rtsp_video_codec, result.rtsp_video.codec) ||
-        !parse_video_transcode_codec(http_video_codec, result.http_video.codec) || !parse_video_transcode_codec(whep_video_codec, result.whep_video.codec))
+    if ((values.count("rtmp-video-codec") != 0U && !parse_video_transcode_codec(rtmp_video_codec, result.rtmp_video.codec)) ||
+        (values.count("rtsp-video-codec") != 0U && !parse_video_transcode_codec(rtsp_video_codec, result.rtsp_video.codec)) ||
+        (values.count("http-video-codec") != 0U && !parse_video_transcode_codec(http_video_codec, result.http_video.codec)) ||
+        (values.count("whep-video-codec") != 0U && !parse_video_transcode_codec(whep_video_codec, result.whep_video.codec)))
     {
         print_usage(options);
         return 1;
