@@ -155,6 +155,38 @@ void test_ps_fixture_creates_stream()
     media.shutdown();
 }
 
+void test_receiver_ignores_malformed_media()
+{
+    worker_context worker;
+    worker.release_work();
+    auto& streams = stream_registry::instance();
+    streams.clear();
+    gb28181_rtp_receiver receiver(worker, "live/gb-malformed", 96, 0x12345678U);
+    require(receiver.startup(), "gb malformed receiver startup");
+    const std::vector<std::vector<std::uint8_t>> invalid_rtp{
+        {0x80, 96},
+        {0x80, 97, 0, 1, 0, 0, 0, 0, 0x12, 0x34, 0x56, 0x78, 0},
+        {0x90, 96, 0, 1, 0, 0, 0, 0, 0x12, 0x34, 0x56, 0x78, 0xbe, 0xde, 0, 2},
+        {0xa0, 96, 0, 1, 0, 0, 0, 0, 0x12, 0x34, 0x56, 0x78, 20},
+    };
+    for (const auto& packet : invalid_rtp)
+    {
+        require(receiver.receive_rtp(packet) == gb28181_rtp_receive_result::ignored, "gb invalid rtp ignored");
+    }
+    const std::array<std::uint8_t, 3> truncated_rtcp{0x80, 200, 0};
+    require(receiver.receive_rtcp(truncated_rtcp) < 0, "gb truncated rtcp header rejected");
+    require(!streams.find("live/gb-malformed"), "gb malformed media cannot publish");
+    for (const auto& packet : make_ps_rtp(96, 0x12345678U))
+    {
+        require(receiver.receive_rtp(packet) == gb28181_rtp_receive_result::accepted, "gb valid media accepted after malformed packets");
+    }
+    const auto stream = streams.find("live/gb-malformed");
+    require(stream && stream->tracks().size() == 1U && stream->tracks().front().codec == codec_id::h264,
+            "gb valid media still publishes h264 track");
+    receiver.shutdown();
+    require(!streams.find("live/gb-malformed"), "gb malformed regression cleanup");
+}
+
 void test_receiver_video_codec_change_is_fatal()
 {
     worker_context worker;
@@ -607,6 +639,8 @@ int main()
             media_server::test_udp_session_rtcp_shutdown_releases_scheduler();
         }
         std::cout << "[pass] ps_fixture_creates_stream\n";
+        media_server::test_receiver_ignores_malformed_media();
+        std::cout << "[pass] receiver_ignores_malformed_media\n";
         media_server::test_receiver_video_codec_change_is_fatal();
         std::cout << "[pass] receiver_video_codec_change_is_fatal\n";
         media_server::test_receiver_audio_codec_change_is_fatal();

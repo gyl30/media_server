@@ -10312,6 +10312,63 @@ void test_rtsp_input_output_boundaries()
     }
 }
 
+void test_rtmp_duplicate_publisher_preserves_source()
+{
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    io.restart();
+    auto& streams = stream_registry::instance();
+    streams.clear();
+    int original_shutdowns = 0;
+    int duplicate_shutdowns = 0;
+    auto original = std::make_shared<rtmp_publish_session>(worker, "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++original_shutdowns; });
+    auto duplicate = std::make_shared<rtmp_publish_session>(worker, "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++duplicate_shutdowns; });
+    const auto sink = std::make_shared<whip_media_capture_sink>();
+    std::shared_ptr<media_stream> published;
+    boost::asio::post(io,
+                      [&]()
+                      {
+                          std::array<std::uint8_t, 128> metadata{};
+                          auto* end = AMFWriteString(metadata.data(), metadata.data() + metadata.size(), "onMetaData", 10);
+                          end = AMFWriteECMAArarry(end, metadata.data() + metadata.size());
+                          end = AMFWriteNamedDouble(end, metadata.data() + metadata.size(), "videocodecid", 12, FLV_VIDEO_H264);
+                          end = AMFWriteObjectEnd(end, metadata.data() + metadata.size());
+                          require(end != nullptr, "duplicate rtmp metadata");
+                          const auto config = make_rtmp_video_sequence_header(make_video_track());
+                          for (const auto& input : {original, duplicate})
+                          {
+                              require(input->startup(), "duplicate rtmp startup");
+                              require(input->on_script(std::span<const std::uint8_t>(metadata.data(), end)) == 0, "duplicate rtmp metadata accepted");
+                              require(input->on_video(config.data(), config.size(), 0) == 0, "duplicate rtmp video config input");
+                              if (input == original)
+                              {
+                                  published = streams.find("live/duplicate-rtmp");
+                                  require(published != nullptr, "original rtmp publishes");
+                                  published->add_sink(sink);
+                              }
+                          }
+                          require(duplicate_shutdowns == 1 && original_shutdowns == 0, "only duplicate publisher requests shutdown");
+                          duplicate->shutdown();
+                          require(streams.find("live/duplicate-rtmp") == published, "duplicate cleanup preserves original registry owner");
+                          flv_muxer muxer(
+                              [&](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+                              {
+                                  require(type == FLV_TYPE_VIDEO && original->on_video(data.data(), data.size(), timestamp) == 0,
+                                          "original rtmp still accepts video");
+                              });
+                          muxer.on_track(make_video_track());
+                          muxer.on_frame(make_video_frame(0, true));
+                          muxer.shutdown();
+                          require(sink->frames().size() == 1U && sink->frames().front().key_frame &&
+                                      *sink->frames().front().payload == *make_video_frame(0, true).payload && sink->ends() == 0U,
+                                  "original rtmp media remains usable after collision");
+                          original->shutdown();
+                      });
+    io.run();
+    require(original_shutdowns == 0 && sink->ends() == 1U && !streams.find("live/duplicate-rtmp"), "duplicate rtmp final cleanup");
+}
+
 void test_rtmp_input_output_boundaries()
 {
     for (const auto codec : {codec_id::h264, codec_id::h265})
@@ -11660,6 +11717,8 @@ int main()
     std::cout << "[pass] hls_module_lifecycle\n";
     media_server::test_webrtc_rtp_packetizer();
     std::cout << "[pass] webrtc_rtp_packetizer\n";
+    media_server::test_rtmp_duplicate_publisher_preserves_source();
+    std::cout << "[pass] rtmp_duplicate_publisher_preserves_source\n";
     media_server::test_rtmp_input_output_boundaries();
     std::cout << "[pass] rtmp_input_output_boundaries\n";
     media_server::test_rtsp_input_output_boundaries();
