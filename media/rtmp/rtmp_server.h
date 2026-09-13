@@ -2,6 +2,7 @@
 #define MEDIA_RTMP_RTMP_SERVER_H
 
 #include <memory>
+#include <vector>
 #include <mutex>
 #include <cstdint>
 
@@ -33,6 +34,7 @@ class rtmp_server final : public std::enable_shared_from_this<rtmp_server>
     const config& config_;
     tcp_listener listener_;
     std::mutex mutex_;
+    std::vector<std::weak_ptr<rtmp_session>> sessions_;
     bool closed_{};
 };
 

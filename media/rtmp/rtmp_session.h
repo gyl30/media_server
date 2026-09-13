@@ -67,6 +67,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     std::shared_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;
     std::string stream_name_;
+    bool closed_{};
 };
 
 }    // namespace media_server

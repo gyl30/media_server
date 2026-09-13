@@ -38,6 +38,14 @@ void rtmp_server::shutdown()
             return;
         }
         closed_ = true;
+        for (const auto& weak : sessions_)
+        {
+            if (const auto session = weak.lock())
+            {
+                session->shutdown();
+            }
+        }
+        sessions_.clear();
     }
 
     const auto self = shared_from_this();
@@ -66,6 +74,8 @@ void rtmp_server::run(boost::asio::yield_context yield)
         }
 
         auto session = std::make_shared<rtmp_session>(*worker, std::move(socket), config_.rtmp_video);
+        std::erase_if(sessions_, [](const auto& weak) { return weak.expired(); });
+        sessions_.push_back(session);
         session->startup();
     }
 

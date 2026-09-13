@@ -146,7 +146,7 @@ void rtsp_pull_session::schedule_establishment_timeout()
     startup_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->media_started_)
+            if (error || self->closed_ || self->media_started_)
             {
                 return;
             }
@@ -170,7 +170,7 @@ void rtsp_pull_session::schedule_keepalive()
     keepalive_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->client_ == nullptr)
+            if (error || self->closed_ || self->client_ == nullptr)
             {
                 return;
             }
@@ -190,7 +190,7 @@ void rtsp_pull_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || !self->media_started_ || !self->transport_)
+            if (error || self->closed_ || !self->media_started_ || !self->transport_)
             {
                 return;
             }
@@ -340,7 +340,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
 {
     boost::system::error_code error;
     const auto endpoints = resolver_.async_resolve(host, std::to_string(port), yield[error]);
-    if (error)
+    if (error || closed_)
     {
         shutdown();
         return;
@@ -348,7 +348,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
 
     record_establishment_progress();
     boost::asio::async_connect(connect_socket_, endpoints, yield[error]);
-    if (error)
+    if (error || closed_)
     {
         shutdown();
         return;
@@ -381,7 +381,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     while (!stop)
     {
         const auto bytes = transport_->read(buffer, yield, error);
-        if (error)
+        if (error || closed_)
         {
             break;
         }
@@ -431,7 +431,7 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
         const auto data = write_queue_.front();
         boost::system::error_code error;
         static_cast<void>(transport_->write(*data, yield, error));
-        if (error)
+        if (error || closed_)
         {
             shutdown();
             return;
