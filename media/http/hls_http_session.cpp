@@ -13,8 +13,17 @@
 namespace media_server
 {
 
-hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
-    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config), wait_timer_(worker_.io())
+hls_http_session::hls_http_session(worker_context& worker,
+                                   boost::beast::tcp_stream stream,
+                                   request_type request,
+                                   const config& config,
+                                   std::function<void()> on_shutdown)
+    : worker_(worker),
+      stream_(std::move(stream)),
+      request_(std::move(request)),
+      config_(config),
+      on_shutdown_(std::move(on_shutdown)),
+      wait_timer_(worker_.io())
 {
 }
 
@@ -26,7 +35,10 @@ void hls_http_session::startup()
 
 void hls_http_session::run(boost::asio::yield_context yield)
 {
-    handle_request(yield);
+    if (!closed_)
+    {
+        handle_request(yield);
+    }
     shutdown();
 }
 
@@ -100,7 +112,7 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
                 wait_timer_.expires_after(std::chrono::milliseconds(100));
                 boost::system::error_code error;
                 wait_timer_.async_wait(yield[error]);
-                if (error)
+                if (error || closed_)
                 {
                     return;
                 }
@@ -208,14 +220,19 @@ void hls_http_session::shutdown()
 
 void hls_http_session::safe_shutdown()
 {
-    if (!stream_.socket().is_open())
+    if (closed_)
     {
         return;
     }
+    closed_ = true;
     boost::system::error_code error;
     wait_timer_.cancel();
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);
+    if (auto on_shutdown = std::move(on_shutdown_))
+    {
+        on_shutdown();
+    }
 }
 
 }    // namespace media_server

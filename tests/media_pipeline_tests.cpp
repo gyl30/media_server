@@ -3075,7 +3075,8 @@ void test_hls_http_session_shutdown_lifecycle()
 
     config application_config;
     http_request request(boost::beast::http::verb::get, "/play/hls/live/test/index.m3u8", 11);
-    auto session = std::make_shared<hls_http_session>(worker, std::move(stream), std::move(request), application_config);
+    int shutdowns = 0;
+    auto session = std::make_shared<hls_http_session>(worker, std::move(stream), std::move(request), application_config, [&]() { ++shutdowns; });
     const std::weak_ptr<hls_http_session> weak_session = session;
 
     session->shutdown();
@@ -3085,6 +3086,7 @@ void test_hls_http_session_shutdown_lifecycle()
     worker.release_work();
     worker.run();
     require(weak_session.expired(), "hls http repeated shutdown releases session");
+    require(shutdowns == 1, "hls http notifies owner exactly once");
 
     boost::system::error_code error;
     client.close(error);
@@ -5160,7 +5162,7 @@ void test_rtsp_publish_server_contract()
         auto shutdown_server = std::make_shared<rtsp_server>(shutdown_workers, shutdown_config);
         boost::system::error_code startup_error;
         shutdown_server->startup(startup_error);
-        require(!startup_error, "rtsp shutdown independence server startup");
+        require(!startup_error, "rtsp active connection shutdown server startup");
         std::jthread shutdown_runner([&shutdown_workers]() { shutdown_workers.run(); });
 
         boost::asio::io_context shutdown_client_io;
@@ -5175,10 +5177,11 @@ void test_rtsp_publish_server_contract()
         boost::asio::post(shutdown_workers.context(0).io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
         shutdown_barrier_future.wait();
 
-        boost::asio::write(shutdown_client, boost::asio::buffer(std::string_view{"OPTIONS * RTSP/1.0\r\nCSeq: 2\r\n\r\n"}));
-        require(read_rtsp_headers(shutdown_client).starts_with("RTSP/1.0 200"), "rtsp connection survives server shutdown");
-
         boost::system::error_code shutdown_error;
+        std::array<char, 1> shutdown_buffer{};
+        shutdown_client.non_blocking(true);
+        shutdown_client.read_some(boost::asio::buffer(shutdown_buffer), shutdown_error);
+        require(shutdown_error == boost::asio::error::eof, "rtsp server shutdown closes active connection");
         shutdown_client.close(shutdown_error);
         shutdown_workers.release_work();
         shutdown_runner.join();

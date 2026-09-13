@@ -2,6 +2,7 @@
 #define MEDIA_HTTP_HTTP_FLV_SESSION_H
 
 #include <memory>
+#include <functional>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -25,7 +26,8 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config);
+    http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config,
+                     std::function<void()> on_shutdown = {});
 
     void startup();
     void shutdown();
@@ -46,6 +48,8 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     boost::beast::tcp_stream stream_;
     request_type request_;
     const config& config_;
+    std::function<void()> on_shutdown_;
+    bool closed_{};
     std::shared_ptr<http_flv_streamer> streamer_;
     media_reader_handle reader_;
     std::vector<std::uint8_t> pending_bootstrap_;

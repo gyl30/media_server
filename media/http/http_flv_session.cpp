@@ -15,8 +15,12 @@
 namespace media_server
 {
 
-http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
-    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config)
+http_flv_session::http_flv_session(worker_context& worker,
+                                   boost::beast::tcp_stream stream,
+                                   request_type request,
+                                   const config& config,
+                                   std::function<void()> on_shutdown)
+    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config), on_shutdown_(std::move(on_shutdown))
 {
 }
 
@@ -28,7 +32,10 @@ void http_flv_session::startup()
 
 void http_flv_session::run(boost::asio::yield_context yield)
 {
-    handle_request(yield);
+    if (!closed_)
+    {
+        handle_request(yield);
+    }
     shutdown();
 }
 
@@ -82,7 +89,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         boost::beast::http::serializer<false, boost::beast::http::empty_body> serializer(response);
         boost::system::error_code error;
         static_cast<void>(boost::beast::http::async_write_header(stream_, serializer, yield[error]));
-        if (error)
+        if (error || closed_)
         {
             return;
         }
@@ -102,7 +109,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     {
         boost::system::error_code error;
         static_cast<void>(stream_.async_read_some(boost::asio::buffer(read_buffer), yield[error]));
-        if (error)
+        if (error || closed_)
         {
             return;
         }
@@ -172,7 +179,7 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
         const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(data));
         boost::system::error_code error;
         static_cast<void>(boost::asio::async_write(stream_, chunk, yield[error]));
-        if (error)
+        if (error || closed_)
         {
             write_in_progress_ = false;
             shutdown();
@@ -206,10 +213,11 @@ void http_flv_session::shutdown()
 
 void http_flv_session::safe_shutdown()
 {
-    if (!stream_.socket().is_open())
+    if (closed_)
     {
         return;
     }
+    closed_ = true;
     reader_.remove();
     reader_ = {};
     if (streamer_)
@@ -223,6 +231,10 @@ void http_flv_session::safe_shutdown()
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);
+    if (auto on_shutdown = std::move(on_shutdown_))
+    {
+        on_shutdown();
+    }
 }
 
 }    // namespace media_server

@@ -1344,6 +1344,39 @@ void test_whip_http_lifecycle()
             "whip recreated delete");
 }
 
+void test_webrtc_module_shutdown()
+{
+    std::vector<std::uint16_t> ports;
+    {
+        whep_http_test_peer peer;
+        const auto whip_offer = make_whip_offer(webrtc_offer_sdp);
+        for (int index = 0; index < 2; ++index)
+        {
+            const auto published = peer.post("/publish/whip/live/stop-" + std::to_string(index), whip_offer);
+            const auto played = peer.post("/play/whep/live/camera");
+            for (const auto& response : {published, played})
+            {
+                require(response.result() == boost::beast::http::status::created, "module shutdown creates active sessions");
+                const auto offset = response.body().find("m=video ");
+                require(offset != std::string::npos, "module shutdown answer media port");
+                ports.push_back(static_cast<std::uint16_t>(std::stoi(response.body().substr(offset + 8U))));
+            }
+        }
+        whip::shutdown();
+        whep::shutdown();
+        whip::shutdown();
+        whep::shutdown();
+        const auto recreated = peer.post("/publish/whip/live/stop-0", whip_offer);
+        require(recreated.result() == boost::beast::http::status::created, "module shutdown releases whip stream reservation");
+        whip::shutdown();
+    }
+    boost::asio::io_context io;
+    for (const auto port : ports)
+    {
+        boost::asio::ip::udp::socket probe(io, {boost::asio::ip::address_v4::loopback(), port});
+    }
+}
+
 void test_whip_http_self_shutdown_releases_reservation()
 {
     whep_http_test_peer peer;
@@ -3715,6 +3748,8 @@ int main()
     std::cout << "[pass] whep_http_cors\n";
     media_server::test_whip_http_lifecycle();
     std::cout << "[pass] whip_http_lifecycle\n";
+    media_server::test_webrtc_module_shutdown();
+    std::cout << "[pass] webrtc_module_shutdown\n";
     media_server::test_whip_http_self_shutdown_releases_reservation();
     std::cout << "[pass] whip_http_self_shutdown_releases_reservation\n";
     media_server::test_whep_multi_session_isolation();

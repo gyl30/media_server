@@ -2,6 +2,7 @@
 #define MEDIA_HTTP_HTTP_SERVER_H
 
 #include <memory>
+#include <vector>
 #include <mutex>
 
 #include <boost/asio/spawn.hpp>
@@ -32,6 +33,7 @@ class http_server final : public std::enable_shared_from_this<http_server>
     const config& config_;
     tcp_listener listener_;
     std::mutex mutex_;
+    std::vector<std::weak_ptr<http_session>> sessions_;
     bool closed_{};
 };
 }    // namespace media_server

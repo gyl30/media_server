@@ -43,6 +43,10 @@ void rtsp_server_connection::startup()
 
 void rtsp_server_connection::run(boost::asio::yield_context yield)
 {
+    if (closed_)
+    {
+        return;
+    }
     boost::system::error_code endpoint_error;
     const auto peer = transport_.remote_endpoint(endpoint_error);
     if (endpoint_error)
@@ -90,7 +94,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     {
         boost::system::error_code error;
         const auto bytes = transport_.read(buffer, yield, error);
-        if (error)
+        if (error || closed_)
         {
             break;
         }
@@ -342,7 +346,7 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         const auto data = write_queue_.front();
         boost::system::error_code error;
         static_cast<void>(transport_.write(*data, yield, error));
-        if (error)
+        if (error || closed_)
         {
             shutdown();
             return;
@@ -362,7 +366,7 @@ void rtsp_server_connection::schedule_inactivity_timeout()
     inactivity_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error)
+            if (error || self->closed_)
             {
                 return;
             }
@@ -377,6 +381,11 @@ void rtsp_server_connection::schedule_inactivity_timeout()
 
 void rtsp_server_connection::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
     inactivity_timer_.cancel();
     if (publish_session_)
     {

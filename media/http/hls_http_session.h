@@ -2,6 +2,7 @@
 #define MEDIA_HTTP_HLS_HTTP_SESSION_H
 
 #include <memory>
+#include <functional>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -23,7 +24,8 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config);
+    hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config,
+                     std::function<void()> on_shutdown = {});
 
     void startup();
     void shutdown();
@@ -46,6 +48,8 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
     boost::beast::tcp_stream stream_;
     request_type request_;
     const config& config_;
+    std::function<void()> on_shutdown_;
+    bool closed_{};
     boost::asio::steady_timer wait_timer_;
 };
 

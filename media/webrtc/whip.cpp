@@ -180,4 +180,19 @@ bool remove(std::string_view session_id)
     return true;
 }
 
+void shutdown()
+{
+    auto& current = runtime();
+    std::scoped_lock lock(current.mutex);
+    for (const auto& [id, entry] : current.sessions)
+    {
+        if (const auto session = entry.session.lock())
+        {
+            session->shutdown();
+        }
+    }
+    current.sessions.clear();
+    current.streams.clear();
+}
+
 }    // namespace media_server::whip

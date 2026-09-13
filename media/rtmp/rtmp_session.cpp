@@ -42,6 +42,10 @@ void rtmp_session::startup()
 
 void rtmp_session::run(boost::asio::yield_context yield)
 {
+    if (closed_)
+    {
+        return;
+    }
     rtmp_server_handler_t handler{};
     handler.send = &rtmp_session::send_callback;
     handler.onplay = &rtmp_session::play_callback;
@@ -66,7 +70,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     {
         boost::system::error_code error;
         const auto bytes = transport_.read(buffer, yield, error);
-        if (error)
+        if (error || closed_)
         {
             break;
         }
@@ -181,7 +185,7 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         const auto data = write_queue_.front();
         boost::system::error_code error;
         static_cast<void>(transport_.write(*data, yield, error));
-        if (error)
+        if (error || closed_)
         {
             shutdown();
             return;
@@ -281,6 +285,11 @@ void rtmp_session::shutdown()
 
 void rtmp_session::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
     rtmp_context_ = nullptr;
     if (publish_)
     {

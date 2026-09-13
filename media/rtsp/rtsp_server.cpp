@@ -38,6 +38,14 @@ void rtsp_server::shutdown()
             return;
         }
         closed_ = true;
+        for (const auto& weak : sessions_)
+        {
+            if (const auto session = weak.lock())
+            {
+                session->shutdown();
+            }
+        }
+        sessions_.clear();
     }
 
     const auto self = shared_from_this();
@@ -66,6 +74,8 @@ void rtsp_server::run(boost::asio::yield_context yield)
         }
 
         auto connection = std::make_shared<rtsp_server_connection>(*worker, std::move(socket), config_.rtsp_video.codec);
+        std::erase_if(sessions_, [](const auto& weak) { return weak.expired(); });
+        sessions_.push_back(connection);
         connection->startup();
     }
 

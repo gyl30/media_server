@@ -37,6 +37,7 @@ class stream_registry final
     [[nodiscard]] std::shared_ptr<stream_session> take_sender_session(std::string_view stream_name, std::string_view sender_id);
     void remove_sender_session(std::string_view stream_name, std::string_view sender_id, const stream_session& expected);
 
+    void shutdown_sessions();
     void clear();
 
    private:

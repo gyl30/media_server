@@ -11,6 +11,8 @@
 
 #include "service.h"
 #include "media/hls/hls.h"
+#include "media/webrtc/whip.h"
+#include "media/webrtc/whep.h"
 #include "media/core/log.h"
 #include "media/http/http_server.h"
 #include "media/http/signaling_client.h"
@@ -29,11 +31,47 @@ service::~service() = default;
 
 void service::stop()
 {
+    if (stopping_)
+    {
+        return;
+    }
+    stopping_ = true;
+    signals_->cancel();
+    control_cancellation_.emit(boost::asio::cancellation_type::all);
     if (signaling_abort_timer_)
     {
         signaling_abort_timer_->cancel();
     }
-    workers_->stop();
+    rtmp_->shutdown();
+    rtsp_->shutdown();
+    http_->shutdown();
+    for (const auto& pull : pulls_)
+    {
+        pull->shutdown();
+    }
+    pulls_.clear();
+
+    // 等入口会话处理完关闭请求，确保不会再创建新的媒体会话。
+    pending_shutdown_workers_ = workers_->size();
+    for (std::size_t index = 0; index < workers_->size(); ++index)
+    {
+        boost::asio::post(workers_->context(index).io(),
+                          [this]()
+                          {
+                              boost::asio::post(workers_->context(0).io(),
+                                                [this]()
+                                                {
+                                                    if (--pending_shutdown_workers_ != 0)
+                                                    {
+                                                        return;
+                                                    }
+                                                    whip::shutdown();
+                                                    whep::shutdown();
+                                                    stream_registry::instance().shutdown_sessions();
+                                                    workers_->release_work();
+                                                });
+                          });
+    }
 }
 
 void service::schedule_signaling_abort()
@@ -57,6 +95,7 @@ void service::schedule_signaling_abort()
 
 void service::run_control(boost::asio::yield_context yield)
 {
+    yield.throw_if_cancelled(false);
     auto& control_io = workers_->context(0).io();
     const auto signaling = signaling_;
     if (signaling)
@@ -65,6 +104,10 @@ void service::run_control(boost::asio::yield_context yield)
         for (;;)
         {
             const auto registration = signaling->register_once(yield);
+            if (stopping_)
+            {
+                return;
+            }
             if (registration.kind == signaling_result_kind::accepted)
             {
                 break;
@@ -136,6 +179,7 @@ void service::run_control(boost::asio::yield_context yield)
             stop();
             return;
         }
+        pulls_.push_back(std::move(pull));
     }
 
     spdlog::info("rtmp listen {}:{}", config_.bind_address, config_.rtmp_port);
@@ -187,10 +231,19 @@ int service::run()
         signaling_ = std::make_shared<signaling_client>(control_io, std::move(options));
     }
 
-    boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
-    signals.async_wait([this](const boost::system::error_code&, int) { stop(); });
+    signals_ = std::make_unique<boost::asio::signal_set>(control_io, SIGINT, SIGTERM);
+    signals_->async_wait(
+        [this](const boost::system::error_code& error, int)
+        {
+            if (!error)
+            {
+                stop();
+            }
+        });
 
-    boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_control(yield); }, boost::asio::detached);
+    boost::asio::spawn(control_io,
+                       [this](boost::asio::yield_context yield) { run_control(yield); },
+                       boost::asio::bind_cancellation_slot(control_cancellation_.slot(), boost::asio::detached));
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
     hls::shutdown();
