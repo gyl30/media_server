@@ -166,7 +166,7 @@ signaling_request_result signaling_client::request(std::string_view target, std:
 void signaling_client::run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler) const
 {
     boost::asio::steady_timer timer(io_);
-    for (;;)
+    while (yield.cancelled() == boost::asio::cancellation_type::none)
     {
         timer.expires_after(options_.heartbeat_interval);
         boost::system::error_code error;

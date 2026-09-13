@@ -34,6 +34,7 @@ struct create_result
                                    std::string_view offer_sdp,
                                    const config& application_config);
 [[nodiscard]] bool remove(std::string_view session_id);
+void shutdown();
 
 }    // namespace media_server::whip
 

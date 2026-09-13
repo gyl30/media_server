@@ -37,6 +37,14 @@ void http_server::shutdown()
             return;
         }
         closed_ = true;
+        for (const auto& weak : sessions_)
+        {
+            if (const auto session = weak.lock())
+            {
+                session->shutdown();
+            }
+        }
+        sessions_.clear();
     }
 
     const auto self = shared_from_this();
@@ -65,6 +73,8 @@ void http_server::run(boost::asio::yield_context yield)
         }
 
         auto session = std::make_shared<http_session>(*worker, std::move(socket), workers_, config_);
+        std::erase_if(sessions_, [](const auto& weak) { return weak.expired(); });
+        sessions_.push_back(session);
         session->startup();
     }
 

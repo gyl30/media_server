@@ -2,6 +2,7 @@
 #define MEDIA_RTSP_RTSP_SERVER_H
 
 #include <memory>
+#include <vector>
 #include <mutex>
 #include <cstdint>
 
@@ -14,6 +15,8 @@
 
 namespace media_server
 {
+class rtsp_server_connection;
+
 class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
 {
    public:
@@ -31,6 +34,7 @@ class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
     const config& config_;
     tcp_listener listener_;
     std::mutex mutex_;
+    std::vector<std::weak_ptr<rtsp_server_connection>> sessions_;
     bool closed_{};
 };
 

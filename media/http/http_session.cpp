@@ -36,7 +36,7 @@ void http_session::run(boost::asio::yield_context yield)
 
     stream_.expires_after(std::chrono::seconds(30));
     static_cast<void>(boost::beast::http::async_read(stream_, buffer, request, yield[error]));
-    if (error)
+    if (error || closed_)
     {
         shutdown();
     }
@@ -90,16 +90,18 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/play/hls" || path.starts_with("/play/hls/"))
     {
-        auto session = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request), config_);
-        session->startup();
+        const auto self = shared_from_this();
+        hls_ = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request), config_, [self]() { self->shutdown(); });
+        hls_->startup();
         return;
     }
 
     const auto decoded_path = parsed->path();
     if (decoded_path.ends_with(".flv"))
     {
-        auto session = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request), config_);
-        session->startup();
+        const auto self = shared_from_this();
+        flv_ = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request), config_, [self]() { self->shutdown(); });
+        flv_->startup();
         return;
     }
 
@@ -158,9 +160,20 @@ void http_session::shutdown()
 
 void http_session::safe_shutdown()
 {
-    if (!stream_.socket().is_open())
+    if (closed_)
     {
         return;
+    }
+    closed_ = true;
+    if (hls_)
+    {
+        hls_->shutdown();
+        hls_.reset();
+    }
+    if (flv_)
+    {
+        flv_->shutdown();
+        flv_.reset();
     }
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
