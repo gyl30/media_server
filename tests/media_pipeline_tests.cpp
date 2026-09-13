@@ -7994,6 +7994,8 @@ void test_audio_transcoder_opus_aac()
         require(aac.profile == MPEG4_AAC_LC && aac.sampling_frequency == 48'000 && mpeg4_aac_channel_count(aac.channel_configuration) == 2,
                 "opus aac output format");
     }
+    aac_encoder.shutdown();
+    opus_encoder.shutdown();
 }
 
 void test_audio_transcoder_timestamp_compensation()
