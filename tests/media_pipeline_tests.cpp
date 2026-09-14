@@ -5652,9 +5652,17 @@ void test_rtsp_publish_claim_lifecycle()
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url()));
+        auto signaling = std::make_shared<signaling_client>(
+            worker.io(), make_publish_claim_client_options(claim_server.url(), std::chrono::seconds(10)));
+        runtime_event_capture runtime_events(worker);
         auto connection = std::make_shared<rtsp_server_connection>(
-            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+            worker,
+            std::move(server_socket),
+            video_transcode_codec::passthrough,
+            std::move(signaling),
+            std::chrono::seconds(5),
+            1024U * 1024U,
+            runtime_events.emitter());
         std::weak_ptr<rtsp_server_connection> weak = connection;
         connection->startup();
         worker.release_work();
@@ -5663,18 +5671,23 @@ void test_rtsp_publish_claim_lifecycle()
         const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-disconnect";
         boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
         require(claim_server.wait_request().target == "/internal/publish/claim", "rtsp disconnected claim attempted");
+        boost::asio::write(client, boost::asio::buffer("OPTIONS " + base + " RTSP/1.0\r\nCSeq: 2\r\n\r\n"));
         boost::system::error_code close_error;
         client.close(close_error);
         connection.reset();
-        claim_server.release_response();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        require(weak.expired() && !stream_registry::instance().find("live/claim-disconnect"),
-                "publisher disconnect during rtsp claim leaves no runtime");
+        const auto expired_while_claim_pending = weak.expired();
+        const auto pending_events = runtime_events.events();
+        claim_server.release_response();
         runner.join();
+        require(expired_while_claim_pending && !stream_registry::instance().find("live/claim-disconnect"),
+                "publisher disconnect during pending rtsp claim leaves no runtime");
+        require(pending_events.empty(), "RTSP disconnect during pending claim emits no runtime event");
+        require(runtime_events.events().empty(), "RTSP disconnect during claim emits no runtime event");
     }
 
     {
@@ -5711,9 +5724,21 @@ void test_rtsp_publish_claim_lifecycle()
         require(!stream_registry::instance().find("live/claim-pending"), "rtsp claim pending has no visible runtime");
         require(runtime_events.events().empty(), "pending RTSP claim emits no runtime event");
 
+        boost::asio::write(client, boost::asio::buffer("OPTIONS " + base + " RTSP/1.0\r\nCSeq: 2\r\n\r\n"));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
         claim_server.release_response();
-        require(read_rtsp_headers_until(client, std::chrono::seconds(1)).starts_with("RTSP/1.0 200"),
+        auto accepted_responses = read_rtsp_headers_until(client, std::chrono::seconds(1));
+        if (accepted_responses.find("CSeq: 2") == std::string::npos)
+        {
+            accepted_responses.append(read_rtsp_headers_until(client, std::chrono::seconds(1)));
+        }
+        require(accepted_responses.starts_with("RTSP/1.0 200") && accepted_responses.find("CSeq: 1") != std::string::npos,
                 "rtsp ANNOUNCE accepted after publish claim");
+        const auto second_response = accepted_responses.find("RTSP/1.0 200", 1U);
+        require(second_response != std::string::npos &&
+                    accepted_responses.find("RTSP/1.0 200", second_response + 1U) == std::string::npos &&
+                    accepted_responses.find("CSeq: 2") != std::string::npos,
+                "RTSP claim reader preserves pending input once");
         runtime_events.wait_for_count(1U);
         auto events = runtime_events.events();
         require(events.size() == 1U, "accepted RTSP claim emits starting once");
@@ -5728,7 +5753,7 @@ void test_rtsp_publish_claim_lifecycle()
         require(!events[0].end_reason && !events[0].error, "RTSP starting event has no terminal fields");
 
         const auto setup = "SETUP " + base +
-                           "/trackID=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
+                           "/trackID=0 RTSP/1.0\r\nCSeq: 3\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
         boost::asio::write(client, boost::asio::buffer(setup));
         const auto setup_response = read_rtsp_headers_until(client, std::chrono::seconds(1));
         require(setup_response.starts_with("RTSP/1.0 200"), "runtime event RTSP SETUP");
@@ -5740,7 +5765,7 @@ void test_rtsp_publish_claim_lifecycle()
         require(!session.empty(), "runtime event RTSP session id");
 
         boost::asio::write(client,
-                           boost::asio::buffer("RECORD " + base + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n"));
+                           boost::asio::buffer("RECORD " + base + " RTSP/1.0\r\nCSeq: 4\r\nSession: " + session + "\r\n\r\n"));
         require(read_rtsp_headers_until(client, std::chrono::seconds(1)).starts_with("RTSP/1.0 200"), "runtime event RTSP RECORD");
         runtime_events.wait_for_count(2U);
         events = runtime_events.events();
