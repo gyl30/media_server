@@ -9,10 +9,11 @@
 namespace media_server
 {
 
-rtsp_server::rtsp_server(io_context_pool& workers, const config& config)
+rtsp_server::rtsp_server(io_context_pool& workers, const config& config, std::shared_ptr<signaling_client> signaling)
     : workers_(workers),
       worker_(workers.next()),
       config_(config),
+      signaling_(std::move(signaling)),
       listener_(worker_.io(), config.rtsp_port, boost::asio::ip::make_address(config.bind_address))
 {
 }
@@ -73,7 +74,7 @@ void rtsp_server::run(boost::asio::yield_context yield)
             break;
         }
 
-        auto connection = std::make_shared<rtsp_server_connection>(*worker, std::move(socket), config_.rtsp_video.codec);
+        auto connection = std::make_shared<rtsp_server_connection>(*worker, std::move(socket), config_.rtsp_video.codec, signaling_);
         std::erase_if(sessions_, [](const auto& weak) { return weak.expired(); });
         sessions_.push_back(connection);
         connection->startup();

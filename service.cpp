@@ -212,7 +212,7 @@ int service::run()
     }
 
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_, signaling_);
-    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_);
+    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_, signaling_);
     http_ = std::make_shared<http_server>(*workers_, config_);
 
     signals_ = std::make_unique<boost::asio::signal_set>(control_io, SIGINT, SIGTERM);

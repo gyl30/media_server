@@ -35,13 +35,16 @@ class rtsp_publish_session final
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
+    [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
+    [[nodiscard]] const std::string& stream_name() const noexcept { return stream_name_; }
     int on_setup(rtsp_server_t* server,
                  std::string_view uri,
                  std::string_view session,
                  const rtsp_header_transport_t transports[],
                  std::size_t count);
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
-    int on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length);
+    int prepare_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length);
+    int accept_announce(rtsp_server_t* server);
     int on_record(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
     void shutdown();
 
@@ -54,8 +57,10 @@ class rtsp_publish_session final
     std::shared_ptr<rtsp_publish_tcp_session> tcp_session_;
     std::shared_ptr<rtsp_publish_udp_session> udp_session_;
     std::vector<rtsp_publish_track_description> descriptions_;
+    std::string stream_id_;
     std::string stream_name_;
     std::string session_id_;
+    bool announce_prepared_{};
 };
 
 }    // namespace media_server

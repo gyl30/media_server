@@ -71,13 +71,14 @@ wait_http() {
     return 1
 }
 
-allocate_rtmp_publish() {
+allocate_publish() {
     local label="$1"
-    local stream_name="$2"
+    local protocol="$2"
+    local stream_name="$3"
     local response="$work_dir/${label}_allocation.json"
     local body
     local status
-    printf -v body '{"protocol":"rtmp","stream_name":"%s"}' "$stream_name"
+    printf -v body '{"protocol":"%s","stream_name":"%s"}' "$protocol" "$stream_name"
     status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o "$response" -w '%{http_code}' \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
@@ -87,7 +88,7 @@ allocate_rtmp_publish() {
         cat "$response" >&2 2>/dev/null || true
         return 1
     fi
-    python3 - "$response" <<'PY'
+    python3 - "$response" "$protocol" <<'PY'
 import json
 import sys
 import urllib.parse
@@ -101,7 +102,7 @@ parsed_id = uuid.UUID(stream_id)
 parsed_url = urllib.parse.urlsplit(publish_url)
 query = urllib.parse.parse_qs(parsed_url.query, strict_parsing=True)
 assert parsed_id.version == 4 and str(parsed_id) == stream_id
-assert parsed_url.scheme == "rtmp" and query.get("stream_id") == [stream_id]
+assert parsed_url.scheme == sys.argv[2] and query.get("stream_id") == [stream_id]
 print(publish_url)
 PY
 }
@@ -359,7 +360,7 @@ wait_http "http://${server_address}:${http_port}/" "$main_pid" "$work_dir/server
 kill -0 "$main_pid"
 
 # H.264 + AAC source 复用到 UDP、两种 TCP 角色配对和 RTCP 验证。
-publish_url="$(allocate_rtmp_publish h264_aac live/gb-h264-aac)"
+publish_url="$(allocate_publish h264_aac rtmp live/gb-h264-aac)"
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
     -f lavfi -i 'sine=frequency=1000:sample_rate=44100' \
@@ -477,6 +478,7 @@ kill -0 "$main_pid"
 stop_publisher
 
 # 使用真实 FFmpeg RTSP publisher 覆盖生产对端常见的 G711 静态 payload 形式。
+publish_url="$(allocate_publish h265_g711a rtsp live/gb-h265-g711a)"
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
     -f lavfi -i 'sine=frequency=1200:sample_rate=8000' \
@@ -484,7 +486,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -c:v libx265 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 25 \
     -x265-params 'keyint=25:min-keyint=25:scenecut=0:bframes=0' \
     -c:a pcm_alaw -ar 8000 -ac 1 \
-    -rtsp_transport tcp -f rtsp "rtsp://${server_address}:${rtsp_port}/live/gb-h265-g711a" \
+    -rtsp_transport tcp -f rtsp "$publish_url" \
     >"$work_dir/publisher_h265_g711a.log" 2>&1 &
 publish_pid=$!
 wait_probe_streams "$work_dir/source_h265_g711a.txt" hevc pcm_alaw \
@@ -493,6 +495,7 @@ run_udp_case udp_h265_g711a live/gb-h265-g711a relay/gb-udp-h265-g711a hevc pcm_
     00000000-0000-4000-8000-000000000109 00000000-0000-4000-8000-000000000110
 stop_publisher
 
+publish_url="$(allocate_publish h264_g711u rtsp live/gb-h264-g711u)"
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
     -f lavfi -i 'sine=frequency=1300:sample_rate=8000' \
@@ -500,7 +503,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
     -g 25 -keyint_min 25 -sc_threshold 0 \
     -c:a pcm_mulaw -ar 8000 -ac 1 \
-    -rtsp_transport tcp -f rtsp "rtsp://${server_address}:${rtsp_port}/live/gb-h264-g711u" \
+    -rtsp_transport tcp -f rtsp "$publish_url" \
     >"$work_dir/publisher_h264_g711u.log" 2>&1 &
 publish_pid=$!
 wait_probe_streams "$work_dir/source_h264_g711u.txt" h264 pcm_mulaw \

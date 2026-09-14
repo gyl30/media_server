@@ -53,41 +53,42 @@ bool rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const 
     return tcp_session_->on_interleaved(channel, data);
 }
 
-int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
+int rtsp_publish_session::prepare_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
-    if (!session_id_.empty() || sdp == nullptr || length <= 0)
+    if (announce_prepared_ || !session_id_.empty() || sdp == nullptr || length <= 0)
     {
-        return rtsp_server_reply_announce(server, 455);
+        return 455;
     }
 
-    descriptions_.clear();
-    stream_name_ = rtsp_path_from_uri(uri);
-    if (stream_name_.empty())
+    const auto target = parse_rtsp_publish_target(uri);
+    if (!target)
     {
-        return rtsp_server_reply_announce(server, 400);
+        return 400;
     }
 
     const auto count = rtsp_media_sdp(sdp, length, nullptr, 0);
     if (count <= 0)
     {
-        return rtsp_server_reply_announce(server, 415);
+        return 415;
     }
     std::vector<rtsp_media_t> media(static_cast<std::size_t>(count));
     if (rtsp_media_sdp(sdp, length, media.data(), count) != count)
     {
-        return rtsp_server_reply_announce(server, 415);
+        return 415;
     }
 
     const auto* content_base = rtsp_server_get_header(server, "Content-Base");
     const auto* content_location = rtsp_server_get_header(server, "Content-Location");
+    const std::string uri_value(uri);
     for (auto& description : media)
     {
-        if (rtsp_media_set_url(&description, content_base, content_location, std::string(uri).c_str()) != 0)
+        if (rtsp_media_set_url(&description, content_base, content_location, uri_value.c_str()) != 0)
         {
-            return rtsp_server_reply_announce(server, 400);
+            return 400;
         }
     }
 
+    std::vector<rtsp_publish_track_description> descriptions;
     bool video = false;
     bool audio = false;
     for (const auto& description : media)
@@ -123,10 +124,9 @@ int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view ur
         {
             continue;
         }
-        if ((selected->track.kind == media_kind::video && video) || (selected->track.kind == media_kind::audio && audio) || descriptions_.size() >= 2)
+        if ((selected->track.kind == media_kind::video && video) || (selected->track.kind == media_kind::audio && audio) || descriptions.size() >= 2)
         {
-            descriptions_.clear();
-            return rtsp_server_reply_announce(server, 415);
+            return 415;
         }
         if (selected->track.kind == media_kind::video)
         {
@@ -136,14 +136,28 @@ int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view ur
         {
             audio = true;
         }
-        descriptions_.push_back(std::move(*selected));
+        descriptions.push_back(std::move(*selected));
     }
     if (!video)
     {
-        descriptions_.clear();
-        return rtsp_server_reply_announce(server, 415);
+        return 415;
     }
 
+    stream_id_ = target->stream_id;
+    stream_name_ = target->stream_name;
+    descriptions_ = std::move(descriptions);
+    announce_prepared_ = true;
+    return 200;
+}
+
+int rtsp_publish_session::accept_announce(rtsp_server_t* server)
+{
+    if (!announce_prepared_ || !session_id_.empty())
+    {
+        return rtsp_server_reply_announce(server, 455);
+    }
+
+    announce_prepared_ = false;
     session_id_ = std::to_string(random_u32());
     return rtsp_server_reply_announce(server, 200);
 }

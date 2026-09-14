@@ -72,7 +72,7 @@ void test_rtsp_server_write_backlog_limit()
     acceptor.accept(server_socket);
 
     auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, 5s, 0U);
+        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 5s, 0U);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });

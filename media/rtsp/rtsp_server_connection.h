@@ -10,6 +10,7 @@
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/steady_timer.hpp>
 
@@ -25,6 +26,7 @@ namespace media_server
 {
 
 class worker_context;
+class signaling_client;
 class rtsp_publish_session;
 class rtsp_play_session;
 
@@ -34,6 +36,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     rtsp_server_connection(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
                            video_transcode_codec video_codec,
+                           std::shared_ptr<signaling_client> signaling = {},
                            std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
                            std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtsp_server_connection();
@@ -56,24 +59,36 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
 
     void run(boost::asio::yield_context yield);
+    bool run_publish_claim(rtsp_server_t* server, boost::asio::yield_context& yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
+    int reply_announce_and_close(rtsp_server_t* server, int status);
     void safe_shutdown();
     void record_control_activity();
     void schedule_inactivity_timeout();
 
     worker_context& worker_;
     video_transcode_codec video_codec_;
+    std::shared_ptr<signaling_client> signaling_;
     tcp_yield_transport transport_;
     boost::asio::steady_timer inactivity_timer_;
     std::chrono::milliseconds inactivity_timeout_;
     std::chrono::steady_clock::time_point last_control_activity_{};
     std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
-    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
+    struct write_entry
+    {
+        std::shared_ptr<std::vector<std::uint8_t>> data;
+        bool close_after_write{};
+    };
+    std::deque<write_entry> write_queue_;
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
+    boost::asio::cancellation_signal run_cancellation_;
     boost::asio::ip::address local_address_;
+    bool publish_claim_pending_{};
+    bool close_next_write_{};
+    bool closing_after_write_{};
     bool closed_{};
 };
 

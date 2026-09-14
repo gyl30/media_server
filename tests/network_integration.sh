@@ -73,14 +73,15 @@ wait_http() {
     return 1
 }
 
-allocate_rtmp_publish() {
+allocate_publish() {
     local label="$1"
     local signaling_port="$2"
-    local stream_name="$3"
+    local protocol="$3"
+    local stream_name="$4"
     local response="$work_dir/${label}_allocation.json"
     local body
     local status
-    printf -v body '{"protocol":"rtmp","stream_name":"%s"}' "$stream_name"
+    printf -v body '{"protocol":"%s","stream_name":"%s"}' "$protocol" "$stream_name"
     status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o "$response" -w '%{http_code}' \
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
@@ -90,7 +91,7 @@ allocate_rtmp_publish() {
         cat "$response" >&2 2>/dev/null || true
         return 1
     fi
-    python3 - "$response" <<'PY'
+    python3 - "$response" "$protocol" <<'PY'
 import json
 import sys
 import urllib.parse
@@ -104,7 +105,7 @@ parsed_id = uuid.UUID(stream_id)
 parsed_url = urllib.parse.urlsplit(publish_url)
 query = urllib.parse.parse_qs(parsed_url.query, strict_parsing=True)
 assert parsed_id.version == 4 and str(parsed_id) == stream_id
-assert parsed_url.scheme == "rtmp" and query.get("stream_id") == [stream_id]
+assert parsed_url.scheme == sys.argv[2] and query.get("stream_id") == [stream_id]
 print(publish_url)
 PY
 }
@@ -274,7 +275,7 @@ main_pid=$!
 wait_http 'http://127.0.0.1:18080/' "$main_pid" "$work_dir/server.log"
 kill -0 "$main_pid"
 
-main_publish_url="$(allocate_rtmp_publish main "$main_signaling_http_port" live/test)"
+main_publish_url="$(allocate_publish main "$main_signaling_http_port" rtmp live/test)"
 
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
@@ -328,6 +329,7 @@ probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/play/hls/relay/test'
 for publish_case in tcp udp udp-restart; do
     transport="${publish_case%%-*}"
     stream_name="rtsp-publish-$publish_case"
+    rtsp_publish_url="$(allocate_publish "rtsp_publish_$publish_case" "$main_signaling_http_port" rtsp "live/$stream_name")"
     ffmpeg -nostdin -hide_banner -loglevel error -re \
         -f lavfi -i 'testsrc=size=320x180:rate=25' \
         -f lavfi -i 'sine=frequency=1200:sample_rate=44100' \
@@ -335,7 +337,7 @@ for publish_case in tcp udp udp-restart; do
         -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
         -g 25 -keyint_min 25 -sc_threshold 0 \
         -c:a aac -b:a 96k -ac 2 \
-        -t 24 -rtsp_transport "$transport" -f rtsp "rtsp://127.0.0.1:18554/live/$stream_name" \
+        -t 24 -rtsp_transport "$transport" -f rtsp "$rtsp_publish_url" \
         >"$work_dir/rtsp_publish_${publish_case}.log" 2>&1 &
     rtsp_publish_pid=$!
 
@@ -353,6 +355,7 @@ for publish_case in tcp udp udp-restart; do
 done
 
 # RTSP pull AV1 回归使用独立 H.264 RTSP 源，避免依赖前面已经结束的 RTMP publisher。
+av1_source_publish_url="$(allocate_publish av1_source "$main_signaling_http_port" rtsp live/av1-pull-source)"
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
     -f lavfi -i 'sine=frequency=1300:sample_rate=44100' \
@@ -360,7 +363,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
     -g 25 -keyint_min 25 -sc_threshold 0 \
     -c:a aac -b:a 96k -ac 2 \
-    -rtsp_transport tcp -f rtsp 'rtsp://127.0.0.1:18554/live/av1-pull-source' \
+    -rtsp_transport tcp -f rtsp "$av1_source_publish_url" \
     >"$work_dir/av1_rtsp_pull_source.log" 2>&1 &
 rtsp_publish_pid=$!
 
@@ -391,7 +394,7 @@ kill -0 "$av1_server_pid"
 create_rtsp_pull rtsp_pull_av1 18082 relay/av1 'rtsp://127.0.0.1:18554/live/av1-pull-source' \
     '00000000-0000-4000-8000-000000000003'
 
-av1_publish_url="$(allocate_rtmp_publish av1 "$av1_signaling_http_port" live/av1)"
+av1_publish_url="$(allocate_publish av1 "$av1_signaling_http_port" rtmp live/av1)"
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
     -f lavfi -i 'sine=frequency=1400:sample_rate=44100' \
@@ -454,6 +457,7 @@ curl -fsS "http://127.0.0.1:18082/play/hls/live/av1/$av1_segment" >"$work_dir/hl
 # RTSP publish TCP/UDP 继续以 H.264 输入，验证同一 RTSP 服务的 AV1 play。
 for transport in tcp udp; do
     stream_name="rtsp-av1-$transport"
+    rtsp_publish_url="$(allocate_publish "rtsp_av1_$transport" "$av1_signaling_http_port" rtsp "live/$stream_name")"
     ffmpeg -nostdin -hide_banner -loglevel error -re \
         -f lavfi -i 'testsrc=size=320x180:rate=25' \
         -f lavfi -i 'sine=frequency=1500:sample_rate=44100' \
@@ -461,7 +465,7 @@ for transport in tcp udp; do
         -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
         -g 25 -keyint_min 25 -sc_threshold 0 \
         -c:a aac -b:a 96k -ac 2 \
-        -rtsp_transport "$transport" -f rtsp "rtsp://127.0.0.1:18556/live/$stream_name" \
+        -rtsp_transport "$transport" -f rtsp "$rtsp_publish_url" \
         >"$work_dir/rtsp_av1_publish_${transport}.log" 2>&1 &
     rtsp_publish_pid=$!
 
