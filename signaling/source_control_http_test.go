@@ -136,6 +136,49 @@ func TestSourceControlPersistsDesiredStateAcrossCommandFailure(t *testing.T) {
 	}
 }
 
+func TestSourceControlStopRecoversFromLostTerminalEvent(t *testing.T) {
+	var creates []string
+	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/rtsp/pull/create":
+			var command rtspPullCreateRequest
+			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
+				t.Errorf("decode create: %v", err)
+			}
+			creates = append(creates, command.StreamID)
+			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+		case "/rtsp/pull/delete":
+			writeHTTPError(writer, http.StatusNotFound, "not_found")
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer media.Close()
+	server := newSourceControlTestServer(t, media.URL)
+	source := createControlTestSource(t, server, "live/lost-terminal", "", "")
+
+	firstID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
+	active := observedRuntime{
+		Type: "source_started", ServerID: "media-1", InstanceID: "instance-a", StreamID: firstID,
+		StreamName: source.streamName, SourceID: source.sourceID, Direction: "input", Protocol: "rtsp",
+		State: "streaming", Stage: "streaming",
+	}
+	if _, err := server.runtimes.apply(active); err != nil {
+		t.Fatalf("apply(active) error = %v", err)
+	}
+	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
+	current, ok := server.runtimes.currentForSource(source.sourceID)
+	if !ok || current.StreamID != firstID || current.Type != "source_stopped" || current.State != "stopped" ||
+		current.EndReason != "requested" {
+		t.Fatalf("observed after acknowledged stop = %+v, %v", current, ok)
+	}
+
+	secondID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
+	if secondID == firstID || len(creates) != 2 || creates[0] != firstID || creates[1] != secondID {
+		t.Fatalf("restart IDs = %q/%q, creates = %v", firstID, secondID, creates)
+	}
+}
+
 func TestSourceControlSerializesConcurrentStarts(t *testing.T) {
 	createStarted := make(chan struct{})
 	releaseCreate := make(chan struct{})
