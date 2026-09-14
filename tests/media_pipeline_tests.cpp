@@ -5966,11 +5966,9 @@ void test_rtsp_publish_server_contract()
         boost::asio::post(shutdown_workers.context(0).io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
         shutdown_barrier_future.wait();
 
+        require(wait_for_rtsp_close(shutdown_client, std::chrono::seconds(1)),
+                "rtsp server shutdown closes active connection");
         boost::system::error_code shutdown_error;
-        std::array<char, 1> shutdown_buffer{};
-        shutdown_client.non_blocking(true);
-        shutdown_client.read_some(boost::asio::buffer(shutdown_buffer), shutdown_error);
-        require(shutdown_error == boost::asio::error::eof, "rtsp server shutdown closes active connection");
         shutdown_client.close(shutdown_error);
         shutdown_workers.release_work();
         shutdown_runner.join();
