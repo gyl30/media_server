@@ -13,13 +13,18 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	sources, err := openSourceStore(ctx, cfg.database)
+	if err != nil {
+		return err
+	}
+	defer sources.close()
 	server, err := newSIPServer(cfg, logger)
 	if err != nil {
 		return err
 	}
 	defer server.close()
 	registry := newMediaServerRegistry()
-	infrastructure := newInfrastructureServer(cfg, registry, logger)
+	infrastructure := newInfrastructureServer(cfg, registry, sources, logger)
 	ssrcs, err := newSSRCAllocator(cfg.sipDomain)
 	if err != nil {
 		return err

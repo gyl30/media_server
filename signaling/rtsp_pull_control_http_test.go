@@ -54,7 +54,7 @@ func TestRTSPPullControlCreateDeleteAndSelectMediaServer(t *testing.T) {
 	if err := registry.register(registration, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 
@@ -125,7 +125,7 @@ func TestRTSPPullControlAllowsRecreateAfterRuntimeFailure(t *testing.T) {
 	}, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 	command := rtspPullCreateRequest{StreamName: "live/recreate", URL: "rtsp://192.0.2.10/live"}
@@ -188,7 +188,7 @@ func TestRTSPPullControlDelayedDeletePreservesReplacement(t *testing.T) {
 	}, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	command := rtspPullCreateRequest{StreamName: "live/replacement", URL: "rtsp://192.0.2.10/live"}
 	createRequest := httptest.NewRequest(http.MethodPost, "/internal/rtsp-pull/create", strings.NewReader(`{"stream_name":"live/replacement","url":"rtsp://192.0.2.10/live"}`))
 	createRequest.Header.Set("Content-Type", "application/json")
@@ -272,7 +272,7 @@ func TestRTSPPullControlValidatesAndMapsMediaErrors(t *testing.T) {
 	}, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 
@@ -312,7 +312,7 @@ func TestRTSPPullControlValidatesAndMapsMediaErrors(t *testing.T) {
 		response.Body.Close()
 	}
 
-	emptyServer := newInfrastructureServer(testConfig(), newMediaServerRegistry(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	emptyServer := newTestInfrastructureServer(t, testConfig(), newMediaServerRegistry(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodPost, "/internal/rtsp-pull/create", strings.NewReader(`{"stream_name":"live/camera","url":"rtsp://192.0.2.10/live"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -335,7 +335,7 @@ func TestRTSPPullControlMapsFailuresWithoutLoggingPassword(t *testing.T) {
 		t.Fatalf("register() error = %v", err)
 	}
 	var logs bytes.Buffer
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(&logs, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(&logs, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 	username := "admin"
@@ -370,7 +370,7 @@ func TestRTSPPullControlDoesNotDeleteOnAmbiguousCreateFailure(t *testing.T) {
 	}, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	server.rtspPulls["live/ambiguous"] = rtspPullRuntime{
 		server:   mediaServerInstance{serverID: "media-1", instanceID: "instance-a", controlURL: mediaServer.URL, online: true},
 		streamID: testStreamID,
@@ -413,7 +413,7 @@ func TestRTSPPullControlCreateDoesNotRetainExpiredMediaServer(t *testing.T) {
 	}, now); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodPost, "/internal/rtsp-pull/create", strings.NewReader(`{"stream_name":"live/expired","url":"rtsp://192.0.2.10/live"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -467,7 +467,7 @@ func TestRTSPPullControlShutdownDeletesSessions(t *testing.T) {
 	}, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodPost, "/internal/rtsp-pull/create", strings.NewReader(`{"stream_name":"live/shutdown","url":"rtsp://192.0.2.10/live"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -501,7 +501,7 @@ func TestRTSPPullControlMapsNetworkFailureWithoutLoggingPassword(t *testing.T) {
 		t.Fatalf("register() error = %v", err)
 	}
 	var logs bytes.Buffer
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(&logs, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(&logs, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 	username := "admin"
@@ -536,7 +536,7 @@ func TestRTSPPullControlRemovesOwnershipWhenMediaSessionIsMissing(t *testing.T) 
 	}, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 	command := rtspPullCreateRequest{StreamName: "live/missing", URL: "rtsp://192.0.2.10/live"}

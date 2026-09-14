@@ -10,6 +10,7 @@ import (
 )
 
 type config struct {
+	database            string
 	sipListen           string
 	sipAdvertise        string
 	httpListen          string
@@ -28,6 +29,7 @@ func parseConfig(args []string) (config, error) {
 	var cfg config
 	flags := flag.NewFlagSet("signaling", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.StringVar(&cfg.database, "database", "signaling.db", "SQLite database path")
 	flags.StringVar(&cfg.sipListen, "sip-listen", "127.0.0.1:5060", "SIP UDP listen address")
 	flags.StringVar(&cfg.sipAdvertise, "sip-advertise", "127.0.0.1:5060", "SIP address advertised to devices")
 	flags.StringVar(&cfg.httpListen, "http-listen", "127.0.0.1:9090", "internal HTTP listen address")
@@ -45,6 +47,9 @@ func parseConfig(args []string) (config, error) {
 	}
 	if flags.NArg() != 0 {
 		return config{}, fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	if cfg.database == "" {
+		return config{}, fmt.Errorf("invalid database path")
 	}
 	sipListen, err := netip.ParseAddrPort(cfg.sipListen)
 	if err != nil || sipListen.Addr().IsUnspecified() || sipListen.Port() == 0 {
