@@ -186,6 +186,26 @@ void test_registration_and_heartbeat_body()
     require(heartbeat.at("server_id") == "media-1" && heartbeat.at("instance_id") == "instance-a", "heartbeat identity stable");
 }
 
+void test_publish_claim_uses_caller_executor_and_body()
+{
+    test_http_server server;
+    boost::asio::io_context construction_io;
+    boost::asio::io_context worker_io;
+    media_server::signaling_client client(construction_io, client_options(server.url()));
+    const auto result = run_request(worker_io,
+                                    [&](boost::asio::yield_context& yield)
+                                    { return client.claim_publish("00000000-0000-4000-8000-000000000001", "rtmp", "live/camera", yield); });
+    require(result.kind == media_server::signaling_result_kind::accepted, "publish claim accepted on caller executor");
+    const auto requests = server.wait_requests(1);
+    require(requests[0].target == "/internal/publish/claim", "publish claim target");
+    const auto body = boost::json::parse(requests[0].body).as_object();
+    require(body.size() == 6U, "publish claim field count");
+    require(body.at("stream_id") == "00000000-0000-4000-8000-000000000001", "publish claim stream id");
+    require(body.at("server_id") == "media-1" && body.at("instance_id") == "instance-a", "publish claim server identity");
+    require(body.at("direction") == "input" && body.at("protocol") == "rtmp", "publish claim direction and protocol");
+    require(body.at("stream_name") == "live/camera", "publish claim stream name");
+}
+
 void test_result_classification()
 {
     test_http_server server(boost::beast::http::status::conflict);
@@ -354,6 +374,7 @@ void test_control_cancellation_ends_in_flight_heartbeat()
 int main()
 {
     test_registration_and_heartbeat_body();
+    test_publish_claim_uses_caller_executor_and_body();
     test_result_classification();
     test_success_requires_result_ok();
     test_constructor_rejects_non_base_urls();

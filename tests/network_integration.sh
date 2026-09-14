@@ -3,9 +3,16 @@ set -euo pipefail
 
 server_bin="${1:-./build/media_server}"
 work_dir="${2:-./network_test_output}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+signaling_bin="${SIGNALING_BIN:-}"
 mkdir -p "$work_dir"
 work_dir="$(cd "$work_dir" && pwd)"
 server_bin="$(realpath "$server_bin")"
+
+main_signaling_sip_port=15050
+main_signaling_http_port=19090
+av1_signaling_sip_port=15051
+av1_signaling_http_port=19091
 
 ffprobe_version="$(ffprobe -version | head -1)"
 ffprobe_major="$(sed -n 's/^ffprobe version n\?\([0-9][0-9]*\).*/\1/p' <<<"$ffprobe_version")"
@@ -15,27 +22,92 @@ if [[ -z "$ffprobe_major" || "$ffprobe_major" -lt 8 ]]; then
 fi
 
 main_pid=""
+main_signaling_pid=""
 pull_pid=""
 publish_pid=""
 rtsp_publish_pid=""
 av1_server_pid=""
 av1_publish_pid=""
+av1_signaling_pid=""
 cleanup() {
     set +e
-    [[ -n "$av1_publish_pid" ]] && kill "$av1_publish_pid" 2>/dev/null
-    [[ -n "$av1_server_pid" ]] && kill "$av1_server_pid" 2>/dev/null
-    [[ -n "$rtsp_publish_pid" ]] && kill "$rtsp_publish_pid" 2>/dev/null
-    [[ -n "$publish_pid" ]] && kill "$publish_pid" 2>/dev/null
-    [[ -n "$pull_pid" ]] && kill "$pull_pid" 2>/dev/null
-    [[ -n "$main_pid" ]] && kill "$main_pid" 2>/dev/null
+    [[ -n "$av1_publish_pid" ]] && kill -TERM "$av1_publish_pid" 2>/dev/null
+    [[ -n "$rtsp_publish_pid" ]] && kill -TERM "$rtsp_publish_pid" 2>/dev/null
+    [[ -n "$publish_pid" ]] && kill -TERM "$publish_pid" 2>/dev/null
+    [[ -n "$av1_server_pid" ]] && kill -TERM "$av1_server_pid" 2>/dev/null
+    [[ -n "$pull_pid" ]] && kill -TERM "$pull_pid" 2>/dev/null
+    [[ -n "$main_pid" ]] && kill -TERM "$main_pid" 2>/dev/null
+    [[ -n "$av1_signaling_pid" ]] && kill -TERM "$av1_signaling_pid" 2>/dev/null
+    [[ -n "$main_signaling_pid" ]] && kill -TERM "$main_signaling_pid" 2>/dev/null
     [[ -n "$av1_publish_pid" ]] && wait "$av1_publish_pid" 2>/dev/null
-    [[ -n "$av1_server_pid" ]] && wait "$av1_server_pid" 2>/dev/null
     [[ -n "$rtsp_publish_pid" ]] && wait "$rtsp_publish_pid" 2>/dev/null
     [[ -n "$publish_pid" ]] && wait "$publish_pid" 2>/dev/null
+    [[ -n "$av1_server_pid" ]] && wait "$av1_server_pid" 2>/dev/null
     [[ -n "$pull_pid" ]] && wait "$pull_pid" 2>/dev/null
     [[ -n "$main_pid" ]] && wait "$main_pid" 2>/dev/null
+    [[ -n "$av1_signaling_pid" ]] && wait "$av1_signaling_pid" 2>/dev/null
+    [[ -n "$main_signaling_pid" ]] && wait "$main_signaling_pid" 2>/dev/null
 }
 trap cleanup EXIT
+
+wait_http() {
+    local url="$1"
+    local pid="$2"
+    local log="$3"
+    for _ in $(seq 1 100); do
+        if curl --noproxy '*' -sS --max-time 1 -o /dev/null "$url" 2>/dev/null; then
+            if kill -0 "$pid" 2>/dev/null; then
+                return 0
+            fi
+            cat "$log" >&2 2>/dev/null || true
+            return 1
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            cat "$log" >&2 2>/dev/null || true
+            return 1
+        fi
+        sleep 0.05
+    done
+    echo "HTTP endpoint did not become ready: $url" >&2
+    cat "$log" >&2 2>/dev/null || true
+    return 1
+}
+
+allocate_rtmp_publish() {
+    local label="$1"
+    local signaling_port="$2"
+    local stream_name="$3"
+    local response="$work_dir/${label}_allocation.json"
+    local body
+    local status
+    printf -v body '{"protocol":"rtmp","stream_name":"%s"}' "$stream_name"
+    status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o "$response" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "http://127.0.0.1:$signaling_port/api/publish/allocations")"
+    if [[ "$status" != "201" ]]; then
+        echo "POST /api/publish/allocations returned $status" >&2
+        cat "$response" >&2 2>/dev/null || true
+        return 1
+    fi
+    python3 - "$response" <<'PY'
+import json
+import sys
+import urllib.parse
+import uuid
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    response = json.load(source)
+stream_id = response["stream_id"]
+publish_url = response["publish_url"]
+parsed_id = uuid.UUID(stream_id)
+parsed_url = urllib.parse.urlsplit(publish_url)
+query = urllib.parse.parse_qs(parsed_url.query, strict_parsing=True)
+assert parsed_id.version == 4 and str(parsed_id) == stream_id
+assert parsed_url.scheme == "rtmp" and query.get("stream_id") == [stream_id]
+print(publish_url)
+PY
+}
 
 wait_log() {
     local file="$1"
@@ -173,10 +245,36 @@ probe_hls_ts() {
     probe_streams "$work_dir/${prefix}_streams.txt" "$work_dir/${prefix}_segment.ts"
 }
 
+if [[ -z "$signaling_bin" ]]; then
+    (
+        cd "$script_dir/../signaling"
+        go build -o "$work_dir/signaling" .
+    )
+    signaling_bin="$work_dir/signaling"
+else
+    signaling_bin="$(realpath "$signaling_bin")"
+fi
+
+"$signaling_bin" \
+    --sip-listen "127.0.0.1:$main_signaling_sip_port" \
+    --sip-advertise "127.0.0.1:$main_signaling_sip_port" \
+    --http-listen "127.0.0.1:$main_signaling_http_port" \
+    >"$work_dir/main_signaling.log" 2>&1 &
+main_signaling_pid=$!
+wait_http "http://127.0.0.1:$main_signaling_http_port/" "$main_signaling_pid" "$work_dir/main_signaling.log"
+kill -0 "$main_signaling_pid"
+
 "$server_bin" --rtmp-port 19350 --rtsp-port 18554 --http-port 18080 \
+    --signaling-url "http://127.0.0.1:$main_signaling_http_port" \
+    --server-id network-main \
+    --control-url 'http://127.0.0.1:18080' \
+    --media-ip 127.0.0.1 \
     >"$work_dir/server.log" 2>&1 &
 main_pid=$!
-sleep 0.4
+wait_http 'http://127.0.0.1:18080/' "$main_pid" "$work_dir/server.log"
+kill -0 "$main_pid"
+
+main_publish_url="$(allocate_rtmp_publish main "$main_signaling_http_port" live/test)"
 
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
@@ -185,7 +283,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
     -g 25 -keyint_min 25 -sc_threshold 0 \
     -c:a aac -b:a 96k -ac 2 \
-    -t 22 -f flv 'rtmp://127.0.0.1:19350/live/test' \
+    -t 22 -f flv "$main_publish_url" \
     >"$work_dir/publisher.log" 2>&1 &
 publish_pid=$!
 
@@ -270,15 +368,30 @@ wait_probe_streams "$work_dir/av1_rtsp_pull_source.txt" h264 aac -rtsp_transport
     'rtsp://127.0.0.1:18554/live/av1-pull-source'
 
 # AV1 作为显式输出能力启用：RTMP/HTTP-FLV 使用 Enhanced FLV，HLS 使用 fMP4，RTSP 使用 AV1/RTP。
+"$signaling_bin" \
+    --sip-listen "127.0.0.1:$av1_signaling_sip_port" \
+    --sip-advertise "127.0.0.1:$av1_signaling_sip_port" \
+    --http-listen "127.0.0.1:$av1_signaling_http_port" \
+    >"$work_dir/av1_signaling.log" 2>&1 &
+av1_signaling_pid=$!
+wait_http "http://127.0.0.1:$av1_signaling_http_port/" "$av1_signaling_pid" "$work_dir/av1_signaling.log"
+kill -0 "$av1_signaling_pid"
+
 "$server_bin" --rtmp-port 19352 --rtsp-port 18556 --http-port 18082 \
     --rtmp-video-codec av1 --rtsp-video-codec av1 --http-video-codec av1 \
+    --signaling-url "http://127.0.0.1:$av1_signaling_http_port" \
+    --server-id network-av1 \
+    --control-url 'http://127.0.0.1:18082' \
+    --media-ip 127.0.0.1 \
     >"$work_dir/av1_server.log" 2>&1 &
 av1_server_pid=$!
-sleep 0.4
+wait_http 'http://127.0.0.1:18082/' "$av1_server_pid" "$work_dir/av1_server.log"
+kill -0 "$av1_server_pid"
 
 create_rtsp_pull rtsp_pull_av1 18082 relay/av1 'rtsp://127.0.0.1:18554/live/av1-pull-source' \
     '00000000-0000-4000-8000-000000000003'
 
+av1_publish_url="$(allocate_rtmp_publish av1 "$av1_signaling_http_port" live/av1)"
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
     -f lavfi -i 'sine=frequency=1400:sample_rate=44100' \
@@ -286,7 +399,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
     -g 25 -keyint_min 25 -sc_threshold 0 \
     -c:a aac -b:a 96k -ac 2 \
-    -f flv 'rtmp://127.0.0.1:19352/live/av1' \
+    -f flv "$av1_publish_url" \
     >"$work_dir/av1_publisher.log" 2>&1 &
 av1_publish_pid=$!
 

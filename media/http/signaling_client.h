@@ -52,6 +52,10 @@ class signaling_client
 
     signaling_request_result register_once(boost::asio::yield_context& yield) const;
     signaling_request_result heartbeat_once(boost::asio::yield_context& yield) const;
+    signaling_request_result claim_publish(std::string_view stream_id,
+                                           std::string_view protocol,
+                                           std::string_view stream_name,
+                                           boost::asio::yield_context& yield) const;
     void run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler) const;
 
    private:

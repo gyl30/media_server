@@ -40,9 +40,25 @@ std::string heartbeat_body(const signaling_client_options& options)
     });
 }
 
+std::string publish_claim_body(const signaling_client_options& options,
+                               std::string_view stream_id,
+                               std::string_view protocol,
+                               std::string_view stream_name)
+{
+    return boost::json::serialize(boost::json::object{
+        {"stream_id", stream_id},
+        {"server_id", options.server_id},
+        {"instance_id", options.instance_id},
+        {"direction", "input"},
+        {"protocol", protocol},
+        {"stream_name", stream_name},
+    });
+}
+
 struct signaling_request_state
 {
-    signaling_request_state(boost::asio::io_context& io, std::chrono::milliseconds timeout) : resolver(io), stream(io), deadline(io)
+    signaling_request_state(boost::asio::any_io_executor executor, std::chrono::milliseconds timeout)
+        : resolver(executor), stream(executor), deadline(executor)
     {
         deadline.expires_after(timeout);
     }
@@ -77,11 +93,19 @@ signaling_request_result signaling_client::heartbeat_once(boost::asio::yield_con
     return request("/internal/media-servers/heartbeat", heartbeat_body(options_), yield);
 }
 
+signaling_request_result signaling_client::claim_publish(std::string_view stream_id,
+                                                         std::string_view protocol,
+                                                         std::string_view stream_name,
+                                                         boost::asio::yield_context& yield) const
+{
+    return request("/internal/publish/claim", publish_claim_body(options_, stream_id, protocol, stream_name), yield);
+}
+
 signaling_request_result signaling_client::request(std::string_view target, std::string body, boost::asio::yield_context& yield) const
 {
     namespace http = beast::http;
 
-    const auto state = std::make_shared<signaling_request_state>(io_, options_.request_timeout);
+    const auto state = std::make_shared<signaling_request_state>(yield.get_executor(), options_.request_timeout);
     state->deadline.async_wait(
         [state](const boost::system::error_code& error)
         {

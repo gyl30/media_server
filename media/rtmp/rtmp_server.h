@@ -16,11 +16,12 @@
 namespace media_server
 {
 class rtmp_session;
+class signaling_client;
 
 class rtmp_server final : public std::enable_shared_from_this<rtmp_server>
 {
    public:
-    rtmp_server(io_context_pool& workers, const config& config);
+    rtmp_server(io_context_pool& workers, const config& config, std::shared_ptr<signaling_client> signaling = {});
 
     void startup(boost::system::error_code& error);
     void shutdown();
@@ -32,6 +33,7 @@ class rtmp_server final : public std::enable_shared_from_this<rtmp_server>
     io_context_pool& workers_;
     worker_context& worker_;
     const config& config_;
+    std::shared_ptr<signaling_client> signaling_;
     tcp_listener listener_;
     std::mutex mutex_;
     std::vector<std::weak_ptr<rtmp_session>> sessions_;
