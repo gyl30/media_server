@@ -78,6 +78,7 @@
 #include "media/rtsp/rtsp_publish_media.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
+#include "tests/clients/publish_claim_test_server.h"
 #include "tests/clients/rtmp_test_client.h"
 #include "tests/clients/rtsp_test_client.h"
 
@@ -1418,6 +1419,37 @@ std::string read_rtsp_headers_until(boost::asio::ip::tcp::socket& socket, std::c
     return request;
 }
 
+bool wait_for_rtsp_close(boost::asio::ip::tcp::socket& socket,
+                         std::chrono::steady_clock::duration timeout,
+                         std::string* received = nullptr)
+{
+    socket.non_blocking(true);
+    std::array<char, 256> buffer{};
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        boost::system::error_code error;
+        const auto bytes = socket.read_some(boost::asio::buffer(buffer), error);
+        if (!error && received != nullptr)
+        {
+            received->append(buffer.data(), bytes);
+        }
+        if (error == boost::asio::error::eof || error == boost::asio::error::connection_reset)
+        {
+            socket.non_blocking(false);
+            return true;
+        }
+        if (error && error != boost::asio::error::would_block && error != boost::asio::error::try_again)
+        {
+            socket.non_blocking(false);
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    socket.non_blocking(false);
+    return false;
+}
+
 std::vector<std::uint8_t> make_rtmp_video_sequence_header(media_track track)
 {
     std::vector<std::uint8_t> packet;
@@ -1473,128 +1505,8 @@ void test_rtmp_publish_target_parsing()
 
 constexpr std::string_view test_rtmp_stream_id = "00000000-0000-4000-8000-000000000001";
 
-struct rtmp_claim_request
-{
-    std::string target;
-    std::string body;
-};
-
-class rtmp_claim_test_server final
-{
-   public:
-    explicit rtmp_claim_test_server(boost::beast::http::status status = boost::beast::http::status::ok, bool hold_response = false)
-        : acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}),
-          port_(acceptor_.local_endpoint().port()),
-          status_(status),
-          hold_response_(hold_response),
-          thread_([this]() { run(); })
-    {
-    }
-
-    ~rtmp_claim_test_server()
-    {
-        {
-            std::lock_guard lock(mutex_);
-            stopping_ = true;
-            response_released_ = true;
-        }
-        condition_.notify_all();
-        boost::asio::ip::tcp::socket wake(io_);
-        boost::system::error_code ignored;
-        wake.connect({boost::asio::ip::address_v4::loopback(), port_}, ignored);
-        thread_.join();
-    }
-
-    [[nodiscard]] std::string url() const { return "http://127.0.0.1:" + std::to_string(port_); }
-
-    [[nodiscard]] std::size_t request_count() const
-    {
-        std::lock_guard lock(mutex_);
-        return requests_.size();
-    }
-
-    rtmp_claim_request wait_request()
-    {
-        std::unique_lock lock(mutex_);
-        require(condition_.wait_for(lock, std::chrono::seconds(2), [this]() { return !requests_.empty(); }), "RTMP claim request timeout");
-        return requests_.front();
-    }
-
-    void release_response()
-    {
-        {
-            std::lock_guard lock(mutex_);
-            response_released_ = true;
-        }
-        condition_.notify_all();
-    }
-
-   private:
-    void run()
-    {
-        for (;;)
-        {
-            boost::asio::ip::tcp::socket socket(io_);
-            boost::system::error_code error;
-            acceptor_.accept(socket, error);
-            if (error)
-            {
-                return;
-            }
-            {
-                std::lock_guard lock(mutex_);
-                if (stopping_)
-                {
-                    return;
-                }
-            }
-
-            boost::beast::flat_buffer buffer;
-            boost::beast::http::request<boost::beast::http::string_body> request;
-            boost::beast::http::read(socket, buffer, request, error);
-            if (error)
-            {
-                continue;
-            }
-            {
-                std::lock_guard lock(mutex_);
-                requests_.push_back({std::string(request.target()), request.body()});
-            }
-            condition_.notify_all();
-
-            if (hold_response_)
-            {
-                std::unique_lock lock(mutex_);
-                condition_.wait(lock, [this]() { return response_released_ || stopping_; });
-                if (stopping_)
-                {
-                    return;
-                }
-            }
-
-            boost::beast::http::response<boost::beast::http::string_body> response(status_, request.version());
-            response.set(boost::beast::http::field::content_type, "application/json");
-            response.body() = response.result_int() >= 200 && response.result_int() < 300 ? R"({"result":"ok"})" : R"({"error":"rejected"})";
-            response.prepare_payload();
-            boost::beast::http::write(socket, response, error);
-        }
-    }
-
-    boost::asio::io_context io_;
-    boost::asio::ip::tcp::acceptor acceptor_;
-    std::uint16_t port_{};
-    boost::beast::http::status status_;
-    bool hold_response_{};
-    mutable std::mutex mutex_;
-    std::condition_variable condition_;
-    std::vector<rtmp_claim_request> requests_;
-    bool response_released_{};
-    bool stopping_{};
-    std::jthread thread_;
-};
-
-signaling_client_options make_rtmp_claim_client_options(std::string url,
-                                                        std::chrono::milliseconds request_timeout = std::chrono::seconds(2))
+signaling_client_options make_publish_claim_client_options(std::string url,
+                                                           std::chrono::milliseconds request_timeout = std::chrono::seconds(2))
 {
     return {
         .signaling_url = std::move(url),
@@ -1650,7 +1562,7 @@ class rtmp_publish_test_peer final
     {
         streams_.clear();
         signaling_ =
-            std::make_shared<signaling_client>(worker_.io(), make_rtmp_claim_client_options(claim_server_.url(), claim_timeout));
+            std::make_shared<signaling_client>(worker_.io(), make_publish_claim_client_options(claim_server_.url(), claim_timeout));
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
         auto session =
@@ -1832,7 +1744,7 @@ class rtmp_publish_test_peer final
 
     bool stream_exists() { return query_stream_exists(); }
 
-    rtmp_claim_request wait_claim_request()
+    test::publish_claim_request wait_claim_request()
     {
         pump_until([this]() { return claim_server_.request_count() != 0U; });
         return claim_server_.wait_request();
@@ -2005,7 +1917,7 @@ class rtmp_publish_test_peer final
         return future.get();
     }
 
-    rtmp_claim_test_server claim_server_;
+    test::publish_claim_test_server claim_server_;
     worker_context worker_;
     std::shared_ptr<signaling_client> signaling_;
     stream_registry& streams_ = stream_registry::instance();
@@ -2362,12 +2274,12 @@ void test_rtmp_publish_claim_lifecycle()
 
 void test_rtmp_coroutine_publish_client()
 {
-    rtmp_claim_test_server claim_server;
+    test::publish_claim_test_server claim_server;
     worker_context server_worker;
     auto& streams = stream_registry::instance();
     streams.clear();
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
-    auto signaling = std::make_shared<signaling_client>(server_worker.io(), make_rtmp_claim_client_options(claim_server.url()));
+    auto signaling = std::make_shared<signaling_client>(server_worker.io(), make_publish_claim_client_options(claim_server.url()));
 
     boost::asio::io_context client_io;
     test::rtmp_test_client client(client_io, "live", "coroutine-publish?stream_id=" + std::string(test_rtmp_stream_id));
@@ -2440,6 +2352,7 @@ void test_rtmp_coroutine_play_client()
 
 void test_rtsp_coroutine_publish_client()
 {
+    test::publish_claim_test_server claim_server;
     worker_context server_worker;
     auto& streams = stream_registry::instance();
     streams.clear();
@@ -2457,13 +2370,16 @@ void test_rtsp_coroutine_publish_client()
                      "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
                      "a=control:" +
                      base + "/trackID=1\r\n";
-    test::rtsp_test_client client(client_io, "/live/coroutine-publish");
+    test::rtsp_test_client client(
+        client_io, "/live/coroutine-publish?stream_id=00000000-0000-4000-8000-000000000001");
     const std::vector<std::uint8_t> rtp{0x80, 0xe0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78, 0x65, 0x88, 0x84, 0x21, 0xa0};
     auto future = boost::asio::co_spawn(
         client_io, client.publish("127.0.0.1", acceptor.local_endpoint().port(), sdp, rtp), boost::asio::use_future);
     std::jthread client_runner([&client_io]() { client_io.run(); });
 
-    auto connection = std::make_shared<rtsp_server_connection>(server_worker, acceptor.accept(), video_transcode_codec{});
+    auto signaling = std::make_shared<signaling_client>(server_worker.io(), make_publish_claim_client_options(claim_server.url()));
+    auto connection =
+        std::make_shared<rtsp_server_connection>(server_worker, acceptor.accept(), video_transcode_codec{}, std::move(signaling));
     connection->startup();
     std::jthread server_runner([&server_worker]() { server_worker.run(); });
 
@@ -5369,6 +5285,7 @@ void test_rtsp_sdp_contract()
 
 void test_rtsp_publish_opus_fmtp_whitespace()
 {
+    test::publish_claim_test_server claim_server;
     io_context_pool workers(1);
     boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32114});
     const auto port = probe.local_endpoint().port();
@@ -5377,7 +5294,9 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     streams.clear();
     config application_config;
     application_config.rtsp_port = port;
-    auto server = std::make_shared<rtsp_server>(workers, application_config);
+    auto signaling =
+        std::make_shared<signaling_client>(workers.context(0).io(), make_publish_claim_client_options(claim_server.url()));
+    auto server = std::make_shared<rtsp_server>(workers, application_config, std::move(signaling));
     boost::system::error_code startup_error;
     server->startup(startup_error);
     require(!startup_error, "rtsp opus whitespace server startup");
@@ -5411,7 +5330,9 @@ void test_rtsp_publish_opus_fmtp_whitespace()
         return read_rtsp_headers(client);
     };
 
-    require(request("ANNOUNCE " + base + " RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) +
+    require(request("ANNOUNCE " + base +
+                    "?stream_id=00000000-0000-4000-8000-000000000001 RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " +
+                    std::to_string(sdp.size()) +
                     "\r\n\r\n" + sdp)
                 .starts_with("RTSP/1.0 200"),
             "rtsp opus whitespace announce");
@@ -5458,6 +5379,254 @@ void test_rtsp_uri_contract()
     require(rtsp_path_from_uri("rtsp://127.0.0.1:8554/live/test") == "live/test", "rtsp uri absolute stream");
     require(rtsp_path_from_uri("/live/test/trackID=2") == "live/test/trackID=2", "rtsp uri preserves opaque track segment");
     require(rtsp_path_from_uri("rtsp://[").empty(), "rtsp uri invalid stream");
+
+    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000001";
+    for (const auto& [uri, expected_name] : std::array<std::pair<std::string_view, std::string_view>, 4>{
+             std::pair{"rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-000000000001", "live/camera"},
+             std::pair{"rtsp://127.0.0.1:8554/live/camera?token=x&stream_id=00000000-0000-4000-8000-000000000001&mode=record", "live/camera"},
+             std::pair{"rtsp://127.0.0.1:8554/live/camera?mode=record&stream_id=00000000-0000-4000-8000-000000000001", "live/camera"},
+             std::pair{"rtsp://127.0.0.1:8554/live/camera%20one?stream%5Fid=00000000-0000-4000-8000-000000000001", "live/camera one"},
+         })
+    {
+        const auto target = parse_rtsp_publish_target(uri);
+        require(target && target->stream_name == expected_name && target->stream_id == stream_id, "rtsp publish target parsed");
+    }
+
+    for (const auto uri : {
+             "rtsp://127.0.0.1:8554/live/camera",
+             "rtsp://127.0.0.1:8554/live/camera?stream_id=",
+             "rtsp://127.0.0.1:8554/live/camera?stream_id=not-a-uuid",
+             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-00000000000A",
+             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-1000-8000-000000000001",
+             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-7000-000000000001",
+             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-000000000001&stream_id=00000000-0000-4000-8000-000000000002",
+             "rtsp://127.0.0.1:8554/?stream_id=00000000-0000-4000-8000-000000000001",
+             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-000000000001#fragment",
+         })
+    {
+        require(!parse_rtsp_publish_target(uri), "invalid rtsp publish target rejected");
+    }
+}
+
+void test_rtsp_publish_claim_lifecycle()
+{
+    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000001";
+    const auto make_announce = [](const std::string& base, std::string_view id)
+    {
+        const auto sdp = std::string("v=0\r\n") +
+                         "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                         "s=claim\r\n"
+                         "c=IN IP4 127.0.0.1\r\n"
+                         "t=0 0\r\n"
+                         "m=video 0 RTP/AVP 96\r\n"
+                         "a=rtpmap:96 H264/90000\r\n"
+                         "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                         "a=control:" +
+                         base + "/trackID=0\r\n";
+        return "ANNOUNCE " + base + "?token=x&stream_id=" + std::string(id) +
+               " RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
+    };
+
+    {
+        worker_context worker;
+        boost::asio::io_context client_io;
+        boost::asio::ip::tcp::acceptor unavailable(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+        const auto unavailable_url = "http://127.0.0.1:" + std::to_string(unavailable.local_endpoint().port());
+        unavailable.close();
+        boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::socket client(client_io);
+        client.connect(acceptor.local_endpoint());
+        boost::asio::ip::tcp::socket server_socket(worker.io());
+        acceptor.accept(server_socket);
+        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(unavailable_url));
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+        connection->startup();
+        worker.release_work();
+        std::jthread runner([&worker]() { worker.run(); });
+
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-network-error";
+        boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
+        const auto response = read_rtsp_headers_until(client, std::chrono::seconds(1));
+        require(response.starts_with("RTSP/1.0 503"), "rtsp publish claim network failure status");
+        require(wait_for_rtsp_close(client, std::chrono::seconds(1)), "rtsp network claim failure closes after response");
+        connection->shutdown();
+        runner.join();
+    }
+
+    {
+        test::publish_claim_test_server claim_server(boost::beast::http::status::ok, true);
+        worker_context worker;
+        boost::asio::io_context client_io;
+        boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::socket client(client_io);
+        client.connect(acceptor.local_endpoint());
+        boost::asio::ip::tcp::socket server_socket(worker.io());
+        acceptor.accept(server_socket);
+        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url()));
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+        std::weak_ptr<rtsp_server_connection> weak = connection;
+        connection->startup();
+        worker.release_work();
+        std::jthread runner([&worker]() { worker.run(); });
+
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-disconnect";
+        boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
+        require(claim_server.wait_request().target == "/internal/publish/claim", "rtsp disconnected claim attempted");
+        boost::system::error_code close_error;
+        client.close(close_error);
+        connection.reset();
+        claim_server.release_response();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(weak.expired() && !stream_registry::instance().find("live/claim-disconnect"),
+                "publisher disconnect during rtsp claim leaves no runtime");
+        runner.join();
+    }
+
+    {
+        test::publish_claim_test_server claim_server(boost::beast::http::status::ok, true);
+        worker_context worker;
+        boost::asio::io_context client_io;
+        boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::socket client(client_io);
+        client.connect(acceptor.local_endpoint());
+        boost::asio::ip::tcp::socket server_socket(worker.io());
+        acceptor.accept(server_socket);
+        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url()));
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+        connection->startup();
+        worker.release_work();
+        std::jthread runner([&worker]() { worker.run(); });
+
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-pending";
+        boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
+        const auto claim = claim_server.wait_request();
+        const auto body = boost::json::parse(claim.body).as_object();
+        require(claim.target == "/internal/publish/claim" && body.size() == 6U, "rtsp publish claim request");
+        require(std::string_view(body.at("stream_id").as_string()) == stream_id && body.at("protocol") == "rtsp" &&
+                    body.at("stream_name") == "live/claim-pending",
+                "rtsp publish claim identity");
+        require(read_rtsp_headers_until(client, std::chrono::milliseconds(50)).empty(), "rtsp ANNOUNCE waits for publish claim");
+        require(!stream_registry::instance().find("live/claim-pending"), "rtsp claim pending has no visible runtime");
+
+        claim_server.release_response();
+        require(read_rtsp_headers_until(client, std::chrono::seconds(1)).starts_with("RTSP/1.0 200"),
+                "rtsp ANNOUNCE accepted after publish claim");
+        connection->shutdown();
+        runner.join();
+    }
+
+    for (const auto& [claim_status, rtsp_status] : {
+             std::pair{boost::beast::http::status::conflict, std::string_view{"RTSP/1.0 403"}},
+             std::pair{boost::beast::http::status::internal_server_error, std::string_view{"RTSP/1.0 503"}},
+         })
+    {
+        test::publish_claim_test_server claim_server(claim_status);
+        worker_context worker;
+        boost::asio::io_context client_io;
+        boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::socket client(client_io);
+        client.connect(acceptor.local_endpoint());
+        boost::asio::ip::tcp::socket server_socket(worker.io());
+        acceptor.accept(server_socket);
+        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url()));
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+        std::weak_ptr<rtsp_server_connection> weak = connection;
+        connection->startup();
+        connection.reset();
+        worker.release_work();
+        std::jthread runner([&worker]() { worker.run(); });
+
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-rejected";
+        const auto setup = "SETUP " + base +
+                           "/trackID=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
+        boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id) + setup));
+        auto response = read_rtsp_headers_until(client, std::chrono::seconds(1));
+        require(response.starts_with(rtsp_status), "rtsp publish claim failure status");
+        std::string trailing;
+        require(wait_for_rtsp_close(client, std::chrono::seconds(1), &trailing), "rtsp rejected claim response precedes close");
+        response.append(trailing);
+        require(response.find("RTSP/1.0", 1U) == std::string::npos, "rtsp rejected claim does not process pipelined SETUP");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(weak.expired() && !stream_registry::instance().find("live/claim-rejected"), "rtsp rejected claim leaves no runtime");
+        runner.join();
+    }
+
+    {
+        test::publish_claim_test_server claim_server(boost::beast::http::status::ok, true);
+        worker_context worker;
+        boost::asio::io_context client_io;
+        boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::socket client(client_io);
+        client.connect(acceptor.local_endpoint());
+        boost::asio::ip::tcp::socket server_socket(worker.io());
+        acceptor.accept(server_socket);
+        auto signaling = std::make_shared<signaling_client>(
+            worker.io(), make_publish_claim_client_options(claim_server.url(), std::chrono::milliseconds(50)));
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+        connection->startup();
+        worker.release_work();
+        std::jthread runner([&worker]() { worker.run(); });
+
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-timeout";
+        boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
+        require(claim_server.wait_request().target == "/internal/publish/claim", "rtsp timed claim attempted");
+        const auto response = read_rtsp_headers_until(client, std::chrono::seconds(1));
+        require(response.starts_with("RTSP/1.0 503"), "rtsp publish claim timeout status");
+        require(wait_for_rtsp_close(client, std::chrono::seconds(1)), "rtsp timed out claim closes after response");
+        claim_server.release_response();
+        connection->shutdown();
+        runner.join();
+    }
+
+    {
+        test::publish_claim_test_server claim_server(boost::beast::http::status::ok, true);
+        worker_context worker;
+        boost::asio::io_context client_io;
+        boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+        boost::asio::ip::tcp::socket client(client_io);
+        client.connect(acceptor.local_endpoint());
+        boost::asio::ip::tcp::socket server_socket(worker.io());
+        acceptor.accept(server_socket);
+        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url()));
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+        std::weak_ptr<rtsp_server_connection> weak = connection;
+        connection->startup();
+        worker.release_work();
+        std::jthread runner([&worker]() { worker.run(); });
+
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-shutdown";
+        boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
+        require(claim_server.wait_request().target == "/internal/publish/claim", "rtsp pending claim attempted");
+        connection->shutdown();
+        std::promise<void> shutdown_barrier;
+        auto shutdown_barrier_future = shutdown_barrier.get_future();
+        boost::asio::post(worker.io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
+        shutdown_barrier_future.wait();
+        connection.reset();
+        claim_server.release_response();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(weak.expired() && !stream_registry::instance().find("live/claim-shutdown"),
+                "late rtsp claim completion does not revive connection");
+        runner.join();
+    }
 }
 
 void test_rtsp_publish_server_contract()
@@ -5526,6 +5695,7 @@ void test_rtsp_publish_server_contract()
         shutdown_runner.join();
     }
 
+    test::publish_claim_test_server claim_server;
     io_context_pool workers(1);
     boost::asio::ip::tcp::acceptor probe(workers.context(0).io(), {boost::asio::ip::address_v4::loopback(), 32120});
     const auto port = probe.local_endpoint().port();
@@ -5534,7 +5704,9 @@ void test_rtsp_publish_server_contract()
     streams.clear();
     config application_config;
     application_config.rtsp_port = port;
-    auto server = std::make_shared<rtsp_server>(workers, application_config);
+    auto signaling =
+        std::make_shared<signaling_client>(workers.context(0).io(), make_publish_claim_client_options(claim_server.url()));
+    auto server = std::make_shared<rtsp_server>(workers, application_config, std::move(signaling));
     boost::system::error_code startup_error;
     server->startup(startup_error);
     require(!startup_error, "rtsp publish server startup");
@@ -5544,6 +5716,7 @@ void test_rtsp_publish_server_contract()
     boost::asio::ip::tcp::socket client(client_io);
     client.connect({boost::asio::ip::address_v4::loopback(), port});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/publish";
+    constexpr std::string_view publish_query = "?stream_id=00000000-0000-4000-8000-000000000001";
     const auto video_control = base + "/trackID=0";
     const auto request = [&](std::string value)
     {
@@ -5591,6 +5764,7 @@ void test_rtsp_publish_server_contract()
                                   "a=control:video-h265\r\n";
         boost::asio::write(topology,
                            boost::asio::buffer("ANNOUNCE " + topology_base +
+                                               std::string(publish_query) +
                                                " RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " +
                                                std::to_string(topology_sdp.size()) + "\r\n\r\n" + topology_sdp));
         require(read_rtsp_headers(topology).starts_with("RTSP/1.0 415"), "rtsp publish rejects duplicate video topology");
@@ -5618,7 +5792,8 @@ void test_rtsp_publish_server_contract()
                                  handoff_audio + "\r\n";
         boost::asio::write(
             handoff,
-            boost::asio::buffer("ANNOUNCE " + handoff_base + " RTSP/1.0\r\nCSeq: 100\r\nContent-Type: application/sdp\r\nContent-Length: " +
+            boost::asio::buffer("ANNOUNCE " + handoff_base + std::string(publish_query) +
+                                " RTSP/1.0\r\nCSeq: 100\r\nContent-Type: application/sdp\r\nContent-Length: " +
                                 std::to_string(handoff_sdp.size()) + "\r\n\r\n" + handoff_sdp));
         require(read_rtsp_headers(handoff).starts_with("RTSP/1.0 200"), "rtsp publish handoff announce");
 
@@ -5681,7 +5856,8 @@ void test_rtsp_publish_server_contract()
             boost::asio::write(mixed, boost::asio::buffer(value));
             return read_rtsp_headers(mixed);
         };
-        require(mixed_request("ANNOUNCE " + mixed_base + " RTSP/1.0\r\nCSeq: 110\r\nContent-Type: application/sdp\r\nContent-Length: " +
+        require(mixed_request("ANNOUNCE " + mixed_base + std::string(publish_query) +
+                              " RTSP/1.0\r\nCSeq: 110\r\nContent-Type: application/sdp\r\nContent-Length: " +
                               std::to_string(mixed_sdp.size()) + "\r\n\r\n" + mixed_sdp)
                     .starts_with("RTSP/1.0 200"),
                 "rtsp publish mixed transport announce");
@@ -5722,7 +5898,8 @@ void test_rtsp_publish_server_contract()
                      "a=control:" +
                      video_control + "\r\n";
     const auto announce =
-        request("ANNOUNCE " + base + " RTSP/1.0\r\nCSeq: 2\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) +
+        request("ANNOUNCE " + base + std::string(publish_query) +
+                " RTSP/1.0\r\nCSeq: 2\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) +
                 "\r\n\r\n" + sdp);
     require(announce.starts_with("RTSP/1.0 200"), "rtsp publish announce with ignored media");
     require(!streams.find("live/publish"), "rtsp publish remains private after announce");
@@ -5781,7 +5958,8 @@ void test_rtsp_publish_server_contract()
         boost::asio::write(duplicate, boost::asio::buffer(value));
         return read_rtsp_headers(duplicate);
     };
-    require(duplicate_request("ANNOUNCE " + base + " RTSP/1.0\r\nCSeq: 20\r\nContent-Type: application/sdp\r\nContent-Length: " +
+    require(duplicate_request("ANNOUNCE " + base + std::string(publish_query) +
+                              " RTSP/1.0\r\nCSeq: 20\r\nContent-Type: application/sdp\r\nContent-Length: " +
                               std::to_string(sdp.size()) + "\r\n\r\n" + sdp)
                 .starts_with("RTSP/1.0 200"),
             "rtsp duplicate publisher announce");
@@ -5898,7 +6076,8 @@ void test_rtsp_publish_server_contract()
         boost::asio::write(republish, boost::asio::buffer(value));
         return read_rtsp_headers(republish);
     };
-    require(republish_request("ANNOUNCE " + base + " RTSP/1.0\r\nCSeq: 30\r\nContent-Type: application/sdp\r\nContent-Length: " +
+    require(republish_request("ANNOUNCE " + base + std::string(publish_query) +
+                              " RTSP/1.0\r\nCSeq: 30\r\nContent-Type: application/sdp\r\nContent-Length: " +
                               std::to_string(sdp.size()) + "\r\n\r\n" + sdp)
                 .starts_with("RTSP/1.0 200"),
             "rtsp republish announce");
@@ -5966,7 +6145,8 @@ void test_rtsp_publish_server_contract()
                           "c=IN IP4 127.0.0.1\r\n"
                           "t=0 0\r\n" +
                           h265_media + "a=control:" + h265_video_control + "\r\n";
-    require(h265_request("ANNOUNCE " + h265_base + " RTSP/1.0\r\nCSeq: 40\r\nContent-Type: application/sdp\r\nContent-Length: " +
+    require(h265_request("ANNOUNCE " + h265_base + std::string(publish_query) +
+                         " RTSP/1.0\r\nCSeq: 40\r\nContent-Type: application/sdp\r\nContent-Length: " +
                          std::to_string(h265_sdp.size()) + "\r\n\r\n" + h265_sdp)
                 .starts_with("RTSP/1.0 200"),
             "rtsp publish h265 announce");
@@ -6016,7 +6196,8 @@ void test_rtsp_publish_server_contract()
                          "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
                          "a=control:" +
                          udp_video_control + "\r\n";
-    const auto udp_announce = udp_request("ANNOUNCE " + udp_base + " RTSP/1.0\r\nCSeq: 10\r\nContent-Type: application/sdp\r\nContent-Length: " +
+    const auto udp_announce = udp_request("ANNOUNCE " + udp_base + std::string(publish_query) +
+                                          " RTSP/1.0\r\nCSeq: 10\r\nContent-Type: application/sdp\r\nContent-Length: " +
                                           std::to_string(udp_sdp.size()) + "\r\n\r\n" + udp_sdp);
     require(udp_announce.starts_with("RTSP/1.0 200"), "rtsp publish udp announce");
 
@@ -11993,6 +12174,8 @@ int main()
     std::cout << "[pass] rtsp_publish_opus_fmtp_whitespace\n";
     media_server::test_rtsp_uri_contract();
     std::cout << "[pass] rtsp_uri_contract\n";
+    media_server::test_rtsp_publish_claim_lifecycle();
+    std::cout << "[pass] rtsp_publish_claim_lifecycle\n";
     media_server::test_rtsp_publish_server_contract();
     std::cout << "[pass] rtsp_publish_server_contract\n";
     media_server::test_rtsp_coroutine_publish_client();

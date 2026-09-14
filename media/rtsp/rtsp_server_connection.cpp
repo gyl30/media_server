@@ -4,9 +4,12 @@
 #include <cstdlib>
 #include <utility>
 
+#include <spdlog/spdlog.h>
+#include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/detached.hpp>
 
+#include "media/http/signaling_client.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_play_session.h"
@@ -20,12 +23,14 @@ extern "C"
 namespace media_server
 {
 rtsp_server_connection::rtsp_server_connection(worker_context& worker,
-                                                   boost::asio::ip::tcp::socket socket,
-                                                   video_transcode_codec video_codec,
-                                                   std::chrono::milliseconds inactivity_timeout,
-                                                   std::size_t max_write_queue_bytes)
+                                               boost::asio::ip::tcp::socket socket,
+                                               video_transcode_codec video_codec,
+                                               std::shared_ptr<signaling_client> signaling,
+                                               std::chrono::milliseconds inactivity_timeout,
+                                               std::size_t max_write_queue_bytes)
     : worker_(worker),
       video_codec_(video_codec),
+      signaling_(std::move(signaling)),
       transport_(std::move(socket)),
       inactivity_timer_(worker_.io()),
       inactivity_timeout_(inactivity_timeout),
@@ -38,11 +43,14 @@ rtsp_server_connection::~rtsp_server_connection() = default;
 void rtsp_server_connection::startup()
 {
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+    boost::asio::spawn(worker_.io(),
+                       [self](boost::asio::yield_context yield) { self->run(yield); },
+                       boost::asio::bind_cancellation_slot(run_cancellation_.slot(), boost::asio::detached));
 }
 
 void rtsp_server_connection::run(boost::asio::yield_context yield)
 {
+    yield.throw_if_cancelled(false);
     if (closed_)
     {
         return;
@@ -138,6 +146,17 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 break;
             }
             remaining = remaining.subspan(consumed);
+
+            if (publish_claim_pending_ && !run_publish_claim(rtsp_context, yield))
+            {
+                stop = true;
+                break;
+            }
+            if (closed_ || closing_after_write_)
+            {
+                stop = true;
+                break;
+            }
         }
     }
 
@@ -146,7 +165,41 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     {
         std::free(interleaved.data);
     }
-    shutdown();
+    if (!closing_after_write_)
+    {
+        shutdown();
+    }
+}
+
+bool rtsp_server_connection::run_publish_claim(rtsp_server_t* server, boost::asio::yield_context& yield)
+{
+    const auto publish = publish_session_;
+    const auto stream_id = publish->stream_id();
+    const auto stream_name = publish->stream_name();
+    const auto result = signaling_->claim_publish(stream_id, "rtsp", stream_name, yield);
+    if (closed_ || !publish_claim_pending_ || publish_session_ != publish)
+    {
+        return false;
+    }
+
+    publish_claim_pending_ = false;
+    if (result.kind == signaling_result_kind::accepted)
+    {
+        record_control_activity();
+        if (publish->accept_announce(server) != 0)
+        {
+            shutdown();
+            return false;
+        }
+        return true;
+    }
+
+    spdlog::warn("rtsp publish claim failed stream {} stream_id {} status {} error {}", stream_name, stream_id, result.status, result.error);
+    publish->shutdown();
+    publish_session_.reset();
+    const auto status = result.kind == signaling_result_kind::rejected ? 403 : 503;
+    static_cast<void>(reply_announce_and_close(server, status));
+    return false;
 }
 
 void rtsp_server_connection::shutdown()
@@ -266,15 +319,29 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     {
         return rtsp_server_reply_announce(server, 501);
     }
-    if (!self->publish_session_)
+    if (self->publish_session_)
     {
-        const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_publish_session>(
-            self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
-        self->publish_session_ = std::move(next_session);
+        return rtsp_server_reply_announce(server, 455);
     }
-    return self->publish_session_->on_announce(server, uri != nullptr ? uri : "", sdp, length);
+    if (!self->signaling_)
+    {
+        return self->reply_announce_and_close(server, 503);
+    }
+
+    const auto owner = self->shared_from_this();
+    auto next_session = std::make_shared<rtsp_publish_session>(
+        self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
+    next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
+    const auto status = next_session->prepare_announce(server, uri != nullptr ? uri : "", sdp, length);
+    if (status != 200)
+    {
+        next_session->shutdown();
+        return rtsp_server_reply_announce(server, status);
+    }
+
+    self->publish_session_ = std::move(next_session);
+    self->publish_claim_pending_ = true;
+    return 0;
 }
 
 int rtsp_server_connection::record_callback(
@@ -313,8 +380,13 @@ int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* s
 
 void rtsp_server_connection::write(std::span<const std::uint8_t> data)
 {
+    const bool close_after_write = std::exchange(close_next_write_, false);
     if (data.empty())
     {
+        if (close_after_write)
+        {
+            shutdown();
+        }
         return;
     }
 
@@ -325,13 +397,32 @@ void rtsp_server_connection::write(std::span<const std::uint8_t> data)
     }
 
     const bool start_write = write_queue_.empty();
-    write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
+    write_queue_.push_back({
+        .data = std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()),
+        .close_after_write = close_after_write,
+    });
     queued_write_bytes_ += data.size();
+    if (close_after_write)
+    {
+        closing_after_write_ = true;
+    }
     if (start_write)
     {
         const auto self = shared_from_this();
         boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_write(yield); }, boost::asio::detached);
     }
+}
+
+int rtsp_server_connection::reply_announce_and_close(rtsp_server_t* server, int status)
+{
+    close_next_write_ = true;
+    const auto result = rtsp_server_reply_announce(server, status);
+    close_next_write_ = false;
+    if (!closing_after_write_)
+    {
+        shutdown();
+    }
+    return result;
 }
 
 void rtsp_server_connection::run_write(boost::asio::yield_context yield)
@@ -343,17 +434,22 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
             return;
         }
 
-        const auto data = write_queue_.front();
+        const auto entry = write_queue_.front();
         boost::system::error_code error;
-        static_cast<void>(transport_.write(*data, yield, error));
+        static_cast<void>(transport_.write(*entry.data, yield, error));
         if (error || closed_)
         {
             shutdown();
             return;
         }
 
-        queued_write_bytes_ -= data->size();
+        queued_write_bytes_ -= entry.data->size();
         write_queue_.pop_front();
+        if (entry.close_after_write)
+        {
+            shutdown();
+            return;
+        }
     }
 }
 
@@ -386,6 +482,7 @@ void rtsp_server_connection::safe_shutdown()
         return;
     }
     closed_ = true;
+    run_cancellation_.emit(boost::asio::cancellation_type::all);
     inactivity_timer_.cancel();
     if (publish_session_)
     {
