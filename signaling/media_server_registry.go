@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -130,6 +131,30 @@ func (r *mediaServerRegistry) isOnline(server mediaServerInstance) bool {
 	defer r.mu.RUnlock()
 	instance, ok := r.instances[mediaServerKey{serverID: server.serverID, instanceID: server.instanceID}]
 	return ok && instance.online
+}
+
+func (r *mediaServerRegistry) withOnlineInstance(serverID, instanceID string, operation func()) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	instance, ok := r.instances[mediaServerKey{serverID: serverID, instanceID: instanceID}]
+	if !ok || !instance.online {
+		return false
+	}
+	operation()
+	return true
+}
+
+func (r *mediaServerRegistry) currentInstances() []mediaServerInstance {
+	r.mu.RLock()
+	instances := make([]mediaServerInstance, 0, len(r.current))
+	for _, key := range r.current {
+		instances = append(instances, r.instances[key])
+	}
+	r.mu.RUnlock()
+	sort.Slice(instances, func(left, right int) bool {
+		return instances[left].serverID < instances[right].serverID
+	})
+	return instances
 }
 
 func (r *mediaServerRegistry) onlineCount() int {
