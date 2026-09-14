@@ -24,6 +24,7 @@ type infrastructureServer struct {
 	allocations          *publishAllocationRegistry
 	sources              *sourceStore
 	runtimes             *observedRuntimeRegistry
+	runtimeEvents        *runtimeEventHub
 	rtspPullMu           sync.Mutex
 	rtspPulls            map[string]rtspPullRuntime
 	sourceControlMu      sync.Mutex
@@ -33,10 +34,13 @@ type infrastructureServer struct {
 }
 
 func newInfrastructureServer(cfg config, registry *mediaServerRegistry, sources *sourceStore, logger *slog.Logger) *infrastructureServer {
+	runtimeEvents := newRuntimeEventHub()
+	runtimes := newObservedRuntimeRegistry()
+	runtimes.setOnChange(runtimeEvents.publish)
 	return &infrastructureServer{
 		cfg: cfg, registry: registry, logger: logger,
 		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), allocations: newPublishAllocationRegistry(),
-		sources: sources, runtimes: newObservedRuntimeRegistry(), rtspPulls: make(map[string]rtspPullRuntime),
+		sources: sources, runtimes: runtimes, runtimeEvents: runtimeEvents, rtspPulls: make(map[string]rtspPullRuntime),
 	}
 }
 
@@ -53,6 +57,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	mux.HandleFunc("POST /api/sources/{source_id}/stop", s.handleSourceStop)
 	mux.HandleFunc("GET /api/media-servers", s.handleMediaServerList)
 	mux.HandleFunc("GET /api/runtimes", s.handleRuntimeList)
+	mux.HandleFunc("GET /api/events", s.handleRuntimeEvents)
 	mux.HandleFunc("POST /api/preview/start", s.handlePreviewStart)
 	mux.HandleFunc("POST /internal/publish/claim", s.handlePublishClaim)
 	mux.HandleFunc("POST /internal/runtime-events", s.handleRuntimeEvent)
@@ -112,8 +117,11 @@ func (s *infrastructureServer) serve(ctx context.Context) error {
 		for {
 			select {
 			case <-serveContext.Done():
+				s.runtimeEvents.close()
 				shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				_ = server.Shutdown(shutdownContext)
+				if err := server.Shutdown(shutdownContext); err != nil {
+					_ = server.Close()
+				}
 				cancel()
 				return
 			case now := <-ticker.C:
