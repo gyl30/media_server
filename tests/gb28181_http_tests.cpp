@@ -20,6 +20,12 @@ namespace media_server
 namespace
 {
 
+class foreign_receiver_session final : public stream_session
+{
+   public:
+    void shutdown() override {}
+};
+
 void require(bool condition, std::string_view message)
 {
     if (!condition)
@@ -186,6 +192,23 @@ void test_sender_handlers()
     stream_registry::instance().clear();
 }
 
+void test_receiver_delete_preserves_foreign_session()
+{
+    worker_context worker;
+    auto& streams = stream_registry::instance();
+    streams.clear();
+
+    auto foreign = std::make_shared<foreign_receiver_session>();
+    require(streams.add_receiver_session("live/foreign", foreign), "gb receiver foreign identity");
+    const auto response = receiver_request(worker, request("/gb28181/receiver/delete", {{"stream_name", "live/foreign"}}));
+    require_json_response(response,
+                          boost::beast::http::status::internal_server_error,
+                          R"({"error":"operation_failed"})",
+                          "gb receiver delete preserves foreign session");
+    require(streams.take_receiver_session("live/foreign") == foreign, "gb receiver foreign identity retained");
+    streams.clear();
+}
+
 void test_request_namespace_dispatch()
 {
     worker_context worker;
@@ -208,6 +231,7 @@ int main()
     try
     {
         media_server::test_receiver_handlers();
+        media_server::test_receiver_delete_preserves_foreign_session();
         media_server::test_sender_handlers();
         media_server::test_request_namespace_dispatch();
         std::cout << "[pass] gb28181_http_handlers\n";

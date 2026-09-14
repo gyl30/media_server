@@ -8,6 +8,7 @@
 #include "media/http/whep_http.h"
 #include "media/http/whip_http.h"
 #include "media/http/gb28181_http.h"
+#include "media/http/rtsp_pull_http.h"
 #include "media/http/http_session.h"
 #include "media/net/io_context_pool.h"
 #include "media/net/worker_context.h"
@@ -66,7 +67,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     {
         write_string_response(request,
                               media_server::handle_gb28181_receiver_request(
-                                  request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
+                                  request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address)),
                               yield);
         return;
     }
@@ -74,8 +75,13 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     {
         write_string_response(request,
                               media_server::handle_gb28181_sender_request(
-                                  request, workers_.next(), *parsed, boost::asio::ip::make_address(config_.bind_address)),
+                                  request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address)),
                               yield);
+        return;
+    }
+    if (path == "/rtsp/pull" || path.starts_with("/rtsp/pull/"))
+    {
+        write_string_response(request, media_server::handle_rtsp_pull_request(request, worker_, *parsed), yield);
         return;
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))

@@ -13,6 +13,7 @@
 
 #include <boost/asio.hpp>
 
+#include "media/core/stream_registry.h"
 #include "media/net/tcp_yield_transport.h"
 
 extern "C"
@@ -28,19 +29,22 @@ namespace media_server
 class worker_context;
 class rtsp_pull_media;
 
-class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_session>
+class rtsp_pull_session final : public stream_session, public std::enable_shared_from_this<rtsp_pull_session>
 {
    public:
     rtsp_pull_session(worker_context& worker,
                       std::string stream_name,
                       std::string url,
+                      std::string username = {},
+                      std::string password = {},
                       std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
                       std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                       std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtsp_pull_session();
 
+    [[nodiscard]] static bool valid_url(std::string_view url);
     bool startup();
-    void shutdown();
+    void shutdown() override;
 
    private:
     struct parsed_url
@@ -48,8 +52,6 @@ class rtsp_pull_session final : public std::enable_shared_from_this<rtsp_pull_se
         std::string request_url;
         std::string host;
         std::uint16_t port{554};
-        std::string username;
-        std::string password;
     };
 
     static int send_callback(void* param, const char* uri, const void* request, std::size_t bytes);

@@ -51,6 +51,76 @@ wait_log() {
     return 1
 }
 
+wait_log_count() {
+    local file="$1"
+    local text="$2"
+    local expected="$3"
+    for _ in $(seq 1 80); do
+        if [[ "$(grep -Fc "$text" "$file" 2>/dev/null || true)" -ge "$expected" ]]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo "missing log count $expected: $text" >&2
+    cat "$file" >&2 || true
+    return 1
+}
+
+post_json_expected() {
+    local output="$1"
+    local url="$2"
+    local body="$3"
+    local expected_status="$4"
+    local expected_body="$5"
+    local status
+    status="$(curl -sS -o "$output" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "$url")"
+    if [[ "$status" != "$expected_status" || "$(<"$output")" != "$expected_body" ]]; then
+        echo "unexpected HTTP response from $url: status $status" >&2
+        cat "$output" >&2 || true
+        return 1
+    fi
+}
+
+create_rtsp_pull() {
+    local label="$1"
+    local port="$2"
+    local stream_name="$3"
+    local url="$4"
+    local body
+    printf -v body '{"stream_name":"%s","url":"%s"}' "$stream_name" "$url"
+    post_json_expected "$work_dir/${label}_create.json" \
+        "http://127.0.0.1:$port/rtsp/pull/create" "$body" 201 '{"result":"ok"}'
+}
+
+delete_rtsp_pull() {
+    local label="$1"
+    local port="$2"
+    local stream_name="$3"
+    local body
+    printf -v body '{"stream_name":"%s"}' "$stream_name"
+    post_json_expected "$work_dir/${label}_delete.json" \
+        "http://127.0.0.1:$port/rtsp/pull/delete" "$body" 200 '{"result":"ok"}'
+}
+
+wait_http_stream_absent() {
+    local port="$1"
+    local stream_name="$2"
+    local status
+    for _ in $(seq 1 80); do
+        status="$(curl -sS --max-time 1 -o /dev/null -w '%{http_code}' \
+            "http://127.0.0.1:$port/$stream_name.flv" 2>/dev/null || true)"
+        if [[ "$status" == "404" ]]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo "HTTP stream remained available after RTSP pull delete: $stream_name" >&2
+    return 1
+}
+
 probe_streams_expected() {
     local output="$1"
     local video_codec="$2"
@@ -129,13 +199,22 @@ probe_streams "$work_dir/http_flv_from_rtmp.txt" 'http://127.0.0.1:18080/live/te
 probe_hls_ts hls_from_rtmp 'http://127.0.0.1:18080/play/hls/live/test'
 
 "$server_bin" --rtmp-port 19351 --rtsp-port 18555 --http-port 18081 \
-    --rtsp-pull 'relay/test=rtsp://127.0.0.1:18554/live/test' \
     >"$work_dir/pull_server.log" 2>&1 &
 pull_pid=$!
+sleep 0.4
+
+create_rtsp_pull rtsp_pull_initial 18081 relay/test 'rtsp://127.0.0.1:18554/live/test'
 
 wait_log "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test'
 wait_log "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true'
-sleep 1
+wait_probe_streams "$work_dir/rtsp_pull_initial.txt" h264 aac -rtsp_transport tcp \
+    'rtsp://127.0.0.1:18555/relay/test'
+
+delete_rtsp_pull rtsp_pull_initial 18081 relay/test
+wait_http_stream_absent 18081 relay/test
+create_rtsp_pull rtsp_pull_recreate 18081 relay/test 'rtsp://127.0.0.1:18554/live/test'
+wait_log_count "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test' 2
+wait_log_count "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true' 2
 
 probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18555/relay/test'
 probe_streams "$work_dir/rtmp_from_rtsp.txt" 'rtmp://127.0.0.1:19351/relay/test'
@@ -189,10 +268,11 @@ wait_probe_streams "$work_dir/av1_rtsp_pull_source.txt" h264 aac -rtsp_transport
 # AV1 作为显式输出能力启用：RTMP/HTTP-FLV 使用 Enhanced FLV，HLS 使用 fMP4，RTSP 使用 AV1/RTP。
 "$server_bin" --rtmp-port 19352 --rtsp-port 18556 --http-port 18082 \
     --rtmp-video-codec av1 --rtsp-video-codec av1 --http-video-codec av1 \
-    --rtsp-pull 'relay/av1=rtsp://127.0.0.1:18554/live/av1-pull-source' \
     >"$work_dir/av1_server.log" 2>&1 &
 av1_server_pid=$!
 sleep 0.4
+
+create_rtsp_pull rtsp_pull_av1 18082 relay/av1 'rtsp://127.0.0.1:18554/live/av1-pull-source'
 
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \

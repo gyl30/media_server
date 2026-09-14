@@ -84,12 +84,16 @@ bool should_setup_media(rtsp_client_t* client, int media)
 rtsp_pull_session::rtsp_pull_session(worker_context& worker,
                                      std::string stream_name,
                                      std::string url,
+                                     std::string username,
+                                     std::string password,
                                      std::chrono::milliseconds establishment_timeout,
                                      std::chrono::milliseconds initial_tracks_timeout,
                                      std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
       url_(std::move(url)),
+      username_(std::move(username)),
+      password_(std::move(password)),
       resolver_(worker_.io()),
       connect_socket_(worker_.io()),
       startup_timer_(worker_.io()),
@@ -102,6 +106,8 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
 }
 
 rtsp_pull_session::~rtsp_pull_session() = default;
+
+bool rtsp_pull_session::valid_url(std::string_view url) { return parse_url(url).has_value(); }
 
 bool rtsp_pull_session::startup()
 {
@@ -116,8 +122,6 @@ bool rtsp_pull_session::startup()
     }
 
     url_ = parsed->request_url;
-    username_ = parsed->username;
-    password_ = parsed->password;
     started_ = true;
 
     record_establishment_progress();
@@ -223,6 +227,7 @@ void rtsp_pull_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    stream_registry::instance().remove_receiver_session(stream_name_, *this);
     if (media_)
     {
         media_->shutdown();
@@ -308,7 +313,7 @@ void rtsp_pull_session::rtp_callback(void* param, std::uint8_t channel, const vo
 std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::string_view url)
 {
     const auto parsed = boost::urls::parse_uri(url);
-    if (!parsed || parsed->scheme() != "rtsp" || !parsed->has_authority())
+    if (!parsed || parsed->scheme() != "rtsp" || !parsed->has_authority() || parsed->has_userinfo())
     {
         return std::nullopt;
     }
@@ -324,15 +329,10 @@ std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::s
         return std::nullopt;
     }
 
-    boost::urls::url request_url(*parsed);
-    request_url.remove_userinfo();
-
     parsed_url result;
-    result.request_url = std::string(request_url.buffer());
+    result.request_url = std::string(parsed->buffer());
     result.host = std::string(host);
     result.port = parsed->has_port() ? parsed->port_number() : static_cast<std::uint16_t>(554);
-    result.username = std::string(parsed->user());
-    result.password = std::string(parsed->password());
     return result;
 }
 
@@ -366,8 +366,11 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     handler.onteardown = &rtsp_pull_session::teardown_callback;
     handler.onrtp = &rtsp_pull_session::rtp_callback;
 
-    auto* client = rtsp_client_create(
-        url_.c_str(), username_.empty() ? nullptr : username_.c_str(), password_.empty() ? nullptr : password_.c_str(), &handler, this);
+    auto* client = rtsp_client_create(url_.c_str(),
+                                      username_.empty() ? nullptr : username_.c_str(),
+                                      username_.empty() ? nullptr : password_.c_str(),
+                                      &handler,
+                                      this);
     if (client == nullptr)
     {
         shutdown();
