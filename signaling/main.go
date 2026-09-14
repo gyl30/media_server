@@ -36,6 +36,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	server.onDeviceOffline = func(deviceID string) { live.deviceOffline(context.Background(), deviceID) }
 	infrastructure.onMediaServerOffline = func(instance mediaServerInstance) {
 		infrastructure.removeRTSPPullsForMediaServer(instance)
+		infrastructure.runtimes.mediaServerOffline(instance.serverID, instance.instanceID)
 		live.mediaServerOffline(context.Background(), instance)
 	}
 	logger.Info("SIP UDP listening", "address", cfg.sipListen)
