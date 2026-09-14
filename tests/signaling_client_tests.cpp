@@ -14,6 +14,7 @@
 #include <boost/beast.hpp>
 #include <boost/json.hpp>
 
+#include "media/core/runtime_event.h"
 #include "media/http/signaling_client.h"
 
 namespace
@@ -204,6 +205,50 @@ void test_publish_claim_uses_caller_executor_and_body()
     require(body.at("server_id") == "media-1" && body.at("instance_id") == "instance-a", "publish claim server identity");
     require(body.at("direction") == "input" && body.at("protocol") == "rtmp", "publish claim direction and protocol");
     require(body.at("stream_name") == "live/camera", "publish claim stream name");
+}
+
+void test_runtime_event_accepts_status_only_success()
+{
+    media_server::runtime_event event{
+        .type = media_server::runtime_event_type::runtime_error,
+        .server_id = "media-1",
+        .instance_id = "instance-a",
+        .stream_id = "00000000-0000-4000-8000-000000000001",
+        .stream_name = "live/camera",
+        .source_id = "10000000-0000-4000-8000-000000000001",
+        .direction = media_server::runtime_direction::input,
+        .protocol = media_server::runtime_protocol::rtsp,
+        .state = media_server::runtime_state::stopped,
+        .stage = "connecting",
+        .end_reason = media_server::runtime_end_reason::runtime_error,
+        .error = "connection_failed",
+    };
+    test_http_server no_content(boost::beast::http::status::no_content, "");
+    boost::asio::io_context no_content_io;
+    media_server::signaling_client no_content_client(no_content_io, client_options(no_content.url()));
+    const auto no_content_result = run_request(
+        no_content_io, [&](boost::asio::yield_context& yield) { return no_content_client.report_runtime_event(event, yield); });
+    require(no_content_result.kind == media_server::signaling_result_kind::accepted && no_content_result.status == 204,
+            "runtime event accepts empty 204 response");
+    const auto request = no_content.wait_requests(1).front();
+    require(request.target == "/internal/runtime-events", "runtime event endpoint");
+    const auto body = boost::json::parse(request.body).as_object();
+    require(body.size() == 12U && body.at("type") == "runtime_error" &&
+                std::string(body.at("stream_id").as_string()) == event.stream_id,
+            "runtime event body");
+    require(std::string(body.at("source_id").as_string()) == *event.source_id &&
+                std::string(body.at("stage").as_string()) == *event.stage,
+            "runtime event optional identity and stage");
+    require(body.at("end_reason") == "runtime_error" && std::string(body.at("error").as_string()) == *event.error,
+            "runtime event terminal fields");
+
+    test_http_server accepted(boost::beast::http::status::accepted, "not-json");
+    boost::asio::io_context accepted_io;
+    media_server::signaling_client accepted_client(accepted_io, client_options(accepted.url()));
+    const auto accepted_result =
+        run_request(accepted_io, [&](boost::asio::yield_context& yield) { return accepted_client.report_runtime_event(event, yield); });
+    require(accepted_result.kind == media_server::signaling_result_kind::accepted && accepted_result.status == 202,
+            "runtime event accepts non-JSON 202 response");
 }
 
 void test_result_classification()
@@ -398,6 +443,7 @@ int main()
 {
     test_registration_and_heartbeat_body();
     test_publish_claim_uses_caller_executor_and_body();
+    test_runtime_event_accepts_status_only_success();
     test_result_classification();
     test_success_requires_result_ok();
     test_constructor_rejects_non_base_urls();
