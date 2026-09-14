@@ -51,7 +51,9 @@ int send_callback(void* param, const void* data, std::size_t bytes)
 
 int announce_callback(void* param, rtsp_server_t* server, const char* uri, const char* sdp, int length)
 {
-    return static_cast<server_fixture*>(param)->publish->on_announce(server, uri, sdp, length);
+    auto* publish = static_cast<server_fixture*>(param)->publish;
+    const auto status = publish->prepare_announce(server, uri, sdp, length);
+    return status == 200 ? publish->accept_announce(server) : rtsp_server_reply_announce(server, status);
 }
 
 int setup_callback(void* param,
@@ -123,6 +125,7 @@ void test_rtcp_scheduler_releases_after_shutdown()
     require(server != nullptr, "rtsp publish udp server create");
 
     const std::string uri = "rtsp://127.0.0.1/live/rtcp-scheduler";
+    const std::string announce_uri = uri + "?stream_id=00000000-0000-4000-8000-000000000001";
     const std::string track_uri = uri + "/trackID=0";
     const auto sdp =
         std::string("v=0\r\n") +
@@ -137,7 +140,7 @@ void test_rtcp_scheduler_releases_after_shutdown()
         "a=control:" + track_uri + "\r\n";
 
     const auto announce =
-        "ANNOUNCE " + uri + " RTSP/1.0\r\n"
+        "ANNOUNCE " + announce_uri + " RTSP/1.0\r\n"
         "CSeq: 1\r\n"
         "Content-Type: application/sdp\r\n"
         "Content-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;

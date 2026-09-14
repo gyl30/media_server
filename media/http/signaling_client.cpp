@@ -119,7 +119,11 @@ signaling_request_result signaling_client::request(std::string_view target, std:
             state->stream.socket().cancel(ignored);
         });
 
-    const auto finish = [&state]() { static_cast<void>(state->deadline.cancel()); };
+    const auto finish = [&state, &yield]()
+    {
+        static_cast<void>(state->deadline.cancel());
+        yield.get_cancellation_slot().clear();
+    };
     const auto fail = [&state, &finish](const boost::system::error_code& error)
     {
         signaling_request_result result{

@@ -13,9 +13,11 @@
 
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
+#include "media/http/signaling_client.h"
 #include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_server_connection.h"
+#include "tests/clients/publish_claim_test_server.h"
 
 namespace
 {
@@ -140,9 +142,26 @@ std::string publish_announce(std::string_view uri)
         "sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
         "a=control:" + track_uri + "\r\n";
 
-    return "ANNOUNCE " + std::string(uri) +
+    return "ANNOUNCE " + std::string(uri) + "?stream_id=00000000-0000-4000-8000-000000000001" +
            " RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " +
            std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
+}
+
+std::shared_ptr<media_server::signaling_client> make_signaling(
+    worker_context& worker, const media_server::test::publish_claim_test_server& server)
+{
+    return std::make_shared<media_server::signaling_client>(
+        worker.io(),
+        media_server::signaling_client_options{
+            .signaling_url = server.url(),
+            .server_id = "media-1",
+            .instance_id = "instance-a",
+            .control_url = "http://127.0.0.1:8080",
+            .media_ip = "127.0.0.1",
+            .rtmp_port = 1935,
+            .rtsp_port = 8554,
+            .http_port = 8080,
+        });
 }
 
 void test_idle_connection_timeout()
@@ -156,7 +175,7 @@ void test_idle_connection_timeout()
     acceptor.accept(server_socket);
 
     auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, 100ms);
+        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 100ms);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });
@@ -178,7 +197,7 @@ void test_control_activity_refreshes_timeout()
     acceptor.accept(server_socket);
 
     auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, 200ms);
+        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 200ms);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });
@@ -199,6 +218,7 @@ void test_control_activity_refreshes_timeout()
 
 void test_udp_setup_internal_failure_closes_connection()
 {
+    media_server::test::publish_claim_test_server claim_server;
     port_manager::init(33'000, 33'001);
     const auto reserved = port_manager::instance().acquire_pair();
     require(reserved.has_value(), "reserve RTSP UDP media ports");
@@ -211,8 +231,8 @@ void test_udp_setup_internal_failure_closes_connection()
     tcp::socket server_socket(worker.io());
     acceptor.accept(server_socket);
 
-    auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, 5s);
+    auto connection = std::make_shared<rtsp_server_connection>(
+        worker, std::move(server_socket), video_transcode_codec::passthrough, make_signaling(worker, claim_server), 5s);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });
@@ -237,6 +257,7 @@ void test_udp_setup_internal_failure_closes_connection()
 
 void test_record_internal_failure_closes_connection()
 {
+    media_server::test::publish_claim_test_server claim_server;
     worker_context worker;
     auto existing = std::make_shared<media_server::media_stream>("live/record-internal-failure", worker);
     require(existing->set_tracks({media_server::media_track{
@@ -257,8 +278,8 @@ void test_record_internal_failure_closes_connection()
     tcp::socket server_socket(worker.io());
     acceptor.accept(server_socket);
 
-    auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, 5s);
+    auto connection = std::make_shared<rtsp_server_connection>(
+        worker, std::move(server_socket), video_transcode_codec::passthrough, make_signaling(worker, claim_server), 5s);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });
