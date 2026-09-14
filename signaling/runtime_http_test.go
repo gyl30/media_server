@@ -67,19 +67,21 @@ func TestRuntimeEventHTTPRejectsInvalidStaleAndConflictingEvents(t *testing.T) {
 
 func TestRuntimeEventHTTPDoesNotRemoveReplacementPull(t *testing.T) {
 	server, registration := newRuntimeHTTPTestServer(t)
+	sourceID := "10000000-0000-4000-8000-000000000001"
 	replacement := rtspPullRuntime{
+		sourceID: sourceID, streamName: "live/camera",
 		server:   mediaServerInstance{serverID: registration.ServerID, instanceID: registration.InstanceID},
 		streamID: "30000000-0000-4000-8000-000000000001",
 	}
-	server.rtspPulls["live/camera"] = replacement
+	server.rtspPulls[sourceID] = replacement
 	oldStop := `{"type":"source_stopped","server_id":"media-1","instance_id":"instance-a",` +
 		`"stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera",` +
-		`"direction":"input","protocol":"rtsp","state":"stopped","end_reason":"remote"}`
+		`"source_id":"` + sourceID + `","direction":"input","protocol":"rtsp","state":"stopped","end_reason":"remote"}`
 	response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", oldStop, "application/json")
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("stop response = %d %s", response.Code, response.Body.String())
 	}
-	if current, ok := server.rtspPullRuntime("live/camera"); !ok || current.streamID != replacement.streamID {
+	if current, ok := server.rtspSourceRuntime(sourceID); !ok || current.streamID != replacement.streamID {
 		t.Fatalf("replacement runtime = %+v, %v", current, ok)
 	}
 }

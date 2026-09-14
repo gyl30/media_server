@@ -64,6 +64,14 @@ func TestSourceStorePersistsAndUpdatesSources(t *testing.T) {
 	if updated.username != username || updated.password != password {
 		t.Fatalf("replaced credentials = %q/%q", updated.username, updated.password)
 	}
+	updated, err = store.setDesiredState(ctx, first.sourceID, sourceDesiredStopped)
+	if err != nil || updated.desiredState != sourceDesiredStopped {
+		t.Fatalf("setDesiredState() = %+v, %v", updated, err)
+	}
+	updated, err = store.setDesiredState(ctx, first.sourceID, sourceDesiredRunning)
+	if err != nil || updated.desiredState != sourceDesiredRunning {
+		t.Fatalf("setDesiredState(running) = %+v, %v", updated, err)
+	}
 	if err := store.close(); err != nil {
 		t.Fatalf("close() error = %v", err)
 	}
@@ -81,6 +89,9 @@ func TestSourceStorePersistsAndUpdatesSources(t *testing.T) {
 		persisted.password != password || persisted.desiredState != sourceDesiredRunning {
 		t.Fatalf("persisted source = %+v", persisted)
 	}
+	if err := store.deleteStopped(ctx, first.sourceID); !errors.Is(err, errSourceConflict) {
+		t.Fatalf("delete running source error = %v", err)
+	}
 
 	conflictingName := second.streamName
 	if _, err := store.patch(ctx, first.sourceID, rtspSourcePatch{streamName: &conflictingName}); !errors.Is(err, errSourceConflict) {
@@ -90,13 +101,16 @@ func TestSourceStorePersistsAndUpdatesSources(t *testing.T) {
 	if err != nil || unchanged.streamName != first.streamName {
 		t.Fatalf("source after conflict = %+v, %v", unchanged, err)
 	}
-	if err := store.delete(ctx, first.sourceID); err != nil {
+	if _, err := store.setDesiredState(ctx, first.sourceID, sourceDesiredStopped); err != nil {
+		t.Fatalf("stop source before delete error = %v", err)
+	}
+	if err := store.deleteStopped(ctx, first.sourceID); err != nil {
 		t.Fatalf("delete() error = %v", err)
 	}
 	if _, err := store.get(ctx, first.sourceID); !errors.Is(err, errSourceNotFound) {
 		t.Fatalf("get(deleted) error = %v", err)
 	}
-	if err := store.delete(ctx, first.sourceID); !errors.Is(err, errSourceNotFound) {
+	if err := store.deleteStopped(ctx, first.sourceID); !errors.Is(err, errSourceNotFound) {
 		t.Fatalf("delete(missing) error = %v", err)
 	}
 }

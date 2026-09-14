@@ -68,10 +68,25 @@ func (r *observedRuntimeRegistry) apply(event observedRuntime) (bool, error) {
 	return true, nil
 }
 
-func (r *observedRuntimeRegistry) bindSource(sourceID, streamID string) {
+func (r *observedRuntimeRegistry) bindSource(sourceID, streamID string) (string, bool) {
 	r.mu.Lock()
+	previous, existed := r.currentBySource[sourceID]
 	r.currentBySource[sourceID] = streamID
 	r.mu.Unlock()
+	return previous, existed
+}
+
+func (r *observedRuntimeRegistry) restoreSourceBinding(sourceID, expected, previous string, hadPrevious bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.currentBySource[sourceID] != expected {
+		return
+	}
+	if hadPrevious {
+		r.currentBySource[sourceID] = previous
+		return
+	}
+	delete(r.currentBySource, sourceID)
 }
 
 func (r *observedRuntimeRegistry) currentForSource(sourceID string) (observedRuntime, bool) {
