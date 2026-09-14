@@ -1185,6 +1185,13 @@ void test_whep_http_namespace_dispatch()
 
     const auto response = handle_whep_request(request, worker, *target, application_config);
     require(response.result() == boost::beast::http::status::ok, "whep namespace dispatch status");
+
+    whep_http_request reserved_name_request{boost::beast::http::verb::get, "/play/whep/session", 11};
+    const auto reserved_name_target = boost::urls::parse_origin_form(reserved_name_request.target());
+    require(reserved_name_target.has_value(), "whep reserved stream request target");
+    const auto reserved_name_response =
+        handle_whep_request(reserved_name_request, worker, *reserved_name_target, application_config);
+    require(reserved_name_response.result() == boost::beast::http::status::ok, "whep reserved stream endpoint status");
 }
 
 void test_whep_http_cors()
@@ -1231,6 +1238,13 @@ void test_whep_http_cors()
     require(unavailable.result() == boost::beast::http::status::conflict, "whep unavailable stream status");
     require(unavailable[boost::beast::http::field::retry_after] == "1", "whep unavailable stream retry after");
     require(unavailable["Access-Control-Allow-Origin"] == "*", "whep unavailable stream allow origin");
+
+    const auto encoded_stream =
+        peer.post("/play/whep/live%2Fcamera", webrtc_offer_sdp, "550e8400-e29b-41d4-a716-446655440001");
+    require(encoded_stream.result() == boost::beast::http::status::created, "whep encoded stream create status");
+    const auto encoded_location = std::string(encoded_stream[boost::beast::http::field::location]);
+    require(peer.remove(encoded_location).result() == boost::beast::http::status::no_content,
+            "whep encoded stream delete status");
 
     const auto missing_get = peer.request(boost::beast::http::verb::get, "/play/whep/session/missing");
     require(missing_get.result() == boost::beast::http::status::not_found && missing_get.body().empty(), "whep missing session get");

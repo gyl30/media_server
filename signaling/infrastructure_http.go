@@ -53,6 +53,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	mux.HandleFunc("POST /api/sources/{source_id}/stop", s.handleSourceStop)
 	mux.HandleFunc("GET /api/media-servers", s.handleMediaServerList)
 	mux.HandleFunc("GET /api/runtimes", s.handleRuntimeList)
+	mux.HandleFunc("POST /api/preview/start", s.handlePreviewStart)
 	mux.HandleFunc("POST /internal/publish/claim", s.handlePublishClaim)
 	mux.HandleFunc("POST /internal/runtime-events", s.handleRuntimeEvent)
 	if s.live != nil {
