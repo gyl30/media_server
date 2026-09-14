@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Media Control</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="#overview" aria-label="Media Control overview">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span><strong>Media Control</strong><small>Control Plane</small></span>
+    </a>
+    <div class="header-actions">
+      <span id="event-status" class="connection-state is-pending" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>SSE connecting</span>
+      </span>
+      <button id="refresh-button" class="button secondary" type="button">
+        <svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"></use></svg>
+        Refresh
+      </button>
+    </div>
+  </header>
+
+  <nav class="view-tabs" aria-label="Workspace" role="tablist">
+    <button class="view-tab is-active" id="tab-overview" type="button" role="tab" aria-selected="true" aria-controls="view-overview" data-view="overview">
+      <svg class="icon" aria-hidden="true"><use href="/icons.svg#server"></use></svg>
+      Overview
+    </button>
+    <button class="view-tab" id="tab-sources" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-sources" data-view="sources">
+      <svg class="icon" aria-hidden="true"><use href="/icons.svg#radio"></use></svg>
+      RTSP Sources
+    </button>
+    <button class="view-tab" id="tab-devices" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-devices" data-view="devices">
+      <svg class="icon" aria-hidden="true"><use href="/icons.svg#activity"></use></svg>
+      GB28181
+    </button>
+    <button class="view-tab" id="tab-runtimes" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-runtimes" data-view="runtimes">
+      <svg class="icon" aria-hidden="true"><use href="/icons.svg#activity"></use></svg>
+      Runtimes
+    </button>
+  </nav>
+
+  <div id="global-status" class="global-status" role="status" aria-live="polite" hidden></div>
+
+  <main class="app-layout">
+    <div class="workspace">
+      <section class="view is-active" id="view-overview" role="tabpanel" aria-labelledby="tab-overview">
+        <div class="section-heading">
+          <div><p class="eyebrow">System</p><h1>Overview</h1></div>
+          <time id="last-updated">Not refreshed</time>
+        </div>
+        <div class="metric-grid" aria-label="System summary">
+          <article class="metric"><span>Media servers</span><strong id="metric-servers">0 / 0</strong><small>online / total</small></article>
+          <article class="metric"><span>RTSP sources</span><strong id="metric-sources">0 / 0</strong><small>active / total</small></article>
+          <article class="metric"><span>GB devices</span><strong id="metric-devices">0 / 0</strong><small>online / total</small></article>
+          <article class="metric"><span>Runtimes</span><strong id="metric-runtimes">0</strong><small>active now</small></article>
+        </div>
+
+        <section class="data-section" aria-labelledby="media-servers-title">
+          <div class="subheading"><h2 id="media-servers-title">Media Servers</h2><span id="server-count" class="count-label">0 total</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th scope="col">Server</th><th scope="col">Media address</th><th scope="col">Ports</th><th scope="col">Last seen</th><th scope="col">Status</th></tr></thead>
+              <tbody id="server-rows"></tbody>
+            </table>
+          </div>
+          <p id="server-empty" class="empty-state">No media servers registered.</p>
+        </section>
+
+        <section class="data-section" aria-labelledby="overview-runtimes-title">
+          <div class="subheading"><h2 id="overview-runtimes-title">Active Runtimes</h2><span id="active-runtime-count" class="count-label">0 active</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th scope="col">Stream</th><th scope="col">Protocol</th><th scope="col">State</th><th scope="col">Server</th></tr></thead>
+              <tbody id="overview-runtime-rows"></tbody>
+            </table>
+          </div>
+          <p id="overview-runtime-empty" class="empty-state">No active runtimes.</p>
+        </section>
+      </section>
+
+      <section class="view" id="view-sources" role="tabpanel" aria-labelledby="tab-sources" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Inputs</p><h1>RTSP Sources</h1></div>
+          <button id="add-source-button" class="button primary" type="button">
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>
+            Add source
+          </button>
+        </div>
+        <section class="data-section" aria-label="RTSP sources">
+          <div class="table-wrap wide-table">
+            <table>
+              <thead><tr><th scope="col">Stream</th><th scope="col">Endpoint</th><th scope="col">Desired</th><th scope="col">Observed</th><th scope="col">Server</th><th scope="col" class="actions-heading">Actions</th></tr></thead>
+              <tbody id="source-rows"></tbody>
+            </table>
+          </div>
+          <p id="source-empty" class="empty-state">No RTSP sources configured.</p>
+        </section>
+      </section>
+
+      <section class="view" id="view-devices" role="tabpanel" aria-labelledby="tab-devices" hidden>
+        <div class="section-heading"><div><p class="eyebrow">Inputs</p><h1>GB28181</h1></div><span id="device-count" class="count-label">0 devices</span></div>
+        <div class="device-layout">
+          <section class="device-pane" aria-labelledby="devices-title">
+            <div class="subheading"><h2 id="devices-title">Devices</h2></div>
+            <div id="device-list" class="device-list"></div>
+            <p id="device-empty" class="empty-state compact">No registered devices.</p>
+          </section>
+          <section class="channel-pane" aria-labelledby="channels-title">
+            <div class="subheading"><h2 id="channels-title">Channels</h2><span id="selected-device" class="count-label">No device selected</span></div>
+            <div class="table-wrap wide-table">
+              <table>
+                <thead><tr><th scope="col">Channel</th><th scope="col">Catalog</th><th scope="col">Live</th><th scope="col" class="actions-heading">Actions</th></tr></thead>
+                <tbody id="channel-rows"></tbody>
+              </table>
+            </div>
+            <p id="channel-empty" class="empty-state">Select an online device.</p>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-runtimes" role="tabpanel" aria-labelledby="tab-runtimes" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Observed state</p><h1>Runtimes</h1></div>
+          <label class="field-inline" for="runtime-filter"><span>Show</span><select id="runtime-filter"><option value="active">Active</option><option value="stopped">Stopped</option><option value="all">All</option></select></label>
+        </div>
+        <section class="data-section" aria-label="Runtime state">
+          <div class="table-wrap runtime-table">
+            <table>
+              <thead><tr><th scope="col">Stream</th><th scope="col">Type</th><th scope="col">Protocol</th><th scope="col">State</th><th scope="col">Server</th><th scope="col">End</th></tr></thead>
+              <tbody id="runtime-rows"></tbody>
+            </table>
+          </div>
+          <p id="runtime-empty" class="empty-state">No matching runtimes.</p>
+        </section>
+      </section>
+    </div>
+
+    <aside class="preview-panel" aria-labelledby="preview-title">
+      <div class="preview-heading">
+        <div><p class="eyebrow">WebRTC output</p><h2 id="preview-title">WHEP Preview</h2></div>
+        <button id="stop-preview-button" class="button danger subtle" type="button" disabled>
+          <svg class="icon" aria-hidden="true"><use href="/icons.svg#square"></use></svg>
+          Stop
+        </button>
+      </div>
+      <div class="video-shell">
+        <video id="preview-video" autoplay playsinline controls></video>
+        <div id="preview-placeholder" class="video-placeholder">
+          <svg class="preview-icon" aria-hidden="true"><use href="/icons.svg#monitor-play"></use></svg>
+          <strong>No active preview</strong>
+        </div>
+      </div>
+      <dl class="preview-details">
+        <div><dt>Target</dt><dd id="preview-target">None</dd></div>
+        <div><dt>State</dt><dd id="preview-state"><span class="state-badge neutral"><span class="status-dot"></span>Idle</span></dd></div>
+        <div><dt>Stream ID</dt><dd id="preview-stream-id" class="mono">-</dd></div>
+      </dl>
+      <p id="preview-error" class="inline-error" role="alert" hidden></p>
+    </aside>
+  </main>
+
+  <dialog id="source-dialog" class="source-dialog">
+    <form id="source-form">
+      <div class="dialog-heading"><div><p class="eyebrow">RTSP input</p><h2 id="source-dialog-title">Add source</h2></div><button class="icon-button" id="close-source-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
+      <input id="source-id" type="hidden">
+      <div class="form-grid">
+        <label class="field"><span>Stream name</span><input id="source-stream-name" name="stream_name" type="text" autocomplete="off" required></label>
+        <label class="field"><span>RTSP URL</span><input id="source-url" name="url" type="url" inputmode="url" autocomplete="off" placeholder="rtsp://camera.example/live" required></label>
+        <label class="field"><span>Username</span><input id="source-username" name="username" type="text" autocomplete="username"></label>
+        <label class="field"><span>Password</span><input id="source-password" name="password" type="password" autocomplete="new-password"></label>
+      </div>
+      <label id="clear-password-field" class="check-field" hidden><input id="clear-password" type="checkbox"><span>Clear saved password</span></label>
+      <p id="source-form-error" class="inline-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="cancel-source-dialog" class="button secondary" type="button">Cancel</button><button id="save-source-button" class="button primary" type="submit">Create source</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <form method="dialog">
+      <h2 id="confirm-title">Confirm action</h2>
+      <p id="confirm-message"></p>
+      <div class="dialog-actions"><button class="button secondary" value="cancel">Cancel</button><button id="confirm-action-button" class="button danger" value="confirm">Delete</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
