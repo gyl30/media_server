@@ -1471,6 +1471,48 @@ void test_whip_establishment_timeout()
     require(session->local_port() == 0, "whip establishment timeout repeated shutdown ignored");
 }
 
+void test_whip_udp_queue_overflow()
+{
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
+
+    const auto offer = parse_webrtc_offer(make_whip_offer(webrtc_offer_sdp));
+    require(offer.has_value(), "whip udp overflow parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "whip udp overflow certificate");
+
+    auto session = std::make_shared<whip_session>(
+        worker, "live/whip-udp-overflow", boost::asio::ip::make_address("127.0.0.1"), certificate, whip_session_timeouts{}, 0U);
+    require(session->startup(*offer) == whip_session_startup_error::none, "whip udp overflow session startup");
+    const auto local_port = session->local_port();
+    require(local_port != 0, "whip udp overflow socket open");
+
+    const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
+    const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
+    require(!local_ufrag.empty() && !local_pwd.empty(), "whip udp overflow credentials");
+
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    boost::system::error_code error;
+    client.non_blocking(true, error);
+    require(!error, "whip udp overflow non blocking");
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::address_v4::loopback(), local_port);
+    const std::array<std::uint8_t, 12> transaction_id{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    const auto request = make_stun_request(local_ufrag + ":remotevideo", local_pwd, transaction_id, false);
+    static_cast<void>(client.send_to(boost::asio::buffer(request), server_endpoint));
+    io.run_for(std::chrono::milliseconds(20));
+    io.restart();
+
+    require(session->local_port() == local_port, "whip udp overflow keeps session running");
+    require(client.available(error) == 0U && !error, "whip udp overflow drops new packet");
+
+    session->shutdown();
+    drain_io(io);
+    require(session->local_port() == 0, "whip udp overflow shutdown closes socket");
+    boost::asio::ip::udp::socket probe(io, server_endpoint);
+}
+
 void test_whip_sdp_answer()
 {
     const auto offer = parse_webrtc_offer(make_whip_offer(webrtc_offer_sdp));
@@ -3114,6 +3156,50 @@ void test_whep_udp_send_queue()
     client.close(error);
 }
 
+void test_whep_udp_queue_overflow()
+{
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
+    auto stream = std::make_shared<media_stream>("live/whep-udp-overflow", worker);
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "whep udp overflow initial tracks");
+
+    const auto offer = parse_webrtc_offer(webrtc_offer_sdp);
+    require(offer.has_value(), "whep udp overflow parse offer");
+    auto certificate = dtls_certificate::create();
+    require(certificate != nullptr, "whep udp overflow certificate");
+
+    auto session = std::make_shared<whep_session>(
+        worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate, whep_session_timeouts{}, video_transcode_config{}, 0U);
+    require(session->startup(*offer) == whep_session_startup_error::none, "whep udp overflow session startup");
+    const auto local_port = session->local_port();
+    require(local_port != 0, "whep udp overflow socket open");
+
+    const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
+    const auto local_pwd = sdp_attribute(session->answer_sdp(), "ice-pwd");
+    require(!local_ufrag.empty() && !local_pwd.empty(), "whep udp overflow credentials");
+
+    boost::asio::ip::udp::socket client(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::loopback(), 0));
+    boost::system::error_code error;
+    client.non_blocking(true, error);
+    require(!error, "whep udp overflow non blocking");
+    const boost::asio::ip::udp::endpoint server_endpoint(boost::asio::ip::address_v4::loopback(), local_port);
+    const std::array<std::uint8_t, 12> transaction_id{2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
+    const auto request = make_stun_request(local_ufrag + ":remotevideo", local_pwd, transaction_id, false);
+    static_cast<void>(client.send_to(boost::asio::buffer(request), server_endpoint));
+    io.run_for(std::chrono::milliseconds(20));
+    io.restart();
+
+    require(session->local_port() == local_port, "whep udp overflow keeps session running");
+    require(client.available(error) == 0U && !error, "whep udp overflow drops new packet");
+
+    session->shutdown();
+    drain_io(io);
+    require(session->local_port() == 0, "whep udp overflow shutdown closes socket");
+    boost::asio::ip::udp::socket probe(io, server_endpoint);
+}
+
 void test_whep_ice_lite()
 {
     worker_context worker;
@@ -3758,6 +3844,8 @@ int main()
     std::cout << "[pass] whep_establishment_timeout\n";
     media_server::test_whip_establishment_timeout();
     std::cout << "[pass] whip_establishment_timeout\n";
+    media_server::test_whip_udp_queue_overflow();
+    std::cout << "[pass] whip_udp_queue_overflow\n";
     media_server::test_whep_ice_activity_timeout();
     std::cout << "[pass] whep_ice_activity_timeout\n";
     media_server::test_stun_ice_connectivity_check_contract();
@@ -3766,6 +3854,8 @@ int main()
     std::cout << "[pass] whep_stun_unknown_attribute_contract\n";
     media_server::test_whep_udp_send_queue();
     std::cout << "[pass] whep_udp_send_queue\n";
+    media_server::test_whep_udp_queue_overflow();
+    std::cout << "[pass] whep_udp_queue_overflow\n";
     media_server::test_whep_ice_lite();
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();

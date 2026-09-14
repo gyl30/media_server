@@ -130,7 +130,7 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (write_queue_.empty())
+        if (closed_ || write_queue_.empty())
         {
             return;
         }
@@ -143,6 +143,10 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
             shutdown();
             return;
         }
+        if (closed_)
+        {
+            return;
+        }
 
         queued_write_bytes_ -= data->size();
         write_queue_.pop_front();
@@ -151,7 +155,7 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 
 void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (!transport_)
+    if (closed_ || !transport_)
     {
         return;
     }

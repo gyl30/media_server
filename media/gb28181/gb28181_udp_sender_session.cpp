@@ -26,7 +26,8 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
                                                        boost::asio::ip::address bind_address,
                                                        std::string sender_id,
                                                        bool rtcp_enabled,
-                                                       std::chrono::milliseconds rtcp_interval)
+                                                       std::chrono::milliseconds rtcp_interval,
+                                                       std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
       sender_id_(std::move(sender_id)),
@@ -38,6 +39,7 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
       rtcp_transport_(worker_.io()),
       rtcp_timer_(worker_.io()),
       rtcp_interval_(rtcp_interval),
+      max_write_queue_bytes_(max_write_queue_bytes),
       rtcp_enabled_(rtcp_enabled)
 {
 }
@@ -150,7 +152,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (write_queue_.empty())
+        if (!local_ports_ || write_queue_.empty())
         {
             return;
         }
@@ -164,7 +166,12 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
             shutdown();
             return;
         }
+        if (!local_ports_)
+        {
+            return;
+        }
 
+        queued_write_bytes_ -= data->size();
         write_queue_.pop_front();
     }
 }
@@ -219,6 +226,16 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     {
         return;
     }
+    if (packet.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - packet.size())
+    {
+        spdlog::warn("gb28181 udp write queue full stream {} sender {} queued {} limit {} dropped {}",
+                     stream_->name(),
+                     sender_id_,
+                     queued_write_bytes_,
+                     max_write_queue_bytes_,
+                     packet.size());
+        return;
+    }
     if (rtcp_sender_ != nullptr && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
     {
         shutdown();
@@ -226,6 +243,7 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     }
 
     const bool start_write = write_queue_.empty();
+    queued_write_bytes_ += packet.size();
     write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(std::move(packet)));
     if (start_write)
     {

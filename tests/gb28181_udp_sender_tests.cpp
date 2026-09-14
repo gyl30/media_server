@@ -110,6 +110,73 @@ void test_udp_sender_session_sends_rtp()
     io.run();
 }
 
+void test_udp_sender_queue_overflow_drops_packet()
+{
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    auto& streams = stream_registry::instance();
+    streams.clear();
+
+    boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
+    constexpr track_id video_track_id = 1;
+    const std::vector<std::uint8_t> config{
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
+        0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80,
+    };
+    auto source = std::make_shared<media_stream>("live/gb-udp-overflow", worker);
+    require(source->set_tracks({media_track{
+                .id = video_track_id,
+                .kind = media_kind::video,
+                .codec = codec_id::h264,
+                .clock_rate = 90'000,
+                .channel_count = 0,
+                .codec_config = config,
+            }}),
+            "gb udp overflow source tracks");
+    require(streams.add(source), "gb udp overflow source registry");
+
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::udp,
+        .remote_address = boost::asio::ip::address_v4::loopback(),
+        .remote_rtp_port = rtp_receiver.local_endpoint().port(),
+        .remote_rtcp_port = rtcp_receiver.local_endpoint().port(),
+        .payload_type = 96,
+        .ssrc = 0x12345680U,
+    };
+    auto session = std::make_shared<gb28181_udp_sender_session>(
+        worker, source, description, boost::asio::ip::address_v4::loopback(), "udp-overflow", false, std::chrono::milliseconds{25'000}, 0U);
+    require(streams.add_sender_session(source->name(), "udp-overflow", session), "gb udp overflow sender registry");
+    require(session->startup(), "gb udp overflow session startup");
+
+    io.run_for(std::chrono::milliseconds(20));
+    io.restart();
+
+    auto payload = config;
+    payload.insert(payload.end(), {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x21, 0xa0});
+    source->publish(media_frame{
+        .track = video_track_id,
+        .dts_ns = 0,
+        .pts_ns = 0,
+        .key_frame = true,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(payload)),
+    });
+    io.run_for(std::chrono::milliseconds(40));
+    io.restart();
+
+    require(rtp_receiver.available() == 0U, "gb udp overflow drops new packet");
+    auto registered = streams.take_sender_session(source->name(), "udp-overflow");
+    require(registered.get() == session.get(), "gb udp overflow keeps session running");
+
+    std::weak_ptr<gb28181_udp_sender_session> weak_session = session;
+    session->shutdown();
+    session.reset();
+    registered.reset();
+    io.run();
+    require(weak_session.expired(), "gb udp overflow shutdown releases session");
+}
+
 void test_udp_sender_rtcp_shutdown_releases_scheduler()
 {
     worker_context worker;
@@ -195,6 +262,7 @@ int main()
         for (int iteration = 0; iteration < 10; ++iteration)
         {
             media_server::test_udp_sender_session_sends_rtp();
+            media_server::test_udp_sender_queue_overflow_drops_packet();
             media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
         }
         media_server::stream_registry::instance().clear();

@@ -2,6 +2,7 @@
 #define MEDIA_GB28181_GB28181_UDP_SENDER_SESSION_H
 
 #include <chrono>
+#include <cstddef>
 #include <deque>
 #include <memory>
 #include <string>
@@ -33,7 +34,8 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
                                boost::asio::ip::address bind_address,
                                std::string sender_id,
                                bool rtcp_enabled,
-                               std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{25'000});
+                               std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{25'000},
+                               std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] bool startup();
     void shutdown() override;
@@ -57,6 +59,8 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     udp_yield_transport rtcp_transport_;
     boost::asio::steady_timer rtcp_timer_;
     std::chrono::milliseconds rtcp_interval_;
+    std::size_t max_write_queue_bytes_;
+    std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::optional<port_manager::port_pair> local_ports_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
