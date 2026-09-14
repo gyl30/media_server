@@ -75,6 +75,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	mux.Handle("GET /api.js", embeddedWebFile("api.js"))
 	mux.Handle("GET /whep.js", embeddedWebFile("whep.js"))
 	mux.Handle("GET /icons.svg", embeddedWebFile("icons.svg"))
+	mux.Handle("GET /favicon.svg", embeddedWebFile("favicon.svg"))
 	return mux
 }
 
