@@ -13,6 +13,8 @@
 namespace media_server
 {
 
+struct runtime_event;
+
 enum class signaling_result_kind
 {
     accepted,
@@ -56,10 +58,20 @@ class signaling_client
                                            std::string_view protocol,
                                            std::string_view stream_name,
                                            boost::asio::yield_context& yield) const;
+    signaling_request_result report_runtime_event(const runtime_event& event, boost::asio::yield_context& yield) const;
     void run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler) const;
 
    private:
-    signaling_request_result request(std::string_view target, std::string body, boost::asio::yield_context& yield) const;
+    enum class success_response
+    {
+        result_ok,
+        status_only,
+    };
+
+    signaling_request_result request(std::string_view target,
+                                     std::string body,
+                                     success_response success,
+                                     boost::asio::yield_context& yield) const;
 
     boost::asio::io_context& io_;
     signaling_client_options options_;

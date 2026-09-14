@@ -8,6 +8,7 @@
 #include <boost/url/parse.hpp>
 #include <spdlog/spdlog.h>
 
+#include "media/core/runtime_event.h"
 #include "media/http/signaling_client.h"
 
 namespace media_server
@@ -55,6 +56,37 @@ std::string publish_claim_body(const signaling_client_options& options,
     });
 }
 
+std::string runtime_event_body(const runtime_event& event)
+{
+    boost::json::object body{
+        {"type", to_string(event.type)},
+        {"server_id", event.server_id},
+        {"instance_id", event.instance_id},
+        {"stream_id", event.stream_id},
+        {"stream_name", event.stream_name},
+        {"direction", to_string(event.direction)},
+        {"protocol", to_string(event.protocol)},
+        {"state", to_string(event.state)},
+    };
+    if (event.source_id)
+    {
+        body.emplace("source_id", *event.source_id);
+    }
+    if (event.stage)
+    {
+        body.emplace("stage", *event.stage);
+    }
+    if (event.end_reason)
+    {
+        body.emplace("end_reason", to_string(*event.end_reason));
+    }
+    if (event.error)
+    {
+        body.emplace("error", *event.error);
+    }
+    return boost::json::serialize(body);
+}
+
 struct signaling_request_state
 {
     signaling_request_state(boost::asio::any_io_executor executor, std::chrono::milliseconds timeout)
@@ -85,12 +117,12 @@ signaling_client::signaling_client(boost::asio::io_context& io, signaling_client
 
 signaling_request_result signaling_client::register_once(boost::asio::yield_context& yield) const
 {
-    return request("/internal/media-servers/register", registration_body(options_), yield);
+    return request("/internal/media-servers/register", registration_body(options_), success_response::result_ok, yield);
 }
 
 signaling_request_result signaling_client::heartbeat_once(boost::asio::yield_context& yield) const
 {
-    return request("/internal/media-servers/heartbeat", heartbeat_body(options_), yield);
+    return request("/internal/media-servers/heartbeat", heartbeat_body(options_), success_response::result_ok, yield);
 }
 
 signaling_request_result signaling_client::claim_publish(std::string_view stream_id,
@@ -98,10 +130,19 @@ signaling_request_result signaling_client::claim_publish(std::string_view stream
                                                          std::string_view stream_name,
                                                          boost::asio::yield_context& yield) const
 {
-    return request("/internal/publish/claim", publish_claim_body(options_, stream_id, protocol, stream_name), yield);
+    return request(
+        "/internal/publish/claim", publish_claim_body(options_, stream_id, protocol, stream_name), success_response::result_ok, yield);
 }
 
-signaling_request_result signaling_client::request(std::string_view target, std::string body, boost::asio::yield_context& yield) const
+signaling_request_result signaling_client::report_runtime_event(const runtime_event& event, boost::asio::yield_context& yield) const
+{
+    return request("/internal/runtime-events", runtime_event_body(event), success_response::status_only, yield);
+}
+
+signaling_request_result signaling_client::request(std::string_view target,
+                                                   std::string body,
+                                                   success_response success,
+                                                   boost::asio::yield_context& yield) const
 {
     namespace http = beast::http;
 
@@ -174,6 +215,11 @@ signaling_request_result signaling_client::request(std::string_view target, std:
                                                                                       : signaling_result_kind::rejected;
         finish();
         return {.kind = kind, .status = status, .error = {}};
+    }
+    if (success == success_response::status_only)
+    {
+        finish();
+        return {.kind = signaling_result_kind::accepted, .status = status, .error = {}};
     }
 
     boost::system::error_code json_error;
