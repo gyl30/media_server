@@ -31,6 +31,7 @@ type sourceResponse struct {
 	URL          string             `json:"url"`
 	Username     string             `json:"username"`
 	DesiredState sourceDesiredState `json:"desired_state"`
+	Observed     *observedRuntime   `json:"observed,omitempty"`
 }
 
 func (s *infrastructureServer) handleSourceList(writer http.ResponseWriter, request *http.Request) {
@@ -42,7 +43,7 @@ func (s *infrastructureServer) handleSourceList(writer http.ResponseWriter, requ
 	}
 	response := make([]sourceResponse, 0, len(sources))
 	for _, source := range sources {
-		response = append(response, makeSourceResponse(source))
+		response = append(response, s.makeSourceResponse(source))
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"sources": response})
 }
@@ -73,7 +74,7 @@ func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, re
 		s.writeSourceError(writer, "create", source.sourceID, err)
 		return
 	}
-	writeJSON(writer, http.StatusCreated, makeSourceResponse(source))
+	writeJSON(writer, http.StatusCreated, s.makeSourceResponse(source))
 }
 
 func (s *infrastructureServer) handleSourcePatch(writer http.ResponseWriter, request *http.Request) {
@@ -100,16 +101,26 @@ func (s *infrastructureServer) handleSourcePatch(writer http.ResponseWriter, req
 		s.writeSourceError(writer, "patch", sourceID, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, makeSourceResponse(source))
+	writeJSON(writer, http.StatusOK, s.makeSourceResponse(source))
 }
 
 func (s *infrastructureServer) handleSourceDelete(writer http.ResponseWriter, request *http.Request) {
+	if !s.beginSourceControl() {
+		writeHTTPError(writer, http.StatusServiceUnavailable, "server_shutdown")
+		return
+	}
+	defer s.endSourceControl()
+
 	sourceID := request.PathValue("source_id")
 	if !validUUIDv4(sourceID) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if err := s.sources.delete(request.Context(), sourceID); err != nil {
+	if err := s.stopSource(request.Context(), sourceID); err != nil {
+		s.writeSourceRuntimeError(writer, "delete", sourceID, "", err)
+		return
+	}
+	if err := s.sources.deleteStopped(request.Context(), sourceID); err != nil {
 		s.writeSourceError(writer, "delete", sourceID, err)
 		return
 	}
@@ -130,11 +141,15 @@ func (s *infrastructureServer) writeSourceError(writer http.ResponseWriter, oper
 	}
 }
 
-func makeSourceResponse(source rtspSource) sourceResponse {
-	return sourceResponse{
+func (s *infrastructureServer) makeSourceResponse(source rtspSource) sourceResponse {
+	response := sourceResponse{
 		SourceID: source.sourceID, StreamName: source.streamName, URL: source.url,
 		Username: source.username, DesiredState: source.desiredState,
 	}
+	if runtime, ok := s.runtimes.currentForSource(source.sourceID); ok {
+		response.Observed = &runtime
+	}
+	return response
 }
 
 func validRTSPSourceURL(value string) bool {
