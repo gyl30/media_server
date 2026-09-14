@@ -27,12 +27,19 @@ type observedRuntimeRegistry struct {
 	mu              sync.RWMutex
 	byStreamID      map[string]observedRuntime
 	currentBySource map[string]string
+	onChange        func(observedRuntime)
 }
 
 func newObservedRuntimeRegistry() *observedRuntimeRegistry {
 	return &observedRuntimeRegistry{
 		byStreamID: make(map[string]observedRuntime), currentBySource: make(map[string]string),
 	}
+}
+
+func (r *observedRuntimeRegistry) setOnChange(onChange func(observedRuntime)) {
+	r.mu.Lock()
+	r.onChange = onChange
+	r.mu.Unlock()
 }
 
 func (r *observedRuntimeRegistry) apply(event observedRuntime) (bool, error) {
@@ -82,6 +89,9 @@ func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExist
 		if _, bound := r.currentBySource[event.SourceID]; !bound {
 			r.currentBySource[event.SourceID] = event.StreamID
 		}
+	}
+	if r.onChange != nil {
+		r.onChange(event)
 	}
 	return true, nil
 }
@@ -142,6 +152,9 @@ func (r *observedRuntimeRegistry) mediaServerOffline(serverID, instanceID string
 		runtime.Error = "media_server_offline"
 		r.byStreamID[streamID] = runtime
 		changed = append(changed, runtime)
+		if r.onChange != nil {
+			r.onChange(runtime)
+		}
 	}
 	return changed
 }
