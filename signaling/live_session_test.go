@@ -385,16 +385,34 @@ func TestLiveSessionByeTimeoutStillDeletesMedia(t *testing.T) {
 	allocator, _ := newSSRCAllocator(platform.cfg.sipDomain)
 	live := newLiveService(platform, mediaRegistry, newMediaServerHTTPClient(time.Second), allocator, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	live.byeTimeout = 50 * time.Millisecond
-	if _, err := live.startLive(context.Background(), testDeviceID, testChannelID); err != nil {
+	view, err := live.startLive(context.Background(), testDeviceID, testChannelID)
+	if err != nil {
 		t.Fatalf("startLive() error = %v", err)
 	}
 	<-device.acks
+	infrastructure := newTestInfrastructureServer(t, testConfig(), mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	infrastructure.live = live
+	if _, err := infrastructure.runtimes.apply(observedRuntime{
+		Type: "source_started", ServerID: view.server.serverID, InstanceID: view.server.instanceID,
+		StreamID: view.streamID, StreamName: view.streamName, Direction: "input", Protocol: "gb28181",
+		State: "streaming", Stage: "streaming",
+	}); err != nil {
+		t.Fatalf("apply runtime error = %v", err)
+	}
 	device.stop()
-	if err := live.stopLive(context.Background(), testDeviceID, testChannelID); err == nil {
-		t.Fatal("stopLive() succeeded without BYE response")
+	path := "/api/devices/" + testDeviceID + "/channels/" + testChannelID + "/stop"
+	response := sourceRequest(t, infrastructure.handler(), http.MethodPost, path,
+		`{"stream_id":"`+view.streamID+`"}`, "application/json")
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("stop status/body = %d %s", response.Code, response.Body.String())
 	}
 	if deletes.Load() != 1 || live.len() != 0 || allocator.activeCount() != 0 {
 		t.Fatalf("cleanup delete=%d live=%d ssrc=%d", deletes.Load(), live.len(), allocator.activeCount())
+	}
+	observed := infrastructure.runtimes.snapshot()
+	if len(observed) != 1 || observed[0].StreamID != view.streamID || observed[0].State != "stopped" ||
+		observed[0].EndReason != "requested" {
+		t.Fatalf("observed after BYE failure = %+v", observed)
 	}
 }
 
@@ -638,10 +656,14 @@ func registerLiveTestDevice(t *testing.T, platform *sipServer, deviceAddr string
 	}
 }
 
-func startLiveTestMediaServer(t *testing.T) (*mediaServerRegistry, *httptest.Server, *atomic.Int32, *atomic.Int32) {
+func startLiveTestMediaServer(t *testing.T, deleteStatus ...int) (*mediaServerRegistry, *httptest.Server, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 	creates := &atomic.Int32{}
 	deletes := &atomic.Int32{}
+	status := http.StatusOK
+	if len(deleteStatus) != 0 {
+		status = deleteStatus[0]
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -651,6 +673,11 @@ func startLiveTestMediaServer(t *testing.T) (*mediaServerRegistry, *httptest.Ser
 			_, _ = io.WriteString(writer, `{"result":"ok","rtp_port":40000,"rtcp_port":40001}`)
 		case "/gb28181/receiver/delete":
 			deletes.Add(1)
+			if status == http.StatusNotFound {
+				writer.WriteHeader(status)
+				_, _ = io.WriteString(writer, `{"error":"not_found"}`)
+				return
+			}
 			_, _ = io.WriteString(writer, `{"result":"ok"}`)
 		default:
 			http.NotFound(writer, request)

@@ -61,11 +61,11 @@ func (s *infrastructureServer) handleLiveStop(writer http.ResponseWriter, reques
 }
 
 func (s *infrastructureServer) stopLive(writer http.ResponseWriter, request *http.Request, deviceID, channelID, streamID string) {
-	var err error
-	if streamID == "" {
-		err = s.live.stopLive(request.Context(), deviceID, channelID)
-	} else {
-		err = s.live.stopLiveExpected(request.Context(), deviceID, channelID, streamID)
+	live, mediaStopped, err := s.live.stopLiveRuntime(request.Context(), deviceID, channelID, streamID)
+	if mediaStopped {
+		_, stateErr := s.runtimes.acknowledgeSourceStopped(
+			live.server, live.streamID, live.streamName, "", "gb28181")
+		err = errors.Join(err, stateErr)
 	}
 	if err != nil {
 		switch {

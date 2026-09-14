@@ -103,7 +103,7 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 	})
 	platform, _ := startRegistrar(t, testConfig())
 	registerLiveTestDevice(t, platform, device.addr)
-	mediaRegistry, _, _, deletes := startLiveTestMediaServer(t)
+	mediaRegistry, _, _, deletes := startLiveTestMediaServer(t, http.StatusNotFound)
 	allocator, err := newSSRCAllocator(platform.cfg.sipDomain)
 	if err != nil {
 		t.Fatalf("newSSRCAllocator() error = %v", err)
@@ -131,6 +131,17 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "ssrc") || strings.Contains(response.Body.String(), "rtp_port") {
 		t.Fatalf("public start exposed receiver details: %s", response.Body.String())
+	}
+	instance, ok := mediaRegistry.selectOnline()
+	if !ok {
+		t.Fatal("media server is not online")
+	}
+	if _, err := server.runtimes.apply(observedRuntime{
+		Type: "source_started", ServerID: instance.serverID, InstanceID: instance.instanceID,
+		StreamID: started.StreamID, StreamName: started.StreamName, Direction: "input", Protocol: "gb28181",
+		State: "streaming", Stage: "streaming",
+	}); err != nil {
+		t.Fatalf("apply GB runtime error = %v", err)
 	}
 	select {
 	case <-device.acks:
@@ -167,5 +178,10 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 	}
 	if live.len() != 0 || allocator.activeCount() != 0 || deletes.Load() != 1 {
 		t.Fatalf("cleanup live=%d ssrc=%d deletes=%d", live.len(), allocator.activeCount(), deletes.Load())
+	}
+	observed := server.runtimes.snapshot()
+	if len(observed) != 1 || observed[0].StreamID != started.StreamID || observed[0].Type != "source_stopped" ||
+		observed[0].State != "stopped" || observed[0].EndReason != "requested" {
+		t.Fatalf("observed after GB stop = %+v", observed)
 	}
 }
