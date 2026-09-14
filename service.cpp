@@ -196,10 +196,6 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_io = workers_->context(0).io();
-    rtmp_ = std::make_shared<rtmp_server>(*workers_, config_);
-    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_);
-    http_ = std::make_shared<http_server>(*workers_, config_);
-
     if (!config_.signaling_url.empty())
     {
         signaling_client_options options{
@@ -214,6 +210,10 @@ int service::run()
         };
         signaling_ = std::make_shared<signaling_client>(control_io, std::move(options));
     }
+
+    rtmp_ = std::make_shared<rtmp_server>(*workers_, config_, signaling_);
+    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_);
+    http_ = std::make_shared<http_server>(*workers_, config_);
 
     signals_ = std::make_unique<boost::asio::signal_set>(control_io, SIGINT, SIGTERM);
     signals_->async_wait(
