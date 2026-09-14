@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <deque>
 #include <memory>
+#include <mutex>
+#include <optional>
 
 #include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/io_context.hpp>
@@ -30,13 +32,16 @@ class runtime_event_reporter final : public std::enable_shared_from_this<runtime
    private:
     static constexpr std::size_t max_pending_events = 500U;
 
-    void enqueue(runtime_event event);
     void start_writer();
     void run_writer(boost::asio::yield_context yield);
+    [[nodiscard]] std::optional<runtime_event> take_next_event();
+    [[nodiscard]] bool closed();
+    void finish_writer();
     void safe_shutdown();
 
     boost::asio::io_context& io_;
     std::shared_ptr<const signaling_client> signaling_;
+    std::mutex mutex_;
     std::deque<runtime_event> pending_events_;
     boost::asio::cancellation_signal cancellation_;
     bool writer_running_{};

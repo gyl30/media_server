@@ -419,6 +419,33 @@ void test_queue_overflow_clears_backlog_and_keeps_newest()
             "overflow keeps newest incoming event");
 }
 
+void test_report_coalesces_before_owner_context()
+{
+    scripted_http_server server({response_action::hold_no_content});
+    boost::asio::io_context io;
+    auto client = std::make_shared<media_server::signaling_client>(io, client_options(server.url()));
+    auto reporter = std::make_shared<media_server::runtime_event_reporter>(io, client);
+    for (std::size_t index = 0; index <= 500U; ++index)
+    {
+        reporter->report(event(index));
+    }
+
+    bool barrier_reached{};
+    boost::asio::post(io, [&barrier_reached]() { barrier_reached = true; });
+    std::size_t handlers{};
+    while (!barrier_reached && handlers < 600U)
+    {
+        require(io.poll_one() == 1U, "reporter owner barrier remains runnable");
+        ++handlers;
+    }
+    require(barrier_reached, "reporter owner barrier reached");
+    require(handlers < 10U, "runtime event ingress coalesces owner handlers");
+
+    reporter->shutdown();
+    server.release_hold();
+    io.run_for(500ms);
+}
+
 void test_emit_never_blocks_worker()
 {
     scripted_http_server server({response_action::hold_no_content});
@@ -563,6 +590,7 @@ int main()
     test_network_failure_drops_attempted_and_delays_backlog();
     test_queue_accepts_exact_capacity();
     test_queue_overflow_clears_backlog_and_keeps_newest();
+    test_report_coalesces_before_owner_context();
     test_emit_never_blocks_worker();
     test_delivery_failure_does_not_stop_media_session();
     test_shutdown_cancels_in_flight_without_drain();
