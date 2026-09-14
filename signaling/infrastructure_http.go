@@ -58,6 +58,10 @@ func (s *infrastructureServer) handler() http.Handler {
 	if s.live != nil {
 		mux.HandleFunc("POST /internal/live/start", s.handleLiveStart)
 		mux.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
+		mux.HandleFunc("GET /api/devices", s.handleDeviceList)
+		mux.HandleFunc("GET /api/devices/{device_id}/channels", s.handleChannelList)
+		mux.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
+		mux.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
 	}
 	return mux
 }

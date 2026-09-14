@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -83,6 +85,49 @@ func TestRuntimeEventHTTPDoesNotRemoveReplacementPull(t *testing.T) {
 	}
 	if current, ok := server.rtspSourceRuntime(sourceID); !ok || current.streamID != replacement.streamID {
 		t.Fatalf("replacement runtime = %+v, %v", current, ok)
+	}
+}
+
+func TestRuntimeEventHTTPRemovesOnlyMatchingGBLiveGeneration(t *testing.T) {
+	server, registration := newRuntimeHTTPTestServer(t)
+	platform := newTestSIPServer(t, "127.0.0.1:0")
+	allocator, err := newSSRCAllocator(platform.cfg.sipDomain)
+	if err != nil {
+		t.Fatalf("newSSRCAllocator() error = %v", err)
+	}
+	live := newLiveService(platform, server.registry, server.media, allocator,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server.live = live
+	ssrc, err := allocator.acquire()
+	if err != nil {
+		t.Fatalf("acquire SSRC error = %v", err)
+	}
+	_, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	replacementID := "30000000-0000-4000-8000-000000000001"
+	session := &liveSession{
+		key:      liveKey{deviceID: testDeviceID, channelID: testChannelID},
+		streamID: replacementID, streamName: "gb/" + testDeviceID + "/" + testChannelID,
+		server: mediaServerInstance{serverID: registration.ServerID, instanceID: registration.InstanceID},
+		ssrc:   ssrc, state: liveStreaming, cancel: cancel, established: make(chan struct{}), done: make(chan struct{}),
+	}
+	live.sessions[session.key] = session
+	postStop := func(streamID string) *httptest.ResponseRecorder {
+		body := `{"type":"source_stopped","server_id":"media-1","instance_id":"instance-a",` +
+			`"stream_id":"` + streamID + `","stream_name":"` + session.streamName + `",` +
+			`"direction":"input","protocol":"gb28181","state":"stopped","end_reason":"remote"}`
+		return sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", body, "application/json")
+	}
+	if response := postStop("20000000-0000-4000-8000-000000000001"); response.Code != http.StatusNoContent || live.len() != 1 {
+		t.Fatalf("stale terminal status/live = %d/%d", response.Code, live.len())
+	}
+	if response := postStop(replacementID); response.Code != http.StatusNoContent || live.len() != 0 || allocator.activeCount() != 0 {
+		t.Fatalf("matching terminal status/live/ssrc = %d/%d/%d", response.Code, live.len(), allocator.activeCount())
+	}
+	select {
+	case <-session.done:
+	default:
+		t.Fatal("matching terminal did not finish session cleanup")
 	}
 }
 

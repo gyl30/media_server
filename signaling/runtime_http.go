@@ -66,6 +66,9 @@ func (s *infrastructureServer) handleRuntimeEvent(writer http.ResponseWriter, re
 			sourceID: event.SourceID, streamName: event.StreamName,
 			server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
 		})
+		if s.live != nil && event.Protocol == "gb28181" && event.Direction == "input" {
+			s.live.runtimeStopped(event.ServerID, event.InstanceID, event.StreamID, event.StreamName)
+		}
 	}
 	writer.WriteHeader(http.StatusNoContent)
 }

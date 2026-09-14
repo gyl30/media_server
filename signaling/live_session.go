@@ -18,6 +18,7 @@ import (
 var (
 	errLiveExists         = errors.New("live session already exists")
 	errLiveNotFound       = errors.New("live session does not exist")
+	errLiveChanged        = errors.New("live session generation changed")
 	errDeviceOffline      = errors.New("device is offline")
 	errChannelUnavailable = errors.New("channel is unavailable")
 	errNoMediaServer      = errors.New("no online media server")
@@ -244,11 +245,19 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		return liveView{}, context.Canceled
 	}
 	session.state = liveStreaming
-	view := liveView{
-		streamID: session.streamID, streamName: session.streamName, state: session.state, ssrc: session.ssrc, rtpPort: session.endpoint.rtpPort,
-	}
+	view := makeLiveView(session)
 	s.mu.Unlock()
 	return view, nil
+}
+
+func (s *liveService) live(deviceID, channelID string) (liveView, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[liveKey{deviceID: deviceID, channelID: channelID}]
+	if !ok {
+		return liveView{}, false
+	}
+	return makeLiveView(session), true
 }
 
 func (s *liveService) stopLive(ctx context.Context, deviceID, channelID string) error {
@@ -263,8 +272,27 @@ func (s *liveService) stopLive(ctx context.Context, deviceID, channelID string) 
 	return s.stopSession(ctx, session, true)
 }
 
+func (s *liveService) stopLiveExpected(ctx context.Context, deviceID, channelID, streamID string) error {
+	key := liveKey{deviceID: deviceID, channelID: channelID}
+	s.mu.Lock()
+	session, ok := s.sessions[key]
+	if !ok {
+		s.mu.Unlock()
+		return errLiveNotFound
+	}
+	if session.streamID != streamID {
+		s.mu.Unlock()
+		return errLiveChanged
+	}
+	return s.stopSessionLocked(ctx, session, true)
+}
+
 func (s *liveService) stopSession(ctx context.Context, session *liveSession, deleteMedia bool) error {
 	s.mu.Lock()
+	return s.stopSessionLocked(ctx, session, deleteMedia)
+}
+
+func (s *liveService) stopSessionLocked(ctx context.Context, session *liveSession, deleteMedia bool) error {
 	current, ok := s.sessions[session.key]
 	if !ok || current != session {
 		s.mu.Unlock()
@@ -309,6 +337,25 @@ func (s *liveService) mediaServerOffline(ctx context.Context, server mediaServer
 	s.stopMatching(ctx, func(session *liveSession) bool {
 		return session.server.serverID == server.serverID && session.server.instanceID == server.instanceID
 	}, false)
+}
+
+func (s *liveService) runtimeStopped(serverID, instanceID, streamID, streamName string) {
+	s.mu.Lock()
+	var session *liveSession
+	for _, candidate := range s.sessions {
+		if candidate.server.serverID == serverID && candidate.server.instanceID == instanceID &&
+			candidate.streamID == streamID && candidate.streamName == streamName {
+			session = candidate
+			break
+		}
+	}
+	s.mu.Unlock()
+	if session == nil {
+		return
+	}
+	if err := s.stopSession(context.Background(), session, false); err != nil {
+		s.logger.Warn("stopped GB28181 runtime cleanup failed", "stream_name", streamName, "stream_id", streamID, "error", err)
+	}
 }
 
 func (s *liveService) shutdown(ctx context.Context) {
@@ -419,4 +466,11 @@ func (s *liveService) len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.sessions)
+}
+
+func makeLiveView(session *liveSession) liveView {
+	return liveView{
+		streamID: session.streamID, streamName: session.streamName, state: session.state,
+		ssrc: session.ssrc, rtpPort: session.endpoint.rtpPort,
+	}
 }
