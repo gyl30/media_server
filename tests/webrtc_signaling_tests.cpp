@@ -61,6 +61,10 @@ namespace
 {
 
 constexpr std::string_view control_stream_id = "550e8400-e29b-41d4-a716-446655440000";
+constexpr std::string_view alternate_control_stream_id = "550e8400-e29b-41d4-a716-446655440001";
+constexpr std::string_view replacement_control_stream_id = "550e8400-e29b-41d4-a716-446655440002";
+constexpr std::string_view updated_control_stream_id = "550e8400-e29b-41d4-a716-446655440003";
+constexpr std::string_view final_control_stream_id = "550e8400-e29b-41d4-a716-446655440004";
 
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
@@ -1267,6 +1271,10 @@ void test_whep_http_cors()
     require(location.starts_with("/play/whep/session/"), "whep create location");
     require(created.body().starts_with("v=0\r\n"), "whep create answer");
 
+    const auto duplicate = peer.post("/play/whep/live/camera", webrtc_offer_sdp, control_stream_id);
+    require(duplicate.result() == boost::beast::http::status::conflict, "whep duplicate stream id rejected");
+    require(duplicate["Access-Control-Allow-Origin"] == "*", "whep duplicate stream id allow origin");
+
     require_whep_options(peer.options(location, "DELETE"), "GET, HEAD, DELETE, OPTIONS", false);
 
     const auto session_get = peer.request(boost::beast::http::verb::get, location);
@@ -1387,7 +1395,8 @@ void test_webrtc_module_shutdown()
         for (int index = 0; index < 2; ++index)
         {
             const auto published = peer.post("/publish/whip/live/stop-" + std::to_string(index), whip_offer);
-            const auto played = peer.post("/play/whep/live/camera", webrtc_offer_sdp, control_stream_id);
+            const auto played = peer.post(
+                "/play/whep/live/camera", webrtc_offer_sdp, index == 0 ? control_stream_id : alternate_control_stream_id);
             for (const auto& response : {published, played})
             {
                 require(response.result() == boost::beast::http::status::created, "module shutdown creates active sessions");
@@ -1402,7 +1411,10 @@ void test_webrtc_module_shutdown()
         whep::shutdown();
         const auto recreated = peer.post("/publish/whip/live/stop-0", whip_offer);
         require(recreated.result() == boost::beast::http::status::created, "module shutdown releases whip stream reservation");
+        const auto replayed = peer.post("/play/whep/live/camera", webrtc_offer_sdp, replacement_control_stream_id);
+        require(replayed.result() == boost::beast::http::status::created, "module shutdown accepts new whep runtime");
         whip::shutdown();
+        whep::shutdown();
     }
     boost::asio::io_context io;
     for (const auto port : ports)
@@ -2669,8 +2681,16 @@ void test_whep_session_lifecycle()
     require(whep::create(worker, std::string{control_stream_id}, "live/test", missing_ice_offer, application_config).error == whep::create_error::invalid_offer,
             "whep semantic invalid offer");
 
-    const auto first = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
-    const auto second = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    std::vector<runtime_event> events;
+    const auto runtime_events = std::make_shared<runtime_event_emitter>(
+        "media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
+    const auto first = whep::create(
+        worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config, runtime_events);
+    const auto duplicate = whep::create(
+        worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config, runtime_events);
+    require(duplicate.error == whep::create_error::stream_id_conflict, "whep reject duplicate runtime stream id");
+    require(events.size() == 1U && events.front().state == runtime_state::starting, "whep duplicate emits no runtime event");
+    const auto second = whep::create(worker, std::string{alternate_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
     require(first.error == whep::create_error::none && second.error == whep::create_error::none, "whep create multiple sessions");
     require(!first.session_id.empty() && !second.session_id.empty(), "whep session ids");
     require(first.session_id != second.session_id, "whep unique session ids");
@@ -2689,7 +2709,7 @@ void test_whep_session_lifecycle()
     require(whep::remove(second.session_id), "whep remove second session");
     drain_io(io);
 
-    const auto third = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    const auto third = whep::create(worker, std::string{replacement_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
     require(third.error == whep::create_error::none, "whep recreate viewer");
 
     streams.remove(*stream);
@@ -2701,7 +2721,7 @@ void test_whep_session_lifecycle()
     require(replacement->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(streams.add(replacement), "whep replacement registry add");
 
-    const auto replacement_session = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    const auto replacement_session = whep::create(worker, std::string{updated_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
     require(replacement_session.error == whep::create_error::none, "whep create after republish");
     require(replacement_session.session_id != third.session_id, "whep republish new session id");
 
@@ -2712,7 +2732,7 @@ void test_whep_session_lifecycle()
     require(!whep::contains(replacement_session.session_id), "whep source config change releases session resource");
     require(!whep::remove(replacement_session.session_id), "whep source config change releases session");
 
-    const auto updated_session = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    const auto updated_session = whep::create(worker, std::string{final_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
     require(updated_session.error == whep::create_error::none, "whep create after config change");
     require(whep::remove(updated_session.session_id), "whep remove updated session");
     drain_io(io);
