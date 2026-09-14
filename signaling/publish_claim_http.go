@@ -25,10 +25,16 @@ func (s *infrastructureServer) handlePublishClaim(writer http.ResponseWriter, re
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	err := s.allocations.claim(publishClaim{
-		streamID: command.StreamID, serverID: command.ServerID, instanceID: command.InstanceID,
-		direction: command.Direction, protocol: command.Protocol, streamName: command.StreamName,
-	}, time.Now())
+	var err error
+	if !s.registry.withOnlineInstance(command.ServerID, command.InstanceID, func() {
+		err = s.allocations.claim(publishClaim{
+			streamID: command.StreamID, serverID: command.ServerID, instanceID: command.InstanceID,
+			direction: command.Direction, protocol: command.Protocol, streamName: command.StreamName,
+		}, time.Now())
+	}) {
+		writeHTTPError(writer, http.StatusGone, "stale_instance")
+		return
+	}
 	switch {
 	case err == nil:
 		writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
