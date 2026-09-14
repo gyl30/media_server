@@ -2,7 +2,6 @@
 #define MEDIA_SERVER_SERVICE_H
 
 #include <memory>
-#include <vector>
 
 #include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -20,7 +19,6 @@ class io_context_pool;
 class signaling_client;
 class rtmp_server;
 class rtsp_server;
-class rtsp_pull_session;
 
 class service
 {
@@ -42,7 +40,6 @@ class service
     std::shared_ptr<http_server> http_;
     std::shared_ptr<signaling_client> signaling_;
     std::unique_ptr<boost::asio::steady_timer> signaling_abort_timer_;
-    std::vector<std::shared_ptr<rtsp_pull_session>> pulls_;
     std::unique_ptr<boost::asio::signal_set> signals_;
     boost::asio::cancellation_signal control_cancellation_;
     std::size_t pending_shutdown_workers_{};
