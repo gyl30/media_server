@@ -4,6 +4,7 @@
 #include <charconv>
 #include <iostream>
 #include <string_view>
+#include <set>
 
 #include <boost/program_options.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -146,6 +147,7 @@ int parse_config(int argc, char** argv, config* cfg)
         return 1;
     }
 
+    std::set<std::string> rtsp_pull_names;
     for (const auto& value : rtsp_pulls)
     {
         const auto equal = value.find('=');
@@ -154,7 +156,13 @@ int parse_config(int argc, char** argv, config* cfg)
             print_usage(options);
             return 1;
         }
-        result.rtsp_pulls.emplace_back(value.substr(0, equal), value.substr(equal + 1));
+        const auto name = value.substr(0, equal);
+        if (!rtsp_pull_names.emplace(name).second)
+        {
+            print_usage(options);
+            return 1;
+        }
+        result.rtsp_pulls.emplace_back(name, value.substr(equal + 1));
     }
 
     const bool has_signaling_value = !result.signaling_url.empty() || !result.server_id.empty() || !result.control_url.empty() || !result.media_ip.empty();

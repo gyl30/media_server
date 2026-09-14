@@ -129,6 +129,7 @@ void test_invalid()
         {"media_server", "--rtsp-pull", "missing-equals"},
         {"media_server", "--rtsp-pull", "=rtsp://127.0.0.1/live"},
         {"media_server", "--rtsp-pull", "live="},
+        {"media_server", "--rtsp-pull", "live/duplicate=rtsp://127.0.0.1/source-a", "--rtsp-pull", "live/duplicate=rtsp://127.0.0.1/source-b"},
         {"media_server", "--rtmp-video-codec", "h264"},
         {"media_server", "--rtsp-video-codec", ""},
         {"media_server", "--http-video-codec", "h265"},
