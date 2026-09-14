@@ -45,7 +45,8 @@ whep_session::whep_session(worker_context& worker,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
                            whep_session_timeouts timeouts,
-                           video_transcode_config video)
+                           video_transcode_config video,
+                           std::size_t max_write_queue_bytes)
     : stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
@@ -53,6 +54,7 @@ whep_session::whep_session(worker_context& worker,
       timeouts_(timeouts),
       worker_(worker),
       udp_transport_(worker_.io()),
+      max_write_queue_bytes_(max_write_queue_bytes),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
       ice_activity_timer_(worker_.io())
@@ -218,11 +220,7 @@ void whep_session::safe_shutdown()
     ice_activity_timer_.cancel();
     dtls_.reset();
     answer_ = {};
-    local_port_ = 0;
-    if (udp_write_queue_.empty())
-    {
-        shutdown_udp_transport();
-    }
+    shutdown_udp_transport();
 
     spdlog::info("webrtc whep session shutdown {}", id_);
 }
@@ -354,12 +352,8 @@ void whep_session::run_udp_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (udp_write_queue_.empty())
+        if (!started_ || udp_write_queue_.empty())
         {
-            if (local_port_ == 0)
-            {
-                shutdown_udp_transport();
-            }
             return;
         }
 
@@ -374,12 +368,15 @@ void whep_session::run_udp_write(boost::asio::yield_context yield)
                           datagram.endpoint.address().to_string(),
                           datagram.endpoint.port(),
                           error.message());
-            udp_write_queue_.clear();
-            shutdown_udp_transport();
             shutdown();
             return;
         }
+        if (!started_)
+        {
+            return;
+        }
 
+        queued_write_bytes_ -= datagram.packet->size();
         udp_write_queue_.pop_front();
     }
 }
@@ -662,8 +659,15 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
     {
         return;
     }
+    if (packet.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - packet.size())
+    {
+        spdlog::warn(
+            "whep udp write queue full session {} queued {} limit {} dropped {}", id_, queued_write_bytes_, max_write_queue_bytes_, packet.size());
+        return;
+    }
 
     const bool start_write = udp_write_queue_.empty();
+    queued_write_bytes_ += packet.size();
     udp_write_queue_.push_back(pending_datagram{
         .packet = std::make_shared<std::vector<std::uint8_t>>(std::move(packet)),
         .endpoint = std::move(endpoint),
