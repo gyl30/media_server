@@ -62,7 +62,8 @@ func (s *infrastructureServer) handleRuntimeEvent(writer http.ResponseWriter, re
 		return
 	}
 	if event.State == "stopped" {
-		s.removeRTSPPull(event.StreamName, rtspPullRuntime{
+		s.removeRTSPPull(rtspPullRuntime{
+			sourceID: event.SourceID, streamName: event.StreamName,
 			server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
 		})
 	}

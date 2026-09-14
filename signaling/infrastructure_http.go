@@ -26,6 +26,9 @@ type infrastructureServer struct {
 	runtimes             *observedRuntimeRegistry
 	rtspPullMu           sync.Mutex
 	rtspPulls            map[string]rtspPullRuntime
+	sourceControlMu      sync.Mutex
+	sourceControlWait    sync.WaitGroup
+	sourceControlClosed  bool
 	onMediaServerOffline func(mediaServerInstance)
 }
 
@@ -41,13 +44,13 @@ func (s *infrastructureServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/media-servers/register", s.handleMediaServerRegister)
 	mux.HandleFunc("POST /internal/media-servers/heartbeat", s.handleMediaServerHeartbeat)
-	mux.HandleFunc("POST /internal/rtsp-pull/create", s.handleRTSPPullCreate)
-	mux.HandleFunc("POST /internal/rtsp-pull/delete", s.handleRTSPPullDelete)
 	mux.HandleFunc("POST /api/publish/allocations", s.handlePublishAllocation)
 	mux.HandleFunc("GET /api/sources", s.handleSourceList)
 	mux.HandleFunc("POST /api/sources", s.handleSourceCreate)
 	mux.HandleFunc("PATCH /api/sources/{source_id}", s.handleSourcePatch)
 	mux.HandleFunc("DELETE /api/sources/{source_id}", s.handleSourceDelete)
+	mux.HandleFunc("POST /api/sources/{source_id}/start", s.handleSourceStart)
+	mux.HandleFunc("POST /api/sources/{source_id}/stop", s.handleSourceStop)
 	mux.HandleFunc("GET /api/media-servers", s.handleMediaServerList)
 	mux.HandleFunc("GET /api/runtimes", s.handleRuntimeList)
 	mux.HandleFunc("POST /internal/publish/claim", s.handlePublishClaim)
@@ -139,6 +142,17 @@ func decodeJSON(writer http.ResponseWriter, request *http.Request, target any) b
 	}
 	var extra any
 	return decoder.Decode(&extra) == io.EOF
+}
+
+func decodeOptionalString(raw json.RawMessage) (*string, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	var value *string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false
+	}
+	return value, value != nil
 }
 
 func validMediaServerRegistration(registration mediaServerRegistration) bool {

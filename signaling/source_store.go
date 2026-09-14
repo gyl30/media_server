@@ -189,8 +189,8 @@ func (s *sourceStore) patch(ctx context.Context, sourceID string, patch rtspSour
 	return source, nil
 }
 
-func (s *sourceStore) delete(ctx context.Context, sourceID string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM rtsp_sources WHERE source_id = ?`, sourceID)
+func (s *sourceStore) deleteStopped(ctx context.Context, sourceID string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM rtsp_sources WHERE source_id = ? AND desired_state = ?`, sourceID, sourceDesiredStopped)
 	if err != nil {
 		return fmt.Errorf("delete source: %w", err)
 	}
@@ -199,9 +199,46 @@ func (s *sourceStore) delete(ctx context.Context, sourceID string) error {
 		return fmt.Errorf("delete source result: %w", err)
 	}
 	if changed == 0 {
-		return errSourceNotFound
+		if _, err := s.get(ctx, sourceID); errors.Is(err, errSourceNotFound) {
+			return errSourceNotFound
+		} else if err != nil {
+			return err
+		}
+		return errSourceConflict
 	}
 	return nil
+}
+
+func (s *sourceStore) setDesiredState(ctx context.Context, sourceID string, desired sourceDesiredState) (rtspSource, error) {
+	if desired != sourceDesiredStopped && desired != sourceDesiredRunning {
+		return rtspSource{}, errInvalidSource
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return rtspSource{}, fmt.Errorf("begin desired state update: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE rtsp_sources SET desired_state = ? WHERE source_id = ?`, desired, sourceID)
+	if err != nil {
+		return rtspSource{}, fmt.Errorf("update desired state: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return rtspSource{}, fmt.Errorf("desired state result: %w", err)
+	}
+	if changed == 0 {
+		return rtspSource{}, errSourceNotFound
+	}
+	source, err := scanRTSPSource(tx.QueryRowContext(ctx, `
+		SELECT source_id, stream_name, url, username, password, desired_state
+		FROM rtsp_sources WHERE source_id = ?`, sourceID))
+	if err != nil {
+		return rtspSource{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return rtspSource{}, fmt.Errorf("commit desired state update: %w", err)
+	}
+	return source, nil
 }
 
 type rowScanner interface {

@@ -109,6 +109,27 @@ func TestObservedRuntimeSourceGenerationFencing(t *testing.T) {
 	}
 }
 
+func TestObservedRuntimeRestoresOnlyCurrentSourceBinding(t *testing.T) {
+	runtimes := newObservedRuntimeRegistry()
+	sourceID := "10000000-0000-4000-8000-000000000002"
+	previous, hadPrevious := runtimes.bindSource(sourceID, "20000000-0000-4000-8000-000000000002")
+	if hadPrevious || previous != "" {
+		t.Fatalf("initial binding = %q, %v", previous, hadPrevious)
+	}
+	previous, hadPrevious = runtimes.bindSource(sourceID, "30000000-0000-4000-8000-000000000002")
+	if !hadPrevious || previous != "20000000-0000-4000-8000-000000000002" {
+		t.Fatalf("replacement binding = %q, %v", previous, hadPrevious)
+	}
+	runtimes.restoreSourceBinding(sourceID, "20000000-0000-4000-8000-000000000002", previous, hadPrevious)
+	if current := runtimes.currentBySource[sourceID]; current != "30000000-0000-4000-8000-000000000002" {
+		t.Fatalf("stale restore changed binding to %q", current)
+	}
+	runtimes.restoreSourceBinding(sourceID, "30000000-0000-4000-8000-000000000002", previous, hadPrevious)
+	if current := runtimes.currentBySource[sourceID]; current != "20000000-0000-4000-8000-000000000002" {
+		t.Fatalf("current restore binding = %q", current)
+	}
+}
+
 func TestObservedRuntimeMarksExactMediaServerOffline(t *testing.T) {
 	runtimes := newObservedRuntimeRegistry()
 	oldInstance := testObservedRuntime("40000000-0000-4000-8000-000000000001", "streaming")
