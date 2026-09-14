@@ -76,9 +76,13 @@ gb28181_transport_config make_tcp_passive_transport(std::uint16_t port, std::uin
                                .ssrc = ssrc};
 }
 
-gb28181_http_response create_receiver(worker_context& worker, std::string_view stream_name, const gb28181_transport_config& transport)
+gb28181_http_response create_receiver(worker_context& worker,
+                                      std::string_view stream_id,
+                                      std::string_view stream_name,
+                                      const gb28181_transport_config& transport)
 {
     boost::json::object body;
+    body["stream_id"] = stream_id;
     body["stream_name"] = stream_name;
     body["transport"] = "tcp_active";
     body["remote_address"] = transport.remote_address.to_string();
@@ -88,9 +92,10 @@ gb28181_http_response create_receiver(worker_context& worker, std::string_view s
     return receiver_request(worker, request("/gb28181/receiver/create", std::move(body)));
 }
 
-gb28181_http_response delete_receiver(worker_context& worker, std::string_view stream_name)
+gb28181_http_response delete_receiver(worker_context& worker, std::string_view stream_id, std::string_view stream_name)
 {
     boost::json::object body;
+    body["stream_id"] = stream_id;
     body["stream_name"] = stream_name;
     return receiver_request(worker, request("/gb28181/receiver/delete", std::move(body)));
 }
@@ -116,10 +121,12 @@ std::shared_ptr<media_stream> add_video_stream(worker_context& worker, std::stri
 
 gb28181_http_response create_sender(worker_context& worker,
                                     const media_stream& stream,
+                                    std::string_view stream_id,
                                     std::string_view sender_id,
                                     const gb28181_transport_config& transport)
 {
     boost::json::object body;
+    body["stream_id"] = stream_id;
     body["stream_name"] = stream.name();
     body["sender_id"] = sender_id;
     body["transport"] = "tcp_active";
@@ -130,9 +137,13 @@ gb28181_http_response create_sender(worker_context& worker,
     return sender_request(worker, request("/gb28181/sender/create", std::move(body)));
 }
 
-gb28181_http_response delete_sender(worker_context& worker, std::string_view stream_name, std::string_view sender_id)
+gb28181_http_response delete_sender(worker_context& worker,
+                                    std::string_view stream_id,
+                                    std::string_view stream_name,
+                                    std::string_view sender_id)
 {
     boost::json::object body;
+    body["stream_id"] = stream_id;
     body["stream_name"] = stream_name;
     body["sender_id"] = sender_id;
     return sender_request(worker, request("/gb28181/sender/delete", std::move(body)));
@@ -148,11 +159,19 @@ void test_receiver_identity_is_reusable_after_shutdown()
     auto& io = worker.io();
     clear_state();
     const auto description = make_tcp_active_transport(65'000, 10'000'2001);
+    constexpr std::string_view first_stream_id = "550e8400-e29b-41d4-a716-446655440000";
+    constexpr std::string_view second_stream_id = "550e8400-e29b-41d4-a716-446655440001";
 
-    require_status(create_receiver(worker, "live/gb-identity", description), boost::beast::http::status::created, "gb receiver first create");
-    require_status(delete_receiver(worker, "live/gb-identity"), boost::beast::http::status::ok, "gb receiver remove");
-    require_status(create_receiver(worker, "live/gb-identity", description), boost::beast::http::status::created, "gb receiver reusable after shutdown");
-    require_status(delete_receiver(worker, "live/gb-identity"), boost::beast::http::status::ok, "gb receiver final remove");
+    require_status(create_receiver(worker, first_stream_id, "live/gb-identity", description),
+                   boost::beast::http::status::created,
+                   "gb receiver first create");
+    require_status(delete_receiver(worker, first_stream_id, "live/gb-identity"), boost::beast::http::status::ok, "gb receiver remove");
+    require_status(create_receiver(worker, second_stream_id, "live/gb-identity", description),
+                   boost::beast::http::status::created,
+                   "gb receiver reusable after shutdown");
+    require_status(delete_receiver(worker, second_stream_id, "live/gb-identity"),
+                   boost::beast::http::status::ok,
+                   "gb receiver final remove");
     io.run();
     clear_state();
 }
@@ -166,11 +185,22 @@ void test_sender_identity_is_reusable_after_shutdown()
     clear_state();
     const auto stream = add_video_stream(worker, "live/gb-sender-identity");
     const auto description = make_tcp_active_transport(65'000, 10'000'2002);
+    constexpr std::string_view first_stream_id = "550e8400-e29b-41d4-a716-446655440002";
+    constexpr std::string_view second_stream_id = "550e8400-e29b-41d4-a716-446655440003";
 
-    require_status(create_sender(worker, *stream, "primary", description), boost::beast::http::status::created, "gb sender first create");
-    require_status(delete_sender(worker, stream->name(), "primary"), boost::beast::http::status::ok, "gb sender remove");
-    require_status(create_sender(worker, *stream, "primary", description), boost::beast::http::status::created, "gb sender reusable after shutdown");
-    require_status(delete_sender(worker, stream->name(), "primary"), boost::beast::http::status::ok, "gb sender final remove");
+    require_status(create_sender(worker, *stream, first_stream_id, "primary", description),
+                   boost::beast::http::status::created,
+                   "gb sender first create");
+    require_status(delete_sender(worker, first_stream_id, stream->name(), "primary"), boost::beast::http::status::ok, "gb sender remove");
+    require_status(create_sender(worker, *stream, second_stream_id, "primary", description),
+                   boost::beast::http::status::created,
+                   "gb sender reusable after shutdown");
+    require_status(delete_sender(worker, first_stream_id, stream->name(), "primary"),
+                   boost::beast::http::status::internal_server_error,
+                   "gb sender stale identity does not remove replacement");
+    require_status(delete_sender(worker, second_stream_id, stream->name(), "primary"),
+                   boost::beast::http::status::ok,
+                   "gb sender final remove");
     io.run();
     clear_state();
 }
@@ -184,7 +214,7 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
     clear_state();
     const std::string stream_name = "live/gb-receiver-repeated-shutdown";
     const auto description = make_tcp_passive_transport(0, 10'000'2007);
-    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
+    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
     require(stream_registry::instance().add_receiver_session(stream_name, session), "gb receiver repeated shutdown registry add");
     require(session->startup(), "gb receiver repeated shutdown startup");
 
@@ -208,7 +238,7 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
     const auto stream = add_video_stream(worker, "live/gb-sender-repeated-shutdown");
     const auto description = make_tcp_passive_transport(0, 10'000'2008);
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
-                                                                stream,
+                                                                "550e8400-e29b-41d4-a716-446655440000", stream,
                                                                 "repeated-shutdown",
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),
@@ -235,7 +265,7 @@ void test_tcp_timeout_unregisters_receiver_session()
     clear_state();
     const std::string stream_name = "live/gb-receiver-timeout";
     const auto description = make_tcp_passive_transport(0, 10'000'2005);
-    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
+    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
     require(stream_registry::instance().add_receiver_session(stream_name, session), "gb receiver timeout registry add");
     require(session->startup(), "gb receiver timeout startup");
     io.run();
@@ -255,7 +285,7 @@ void test_tcp_timeout_unregisters_sender_session()
     const auto stream = add_video_stream(worker, "live/gb-sender-timeout");
     const auto description = make_tcp_passive_transport(0, 10'000'2006);
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
-                                                                stream,
+                                                                "550e8400-e29b-41d4-a716-446655440000", stream,
                                                                 "timeout",
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),

@@ -83,7 +83,8 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
 
     if (config.transport.mode == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, config.transport, bind_address);
+        auto session =
+            std::make_shared<gb28181_udp_receiver_session>(worker, config.stream_id, stream_name, config.transport, bind_address);
         if (!streams.add_receiver_session(stream_name, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -111,7 +112,7 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
     else
     {
         auto session = std::make_shared<gb28181_tcp_receiver_session>(
-            worker, stream_name, config.transport, bind_address, tcp_establishment_timeout);
+            worker, config.stream_id, stream_name, config.transport, bind_address, tcp_establishment_timeout);
         if (!streams.add_receiver_session(stream_name, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -144,7 +145,7 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
     if (config.transport.mode == gb28181_transport::udp)
     {
         auto session = std::make_shared<gb28181_udp_sender_session>(
-            worker, stream, config.transport, std::move(bind_address), sender_id, config.rtcp_enabled);
+            worker, config.stream_id, stream, config.transport, std::move(bind_address), sender_id, config.rtcp_enabled);
         if (!streams.add_sender_session(stream_name, sender_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -159,6 +160,7 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
     else
     {
         auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
+                                                                    config.stream_id,
                                                                     stream,
                                                                     sender_id,
                                                                     config.transport,
@@ -208,16 +210,17 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
         return handle_receiver_create(request, worker, std::move(*config), std::move(bind_address));
     }
 
-    const auto stream_name = parse_gb28181_receiver_delete(request.body());
-    if (!stream_name)
+    const auto identity = parse_gb28181_receiver_delete(request.body());
+    if (!identity)
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
     auto& streams = stream_registry::instance();
-    std::shared_ptr<stream_session> session = streams.take_receiver_session_as<gb28181_udp_receiver_session>(*stream_name);
+    std::shared_ptr<stream_session> session =
+        streams.take_receiver_session_as<gb28181_udp_receiver_session>(identity->stream_name, identity->stream_id);
     if (!session)
     {
-        session = streams.take_receiver_session_as<gb28181_tcp_receiver_session>(*stream_name);
+        session = streams.take_receiver_session_as<gb28181_tcp_receiver_session>(identity->stream_name, identity->stream_id);
     }
     if (!session)
     {
@@ -260,7 +263,7 @@ gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& 
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = stream_registry::instance().take_sender_session(identity->first, identity->second);
+    auto session = stream_registry::instance().take_sender_session(identity->stream_name, identity->sender_id, identity->stream_id);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");

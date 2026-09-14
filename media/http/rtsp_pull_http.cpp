@@ -8,6 +8,7 @@
 
 #include <boost/json.hpp>
 
+#include "media/core/stream_id.h"
 #include "media/core/stream_registry.h"
 #include "media/http/rtsp_pull_http.h"
 #include "media/rtsp/rtsp_pull_session.h"
@@ -19,10 +20,17 @@ namespace
 
 struct rtsp_pull_create_config
 {
+    std::string stream_id;
     std::string stream_name;
     std::string url;
     std::string username;
     std::string password;
+};
+
+struct rtsp_pull_identity
+{
+    std::string stream_id;
+    std::string stream_name;
 };
 
 rtsp_pull_http_response make_json_response(const rtsp_pull_http_request& request,
@@ -99,21 +107,24 @@ bool optional_string(const boost::json::object& object, std::string_view key, st
 std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_name", "url", "username", "password"}))
+    if (!object || !has_only_fields(*object, {"stream_id", "stream_name", "url", "username", "password"}))
     {
         return std::nullopt;
     }
 
+    auto stream_id = required_string(*object, "stream_id");
     auto stream_name = required_string(*object, "stream_name");
     auto url = required_string(*object, "url");
     std::string username;
     std::string password;
-    if (!stream_name || !url || !optional_string(*object, "username", username) || !optional_string(*object, "password", password) ||
+    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name || !url || !optional_string(*object, "username", username) ||
+        !optional_string(*object, "password", password) ||
         (object->if_contains("password") != nullptr && username.empty()))
     {
         return std::nullopt;
     }
     return rtsp_pull_create_config{
+        .stream_id = std::move(*stream_id),
         .stream_name = std::move(*stream_name),
         .url = std::move(*url),
         .username = std::move(username),
@@ -121,14 +132,20 @@ std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body
     };
 }
 
-std::optional<std::string> parse_delete_stream_name(std::string_view body)
+std::optional<rtsp_pull_identity> parse_delete_identity(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_name"}))
+    if (!object || !has_only_fields(*object, {"stream_id", "stream_name"}))
     {
         return std::nullopt;
     }
-    return required_string(*object, "stream_name");
+    auto stream_id = required_string(*object, "stream_id");
+    auto stream_name = required_string(*object, "stream_name");
+    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name)
+    {
+        return std::nullopt;
+    }
+    return rtsp_pull_identity{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name)};
 }
 
 std::optional<rtsp_pull_http_response> validate_request(const rtsp_pull_http_request& request, const boost::urls::url_view& target)
@@ -162,8 +179,12 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
     }
 
     const auto stream_name = config.stream_name;
-    auto session = std::make_shared<rtsp_pull_session>(
-        worker, stream_name, std::move(config.url), std::move(config.username), std::move(config.password));
+    auto session = std::make_shared<rtsp_pull_session>(worker,
+                                                       std::move(config.stream_id),
+                                                       stream_name,
+                                                       std::move(config.url),
+                                                       std::move(config.username),
+                                                       std::move(config.password));
     if (!streams.add_receiver_session(stream_name, session))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
@@ -203,12 +224,13 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
         return handle_create(request, worker, std::move(*config));
     }
 
-    const auto stream_name = parse_delete_stream_name(request.body());
-    if (!stream_name)
+    const auto identity = parse_delete_identity(request.body());
+    if (!identity)
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = stream_registry::instance().take_receiver_session_as<rtsp_pull_session>(*stream_name);
+    auto session =
+        stream_registry::instance().take_receiver_session_as<rtsp_pull_session>(identity->stream_name, identity->stream_id);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");

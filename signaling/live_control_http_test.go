@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/emiago/sipgo/sip"
+	"github.com/google/uuid"
 )
 
 func TestLiveControlHTTPStartCancellationCancelsMediaCreate(t *testing.T) {
@@ -107,6 +108,7 @@ func TestLiveControlHTTPStartAndStop(t *testing.T) {
 	}
 	var started struct {
 		Result     string    `json:"result"`
+		StreamID   string    `json:"stream_id"`
 		StreamName string    `json:"stream_name"`
 		State      liveState `json:"state"`
 		SSRC       uint32    `json:"ssrc"`
@@ -119,6 +121,10 @@ func TestLiveControlHTTPStartAndStop(t *testing.T) {
 	response.Body.Close()
 	if started.Result != "ok" || started.StreamName != "gb/"+testDeviceID+"/"+testChannelID || started.State != liveStreaming || started.SSRC == 0 || started.RTPPort == 0 {
 		t.Fatalf("start response = %+v", started)
+	}
+	parsedStreamID, err := uuid.Parse(started.StreamID)
+	if err != nil || parsedStreamID.Version() != 4 || parsedStreamID.String() != started.StreamID {
+		t.Fatalf("stream_id = %q, error = %v", started.StreamID, err)
 	}
 	select {
 	case <-device.acks:

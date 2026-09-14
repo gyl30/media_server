@@ -208,6 +208,9 @@ int service::run()
             .instance_id = boost::uuids::to_string(boost::uuids::random_generator{}()),
             .control_url = config_.control_url,
             .media_ip = config_.media_ip,
+            .rtmp_port = config_.rtmp_port,
+            .rtsp_port = config_.rtsp_port,
+            .http_port = config_.http_port,
         };
         signaling_ = std::make_shared<signaling_client>(control_io, std::move(options));
     }

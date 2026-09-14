@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "media/webrtc/whep.h"
+#include "media/core/stream_id.h"
 #include "media/net/worker_context.h"
 #include "media/http/whep_http.h"
 
@@ -65,7 +66,7 @@ whep_http_string_response handle_whep_options(const whep_http_request& request, 
     response.erase(boost::beast::http::field::cache_control);
     response.set(boost::beast::http::field::access_control_allow_methods,
                  session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS");
-    response.set(boost::beast::http::field::access_control_allow_headers, "Content-Type");
+    response.set(boost::beast::http::field::access_control_allow_headers, "Content-Type, X-Stream-ID");
     if (!session_resource)
     {
         response.set("Accept-Post", "application/sdp");
@@ -84,10 +85,11 @@ whep_http_string_response handle_whep_session_get(const whep_http_request& reque
 
 whep_http_string_response handle_whep_post(const whep_http_request& request,
                                            worker_context& worker,
+                                           std::string stream_id,
                                            std::string stream_name,
                                            const config& application_config)
 {
-    auto result = whep::create(worker, stream_name, request.body(), application_config);
+    auto result = whep::create(worker, std::move(stream_id), stream_name, request.body(), application_config);
     switch (result.error)
     {
         case whep::create_error::none:
@@ -161,6 +163,11 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
         {
             return make_whep_error_response(request, boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n");
         }
+        const auto stream_id = request["X-Stream-ID"];
+        if (!valid_stream_id(stream_id))
+        {
+            return make_whep_error_response(request, boost::beast::http::status::bad_request, "invalid stream id\n");
+        }
         std::string stream_name;
         for (const auto& segment : segments)
         {
@@ -170,7 +177,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
             }
             stream_name.append(segment);
         }
-        return handle_whep_post(request, worker, std::move(stream_name), application_config);
+        return handle_whep_post(request, worker, std::string{stream_id}, std::move(stream_name), application_config);
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {

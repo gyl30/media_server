@@ -212,7 +212,8 @@ void test_signaling_registration_precedes_media_listeners()
     control.connect({boost::asio::ip::make_address("127.0.0.1"), http_port});
     boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::post, "/gb28181/receiver/create", 11};
     request.set(boost::beast::http::field::content_type, "application/json");
-    request.body() = R"({"stream_name":"live/service-stop","transport":"udp","payload_type":96,"ssrc":305419896})";
+    request.body() =
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/service-stop","transport":"udp","payload_type":96,"ssrc":305419896})";
     request.prepare_payload();
     boost::beast::http::write(control, request);
     boost::beast::flat_buffer response_buffer;

@@ -73,7 +73,7 @@ void test_udp_sender_session_sends_rtp()
         .ssrc = ssrc,
     };
     auto session = std::make_shared<gb28181_udp_sender_session>(
-        worker, source, description, boost::asio::ip::address_v4::loopback(), "udp-sender", false);
+        worker, "550e8400-e29b-41d4-a716-446655440000", source, description, boost::asio::ip::address_v4::loopback(), "udp-sender", false);
     require(streams.add_sender_session(source->name(), "udp-sender", session), "gb udp sender session registry");
     require(session->startup(), "gb udp sender session startup");
 
@@ -146,7 +146,7 @@ void test_udp_sender_queue_overflow_drops_packet()
         .ssrc = 0x12345680U,
     };
     auto session = std::make_shared<gb28181_udp_sender_session>(
-        worker, source, description, boost::asio::ip::address_v4::loopback(), "udp-overflow", false, std::chrono::milliseconds{25'000}, 0U);
+        worker, "550e8400-e29b-41d4-a716-446655440000", source, description, boost::asio::ip::address_v4::loopback(), "udp-overflow", false, std::chrono::milliseconds{25'000}, 0U);
     require(streams.add_sender_session(source->name(), "udp-overflow", session), "gb udp overflow sender registry");
     require(session->startup(), "gb udp overflow session startup");
 
@@ -215,7 +215,7 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
         .ssrc = ssrc,
     };
     auto session = std::make_shared<gb28181_udp_sender_session>(worker,
-                                                                source,
+                                                                "550e8400-e29b-41d4-a716-446655440000", source,
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),
                                                                 "udp-sender-rtcp",

@@ -6,6 +6,7 @@
 #include <deque>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstdint>
 
@@ -28,6 +29,7 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
 {
    public:
     gb28181_tcp_sender_session(worker_context& worker,
+                               std::string stream_id,
                                std::shared_ptr<media_stream> stream,
                                std::string sender_id,
                                gb28181_transport_config config,
@@ -37,6 +39,7 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
 
     [[nodiscard]] bool startup();
     void shutdown() override;
+    [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
     void run(boost::asio::yield_context yield);
@@ -45,6 +48,7 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     void safe_shutdown();
 
     worker_context& worker_;
+    std::string stream_id_;
     std::shared_ptr<media_stream> stream_;
     std::string sender_id_;
     gb28181_transport_config config_;

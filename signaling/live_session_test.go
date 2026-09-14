@@ -17,6 +17,7 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/google/uuid"
 )
 
 func TestLiveSessionInviteAckByeAndMediaLifecycle(t *testing.T) {
@@ -39,6 +40,10 @@ func TestLiveSessionInviteAckByeAndMediaLifecycle(t *testing.T) {
 	if view.state != liveStreaming || view.streamName != "gb/"+testDeviceID+"/"+testChannelID || view.ssrc != 200000001 || view.rtpPort != 40000 {
 		t.Fatalf("live view = %+v", view)
 	}
+	parsedStreamID, err := uuid.Parse(view.streamID)
+	if err != nil || parsedStreamID.Version() != 4 || parsedStreamID.String() != view.streamID {
+		t.Fatalf("stream_id = %q, error = %v", view.streamID, err)
+	}
 	select {
 	case request := <-device.invites:
 		if request.Method != sip.INVITE || request.ContentType() == nil || request.ContentType().Value() != "application/sdp" {
@@ -55,6 +60,7 @@ func TestLiveSessionInviteAckByeAndMediaLifecycle(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ACK was not received")
 	}
+	<-device.dialogs
 	if creates.Load() != 1 || deletes.Load() != 0 {
 		t.Fatalf("media calls create=%d delete=%d", creates.Load(), deletes.Load())
 	}
@@ -72,6 +78,39 @@ func TestLiveSessionInviteAckByeAndMediaLifecycle(t *testing.T) {
 	}
 	if deletes.Load() != 1 || live.len() != 0 || allocator.activeCount() != 0 {
 		t.Fatalf("cleanup delete=%d live=%d ssrc=%d", deletes.Load(), live.len(), allocator.activeCount())
+	}
+
+	restarted, err := live.startLive(context.Background(), testDeviceID, testChannelID)
+	if err != nil {
+		t.Fatalf("restart startLive() error = %v", err)
+	}
+	if restarted.streamID == view.streamID {
+		t.Fatalf("restart reused stream_id %q", restarted.streamID)
+	}
+	if parsed, parseErr := uuid.Parse(restarted.streamID); parseErr != nil || parsed.Version() != 4 || parsed.String() != restarted.streamID {
+		t.Fatalf("restart stream_id = %q, error = %v", restarted.streamID, parseErr)
+	}
+	select {
+	case <-device.invites:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restart INVITE was not received")
+	}
+	select {
+	case <-device.acks:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restart ACK was not received")
+	}
+	<-device.dialogs
+	if err := live.stopLive(context.Background(), testDeviceID, testChannelID); err != nil {
+		t.Fatalf("restart stopLive() error = %v", err)
+	}
+	select {
+	case <-device.byes:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restart BYE was not received")
+	}
+	if creates.Load() != 2 || deletes.Load() != 2 || live.len() != 0 || allocator.activeCount() != 0 {
+		t.Fatalf("restart cleanup create=%d delete=%d live=%d ssrc=%d", creates.Load(), deletes.Load(), live.len(), allocator.activeCount())
 	}
 	_ = mediaServer
 }

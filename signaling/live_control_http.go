@@ -37,6 +37,7 @@ func (s *infrastructureServer) handleLiveStart(writer http.ResponseWriter, reque
 
 	writeJSON(writer, http.StatusCreated, map[string]any{
 		"result":      "ok",
+		"stream_id":   view.streamID,
 		"stream_name": view.streamName,
 		"state":       view.state,
 		"ssrc":        view.ssrc,

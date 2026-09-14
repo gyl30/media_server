@@ -26,6 +26,9 @@ std::string registration_body(const signaling_client_options& options)
         {"instance_id", options.instance_id},
         {"control_url", options.control_url},
         {"media_ip", options.media_ip},
+        {"rtmp_port", options.rtmp_port},
+        {"rtsp_port", options.rtsp_port},
+        {"http_port", options.http_port},
     });
 }
 

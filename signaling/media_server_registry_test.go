@@ -120,5 +120,8 @@ func testMediaServerRegistration(serverID, instanceID, mediaIP string) mediaServ
 		InstanceID: instanceID,
 		ControlURL: "http://" + mediaIP + ":8080",
 		MediaIP:    mediaIP,
+		RTMPPort:   1935,
+		RTSPPort:   8554,
+		HTTPPort:   8080,
 	}
 }

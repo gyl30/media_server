@@ -16,6 +16,9 @@ type mediaServerRegistration struct {
 	InstanceID string `json:"instance_id"`
 	ControlURL string `json:"control_url"`
 	MediaIP    string `json:"media_ip"`
+	RTMPPort   uint16 `json:"rtmp_port"`
+	RTSPPort   uint16 `json:"rtsp_port"`
+	HTTPPort   uint16 `json:"http_port"`
 }
 
 type mediaServerHeartbeat struct {
@@ -33,6 +36,9 @@ type mediaServerInstance struct {
 	instanceID    string
 	controlURL    string
 	mediaIP       string
+	rtmpPort      uint16
+	rtspPort      uint16
+	httpPort      uint16
 	lastHeartbeat time.Time
 	online        bool
 }
@@ -66,6 +72,9 @@ func (r *mediaServerRegistry) register(registration mediaServerRegistration, now
 		instanceID:    registration.InstanceID,
 		controlURL:    registration.ControlURL,
 		mediaIP:       registration.MediaIP,
+		rtmpPort:      registration.RTMPPort,
+		rtspPort:      registration.RTSPPort,
+		httpPort:      registration.HTTPPort,
 		lastHeartbeat: now,
 		online:        true,
 	}
