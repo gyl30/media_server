@@ -51,7 +51,7 @@ func TestLiveControlHTTPStartCancellationCancelsMediaCreate(t *testing.T) {
 		t.Fatalf("newSSRCAllocator() error = %v", err)
 	}
 	live := newLiveService(platform, mediaRegistry, newMediaServerHTTPClient(time.Second), allocator, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	server := newInfrastructureServer(testConfig(), mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	server.live = live
 	requestContext, cancel := context.WithCancel(t.Context())
 	request := httptest.NewRequestWithContext(requestContext, http.MethodPost, "/internal/live/start", strings.NewReader(`{"device_id":"`+testDeviceID+`","channel_id":"`+testChannelID+`"}`))
@@ -95,7 +95,7 @@ func TestLiveControlHTTPStartAndStop(t *testing.T) {
 		t.Fatalf("newSSRCAllocator() error = %v", err)
 	}
 	live := newLiveService(platform, mediaRegistry, newMediaServerHTTPClient(time.Second), allocator, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	server := newInfrastructureServer(testConfig(), mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	server.live = live
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
@@ -157,7 +157,7 @@ func TestLiveControlHTTPRejectsInvalidAndMissingLive(t *testing.T) {
 		t.Fatalf("newSSRCAllocator() error = %v", err)
 	}
 	live := newLiveService(platform, mediaRegistry, newMediaServerHTTPClient(time.Second), allocator, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	server := newInfrastructureServer(testConfig(), mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	server.live = live
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()

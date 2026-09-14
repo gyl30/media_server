@@ -30,7 +30,7 @@ func TestPublishAllocationHTTP(t *testing.T) {
 			if err := registry.register(registration, time.Now()); err != nil {
 				t.Fatalf("register() error = %v", err)
 			}
-			server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			httpServer := httptest.NewServer(server.handler())
 			defer httpServer.Close()
 
@@ -78,7 +78,7 @@ func TestPublishAllocationHTTPRejectsInvalidRequests(t *testing.T) {
 	if err := registry.register(registration, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 
@@ -117,7 +117,7 @@ func TestPublishAllocationHTTPRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestPublishAllocationHTTPRequiresOnlineMediaServer(t *testing.T) {
-	server := newInfrastructureServer(testConfig(), newMediaServerRegistry(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), newMediaServerRegistry(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 

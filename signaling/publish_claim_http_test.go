@@ -17,7 +17,7 @@ func TestPublishClaimHTTP(t *testing.T) {
 	if err := registry.register(registration, time.Now()); err != nil {
 		t.Fatalf("register() error = %v", err)
 	}
-	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	allocation := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
 		serverID: "media-1", instanceID: "instance-a",
 	}, time.Now())
@@ -45,7 +45,7 @@ func TestPublishClaimHTTP(t *testing.T) {
 }
 
 func TestPublishClaimHTTPErrorContract(t *testing.T) {
-	server := newInfrastructureServer(testConfig(), newMediaServerRegistry(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), newMediaServerRegistry(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 	valid := `{"stream_id":"00000000-0000-4000-8000-000000000001","server_id":"media-1","instance_id":"instance-a","direction":"input","protocol":"rtmp","stream_name":"live/camera"}`
@@ -85,7 +85,7 @@ func TestPublishClaimHTTPErrorContract(t *testing.T) {
 }
 
 func TestPublishClaimHTTPReportsExpiredAllocation(t *testing.T) {
-	server := newInfrastructureServer(testConfig(), newMediaServerRegistry(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, testConfig(), newMediaServerRegistry(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	allocation := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
 		serverID: "media-1", instanceID: "instance-a",
 	}, time.Now().Add(-publishAllocationTTL))
