@@ -23,6 +23,7 @@ simulator_bin="${SIMULATOR_BIN:-}"
 mkdir -p "$work_dir"
 work_dir="$(cd "$work_dir" && pwd)"
 server_bin="$(realpath "$server_bin")"
+signaling_database="$(mktemp "$work_dir/signaling.XXXXXX.db")"
 
 signaling_pid=""
 media_pid=""
@@ -140,6 +141,7 @@ fi
     --sip-listen "$signaling_address:$sip_port" \
     --sip-advertise "$signaling_address:$sip_port" \
     --http-listen "$signaling_address:$signaling_http_port" \
+    --database "$signaling_database" \
     >"$work_dir/signaling.log" 2>&1 &
 signaling_pid=$!
 wait_http "http://$signaling_address:$signaling_http_port/" "$signaling_pid" "$work_dir/signaling.log"
