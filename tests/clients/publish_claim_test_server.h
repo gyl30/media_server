@@ -1,6 +1,7 @@
 #ifndef MEDIA_SERVER_TESTS_CLIENTS_PUBLISH_CLAIM_TEST_SERVER_H
 #define MEDIA_SERVER_TESTS_CLIENTS_PUBLISH_CLAIM_TEST_SERVER_H
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -8,6 +9,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -73,6 +75,18 @@ class publish_claim_test_server final
             throw std::runtime_error("publish claim request timeout");
         }
         return requests_.front();
+    }
+
+    [[nodiscard]] bool wait_target(std::string_view target)
+    {
+        std::unique_lock lock(mutex_);
+        return condition_.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this, target]()
+            {
+                return std::ranges::any_of(requests_, [target](const auto& request) { return request.target == target; });
+            });
     }
 
     void release_response()

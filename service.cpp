@@ -16,6 +16,7 @@
 #include "media/core/log.h"
 #include "media/core/runtime_event.h"
 #include "media/http/http_server.h"
+#include "media/http/runtime_event_reporter.h"
 #include "media/http/signaling_client.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
@@ -67,6 +68,10 @@ void service::stop()
                                                     whep::shutdown(runtime_end_reason::server_shutdown);
                                                     stream_registry::instance().shutdown_sessions(
                                                         runtime_end_reason::server_shutdown);
+                                                    if (runtime_event_reporter_)
+                                                    {
+                                                        runtime_event_reporter_->shutdown();
+                                                    }
                                                     workers_->release_work();
                                                 });
                           });
@@ -215,7 +220,17 @@ int service::run()
             .http_port = config_.http_port,
         };
         signaling_ = std::make_shared<signaling_client>(control_io, std::move(options));
-        runtime_events_ = std::make_shared<runtime_event_emitter>(config_.server_id, instance_id, [](runtime_event) {});
+        runtime_event_reporter_ = std::make_shared<runtime_event_reporter>(control_io, signaling_);
+        runtime_events_ = std::make_shared<runtime_event_emitter>(
+            config_.server_id,
+            instance_id,
+            [reporter = std::weak_ptr<runtime_event_reporter>(runtime_event_reporter_)](runtime_event event)
+            {
+                if (const auto value = reporter.lock())
+                {
+                    value->report(std::move(event));
+                }
+            });
     }
 
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_, signaling_, runtime_events_);

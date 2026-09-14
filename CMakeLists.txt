@@ -192,6 +192,7 @@ add_library(media_core STATIC
     media/http/gb28181_json.cpp
     media/http/gb28181_http.cpp
     media/http/rtsp_pull_http.cpp
+    media/http/runtime_event_reporter.cpp
     media/http/signaling_client.cpp
     media/http/whep_http.cpp
     media/http/whip_http.cpp
@@ -362,6 +363,10 @@ if(BUILD_TESTING)
     add_executable(runtime_event_tests tests/runtime_event_tests.cpp)
     target_link_libraries(runtime_event_tests PRIVATE media_core media_server_link_options)
     add_test(NAME runtime_event_tests COMMAND runtime_event_tests)
+
+    add_executable(runtime_event_reporter_tests tests/runtime_event_reporter_tests.cpp)
+    target_link_libraries(runtime_event_reporter_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME runtime_event_reporter_tests COMMAND runtime_event_reporter_tests)
 
     add_executable(port_manager_tests tests/port_manager_tests.cpp)
     target_link_libraries(port_manager_tests PRIVATE media_core media_server_link_options)

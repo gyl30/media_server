@@ -357,6 +357,7 @@ void test_service_shutdown_latches_output_reason()
         publisher_io, publisher.publish("127.0.0.1", rtsp_port, sdp, rtp), boost::asio::use_future);
     publisher_io.run();
     require(!publish.get(), "service shutdown reason publisher starts");
+    require(signaling.wait_target("/internal/runtime-events"), "service forwards runtime events to signaling");
 
     auto stream = media_server::stream_registry::instance().find(stream_name);
     require(stream != nullptr, "service shutdown reason publisher enters registry");
