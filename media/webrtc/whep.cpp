@@ -22,6 +22,7 @@ struct state
 {
     std::mutex mutex;
     std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions;
+    std::map<std::string, std::weak_ptr<whep_session>, std::less<>> stream_sessions;
 };
 
 state& runtime()
@@ -31,6 +32,33 @@ state& runtime()
 }
 
 create_result failed(create_error error) { return {.error = error, .session_id = {}, .answer_sdp = {}}; }
+
+void cleanup_expired(state& current)
+{
+    std::erase_if(current.sessions, [](const auto& entry) { return entry.second.expired(); });
+    std::erase_if(current.stream_sessions, [](const auto& entry) { return entry.second.expired(); });
+}
+
+void release_stream_session(state& current, const whep_session& expected)
+{
+    const auto iterator = current.stream_sessions.find(expected.stream_id());
+    if (iterator == current.stream_sessions.end())
+    {
+        return;
+    }
+    const auto session = iterator->second.lock();
+    if (!session || session.get() == &expected)
+    {
+        current.stream_sessions.erase(iterator);
+    }
+}
+
+void release_stream_session(const std::shared_ptr<whep_session>& expected)
+{
+    auto& current = runtime();
+    std::scoped_lock lock(current.mutex);
+    release_stream_session(current, *expected);
+}
 
 }    // namespace
 
@@ -104,13 +132,25 @@ create_result create(worker_context& worker,
                                                   application_config.whep_video,
                                                   1024U * 1024U,
                                                   std::move(runtime_events));
+    {
+        auto& current = runtime();
+        std::scoped_lock lock(current.mutex);
+        cleanup_expired(current);
+        if (!current.stream_sessions.emplace(session->stream_id(), session).second)
+        {
+            spdlog::debug("whep create stream id already active {}", session->stream_id());
+            return failed(create_error::stream_id_conflict);
+        }
+    }
     switch (session->startup(std::move(*offer)))
     {
         case whep_session_startup_error::none:
             break;
         case whep_session_startup_error::invalid_offer:
+            release_stream_session(session);
             return failed(create_error::invalid_offer);
         case whep_session_startup_error::internal_error:
+            release_stream_session(session);
             return failed(create_error::internal_error);
     }
 
@@ -119,8 +159,12 @@ create_result create(worker_context& worker,
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
-        std::erase_if(current.sessions, [](const auto& entry) { return entry.second.expired(); });
+        cleanup_expired(current);
         inserted = current.sessions.emplace(session_id, session).second;
+        if (!inserted)
+        {
+            release_stream_session(current, *session);
+        }
     }
     if (!inserted)
     {
@@ -137,14 +181,10 @@ bool contains(std::string_view session_id)
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
+    cleanup_expired(current);
     const auto iterator = current.sessions.find(session_id);
     if (iterator == current.sessions.end())
     {
-        return false;
-    }
-    if (iterator->second.expired())
-    {
-        current.sessions.erase(iterator);
         return false;
     }
     return true;
@@ -156,6 +196,7 @@ bool remove(std::string_view session_id)
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
+        cleanup_expired(current);
         const auto iterator = current.sessions.find(session_id);
         if (iterator == current.sessions.end())
         {
@@ -164,6 +205,10 @@ bool remove(std::string_view session_id)
         }
         session = iterator->second.lock();
         current.sessions.erase(iterator);
+        if (session)
+        {
+            release_stream_session(current, *session);
+        }
     }
     if (!session)
     {
@@ -187,6 +232,7 @@ void shutdown(runtime_end_reason reason)
         }
     }
     current.sessions.clear();
+    current.stream_sessions.clear();
 }
 
 }    // namespace media_server::whep
