@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -116,6 +117,17 @@ func (r *channelRegistry) len(deviceID string) int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.channels[deviceID])
+}
+
+func (r *channelRegistry) list(deviceID string) []channel {
+	r.mu.RLock()
+	channels := make([]channel, 0, len(r.channels[deviceID]))
+	for _, value := range r.channels[deviceID] {
+		channels = append(channels, value)
+	}
+	r.mu.RUnlock()
+	sort.Slice(channels, func(left, right int) bool { return channels[left].id < channels[right].id })
+	return channels
 }
 
 func (r *channelRegistry) removeDevice(deviceID string) {

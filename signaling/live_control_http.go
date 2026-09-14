@@ -16,8 +16,22 @@ func (s *infrastructureServer) handleLiveStart(writer http.ResponseWriter, reque
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	view, ok := s.startLive(writer, request, command.DeviceID, command.ChannelID)
+	if !ok {
+		return
+	}
+	writeJSON(writer, http.StatusCreated, map[string]any{
+		"result":      "ok",
+		"stream_id":   view.streamID,
+		"stream_name": view.streamName,
+		"state":       view.state,
+		"ssrc":        view.ssrc,
+		"rtp_port":    view.rtpPort,
+	})
+}
 
-	view, err := s.live.startLive(request.Context(), command.DeviceID, command.ChannelID)
+func (s *infrastructureServer) startLive(writer http.ResponseWriter, request *http.Request, deviceID, channelID string) (liveView, bool) {
+	view, err := s.live.startLive(request.Context(), deviceID, channelID)
 	if err != nil {
 		switch {
 		case errors.Is(err, errLiveExists):
@@ -29,20 +43,12 @@ func (s *infrastructureServer) handleLiveStart(writer http.ResponseWriter, reque
 		case errors.Is(err, errNoMediaServer):
 			writeHTTPError(writer, http.StatusServiceUnavailable, "no_media_server")
 		default:
-			s.logger.Error("live start failed", "device_id", command.DeviceID, "channel_id", command.ChannelID, "error", err)
+			s.logger.Error("live start failed", "device_id", deviceID, "channel_id", channelID, "error", err)
 			writeHTTPError(writer, http.StatusBadGateway, "live_start_failed")
 		}
-		return
+		return liveView{}, false
 	}
-
-	writeJSON(writer, http.StatusCreated, map[string]any{
-		"result":      "ok",
-		"stream_id":   view.streamID,
-		"stream_name": view.streamName,
-		"state":       view.state,
-		"ssrc":        view.ssrc,
-		"rtp_port":    view.rtpPort,
-	})
+	return view, true
 }
 
 func (s *infrastructureServer) handleLiveStop(writer http.ResponseWriter, request *http.Request) {
@@ -51,14 +57,26 @@ func (s *infrastructureServer) handleLiveStop(writer http.ResponseWriter, reques
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	s.stopLive(writer, request, command.DeviceID, command.ChannelID, "")
+}
 
-	if err := s.live.stopLive(request.Context(), command.DeviceID, command.ChannelID); err != nil {
-		if errors.Is(err, errLiveNotFound) {
+func (s *infrastructureServer) stopLive(writer http.ResponseWriter, request *http.Request, deviceID, channelID, streamID string) {
+	var err error
+	if streamID == "" {
+		err = s.live.stopLive(request.Context(), deviceID, channelID)
+	} else {
+		err = s.live.stopLiveExpected(request.Context(), deviceID, channelID, streamID)
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, errLiveNotFound):
 			writeHTTPError(writer, http.StatusNotFound, "live_not_found")
-			return
+		case errors.Is(err, errLiveChanged):
+			writeHTTPError(writer, http.StatusConflict, "live_changed")
+		default:
+			s.logger.Error("live stop failed", "device_id", deviceID, "channel_id", channelID, "error", err)
+			writeHTTPError(writer, http.StatusBadGateway, "live_stop_failed")
 		}
-		s.logger.Error("live stop failed", "device_id", command.DeviceID, "channel_id", command.ChannelID, "error", err)
-		writeHTTPError(writer, http.StatusBadGateway, "live_stop_failed")
 		return
 	}
 
