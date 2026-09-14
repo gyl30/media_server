@@ -20,7 +20,6 @@
 #include "media/rtsp/rtsp_server.h"
 #include "media/net/io_context_pool.h"
 #include "media/core/stream_registry.h"
-#include "media/rtsp/rtsp_pull_session.h"
 
 namespace media_server
 {
@@ -45,11 +44,6 @@ void service::stop()
     rtmp_->shutdown();
     rtsp_->shutdown();
     http_->shutdown();
-    for (const auto& pull : pulls_)
-    {
-        pull->shutdown();
-    }
-    pulls_.clear();
 
     // 等入口会话处理完关闭请求，确保不会再创建新的媒体会话。
     pending_shutdown_workers_ = workers_->size();
@@ -167,19 +161,6 @@ void service::run_control(boost::asio::yield_context yield)
         exit_code_ = 2;
         stop();
         return;
-    }
-
-    for (const auto& [name, url] : config_.rtsp_pulls)
-    {
-        auto pull = std::make_shared<rtsp_pull_session>(workers_->next(), name, url);
-        if (!pull->startup())
-        {
-            spdlog::error("rtsp pull startup failed stream {}", name);
-            exit_code_ = 2;
-            stop();
-            return;
-        }
-        pulls_.push_back(std::move(pull));
     }
 
     spdlog::info("rtmp listen {}:{}", config_.bind_address, config_.rtmp_port);

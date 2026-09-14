@@ -1,10 +1,8 @@
 #include <string>
-#include <vector>
 #include <utility>
 #include <charconv>
 #include <iostream>
 #include <string_view>
-#include <set>
 
 #include <boost/program_options.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -74,7 +72,6 @@ int parse_config(int argc, char** argv, config* cfg)
     std::string rtsp_video_codec;
     std::string http_video_codec;
     std::string whep_video_codec;
-    std::vector<std::string> rtsp_pulls;
 
     po::options_description options("options");
     options.add_options()("help", "show help")("rtmp-port", po::value<std::string>(&rtmp_port), "rtmp listen port")(
@@ -82,7 +79,6 @@ int parse_config(int argc, char** argv, config* cfg)
         "bind-address", po::value<std::string>(&result.bind_address), "server listen address")(
         "webrtc-address", po::value<std::string>(&result.webrtc_address), "webrtc address")(
         "threads", po::value<std::string>(&threads), "worker thread count")(
-        "rtsp-pull", po::value<std::vector<std::string>>(&rtsp_pulls)->composing(), "stream_name=rtsp_url")(
         "rtmp-video-codec", po::value<std::string>(&rtmp_video_codec), "passthrough|av1")(
         "rtsp-video-codec", po::value<std::string>(&rtsp_video_codec), "passthrough|av1")(
         "http-video-codec", po::value<std::string>(&http_video_codec), "passthrough|av1")(
@@ -145,24 +141,6 @@ int parse_config(int argc, char** argv, config* cfg)
     {
         print_usage(options);
         return 1;
-    }
-
-    std::set<std::string> rtsp_pull_names;
-    for (const auto& value : rtsp_pulls)
-    {
-        const auto equal = value.find('=');
-        if (equal == std::string::npos || equal == 0 || equal + 1 >= value.size())
-        {
-            print_usage(options);
-            return 1;
-        }
-        const auto name = value.substr(0, equal);
-        if (!rtsp_pull_names.emplace(name).second)
-        {
-            print_usage(options);
-            return 1;
-        }
-        result.rtsp_pulls.emplace_back(name, value.substr(equal + 1));
     }
 
     const bool has_signaling_value = !result.signaling_url.empty() || !result.server_id.empty() || !result.control_url.empty() || !result.media_ip.empty();
