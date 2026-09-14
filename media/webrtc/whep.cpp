@@ -35,6 +35,7 @@ create_result failed(create_error error) { return {.error = error, .session_id =
 }    // namespace
 
 create_result create(worker_context& worker,
+                     std::string stream_id,
                      std::string_view stream_name,
                      std::string_view offer_sdp,
                      const config& application_config)
@@ -94,7 +95,7 @@ create_result create(worker_context& worker,
     }
 
     auto session = std::make_shared<whep_session>(
-        worker, stream, advertised_address, std::move(certificate), whep_session_timeouts{}, application_config.whep_video);
+        worker, std::move(stream_id), stream, advertised_address, std::move(certificate), whep_session_timeouts{}, application_config.whep_video);
     switch (session->startup(std::move(*offer)))
     {
         case whep_session_startup_error::none:

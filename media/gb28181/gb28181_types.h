@@ -30,16 +30,31 @@ struct gb28181_transport_config
 
 struct gb28181_receiver_config
 {
+    std::string stream_id;
     std::string stream_name;
     gb28181_transport_config transport;
 };
 
 struct gb28181_sender_config
 {
+    std::string stream_id;
     std::string stream_name;
     std::string sender_id;
     gb28181_transport_config transport;
     bool rtcp_enabled{};
+};
+
+struct gb28181_receiver_identity
+{
+    std::string stream_id;
+    std::string stream_name;
+};
+
+struct gb28181_sender_identity
+{
+    std::string stream_id;
+    std::string stream_name;
+    std::string sender_id;
 };
 
 }    // namespace media_server

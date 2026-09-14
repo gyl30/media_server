@@ -21,6 +21,7 @@ extern "C"
 namespace media_server
 {
 gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
+                                                       std::string stream_id,
                                                        std::shared_ptr<media_stream> stream,
                                                        gb28181_transport_config config,
                                                        boost::asio::ip::address bind_address,
@@ -29,6 +30,7 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
                                                        std::chrono::milliseconds rtcp_interval,
                                                        std::size_t max_write_queue_bytes)
     : worker_(worker),
+      stream_id_(std::move(stream_id)),
       stream_(std::move(stream)),
       sender_id_(std::move(sender_id)),
       config_(std::move(config)),
@@ -147,6 +149,8 @@ void gb28181_udp_sender_session::shutdown()
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
+
+std::string_view gb28181_udp_sender_session::stream_id() const noexcept { return stream_id_; }
 
 void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 {

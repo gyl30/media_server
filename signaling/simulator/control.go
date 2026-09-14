@@ -18,6 +18,7 @@ type liveControlRequest struct {
 
 type liveStartResponse struct {
 	Result     string `json:"result"`
+	StreamID   string `json:"stream_id"`
 	StreamName string `json:"stream_name"`
 	State      string `json:"state"`
 	SSRC       uint32 `json:"ssrc"`

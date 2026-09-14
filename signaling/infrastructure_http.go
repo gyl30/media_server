@@ -22,14 +22,14 @@ type infrastructureServer struct {
 	live                 *liveService
 	media                *mediaServerHTTPClient
 	rtspPullMu           sync.Mutex
-	rtspPulls            map[string]mediaServerInstance
+	rtspPulls            map[string]rtspPullRuntime
 	onMediaServerOffline func(mediaServerInstance)
 }
 
 func newInfrastructureServer(cfg config, registry *mediaServerRegistry, logger *slog.Logger) *infrastructureServer {
 	return &infrastructureServer{
 		cfg: cfg, registry: registry, logger: logger,
-		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), rtspPulls: make(map[string]mediaServerInstance),
+		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), rtspPulls: make(map[string]rtspPullRuntime),
 	}
 }
 
@@ -136,7 +136,7 @@ func validMediaServerRegistration(registration mediaServerRegistration) bool {
 		return false
 	}
 	mediaIP := net.ParseIP(registration.MediaIP)
-	return mediaIP != nil && !mediaIP.IsUnspecified()
+	return mediaIP != nil && !mediaIP.IsUnspecified() && registration.RTMPPort != 0 && registration.RTSPPort != 0 && registration.HTTPPort != 0
 }
 
 func writeHTTPError(writer http.ResponseWriter, status int, code string) {

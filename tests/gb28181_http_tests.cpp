@@ -20,6 +20,9 @@ namespace media_server
 namespace
 {
 
+constexpr std::string_view stream_id_a = "550e8400-e29b-41d4-a716-446655440000";
+constexpr std::string_view stream_id_b = "550e8400-e29b-41d4-b716-446655440001";
+
 class foreign_receiver_session final : public stream_session
 {
    public:
@@ -86,6 +89,7 @@ void test_receiver_handlers()
     auto& io = worker.io();
     stream_registry::instance().clear();
     boost::json::object create_body;
+    create_body["stream_id"] = stream_id_a;
     create_body["stream_name"] = "live/http-handler-receiver";
     create_body["transport"] = "udp";
     create_body["payload_type"] = 96;
@@ -119,7 +123,14 @@ void test_receiver_handlers()
         duplicate_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "receiver create failure response");
 
     boost::json::object delete_body;
+    delete_body["stream_id"] = stream_id_a;
     delete_body["stream_name"] = "live/http-handler-receiver";
+    auto stale_delete_body = delete_body;
+    stale_delete_body["stream_id"] = stream_id_b;
+    require_json_response(receiver_request(worker, request("/gb28181/receiver/delete", std::move(stale_delete_body))),
+                          boost::beast::http::status::internal_server_error,
+                          R"({"error":"operation_failed"})",
+                          "receiver stale delete rejected");
     const auto delete_response = receiver_request(worker, request("/gb28181/receiver/delete", delete_body));
     require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "receiver delete response");
 
@@ -155,6 +166,7 @@ void test_sender_handlers()
     require(stream_registry::instance().add(stream), "sender handler stream");
 
     boost::json::object create_body;
+    create_body["stream_id"] = stream_id_a;
     create_body["stream_name"] = stream->name();
     create_body["sender_id"] = "primary";
     create_body["transport"] = "udp";
@@ -171,6 +183,7 @@ void test_sender_handlers()
         duplicate_response, boost::beast::http::status::internal_server_error, R"({"error":"operation_failed"})", "sender create failure response");
 
     boost::json::object delete_body;
+    delete_body["stream_id"] = stream_id_a;
     delete_body["stream_name"] = stream->name();
     delete_body["sender_id"] = "primary";
     const auto delete_response = sender_request(worker, request("/gb28181/sender/delete", delete_body));
@@ -200,7 +213,8 @@ void test_receiver_delete_preserves_foreign_session()
 
     auto foreign = std::make_shared<foreign_receiver_session>();
     require(streams.add_receiver_session("live/foreign", foreign), "gb receiver foreign identity");
-    const auto response = receiver_request(worker, request("/gb28181/receiver/delete", {{"stream_name", "live/foreign"}}));
+    const auto response = receiver_request(
+        worker, request("/gb28181/receiver/delete", {{"stream_id", stream_id_a}, {"stream_name", "live/foreign"}}));
     require_json_response(response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",

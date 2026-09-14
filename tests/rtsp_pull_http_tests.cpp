@@ -19,6 +19,9 @@ namespace media_server
 namespace
 {
 
+constexpr char stream_id_a[] = "550e8400-e29b-41d4-a716-446655440000";
+constexpr char stream_id_b[] = "550e8400-e29b-41d4-b716-446655440001";
+
 class foreign_receiver_session final : public stream_session
 {
    public:
@@ -76,9 +79,14 @@ void require_response(const rtsp_pull_http_response& response,
     require(response.body() == body, message);
 }
 
-boost::json::object create_body(std::string stream_name, std::string url)
+boost::json::object create_body(std::string stream_name, std::string url, std::string_view stream_id = stream_id_a)
 {
-    return {{"stream_name", std::move(stream_name)}, {"url", std::move(url)}};
+    return {{"stream_id", stream_id}, {"stream_name", std::move(stream_name)}, {"url", std::move(url)}};
+}
+
+boost::json::object delete_body(std::string stream_name, std::string_view stream_id = stream_id_a)
+{
+    return {{"stream_id", stream_id}, {"stream_name", std::move(stream_name)}};
 }
 
 void test_request_validation()
@@ -93,7 +101,7 @@ void test_request_validation()
                      boost::beast::http::status::created,
                      R"({"result":"ok"})",
                      "rtsp pull no auth create");
-    require_response(handle(worker, request("/rtsp/pull/delete", {{"stream_name", "live/no-auth"}})),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/no-auth"))),
                      boost::beast::http::status::ok,
                      R"({"result":"ok"})",
                      "rtsp pull no auth delete");
@@ -105,26 +113,26 @@ void test_request_validation()
                      boost::beast::http::status::created,
                      R"({"result":"ok"})",
                      "rtsp pull auth create");
-    require_response(handle(worker, request("/rtsp/pull/delete", {{"stream_name", "live/auth"}})),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/auth"))),
                      boost::beast::http::status::ok,
                      R"({"result":"ok"})",
                      "rtsp pull auth delete");
 
     const std::string invalid_bodies[]{
-        R"({"url":"rtsp://127.0.0.1/live"})",
-        R"({"stream_name":"live/missing-url"})",
-        R"({"stream_name":"live/password","url":"rtsp://127.0.0.1/live","password":"secret"})",
-        R"({"stream_name":"live/password","url":"rtsp://127.0.0.1/live","username":"","password":""})",
-        R"({"stream_name":"live/userinfo","url":"rtsp://admin:secret@127.0.0.1/live"})",
-        R"({"stream_name":"live/scheme","url":"http://127.0.0.1/live"})",
-        R"({"stream_name":"live/authority","url":"rtsp:/live"})",
-        R"({"stream_name":"live/host","url":"rtsp:///live"})",
-        R"({"stream_name":"live/port","url":"rtsp://127.0.0.1:0/live"})",
-        R"({"stream_name":"live/unknown","url":"rtsp://127.0.0.1/live","unknown":true})",
-        R"({"stream_name":1,"url":"rtsp://127.0.0.1/live"})",
-        R"({"stream_name":"live/type","url":"rtsp://127.0.0.1/live","username":1})",
-        R"({"stream_name":"live/type","url":"rtsp://127.0.0.1/live","password":1})",
-        R"({"stream_name":"live/trailing","url":"rtsp://127.0.0.1/live"} {})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/missing-url"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/password","url":"rtsp://127.0.0.1/live","password":"secret"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/password","url":"rtsp://127.0.0.1/live","username":"","password":""})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/userinfo","url":"rtsp://admin:secret@127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/scheme","url":"http://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/authority","url":"rtsp:/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/host","url":"rtsp:///live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/port","url":"rtsp://127.0.0.1:0/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/unknown","url":"rtsp://127.0.0.1/live","unknown":true})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":1,"url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/type","url":"rtsp://127.0.0.1/live","username":1})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/type","url":"rtsp://127.0.0.1/live","password":1})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/trailing","url":"rtsp://127.0.0.1/live"} {})",
         "{",
         "[]",
     };
@@ -136,7 +144,7 @@ void test_request_validation()
                          "rtsp pull invalid create");
     }
 
-    require_response(handle(worker, request("/rtsp/pull/delete", R"({"stream_name":""})")),
+    require_response(handle(worker, request("/rtsp/pull/delete", R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":""})")),
                      boost::beast::http::status::bad_request,
                      R"({"error":"invalid_request"})",
                      "rtsp pull invalid delete");
@@ -162,6 +170,57 @@ void test_request_validation()
     streams.clear();
 }
 
+void test_stream_id_required()
+{
+    worker_context worker;
+    auto& streams = stream_registry::instance();
+    streams.clear();
+
+    auto identified = create_body("live/identified", "rtsp://127.0.0.1:9/live/source");
+    require_response(handle(worker, request("/rtsp/pull/create", std::move(identified))),
+                     boost::beast::http::status::created,
+                     R"({"result":"ok"})",
+                     "rtsp pull accepts stream id");
+
+    require_response(handle(worker,
+                            request("/rtsp/pull/create",
+                                    {{"stream_name", "live/missing-id"}, {"url", "rtsp://127.0.0.1:9/live/source"}})),
+                     boost::beast::http::status::bad_request,
+                     R"({"error":"invalid_request"})",
+                     "rtsp pull requires stream id");
+    require_response(handle(worker,
+                            request("/rtsp/pull/create",
+                                    create_body("live/uppercase-id",
+                                                "rtsp://127.0.0.1:9/live/source",
+                                                "550E8400-E29B-41D4-A716-446655440000"))),
+                     boost::beast::http::status::bad_request,
+                     R"({"error":"invalid_request"})",
+                     "rtsp pull rejects noncanonical stream id");
+    require_response(handle(worker,
+                            request("/rtsp/pull/create",
+                                    create_body("live/non-v4-id",
+                                                "rtsp://127.0.0.1:9/live/source",
+                                                "550e8400-e29b-11d4-a716-446655440000"))),
+                     boost::beast::http::status::bad_request,
+                     R"({"error":"invalid_request"})",
+                     "rtsp pull requires version four stream id");
+    require_response(handle(worker,
+                            request("/rtsp/pull/create",
+                                    create_body("live/non-rfc-variant",
+                                                "rtsp://127.0.0.1:9/live/source",
+                                                "550e8400-e29b-41d4-0716-446655440000"))),
+                     boost::beast::http::status::bad_request,
+                     R"({"error":"invalid_request"})",
+                     "rtsp pull requires RFC 4122 stream id variant");
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/identified"))),
+                     boost::beast::http::status::ok,
+                     R"({"result":"ok"})",
+                     "rtsp pull identified delete");
+    worker.release_work();
+    worker.io().run();
+    streams.clear();
+}
+
 void test_create_delete_recreate()
 {
     worker_context worker;
@@ -178,23 +237,27 @@ void test_create_delete_recreate()
                      boost::beast::http::status::conflict,
                      R"({"error":"conflict"})",
                      "rtsp pull duplicate create");
-    require_response(handle(worker, request("/rtsp/pull/delete", {{"stream_name", "live/recreate"}})),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/recreate"))),
                      boost::beast::http::status::ok,
                      R"({"result":"ok"})",
                      "rtsp pull initial delete");
-    require_response(handle(worker, request("/rtsp/pull/create", body)),
+    require_response(handle(worker, request("/rtsp/pull/create", create_body("live/recreate", "rtsp://127.0.0.1:9/live/source", stream_id_b))),
                      boost::beast::http::status::created,
                      R"({"result":"ok"})",
                      "rtsp pull immediate recreate");
-    require_response(handle(worker, request("/rtsp/pull/create", body)),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/recreate", stream_id_a))),
+                     boost::beast::http::status::not_found,
+                     R"({"error":"not_found"})",
+                     "rtsp pull stale delete rejected");
+    require_response(handle(worker, request("/rtsp/pull/create", create_body("live/recreate", "rtsp://127.0.0.1:9/live/source", stream_id_b))),
                      boost::beast::http::status::conflict,
                      R"({"error":"conflict"})",
                      "rtsp pull recreated identity retained");
-    require_response(handle(worker, request("/rtsp/pull/delete", {{"stream_name", "live/recreate"}})),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/recreate", stream_id_b))),
                      boost::beast::http::status::ok,
                      R"({"result":"ok"})",
                      "rtsp pull recreated delete");
-    require_response(handle(worker, request("/rtsp/pull/delete", {{"stream_name", "live/recreate"}})),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/recreate", stream_id_b))),
                      boost::beast::http::status::not_found,
                      R"({"error":"not_found"})",
                      "rtsp pull missing delete");
@@ -212,7 +275,7 @@ void test_delete_preserves_foreign_receiver()
 
     auto foreign = std::make_shared<foreign_receiver_session>();
     require(streams.add_receiver_session("live/foreign", foreign), "rtsp pull foreign receiver identity");
-    require_response(handle(worker, request("/rtsp/pull/delete", {{"stream_name", "live/foreign"}})),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/foreign"))),
                      boost::beast::http::status::not_found,
                      R"({"error":"not_found"})",
                      "rtsp pull delete preserves foreign receiver");
@@ -226,12 +289,12 @@ void test_delayed_shutdown_preserves_replacement()
     auto& streams = stream_registry::instance();
     streams.clear();
 
-    auto old_session = std::make_shared<rtsp_pull_session>(worker, "live/replacement", "rtsp://127.0.0.1:9/live/old");
+    auto old_session = std::make_shared<rtsp_pull_session>(worker, stream_id_a, "live/replacement", "rtsp://127.0.0.1:9/live/old");
     require(streams.add_receiver_session("live/replacement", old_session), "rtsp pull old identity");
     auto removed = streams.take_receiver_session("live/replacement");
     require(removed.get() == old_session.get(), "rtsp pull old identity removed");
 
-    auto replacement = std::make_shared<rtsp_pull_session>(worker, "live/replacement", "rtsp://127.0.0.1:9/live/new");
+    auto replacement = std::make_shared<rtsp_pull_session>(worker, stream_id_b, "live/replacement", "rtsp://127.0.0.1:9/live/new");
     require(streams.add_receiver_session("live/replacement", replacement), "rtsp pull replacement identity");
     old_session->shutdown();
     worker.release_work();
@@ -267,7 +330,7 @@ void test_runtime_failure_releases_identity()
                      boost::beast::http::status::created,
                      R"({"result":"ok"})",
                      "rtsp pull recreate after runtime failure");
-    require_response(handle(worker, request("/rtsp/pull/delete", {{"stream_name", "live/failure"}})),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/failure"))),
                      boost::beast::http::status::ok,
                      R"({"result":"ok"})",
                      "rtsp pull failure replacement delete");
@@ -289,7 +352,7 @@ void test_registry_shutdown_stops_pull()
     streams.shutdown_sessions();
     worker.release_work();
     worker.io().run();
-    require_response(handle(worker, request("/rtsp/pull/delete", {{"stream_name", "live/service-stop"}})),
+    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/service-stop"))),
                      boost::beast::http::status::not_found,
                      R"({"error":"not_found"})",
                      "rtsp pull service stop removes identity");
@@ -304,6 +367,7 @@ int main()
     try
     {
         media_server::test_request_validation();
+        media_server::test_stream_id_required();
         media_server::test_create_delete_recreate();
         media_server::test_delete_preserves_foreign_receiver();
         media_server::test_delayed_shutdown_preserves_replacement();

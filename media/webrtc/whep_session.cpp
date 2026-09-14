@@ -41,6 +41,7 @@ std::string random_hex(std::size_t byte_count)
 }    // namespace
 
 whep_session::whep_session(worker_context& worker,
+                           std::string stream_id,
                            std::shared_ptr<media_stream> stream,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
@@ -57,7 +58,8 @@ whep_session::whep_session(worker_context& worker,
       max_write_queue_bytes_(max_write_queue_bytes),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
-      ice_activity_timer_(worker_.io())
+      ice_activity_timer_(worker_.io()),
+      stream_id_(std::move(stream_id))
 {
 }
 
@@ -110,7 +112,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
                                      webrtc_answer_config{
                                          .address = advertised_address_,
                                          .port = local_port_,
-                                         .stream_id = id_,
+                                         .stream_id = stream_id_,
                                          .ice_ufrag = ice_ufrag_,
                                          .ice_pwd = ice_pwd_,
                                          .fingerprint = certificate_->sha256_fingerprint(),
@@ -237,6 +239,8 @@ void whep_session::shutdown_udp_transport()
 }
 
 const std::string& whep_session::id() const noexcept { return id_; }
+
+const std::string& whep_session::stream_id() const noexcept { return stream_id_; }
 
 const std::string& whep_session::answer_sdp() const noexcept { return answer_.sdp; }
 

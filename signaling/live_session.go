@@ -12,6 +12,7 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/google/uuid"
 )
 
 var (
@@ -39,6 +40,7 @@ type liveKey struct {
 type liveSession struct {
 	key         liveKey
 	streamName  string
+	streamID    string
 	server      mediaServerInstance
 	endpoint    gb28181ReceiverEndpoint
 	ssrc        uint32
@@ -52,6 +54,7 @@ type liveSession struct {
 }
 
 type liveView struct {
+	streamID   string
 	streamName string
 	state      liveState
 	ssrc       uint32
@@ -111,7 +114,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	key := liveKey{deviceID: deviceID, channelID: channelID}
 	operationContext, cancel := context.WithCancel(ctx)
 	session := &liveSession{
-		key: key, streamName: "gb/" + deviceID + "/" + channelID, server: server, ssrc: ssrc,
+		key: key, streamID: uuid.NewString(), streamName: "gb/" + deviceID + "/" + channelID, server: server, ssrc: ssrc,
 		state: livePreparing, cancel: cancel, established: make(chan struct{}), done: make(chan struct{}), deleteMedia: true,
 	}
 	s.mu.Lock()
@@ -140,13 +143,13 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	}
 
 	endpoint, err := s.media.createUDPReceiver(operationContext, server, gb28181ReceiverRequest{
-		streamName: session.streamName, payloadType: 96, ssrc: ssrc,
+		streamID: session.streamID, streamName: session.streamName, payloadType: 96, ssrc: ssrc,
 	})
 	if err != nil {
 		var rejection *mediaServerHTTPRejection
 		if !errors.As(err, &rejection) && s.shouldDeleteMedia(session) {
 			cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
-			_ = s.media.deleteReceiver(cleanupContext, server, session.streamName)
+			_ = s.media.deleteReceiver(cleanupContext, server, session.streamID, session.streamName)
 			cleanupCancel()
 		}
 		s.remove(session)
@@ -241,7 +244,9 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		return liveView{}, context.Canceled
 	}
 	session.state = liveStreaming
-	view := liveView{streamName: session.streamName, state: session.state, ssrc: session.ssrc, rtpPort: session.endpoint.rtpPort}
+	view := liveView{
+		streamID: session.streamID, streamName: session.streamName, state: session.state, ssrc: session.ssrc, rtpPort: session.endpoint.rtpPort,
+	}
 	s.mu.Unlock()
 	return view, nil
 }
@@ -345,7 +350,7 @@ func (s *liveService) cleanup(session *liveSession, sendBye, deleteMedia bool) e
 	}
 	if deleteMedia && s.shouldDeleteMedia(session) && session.endpoint.rtpPort != 0 {
 		cleanupContext, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
-		if err := s.media.deleteReceiver(cleanupContext, session.server, session.streamName); err != nil {
+		if err := s.media.deleteReceiver(cleanupContext, session.server, session.streamID, session.streamName); err != nil {
 			result = errors.Join(result, err)
 		}
 		cancel()

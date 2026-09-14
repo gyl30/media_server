@@ -4,6 +4,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <cstdint>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -23,19 +24,22 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
 {
    public:
     gb28181_tcp_receiver_session(worker_context& worker,
-                        std::string stream_name,
-                        gb28181_transport_config config,
-                        boost::asio::ip::address bind_address,
-                        std::chrono::milliseconds establishment_timeout);
+                                  std::string stream_id,
+                                  std::string stream_name,
+                                  gb28181_transport_config config,
+                                  boost::asio::ip::address bind_address,
+                                  std::chrono::milliseconds establishment_timeout);
 
     [[nodiscard]] bool startup();
     void shutdown() override;
+    [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
     void run(boost::asio::yield_context yield);
     void safe_shutdown();
 
     worker_context& worker_;
+    std::string stream_id_;
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
     gb28181_rtp_receiver receiver_;

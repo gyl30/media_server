@@ -103,7 +103,9 @@ bool stream_registry::add_sender_session(std::string stream_name, std::string se
     return iterator->second.sender_sessions.emplace(std::move(sender_id), std::move(session)).second;
 }
 
-std::shared_ptr<stream_session> stream_registry::take_sender_session(std::string_view stream_name, std::string_view sender_id)
+std::shared_ptr<stream_session> stream_registry::take_sender_session(std::string_view stream_name,
+                                                                     std::string_view sender_id,
+                                                                     std::string_view expected_stream_id)
 {
     std::shared_ptr<stream_session> session;
     {
@@ -114,7 +116,8 @@ std::shared_ptr<stream_session> stream_registry::take_sender_session(std::string
             return {};
         }
         const auto sender_iterator = stream_iterator->second.sender_sessions.find(sender_id);
-        if (sender_iterator == stream_iterator->second.sender_sessions.end())
+        if (sender_iterator == stream_iterator->second.sender_sessions.end() ||
+            (!expected_stream_id.empty() && sender_iterator->second->stream_id() != expected_stream_id))
         {
             return {};
         }

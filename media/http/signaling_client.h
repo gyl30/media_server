@@ -2,6 +2,7 @@
 #define MEDIA_HTTP_SIGNALING_CLIENT_H
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -34,6 +35,9 @@ struct signaling_client_options
     std::string instance_id;
     std::string control_url;
     std::string media_ip;
+    std::uint16_t rtmp_port{};
+    std::uint16_t rtsp_port{};
+    std::uint16_t http_port{};
     std::chrono::milliseconds heartbeat_interval{std::chrono::seconds{5}};
     std::chrono::milliseconds request_timeout{std::chrono::seconds{3}};
 };

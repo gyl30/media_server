@@ -272,7 +272,7 @@ void test_udp_session_fatal_codec_change_unregisters()
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session = std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, description, boost::asio::ip::address_v4::loopback());
+    auto session = std::make_shared<gb28181_udp_receiver_session>(worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback());
     require(streams.add_receiver_session(stream_name, session), "gb fatal codec session registry add");
     require(session->startup(), "gb fatal codec session startup");
     const auto local_ports = session->local_ports();
@@ -477,7 +477,7 @@ void test_rtcp_peer_learning_overrides_rtp_plus_one()
         .ssrc = ssrc,
     };
     auto session = std::make_shared<gb28181_udp_receiver_session>(
-        worker, "live/gb-rtcp-peer", description, boost::asio::ip::address_v4::loopback());
+        worker, "550e8400-e29b-41d4-a716-446655440000", "live/gb-rtcp-peer", description, boost::asio::ip::address_v4::loopback());
     require(session->startup(), "gb rtcp peer startup");
     const auto local_ports = session->local_ports();
     require(local_ports.has_value(), "gb rtcp peer local ports");
@@ -552,7 +552,7 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
         .ssrc = ssrc,
     };
     auto session = std::make_shared<gb28181_udp_receiver_session>(
-        worker, "live/gb-peer-learned", description, boost::asio::ip::address_v4::loopback());
+        worker, "550e8400-e29b-41d4-a716-446655440000", "live/gb-peer-learned", description, boost::asio::ip::address_v4::loopback());
     require(session->startup(), "gb peer learned startup");
     const auto local_ports = session->local_ports();
     require(local_ports.has_value(), "gb peer learned local ports");
@@ -607,7 +607,7 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
     };
     auto session =
         std::make_shared<gb28181_udp_receiver_session>(
-            worker, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds::zero());
+            worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds::zero());
     require(streams.add_receiver_session(stream_name, session), "gb rtcp shutdown session registry add");
     require(session->startup(), "gb rtcp shutdown session startup");
 

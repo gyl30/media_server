@@ -26,7 +26,7 @@ func TestControlClientStartAndStop(t *testing.T) {
 		case "/internal/live/start":
 			starts++
 			writer.WriteHeader(http.StatusCreated)
-			_, _ = writer.Write([]byte(`{"result":"ok","stream_name":"gb/a/b","state":"streaming","ssrc":200000001,"rtp_port":40000}`))
+			_, _ = writer.Write([]byte(`{"result":"ok","stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"gb/a/b","state":"streaming","ssrc":200000001,"rtp_port":40000}`))
 		case "/internal/live/stop":
 			stops++
 			_, _ = writer.Write([]byte(`{"result":"ok"}`))
@@ -41,7 +41,8 @@ func TestControlClientStartAndStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("startLive() error = %v", err)
 	}
-	if started.State != "streaming" || started.SSRC != 200000001 || started.RTPPort != 40000 {
+	if started.StreamID != "550e8400-e29b-41d4-a716-446655440000" ||
+		started.State != "streaming" || started.SSRC != 200000001 || started.RTPPort != 40000 {
 		t.Fatalf("started = %+v", started)
 	}
 	if err := client.stopLive(t.Context(), "34020000001320000001", "34020000001320000002"); err != nil {

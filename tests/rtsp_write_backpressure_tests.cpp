@@ -98,7 +98,7 @@ void test_rtsp_pull_write_backlog_limit()
         "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/backpressure";
 
     auto pull = std::make_shared<rtsp_pull_session>(
-        client_worker, "relay/backpressure", request_url, "", "", 5s, 5s, 0U);
+        client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/backpressure", request_url, "", "", 5s, 5s, 0U);
     require(pull->startup(), "RTSP pull backlog startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });

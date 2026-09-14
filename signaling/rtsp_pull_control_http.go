@@ -6,7 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+
+	"github.com/google/uuid"
 )
+
+type rtspPullRuntime struct {
+	server   mediaServerInstance
+	streamID string
+}
 
 type rtspPullControlCreateRequest struct {
 	StreamName string          `json:"stream_name"`
@@ -28,10 +35,11 @@ func (s *infrastructureServer) handleRTSPPullCreate(writer http.ResponseWriter, 
 		return
 	}
 	command := rtspPullCreateRequest{
-		StreamName: payload.StreamName, URL: payload.URL, Username: username, Password: password,
+		StreamID: uuid.NewString(), StreamName: payload.StreamName, URL: payload.URL, Username: username, Password: password,
 	}
 
-	server, ok := s.rtspPullServer(command.StreamName)
+	runtime, ok := s.rtspPullRuntime(command.StreamName)
+	server := runtime.server
 	if !ok {
 		server, ok = s.registry.selectOnline()
 	}
@@ -45,12 +53,13 @@ func (s *infrastructureServer) handleRTSPPullCreate(writer http.ResponseWriter, 
 		return
 	}
 	s.rtspPullMu.Lock()
-	s.rtspPulls[command.StreamName] = server
+	runtime = rtspPullRuntime{server: server, streamID: command.StreamID}
+	s.rtspPulls[command.StreamName] = runtime
 	s.rtspPullMu.Unlock()
 	if !s.registry.isOnline(server) {
-		if s.removeRTSPPull(command.StreamName, server) {
+		if s.removeRTSPPull(command.StreamName, runtime) {
 			cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
-			if err := s.media.deleteRTSPPull(cleanupContext, server, command.StreamName); err != nil {
+			if err := s.media.deleteRTSPPull(cleanupContext, server, command.StreamID, command.StreamName); err != nil {
 				s.logger.Warn("rtsp pull cleanup failed", "stream_name", command.StreamName, "server_id", server.serverID, "error", err)
 			}
 			cancel()
@@ -58,7 +67,7 @@ func (s *infrastructureServer) handleRTSPPullCreate(writer http.ResponseWriter, 
 		writeHTTPError(writer, http.StatusServiceUnavailable, "no_media_server")
 		return
 	}
-	writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+	writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok", "stream_id": command.StreamID})
 }
 
 func decodeOptionalString(raw json.RawMessage) (*string, bool) {
@@ -81,15 +90,15 @@ func (s *infrastructureServer) handleRTSPPullDelete(writer http.ResponseWriter, 
 		return
 	}
 
-	server, ok := s.takeRTSPPullServer(command.StreamName)
+	runtime, ok := s.takeRTSPPullRuntime(command.StreamName)
 	if !ok {
 		writeHTTPError(writer, http.StatusNotFound, "not_found")
 		return
 	}
-	if err := s.media.deleteRTSPPull(request.Context(), server, command.StreamName); err != nil {
+	if err := s.media.deleteRTSPPull(request.Context(), runtime.server, runtime.streamID, command.StreamName); err != nil {
 		var rejection *mediaServerHTTPRejection
 		if !errors.As(err, &rejection) || rejection.status != http.StatusNotFound {
-			s.restoreRTSPPull(command.StreamName, server)
+			s.restoreRTSPPull(command.StreamName, runtime)
 		}
 		s.writeRTSPPullError(writer, "delete", command.StreamName, err)
 		return
@@ -97,42 +106,43 @@ func (s *infrastructureServer) handleRTSPPullDelete(writer http.ResponseWriter, 
 	writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
 }
 
-func (s *infrastructureServer) rtspPullServer(streamName string) (mediaServerInstance, bool) {
+func (s *infrastructureServer) rtspPullRuntime(streamName string) (rtspPullRuntime, bool) {
 	s.rtspPullMu.Lock()
-	server, ok := s.rtspPulls[streamName]
+	runtime, ok := s.rtspPulls[streamName]
 	s.rtspPullMu.Unlock()
-	if !ok || !s.registry.isOnline(server) {
-		return mediaServerInstance{}, false
+	if !ok || !s.registry.isOnline(runtime.server) {
+		return rtspPullRuntime{}, false
 	}
-	return server, true
+	return runtime, true
 }
 
-func (s *infrastructureServer) takeRTSPPullServer(streamName string) (mediaServerInstance, bool) {
+func (s *infrastructureServer) takeRTSPPullRuntime(streamName string) (rtspPullRuntime, bool) {
 	s.rtspPullMu.Lock()
-	server, ok := s.rtspPulls[streamName]
+	runtime, ok := s.rtspPulls[streamName]
 	if ok {
 		delete(s.rtspPulls, streamName)
 	}
 	s.rtspPullMu.Unlock()
-	if !ok || !s.registry.isOnline(server) {
-		return mediaServerInstance{}, false
+	if !ok || !s.registry.isOnline(runtime.server) {
+		return rtspPullRuntime{}, false
 	}
-	return server, true
+	return runtime, true
 }
 
-func (s *infrastructureServer) restoreRTSPPull(streamName string, server mediaServerInstance) {
+func (s *infrastructureServer) restoreRTSPPull(streamName string, runtime rtspPullRuntime) {
 	s.rtspPullMu.Lock()
 	if _, exists := s.rtspPulls[streamName]; !exists {
-		s.rtspPulls[streamName] = server
+		s.rtspPulls[streamName] = runtime
 	}
 	s.rtspPullMu.Unlock()
 }
 
-func (s *infrastructureServer) removeRTSPPull(streamName string, expected mediaServerInstance) bool {
+func (s *infrastructureServer) removeRTSPPull(streamName string, expected rtspPullRuntime) bool {
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
-	server, ok := s.rtspPulls[streamName]
-	if !ok || server.serverID != expected.serverID || server.instanceID != expected.instanceID {
+	runtime, ok := s.rtspPulls[streamName]
+	if !ok || runtime.streamID != expected.streamID || runtime.server.serverID != expected.server.serverID ||
+		runtime.server.instanceID != expected.server.instanceID {
 		return false
 	}
 	delete(s.rtspPulls, streamName)
@@ -141,8 +151,8 @@ func (s *infrastructureServer) removeRTSPPull(streamName string, expected mediaS
 
 func (s *infrastructureServer) removeRTSPPullsForMediaServer(expected mediaServerInstance) {
 	s.rtspPullMu.Lock()
-	for streamName, server := range s.rtspPulls {
-		if server.serverID == expected.serverID && server.instanceID == expected.instanceID {
+	for streamName, runtime := range s.rtspPulls {
+		if runtime.server.serverID == expected.serverID && runtime.server.instanceID == expected.instanceID {
 			delete(s.rtspPulls, streamName)
 		}
 	}
@@ -152,16 +162,16 @@ func (s *infrastructureServer) removeRTSPPullsForMediaServer(expected mediaServe
 func (s *infrastructureServer) shutdownRTSPPulls(ctx context.Context) {
 	s.rtspPullMu.Lock()
 	pulls := s.rtspPulls
-	s.rtspPulls = make(map[string]mediaServerInstance)
+	s.rtspPulls = make(map[string]rtspPullRuntime)
 	s.rtspPullMu.Unlock()
 
 	var wait sync.WaitGroup
-	for streamName, server := range pulls {
+	for streamName, runtime := range pulls {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if err := s.media.deleteRTSPPull(ctx, server, streamName); err != nil {
-				s.logger.Warn("rtsp pull shutdown failed", "stream_name", streamName, "server_id", server.serverID, "error", err)
+			if err := s.media.deleteRTSPPull(ctx, runtime.server, runtime.streamID, streamName); err != nil {
+				s.logger.Warn("rtsp pull shutdown failed", "stream_name", streamName, "server_id", runtime.server.serverID, "error", err)
 			}
 		}()
 	}
