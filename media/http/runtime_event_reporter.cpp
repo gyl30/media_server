@@ -17,7 +17,38 @@ runtime_event_reporter::runtime_event_reporter(boost::asio::io_context& io, std:
 
 void runtime_event_reporter::report(runtime_event event)
 {
-    boost::asio::post(io_, [self = shared_from_this(), event = std::move(event)]() mutable { self->enqueue(std::move(event)); });
+    bool overflow{};
+    std::size_t pending{};
+    std::string newest_stream_id;
+    bool start{};
+    {
+        std::scoped_lock lock(mutex_);
+        if (closed_)
+        {
+            return;
+        }
+        if (pending_events_.size() >= max_pending_events)
+        {
+            overflow = true;
+            pending = pending_events_.size();
+            newest_stream_id = event.stream_id;
+            pending_events_.clear();
+        }
+        pending_events_.push_back(std::move(event));
+        if (!writer_running_)
+        {
+            writer_running_ = true;
+            start = true;
+        }
+    }
+    if (overflow)
+    {
+        spdlog::warn("runtime event queue full pending {} limit {} newest stream_id {}", pending, max_pending_events, newest_stream_id);
+    }
+    if (start)
+    {
+        boost::asio::post(io_, [self = shared_from_this()]() { self->start_writer(); });
+    }
 }
 
 void runtime_event_reporter::shutdown()
@@ -25,30 +56,8 @@ void runtime_event_reporter::shutdown()
     boost::asio::dispatch(io_, [self = shared_from_this()]() { self->safe_shutdown(); });
 }
 
-void runtime_event_reporter::enqueue(runtime_event event)
-{
-    if (closed_)
-    {
-        return;
-    }
-    if (pending_events_.size() >= max_pending_events)
-    {
-        spdlog::warn("runtime event queue full pending {} limit {} newest stream_id {}",
-                     pending_events_.size(),
-                     max_pending_events,
-                     event.stream_id);
-        pending_events_.clear();
-    }
-    pending_events_.push_back(std::move(event));
-    if (!writer_running_)
-    {
-        start_writer();
-    }
-}
-
 void runtime_event_reporter::start_writer()
 {
-    writer_running_ = true;
     boost::asio::spawn(
         io_,
         [self = shared_from_this()](boost::asio::yield_context yield) { self->run_writer(yield); },
@@ -61,12 +70,15 @@ void runtime_event_reporter::run_writer(boost::asio::yield_context yield)
 
     yield.throw_if_cancelled(false);
     boost::asio::steady_timer reconnect_timer(yield.get_executor());
-    while (!closed_ && !pending_events_.empty())
+    for (;;)
     {
-        auto event = std::move(pending_events_.front());
-        pending_events_.pop_front();
-        const auto result = signaling_->report_runtime_event(event, yield);
-        if (closed_)
+        auto event = take_next_event();
+        if (!event)
+        {
+            break;
+        }
+        const auto result = signaling_->report_runtime_event(*event, yield);
+        if (closed())
         {
             break;
         }
@@ -76,31 +88,70 @@ void runtime_event_reporter::run_writer(boost::asio::yield_context yield)
         }
         if (result.kind != signaling_result_kind::network_error)
         {
-            spdlog::warn("runtime event delivery failed stream {} status {}", event.stream_id, result.status);
+            spdlog::warn("runtime event delivery failed stream {} status {}", event->stream_id, result.status);
             continue;
         }
 
         spdlog::warn("runtime event delivery network error stream {} error {}; reconnecting in 5 seconds",
-                     event.stream_id,
+                     event->stream_id,
                      result.error);
         reconnect_timer.expires_after(5s);
         boost::system::error_code error;
         reconnect_timer.async_wait(yield[error]);
-        if (error || closed_)
+        if (error || closed())
         {
             break;
         }
     }
-    writer_running_ = false;
+    finish_writer();
+}
+
+std::optional<runtime_event> runtime_event_reporter::take_next_event()
+{
+    std::scoped_lock lock(mutex_);
+    if (closed_ || pending_events_.empty())
+    {
+        return std::nullopt;
+    }
+    auto event = std::move(pending_events_.front());
+    pending_events_.pop_front();
+    return event;
+}
+
+bool runtime_event_reporter::closed()
+{
+    std::scoped_lock lock(mutex_);
+    return closed_;
+}
+
+void runtime_event_reporter::finish_writer()
+{
+    bool restart{};
+    {
+        std::scoped_lock lock(mutex_);
+        writer_running_ = false;
+        if (!closed_ && !pending_events_.empty())
+        {
+            writer_running_ = true;
+            restart = true;
+        }
+    }
+    if (restart)
+    {
+        boost::asio::post(io_, [self = shared_from_this()]() { self->start_writer(); });
+    }
 }
 
 void runtime_event_reporter::safe_shutdown()
 {
-    if (closed_)
     {
-        return;
+        std::scoped_lock lock(mutex_);
+        if (closed_)
+        {
+            return;
+        }
+        closed_ = true;
     }
-    closed_ = true;
     cancellation_.emit(boost::asio::cancellation_type::all);
 }
 
