@@ -235,12 +235,13 @@ export class WHEPPreview {
     session.cancelled = true;
     session.controller.abort();
     this.emit("stopping", session);
-    this.closeLocal(session);
     let deleteError = null;
     try {
       await deleteResource(session.resourceURL);
     } catch (error) {
       deleteError = error;
+    } finally {
+      this.closeLocal(session);
     }
     if (generation === this.generation && !this.current) {
       this.emit("idle", null, deleteError ? deleteError.code : "");
