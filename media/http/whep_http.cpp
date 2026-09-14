@@ -104,6 +104,8 @@ whep_http_string_response handle_whep_post(const whep_http_request& request,
         case whep::create_error::stream_not_found:
             return make_string_response(
                 request, boost::beast::http::status::conflict, "text/plain", "stream not found\n", {}, whep_retry_after_seconds);
+        case whep::create_error::stream_id_conflict:
+            return make_string_response(request, boost::beast::http::status::conflict, "text/plain", "stream id already active\n");
         case whep::create_error::invalid_offer:
             return make_string_response(request, boost::beast::http::status::bad_request, "text/plain", "invalid or unsupported sdp offer\n");
         case whep::create_error::internal_error:

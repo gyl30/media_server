@@ -20,6 +20,7 @@ enum class create_error
 {
     none,
     stream_not_found,
+    stream_id_conflict,
     invalid_offer,
     internal_error,
 };
