@@ -57,6 +57,7 @@ type liveSession struct {
 type liveView struct {
 	streamID   string
 	streamName string
+	server     mediaServerInstance
 	state      liveState
 	ssrc       uint32
 	rtpPort    uint16
@@ -470,7 +471,7 @@ func (s *liveService) len() int {
 
 func makeLiveView(session *liveSession) liveView {
 	return liveView{
-		streamID: session.streamID, streamName: session.streamName, state: session.state,
+		streamID: session.streamID, streamName: session.streamName, server: session.server, state: session.state,
 		ssrc: session.ssrc, rtpPort: session.endpoint.rtpPort,
 	}
 }
