@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"mime"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -39,19 +40,20 @@ type liveKey struct {
 }
 
 type liveSession struct {
-	key         liveKey
-	streamName  string
-	streamID    string
-	server      mediaServerInstance
-	endpoint    gb28181ReceiverEndpoint
-	ssrc        uint32
-	state       liveState
-	dialog      *sipgo.DialogClientSession
-	callID      string
-	cancel      context.CancelFunc
-	established chan struct{}
-	done        chan struct{}
-	deleteMedia bool
+	key          liveKey
+	streamName   string
+	streamID     string
+	server       mediaServerInstance
+	endpoint     gb28181ReceiverEndpoint
+	ssrc         uint32
+	state        liveState
+	dialog       *sipgo.DialogClientSession
+	callID       string
+	cancel       context.CancelFunc
+	established  chan struct{}
+	done         chan struct{}
+	deleteMedia  bool
+	mediaStopped bool
 }
 
 type liveView struct {
@@ -262,30 +264,36 @@ func (s *liveService) live(deviceID, channelID string) (liveView, bool) {
 }
 
 func (s *liveService) stopLive(ctx context.Context, deviceID, channelID string) error {
-	key := liveKey{deviceID: deviceID, channelID: channelID}
-	s.mu.Lock()
-	session, ok := s.sessions[key]
-	if !ok {
-		s.mu.Unlock()
-		return errLiveNotFound
-	}
-	s.mu.Unlock()
-	return s.stopSession(ctx, session, true)
+	_, _, err := s.stopLiveRuntime(ctx, deviceID, channelID, "")
+	return err
 }
 
 func (s *liveService) stopLiveExpected(ctx context.Context, deviceID, channelID, streamID string) error {
+	_, _, err := s.stopLiveRuntime(ctx, deviceID, channelID, streamID)
+	return err
+}
+
+func (s *liveService) stopLiveRuntime(
+	ctx context.Context,
+	deviceID, channelID, expectedStreamID string,
+) (liveView, bool, error) {
 	key := liveKey{deviceID: deviceID, channelID: channelID}
 	s.mu.Lock()
 	session, ok := s.sessions[key]
 	if !ok {
 		s.mu.Unlock()
-		return errLiveNotFound
+		return liveView{}, false, errLiveNotFound
 	}
-	if session.streamID != streamID {
+	if expectedStreamID != "" && session.streamID != expectedStreamID {
 		s.mu.Unlock()
-		return errLiveChanged
+		return liveView{}, false, errLiveChanged
 	}
-	return s.stopSessionLocked(ctx, session, true)
+	view := makeLiveView(session)
+	err := s.stopSessionLocked(ctx, session, true)
+	s.mu.Lock()
+	mediaStopped := session.mediaStopped
+	s.mu.Unlock()
+	return view, mediaStopped, err
 }
 
 func (s *liveService) stopSession(ctx context.Context, session *liveSession, deleteMedia bool) error {
@@ -387,6 +395,8 @@ func (s *liveService) stopMatching(ctx context.Context, matches func(*liveSessio
 
 func (s *liveService) cleanup(session *liveSession, sendBye, deleteMedia bool) error {
 	var result error
+	deleteRuntime := deleteMedia && s.shouldDeleteMedia(session)
+	mediaStopped := !deleteRuntime
 	if sendBye && session.dialog != nil {
 		byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
 		if err := session.dialog.Bye(byeContext); err != nil {
@@ -396,13 +406,23 @@ func (s *liveService) cleanup(session *liveSession, sendBye, deleteMedia bool) e
 	} else if session.dialog != nil {
 		_ = session.dialog.Close()
 	}
-	if deleteMedia && s.shouldDeleteMedia(session) && session.endpoint.rtpPort != 0 {
+	if deleteRuntime && session.endpoint.rtpPort != 0 {
 		cleanupContext, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
 		if err := s.media.deleteReceiver(cleanupContext, session.server, session.streamID, session.streamName); err != nil {
-			result = errors.Join(result, err)
+			var rejection *mediaServerHTTPRejection
+			if !errors.As(err, &rejection) || rejection.status != http.StatusNotFound {
+				result = errors.Join(result, err)
+			} else {
+				mediaStopped = true
+			}
+		} else {
+			mediaStopped = true
 		}
 		cancel()
 	}
+	s.mu.Lock()
+	session.mediaStopped = session.mediaStopped || mediaStopped
+	s.mu.Unlock()
 	s.remove(session)
 	return result
 }

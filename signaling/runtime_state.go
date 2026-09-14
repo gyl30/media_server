@@ -38,13 +38,31 @@ func newObservedRuntimeRegistry() *observedRuntimeRegistry {
 func (r *observedRuntimeRegistry) apply(event observedRuntime) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.applyLocked(event, false)
+}
+
+func (r *observedRuntimeRegistry) acknowledgeSourceStopped(
+	server mediaServerInstance,
+	streamID, streamName, sourceID, protocol string,
+) (bool, error) {
+	event := observedRuntime{
+		Type: "source_stopped", ServerID: server.serverID, InstanceID: server.instanceID,
+		StreamID: streamID, StreamName: streamName, SourceID: sourceID,
+		Direction: "input", Protocol: protocol, State: "stopped", EndReason: "requested",
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applyLocked(event, true)
+}
+
+func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExistingStopped bool) (bool, error) {
 	current, exists := r.byStreamID[event.StreamID]
 	if exists {
 		if !sameRuntimeIdentity(current, event) {
 			return false, errRuntimeConflict
 		}
 		if current.State == "stopped" {
-			if current == event {
+			if current == event || acceptExistingStopped {
 				return false, nil
 			}
 			return false, errRuntimeConflict

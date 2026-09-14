@@ -155,6 +155,61 @@ func TestObservedRuntimeMarksExactMediaServerOffline(t *testing.T) {
 	}
 }
 
+func TestObservedRuntimeAcknowledgesRequestedStopByGeneration(t *testing.T) {
+	runtimes := newObservedRuntimeRegistry()
+	sourceID := "10000000-0000-4000-8000-000000000003"
+	first := testObservedRuntime("20000000-0000-4000-8000-000000000003", "streaming")
+	first.SourceID = sourceID
+	if _, err := runtimes.apply(first); err != nil {
+		t.Fatalf("apply(first) error = %v", err)
+	}
+	second := testObservedRuntime("30000000-0000-4000-8000-000000000003", "streaming")
+	second.SourceID = sourceID
+	runtimes.bindSource(sourceID, second.StreamID)
+	if _, err := runtimes.apply(second); err != nil {
+		t.Fatalf("apply(second) error = %v", err)
+	}
+	server := mediaServerInstance{serverID: first.ServerID, instanceID: first.InstanceID}
+	if changed, err := runtimes.acknowledgeSourceStopped(
+		server, first.StreamID, first.StreamName, first.SourceID, first.Protocol); err != nil || !changed {
+		t.Fatalf("acknowledge(first) = %v, %v", changed, err)
+	}
+	current, ok := runtimes.currentForSource(sourceID)
+	if !ok || current.StreamID != second.StreamID || current.State != "streaming" {
+		t.Fatalf("current runtime = %+v, %v", current, ok)
+	}
+
+	terminal := second
+	terminal.Type = "runtime_error"
+	terminal.State = "stopped"
+	terminal.Stage = ""
+	terminal.EndReason = "runtime_error"
+	terminal.Error = "transport_failed"
+	if _, err := runtimes.apply(terminal); err != nil {
+		t.Fatalf("apply(terminal) error = %v", err)
+	}
+	if changed, err := runtimes.acknowledgeSourceStopped(
+		server, second.StreamID, second.StreamName, second.SourceID, second.Protocol); err != nil || changed {
+		t.Fatalf("acknowledge(existing terminal) = %v, %v", changed, err)
+	}
+	current, ok = runtimes.currentForSource(sourceID)
+	if !ok || current != terminal {
+		t.Fatalf("terminal reason was overwritten: %+v, %v", current, ok)
+	}
+
+	thirdID := "40000000-0000-4000-8000-000000000003"
+	runtimes.bindSource(sourceID, thirdID)
+	if changed, err := runtimes.acknowledgeSourceStopped(
+		server, thirdID, first.StreamName, sourceID, first.Protocol); err != nil || !changed {
+		t.Fatalf("acknowledge(unseen) = %v, %v", changed, err)
+	}
+	lateStarting := first
+	lateStarting.StreamID = thirdID
+	if _, err := runtimes.apply(lateStarting); !errors.Is(err, errRuntimeConflict) {
+		t.Fatalf("late starting error = %v", err)
+	}
+}
+
 func testObservedRuntime(streamID, state string) observedRuntime {
 	return observedRuntime{
 		Type: "source_started", ServerID: "media-1", InstanceID: "instance-a",

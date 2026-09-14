@@ -129,13 +129,14 @@ func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string) 
 	}
 	if err := s.media.deleteRTSPPull(ctx, runtime.server, runtime.streamID, runtime.streamName); err != nil {
 		var rejection *mediaServerHTTPRejection
-		if errors.As(err, &rejection) && rejection.status == http.StatusNotFound {
-			return nil
+		if !errors.As(err, &rejection) || rejection.status != http.StatusNotFound {
+			s.restoreRTSPPull(runtime)
+			return err
 		}
-		s.restoreRTSPPull(runtime)
-		return err
 	}
-	return nil
+	_, err = s.runtimes.acknowledgeSourceStopped(
+		runtime.server, runtime.streamID, runtime.streamName, runtime.sourceID, "rtsp")
+	return err
 }
 
 func (s *infrastructureServer) writeSourceRuntimeError(writer http.ResponseWriter, operation, sourceID, streamName string, err error) {
