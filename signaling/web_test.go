@@ -31,7 +31,8 @@ func TestWebAssetsAreEmbedded(t *testing.T) {
 		contentType string
 		contains    string
 	}{
-		{path: "/", contentType: "text/html", contains: "Media Control"},
+		{path: "/", contentType: "text/html", contains: `href="/favicon.svg"`},
+		{path: "/favicon.svg", contentType: "image/svg+xml", contains: "Media Control favicon"},
 		{path: "/style.css", contentType: "text/css", contains: "--color-ink"},
 		{path: "/app.js", contentType: "text/javascript", contains: `new EventSource("/api/events")`},
 		{path: "/api.js", contentType: "text/javascript", contains: "/api/sources"},
