@@ -88,6 +88,10 @@ bool rtsp_publish_media::start_recording()
         return false;
     }
     recording_ = true;
+    if (streaming_handler_)
+    {
+        streaming_handler_();
+    }
     return true;
 }
 
@@ -126,8 +130,12 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
                 static_cast<void>(rtsp_demuxer_set_timestamp(demuxer, rtp_timestamp, pts));
             }
         }
+        else if (result < 0)
+        {
+            protocol_error_ = true;
+        }
     }
-    return !fatal_codec_change_;
+    return !protocol_error_;
 }
 
 int rtsp_publish_media::generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
@@ -161,6 +169,7 @@ void rtsp_publish_media::shutdown()
         }
     }
     demuxers_.clear();
+    streaming_handler_ = {};
     rtcp_synchronized_ = false;
     avpkt2bs_destroy(&bitstream_);
 }
@@ -170,6 +179,8 @@ const std::vector<rtsp_publish_track_description>& rtsp_publish_media::descripti
 const std::string& rtsp_publish_media::media_stream_name() const noexcept { return media_stream_name_; }
 
 bool rtsp_publish_media::recording() const noexcept { return recording_; }
+
+bool rtsp_publish_media::protocol_error() const noexcept { return protocol_error_; }
 
 int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_publish_media*>(param)->on_demuxed_packet(packet); }
 
@@ -200,7 +211,7 @@ int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
     if (state == descriptions_.end())
     {
         spdlog::warn("rtsp publish raw codec change {}", to_string(codec));
-        fatal_codec_change_ = true;
+        protocol_error_ = true;
         return -1;
     }
 

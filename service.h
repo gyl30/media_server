@@ -17,6 +17,7 @@ namespace media_server
 class http_server;
 class io_context_pool;
 class signaling_client;
+class runtime_event_emitter;
 class rtmp_server;
 class rtsp_server;
 
@@ -39,6 +40,7 @@ class service
     std::shared_ptr<rtsp_server> rtsp_;
     std::shared_ptr<http_server> http_;
     std::shared_ptr<signaling_client> signaling_;
+    std::shared_ptr<const runtime_event_emitter> runtime_events_;
     std::unique_ptr<boost::asio::steady_timer> signaling_abort_timer_;
     std::unique_ptr<boost::asio::signal_set> signals_;
     boost::asio::cancellation_signal control_cancellation_;

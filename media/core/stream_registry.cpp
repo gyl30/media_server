@@ -152,7 +152,7 @@ void stream_registry::remove_sender_session(std::string_view stream_name, std::s
     }
 }
 
-void stream_registry::shutdown_sessions()
+void stream_registry::shutdown_sessions(runtime_end_reason reason)
 {
     std::vector<std::shared_ptr<stream_session>> sessions;
     {
@@ -171,7 +171,7 @@ void stream_registry::shutdown_sessions()
     }
     for (const auto& session : sessions)
     {
-        session->shutdown();
+        session->shutdown(reason);
     }
 }
 

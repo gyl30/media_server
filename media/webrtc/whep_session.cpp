@@ -8,6 +8,7 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/detached.hpp>
 
 #include "media/webrtc/stun_message.h"
@@ -47,19 +48,22 @@ whep_session::whep_session(worker_context& worker,
                            std::shared_ptr<dtls_certificate> certificate,
                            whep_session_timeouts timeouts,
                            video_transcode_config video,
-                           std::size_t max_write_queue_bytes)
+                           std::size_t max_write_queue_bytes,
+                           runtime_event_emitter_ptr runtime_events)
     : stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
       video_config_(video),
       timeouts_(timeouts),
+      runtime_events_(std::move(runtime_events)),
       worker_(worker),
       udp_transport_(worker_.io()),
       max_write_queue_bytes_(max_write_queue_bytes),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
       ice_activity_timer_(worker_.io()),
-      stream_id_(std::move(stream_id))
+      stream_id_(std::move(stream_id)),
+      stream_name_(stream_ ? stream_->name() : std::string{})
 {
 }
 
@@ -92,7 +96,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         port_manager::instance().release(local_port_reservation_);
         local_port_reservation_ = 0;
         spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
-        shutdown();
+        shutdown(runtime_end_reason::runtime_error, udp_error.message());
         return whep_session_startup_error::internal_error;
     }
 
@@ -102,7 +106,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     if (id_.empty() || ice_ufrag_.empty() || ice_pwd_.empty())
     {
         spdlog::error("webrtc session identifiers create failed");
-        shutdown();
+        shutdown(runtime_end_reason::runtime_error, "session_identifier_creation_failed");
         return whep_session_startup_error::internal_error;
     }
 
@@ -121,7 +125,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     if (!answer)
     {
         spdlog::debug("webrtc answer create failed session {}", id_);
-        shutdown();
+        shutdown(runtime_end_reason::protocol_error, "invalid_offer");
         return whep_session_startup_error::invalid_offer;
     }
     const auto media = std::find_if(
@@ -130,7 +134,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
     {
         spdlog::debug("webrtc whep startup rejected invalid transport attributes");
-        shutdown();
+        shutdown(runtime_end_reason::protocol_error, "invalid_transport_attributes");
         return whep_session_startup_error::invalid_offer;
     }
 
@@ -142,7 +146,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     if (!dtls_->startup())
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
-        shutdown();
+        shutdown(runtime_end_reason::runtime_error, "dtls_startup_failed");
         return whep_session_startup_error::internal_error;
     }
 
@@ -178,14 +182,26 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         answer_.audio_channel_count.value_or(0),
         answer_.audio_bitrate.value_or(0),
         answer_.audio_max_playback_rate.value_or(0));
+    emit_starting();
     startup_establishment_timeout();
     return whep_session_startup_error::none;
 }
 
-void whep_session::shutdown()
+void whep_session::shutdown(runtime_end_reason reason, std::string error)
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+    boost::asio::dispatch(worker_.io(),
+                          [self, reason, error = std::move(error)]() mutable
+                          {
+                              if (self->ending_ || (!self->stream_ && !self->certificate_))
+                              {
+                                  return;
+                              }
+                              self->ending_ = true;
+                              self->end_reason_ = reason;
+                              self->end_error_ = std::move(error);
+                              boost::asio::post(self->worker_.io(), [self]() { self->safe_shutdown(); });
+                          });
 }
 
 void whep_session::safe_shutdown()
@@ -225,6 +241,7 @@ void whep_session::safe_shutdown()
     shutdown_udp_transport();
 
     spdlog::info("webrtc whep session shutdown {}", id_);
+    emit_stopped();
 }
 
 void whep_session::shutdown_udp_transport()
@@ -262,12 +279,12 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
     if (!apply_tracks(tracks))
     {
         spdlog::info("webrtc negotiated track changed session {}", id_);
-        shutdown();
+        shutdown(runtime_end_reason::runtime_error, "negotiated_tracks_changed");
         return;
     }
     if (packetizer_ && initial_snapshot && !start_media_read())
     {
-        shutdown();
+        shutdown(runtime_end_reason::runtime_error, "media_read_start_failed");
     }
 }
 
@@ -282,7 +299,7 @@ void whep_session::on_read(media_read_batch batch)
     if (!apply_tracks(batch.tracks))
     {
         spdlog::info("webrtc negotiated track changed session {}", id_);
-        shutdown();
+        shutdown(runtime_end_reason::runtime_error, "negotiated_tracks_changed");
         return;
     }
 
@@ -295,7 +312,7 @@ void whep_session::on_read(media_read_batch batch)
         }
         if (!packetizer_->on_frame(entry.frame))
         {
-            shutdown();
+            shutdown(runtime_end_reason::runtime_error, "media_packetization_failed");
             return;
         }
     }
@@ -309,7 +326,7 @@ void whep_session::on_read(media_read_batch batch)
 void whep_session::on_end()
 {
     spdlog::info("webrtc source stream ended session {}", id_);
-    shutdown();
+    shutdown(runtime_end_reason::remote);
 }
 
 bool whep_session::apply_tracks(const media_track_snapshot_ptr& tracks)
@@ -335,28 +352,35 @@ void whep_session::run_udp(boost::asio::yield_context yield)
 {
     std::vector<std::uint8_t> buffer(64 * 1024);
     boost::asio::ip::udp::endpoint endpoint;
+    boost::system::error_code read_error;
     for (;;)
     {
-        boost::system::error_code error;
-        const auto bytes = udp_transport_.read(buffer, endpoint, yield, error);
-        if (error)
+        const auto bytes = udp_transport_.read(buffer, endpoint, yield, read_error);
+        if (read_error)
         {
-            if (error != boost::asio::error::operation_aborted)
+            if (read_error != boost::asio::error::operation_aborted)
             {
-                spdlog::debug("webrtc udp receive failed session {} error {}", id_, error.message());
+                spdlog::debug("webrtc udp receive failed session {} error {}", id_, read_error.message());
             }
             break;
         }
         handle_packet(std::span<const std::uint8_t>{buffer.data(), bytes}, endpoint);
     }
-    shutdown();
+    if (read_error != boost::asio::error::operation_aborted)
+    {
+        shutdown(runtime_end_reason::runtime_error, read_error.message());
+    }
+    else
+    {
+        shutdown(runtime_end_reason::runtime_error, "udp_receive_aborted");
+    }
 }
 
 void whep_session::run_udp_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (!started_ || udp_write_queue_.empty())
+        if (ending_ || !started_ || udp_write_queue_.empty())
         {
             return;
         }
@@ -365,6 +389,10 @@ void whep_session::run_udp_write(boost::asio::yield_context yield)
         boost::system::error_code error;
         static_cast<void>(
             udp_transport_.write(std::span<const std::uint8_t>{datagram.packet->data(), datagram.packet->size()}, datagram.endpoint, yield, error));
+        if (ending_ || !started_)
+        {
+            return;
+        }
         if (error)
         {
             spdlog::debug("webrtc udp send failed session {} remote {} {} error {}",
@@ -372,11 +400,7 @@ void whep_session::run_udp_write(boost::asio::yield_context yield)
                           datagram.endpoint.address().to_string(),
                           datagram.endpoint.port(),
                           error.message());
-            shutdown();
-            return;
-        }
-        if (!started_)
-        {
+            shutdown(runtime_end_reason::runtime_error, error.message());
             return;
         }
 
@@ -523,7 +547,14 @@ void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
     if (!dtls_->handle_datagram(packet))
     {
         spdlog::error("webrtc dtls failed session {}", id_);
-        shutdown();
+        if (was_connected && dtls_->connected())
+        {
+            shutdown(runtime_end_reason::remote);
+        }
+        else
+        {
+            shutdown(runtime_end_reason::protocol_error, "dtls_failed");
+        }
         return;
     }
 
@@ -534,7 +565,7 @@ void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
         if (!startup_media())
         {
             spdlog::error("webrtc srtp startup failed session {}", id_);
-            shutdown();
+            shutdown(runtime_end_reason::runtime_error, "media_startup_failed");
         }
         return;
     }
@@ -590,6 +621,7 @@ bool whep_session::startup_media()
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
     spdlog::debug("webrtc srtp profile session {} {}", id_, dtls_->srtp_keying_material()->profile);
+    emit_streaming();
     return true;
 }
 
@@ -659,7 +691,7 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet)
 
 void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
 {
-    if (!started_ || local_port_reservation_ == 0 || packet.empty())
+    if (ending_ || !started_ || local_port_reservation_ == 0 || packet.empty())
     {
         return;
     }
@@ -720,7 +752,7 @@ void whep_session::handle_dtls_timeout()
     if (!dtls_->handle_timeout())
     {
         spdlog::error("webrtc dtls timeout failed session {}", id_);
-        shutdown();
+        shutdown(runtime_end_reason::runtime_error, "dtls_timeout_processing_failed");
         return;
     }
     schedule_dtls_timeout();
@@ -744,7 +776,7 @@ void whep_session::startup_establishment_timeout()
             }
 
             spdlog::info("webrtc establishment timeout session {}", self->id_);
-            self->shutdown();
+            self->shutdown(runtime_end_reason::timeout, "establishment_timeout");
         });
 }
 
@@ -766,8 +798,73 @@ void whep_session::refresh_ice_activity_timeout()
             }
 
             spdlog::info("webrtc ice activity timeout session {}", self->id_);
-            self->shutdown();
+            self->shutdown(runtime_end_reason::timeout, "ice_activity_timeout");
         });
+}
+
+void whep_session::emit_starting()
+{
+    if (runtime_started_ || ending_)
+    {
+        return;
+    }
+    runtime_started_ = true;
+    if (runtime_events_)
+    {
+        runtime_events_->emit(runtime_event{
+            .type = runtime_event_type::output_started,
+            .stream_id = stream_id_,
+            .stream_name = stream_name_,
+            .direction = runtime_direction::output,
+            .protocol = runtime_protocol::whep,
+            .state = runtime_state::starting,
+            .stage = "ice",
+        });
+    }
+}
+
+void whep_session::emit_streaming()
+{
+    if (!runtime_started_ || runtime_streaming_ || ending_ || !started_)
+    {
+        return;
+    }
+    runtime_streaming_ = true;
+    if (runtime_events_)
+    {
+        runtime_events_->emit(runtime_event{
+            .type = runtime_event_type::output_started,
+            .stream_id = stream_id_,
+            .stream_name = stream_name_,
+            .direction = runtime_direction::output,
+            .protocol = runtime_protocol::whep,
+            .state = runtime_state::streaming,
+            .stage = "streaming",
+        });
+    }
+}
+
+void whep_session::emit_stopped()
+{
+    if (!runtime_started_)
+    {
+        return;
+    }
+    runtime_started_ = false;
+    runtime_streaming_ = false;
+    if (runtime_events_)
+    {
+        runtime_events_->emit(runtime_event{
+            .type = terminal_event_type(runtime_event_type::output_stopped, end_reason_),
+            .stream_id = stream_id_,
+            .stream_name = stream_name_,
+            .direction = runtime_direction::output,
+            .protocol = runtime_protocol::whep,
+            .state = runtime_state::stopped,
+            .end_reason = end_reason_,
+            .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
+        });
+    }
 }
 
 }    // namespace media_server

@@ -20,6 +20,7 @@
 #include "media/net/udp_yield_transport.h"
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
+#include "media/core/runtime_event.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/webrtc_packetizer.h"
 #include "media/webrtc/dtls_transport.h"
@@ -54,10 +55,11 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
                  std::shared_ptr<dtls_certificate> certificate,
                  whep_session_timeouts timeouts = {},
                  video_transcode_config video = {},
-                 std::size_t max_write_queue_bytes = 1024U * 1024U);
+                 std::size_t max_write_queue_bytes = 1024U * 1024U,
+                 runtime_event_emitter_ptr runtime_events = {});
 
     [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
-    void shutdown();
+    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
 
     [[nodiscard]] const std::string& id() const noexcept;
     [[nodiscard]] const std::string& stream_id() const noexcept;
@@ -96,12 +98,16 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void handle_dtls_timeout();
     void startup_establishment_timeout();
     void refresh_ice_activity_timeout();
+    void emit_starting();
+    void emit_streaming();
+    void emit_stopped();
 
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
     video_transcode_config video_config_;
     whep_session_timeouts timeouts_;
+    runtime_event_emitter_ptr runtime_events_;
     std::map<track_id, media_track> negotiated_tracks_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
@@ -117,6 +123,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::optional<boost::asio::ip::udp::endpoint> remote_endpoint_;
     std::uint16_t local_port_reservation_{};
     std::string stream_id_;
+    std::string stream_name_;
     std::string id_;
     std::string ice_ufrag_;
     std::string ice_pwd_;
@@ -125,7 +132,12 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::uint16_t local_port_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
+    runtime_end_reason end_reason_{runtime_end_reason::requested};
+    std::string end_error_;
     bool started_{};
+    bool runtime_started_{};
+    bool runtime_streaming_{};
+    bool ending_{};
 };
 
 }    // namespace media_server

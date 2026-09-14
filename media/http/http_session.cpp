@@ -18,8 +18,12 @@
 namespace media_server
 {
 
-http_session::http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, io_context_pool& workers, const config& config)
-    : worker_(worker), stream_(std::move(socket)), workers_(workers), config_(config)
+http_session::http_session(worker_context& worker,
+                           boost::asio::ip::tcp::socket socket,
+                           io_context_pool& workers,
+                           const config& config,
+                           runtime_event_emitter_ptr runtime_events)
+    : worker_(worker), stream_(std::move(socket)), workers_(workers), config_(config), runtime_events_(std::move(runtime_events))
 {
 }
 
@@ -67,7 +71,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     {
         write_string_response(request,
                               media_server::handle_gb28181_receiver_request(
-                                  request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address)),
+                                  request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address), runtime_events_),
                               yield);
         return;
     }
@@ -75,18 +79,18 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     {
         write_string_response(request,
                               media_server::handle_gb28181_sender_request(
-                                  request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address)),
+                                  request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address), runtime_events_),
                               yield);
         return;
     }
     if (path == "/rtsp/pull" || path.starts_with("/rtsp/pull/"))
     {
-        write_string_response(request, media_server::handle_rtsp_pull_request(request, worker_, *parsed), yield);
+        write_string_response(request, media_server::handle_rtsp_pull_request(request, worker_, *parsed, runtime_events_), yield);
         return;
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))
     {
-        write_string_response(request, media_server::handle_whep_request(request, worker_, *parsed, config_), yield);
+        write_string_response(request, media_server::handle_whep_request(request, worker_, *parsed, config_, runtime_events_), yield);
         return;
     }
     if (path == "/publish/whip" || path.starts_with("/publish/whip/"))

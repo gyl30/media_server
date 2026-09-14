@@ -10,6 +10,7 @@
 
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/post.hpp>
 
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
@@ -33,6 +34,60 @@ void require(bool condition, std::string_view message)
     {
         throw std::runtime_error(std::string(message));
     }
+}
+
+struct captured_events
+{
+    std::vector<runtime_event> values;
+    bool owner_only{true};
+};
+
+runtime_event_emitter_ptr capture_events(worker_context& worker, captured_events& events)
+{
+    return std::make_shared<runtime_event_emitter>(
+        "media-1",
+        "instance-1",
+        [&worker, &events](runtime_event event)
+        {
+            events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
+            events.values.push_back(std::move(event));
+        });
+}
+
+template <typename Handler>
+void run_on_owner(worker_context& worker, Handler&& handler)
+{
+    bool completed = false;
+    boost::asio::post(worker.io(),
+                      [&handler, &completed]()
+                      {
+                          handler();
+                          completed = true;
+                      });
+    while (!completed)
+    {
+        if (worker.io().stopped())
+        {
+            worker.io().restart();
+        }
+        static_cast<void>(worker.io().run_one());
+    }
+}
+
+void require_gb_event(const runtime_event& event,
+                      runtime_event_type type,
+                      std::string_view stream_id,
+                      std::string_view stream_name,
+                      runtime_state state,
+                      std::string_view stage,
+                      std::string_view message)
+{
+    const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
+    require(event.type == type && event.server_id == "media-1" && event.instance_id == "instance-1" &&
+                event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id &&
+                event.direction == runtime_direction::output && event.protocol == runtime_protocol::gb28181 && event.state == state &&
+                stage_matches,
+            message);
 }
 
 void test_udp_sender_session_sends_rtp()
@@ -72,10 +127,31 @@ void test_udp_sender_session_sends_rtp()
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
+    constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
+    captured_events events;
     auto session = std::make_shared<gb28181_udp_sender_session>(
-        worker, "550e8400-e29b-41d4-a716-446655440000", source, description, boost::asio::ip::address_v4::loopback(), "udp-sender", false);
+        worker,
+        std::string{stream_id},
+        source,
+        description,
+        boost::asio::ip::address_v4::loopback(),
+        "udp-sender",
+        false,
+        std::chrono::milliseconds{25'000},
+        1024U * 1024U,
+        capture_events(worker, events));
     require(streams.add_sender_session(source->name(), "udp-sender", session), "gb udp sender session registry");
-    require(session->startup(), "gb udp sender session startup");
+    bool started = false;
+    run_on_owner(worker, [&]() { started = session->startup(); });
+    require(started, "gb udp sender session startup");
+    require(events.values.size() == 1U, "gb udp sender starting event count");
+    require_gb_event(events.values[0],
+                     runtime_event_type::output_started,
+                     stream_id,
+                     source->name(),
+                     runtime_state::starting,
+                     {},
+                     "gb udp sender starting event payload");
 
     io.run_for(std::chrono::milliseconds(20));
     io.restart();
@@ -97,6 +173,14 @@ void test_udp_sender_session_sends_rtp()
         io.restart();
     }
     require(rtp_receiver.available() > 0, "gb udp sender sends RTP");
+    require(events.values.size() == 2U, "gb udp sender streaming event count");
+    require_gb_event(events.values[1],
+                     runtime_event_type::output_started,
+                     stream_id,
+                     source->name(),
+                     runtime_state::streaming,
+                     "streaming",
+                     "gb udp sender streaming event payload");
 
     std::array<std::uint8_t, 2048> packet{};
     boost::asio::ip::udp::endpoint sender;
@@ -105,9 +189,19 @@ void test_udp_sender_session_sends_rtp()
     require(rtp_packet_deserialize(&decoded, packet.data(), static_cast<int>(bytes)) == 0 && decoded.payloadlen > 0,
             "gb udp sender sends valid RTP");
 
-    session->shutdown();
-    io.restart();
+    run_on_owner(worker, [&]() { session->shutdown(); });
     io.run();
+    require(events.values.size() == 3U, "gb udp sender stopped event count");
+    require_gb_event(events.values[2],
+                     runtime_event_type::output_stopped,
+                     stream_id,
+                     source->name(),
+                     runtime_state::stopped,
+                     {},
+                     "gb udp sender stopped event payload");
+    require(events.values[2].end_reason == runtime_end_reason::requested && !events.values[2].error,
+            "gb udp sender stopped event reason");
+    require(events.owner_only, "gb udp sender events emitted on owner worker");
 }
 
 void test_udp_sender_queue_overflow_drops_packet()
@@ -145,10 +239,23 @@ void test_udp_sender_queue_overflow_drops_packet()
         .payload_type = 96,
         .ssrc = 0x12345680U,
     };
+    constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
+    captured_events events;
     auto session = std::make_shared<gb28181_udp_sender_session>(
-        worker, "550e8400-e29b-41d4-a716-446655440000", source, description, boost::asio::ip::address_v4::loopback(), "udp-overflow", false, std::chrono::milliseconds{25'000}, 0U);
+        worker,
+        std::string{stream_id},
+        source,
+        description,
+        boost::asio::ip::address_v4::loopback(),
+        "udp-overflow",
+        false,
+        std::chrono::milliseconds{25'000},
+        0U,
+        capture_events(worker, events));
     require(streams.add_sender_session(source->name(), "udp-overflow", session), "gb udp overflow sender registry");
-    require(session->startup(), "gb udp overflow session startup");
+    bool started = false;
+    run_on_owner(worker, [&]() { started = session->startup(); });
+    require(started, "gb udp overflow session startup");
 
     io.run_for(std::chrono::milliseconds(20));
     io.restart();
@@ -166,15 +273,34 @@ void test_udp_sender_queue_overflow_drops_packet()
     io.restart();
 
     require(rtp_receiver.available() == 0U, "gb udp overflow drops new packet");
+    require(events.values.size() == 1U, "gb udp overflow does not report streaming or stop");
+    require_gb_event(events.values[0],
+                     runtime_event_type::output_started,
+                     stream_id,
+                     source->name(),
+                     runtime_state::starting,
+                     {},
+                     "gb udp overflow starting event payload");
     auto registered = streams.take_sender_session(source->name(), "udp-overflow");
     require(registered.get() == session.get(), "gb udp overflow keeps session running");
 
     std::weak_ptr<gb28181_udp_sender_session> weak_session = session;
-    session->shutdown();
+    run_on_owner(worker, [&]() { session->shutdown(); });
     session.reset();
     registered.reset();
     io.run();
     require(weak_session.expired(), "gb udp overflow shutdown releases session");
+    require(events.values.size() == 2U, "gb udp overflow terminal event count");
+    require_gb_event(events.values[1],
+                     runtime_event_type::output_stopped,
+                     stream_id,
+                     source->name(),
+                     runtime_state::stopped,
+                     {},
+                     "gb udp overflow stopped event payload");
+    require(events.values[1].end_reason == runtime_end_reason::requested && !events.values[1].error,
+            "gb udp overflow remains normally stoppable");
+    require(events.owner_only, "gb udp overflow events emitted on owner worker");
 }
 
 void test_udp_sender_rtcp_shutdown_releases_scheduler()
