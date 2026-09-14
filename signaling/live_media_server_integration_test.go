@@ -43,7 +43,7 @@ func TestGB28181LiveWithMediaServer(t *testing.T) {
 	cfg := testConfig()
 	platform, sipAddress := startRegistrar(t, cfg)
 	mediaRegistry := newMediaServerRegistry()
-	infrastructure := httptest.NewServer(newInfrastructureServer(cfg, mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil))).handler())
+	infrastructure := httptest.NewServer(newTestInfrastructureServer(t, cfg, mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil))).handler())
 	t.Cleanup(infrastructure.Close)
 
 	listeners := make([]net.Listener, 3)

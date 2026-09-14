@@ -13,7 +13,7 @@ import (
 
 func TestMediaServerInfrastructureHTTP(t *testing.T) {
 	registry := newMediaServerRegistry()
-	server := newInfrastructureServer(config{mediaServerTimeout: 15 * time.Second}, registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, config{mediaServerTimeout: 15 * time.Second}, registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 	client := httpServer.Client()
@@ -50,7 +50,7 @@ func TestMediaServerInfrastructureHTTP(t *testing.T) {
 
 func TestMediaServerInfrastructureHTTPRejectsMalformedRequests(t *testing.T) {
 	registry := newMediaServerRegistry()
-	server := newInfrastructureServer(config{mediaServerTimeout: 15 * time.Second}, registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := newTestInfrastructureServer(t, config{mediaServerTimeout: 15 * time.Second}, registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 

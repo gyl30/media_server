@@ -19,7 +19,7 @@ type publishClaimRequest struct {
 
 func (s *infrastructureServer) handlePublishClaim(writer http.ResponseWriter, request *http.Request) {
 	var command publishClaimRequest
-	if !decodeJSON(writer, request, &command) || !validControlStreamID(command.StreamID) || command.ServerID == "" ||
+	if !decodeJSON(writer, request, &command) || !validUUIDv4(command.StreamID) || command.ServerID == "" ||
 		command.InstanceID == "" || command.Direction != "input" ||
 		(command.Protocol != "rtmp" && command.Protocol != "rtsp") || command.StreamName == "" {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
@@ -41,7 +41,7 @@ func (s *infrastructureServer) handlePublishClaim(writer http.ResponseWriter, re
 	}
 }
 
-func validControlStreamID(value string) bool {
+func validUUIDv4(value string) bool {
 	parsed, err := uuid.Parse(value)
 	return err == nil && parsed.Version() == 4 && parsed.Variant() == uuid.RFC4122 && parsed.String() == value
 }

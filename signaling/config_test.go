@@ -20,6 +20,19 @@ func TestParseConfig(t *testing.T) {
 		if cfg.mediaRequestTimeout != 3*time.Second || cfg.inviteTimeout != 10*time.Second || cfg.byeTimeout != 3*time.Second {
 			t.Fatalf("operation timeouts = %s/%s/%s", cfg.mediaRequestTimeout, cfg.inviteTimeout, cfg.byeTimeout)
 		}
+		if cfg.database != "signaling.db" {
+			t.Fatalf("database = %q", cfg.database)
+		}
+	})
+
+	t.Run("explicit database", func(t *testing.T) {
+		cfg, err := parseConfig([]string{"-database", "/var/lib/media-server/signaling.db"})
+		if err != nil {
+			t.Fatalf("parseConfig() error = %v", err)
+		}
+		if cfg.database != "/var/lib/media-server/signaling.db" {
+			t.Fatalf("database = %q", cfg.database)
+		}
 	})
 
 	t.Run("explicit listen address", func(t *testing.T) {
@@ -44,6 +57,7 @@ func TestParseConfigRejectsInvalidInput(t *testing.T) {
 		{"-sip-id", "invalid"},
 		{"-sip-domain", "340200"},
 		{"-sip-password", ""},
+		{"-database", ""},
 		{"-register-expires", "0s"},
 		{"-heartbeat-timeout", "0s"},
 		{"-http-listen", "bad"},
