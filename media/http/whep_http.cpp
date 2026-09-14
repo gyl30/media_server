@@ -140,7 +140,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
     }
     const auto segments = std::span<const std::string>(path).subspan(2);
     const bool session_resource = segments.size() == 2 && segments[0] == "session";
-    const bool endpoint_resource = !segments.empty() && segments[0] != "session";
+    const bool endpoint_resource = !segments.empty() && !session_resource;
     if (!session_resource && !endpoint_resource)
     {
         return make_whep_error_response(request, boost::beast::http::status::not_found, "not found\n");
