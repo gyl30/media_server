@@ -5,6 +5,7 @@
 #include <span>
 #include <deque>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -51,7 +52,8 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
                  whep_session_timeouts timeouts = {},
-                 video_transcode_config video = {});
+                 video_transcode_config video = {},
+                 std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
     void shutdown();
@@ -104,6 +106,8 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::unique_ptr<webrtc_packetizer> packetizer_;
     worker_context& worker_;
     udp_yield_transport udp_transport_;
+    std::size_t max_write_queue_bytes_;
+    std::size_t queued_write_bytes_{};
     std::deque<pending_datagram> udp_write_queue_;
     boost::asio::steady_timer dtls_timer_;
     boost::asio::steady_timer establishment_timer_;

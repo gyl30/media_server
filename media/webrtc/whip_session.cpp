@@ -49,13 +49,15 @@ whip_session::whip_session(worker_context& worker,
                            std::string stream_name,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
-                           whip_session_timeouts timeouts)
+                           whip_session_timeouts timeouts,
+                           std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
       timeouts_(timeouts),
       udp_transport_(worker_.io()),
+      max_write_queue_bytes_(max_write_queue_bytes),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
       ice_activity_timer_(worker_.io())
@@ -189,11 +191,7 @@ void whip_session::safe_shutdown()
     dtls_.reset();
     certificate_.reset();
     answer_ = {};
-    local_port_ = 0;
-    if (udp_write_queue_.empty())
-    {
-        shutdown_udp_transport();
-    }
+    shutdown_udp_transport();
 
     spdlog::info("webrtc whip session shutdown {}", id_);
 }
@@ -246,12 +244,8 @@ void whip_session::run_udp_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (udp_write_queue_.empty())
+        if (!started_ || udp_write_queue_.empty())
         {
-            if (local_port_ == 0)
-            {
-                shutdown_udp_transport();
-            }
             return;
         }
 
@@ -266,12 +260,15 @@ void whip_session::run_udp_write(boost::asio::yield_context yield)
                           datagram.endpoint.address().to_string(),
                           datagram.endpoint.port(),
                           error.message());
-            udp_write_queue_.clear();
-            shutdown_udp_transport();
             shutdown();
             return;
         }
+        if (!started_)
+        {
+            return;
+        }
 
+        queued_write_bytes_ -= datagram.packet->size();
         udp_write_queue_.pop_front();
     }
 }
@@ -476,8 +473,15 @@ void whip_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
     {
         return;
     }
+    if (packet.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - packet.size())
+    {
+        spdlog::warn(
+            "whip udp write queue full session {} queued {} limit {} dropped {}", id_, queued_write_bytes_, max_write_queue_bytes_, packet.size());
+        return;
+    }
 
     const bool start_write = udp_write_queue_.empty();
+    queued_write_bytes_ += packet.size();
     udp_write_queue_.push_back(pending_datagram{
         .packet = std::make_shared<std::vector<std::uint8_t>>(std::move(packet)),
         .endpoint = std::move(endpoint),

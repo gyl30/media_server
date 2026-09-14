@@ -4,6 +4,7 @@
 #include <span>
 #include <deque>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -45,7 +46,8 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
                  std::string stream_name,
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
-                 whip_session_timeouts timeouts = {});
+                 whip_session_timeouts timeouts = {},
+                 std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] whip_session_startup_error startup(webrtc_offer offer);
     void shutdown();
@@ -89,6 +91,8 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<whip_media_receiver> media_receiver_;
     udp_yield_transport udp_transport_;
+    std::size_t max_write_queue_bytes_;
+    std::size_t queued_write_bytes_{};
     std::deque<pending_datagram> udp_write_queue_;
     boost::asio::steady_timer dtls_timer_;
     boost::asio::steady_timer establishment_timer_;
