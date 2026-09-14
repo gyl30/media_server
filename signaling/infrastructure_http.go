@@ -21,6 +21,7 @@ type infrastructureServer struct {
 	logger               *slog.Logger
 	live                 *liveService
 	media                *mediaServerHTTPClient
+	allocations          *publishAllocationRegistry
 	rtspPullMu           sync.Mutex
 	rtspPulls            map[string]rtspPullRuntime
 	onMediaServerOffline func(mediaServerInstance)
@@ -29,7 +30,8 @@ type infrastructureServer struct {
 func newInfrastructureServer(cfg config, registry *mediaServerRegistry, logger *slog.Logger) *infrastructureServer {
 	return &infrastructureServer{
 		cfg: cfg, registry: registry, logger: logger,
-		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), rtspPulls: make(map[string]rtspPullRuntime),
+		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), allocations: newPublishAllocationRegistry(),
+		rtspPulls: make(map[string]rtspPullRuntime),
 	}
 }
 
@@ -39,6 +41,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	mux.HandleFunc("POST /internal/media-servers/heartbeat", s.handleMediaServerHeartbeat)
 	mux.HandleFunc("POST /internal/rtsp-pull/create", s.handleRTSPPullCreate)
 	mux.HandleFunc("POST /internal/rtsp-pull/delete", s.handleRTSPPullDelete)
+	mux.HandleFunc("POST /api/publish/allocations", s.handlePublishAllocation)
 	if s.live != nil {
 		mux.HandleFunc("POST /internal/live/start", s.handleLiveStart)
 		mux.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
@@ -96,6 +99,7 @@ func (s *infrastructureServer) serve(ctx context.Context) error {
 				cancel()
 				return
 			case now := <-ticker.C:
+				s.allocations.expire(now)
 				for _, instance := range s.registry.expire(now, s.cfg.mediaServerTimeout) {
 					if s.onMediaServerOffline != nil {
 						s.onMediaServerOffline(instance)
