@@ -18,7 +18,9 @@ find_package(spdlog REQUIRED)
 
 include(CTest)
 include(CheckCXXCompilerFlag)
+include(CheckCXXSourceCompiles)
 include(CheckLinkerFlag)
+include(CMakePushCheckState)
 include(cmake/boost.cmake)
 include(cmake/ffmpeg.cmake)
 include(cmake/ireader.cmake)
@@ -82,6 +84,36 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
        MEDIA_SERVER_SANITIZER STREQUAL "undefined")
         if(MEDIA_SERVER_SANITIZER STREQUAL "address")
             set(media_server_sanitizer_flags address,undefined)
+            target_compile_definitions(media_server_build_options INTERFACE
+                BOOST_USE_UCONTEXT
+                BOOST_USE_ASAN
+            )
+
+            cmake_push_check_state(RESET)
+            set(CMAKE_REQUIRED_DEFINITIONS -DBOOST_USE_UCONTEXT -DBOOST_USE_ASAN)
+            set(CMAKE_REQUIRED_FLAGS "-fsanitize=address,undefined")
+            set(CMAKE_REQUIRED_LINK_OPTIONS -fsanitize=address,undefined)
+            set(CMAKE_REQUIRED_LIBRARIES "${BOOST_CONTEXT_LIBRARY}")
+            set(CMAKE_REQUIRED_INCLUDES "${Boost_INCLUDE_DIRS}")
+            unset(MEDIA_SERVER_BOOST_CONTEXT_ASAN_COMPATIBLE CACHE)
+            check_cxx_source_compiles([=[
+                #include <utility>
+                #include <boost/context/fiber.hpp>
+
+                int main()
+                {
+                    boost::context::fiber context([](boost::context::fiber&& caller) {
+                        return std::move(caller);
+                    });
+                    return 0;
+                }
+            ]=] MEDIA_SERVER_BOOST_CONTEXT_ASAN_COMPATIBLE)
+            cmake_pop_check_state()
+            if(NOT MEDIA_SERVER_BOOST_CONTEXT_ASAN_COMPATIBLE)
+                message(FATAL_ERROR
+                    "MEDIA_SERVER_SANITIZER=address requires BOOST_CONTEXT_LIBRARY "
+                    "built with context-impl=ucontext and sanitizer options")
+            endif()
         else()
             set(media_server_sanitizer_flags undefined)
         endif()
