@@ -23,6 +23,7 @@ type infrastructureServer struct {
 	media                *mediaServerHTTPClient
 	allocations          *publishAllocationRegistry
 	sources              *sourceStore
+	runtimes             *observedRuntimeRegistry
 	rtspPullMu           sync.Mutex
 	rtspPulls            map[string]rtspPullRuntime
 	onMediaServerOffline func(mediaServerInstance)
@@ -32,7 +33,7 @@ func newInfrastructureServer(cfg config, registry *mediaServerRegistry, sources 
 	return &infrastructureServer{
 		cfg: cfg, registry: registry, logger: logger,
 		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), allocations: newPublishAllocationRegistry(),
-		sources: sources, rtspPulls: make(map[string]rtspPullRuntime),
+		sources: sources, runtimes: newObservedRuntimeRegistry(), rtspPulls: make(map[string]rtspPullRuntime),
 	}
 }
 
@@ -47,7 +48,10 @@ func (s *infrastructureServer) handler() http.Handler {
 	mux.HandleFunc("POST /api/sources", s.handleSourceCreate)
 	mux.HandleFunc("PATCH /api/sources/{source_id}", s.handleSourcePatch)
 	mux.HandleFunc("DELETE /api/sources/{source_id}", s.handleSourceDelete)
+	mux.HandleFunc("GET /api/media-servers", s.handleMediaServerList)
+	mux.HandleFunc("GET /api/runtimes", s.handleRuntimeList)
 	mux.HandleFunc("POST /internal/publish/claim", s.handlePublishClaim)
+	mux.HandleFunc("POST /internal/runtime-events", s.handleRuntimeEvent)
 	if s.live != nil {
 		mux.HandleFunc("POST /internal/live/start", s.handleLiveStart)
 		mux.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
