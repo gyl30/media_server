@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const testStreamID = "550e8400-e29b-41d4-a716-446655440000"
+
 func TestMediaServerHTTPCreateUDPReceiverAndDelete(t *testing.T) {
 	requests := make(chan map[string]any, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -39,6 +41,7 @@ func TestMediaServerHTTPCreateUDPReceiverAndDelete(t *testing.T) {
 	client := newMediaServerHTTPClient(time.Second)
 	instance := mediaServerInstance{controlURL: server.URL, mediaIP: "192.0.2.20"}
 	endpoint, err := client.createUDPReceiver(context.Background(), instance, gb28181ReceiverRequest{
+		streamID:    testStreamID,
 		streamName:  "gb/34020000001320000001/34020000001320000002",
 		payloadType: 96,
 		ssrc:        200000001,
@@ -50,16 +53,17 @@ func TestMediaServerHTTPCreateUDPReceiverAndDelete(t *testing.T) {
 		t.Fatalf("endpoint = %+v", endpoint)
 	}
 	create := <-requests
-	if len(create) != 4 || create["stream_name"] != "gb/34020000001320000001/34020000001320000002" || create["transport"] != "udp" ||
+	if len(create) != 5 || create["stream_id"] != testStreamID ||
+		create["stream_name"] != "gb/34020000001320000001/34020000001320000002" || create["transport"] != "udp" ||
 		create["payload_type"] != float64(96) || create["ssrc"] != float64(200000001) {
 		t.Fatalf("create body = %#v", create)
 	}
 
-	if err := client.deleteReceiver(context.Background(), instance, endpoint.streamName); err != nil {
+	if err := client.deleteReceiver(context.Background(), instance, endpoint.streamID, endpoint.streamName); err != nil {
 		t.Fatalf("deleteReceiver() error = %v", err)
 	}
 	remove := <-requests
-	if len(remove) != 1 || remove["stream_name"] != endpoint.streamName {
+	if len(remove) != 2 || remove["stream_id"] != testStreamID || remove["stream_name"] != endpoint.streamName {
 		t.Fatalf("delete body = %#v", remove)
 	}
 }
@@ -94,22 +98,24 @@ func TestMediaServerHTTPCreateAndDeleteRTSPPull(t *testing.T) {
 	client := newMediaServerHTTPClient(time.Second)
 	instance := mediaServerInstance{controlURL: server.URL}
 	command := rtspPullCreateRequest{
-		StreamName: "live/camera", URL: "rtsp://192.0.2.10/live", Username: &username, Password: &password,
+		StreamID: testStreamID, StreamName: "live/camera", URL: "rtsp://192.0.2.10/live", Username: &username, Password: &password,
 	}
 	if err := client.createRTSPPull(context.Background(), instance, command); err != nil {
 		t.Fatalf("createRTSPPull() error = %v", err)
 	}
 	create := <-requests
-	if create.path != "/rtsp/pull/create" || len(create.body) != 4 || create.body["stream_name"] != command.StreamName ||
+	if create.path != "/rtsp/pull/create" || len(create.body) != 5 || create.body["stream_id"] != testStreamID ||
+		create.body["stream_name"] != command.StreamName ||
 		create.body["url"] != command.URL || create.body["username"] != username || create.body["password"] != password {
 		t.Fatalf("create request = %#v", create)
 	}
 
-	if err := client.deleteRTSPPull(context.Background(), instance, command.StreamName); err != nil {
+	if err := client.deleteRTSPPull(context.Background(), instance, command.StreamID, command.StreamName); err != nil {
 		t.Fatalf("deleteRTSPPull() error = %v", err)
 	}
 	remove := <-requests
-	if remove.path != "/rtsp/pull/delete" || len(remove.body) != 1 || remove.body["stream_name"] != command.StreamName {
+	if remove.path != "/rtsp/pull/delete" || len(remove.body) != 2 || remove.body["stream_id"] != testStreamID ||
+		remove.body["stream_name"] != command.StreamName {
 		t.Fatalf("delete request = %#v", remove)
 	}
 }
@@ -123,7 +129,7 @@ func TestMediaServerHTTPDistinguishesRejectionAndNetworkFailure(t *testing.T) {
 	defer server.Close()
 
 	client := newMediaServerHTTPClient(time.Second)
-	request := gb28181ReceiverRequest{streamName: "gb/device/channel", payloadType: 96, ssrc: 200000001}
+	request := gb28181ReceiverRequest{streamID: testStreamID, streamName: "gb/device/channel", payloadType: 96, ssrc: 200000001}
 	_, err := client.createUDPReceiver(context.Background(), mediaServerInstance{controlURL: server.URL, mediaIP: "127.0.0.1"}, request)
 	var rejection *mediaServerHTTPRejection
 	if !errors.As(err, &rejection) || rejection.status != http.StatusInternalServerError || rejection.code != "operation_failed" {
@@ -152,7 +158,7 @@ func TestMediaServerHTTPRejectsInvalidCreateResponse(t *testing.T) {
 			defer server.Close()
 			client := newMediaServerHTTPClient(time.Second)
 			_, err := client.createUDPReceiver(context.Background(), mediaServerInstance{controlURL: server.URL, mediaIP: "127.0.0.1"}, gb28181ReceiverRequest{
-				streamName: "gb/device/channel", payloadType: 96, ssrc: 200000001,
+				streamID: testStreamID, streamName: "gb/device/channel", payloadType: 96, ssrc: 200000001,
 			})
 			if err == nil {
 				t.Fatal("createUDPReceiver() succeeded")

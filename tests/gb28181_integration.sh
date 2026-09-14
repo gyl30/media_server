@@ -191,18 +191,20 @@ run_udp_case() {
     local audio_codec="$5"
     local ssrc="$6"
     local sender_id="$7"
+    local receiver_stream_id="$8"
+    local sender_stream_id="$9"
     local receiver_body
     local sender_body
     local ports
     local rtp_port
     local rtcp_port
 
-    receiver_body="$(printf '{"stream_name":"%s","transport":"udp","payload_type":96,"ssrc":%s}' \
-        "$target" "$ssrc")"
+    receiver_body="$(printf '{"stream_id":"%s","stream_name":"%s","transport":"udp","payload_type":96,"ssrc":%s}' \
+        "$receiver_stream_id" "$target" "$ssrc")"
     ports="$(post_gb28181_receiver "${name}_receiver_post" "$receiver_body")"
     read -r rtp_port rtcp_port <<<"$ports"
-    sender_body="$(printf '{"stream_name":"%s","sender_id":"%s","transport":"udp","remote_address":"%s","remote_rtp_port":%s,"payload_type":96,"ssrc":%s}' \
-        "$source" "$sender_id" "$server_address" "$rtp_port" "$ssrc")"
+    sender_body="$(printf '{"stream_id":"%s","stream_name":"%s","sender_id":"%s","transport":"udp","remote_address":"%s","remote_rtp_port":%s,"payload_type":96,"ssrc":%s}' \
+        "$sender_stream_id" "$source" "$sender_id" "$server_address" "$rtp_port" "$ssrc")"
 
     post_gb28181_sender "${name}_sender_post" "$sender_body"
 
@@ -211,9 +213,9 @@ run_udp_case() {
     assert_specific_sockets
 
     delete_gb28181_sender "${name}_sender_delete" \
-        "$(printf '{"stream_name":"%s","sender_id":"%s"}' "$source" "$sender_id")"
+        "$(printf '{"stream_id":"%s","stream_name":"%s","sender_id":"%s"}' "$sender_stream_id" "$source" "$sender_id")"
     delete_gb28181_receiver "${name}_receiver_delete" \
-        "$(printf '{"stream_name":"%s"}' "$target")"
+        "$(printf '{"stream_id":"%s","stream_name":"%s"}' "$receiver_stream_id" "$target")"
     kill -0 "$main_pid"
 }
 
@@ -225,21 +227,23 @@ run_tcp_case() {
     local ssrc="$5"
     local sender_id="$6"
     local mode="$7"
+    local receiver_stream_id="$8"
+    local sender_stream_id="$9"
     local receiver_body
     local sender_body
 
     if [[ "$mode" == "sender-active" ]]; then
-        receiver_body="$(printf '{"stream_name":"%s","transport":"tcp_passive","listen_port":%s,"payload_type":96,"ssrc":%s}' \
-            "$target" "$port" "$ssrc")"
-        sender_body="$(printf '{"stream_name":"%s","sender_id":"%s","transport":"tcp_active","remote_address":"%s","remote_port":%s,"payload_type":96,"ssrc":%s}' \
-            "$source" "$sender_id" "$server_address" "$port" "$ssrc")"
+        receiver_body="$(printf '{"stream_id":"%s","stream_name":"%s","transport":"tcp_passive","listen_port":%s,"payload_type":96,"ssrc":%s}' \
+            "$receiver_stream_id" "$target" "$port" "$ssrc")"
+        sender_body="$(printf '{"stream_id":"%s","stream_name":"%s","sender_id":"%s","transport":"tcp_active","remote_address":"%s","remote_port":%s,"payload_type":96,"ssrc":%s}' \
+            "$sender_stream_id" "$source" "$sender_id" "$server_address" "$port" "$ssrc")"
         post_gb28181_receiver "${name}_receiver_post" "$receiver_body"
         post_gb28181_sender "${name}_sender_post" "$sender_body"
     else
-        receiver_body="$(printf '{"stream_name":"%s","transport":"tcp_active","remote_address":"%s","remote_port":%s,"payload_type":96,"ssrc":%s}' \
-            "$target" "$server_address" "$port" "$ssrc")"
-        sender_body="$(printf '{"stream_name":"%s","sender_id":"%s","transport":"tcp_passive","listen_port":%s,"payload_type":96,"ssrc":%s}' \
-            "$source" "$sender_id" "$port" "$ssrc")"
+        receiver_body="$(printf '{"stream_id":"%s","stream_name":"%s","transport":"tcp_active","remote_address":"%s","remote_port":%s,"payload_type":96,"ssrc":%s}' \
+            "$receiver_stream_id" "$target" "$server_address" "$port" "$ssrc")"
+        sender_body="$(printf '{"stream_id":"%s","stream_name":"%s","sender_id":"%s","transport":"tcp_passive","listen_port":%s,"payload_type":96,"ssrc":%s}' \
+            "$sender_stream_id" "$source" "$sender_id" "$port" "$ssrc")"
         post_gb28181_sender "${name}_sender_post" "$sender_body"
         post_gb28181_receiver "${name}_receiver_post" "$receiver_body"
     fi
@@ -251,10 +255,10 @@ run_tcp_case() {
     local shutdown_log_line
     shutdown_log_line="$(($(wc -l <"$work_dir/server.log") + 1))"
     delete_gb28181_sender "${name}_sender_delete" \
-        "$(printf '{"stream_name":"%s","sender_id":"%s"}' "$source" "$sender_id")"
+        "$(printf '{"stream_id":"%s","stream_name":"%s","sender_id":"%s"}' "$sender_stream_id" "$source" "$sender_id")"
     wait_tcp_receiver_shutdown "$target" "$shutdown_log_line"
     delete_gb28181_receiver "${name}_receiver_delete" \
-        "$(printf '{"stream_name":"%s"}' "$target")" true
+        "$(printf '{"stream_id":"%s","stream_name":"%s"}' "$receiver_stream_id" "$target")" true
     kill -0 "$main_pid"
 }
 
@@ -279,9 +283,12 @@ publish_pid=$!
 wait_probe_streams "$work_dir/source_h264_aac.txt" h264 aac \
     "rtsp://${server_address}:${rtsp_port}/live/gb-h264-aac"
 
-run_udp_case udp_h264_aac live/gb-h264-aac relay/gb-udp-h264-aac h264 aac 100002001 udp-h264-aac
-run_tcp_case tcp_sender_active live/gb-h264-aac relay/gb-tcp-sender-active 31100 100002004 tcp-sender-active sender-active
-run_tcp_case tcp_sender_passive live/gb-h264-aac relay/gb-tcp-sender-passive 31110 100002005 tcp-sender-passive sender-passive
+run_udp_case udp_h264_aac live/gb-h264-aac relay/gb-udp-h264-aac h264 aac 100002001 udp-h264-aac \
+    00000000-0000-4000-8000-000000000101 00000000-0000-4000-8000-000000000102
+run_tcp_case tcp_sender_active live/gb-h264-aac relay/gb-tcp-sender-active 31100 100002004 tcp-sender-active sender-active \
+    00000000-0000-4000-8000-000000000103 00000000-0000-4000-8000-000000000104
+run_tcp_case tcp_sender_passive live/gb-h264-aac relay/gb-tcp-sender-passive 31110 100002005 tcp-sender-passive sender-passive \
+    00000000-0000-4000-8000-000000000105 00000000-0000-4000-8000-000000000106
 
 # RTCP relay 保持 sender/receiver 对端身份独立，同时保留真实 RTP 数据路径。
 rtcp_relay_rtp_port=31200
@@ -293,7 +300,7 @@ rtcp_rr_packet="$work_dir/rtcp_rr.bin"
 rm -f "$rtcp_sr_packet" "$rtcp_rr_packet"
 
 rtcp_receiver_ports="$(post_gb28181_receiver rtcp_receiver_post \
-    '{"stream_name":"relay/gb-udp-rtcp","transport":"udp","payload_type":96,"ssrc":100002006}')"
+    '{"stream_id":"00000000-0000-4000-8000-000000000107","stream_name":"relay/gb-udp-rtcp","transport":"udp","payload_type":96,"ssrc":100002006}')"
 read -r rtcp_receiver_rtp_port rtcp_receiver_rtcp_port <<<"$rtcp_receiver_ports"
 
 python3 - "$rtcp_relay_rtp_port" "$rtcp_relay_rtcp_port" "$rtcp_receiver_rtp_port" "$rtcp_receiver_rtcp_port" \
@@ -354,7 +361,7 @@ rtcp_relay_pid=$!
 sleep 0.2
 kill -0 "$rtcp_relay_pid"
 
-post_gb28181_sender rtcp_sender_post "$(printf '{"stream_name":"live/gb-h264-aac","sender_id":"udp-rtcp","transport":"udp","remote_address":"%s","remote_rtp_port":%s,"remote_rtcp_port":%s,"payload_type":96,"ssrc":100002006,"rtcp_enabled":true}' \
+post_gb28181_sender rtcp_sender_post "$(printf '{"stream_id":"00000000-0000-4000-8000-000000000108","stream_name":"live/gb-h264-aac","sender_id":"udp-rtcp","transport":"udp","remote_address":"%s","remote_rtp_port":%s,"remote_rtcp_port":%s,"payload_type":96,"ssrc":100002006,"rtcp_enabled":true}' \
     "$server_address" "$rtcp_relay_rtp_port" "$rtcp_relay_rtcp_port")"
 wait_probe_streams "$work_dir/rtcp_probe.txt" h264 aac \
     "rtsp://${server_address}:${rtsp_port}/relay/gb-udp-rtcp"
@@ -372,8 +379,10 @@ grep -qx 'sr' "$rtcp_status"
 grep -qx 'rr' "$rtcp_status"
 [[ -s "$rtcp_sr_packet" ]]
 [[ -s "$rtcp_rr_packet" ]]
-delete_gb28181_sender rtcp_sender_delete '{"stream_name":"live/gb-h264-aac","sender_id":"udp-rtcp"}'
-delete_gb28181_receiver rtcp_receiver_delete '{"stream_name":"relay/gb-udp-rtcp"}'
+delete_gb28181_sender rtcp_sender_delete \
+    '{"stream_id":"00000000-0000-4000-8000-000000000108","stream_name":"live/gb-h264-aac","sender_id":"udp-rtcp"}'
+delete_gb28181_receiver rtcp_receiver_delete \
+    '{"stream_id":"00000000-0000-4000-8000-000000000107","stream_name":"relay/gb-udp-rtcp"}'
 kill -0 "$main_pid"
 stop_publisher
 
@@ -390,7 +399,8 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
 publish_pid=$!
 wait_probe_streams "$work_dir/source_h265_g711a.txt" hevc pcm_alaw \
     "rtsp://${server_address}:${rtsp_port}/live/gb-h265-g711a"
-run_udp_case udp_h265_g711a live/gb-h265-g711a relay/gb-udp-h265-g711a hevc pcm_alaw 100002002 udp-h265-g711a
+run_udp_case udp_h265_g711a live/gb-h265-g711a relay/gb-udp-h265-g711a hevc pcm_alaw 100002002 udp-h265-g711a \
+    00000000-0000-4000-8000-000000000109 00000000-0000-4000-8000-000000000110
 stop_publisher
 
 ffmpeg -nostdin -hide_banner -loglevel error -re \
@@ -405,7 +415,8 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
 publish_pid=$!
 wait_probe_streams "$work_dir/source_h264_g711u.txt" h264 pcm_mulaw \
     "rtsp://${server_address}:${rtsp_port}/live/gb-h264-g711u"
-run_udp_case udp_h264_g711u live/gb-h264-g711u relay/gb-udp-h264-g711u h264 pcm_mulaw 100002003 udp-h264-g711u
+run_udp_case udp_h264_g711u live/gb-h264-g711u relay/gb-udp-h264-g711u h264 pcm_mulaw 100002003 udp-h264-g711u \
+    00000000-0000-4000-8000-000000000111 00000000-0000-4000-8000-000000000112
 stop_publisher
 
 kill -0 "$main_pid"

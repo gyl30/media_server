@@ -12,7 +12,20 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+func rtspPullControlPayload(command rtspPullCreateRequest) map[string]any {
+	payload := map[string]any{"stream_name": command.StreamName, "url": command.URL}
+	if command.Username != nil {
+		payload["username"] = *command.Username
+	}
+	if command.Password != nil {
+		payload["password"] = *command.Password
+	}
+	return payload
+}
 
 func TestRTSPPullControlCreateDeleteAndSelectMediaServer(t *testing.T) {
 	type receivedRequest struct {
@@ -50,13 +63,25 @@ func TestRTSPPullControlCreateDeleteAndSelectMediaServer(t *testing.T) {
 	command := rtspPullCreateRequest{
 		StreamName: "live/camera", URL: "rtsp://192.0.2.10/live", Username: &username, Password: &password,
 	}
-	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", command)
+	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullControlPayload(command))
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create status = %d body = %s", response.StatusCode, readBody(t, response))
 	}
+	var created struct {
+		Result   string `json:"result"`
+		StreamID string `json:"stream_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+		response.Body.Close()
+		t.Fatalf("Decode() error = %v", err)
+	}
 	response.Body.Close()
 	create := <-requests
-	if create.path != "/rtsp/pull/create" || len(create.body) != 4 || create.body["stream_name"] != command.StreamName ||
+	streamID, ok := create.body["stream_id"].(string)
+	parsedStreamID, parseError := uuid.Parse(streamID)
+	if created.Result != "ok" || created.StreamID != streamID || create.path != "/rtsp/pull/create" || len(create.body) != 5 ||
+		!ok || parseError != nil || parsedStreamID.Version() != 4 ||
+		parsedStreamID.String() != streamID || create.body["stream_name"] != command.StreamName ||
 		create.body["url"] != command.URL || create.body["username"] != username || create.body["password"] != password {
 		t.Fatalf("create request = %#v", create)
 	}
@@ -67,7 +92,8 @@ func TestRTSPPullControlCreateDeleteAndSelectMediaServer(t *testing.T) {
 	}
 	response.Body.Close()
 	remove := <-requests
-	if remove.path != "/rtsp/pull/delete" || len(remove.body) != 1 || remove.body["stream_name"] != command.StreamName {
+	if remove.path != "/rtsp/pull/delete" || len(remove.body) != 2 || remove.body["stream_id"] != streamID ||
+		remove.body["stream_name"] != command.StreamName {
 		t.Fatalf("delete request = %#v", remove)
 	}
 
@@ -77,11 +103,17 @@ func TestRTSPPullControlCreateDeleteAndSelectMediaServer(t *testing.T) {
 
 func TestRTSPPullControlAllowsRecreateAfterRuntimeFailure(t *testing.T) {
 	var creates atomic.Int32
+	streamIDs := make(chan string, 2)
 	mediaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/rtsp/pull/create" {
 			http.NotFound(writer, request)
 			return
 		}
+		var command rtspPullCreateRequest
+		if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
+			t.Errorf("Decode() error = %v", err)
+		}
+		streamIDs <- command.StreamID
 		creates.Add(1)
 		writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
 	}))
@@ -98,7 +130,7 @@ func TestRTSPPullControlAllowsRecreateAfterRuntimeFailure(t *testing.T) {
 	defer httpServer.Close()
 	command := rtspPullCreateRequest{StreamName: "live/recreate", URL: "rtsp://192.0.2.10/live"}
 	for range 2 {
-		response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", command)
+		response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullControlPayload(command))
 		if response.StatusCode != http.StatusCreated {
 			t.Fatalf("create status = %d body = %s", response.StatusCode, readBody(t, response))
 		}
@@ -107,17 +139,38 @@ func TestRTSPPullControlAllowsRecreateAfterRuntimeFailure(t *testing.T) {
 	if creates.Load() != 2 {
 		t.Fatalf("creates = %d", creates.Load())
 	}
+	firstStreamID := <-streamIDs
+	secondStreamID := <-streamIDs
+	if firstStreamID == secondStreamID {
+		t.Fatalf("recreated runtime reused stream_id %q", firstStreamID)
+	}
+	for _, streamID := range []string{firstStreamID, secondStreamID} {
+		parsedStreamID, err := uuid.Parse(streamID)
+		if err != nil || parsedStreamID.Version() != 4 || parsedStreamID.String() != streamID {
+			t.Fatalf("stream_id = %q, error = %v", streamID, err)
+		}
+	}
 }
 
 func TestRTSPPullControlDelayedDeletePreservesReplacement(t *testing.T) {
 	deleteStarted := make(chan struct{})
 	releaseDelete := make(chan struct{})
+	createStreamIDs := make(chan string, 2)
+	deleteStreamIDs := make(chan string, 2)
 	var deletes atomic.Int32
 	mediaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var identity struct {
+			StreamID string `json:"stream_id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&identity); err != nil {
+			t.Errorf("Decode() error = %v", err)
+		}
 		switch request.URL.Path {
 		case "/rtsp/pull/create":
+			createStreamIDs <- identity.StreamID
 			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
 		case "/rtsp/pull/delete":
+			deleteStreamIDs <- identity.StreamID
 			if deletes.Add(1) == 1 {
 				close(deleteStarted)
 				<-releaseDelete
@@ -144,6 +197,7 @@ func TestRTSPPullControlDelayedDeletePreservesReplacement(t *testing.T) {
 	if createResponse.Code != http.StatusCreated {
 		t.Fatalf("initial create response = %d %s", createResponse.Code, createResponse.Body.String())
 	}
+	firstStreamID := <-createStreamIDs
 
 	deleteRequest := httptest.NewRequest(http.MethodPost, "/internal/rtsp-pull/delete", strings.NewReader(`{"stream_name":"live/replacement"}`))
 	deleteRequest.Header.Set("Content-Type", "application/json")
@@ -158,6 +212,9 @@ func TestRTSPPullControlDelayedDeletePreservesReplacement(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("delete did not reach media server")
 	}
+	if deletedStreamID := <-deleteStreamIDs; deletedStreamID != firstStreamID {
+		t.Fatalf("initial delete stream_id = %q, want %q", deletedStreamID, firstStreamID)
+	}
 
 	recreateRequest := httptest.NewRequest(http.MethodPost, "/internal/rtsp-pull/create", strings.NewReader(`{"stream_name":"live/replacement","url":"rtsp://192.0.2.10/live"}`))
 	recreateRequest.Header.Set("Content-Type", "application/json")
@@ -165,6 +222,10 @@ func TestRTSPPullControlDelayedDeletePreservesReplacement(t *testing.T) {
 	server.handleRTSPPullCreate(recreateResponse, recreateRequest)
 	if recreateResponse.Code != http.StatusCreated {
 		t.Fatalf("recreate response = %d %s", recreateResponse.Code, recreateResponse.Body.String())
+	}
+	secondStreamID := <-createStreamIDs
+	if secondStreamID == firstStreamID {
+		t.Fatalf("replacement reused stream_id %q", secondStreamID)
 	}
 	close(releaseDelete)
 	select {
@@ -182,6 +243,9 @@ func TestRTSPPullControlDelayedDeletePreservesReplacement(t *testing.T) {
 	server.handleRTSPPullDelete(finalDeleteResponse, finalDeleteRequest)
 	if finalDeleteResponse.Code != http.StatusOK || deletes.Load() != 2 {
 		t.Fatalf("replacement delete = %d %s calls=%d command=%s", finalDeleteResponse.Code, finalDeleteResponse.Body.String(), deletes.Load(), command.StreamName)
+	}
+	if deletedStreamID := <-deleteStreamIDs; deletedStreamID != secondStreamID {
+		t.Fatalf("replacement delete stream_id = %q, want %q", deletedStreamID, secondStreamID)
 	}
 }
 
@@ -221,6 +285,7 @@ func TestRTSPPullControlValidatesAndMapsMediaErrors(t *testing.T) {
 		"null username":    `{"stream_name":"live/camera","url":"rtsp://192.0.2.10/live","username":null}`,
 		"null password":    `{"stream_name":"live/camera","url":"rtsp://192.0.2.10/live","username":"admin","password":null}`,
 		"unknown field":    `{"stream_name":"live/camera","url":"rtsp://192.0.2.10/live","control_url":"http://other"}`,
+		"caller stream id": `{"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","url":"rtsp://192.0.2.10/live"}`,
 		"wrong field type": `{"stream_name":1,"url":"rtsp://192.0.2.10/live"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -238,9 +303,9 @@ func TestRTSPPullControlValidatesAndMapsMediaErrors(t *testing.T) {
 		"live/invalid":  http.StatusBadRequest,
 		"live/conflict": http.StatusConflict,
 	} {
-		response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullCreateRequest{
+		response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullControlPayload(rtspPullCreateRequest{
 			StreamName: streamName, URL: "rtsp://192.0.2.10/live",
-		})
+		}))
 		if response.StatusCode != expectedStatus {
 			t.Fatalf("%s status = %d body = %s", streamName, response.StatusCode, readBody(t, response))
 		}
@@ -275,9 +340,9 @@ func TestRTSPPullControlMapsFailuresWithoutLoggingPassword(t *testing.T) {
 	defer httpServer.Close()
 	username := "admin"
 	password := "do-not-log-this-password"
-	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullCreateRequest{
+	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullControlPayload(rtspPullCreateRequest{
 		StreamName: "live/failure", URL: "rtsp://192.0.2.10/live", Username: &username, Password: &password,
-	})
+	}))
 	assertHTTPError(t, response, http.StatusBadGateway, "rtsp_pull_create_failed")
 	if strings.Contains(logs.String(), password) {
 		t.Fatalf("password leaked in logs: %s", logs.String())
@@ -306,8 +371,9 @@ func TestRTSPPullControlDoesNotDeleteOnAmbiguousCreateFailure(t *testing.T) {
 		t.Fatalf("register() error = %v", err)
 	}
 	server := newInfrastructureServer(testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	server.rtspPulls["live/ambiguous"] = mediaServerInstance{
-		serverID: "media-1", instanceID: "instance-a", controlURL: mediaServer.URL, online: true,
+	server.rtspPulls["live/ambiguous"] = rtspPullRuntime{
+		server:   mediaServerInstance{serverID: "media-1", instanceID: "instance-a", controlURL: mediaServer.URL, online: true},
+		streamID: testStreamID,
 	}
 	request := httptest.NewRequest(http.MethodPost, "/internal/rtsp-pull/create", strings.NewReader(`{"stream_name":"live/ambiguous","url":"rtsp://192.0.2.10/live"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -316,7 +382,7 @@ func TestRTSPPullControlDoesNotDeleteOnAmbiguousCreateFailure(t *testing.T) {
 	if recorder.Code != http.StatusBadGateway || deletes.Load() != 0 {
 		t.Fatalf("response = %d %s deletes=%d", recorder.Code, recorder.Body.String(), deletes.Load())
 	}
-	if mapped, ok := server.rtspPullServer("live/ambiguous"); !ok || mapped.instanceID != "instance-a" {
+	if mapped, ok := server.rtspPullRuntime("live/ambiguous"); !ok || mapped.server.instanceID != "instance-a" {
 		t.Fatal("ambiguous create failure removed existing ownership")
 	}
 }
@@ -375,7 +441,7 @@ func TestRTSPPullControlCreateDoesNotRetainExpiredMediaServer(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable || recorder.Body.String() != "{\"error\":\"no_media_server\"}\n" || deletes.Load() != 1 {
 		t.Fatalf("response = %d %s deletes=%d", recorder.Code, recorder.Body.String(), deletes.Load())
 	}
-	if _, ok := server.rtspPullServer("live/expired"); ok {
+	if _, ok := server.rtspPullRuntime("live/expired"); ok {
 		t.Fatal("expired create retained ownership")
 	}
 }
@@ -440,9 +506,9 @@ func TestRTSPPullControlMapsNetworkFailureWithoutLoggingPassword(t *testing.T) {
 	defer httpServer.Close()
 	username := "admin"
 	password := "network-failure-password"
-	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullCreateRequest{
+	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullControlPayload(rtspPullCreateRequest{
 		StreamName: "live/network-failure", URL: "rtsp://192.0.2.10/live", Username: &username, Password: &password,
-	})
+	}))
 	assertHTTPError(t, response, http.StatusBadGateway, "rtsp_pull_create_failed")
 	if strings.Contains(logs.String(), password) {
 		t.Fatalf("password leaked in logs: %s", logs.String())
@@ -474,7 +540,7 @@ func TestRTSPPullControlRemovesOwnershipWhenMediaSessionIsMissing(t *testing.T) 
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 	command := rtspPullCreateRequest{StreamName: "live/missing", URL: "rtsp://192.0.2.10/live"}
-	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", command)
+	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/rtsp-pull/create", rtspPullControlPayload(command))
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create status = %d body = %s", response.StatusCode, readBody(t, response))
 	}

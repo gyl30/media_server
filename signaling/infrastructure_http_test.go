@@ -26,8 +26,9 @@ func TestMediaServerInfrastructureHTTP(t *testing.T) {
 	}
 	response.Body.Close()
 	instance, ok := registry.selectOnline()
-	if !ok || instance.controlURL != registration.ControlURL[:len(registration.ControlURL)-1] {
-		t.Fatalf("registered control URL = %q", instance.controlURL)
+	if !ok || instance.controlURL != registration.ControlURL[:len(registration.ControlURL)-1] ||
+		instance.rtmpPort != registration.RTMPPort || instance.rtspPort != registration.RTSPPort || instance.httpPort != registration.HTTPPort {
+		t.Fatalf("registered instance = %+v", instance)
 	}
 
 	response = postJSON(t, client, httpServer.URL+"/internal/media-servers/register", registration)
@@ -55,9 +56,12 @@ func TestMediaServerInfrastructureHTTPRejectsMalformedRequests(t *testing.T) {
 
 	for name, body := range map[string]string{
 		"invalid JSON":     `{`,
-		"unknown field":    `{"server_id":"media-1","unknown":true}`,
-		"invalid URL":      `{"server_id":"media-1","instance_id":"a","control_url":"file:///tmp/a","media_ip":"127.0.0.1"}`,
-		"invalid media IP": `{"server_id":"media-1","instance_id":"a","control_url":"http://127.0.0.1:8080","media_ip":"bad"}`,
+		"unknown field":    `{"server_id":"media-1","instance_id":"a","control_url":"http://127.0.0.1:8080","media_ip":"127.0.0.1","rtmp_port":1935,"rtsp_port":8554,"http_port":8080,"unknown":true}`,
+		"invalid URL":      `{"server_id":"media-1","instance_id":"a","control_url":"file:///tmp/a","media_ip":"127.0.0.1","rtmp_port":1935,"rtsp_port":8554,"http_port":8080}`,
+		"invalid media IP": `{"server_id":"media-1","instance_id":"a","control_url":"http://127.0.0.1:8080","media_ip":"bad","rtmp_port":1935,"rtsp_port":8554,"http_port":8080}`,
+		"zero RTMP port":   `{"server_id":"media-1","instance_id":"a","control_url":"http://127.0.0.1:8080","media_ip":"127.0.0.1","rtmp_port":0,"rtsp_port":8554,"http_port":8080}`,
+		"zero RTSP port":   `{"server_id":"media-1","instance_id":"a","control_url":"http://127.0.0.1:8080","media_ip":"127.0.0.1","rtmp_port":1935,"rtsp_port":0,"http_port":8080}`,
+		"zero HTTP port":   `{"server_id":"media-1","instance_id":"a","control_url":"http://127.0.0.1:8080","media_ip":"127.0.0.1","rtmp_port":1935,"rtsp_port":8554,"http_port":0}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			request, err := http.NewRequest(http.MethodPost, httpServer.URL+"/internal/media-servers/register", bytes.NewBufferString(body))

@@ -16,11 +16,13 @@
 namespace media_server
 {
 gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worker,
-                                         std::string stream_name,
-                                         gb28181_transport_config config,
-                                         boost::asio::ip::address bind_address,
-                                         std::chrono::milliseconds establishment_timeout)
+                                                           std::string stream_id,
+                                                           std::string stream_name,
+                                                           gb28181_transport_config config,
+                                                           boost::asio::ip::address bind_address,
+                                                           std::chrono::milliseconds establishment_timeout)
     : worker_(worker),
+      stream_id_(std::move(stream_id)),
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
       receiver_(worker_, std::move(stream_name), config_.payload_type, config_.ssrc),
@@ -54,6 +56,8 @@ void gb28181_tcp_receiver_session::shutdown()
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
+
+std::string_view gb28181_tcp_receiver_session::stream_id() const noexcept { return stream_id_; }
 
 void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
 {

@@ -82,6 +82,7 @@ bool should_setup_media(rtsp_client_t* client, int media)
 }    // namespace
 
 rtsp_pull_session::rtsp_pull_session(worker_context& worker,
+                                     std::string stream_id,
                                      std::string stream_name,
                                      std::string url,
                                      std::string username,
@@ -90,6 +91,7 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
                                      std::chrono::milliseconds initial_tracks_timeout,
                                      std::size_t max_write_queue_bytes)
     : worker_(worker),
+      stream_id_(std::move(stream_id)),
       stream_name_(std::move(stream_name)),
       url_(std::move(url)),
       username_(std::move(username)),
@@ -108,6 +110,8 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
 rtsp_pull_session::~rtsp_pull_session() = default;
 
 bool rtsp_pull_session::valid_url(std::string_view url) { return parse_url(url).has_value(); }
+
+std::string_view rtsp_pull_session::stream_id() const noexcept { return stream_id_; }
 
 bool rtsp_pull_session::startup()
 {

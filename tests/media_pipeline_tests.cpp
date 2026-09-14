@@ -168,10 +168,12 @@ static_assert(std::is_constructible_v<rtsp_pull_session,
                                       std::string,
                                       std::string,
                                       std::string,
+                                      std::string,
                                       std::chrono::milliseconds,
                                       std::chrono::milliseconds>);
 static_assert(!std::is_constructible_v<rtsp_pull_session,
                                        boost::asio::io_context&,
+                                       std::string,
                                        std::string,
                                        std::string,
                                        std::string,
@@ -196,22 +198,26 @@ static_assert(std::is_constructible_v<http_flv_session, worker_context&, boost::
 static_assert(std::is_constructible_v<whip_media_receiver, worker_context&, std::string, whip_media_receiver_config>);
 static_assert(std::is_constructible_v<whep_session,
                                       worker_context&,
+                                      std::string,
                                       std::shared_ptr<media_stream>,
                                       boost::asio::ip::address,
                                       std::shared_ptr<dtls_certificate>>);
 static_assert(std::is_constructible_v<gb28181_udp_receiver_session,
                                       worker_context&,
                                       std::string,
+                                      std::string,
                                       gb28181_transport_config,
                                       boost::asio::ip::address>);
 static_assert(std::is_constructible_v<gb28181_tcp_receiver_session,
                                       worker_context&,
+                                      std::string,
                                       std::string,
                                       gb28181_transport_config,
                                       boost::asio::ip::address,
                                       std::chrono::milliseconds>);
 static_assert(std::is_constructible_v<gb28181_udp_sender_session,
                                       worker_context&,
+                                      std::string,
                                       std::shared_ptr<media_stream>,
                                       gb28181_transport_config,
                                       boost::asio::ip::address,
@@ -219,6 +225,7 @@ static_assert(std::is_constructible_v<gb28181_udp_sender_session,
                                       bool>);
 static_assert(std::is_constructible_v<gb28181_tcp_sender_session,
                                       worker_context&,
+                                      std::string,
                                       std::shared_ptr<media_stream>,
                                       std::string,
                                       gb28181_transport_config,
@@ -2590,7 +2597,7 @@ void test_gb28181_tcp_active_connect_successful()
                                           .payload_type = 96,
                                           .ssrc = 10'000'2101};
     auto session = std::make_shared<gb28181_tcp_receiver_session>(
-        worker, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(2));
+        worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(2));
     require(streams.add_receiver_session(stream_name, session), "gb28181 tcp active registry add");
     require(session->startup(), "gb28181 tcp active startup");
 
@@ -2628,7 +2635,7 @@ void test_gb28181_tcp_active_connection_refused()
                                           .payload_type = 96,
                                           .ssrc = 10'000'2102};
     auto session = std::make_shared<gb28181_tcp_receiver_session>(
-        worker, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(5));
+        worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(5));
     require(streams.add_receiver_session(stream_name, session), "gb28181 tcp active refusal registry add");
     require(session->startup(), "gb28181 tcp active refusal startup");
     const auto started_at = std::chrono::steady_clock::now();
@@ -2848,9 +2855,18 @@ void test_gb28181_multi_sender_identity()
     require(second->set_tracks({make_video_track()}), "gb multi sender second tracks");
     require(streams.add(first) && streams.add(second), "gb multi sender source registry");
 
-    const auto create = [&worker](std::string_view stream_name, std::string_view sender_id)
+    const auto runtime_id = [&second](std::string_view stream_name, std::string_view sender_id) {
+        if (sender_id == "b")
+        {
+            return "550e8400-e29b-41d4-b716-446655440001";
+        }
+        return stream_name == second->name() ? "550e8400-e29b-41d4-8716-446655440002"
+                                             : "550e8400-e29b-41d4-a716-446655440000";
+    };
+    const auto create = [&worker, &runtime_id](std::string_view stream_name, std::string_view sender_id)
     {
         boost::json::object body;
+        body["stream_id"] = runtime_id(stream_name, sender_id);
         body["stream_name"] = stream_name;
         body["sender_id"] = sender_id;
         body["transport"] = "udp";
@@ -2867,9 +2883,10 @@ void test_gb28181_multi_sender_identity()
         require(target.has_value(), "gb multi sender create target");
         return handle_gb28181_sender_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
     };
-    const auto remove = [&worker](std::string_view stream_name, std::string_view sender_id)
+    const auto remove = [&worker, &runtime_id](std::string_view stream_name, std::string_view sender_id)
     {
         boost::json::object body;
+        body["stream_id"] = runtime_id(stream_name, sender_id);
         body["stream_name"] = stream_name;
         body["sender_id"] = sender_id;
 
@@ -3109,21 +3126,25 @@ void test_gb28181_receiver_http_parameters()
 
     const auto post = boost::beast::http::verb::post;
     const auto delete_ = boost::beast::http::verb::delete_;
+    constexpr std::string_view udp_stream_id = "550e8400-e29b-41d4-a716-446655440000";
+    constexpr std::string_view tcp_active_stream_id = "550e8400-e29b-41d4-a716-446655440001";
+    constexpr std::string_view tcp_passive_stream_id = "550e8400-e29b-41d4-a716-446655440002";
     const auto udp_body = [&]
     {
-        return std::string{"{\"stream_name\":\"live/gb-receiver-http\",\"transport\":\"udp\",\"payload_type\":96,"
-                           "\"ssrc\":100001002}"};
+        return std::string{"{\"stream_id\":\""} + std::string{udp_stream_id} +
+               "\",\"stream_name\":\"live/gb-receiver-http\",\"transport\":\"udp\",\"payload_type\":96,"
+               "\"ssrc\":100001002}";
     };
     boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_active_port = tcp_active_probe.local_endpoint().port();
     boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 32110});
     const auto tcp_passive_port = tcp_probe.local_endpoint().port();
     tcp_probe.close();
-    const auto tcp_active_body =
-        "{\"stream_name\":\"live/gb-receiver-http-active\",\"transport\":\"tcp_active\",\"remote_address\":\"127.0.0.1\",\"remote_port\":" +
+    const auto tcp_active_body = "{\"stream_id\":\"" + std::string{tcp_active_stream_id} +
+        "\",\"stream_name\":\"live/gb-receiver-http-active\",\"transport\":\"tcp_active\",\"remote_address\":\"127.0.0.1\",\"remote_port\":" +
         std::to_string(tcp_active_port) + ",\"payload_type\":96,\"ssrc\":100001004}";
-    const auto tcp_passive_body =
-        "{\"stream_name\":\"live/gb-receiver-http-passive\",\"transport\":\"tcp_passive\",\"listen_port\":" +
+    const auto tcp_passive_body = "{\"stream_id\":\"" + std::string{tcp_passive_stream_id} +
+        "\",\"stream_name\":\"live/gb-receiver-http-passive\",\"transport\":\"tcp_passive\",\"listen_port\":" +
         std::to_string(tcp_passive_port) + ",\"payload_type\":96,\"ssrc\":100001005}";
     std::jthread worker_runner([&workers]() { workers.run(); });
     const auto check = [&](boost::beast::http::verb method,
@@ -3152,12 +3173,16 @@ void test_gb28181_receiver_http_parameters()
           "{\"error\":\"method_not_allowed\"}");
     check(post, "/gb28181/receiver/create?transport=udp", boost::beast::http::status::bad_request, "gb receiver rejects query", udp_body());
     check(post, "/gb28181/receiver/create", boost::beast::http::status::bad_request, "gb receiver rejects raw body", "v=0\r\n");
-    check(post, "/gb28181/receiver/create", boost::beast::http::status::bad_request, "gb receiver missing transport", "{\"stream_name\":\"missing-transport\"}");
+    check(post,
+          "/gb28181/receiver/create",
+          boost::beast::http::status::bad_request,
+          "gb receiver missing transport",
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440020\",\"stream_name\":\"missing-transport\"}");
     check(post,
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
           "gb receiver invalid transport",
-          "{\"stream_name\":\"invalid-transport\",\"transport\":\"TCP\",\"remote_address\":\"127.0.0.1\",\"remote_port\":31000,\"payload_type\":96,\"ssrc\":"
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440021\",\"stream_name\":\"invalid-transport\",\"transport\":\"TCP\",\"remote_address\":\"127.0.0.1\",\"remote_port\":31000,\"payload_type\":96,\"ssrc\":"
           "100001006}");
     check(post,
           "/gb28181/receiver/create",
@@ -3168,23 +3193,23 @@ void test_gb28181_receiver_http_parameters()
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
           "gb receiver invalid address",
-          "{\"stream_name\":\"invalid-address\",\"transport\":\"tcp_active\",\"remote_address\":\"bad\",\"remote_port\":31000,\"payload_type\":96,\"ssrc\":100001009}");
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440022\",\"stream_name\":\"invalid-address\",\"transport\":\"tcp_active\",\"remote_address\":\"bad\",\"remote_port\":31000,\"payload_type\":96,\"ssrc\":100001009}");
     check(post,
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
           "gb receiver rejects caller rtp port",
-          "{\"stream_name\":\"invalid-port\",\"transport\":\"udp\",\"rtp_port\":31000,\"payload_type\":96,"
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440023\",\"stream_name\":\"invalid-port\",\"transport\":\"udp\",\"rtp_port\":31000,\"payload_type\":96,"
           "\"ssrc\":100001011}");
     check(post,
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
           "gb receiver invalid payload",
-          "{\"stream_name\":\"invalid-payload\",\"transport\":\"udp\",\"payload_type\":128,\"ssrc\":100001014}");
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440024\",\"stream_name\":\"invalid-payload\",\"transport\":\"udp\",\"payload_type\":128,\"ssrc\":100001014}");
     check(post,
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
           "gb receiver missing ssrc",
-          "{\"stream_name\":\"missing-ssrc\",\"transport\":\"udp\",\"payload_type\":96}");
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440025\",\"stream_name\":\"missing-ssrc\",\"transport\":\"udp\",\"payload_type\":96}");
     check(post,
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
@@ -3194,12 +3219,12 @@ void test_gb28181_receiver_http_parameters()
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
           "gb receiver remote address without port",
-          "{\"stream_name\":\"missing-remote-port\",\"transport\":\"tcp_active\",\"remote_address\":\"127.0.0.1\",\"payload_type\":96,\"ssrc\":100001012}");
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440026\",\"stream_name\":\"missing-remote-port\",\"transport\":\"tcp_active\",\"remote_address\":\"127.0.0.1\",\"payload_type\":96,\"ssrc\":100001012}");
     check(post,
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
           "gb receiver remote port without address",
-          "{\"stream_name\":\"missing-remote-address\",\"transport\":\"tcp_active\",\"remote_port\":31998,\"payload_type\":96,\"ssrc\":100001013}");
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440027\",\"stream_name\":\"missing-remote-address\",\"transport\":\"tcp_active\",\"remote_port\":31998,\"payload_type\":96,\"ssrc\":100001013}");
     check(post,
           "/gb28181/receiver/create",
           boost::beast::http::status::bad_request,
@@ -3227,32 +3252,32 @@ void test_gb28181_receiver_http_parameters()
           "/gb28181/receiver/delete",
           boost::beast::http::status::ok,
           "gb receiver deletes UDP receiver",
-          "{\"stream_name\":\"live/gb-receiver-http\"}",
+          "{\"stream_id\":\"" + std::string{udp_stream_id} + "\",\"stream_name\":\"live/gb-receiver-http\"}",
           "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/receiver/delete",
           boost::beast::http::status::bad_request,
           "gb receiver delete rejects extra field",
-          "{\"stream_name\":\"live/gb-receiver-http\",\"transport\":\"udp\"}");
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440000\",\"stream_name\":\"live/gb-receiver-http\",\"transport\":\"udp\"}");
     check(post, "/gb28181/receiver/create", boost::beast::http::status::created, "gb receiver tcp active", tcp_active_body, "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/receiver/delete",
           boost::beast::http::status::ok,
           "gb receiver deletes tcp active",
-          "{\"stream_name\":\"live/gb-receiver-http-active\"}",
+          "{\"stream_id\":\"" + std::string{tcp_active_stream_id} + "\",\"stream_name\":\"live/gb-receiver-http-active\"}",
           "{\"result\":\"ok\"}");
     check(post, "/gb28181/receiver/create", boost::beast::http::status::created, "gb receiver tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/receiver/delete",
           boost::beast::http::status::ok,
           "gb receiver deletes tcp passive",
-          "{\"stream_name\":\"live/gb-receiver-http-passive\"}",
+          "{\"stream_id\":\"" + std::string{tcp_passive_stream_id} + "\",\"stream_name\":\"live/gb-receiver-http-passive\"}",
           "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/receiver/delete",
           boost::beast::http::status::internal_server_error,
           "gb receiver missing stream",
-          "{\"stream_name\":\"live/gb-receiver-http\"}",
+          "{\"stream_id\":\"" + std::string{udp_stream_id} + "\",\"stream_name\":\"live/gb-receiver-http\"}",
           "{\"error\":\"operation_failed\"}");
 
     work.reset();
@@ -3275,12 +3300,17 @@ void test_gb28181_sender_http_parameters()
     require(stream->set_tracks({make_video_track()}), "gb sender http tracks");
     require(streams.add(stream), "gb sender http source registry");
 
+    constexpr std::string_view udp_stream_id = "550e8400-e29b-41d4-a716-446655440010";
+    constexpr std::string_view udp_rtcp_stream_id = "550e8400-e29b-41d4-a716-446655440011";
+    constexpr std::string_view tcp_active_stream_id = "550e8400-e29b-41d4-a716-446655440012";
+    constexpr std::string_view tcp_passive_stream_id = "550e8400-e29b-41d4-a716-446655440013";
     const std::string udp_body =
-        "{\"stream_name\":\"live/"
+        "{\"stream_id\":\"" + std::string{udp_stream_id} + "\",\"stream_name\":\"live/"
         "gb-sender-http\",\"sender_id\":\"udp-default\",\"transport\":\"udp\",\"remote_address\":\"127.0.0.1\",\"remote_rtp_port\":29020,"
         "\"payload_type\":96,\"ssrc\":100001002}";
     const std::string tcp_base =
-        "{\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-active\",\"transport\":\"tcp_active\",\"remote_address\":\"127.0.0.1\",\"remote_port\":";
+        "{\"stream_id\":\"" + std::string{tcp_active_stream_id} +
+        "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-active\",\"transport\":\"tcp_active\",\"remote_address\":\"127.0.0.1\",\"remote_port\":";
     boost::asio::ip::tcp::acceptor tcp_active_probe(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto tcp_active_port = tcp_active_probe.local_endpoint().port();
     boost::asio::ip::tcp::acceptor tcp_probe(io, {boost::asio::ip::address_v4::loopback(), 32112});
@@ -3288,7 +3318,8 @@ void test_gb28181_sender_http_parameters()
     tcp_probe.close();
     const std::string tcp_active_body = tcp_base + std::to_string(tcp_active_port) + ",\"payload_type\":96,\"ssrc\":100001003}";
     const std::string tcp_passive_body =
-        "{\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-passive\",\"transport\":\"tcp_passive\",\"listen_port\":" +
+        "{\"stream_id\":\"" + std::string{tcp_passive_stream_id} +
+        "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-passive\",\"transport\":\"tcp_passive\",\"listen_port\":" +
         std::to_string(tcp_passive_port) + ",\"payload_type\":96,\"ssrc\":100001004}";
     std::jthread worker_runner([&workers]() { workers.run(); });
 
@@ -3333,14 +3364,14 @@ void test_gb28181_sender_http_parameters()
           "/gb28181/sender/create",
           boost::beast::http::status::bad_request,
           "gb sender missing sender id",
-          "{\"stream_name\":\"live/"
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440030\",\"stream_name\":\"live/"
           "gb-sender-http\",\"transport\":\"udp\",\"remote_address\":\"127.0.0.1\",\"remote_rtp_port\":29020,\"payload_type\":96,\"ssrc\":"
           "100001002}");
     check(post,
           "/gb28181/sender/create",
           boost::beast::http::status::bad_request,
           "gb sender unspecified destination",
-          "{\"stream_name\":\"live/"
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440031\",\"stream_name\":\"live/"
           "gb-sender-http\",\"sender_id\":\"unspecified\",\"transport\":\"udp\",\"remote_address\":\"0.0.0.0\",\"remote_rtp_port\":29020,"
           "\"payload_type\":96,\"ssrc\":100001002}");
     check(post,
@@ -3365,7 +3396,7 @@ void test_gb28181_sender_http_parameters()
           "/gb28181/sender/create",
           boost::beast::http::status::created,
           "gb sender udp rtcp",
-          "{\"stream_name\":\"live/"
+          "{\"stream_id\":\"" + std::string{udp_rtcp_stream_id} + "\",\"stream_name\":\"live/"
           "gb-sender-http\",\"sender_id\":\"udp-rtcp\",\"transport\":\"udp\",\"remote_address\":\"127.0.0.1\",\"remote_rtp_port\":29020,\"remote_rtcp_port\":29021,"
           "\"payload_type\":96,\"ssrc\":100001002,\"rtcp_enabled\":true}",
           "{\"result\":\"ok\"}");
@@ -3373,38 +3404,43 @@ void test_gb28181_sender_http_parameters()
           "/gb28181/sender/delete",
           boost::beast::http::status::bad_request,
           "gb sender delete rejects extra field",
-          "{\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-rtcp\",\"rtcp_enabled\":true}");
+          "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440011\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-rtcp\",\"rtcp_enabled\":true}");
     check(post,
           "/gb28181/sender/delete",
           boost::beast::http::status::ok,
           "gb sender deletes udp default",
-          "{\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-default\"}",
+          "{\"stream_id\":\"" + std::string{udp_stream_id} +
+              "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-default\"}",
           "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/sender/delete",
           boost::beast::http::status::ok,
           "gb sender deletes udp rtcp",
-          "{\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-rtcp\"}",
+          "{\"stream_id\":\"" + std::string{udp_rtcp_stream_id} +
+              "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-rtcp\"}",
           "{\"result\":\"ok\"}");
     check(post, "/gb28181/sender/create", boost::beast::http::status::created, "gb sender tcp active", tcp_active_body, "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/sender/delete",
           boost::beast::http::status::ok,
           "gb sender deletes tcp active",
-          "{\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-active\"}",
+          "{\"stream_id\":\"" + std::string{tcp_active_stream_id} +
+              "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-active\"}",
           "{\"result\":\"ok\"}");
     check(post, "/gb28181/sender/create", boost::beast::http::status::created, "gb sender tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/sender/delete",
           boost::beast::http::status::ok,
           "gb sender deletes tcp passive",
-          "{\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-passive\"}",
+          "{\"stream_id\":\"" + std::string{tcp_passive_stream_id} +
+              "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-passive\"}",
           "{\"result\":\"ok\"}");
     check(post,
           "/gb28181/sender/delete",
           boost::beast::http::status::internal_server_error,
           "gb sender missing identity",
-          "{\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"missing\"}",
+          "{\"stream_id\":\"" + std::string{udp_stream_id} +
+              "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"missing\"}",
           "{\"error\":\"operation_failed\"}");
 
     work.reset();
@@ -3820,17 +3856,17 @@ void test_rtsp_pull_url_contract()
     worker_context client_worker;
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
-    auto invalid = std::make_shared<rtsp_pull_session>(client_worker, "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
+    auto invalid = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
     require(!invalid->startup(), "rtsp invalid port rejected");
     require(!streams.find("relay/invalid"), "rtsp invalid url leaves registry unchanged");
 
     const auto port = acceptor.local_endpoint().port();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/test";
     const auto credential_url = "rtsp://us%65r:p%40ss@127.0.0.1:" + std::to_string(port) + "/live/test";
-    auto userinfo = std::make_shared<rtsp_pull_session>(client_worker, "relay/userinfo", credential_url);
+    auto userinfo = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/userinfo", credential_url);
     require(!userinfo->startup(), "rtsp url userinfo rejected");
 
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/auth", request_url, "user", "p@ss");
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/auth", request_url, "user", "p@ss");
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp auth pull startup");
     pull.reset();
@@ -3885,7 +3921,7 @@ void test_rtsp_pull_establishment_timeout()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/timeout";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/timeout", request_url, "", "", std::chrono::milliseconds(100));
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/timeout", request_url, "", "", std::chrono::milliseconds(100));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp establishment timeout pull startup");
     pull.reset();
@@ -3923,7 +3959,7 @@ void test_rtsp_pull_establishment_progress_timeout()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-timeout";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/play-timeout", request_url, "", "", std::chrono::milliseconds(800));
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/play-timeout", request_url, "", "", std::chrono::milliseconds(800));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp establishment progress timeout pull startup");
     pull.reset();
@@ -3988,7 +4024,7 @@ void test_rtsp_pull_selects_single_audio_and_video()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/multi";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/single-av", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/single-av", request_url);
     require(pull->startup(), "rtsp single audio video pull startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4061,7 +4097,7 @@ void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t e
     streams.clear();
     const auto stream_name = "relay/opus-" + std::to_string(expected_channels) + "-" + std::to_string(fmtp.size());
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, stream_name, request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, request_url);
     require(pull->startup(), "rtsp pull opus startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4196,7 +4232,7 @@ void test_rtsp_pull_rejects_invalid_opus_rate()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus-rate";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/opus-rate", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/opus-rate", request_url);
     require(pull->startup(), "rtsp invalid opus rate startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4263,7 +4299,7 @@ void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     streams.clear();
     const auto stream_name = "relay/" + std::string(to_string(codec)) + (explicit_rtpmap ? "-rtpmap" : "-static");
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, stream_name, request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, request_url);
     require(pull->startup(), "rtsp pull g711 startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4388,7 +4424,7 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
     streams.clear();
     const auto stream_name = std::string("relay/rtp-info");
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/rtp-info";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, stream_name, request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, request_url);
     require(pull->startup(), "rtsp rtp-info pull startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4650,7 +4686,7 @@ void test_rtsp_pull_rejects_mismatched_g711_rtpmap()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711-mismatch";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/g711-mismatch", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/g711-mismatch", request_url);
     require(pull->startup(), "rtsp mismatched g711 startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4700,7 +4736,7 @@ void test_rtsp_pull_rejects_audio_only_source()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/audio-only";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/audio-only", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/audio-only", request_url);
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp audio only pull startup");
     pull.reset();
@@ -4753,7 +4789,7 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/topology";
     auto pull =
-        std::make_shared<rtsp_pull_session>(client_worker, "relay/topology", request_url, "", "", std::chrono::milliseconds(500), std::chrono::milliseconds(50));
+        std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/topology", request_url, "", "", std::chrono::milliseconds(500), std::chrono::milliseconds(50));
     require(pull->startup(), "rtsp topology pull startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4852,7 +4888,7 @@ void test_rtsp_pull_initial_tracks_timeout()
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/initial-tracks-timeout";
     auto pull = std::make_shared<rtsp_pull_session>(
-        client_worker, "relay/initial-tracks-timeout", request_url, "", "", std::chrono::milliseconds(500), std::chrono::milliseconds(100));
+        client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/initial-tracks-timeout", request_url, "", "", std::chrono::milliseconds(500), std::chrono::milliseconds(100));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp initial tracks timeout pull startup");
     pull.reset();
@@ -4948,7 +4984,7 @@ void test_rtsp_pull_independent_keepalive()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/keepalive";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "relay/keepalive", request_url, "", "", std::chrono::milliseconds(750));
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/keepalive", request_url, "", "", std::chrono::milliseconds(750));
     require(pull->startup(), "rtsp keepalive pull startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });

@@ -89,8 +89,9 @@ create_rtsp_pull() {
     local port="$2"
     local stream_name="$3"
     local url="$4"
+    local stream_id="$5"
     local body
-    printf -v body '{"stream_name":"%s","url":"%s"}' "$stream_name" "$url"
+    printf -v body '{"stream_id":"%s","stream_name":"%s","url":"%s"}' "$stream_id" "$stream_name" "$url"
     post_json_expected "$work_dir/${label}_create.json" \
         "http://127.0.0.1:$port/rtsp/pull/create" "$body" 201 '{"result":"ok"}'
 }
@@ -99,8 +100,9 @@ delete_rtsp_pull() {
     local label="$1"
     local port="$2"
     local stream_name="$3"
+    local stream_id="$4"
     local body
-    printf -v body '{"stream_name":"%s"}' "$stream_name"
+    printf -v body '{"stream_id":"%s","stream_name":"%s"}' "$stream_id" "$stream_name"
     post_json_expected "$work_dir/${label}_delete.json" \
         "http://127.0.0.1:$port/rtsp/pull/delete" "$body" 200 '{"result":"ok"}'
 }
@@ -203,16 +205,18 @@ probe_hls_ts hls_from_rtmp 'http://127.0.0.1:18080/play/hls/live/test'
 pull_pid=$!
 sleep 0.4
 
-create_rtsp_pull rtsp_pull_initial 18081 relay/test 'rtsp://127.0.0.1:18554/live/test'
+create_rtsp_pull rtsp_pull_initial 18081 relay/test 'rtsp://127.0.0.1:18554/live/test' \
+    '00000000-0000-4000-8000-000000000001'
 
 wait_log "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test'
 wait_log "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true'
 wait_probe_streams "$work_dir/rtsp_pull_initial.txt" h264 aac -rtsp_transport tcp \
     'rtsp://127.0.0.1:18555/relay/test'
 
-delete_rtsp_pull rtsp_pull_initial 18081 relay/test
+delete_rtsp_pull rtsp_pull_initial 18081 relay/test '00000000-0000-4000-8000-000000000001'
 wait_http_stream_absent 18081 relay/test
-create_rtsp_pull rtsp_pull_recreate 18081 relay/test 'rtsp://127.0.0.1:18554/live/test'
+create_rtsp_pull rtsp_pull_recreate 18081 relay/test 'rtsp://127.0.0.1:18554/live/test' \
+    '00000000-0000-4000-8000-000000000002'
 wait_log_count "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test' 2
 wait_log_count "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true' 2
 
@@ -272,7 +276,8 @@ wait_probe_streams "$work_dir/av1_rtsp_pull_source.txt" h264 aac -rtsp_transport
 av1_server_pid=$!
 sleep 0.4
 
-create_rtsp_pull rtsp_pull_av1 18082 relay/av1 'rtsp://127.0.0.1:18554/live/av1-pull-source'
+create_rtsp_pull rtsp_pull_av1 18082 relay/av1 'rtsp://127.0.0.1:18554/live/av1-pull-source' \
+    '00000000-0000-4000-8000-000000000003'
 
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \

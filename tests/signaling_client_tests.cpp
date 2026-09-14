@@ -132,6 +132,9 @@ media_server::signaling_client_options client_options(std::string url)
         .instance_id = "instance-a",
         .control_url = "http://127.0.0.1:8080",
         .media_ip = "127.0.0.1",
+        .rtmp_port = 1935,
+        .rtsp_port = 8554,
+        .http_port = 8080,
         .heartbeat_interval = 20ms,
         .request_timeout = 500ms,
     };
@@ -177,6 +180,9 @@ void test_registration_and_heartbeat_body()
     require(registration.at("instance_id") == "instance-a", "registration instance id");
     require(registration.at("control_url") == "http://127.0.0.1:8080", "registration control url");
     require(registration.at("media_ip") == "127.0.0.1", "registration media ip");
+    require(registration.at("rtmp_port") == 1935, "registration RTMP port");
+    require(registration.at("rtsp_port") == 8554, "registration RTSP port");
+    require(registration.at("http_port") == 8080, "registration HTTP port");
     require(heartbeat.at("server_id") == "media-1" && heartbeat.at("instance_id") == "instance-a", "heartbeat identity stable");
 }
 

@@ -153,7 +153,7 @@ void test_udp_sender_releases_pair_after_shutdown()
     require(stream->set_tracks({make_video_track()}), "port release stream tracks");
     require(stream_registry::instance().add(stream), "port release stream registry");
     auto session = std::make_shared<gb28181_udp_sender_session>(
-        worker, stream, make_udp_sender_transport(), boost::asio::ip::address_v4::loopback(), "sender", false);
+        worker, "550e8400-e29b-41d4-a716-446655440000", stream, make_udp_sender_transport(), boost::asio::ip::address_v4::loopback(), "sender", false);
     require(stream_registry::instance().add_sender_session(stream->name(), "sender", session), "port release sender registry");
     require(session->startup(), "port release sender startup");
 
@@ -185,7 +185,7 @@ void test_udp_sender_releases_pair_after_bind_failure()
     require(stream->set_tracks({make_video_track()}), "port bind failure stream tracks");
     require(stream_registry::instance().add(stream), "port bind failure stream registry");
     auto session = std::make_shared<gb28181_udp_sender_session>(
-        worker, stream, make_udp_sender_transport(), boost::asio::ip::address_v4::loopback(), "sender", false);
+        worker, "550e8400-e29b-41d4-a716-446655440000", stream, make_udp_sender_transport(), boost::asio::ip::address_v4::loopback(), "sender", false);
     require(!session->startup(), "port bind failure sender startup");
 
     const auto pair = port_manager::instance().acquire_pair();
@@ -206,7 +206,7 @@ void test_udp_receiver_releases_pair_after_bind_failure()
                                           .payload_type = 96,
                                           .ssrc = 10'000'2001};
     auto session = std::make_shared<gb28181_udp_receiver_session>(
-        worker, "live/receiver-port-bind-failure", description, boost::asio::ip::address_v4::loopback());
+        worker, "550e8400-e29b-41d4-a716-446655440000", "live/receiver-port-bind-failure", description, boost::asio::ip::address_v4::loopback());
     require(!session->startup(), "receiver port bind failure startup");
 
     const auto pair = port_manager::instance().acquire_pair();
@@ -224,7 +224,7 @@ void test_udp_receiver_rejects_unavailable_local_address()
                                           .payload_type = 96,
                                           .ssrc = 10'000'2001};
     auto session = std::make_shared<gb28181_udp_receiver_session>(
-        worker, "live/receiver-unavailable-address", description, boost::asio::ip::make_address("192.0.2.1"));
+        worker, "550e8400-e29b-41d4-a716-446655440000", "live/receiver-unavailable-address", description, boost::asio::ip::make_address("192.0.2.1"));
     require(!session->startup(), "receiver unavailable local address rejected");
 
     const auto pair = port_manager::instance().acquire_pair();
