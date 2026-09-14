@@ -21,13 +21,15 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
    public:
     using packet_handler = std::function<void(std::vector<std::uint8_t>)>;
     using end_handler = std::function<void()>;
+    using failure_handler = std::function<void()>;
 
     gb28181_rtp_sender(worker_context& worker,
                          std::shared_ptr<media_stream> stream,
                          std::uint8_t payload_type,
                          std::uint32_t ssrc,
                          packet_handler on_packet,
-                         end_handler on_end);
+                         end_handler on_end,
+                         failure_handler on_failure = {});
     ~gb28181_rtp_sender() override;
 
     [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
@@ -60,6 +62,7 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
     std::uint32_t ssrc_{};
     packet_handler packet_handler_;
     end_handler end_handler_;
+    failure_handler failure_handler_;
     rtsp_muxer_t* muxer_{};
     std::map<track_id, track_state> track_states_;
     media_reader_cursor reader_cursor_;

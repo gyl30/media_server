@@ -25,7 +25,7 @@ constexpr char stream_id_b[] = "550e8400-e29b-41d4-b716-446655440001";
 class foreign_receiver_session final : public stream_session
 {
    public:
-    void shutdown() override {}
+    void shutdown(runtime_end_reason = runtime_end_reason::requested, std::string = {}) override {}
 };
 
 void require(bool condition, std::string_view message)
@@ -107,6 +107,7 @@ void test_request_validation()
                      "rtsp pull no auth delete");
 
     auto auth = create_body("live/auth", valid_url);
+    auth["source_id"] = "source-auth";
     auth["username"] = "admin";
     auth["password"] = "";
     require_response(handle(worker, request("/rtsp/pull/create", std::move(auth))),
@@ -132,6 +133,9 @@ void test_request_validation()
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":1,"url":"rtsp://127.0.0.1/live"})",
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/type","url":"rtsp://127.0.0.1/live","username":1})",
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/type","url":"rtsp://127.0.0.1/live","password":1})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"","stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":null,"stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":1,"stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/trailing","url":"rtsp://127.0.0.1/live"} {})",
         "{",
         "[]",

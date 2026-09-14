@@ -2907,6 +2907,9 @@ void test_whep_establishment_timeout()
     require(offer.has_value(), "establishment timeout parse offer");
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "establishment timeout certificate");
+    std::vector<runtime_event> events;
+    const auto runtime_events = std::make_shared<runtime_event_emitter>(
+        "media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
 
     auto session = std::make_shared<whep_session>(worker,
                                                   std::string{control_stream_id}, stream,
@@ -2915,19 +2918,29 @@ void test_whep_establishment_timeout()
                                                   whep_session_timeouts{
                                                       .establishment = std::chrono::milliseconds(20),
                                                       .ice_activity = std::chrono::seconds(1),
-                                                  });
+                                                  },
+                                                  video_transcode_config{},
+                                                  1024U * 1024U,
+                                                  runtime_events);
     require(session->startup(*offer) == whep_session_startup_error::none, "establishment timeout session startup");
     require(session->local_port() != 0, "establishment timeout socket open");
+    require(events.size() == 1U && events[0].type == runtime_event_type::output_started && events[0].state == runtime_state::starting &&
+                events[0].stream_id == control_stream_id && events[0].stream_name == "live/establishment-timeout",
+            "establishment timeout starting event");
 
     io.run_for(std::chrono::milliseconds(80));
     io.restart();
 
     require(session->local_port() == 0, "establishment timeout closes socket");
     require(!session->ice_connected(), "establishment timeout clears ice");
+    require(events.size() == 2U && events[1].type == runtime_event_type::runtime_error && events[1].state == runtime_state::stopped &&
+                events[1].end_reason == runtime_end_reason::timeout,
+            "establishment timeout terminal event");
 
     session->shutdown();
     drain_io(io);
     require(session->local_port() == 0, "establishment timeout repeated shutdown ignored");
+    require(events.size() == 2U, "establishment timeout event exactly once");
 }
 
 void test_whep_ice_activity_timeout()
@@ -3178,6 +3191,13 @@ void test_whep_udp_send_queue()
 
     session->shutdown();
     drain_io(io);
+    const std::array<std::uint8_t, 12> stopped_transaction_id{4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    const auto stopped_request = make_stun_request(username, local_pwd, stopped_transaction_id, false);
+    static_cast<void>(client.send_to(boost::asio::buffer(stopped_request), server_endpoint));
+    io.run_for(std::chrono::milliseconds(20));
+    io.restart();
+    error.clear();
+    require(client.available(error) == 0U && !error, "udp send queue does not send after shutdown");
     client.close(error);
 }
 
@@ -3558,8 +3578,22 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     const auto offer = parse_webrtc_offer(offer_sdp);
     require(offer.has_value(), "dtls parse offer");
 
-    auto session = std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), server_certificate);
+    std::vector<runtime_event> events;
+    const auto runtime_events = std::make_shared<runtime_event_emitter>(
+        "media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
+    auto session = std::make_shared<whep_session>(worker,
+                                                  std::string{control_stream_id},
+                                                  stream,
+                                                  boost::asio::ip::make_address("127.0.0.1"),
+                                                  server_certificate,
+                                                  whep_session_timeouts{},
+                                                  video_transcode_config{},
+                                                  1024U * 1024U,
+                                                  runtime_events);
     require(session->startup(*offer) == whep_session_startup_error::none, "dtls session startup");
+    require(events.size() == 1U && events[0].type == runtime_event_type::output_started && events[0].state == runtime_state::starting &&
+                events[0].stream_id == control_stream_id && events[0].stream_name == "live/dtls",
+            "dtls runtime starting event");
     require(sdp_attribute(session->answer_sdp(), "fingerprint") == "sha-256 " + server_certificate->sha256_fingerprint(),
             "dtls answer server fingerprint");
 
@@ -3595,6 +3629,8 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
             "dtls server certificate matches answer");
 
     require(session->srtp_started(), "srtp server started");
+    require(events.size() == 2U && events[1].type == runtime_event_type::output_started && events[1].state == runtime_state::streaming,
+            "dtls runtime streaming event");
 
     const auto peer_material = make_peer_srtp_material(client->ssl.get());
     require(peer_material.has_value(), "dtls client srtp material");
@@ -3755,33 +3791,8 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
 
     if (server_shutdown)
     {
-        session->shutdown();
-        bool close_notify_received = false;
-        const auto close_notify_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-        while (!close_notify_received && std::chrono::steady_clock::now() < close_notify_deadline)
-        {
-            io.run_for(std::chrono::milliseconds(10));
-            io.restart();
-
-            boost::system::error_code receive_error;
-            const auto size = client_socket.receive_from(boost::asio::buffer(rtp_buffer), rtp_sender, 0, receive_error);
-            if (receive_error == boost::asio::error::would_block || receive_error == boost::asio::error::try_again)
-            {
-                continue;
-            }
-            require(!receive_error && rtp_sender == server_endpoint, "dtls server close notify receive");
-            const auto packet = std::span<const std::uint8_t>(rtp_buffer.data(), size);
-            if (!dtls_transport::is_dtls_packet(packet))
-            {
-                continue;
-            }
-            require(BIO_write(client->read_bio, packet.data(), static_cast<int>(packet.size())) == static_cast<int>(packet.size()),
-                    "dtls server close notify input");
-            std::array<std::uint8_t, 1> discarded{};
-            const auto result = SSL_read(client->ssl.get(), discarded.data(), static_cast<int>(discarded.size()));
-            close_notify_received = result <= 0 && SSL_get_error(client->ssl.get(), result) == SSL_ERROR_ZERO_RETURN;
-        }
-        require(close_notify_received, "dtls server close notify");
+        session->shutdown(runtime_end_reason::server_shutdown);
+        drain_io(io);
     }
     else
     {
@@ -3790,6 +3801,12 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
         drain_io(io);
     }
     require(session->local_port() == 0U, "dtls close notify shutdown");
+    require(events.size() == 3U && events[2].type == runtime_event_type::output_stopped && events[2].state == runtime_state::stopped &&
+                events[2].end_reason == (server_shutdown ? runtime_end_reason::server_shutdown : runtime_end_reason::remote),
+            "dtls runtime terminal event");
+    session->shutdown();
+    drain_io(io);
+    require(events.size() == 3U, "dtls runtime terminal exactly once");
     peer_srtp.shutdown();
 
     boost::system::error_code error;

@@ -12,6 +12,7 @@
 
 #include "media/net/tcp_listener.h"
 #include "media/net/tcp_yield_transport.h"
+#include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
@@ -28,15 +29,19 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
                                   std::string stream_name,
                                   gb28181_transport_config config,
                                   boost::asio::ip::address bind_address,
-                                  std::chrono::milliseconds establishment_timeout);
+                                  std::chrono::milliseconds establishment_timeout,
+                                  runtime_event_emitter_ptr runtime_events = {});
 
     [[nodiscard]] bool startup();
-    void shutdown() override;
+    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
     void run(boost::asio::yield_context yield);
     void safe_shutdown();
+    void emit_starting();
+    void emit_streaming();
+    void emit_stopped();
 
     worker_context& worker_;
     std::string stream_id_;
@@ -47,6 +52,13 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::unique_ptr<tcp_yield_transport> transport_;
+    runtime_event_emitter_ptr runtime_events_;
+    runtime_end_reason end_reason_{runtime_end_reason::requested};
+    std::string end_error_;
+    bool started_{};
+    bool runtime_started_{};
+    bool runtime_streaming_{};
+    bool ending_{};
     bool closed_{};
 };
 

@@ -22,13 +22,15 @@ gb28181_rtp_sender::gb28181_rtp_sender(worker_context& worker,
                                            std::uint8_t payload_type,
                                            std::uint32_t ssrc,
                                            packet_handler on_packet,
-                                           end_handler on_end)
+                                           end_handler on_end,
+                                           failure_handler on_failure)
     : worker_(worker),
       stream_(std::move(stream)),
       payload_type_(payload_type),
       ssrc_(ssrc),
       packet_handler_(std::move(on_packet)),
-      end_handler_(std::move(on_end))
+      end_handler_(std::move(on_end)),
+      failure_handler_(std::move(on_failure))
 {
 }
 
@@ -129,7 +131,11 @@ void gb28181_rtp_sender::on_read(media_read_batch batch)
         if (result < 0)
         {
             spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
-            if (end_handler_)
+            if (failure_handler_)
+            {
+                failure_handler_();
+            }
+            else if (end_handler_)
             {
                 end_handler_();
             }
@@ -168,6 +174,7 @@ void gb28181_rtp_sender::safe_shutdown()
     }
     packet_handler_ = {};
     end_handler_ = {};
+    failure_handler_ = {};
     reader_handle().remove();
     reader_cursor_.reset();
     track_revision_ = 0;

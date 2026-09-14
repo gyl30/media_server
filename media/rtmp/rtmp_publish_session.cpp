@@ -30,12 +30,16 @@ constexpr track_id audio_track_id = 2;
 rtmp_publish_session::rtmp_publish_session(worker_context& worker,
                                        std::string stream_name,
                                        std::chrono::milliseconds initial_tracks_timeout,
-                                       shutdown_handler on_shutdown)
+                                       shutdown_handler on_shutdown,
+                                       runtime_shutdown_handler on_runtime_shutdown,
+                                       streaming_handler on_streaming)
     : worker_(worker),
       initial_tracks_timer_(worker_.io()),
       initial_tracks_timeout_(initial_tracks_timeout),
       stream_(std::make_shared<media_stream>(std::move(stream_name), worker_)),
-      shutdown_handler_(std::move(on_shutdown))
+      shutdown_handler_(std::move(on_shutdown)),
+      runtime_shutdown_handler_(std::move(on_runtime_shutdown)),
+      streaming_handler_(std::move(on_streaming))
 {
 }
 
@@ -54,12 +58,12 @@ bool rtmp_publish_session::startup()
     initial_tracks_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->tracks_initialized_)
+            if (error || self->closed_ || self->tracks_initialized_)
             {
                 return;
             }
             spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_->name());
-            self->shutdown_handler_();
+            self->notify_shutdown(runtime_end_reason::timeout, "media", "initial_tracks_timeout");
         });
     return true;
 }
@@ -375,7 +379,7 @@ void rtmp_publish_session::try_initialize_tracks()
 
     if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
     {
-        shutdown_handler_();
+        notify_shutdown(runtime_end_reason::timeout, "media", "initial_tracks_timeout");
         return;
     }
 
@@ -393,11 +397,32 @@ void rtmp_publish_session::try_initialize_tracks()
     if (!stream_registry::instance().add(stream_))
     {
         spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
-        shutdown_handler_();
+        notify_shutdown(runtime_end_reason::runtime_error, "media", "stream_registry_add_failed");
         return;
     }
     initial_tracks_timer_.cancel();
+    if (streaming_handler_)
+    {
+        streaming_handler_();
+    }
     spdlog::info("rtmp publish tracks ready audio {}", *expected_audio_);
+}
+
+void rtmp_publish_session::notify_shutdown(runtime_end_reason reason, std::string stage, std::string error)
+{
+    if (shutdown_notified_)
+    {
+        return;
+    }
+    shutdown_notified_ = true;
+    if (runtime_shutdown_handler_)
+    {
+        runtime_shutdown_handler_(reason, std::move(stage), std::move(error));
+    }
+    else if (shutdown_handler_)
+    {
+        shutdown_handler_();
+    }
 }
 
 }    // namespace media_server

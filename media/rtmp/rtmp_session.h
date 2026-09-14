@@ -15,6 +15,7 @@
 #include <boost/asio/spawn.hpp>
 
 #include "media/net/tcp_yield_transport.h"
+#include "media/core/runtime_event.h"
 #include "media/codec/video_transcode_config.h"
 
 struct rtmp_server_t;
@@ -43,11 +44,12 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
                  std::shared_ptr<signaling_client> signaling = {},
                  video_transcode_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
-                 std::size_t max_write_queue_bytes = 1024U * 1024U);
+                 std::size_t max_write_queue_bytes = 1024U * 1024U,
+                 runtime_event_emitter_ptr runtime_events = {});
     ~rtmp_session();
 
     void startup();
-    void shutdown();
+    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
 
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);
@@ -66,7 +68,11 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
     void run_publish_claim(boost::asio::yield_context yield);
+    void shutdown_with_stage(runtime_end_reason reason, std::string stage, std::string error = {});
     void safe_shutdown();
+    void emit_starting();
+    void emit_streaming();
+    void emit_stopped();
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     worker_context& worker_;
@@ -83,7 +89,14 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     boost::asio::cancellation_signal publish_claim_cancellation_;
     std::string stream_id_;
     std::string stream_name_;
+    runtime_event_emitter_ptr runtime_events_;
+    runtime_end_reason end_reason_{runtime_end_reason::requested};
+    std::string end_stage_;
+    std::string end_error_;
     bool publish_claim_pending_{};
+    bool runtime_started_{};
+    bool runtime_streaming_{};
+    bool ending_{};
     bool closed_{};
 };
 

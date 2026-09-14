@@ -14,6 +14,7 @@
 #include "media/webrtc/whip.h"
 #include "media/webrtc/whep.h"
 #include "media/core/log.h"
+#include "media/core/runtime_event.h"
 #include "media/http/http_server.h"
 #include "media/http/signaling_client.h"
 #include "media/rtmp/rtmp_server.h"
@@ -41,6 +42,9 @@ void service::stop()
     {
         signaling_abort_timer_->cancel();
     }
+    // 先锁定现有 runtime 的停机原因，避免 source end 把 output 误报为远端结束。
+    whep::shutdown(runtime_end_reason::server_shutdown);
+    stream_registry::instance().shutdown_sessions(runtime_end_reason::server_shutdown);
     rtmp_->shutdown();
     rtsp_->shutdown();
     http_->shutdown();
@@ -60,8 +64,9 @@ void service::stop()
                                                         return;
                                                     }
                                                     whip::shutdown();
-                                                    whep::shutdown();
-                                                    stream_registry::instance().shutdown_sessions();
+                                                    whep::shutdown(runtime_end_reason::server_shutdown);
+                                                    stream_registry::instance().shutdown_sessions(
+                                                        runtime_end_reason::server_shutdown);
                                                     workers_->release_work();
                                                 });
                           });
@@ -198,10 +203,11 @@ int service::run()
     auto& control_io = workers_->context(0).io();
     if (!config_.signaling_url.empty())
     {
+        const auto instance_id = boost::uuids::to_string(boost::uuids::random_generator{}());
         signaling_client_options options{
             .signaling_url = config_.signaling_url,
             .server_id = config_.server_id,
-            .instance_id = boost::uuids::to_string(boost::uuids::random_generator{}()),
+            .instance_id = instance_id,
             .control_url = config_.control_url,
             .media_ip = config_.media_ip,
             .rtmp_port = config_.rtmp_port,
@@ -209,11 +215,12 @@ int service::run()
             .http_port = config_.http_port,
         };
         signaling_ = std::make_shared<signaling_client>(control_io, std::move(options));
+        runtime_events_ = std::make_shared<runtime_event_emitter>(config_.server_id, instance_id, [](runtime_event) {});
     }
 
-    rtmp_ = std::make_shared<rtmp_server>(*workers_, config_, signaling_);
-    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_, signaling_);
-    http_ = std::make_shared<http_server>(*workers_, config_);
+    rtmp_ = std::make_shared<rtmp_server>(*workers_, config_, signaling_, runtime_events_);
+    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_, signaling_, runtime_events_);
+    http_ = std::make_shared<http_server>(*workers_, config_, runtime_events_);
 
     signals_ = std::make_unique<boost::asio::signal_set>(control_io, SIGINT, SIGTERM);
     signals_->async_wait(

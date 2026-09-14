@@ -14,6 +14,7 @@
 #include <boost/asio/spawn.hpp>
 
 #include "media/core/media_stream.h"
+#include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_listener.h"
 #include "media/net/tcp_yield_transport.h"
@@ -35,10 +36,11 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
                                gb28181_transport_config config,
                                boost::asio::ip::address bind_address,
                                std::chrono::milliseconds establishment_timeout,
-                               std::size_t max_write_queue_bytes = 1024U * 1024U);
+                               std::size_t max_write_queue_bytes = 1024U * 1024U,
+                               runtime_event_emitter_ptr runtime_events = {});
 
     [[nodiscard]] bool startup();
-    void shutdown() override;
+    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
@@ -46,10 +48,14 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     void run_write(boost::asio::yield_context yield);
     void send_packet(std::vector<std::uint8_t> packet);
     void safe_shutdown();
+    void emit_starting();
+    void emit_streaming();
+    void emit_stopped();
 
     worker_context& worker_;
     std::string stream_id_;
     std::shared_ptr<media_stream> stream_;
+    std::string stream_name_;
     std::string sender_id_;
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
@@ -61,6 +67,12 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
+    runtime_event_emitter_ptr runtime_events_;
+    runtime_end_reason end_reason_{runtime_end_reason::requested};
+    std::string end_error_;
+    bool runtime_started_{};
+    bool runtime_streaming_{};
+    bool ending_{};
     bool closed_{};
 };
 
