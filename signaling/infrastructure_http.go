@@ -69,6 +69,12 @@ func (s *infrastructureServer) handler() http.Handler {
 		mux.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
 		mux.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
 	}
+	mux.Handle("GET /{$}", embeddedWebFile("index.html"))
+	mux.Handle("GET /style.css", embeddedWebFile("style.css"))
+	mux.Handle("GET /app.js", embeddedWebFile("app.js"))
+	mux.Handle("GET /api.js", embeddedWebFile("api.js"))
+	mux.Handle("GET /whep.js", embeddedWebFile("whep.js"))
+	mux.Handle("GET /icons.svg", embeddedWebFile("icons.svg"))
 	return mux
 }
 
