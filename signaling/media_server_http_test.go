@@ -64,6 +64,56 @@ func TestMediaServerHTTPCreateUDPReceiverAndDelete(t *testing.T) {
 	}
 }
 
+func TestMediaServerHTTPCreateAndDeleteRTSPPull(t *testing.T) {
+	type receivedRequest struct {
+		path string
+		body map[string]any
+	}
+	requests := make(chan receivedRequest, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("request = %s Content-Type %q", request.Method, request.Header.Get("Content-Type"))
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("Decode() error = %v", err)
+		}
+		requests <- receivedRequest{path: request.URL.Path, body: body}
+		status := http.StatusOK
+		if request.URL.Path == "/rtsp/pull/create" {
+			status = http.StatusCreated
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(status)
+		_, _ = io.WriteString(writer, `{"result":"ok"}`)
+	}))
+	defer server.Close()
+
+	username := "admin"
+	password := ""
+	client := newMediaServerHTTPClient(time.Second)
+	instance := mediaServerInstance{controlURL: server.URL}
+	command := rtspPullCreateRequest{
+		StreamName: "live/camera", URL: "rtsp://192.0.2.10/live", Username: &username, Password: &password,
+	}
+	if err := client.createRTSPPull(context.Background(), instance, command); err != nil {
+		t.Fatalf("createRTSPPull() error = %v", err)
+	}
+	create := <-requests
+	if create.path != "/rtsp/pull/create" || len(create.body) != 4 || create.body["stream_name"] != command.StreamName ||
+		create.body["url"] != command.URL || create.body["username"] != username || create.body["password"] != password {
+		t.Fatalf("create request = %#v", create)
+	}
+
+	if err := client.deleteRTSPPull(context.Background(), instance, command.StreamName); err != nil {
+		t.Fatalf("deleteRTSPPull() error = %v", err)
+	}
+	remove := <-requests
+	if remove.path != "/rtsp/pull/delete" || len(remove.body) != 1 || remove.body["stream_name"] != command.StreamName {
+		t.Fatalf("delete request = %#v", remove)
+	}
+}
+
 func TestMediaServerHTTPDistinguishesRejectionAndNetworkFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

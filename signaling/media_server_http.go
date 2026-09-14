@@ -27,6 +27,13 @@ type gb28181ReceiverEndpoint struct {
 	ssrc        uint32
 }
 
+type rtspPullCreateRequest struct {
+	StreamName string  `json:"stream_name"`
+	URL        string  `json:"url"`
+	Username   *string `json:"username,omitempty"`
+	Password   *string `json:"password,omitempty"`
+}
+
 type mediaServerHTTPRejection struct {
 	status int
 	code   string
@@ -86,6 +93,35 @@ func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, server media
 		Result string `json:"result"`
 	}{}
 	if err := c.post(ctx, server.controlURL+"/gb28181/receiver/delete", requestBody, http.StatusOK, &responseBody); err != nil {
+		return err
+	}
+	if responseBody.Result != "ok" {
+		return fmt.Errorf("invalid media server delete response")
+	}
+	return nil
+}
+
+func (c *mediaServerHTTPClient) createRTSPPull(ctx context.Context, server mediaServerInstance, command rtspPullCreateRequest) error {
+	responseBody := struct {
+		Result string `json:"result"`
+	}{}
+	if err := c.post(ctx, server.controlURL+"/rtsp/pull/create", command, http.StatusCreated, &responseBody); err != nil {
+		return err
+	}
+	if responseBody.Result != "ok" {
+		return fmt.Errorf("invalid media server create response")
+	}
+	return nil
+}
+
+func (c *mediaServerHTTPClient) deleteRTSPPull(ctx context.Context, server mediaServerInstance, streamName string) error {
+	requestBody := struct {
+		StreamName string `json:"stream_name"`
+	}{StreamName: streamName}
+	responseBody := struct {
+		Result string `json:"result"`
+	}{}
+	if err := c.post(ctx, server.controlURL+"/rtsp/pull/delete", requestBody, http.StatusOK, &responseBody); err != nil {
 		return err
 	}
 	if responseBody.Result != "ok" {

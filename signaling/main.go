@@ -24,12 +24,15 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	live := newLiveService(server, registry, newMediaServerHTTPClient(cfg.mediaRequestTimeout), ssrcs, logger)
+	live := newLiveService(server, registry, infrastructure.media, ssrcs, logger)
 	live.inviteTimeout = cfg.inviteTimeout
 	live.byeTimeout = cfg.byeTimeout
 	infrastructure.live = live
 	server.onDeviceOffline = func(deviceID string) { live.deviceOffline(context.Background(), deviceID) }
-	infrastructure.onMediaServerOffline = func(instance mediaServerInstance) { live.mediaServerOffline(context.Background(), instance) }
+	infrastructure.onMediaServerOffline = func(instance mediaServerInstance) {
+		infrastructure.removeRTSPPullsForMediaServer(instance)
+		live.mediaServerOffline(context.Background(), instance)
+	}
 	logger.Info("SIP UDP listening", "address", cfg.sipListen)
 	logger.Info("internal HTTP listening", "address", cfg.httpListen)
 	runContext, cancel := context.WithCancel(ctx)
@@ -39,6 +42,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	first := <-results
 	cancel()
 	second := <-results
+	infrastructure.shutdownRTSPPulls(context.Background())
 	live.shutdown(context.Background())
 	if first != nil {
 		return first
