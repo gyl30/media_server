@@ -14,6 +14,7 @@
 #include <boost/asio.hpp>
 
 #include "media/core/stream_registry.h"
+#include "media/core/runtime_event.h"
 #include "media/net/tcp_yield_transport.h"
 
 extern "C"
@@ -40,12 +41,14 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
                       std::string password = {},
                       std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
                       std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
-                      std::size_t max_write_queue_bytes = 1024U * 1024U);
+                      std::size_t max_write_queue_bytes = 1024U * 1024U,
+                      std::optional<std::string> source_id = {},
+                      runtime_event_emitter_ptr runtime_events = {});
     ~rtsp_pull_session();
 
     [[nodiscard]] static bool valid_url(std::string_view url);
     bool startup();
-    void shutdown() override;
+    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
@@ -71,6 +74,9 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     void safe_shutdown();
+    void emit_starting();
+    void emit_streaming();
+    void emit_stopped();
     void record_establishment_progress();
     void schedule_establishment_timeout();
     void schedule_keepalive();
@@ -81,6 +87,7 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
 
     worker_context& worker_;
     std::string stream_id_;
+    std::optional<std::string> source_id_;
     std::string stream_name_;
     std::string url_;
     std::string username_;
@@ -95,6 +102,9 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::unique_ptr<rtsp_pull_media> media_;
+    runtime_event_emitter_ptr runtime_events_;
+    runtime_end_reason end_reason_{runtime_end_reason::requested};
+    std::string end_error_;
     rtsp_client_t* client_{};
     std::chrono::milliseconds establishment_timeout_;
     std::chrono::milliseconds initial_tracks_timeout_;
@@ -103,6 +113,9 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     std::size_t media_count_{};
     bool started_{};
     bool media_started_{};
+    bool runtime_started_{};
+    bool runtime_streaming_{};
+    bool ending_{};
     bool closed_{};
 };
 

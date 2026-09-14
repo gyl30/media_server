@@ -42,6 +42,7 @@ class gb28181_rtp_receiver final
     void shutdown();
 
     [[nodiscard]] const std::string& stream_name() const noexcept;
+    [[nodiscard]] bool recording() const noexcept { return recording_; }
 
    private:
     struct ps_topology

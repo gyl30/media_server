@@ -2,8 +2,10 @@
 #define MEDIA_RTSP_RTSP_PUBLISH_MEDIA_H
 
 #include <span>
+#include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
@@ -43,11 +45,13 @@ class rtsp_publish_media final
     [[nodiscard]] bool start_recording();
     [[nodiscard]] bool input_packet(std::size_t track_index, std::span<const std::uint8_t> data);
     [[nodiscard]] int generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer);
+    void set_streaming_handler(std::function<void()> handler) { streaming_handler_ = std::move(handler); }
     void shutdown();
 
     [[nodiscard]] const std::vector<rtsp_publish_track_description>& descriptions() const noexcept;
     [[nodiscard]] const std::string& media_stream_name() const noexcept;
     [[nodiscard]] bool recording() const noexcept;
+    [[nodiscard]] bool protocol_error() const noexcept;
 
    private:
     static int packet_callback(void* param, avpacket_t* packet);
@@ -59,12 +63,13 @@ class rtsp_publish_media final
     std::vector<rtsp_publish_track_description> descriptions_;
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> media_stream_;
+    std::function<void()> streaming_handler_;
     avpkt2bs_t bitstream_{};
     std::uint64_t rtcp_sync_ntp_{};
     std::int64_t rtcp_sync_pts_{};
     bool recording_{};
     bool rtcp_synchronized_{};
-    bool fatal_codec_change_{};
+    bool protocol_error_{};
     bool closed_{};
 };
 

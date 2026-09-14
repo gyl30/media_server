@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "config.h"
+#include "media/core/runtime_event.h"
 
 namespace media_server
 {
@@ -34,10 +35,11 @@ struct create_result
                                    std::string stream_id,
                                    std::string_view stream_name,
                                    std::string_view offer_sdp,
-                                   const config& application_config);
+                                   const config& application_config,
+                                   runtime_event_emitter_ptr runtime_events = {});
 [[nodiscard]] bool contains(std::string_view session_id);
 [[nodiscard]] bool remove(std::string_view session_id);
-void shutdown();
+void shutdown(runtime_end_reason reason = runtime_end_reason::server_shutdown);
 
 }    // namespace media_server::whep
 

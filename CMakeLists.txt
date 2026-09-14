@@ -288,7 +288,11 @@ if(BUILD_TESTING)
     target_link_libraries(signaling_client_tests PRIVATE media_core media_server_link_options)
     add_test(NAME signaling_client_tests COMMAND signaling_client_tests)
 
-    add_executable(service_tests tests/service_tests.cpp service.cpp)
+    add_executable(service_tests
+        tests/service_tests.cpp
+        tests/clients/rtsp_test_client.cpp
+        service.cpp
+    )
     target_link_libraries(service_tests PRIVATE media_core media_server_link_options)
     add_test(NAME service_tests COMMAND service_tests)
 
@@ -354,6 +358,10 @@ if(BUILD_TESTING)
     add_executable(rtsp_pull_http_tests tests/rtsp_pull_http_tests.cpp)
     target_link_libraries(rtsp_pull_http_tests PRIVATE media_core media_server_link_options)
     add_test(NAME rtsp_pull_http_tests COMMAND rtsp_pull_http_tests)
+
+    add_executable(runtime_event_tests tests/runtime_event_tests.cpp)
+    target_link_libraries(runtime_event_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME runtime_event_tests COMMAND runtime_event_tests)
 
     add_executable(port_manager_tests tests/port_manager_tests.cpp)
     target_link_libraries(port_manager_tests PRIVATE media_core media_server_link_options)

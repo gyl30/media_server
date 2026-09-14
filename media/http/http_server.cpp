@@ -8,10 +8,11 @@
 
 namespace media_server
 {
-http_server::http_server(io_context_pool& workers, const config& config)
+http_server::http_server(io_context_pool& workers, const config& config, runtime_event_emitter_ptr runtime_events)
     : workers_(workers),
       worker_(workers.next()),
       config_(config),
+      runtime_events_(std::move(runtime_events)),
       listener_(worker_.io(), config.http_port, boost::asio::ip::make_address(config.bind_address))
 {
 }
@@ -72,7 +73,7 @@ void http_server::run(boost::asio::yield_context yield)
             break;
         }
 
-        auto session = std::make_shared<http_session>(*worker, std::move(socket), workers_, config_);
+        auto session = std::make_shared<http_session>(*worker, std::move(socket), workers_, config_, runtime_events_);
         std::erase_if(sessions_, [](const auto& weak) { return weak.expired(); });
         sessions_.push_back(session);
         session->startup();

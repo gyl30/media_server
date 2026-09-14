@@ -5,6 +5,7 @@
 #include <deque>
 #include <chrono>
 #include <memory>
+#include <string>
 #include <vector>
 #include <cstdint>
 
@@ -15,6 +16,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/net/tcp_yield_transport.h"
+#include "media/core/runtime_event.h"
 #include "media/codec/video_transcode_config.h"
 
 extern "C"
@@ -38,11 +40,12 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
                            video_transcode_codec video_codec,
                            std::shared_ptr<signaling_client> signaling = {},
                            std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
-                           std::size_t max_write_queue_bytes = 1024U * 1024U);
+                           std::size_t max_write_queue_bytes = 1024U * 1024U,
+                           runtime_event_emitter_ptr runtime_events = {});
     ~rtsp_server_connection();
 
     void startup();
-    void shutdown();
+    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
 
    private:
     static int send_callback(void* param, const void* data, std::size_t bytes);
@@ -63,7 +66,11 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     int reply_announce_and_close(rtsp_server_t* server, int status);
+    void shutdown_with_stage(runtime_end_reason reason, std::string stage, std::string error = {});
     void safe_shutdown();
+    void emit_starting();
+    void emit_streaming();
+    void emit_stopped();
     void record_control_activity();
     void schedule_inactivity_timeout();
 
@@ -86,9 +93,18 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::cancellation_signal run_cancellation_;
     boost::asio::ip::address local_address_;
+    std::string publisher_stream_id_;
+    std::string publisher_stream_name_;
+    runtime_event_emitter_ptr runtime_events_;
+    runtime_end_reason end_reason_{runtime_end_reason::requested};
+    std::string end_stage_;
+    std::string end_error_;
     bool publish_claim_pending_{};
     bool close_next_write_{};
     bool closing_after_write_{};
+    bool runtime_started_{};
+    bool runtime_streaming_{};
+    bool ending_{};
     bool closed_{};
 };
 

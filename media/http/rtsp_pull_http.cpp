@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -21,6 +22,7 @@ namespace
 struct rtsp_pull_create_config
 {
     std::string stream_id;
+    std::optional<std::string> source_id;
     std::string stream_name;
     std::string url;
     std::string username;
@@ -107,12 +109,21 @@ bool optional_string(const boost::json::object& object, std::string_view key, st
 std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_id", "stream_name", "url", "username", "password"}))
+    if (!object || !has_only_fields(*object, {"stream_id", "source_id", "stream_name", "url", "username", "password"}))
     {
         return std::nullopt;
     }
 
     auto stream_id = required_string(*object, "stream_id");
+    std::optional<std::string> source_id;
+    if (object->if_contains("source_id") != nullptr)
+    {
+        source_id = required_string(*object, "source_id");
+        if (!source_id)
+        {
+            return std::nullopt;
+        }
+    }
     auto stream_name = required_string(*object, "stream_name");
     auto url = required_string(*object, "url");
     std::string username;
@@ -125,6 +136,7 @@ std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body
     }
     return rtsp_pull_create_config{
         .stream_id = std::move(*stream_id),
+        .source_id = std::move(source_id),
         .stream_name = std::move(*stream_name),
         .url = std::move(*url),
         .username = std::move(username),
@@ -165,7 +177,10 @@ std::optional<rtsp_pull_http_response> validate_request(const rtsp_pull_http_req
     return std::nullopt;
 }
 
-rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, worker_context& worker, rtsp_pull_create_config config)
+rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request,
+                                      worker_context& worker,
+                                      rtsp_pull_create_config config,
+                                      runtime_event_emitter_ptr runtime_events)
 {
     if (!rtsp_pull_session::valid_url(config.url))
     {
@@ -184,7 +199,12 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
                                                        stream_name,
                                                        std::move(config.url),
                                                        std::move(config.username),
-                                                       std::move(config.password));
+                                                       std::move(config.password),
+                                                       std::chrono::milliseconds{15'000},
+                                                       std::chrono::milliseconds{15'000},
+                                                       1024U * 1024U,
+                                                       std::move(config.source_id),
+                                                       std::move(runtime_events));
     if (!streams.add_receiver_session(stream_name, session))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
@@ -202,7 +222,8 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
 
 rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& request,
                                                  worker_context& worker,
-                                                 const boost::urls::url_view& target)
+                                                 const boost::urls::url_view& target,
+                                                 runtime_event_emitter_ptr runtime_events)
 {
     const auto path = target.encoded_path();
     if (path != "/rtsp/pull/create" && path != "/rtsp/pull/delete")
@@ -221,7 +242,7 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
         {
             return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
         }
-        return handle_create(request, worker, std::move(*config));
+        return handle_create(request, worker, std::move(*config), std::move(runtime_events));
     }
 
     const auto identity = parse_delete_identity(request.body());

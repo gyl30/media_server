@@ -38,7 +38,8 @@ create_result create(worker_context& worker,
                      std::string stream_id,
                      std::string_view stream_name,
                      std::string_view offer_sdp,
-                     const config& application_config)
+                     const config& application_config,
+                     runtime_event_emitter_ptr runtime_events)
 {
     spdlog::debug("whep create stream {} offer_bytes {}", stream_name, offer_sdp.size());
 
@@ -94,8 +95,15 @@ create_result create(worker_context& worker,
         }
     }
 
-    auto session = std::make_shared<whep_session>(
-        worker, std::move(stream_id), stream, advertised_address, std::move(certificate), whep_session_timeouts{}, application_config.whep_video);
+    auto session = std::make_shared<whep_session>(worker,
+                                                  std::move(stream_id),
+                                                  stream,
+                                                  advertised_address,
+                                                  std::move(certificate),
+                                                  whep_session_timeouts{},
+                                                  application_config.whep_video,
+                                                  1024U * 1024U,
+                                                  std::move(runtime_events));
     switch (session->startup(std::move(*offer)))
     {
         case whep_session_startup_error::none:
@@ -117,7 +125,7 @@ create_result create(worker_context& worker,
     if (!inserted)
     {
         spdlog::error("whep session id collision {}", session_id);
-        session->shutdown();
+        session->shutdown(runtime_end_reason::runtime_error, "session_id_collision");
         return failed(create_error::internal_error);
     }
 
@@ -167,7 +175,7 @@ bool remove(std::string_view session_id)
     return true;
 }
 
-void shutdown()
+void shutdown(runtime_end_reason reason)
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
@@ -175,7 +183,7 @@ void shutdown()
     {
         if (const auto session = entry.lock())
         {
-            session->shutdown();
+            session->shutdown(reason);
         }
     }
     current.sessions.clear();
