@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,17 +20,25 @@ type infrastructureServer struct {
 	registry             *mediaServerRegistry
 	logger               *slog.Logger
 	live                 *liveService
+	media                *mediaServerHTTPClient
+	rtspPullMu           sync.Mutex
+	rtspPulls            map[string]mediaServerInstance
 	onMediaServerOffline func(mediaServerInstance)
 }
 
 func newInfrastructureServer(cfg config, registry *mediaServerRegistry, logger *slog.Logger) *infrastructureServer {
-	return &infrastructureServer{cfg: cfg, registry: registry, logger: logger}
+	return &infrastructureServer{
+		cfg: cfg, registry: registry, logger: logger,
+		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), rtspPulls: make(map[string]mediaServerInstance),
+	}
 }
 
 func (s *infrastructureServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/media-servers/register", s.handleMediaServerRegister)
 	mux.HandleFunc("POST /internal/media-servers/heartbeat", s.handleMediaServerHeartbeat)
+	mux.HandleFunc("POST /internal/rtsp-pull/create", s.handleRTSPPullCreate)
+	mux.HandleFunc("POST /internal/rtsp-pull/delete", s.handleRTSPPullDelete)
 	if s.live != nil {
 		mux.HandleFunc("POST /internal/live/start", s.handleLiveStart)
 		mux.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
