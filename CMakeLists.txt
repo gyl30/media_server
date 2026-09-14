@@ -191,6 +191,7 @@ add_library(media_core STATIC
     media/http/hls_http_session.cpp
     media/http/gb28181_json.cpp
     media/http/gb28181_http.cpp
+    media/http/rtsp_pull_http.cpp
     media/http/signaling_client.cpp
     media/http/whep_http.cpp
     media/http/whip_http.cpp
@@ -349,6 +350,10 @@ if(BUILD_TESTING)
     add_executable(gb28181_http_tests tests/gb28181_http_tests.cpp)
     target_link_libraries(gb28181_http_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_http_tests COMMAND gb28181_http_tests)
+
+    add_executable(rtsp_pull_http_tests tests/rtsp_pull_http_tests.cpp)
+    target_link_libraries(rtsp_pull_http_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME rtsp_pull_http_tests COMMAND rtsp_pull_http_tests)
 
     add_executable(port_manager_tests tests/port_manager_tests.cpp)
     target_link_libraries(port_manager_tests PRIVATE media_core media_server_link_options)
