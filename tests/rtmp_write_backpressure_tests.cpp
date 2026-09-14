@@ -75,7 +75,7 @@ void test_rtmp_write_backlog_limit()
     acceptor.accept(server_socket);
 
     auto session =
-        std::make_shared<rtmp_session>(worker, std::move(server_socket), video_transcode_config{}, 5s, 0U);
+        std::make_shared<rtmp_session>(worker, std::move(server_socket), nullptr, video_transcode_config{}, 5s, 0U);
     session->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });

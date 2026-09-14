@@ -42,6 +42,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	mux.HandleFunc("POST /internal/rtsp-pull/create", s.handleRTSPPullCreate)
 	mux.HandleFunc("POST /internal/rtsp-pull/delete", s.handleRTSPPullDelete)
 	mux.HandleFunc("POST /api/publish/allocations", s.handlePublishAllocation)
+	mux.HandleFunc("POST /internal/publish/claim", s.handlePublishClaim)
 	if s.live != nil {
 		mux.HandleFunc("POST /internal/live/start", s.handleLiveStart)
 		mux.HandleFunc("POST /internal/live/stop", s.handleLiveStop)

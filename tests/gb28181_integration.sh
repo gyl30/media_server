@@ -4,6 +4,9 @@ set -euo pipefail
 server_bin="${1:-./build/media_server}"
 work_dir="${2:-${TMPDIR:-/tmp}/media_server-gb28181-integration}"
 server_address="${MEDIA_SERVER_ADDRESS:-127.0.0.1}"
+signaling_address="${SIGNALING_ADDRESS:-$server_address}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+signaling_bin="${SIGNALING_BIN:-}"
 mkdir -p "$work_dir"
 work_dir="$(cd "$work_dir" && pwd)"
 server_bin="$(realpath "$server_bin")"
@@ -11,7 +14,10 @@ server_bin="$(realpath "$server_bin")"
 rtmp_port=19360
 rtsp_port=18564
 http_port=18084
+signaling_sip_port=15060
+signaling_http_port=19094
 main_pid=""
+signaling_pid=""
 publish_pid=""
 rtcp_relay_pid=""
 
@@ -19,9 +25,11 @@ cleanup() {
     set +e
     stop_publisher
     [[ -n "$rtcp_relay_pid" ]] && kill "$rtcp_relay_pid" 2>/dev/null
-    [[ -n "$main_pid" ]] && kill "$main_pid" 2>/dev/null
+    [[ -n "$main_pid" ]] && kill -TERM "$main_pid" 2>/dev/null
+    [[ -n "$signaling_pid" ]] && kill -TERM "$signaling_pid" 2>/dev/null
     [[ -n "$rtcp_relay_pid" ]] && wait "$rtcp_relay_pid" 2>/dev/null
     [[ -n "$main_pid" ]] && wait "$main_pid" 2>/dev/null
+    [[ -n "$signaling_pid" ]] && wait "$signaling_pid" 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -38,6 +46,64 @@ stop_publisher() {
         wait "$publish_pid" 2>/dev/null || true
         publish_pid=""
     fi
+}
+
+wait_http() {
+    local url="$1"
+    local pid="$2"
+    local log="$3"
+    for _ in $(seq 1 100); do
+        if curl --noproxy '*' -sS --max-time 1 -o /dev/null "$url" 2>/dev/null; then
+            if kill -0 "$pid" 2>/dev/null; then
+                return 0
+            fi
+            cat "$log" >&2 2>/dev/null || true
+            return 1
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            cat "$log" >&2 2>/dev/null || true
+            return 1
+        fi
+        sleep 0.05
+    done
+    echo "HTTP endpoint did not become ready: $url" >&2
+    cat "$log" >&2 2>/dev/null || true
+    return 1
+}
+
+allocate_rtmp_publish() {
+    local label="$1"
+    local stream_name="$2"
+    local response="$work_dir/${label}_allocation.json"
+    local body
+    local status
+    printf -v body '{"protocol":"rtmp","stream_name":"%s"}' "$stream_name"
+    status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o "$response" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "http://${signaling_address}:${signaling_http_port}/api/publish/allocations")"
+    if [[ "$status" != "201" ]]; then
+        echo "POST /api/publish/allocations returned $status" >&2
+        cat "$response" >&2 2>/dev/null || true
+        return 1
+    fi
+    python3 - "$response" <<'PY'
+import json
+import sys
+import urllib.parse
+import uuid
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    response = json.load(source)
+stream_id = response["stream_id"]
+publish_url = response["publish_url"]
+parsed_id = uuid.UUID(stream_id)
+parsed_url = urllib.parse.urlsplit(publish_url)
+query = urllib.parse.parse_qs(parsed_url.query, strict_parsing=True)
+assert parsed_id.version == 4 and str(parsed_id) == stream_id
+assert parsed_url.scheme == "rtmp" and query.get("stream_id") == [stream_id]
+print(publish_url)
+PY
 }
 
 wait_probe_streams() {
@@ -262,14 +328,38 @@ run_tcp_case() {
     kill -0 "$main_pid"
 }
 
+if [[ -z "$signaling_bin" ]]; then
+    (
+        cd "$script_dir/../signaling"
+        go build -o "$work_dir/signaling" .
+    )
+    signaling_bin="$work_dir/signaling"
+else
+    signaling_bin="$(realpath "$signaling_bin")"
+fi
+
+"$signaling_bin" \
+    --sip-listen "$signaling_address:$signaling_sip_port" \
+    --sip-advertise "$signaling_address:$signaling_sip_port" \
+    --http-listen "$signaling_address:$signaling_http_port" \
+    >"$work_dir/signaling.log" 2>&1 &
+signaling_pid=$!
+wait_http "http://${signaling_address}:${signaling_http_port}/" "$signaling_pid" "$work_dir/signaling.log"
+kill -0 "$signaling_pid"
+
 MEDIA_SERVER_LOG_LEVEL=debug "$server_bin" --bind-address "$server_address" --webrtc-address "$server_address" \
     --rtmp-port "$rtmp_port" --rtsp-port "$rtsp_port" --http-port "$http_port" \
+    --signaling-url "http://${signaling_address}:${signaling_http_port}" \
+    --server-id gb28181-integration \
+    --control-url "http://${server_address}:${http_port}" \
+    --media-ip "$server_address" \
     >"$work_dir/server.log" 2>&1 &
 main_pid=$!
-sleep 0.5
+wait_http "http://${server_address}:${http_port}/" "$main_pid" "$work_dir/server.log"
 kill -0 "$main_pid"
 
 # H.264 + AAC source 复用到 UDP、两种 TCP 角色配对和 RTCP 验证。
+publish_url="$(allocate_rtmp_publish h264_aac live/gb-h264-aac)"
 ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f lavfi -i 'testsrc=size=320x180:rate=25' \
     -f lavfi -i 'sine=frequency=1000:sample_rate=44100' \
@@ -277,7 +367,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
     -g 25 -keyint_min 25 -sc_threshold 0 \
     -c:a aac -b:a 96k -ac 2 \
-    -f flv "rtmp://${server_address}:${rtmp_port}/live/gb-h264-aac" \
+    -f flv "$publish_url" \
     >"$work_dir/publisher_h264_aac.log" 2>&1 &
 publish_pid=$!
 wait_probe_streams "$work_dir/source_h264_aac.txt" h264 aac \

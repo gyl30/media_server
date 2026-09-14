@@ -4,12 +4,14 @@
 #include <chrono>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <cstdint>
 #include <string_view>
 
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/spawn.hpp>
 
 #include "media/net/tcp_yield_transport.h"
@@ -20,7 +22,16 @@ struct rtmp_server_t;
 namespace media_server
 {
 
+struct rtmp_publish_target
+{
+    std::string stream_id;
+    std::string stream_name;
+};
+
+[[nodiscard]] std::optional<rtmp_publish_target> parse_rtmp_publish_target(std::string_view app, std::string_view stream);
+
 class worker_context;
+class signaling_client;
 class rtmp_publish_session;
 class rtmp_play_session;
 
@@ -29,6 +40,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
    public:
     rtmp_session(worker_context& worker,
                  boost::asio::ip::tcp::socket socket,
+                 std::shared_ptr<signaling_client> signaling = {},
                  video_transcode_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
@@ -53,11 +65,13 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     void write(std::shared_ptr<std::vector<std::uint8_t>> data);
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
+    void run_publish_claim(boost::asio::yield_context yield);
     void safe_shutdown();
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
     worker_context& worker_;
     tcp_yield_transport transport_;
+    std::shared_ptr<signaling_client> signaling_;
     std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
@@ -66,7 +80,10 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     rtmp_server_t* rtmp_context_{};
     std::shared_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;
+    boost::asio::cancellation_signal publish_claim_cancellation_;
+    std::string stream_id_;
     std::string stream_name_;
+    bool publish_claim_pending_{};
     bool closed_{};
 };
 
