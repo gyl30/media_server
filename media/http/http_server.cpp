@@ -1,7 +1,6 @@
 #include <utility>
 
 #include <boost/asio/detached.hpp>
-#include <boost/asio/post.hpp>
 
 #include "media/http/http_server.h"
 #include "media/http/http_session.h"
@@ -29,29 +28,6 @@ void http_server::startup(boost::system::error_code& error)
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
 }
 
-void http_server::shutdown()
-{
-    {
-        std::scoped_lock lock(mutex_);
-        if (closed_)
-        {
-            return;
-        }
-        closed_ = true;
-        for (const auto& weak : sessions_)
-        {
-            if (const auto session = weak.lock())
-            {
-                session->shutdown();
-            }
-        }
-        sessions_.clear();
-    }
-
-    const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
-}
-
 void http_server::run(boost::asio::yield_context yield)
 {
     boost::system::error_code error;
@@ -62,25 +38,11 @@ void http_server::run(boost::asio::yield_context yield)
         listener_.accept(socket, {}, yield, error);
         if (error)
         {
-            break;
-        }
-
-        std::scoped_lock lock(mutex_);
-        if (closed_)
-        {
-            boost::system::error_code close_error;
-            socket.close(close_error);
-            break;
+            return;
         }
 
         auto session = std::make_shared<http_session>(*worker, std::move(socket), workers_, config_, runtime_events_);
-        std::erase_if(sessions_, [](const auto& weak) { return weak.expired(); });
-        sessions_.push_back(session);
         session->startup();
     }
-
-    shutdown();
 }
-
-void http_server::safe_shutdown() { listener_.shutdown(); }
 }    // namespace media_server
