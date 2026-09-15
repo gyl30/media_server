@@ -336,7 +336,7 @@ void test_fifo_and_event_body()
     require(body.at("end_reason") == "runtime_error" && body.at("error") == "connection_failed",
             "runtime event terminal fields serialized");
     const auto second = boost::json::parse(requests[1].body).as_object();
-    require(second.size() == 9U && !second.contains("source_id") && !second.contains("end_reason") && !second.contains("error"),
+    require(second.size() == 8U && !second.contains("source_id") && !second.contains("end_reason") && !second.contains("error"),
             "runtime event absent optional fields omitted");
 }
 
