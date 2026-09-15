@@ -2,10 +2,6 @@
 #define MEDIA_RTSP_RTSP_SERVER_H
 
 #include <memory>
-#include <string>
-#include <vector>
-#include <mutex>
-#include <cstdint>
 
 #include <boost/asio/spawn.hpp>
 #include <boost/system/error_code.hpp>
@@ -17,7 +13,6 @@
 
 namespace media_server
 {
-class rtsp_server_connection;
 class signaling_client;
 
 class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
@@ -29,11 +24,9 @@ class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
                 runtime_event_emitter_ptr runtime_events = {});
 
     void startup(boost::system::error_code& error);
-    void shutdown(runtime_end_reason reason = runtime_end_reason::server_shutdown, std::string error = {});
 
    private:
     void run(boost::asio::yield_context yield);
-    void safe_shutdown();
 
     io_context_pool& workers_;
     worker_context& worker_;
@@ -41,9 +34,6 @@ class rtsp_server final : public std::enable_shared_from_this<rtsp_server>
     std::shared_ptr<signaling_client> signaling_;
     runtime_event_emitter_ptr runtime_events_;
     tcp_listener listener_;
-    std::mutex mutex_;
-    std::vector<std::weak_ptr<rtsp_server_connection>> sessions_;
-    bool closed_{};
 };
 
 }    // namespace media_server
