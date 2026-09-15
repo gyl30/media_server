@@ -65,7 +65,8 @@ func (r *mediaServerRegistry) register(registration mediaServerRegistration, now
 	if _, exists := r.instances[key]; exists {
 		return errMediaServerConflict
 	}
-	if currentKey, exists := r.current[registration.ServerID]; exists && r.instances[currentKey].online {
+	currentKey, hasCurrent := r.current[registration.ServerID]
+	if hasCurrent && r.instances[currentKey].online {
 		return errMediaServerConflict
 	}
 	instance := mediaServerInstance{
@@ -78,6 +79,9 @@ func (r *mediaServerRegistry) register(registration mediaServerRegistration, now
 		httpPort:      registration.HTTPPort,
 		lastHeartbeat: now,
 		online:        true,
+	}
+	if hasCurrent {
+		delete(r.instances, currentKey)
 	}
 	r.instances[key] = instance
 	r.current[registration.ServerID] = key
