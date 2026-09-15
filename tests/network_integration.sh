@@ -265,16 +265,17 @@ delete_rtsp_source() {
 wait_runtime_state() {
     local signaling_port="$1"
     local stream_id="$2"
-    local protocol="$3"
-    local stream_name="$4"
-    local state="$5"
-    local source_id="${6:-}"
-    local end_reason="${7:-}"
+    local kind="$3"
+    local protocol="$4"
+    local stream_name="$5"
+    local state="$6"
+    local source_id="${7:-}"
+    local end_reason="${8:-}"
     local response="$work_dir/runtime_${stream_id}_${state}.json"
     for _ in $(seq 1 100); do
         if curl --noproxy '*' -fsS --connect-timeout 1 --max-time 2 \
             "http://127.0.0.1:$signaling_port/api/runtimes" >"$response" 2>/dev/null && \
-            python3 - "$response" "$stream_id" "$protocol" "$stream_name" "$state" "$source_id" "$end_reason" <<'PY'
+            python3 - "$response" "$stream_id" "$kind" "$protocol" "$stream_name" "$state" "$source_id" "$end_reason" <<'PY'
 import json
 import sys
 
@@ -283,10 +284,10 @@ with open(sys.argv[1], encoding="utf-8") as source:
 for runtime in runtimes:
     if runtime.get("stream_id") != sys.argv[2]:
         continue
-    if (runtime.get("protocol") == sys.argv[3] and runtime.get("stream_name") == sys.argv[4]
-            and runtime.get("state") == sys.argv[5] and runtime.get("direction") == "input"
-            and runtime.get("source_id", "") == sys.argv[6]
-            and (not sys.argv[7] or runtime.get("end_reason") == sys.argv[7])):
+    if (runtime.get("kind") == sys.argv[3] and runtime.get("protocol") == sys.argv[4]
+            and runtime.get("stream_name") == sys.argv[5] and runtime.get("state") == sys.argv[6]
+            and runtime.get("source_id", "") == sys.argv[7]
+            and (not sys.argv[8] or runtime.get("end_reason") == sys.argv[8])):
         raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -412,7 +413,7 @@ publish_pid=$!
 
 wait_log "$work_dir/server.log" 'rtmp publish live/test'
 wait_log "$work_dir/server.log" 'rtmp publish tracks ready audio true'
-wait_runtime_state "$main_signaling_http_port" "$main_publish_stream_id" rtmp live/test streaming
+wait_runtime_state "$main_signaling_http_port" "$main_publish_stream_id" publisher rtmp live/test streaming
 sleep 1
 
 probe_streams "$work_dir/rtsp_from_rtmp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18554/live/test'
@@ -448,18 +449,18 @@ pull_stream_id="$(start_rtsp_source rtsp_pull_initial "$pull_signaling_http_port
 
 wait_log "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test'
 wait_log "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true'
-wait_runtime_state "$pull_signaling_http_port" "$pull_stream_id" rtsp relay/test streaming "$pull_source_id"
+wait_runtime_state "$pull_signaling_http_port" "$pull_stream_id" source rtsp relay/test streaming "$pull_source_id"
 wait_probe_streams "$work_dir/rtsp_pull_initial.txt" h264 aac -rtsp_transport tcp \
     'rtsp://127.0.0.1:18555/relay/test'
 
 stop_rtsp_source rtsp_pull_initial "$pull_signaling_http_port" "$pull_source_id"
-wait_runtime_state "$pull_signaling_http_port" "$pull_stream_id" rtsp relay/test stopped "$pull_source_id" requested
+wait_runtime_state "$pull_signaling_http_port" "$pull_stream_id" source rtsp relay/test stopped "$pull_source_id" requested
 wait_http_stream_absent 18081 relay/test
 replacement_stream_id="$(start_rtsp_source rtsp_pull_recreate "$pull_signaling_http_port" "$pull_source_id")"
 [[ "$replacement_stream_id" != "$pull_stream_id" ]]
 wait_log_count "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test' 2
 wait_log_count "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true' 2
-wait_runtime_state "$pull_signaling_http_port" "$replacement_stream_id" rtsp relay/test streaming "$pull_source_id"
+wait_runtime_state "$pull_signaling_http_port" "$replacement_stream_id" source rtsp relay/test streaming "$pull_source_id"
 
 probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18555/relay/test'
 probe_streams "$work_dir/rtmp_from_rtsp.txt" 'rtmp://127.0.0.1:19351/relay/test'
@@ -468,13 +469,13 @@ probe_streams "$work_dir/http_flv_from_rtsp.txt" 'http://127.0.0.1:18081/relay/t
 probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/play/hls/relay/test'
 
 stop_rtsp_source rtsp_pull_recreate "$pull_signaling_http_port" "$pull_source_id"
-wait_runtime_state "$pull_signaling_http_port" "$replacement_stream_id" rtsp relay/test stopped "$pull_source_id" requested
+wait_runtime_state "$pull_signaling_http_port" "$replacement_stream_id" source rtsp relay/test stopped "$pull_source_id" requested
 wait_http_stream_absent 18081 relay/test
 delete_rtsp_source rtsp_pull_recreate "$pull_signaling_http_port" "$pull_source_id"
 
 wait "$publish_pid"
 publish_pid=""
-wait_runtime_state "$main_signaling_http_port" "$main_publish_stream_id" rtmp live/test stopped
+wait_runtime_state "$main_signaling_http_port" "$main_publish_stream_id" publisher rtmp live/test stopped
 
 # RTSP publish TCP/UDP 使用独立 stream；UDP 连续建立两次，覆盖传输资源释放后的再次建链。
 for publish_case in tcp udp udp-restart; do
@@ -495,7 +496,7 @@ for publish_case in tcp udp udp-restart; do
 
     wait_probe_streams "$work_dir/rtsp_publish_${publish_case}_rtsp.txt" h264 aac -rtsp_transport tcp \
         "rtsp://127.0.0.1:18554/live/$stream_name"
-    wait_runtime_state "$main_signaling_http_port" "$rtsp_publish_stream_id" rtsp "live/$stream_name" streaming
+    wait_runtime_state "$main_signaling_http_port" "$rtsp_publish_stream_id" publisher rtsp "live/$stream_name" streaming
     probe_streams "$work_dir/rtsp_publish_${publish_case}_rtmp.txt" "rtmp://127.0.0.1:19350/live/$stream_name"
     probe_streams "$work_dir/rtsp_publish_${publish_case}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
     probe_hls_ts "rtsp_publish_${publish_case}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
@@ -503,7 +504,7 @@ for publish_case in tcp udp udp-restart; do
     kill "$rtsp_publish_pid" 2>/dev/null || true
     wait "$rtsp_publish_pid" 2>/dev/null || true
     rtsp_publish_pid=""
-    wait_runtime_state "$main_signaling_http_port" "$rtsp_publish_stream_id" rtsp "live/$stream_name" stopped
+    wait_runtime_state "$main_signaling_http_port" "$rtsp_publish_stream_id" publisher rtsp "live/$stream_name" stopped
     sleep 0.2
     kill -0 "$main_pid"
 done
@@ -524,7 +525,7 @@ rtsp_publish_pid=$!
 
 wait_probe_streams "$work_dir/av1_rtsp_pull_source.txt" h264 aac -rtsp_transport tcp \
     'rtsp://127.0.0.1:18554/live/av1-pull-source'
-wait_runtime_state "$main_signaling_http_port" "$av1_source_publish_stream_id" rtsp live/av1-pull-source streaming
+wait_runtime_state "$main_signaling_http_port" "$av1_source_publish_stream_id" publisher rtsp live/av1-pull-source streaming
 
 # AV1 作为显式输出能力启用：RTMP/HTTP-FLV 使用 Enhanced FLV，HLS 使用 fMP4，RTSP 使用 AV1/RTP。
 "$signaling_bin" \
@@ -568,8 +569,8 @@ av1_publish_pid=$!
 wait_log "$work_dir/av1_server.log" 'rtmp publish live/av1'
 wait_log "$work_dir/av1_server.log" 'rtsp pull connected stream relay/av1'
 wait_log "$work_dir/av1_server.log" 'rtsp pull tracks ready audio true'
-wait_runtime_state "$av1_signaling_http_port" "$av1_publish_stream_id" rtmp live/av1 streaming
-wait_runtime_state "$av1_signaling_http_port" "$av1_pull_stream_id" rtsp relay/av1 streaming "$av1_pull_source_id"
+wait_runtime_state "$av1_signaling_http_port" "$av1_publish_stream_id" publisher rtmp live/av1 streaming
+wait_runtime_state "$av1_signaling_http_port" "$av1_pull_stream_id" source rtsp relay/av1 streaming "$av1_pull_source_id"
 
 wait_probe_streams "$work_dir/rtsp_av1_from_rtmp.txt" av1 aac -rtsp_transport tcp \
     'rtsp://127.0.0.1:18556/live/av1'
@@ -577,7 +578,7 @@ wait_probe_streams "$work_dir/rtsp_av1_from_pull.txt" av1 aac -rtsp_transport tc
     'rtsp://127.0.0.1:18556/relay/av1'
 
 stop_rtsp_source rtsp_pull_av1 "$av1_signaling_http_port" "$av1_pull_source_id"
-wait_runtime_state "$av1_signaling_http_port" "$av1_pull_stream_id" rtsp relay/av1 stopped "$av1_pull_source_id" requested
+wait_runtime_state "$av1_signaling_http_port" "$av1_pull_stream_id" source rtsp relay/av1 stopped "$av1_pull_source_id" requested
 wait_http_stream_absent 18082 relay/av1
 delete_rtsp_source rtsp_pull_av1 "$av1_signaling_http_port" "$av1_pull_source_id"
 
@@ -595,7 +596,7 @@ kill -0 "$av1_server_pid"
 kill "$rtsp_publish_pid" 2>/dev/null || true
 wait "$rtsp_publish_pid" 2>/dev/null || true
 rtsp_publish_pid=""
-wait_runtime_state "$main_signaling_http_port" "$av1_source_publish_stream_id" rtsp live/av1-pull-source stopped
+wait_runtime_state "$main_signaling_http_port" "$av1_source_publish_stream_id" publisher rtsp live/av1-pull-source stopped
 
 # RTMP AV1 必须由 peer 通过 legacy fourCcList 显式声明 av01；未声明时不能回退到其他视频编码。
 wait_probe_streams "$work_dir/rtmp_av1.txt" av1 aac -rtmp_enhanced_codecs av01 'rtmp://127.0.0.1:19352/live/av1'
@@ -639,12 +640,12 @@ for transport in tcp udp; do
 
     wait_probe_streams "$work_dir/rtsp_av1_push_${transport}.txt" av1 aac -rtsp_transport tcp \
         "rtsp://127.0.0.1:18556/live/$stream_name"
-    wait_runtime_state "$av1_signaling_http_port" "$rtsp_publish_stream_id" rtsp "live/$stream_name" streaming
+    wait_runtime_state "$av1_signaling_http_port" "$rtsp_publish_stream_id" publisher rtsp "live/$stream_name" streaming
 
     kill "$rtsp_publish_pid" 2>/dev/null || true
     wait "$rtsp_publish_pid" 2>/dev/null || true
     rtsp_publish_pid=""
-    wait_runtime_state "$av1_signaling_http_port" "$rtsp_publish_stream_id" rtsp "live/$stream_name" stopped
+    wait_runtime_state "$av1_signaling_http_port" "$rtsp_publish_stream_id" publisher rtsp "live/$stream_name" stopped
     sleep 0.2
     kill -0 "$av1_server_pid"
 done
@@ -652,7 +653,7 @@ done
 kill "$av1_publish_pid" 2>/dev/null || true
 wait "$av1_publish_pid" 2>/dev/null || true
 av1_publish_pid=""
-wait_runtime_state "$av1_signaling_http_port" "$av1_publish_stream_id" rtmp live/av1 stopped
+wait_runtime_state "$av1_signaling_http_port" "$av1_publish_stream_id" publisher rtmp live/av1 stopped
 
 kill -0 "$main_pid"
 kill -0 "$pull_pid"

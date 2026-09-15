@@ -25,7 +25,6 @@ func TestObservedRuntimeTransitionsAndIdentity(t *testing.T) {
 		t.Fatalf("apply(streaming) = %v, %v", changed, err)
 	}
 	stopped := streaming
-	stopped.Type = "source_stopped"
 	stopped.State = "stopped"
 	stopped.Stage = ""
 	stopped.EndReason = "remote"
@@ -49,24 +48,24 @@ func TestObservedRuntimeTransitionsAndIdentity(t *testing.T) {
 	}
 }
 
-func TestObservedRuntimeRejectsTypeFamilyChanges(t *testing.T) {
+func TestObservedRuntimeRejectsKindChanges(t *testing.T) {
 	runtimes := newObservedRuntimeRegistry()
 	starting := testObservedRuntime("00000000-0000-4000-8000-000000000009", "starting")
 	if _, err := runtimes.apply(starting); err != nil {
 		t.Fatalf("apply(starting) error = %v", err)
 	}
-	changedType := starting
-	changedType.Type = "publisher_connected"
-	if _, err := runtimes.apply(changedType); !errors.Is(err, errRuntimeConflict) {
-		t.Fatalf("active type mutation error = %v", err)
+	changedKind := starting
+	changedKind.Kind = "publisher"
+	if _, err := runtimes.apply(changedKind); !errors.Is(err, errRuntimeConflict) {
+		t.Fatalf("active kind mutation error = %v", err)
 	}
 	wrongTerminal := starting
-	wrongTerminal.Type = "publisher_disconnected"
+	wrongTerminal.Kind = "publisher"
 	wrongTerminal.State = "stopped"
 	wrongTerminal.Stage = ""
 	wrongTerminal.EndReason = "remote"
 	if _, err := runtimes.apply(wrongTerminal); !errors.Is(err, errRuntimeConflict) {
-		t.Fatalf("terminal type mutation error = %v", err)
+		t.Fatalf("terminal kind mutation error = %v", err)
 	}
 }
 
@@ -92,7 +91,6 @@ func TestObservedRuntimeSourceGenerationFencing(t *testing.T) {
 		t.Fatalf("late first streaming error = %v", err)
 	}
 
-	first.Type = "source_stopped"
 	first.State = "stopped"
 	first.Stage = ""
 	first.EndReason = "requested"
@@ -105,7 +103,6 @@ func TestObservedRuntimeSourceGenerationFencing(t *testing.T) {
 	}
 
 	lateFirst := first
-	lateFirst.Type = "source_started"
 	lateFirst.State = "streaming"
 	lateFirst.EndReason = ""
 	if _, err := runtimes.apply(lateFirst); !errors.Is(err, errRuntimeConflict) {
@@ -160,7 +157,7 @@ func TestObservedRuntimeRestoresEvictedPreviousSourceRuntime(t *testing.T) {
 	runtimes := newObservedRuntimeRegistry()
 	sourceID := "10000000-0000-4000-8000-000000000006"
 	previous := testHistoricalStoppedRuntime(7000)
-	previous.Type = "source_stopped"
+	previous.Kind = "source"
 	previous.Protocol = "rtsp"
 	previous.SourceID = sourceID
 	runtimes.bindSource(sourceID, previous.StreamID)
@@ -206,8 +203,8 @@ func TestObservedRuntimeMarksExactMediaServerOffline(t *testing.T) {
 		t.Fatalf("apply(new) error = %v", err)
 	}
 	changed := runtimes.mediaServerOffline("media-1", "instance-a")
-	if len(changed) != 1 || changed[0].StreamID != oldInstance.StreamID || changed[0].State != "stopped" ||
-		changed[0].Type != "runtime_error" || changed[0].EndReason != "runtime_error" || changed[0].Error != "media_server_offline" {
+	if len(changed) != 1 || changed[0].StreamID != oldInstance.StreamID || changed[0].Kind != oldInstance.Kind ||
+		changed[0].State != "stopped" || changed[0].EndReason != "runtime_error" || changed[0].Error != "media_server_offline" {
 		t.Fatalf("offline changes = %+v", changed)
 	}
 	snapshot := runtimes.snapshot()
@@ -245,7 +242,6 @@ func TestObservedRuntimeAcknowledgesRequestedStopByGeneration(t *testing.T) {
 	}
 
 	terminal := second
-	terminal.Type = "runtime_error"
 	terminal.State = "stopped"
 	terminal.Stage = ""
 	terminal.EndReason = "runtime_error"
@@ -298,7 +294,6 @@ func TestObservedRuntimeBoundsHistoricalStopped(t *testing.T) {
 func TestObservedRuntimeRetentionPreservesActiveAndCurrentSource(t *testing.T) {
 	runtimes := newObservedRuntimeRegistry()
 	active := testHistoricalStoppedRuntime(2000)
-	active.Type = "publisher_connected"
 	active.State = "streaming"
 	active.Stage = "streaming"
 	active.EndReason = ""
@@ -306,7 +301,7 @@ func TestObservedRuntimeRetentionPreservesActiveAndCurrentSource(t *testing.T) {
 		t.Fatalf("apply(active) error = %v", err)
 	}
 	pinned := testHistoricalStoppedRuntime(2001)
-	pinned.Type = "source_stopped"
+	pinned.Kind = "source"
 	pinned.Protocol = "rtsp"
 	pinned.SourceID = "10000000-0000-4000-8000-000000000004"
 	runtimes.bindSource(pinned.SourceID, pinned.StreamID)
@@ -333,7 +328,7 @@ func TestObservedRuntimeUnbindsOnlyExpectedSourceGeneration(t *testing.T) {
 	runtimes := newObservedRuntimeRegistry()
 	sourceID := "10000000-0000-4000-8000-000000000005"
 	first := testHistoricalStoppedRuntime(5001)
-	first.Type = "source_stopped"
+	first.Kind = "source"
 	first.Protocol = "rtsp"
 	first.SourceID = sourceID
 	runtimes.bindSource(sourceID, first.StreamID)
@@ -412,16 +407,16 @@ func TestObservedRuntimeDuplicateStoppedDoesNotRepeatRetention(t *testing.T) {
 
 func testObservedRuntime(streamID, state string) observedRuntime {
 	return observedRuntime{
-		Type: "source_started", ServerID: "media-1", InstanceID: "instance-a",
-		StreamID: streamID, StreamName: "live/camera", Direction: "input", Protocol: "rtsp",
+		Kind: "source", ServerID: "media-1", InstanceID: "instance-a",
+		StreamID: streamID, StreamName: "live/camera", Protocol: "rtsp",
 		State: state, Stage: state,
 	}
 }
 
 func testHistoricalStoppedRuntime(index int) observedRuntime {
 	return observedRuntime{
-		Type: "publisher_disconnected", ServerID: "media-1", InstanceID: "instance-a",
+		Kind: "publisher", ServerID: "media-1", InstanceID: "instance-a",
 		StreamID: fmt.Sprintf("00000000-0000-4000-8000-%012d", index), StreamName: "live/camera",
-		Direction: "input", Protocol: "rtmp", State: "stopped", EndReason: "remote",
+		Protocol: "rtmp", State: "stopped", EndReason: "remote",
 	}
 }

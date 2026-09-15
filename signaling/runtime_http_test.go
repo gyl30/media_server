@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,9 +17,9 @@ func TestRuntimeEventHTTPAndSnapshot(t *testing.T) {
 	sourceID := "10000000-0000-4000-8000-000000000001"
 	streamID := "00000000-0000-4000-8000-000000000001"
 	server.runtimes.bindSource(sourceID, streamID)
-	event := `{"type":"source_started","server_id":"media-1","instance_id":"instance-a",` +
+	event := `{"kind":"source","server_id":"media-1","instance_id":"instance-a",` +
 		`"stream_id":"` + streamID + `","stream_name":"live/camera",` +
-		`"source_id":"` + sourceID + `","direction":"input","protocol":"rtsp",` +
+		`"source_id":"` + sourceID + `","protocol":"rtsp",` +
 		`"state":"starting","stage":"resolving"}`
 	response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", event, "application/json")
 	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
@@ -28,13 +29,16 @@ func TestRuntimeEventHTTPAndSnapshot(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("runtime list status/body = %d %s", response.Code, response.Body.String())
 	}
+	if body := response.Body.String(); strings.Contains(body, `"type"`) || strings.Contains(body, `"direction"`) {
+		t.Fatalf("runtime snapshot contains legacy fields: %s", body)
+	}
 	var snapshot struct {
 		Runtimes []observedRuntime `json:"runtimes"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil || len(snapshot.Runtimes) != 1 {
 		t.Fatalf("runtime snapshot = %+v, %v", snapshot, err)
 	}
-	if runtime := snapshot.Runtimes[0]; runtime.StreamName != "live/camera" || runtime.State != "starting" ||
+	if runtime := snapshot.Runtimes[0]; runtime.Kind != "source" || runtime.StreamName != "live/camera" || runtime.State != "starting" ||
 		runtime.ServerID != registration.ServerID || runtime.SourceID == "" {
 		t.Fatalf("runtime = %+v", runtime)
 	}
@@ -42,9 +46,9 @@ func TestRuntimeEventHTTPAndSnapshot(t *testing.T) {
 
 func TestRuntimeEventHTTPRejectsInvalidStaleAndConflictingEvents(t *testing.T) {
 	server, _ := newRuntimeHTTPTestServer(t)
-	valid := `{"type":"publisher_connected","server_id":"media-1","instance_id":"instance-a",` +
+	valid := `{"kind":"publisher","server_id":"media-1","instance_id":"instance-a",` +
 		`"stream_id":"00000000-0000-4000-8000-000000000001","stream_name":"live/camera",` +
-		`"direction":"input","protocol":"rtmp","state":"starting","stage":"publish"}`
+		`"protocol":"rtmp","state":"starting","stage":"publish"}`
 	if response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", valid, "application/json"); response.Code != http.StatusNoContent {
 		t.Fatalf("valid event response = %d %s", response.Code, response.Body.String())
 	}
@@ -54,11 +58,18 @@ func TestRuntimeEventHTTPRejectsInvalidStaleAndConflictingEvents(t *testing.T) {
 		want int
 	}{
 		{name: "unknown field", body: valid[:len(valid)-1] + `,"extra":true}`, want: http.StatusBadRequest},
-		{name: "missing stream id", body: `{"type":"source_started","server_id":"media-1","instance_id":"instance-a","stream_name":"live/camera","direction":"input","protocol":"rtsp","state":"starting"}`, want: http.StatusBadRequest},
-		{name: "invalid transition shape", body: `{"type":"source_stopped","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","direction":"input","protocol":"rtsp","state":"streaming"}`, want: http.StatusBadRequest},
-		{name: "missing end reason", body: `{"type":"runtime_error","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","direction":"input","protocol":"rtsp","state":"stopped"}`, want: http.StatusBadRequest},
-		{name: "stale instance", body: `{"type":"source_started","server_id":"media-1","instance_id":"instance-old","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","direction":"input","protocol":"rtsp","state":"starting"}`, want: http.StatusGone},
-		{name: "identity mutation", body: `{"type":"publisher_connected","server_id":"media-1","instance_id":"instance-a","stream_id":"00000000-0000-4000-8000-000000000001","stream_name":"live/other","direction":"input","protocol":"rtmp","state":"streaming","stage":"streaming"}`, want: http.StatusConflict},
+		{name: "missing stream id", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-a","stream_name":"live/camera","protocol":"rtsp","state":"starting"}`, want: http.StatusBadRequest},
+		{name: "invalid stream id", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-a","stream_id":"invalid","stream_name":"live/camera","protocol":"rtsp","state":"starting"}`, want: http.StatusBadRequest},
+		{name: "invalid kind", body: `{"kind":"receiver","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"streaming"}`, want: http.StatusBadRequest},
+		{name: "invalid protocol", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"hls","state":"starting"}`, want: http.StatusBadRequest},
+		{name: "invalid state", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"failed"}`, want: http.StatusBadRequest},
+		{name: "missing end reason", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"stopped"}`, want: http.StatusBadRequest},
+		{name: "active end reason", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"starting","end_reason":"remote"}`, want: http.StatusBadRequest},
+		{name: "active error", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"starting","error":"failed"}`, want: http.StatusBadRequest},
+		{name: "legacy type", body: `{"type":"source_started","kind":"source","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"starting"}`, want: http.StatusBadRequest},
+		{name: "legacy direction", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-a","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","direction":"input","protocol":"rtsp","state":"starting"}`, want: http.StatusBadRequest},
+		{name: "stale instance", body: `{"kind":"source","server_id":"media-1","instance_id":"instance-old","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"starting"}`, want: http.StatusGone},
+		{name: "identity mutation", body: `{"kind":"publisher","server_id":"media-1","instance_id":"instance-a","stream_id":"00000000-0000-4000-8000-000000000001","stream_name":"live/other","protocol":"rtmp","state":"streaming","stage":"streaming"}`, want: http.StatusConflict},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -75,9 +86,9 @@ func TestRuntimeEventHTTPDoesNotRemoveReplacementPull(t *testing.T) {
 	sourceID := "10000000-0000-4000-8000-000000000001"
 	oldStreamID := "20000000-0000-4000-8000-000000000001"
 	oldStarting := observedRuntime{
-		Type: "source_started", ServerID: registration.ServerID, InstanceID: registration.InstanceID,
+		Kind: "source", ServerID: registration.ServerID, InstanceID: registration.InstanceID,
 		StreamID: oldStreamID, StreamName: "live/camera", SourceID: sourceID,
-		Direction: "input", Protocol: "rtsp", State: "starting", Stage: "resolving",
+		Protocol: "rtsp", State: "starting", Stage: "resolving",
 	}
 	server.runtimes.bindSource(sourceID, oldStreamID)
 	if _, err := server.runtimes.apply(oldStarting); err != nil {
@@ -90,9 +101,9 @@ func TestRuntimeEventHTTPDoesNotRemoveReplacementPull(t *testing.T) {
 	}
 	server.rtspPulls[sourceID] = replacement
 	server.runtimes.bindSource(sourceID, replacement.streamID)
-	oldStop := `{"type":"source_stopped","server_id":"media-1","instance_id":"instance-a",` +
+	oldStop := `{"kind":"source","server_id":"media-1","instance_id":"instance-a",` +
 		`"stream_id":"` + oldStreamID + `","stream_name":"live/camera",` +
-		`"source_id":"` + sourceID + `","direction":"input","protocol":"rtsp","state":"stopped","end_reason":"remote"}`
+		`"source_id":"` + sourceID + `","protocol":"rtsp","state":"stopped","end_reason":"remote"}`
 	response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", oldStop, "application/json")
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("stop response = %d %s", response.Code, response.Body.String())
@@ -126,10 +137,16 @@ func TestRuntimeEventHTTPRemovesOnlyMatchingGBLiveGeneration(t *testing.T) {
 		ssrc:   ssrc, state: liveStreaming, cancel: cancel, established: make(chan struct{}), done: make(chan struct{}),
 	}
 	live.sessions[session.key] = session
+	outputStop := `{"kind":"output","server_id":"media-1","instance_id":"instance-a",` +
+		`"stream_id":"10000000-0000-4000-8000-000000000002","stream_name":"` + session.streamName + `",` +
+		`"protocol":"gb28181","state":"stopped","end_reason":"remote"}`
+	if response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", outputStop, "application/json"); response.Code != http.StatusNoContent || live.len() != 1 {
+		t.Fatalf("output terminal status/live = %d/%d", response.Code, live.len())
+	}
 	postStop := func(streamID string) *httptest.ResponseRecorder {
-		body := `{"type":"source_stopped","server_id":"media-1","instance_id":"instance-a",` +
+		body := `{"kind":"source","server_id":"media-1","instance_id":"instance-a",` +
 			`"stream_id":"` + streamID + `","stream_name":"` + session.streamName + `",` +
-			`"direction":"input","protocol":"gb28181","state":"stopped","end_reason":"remote"}`
+			`"protocol":"gb28181","state":"stopped","end_reason":"remote"}`
 		return sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", body, "application/json")
 	}
 	if response := postStop("20000000-0000-4000-8000-000000000001"); response.Code != http.StatusNoContent || live.len() != 1 {
@@ -153,9 +170,9 @@ func TestRuntimeEventHTTPRejectsEventsAfterMediaServerExpiry(t *testing.T) {
 		t.Fatalf("expired instances = %d", len(offline))
 	}
 	server.runtimes.mediaServerOffline(offline[0].serverID, offline[0].instanceID)
-	event := `{"type":"source_started","server_id":"media-1","instance_id":"instance-a",` +
+	event := `{"kind":"source","server_id":"media-1","instance_id":"instance-a",` +
 		`"stream_id":"00000000-0000-4000-8000-000000000001","stream_name":"live/camera",` +
-		`"direction":"input","protocol":"rtsp","state":"streaming","stage":"streaming"}`
+		`"protocol":"rtsp","state":"streaming","stage":"streaming"}`
 	response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", event, "application/json")
 	if response.Code != http.StatusGone {
 		t.Fatalf("late event response = %d %s", response.Code, response.Body.String())

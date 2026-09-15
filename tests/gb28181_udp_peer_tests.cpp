@@ -81,7 +81,6 @@ void run_on_owner(worker_context& worker, Handler&& handler)
 }
 
 void require_gb_event(const runtime_event& event,
-                      runtime_event_type type,
                       std::string_view stream_id,
                       std::string_view stream_name,
                       runtime_state state,
@@ -89,9 +88,9 @@ void require_gb_event(const runtime_event& event,
                       std::string_view message)
 {
     const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
-    require(event.type == type && event.server_id == "media-1" && event.instance_id == "instance-1" &&
+    require(event.kind == runtime_kind::source && event.server_id == "media-1" && event.instance_id == "instance-1" &&
                 event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id &&
-                event.direction == runtime_direction::input && event.protocol == runtime_protocol::gb28181 && event.state == state &&
+                event.protocol == runtime_protocol::gb28181 && event.state == state &&
                 stage_matches,
             message);
 }
@@ -342,7 +341,6 @@ void test_udp_session_fatal_codec_change_unregisters()
     require(started, "gb fatal codec session startup");
     require(events.values.size() == 1U, "gb fatal codec starting event count");
     require_gb_event(events.values[0],
-                     runtime_event_type::source_started,
                      stream_id,
                      stream_name,
                      runtime_state::starting,
@@ -362,7 +360,6 @@ void test_udp_session_fatal_codec_change_unregisters()
     require(streams.find(stream_name) != nullptr, "gb fatal codec session initial stream ready");
     require(events.values.size() == 2U, "gb fatal codec streaming event count");
     require_gb_event(events.values[1],
-                     runtime_event_type::source_started,
                      stream_id,
                      stream_name,
                      runtime_state::streaming,
@@ -383,7 +380,6 @@ void test_udp_session_fatal_codec_change_unregisters()
     io.run();
     require(events.values.size() == 3U, "gb fatal codec terminal event count");
     require_gb_event(events.values[2],
-                     runtime_event_type::protocol_error,
                      stream_id,
                      stream_name,
                      runtime_state::stopped,

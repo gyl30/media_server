@@ -214,12 +214,11 @@ std::string json_string(const boost::json::value& value) { return std::string(va
 media_server::runtime_event event(std::size_t value)
 {
     return {
-        .type = media_server::runtime_event_type::source_started,
+        .kind = media_server::runtime_kind::source,
         .server_id = "media-1",
         .instance_id = "instance-a",
         .stream_id = stream_id(value),
         .stream_name = "live/camera-" + std::to_string(value),
-        .direction = media_server::runtime_direction::input,
         .protocol = media_server::runtime_protocol::rtsp,
         .state = media_server::runtime_state::starting,
         .stage = "connecting",
@@ -310,7 +309,6 @@ void test_fifo_and_event_body()
     scripted_http_server server({response_action::accepted, response_action::no_content, response_action::no_content});
     reporter_fixture fixture(server.url());
     auto first = event(1);
-    first.type = media_server::runtime_event_type::runtime_error;
     first.state = media_server::runtime_state::stopped;
     first.source_id = "10000000-0000-4000-8000-000000000001";
     first.end_reason = media_server::runtime_end_reason::runtime_error;
@@ -330,8 +328,8 @@ void test_fifo_and_event_body()
                 "runtime event server identity");
     }
     const auto body = boost::json::parse(requests.front().body).as_object();
-    require(body.size() == 12U, "runtime event optional fields serialized");
-    require(body.at("type") == "runtime_error" && body.at("direction") == "input" && body.at("protocol") == "rtsp",
+    require(body.size() == 11U, "runtime event optional fields serialized");
+    require(body.at("kind") == "source" && body.at("protocol") == "rtsp",
             "runtime event enum fields serialized");
     require(body.at("state") == "stopped" && body.at("stage") == "connecting", "runtime event state serialized");
     require(body.at("source_id") == "10000000-0000-4000-8000-000000000001", "runtime event source id serialized");

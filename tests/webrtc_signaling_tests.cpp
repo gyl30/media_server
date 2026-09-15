@@ -2958,7 +2958,7 @@ void test_whep_establishment_timeout()
                                                   runtime_events);
     require(session->startup(*offer) == whep_session_startup_error::none, "establishment timeout session startup");
     require(session->local_port() != 0, "establishment timeout socket open");
-    require(events.size() == 1U && events[0].type == runtime_event_type::output_started && events[0].state == runtime_state::starting &&
+    require(events.size() == 1U && events[0].kind == runtime_kind::output && events[0].state == runtime_state::starting &&
                 events[0].stream_id == control_stream_id && events[0].stream_name == "live/establishment-timeout",
             "establishment timeout starting event");
 
@@ -2967,7 +2967,7 @@ void test_whep_establishment_timeout()
 
     require(session->local_port() == 0, "establishment timeout closes socket");
     require(!session->ice_connected(), "establishment timeout clears ice");
-    require(events.size() == 2U && events[1].type == runtime_event_type::runtime_error && events[1].state == runtime_state::stopped &&
+    require(events.size() == 2U && events[1].kind == runtime_kind::output && events[1].state == runtime_state::stopped &&
                 events[1].end_reason == runtime_end_reason::timeout,
             "establishment timeout terminal event");
 
@@ -3625,7 +3625,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
                                                   1024U * 1024U,
                                                   runtime_events);
     require(session->startup(*offer) == whep_session_startup_error::none, "dtls session startup");
-    require(events.size() == 1U && events[0].type == runtime_event_type::output_started && events[0].state == runtime_state::starting &&
+    require(events.size() == 1U && events[0].kind == runtime_kind::output && events[0].state == runtime_state::starting &&
                 events[0].stream_id == control_stream_id && events[0].stream_name == "live/dtls",
             "dtls runtime starting event");
     require(sdp_attribute(session->answer_sdp(), "fingerprint") == "sha-256 " + server_certificate->sha256_fingerprint(),
@@ -3663,7 +3663,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
             "dtls server certificate matches answer");
 
     require(session->srtp_started(), "srtp server started");
-    require(events.size() == 2U && events[1].type == runtime_event_type::output_started && events[1].state == runtime_state::streaming,
+    require(events.size() == 2U && events[1].kind == runtime_kind::output && events[1].state == runtime_state::streaming,
             "dtls runtime streaming event");
 
     const auto peer_material = make_peer_srtp_material(client->ssl.get());
@@ -3835,7 +3835,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
         drain_io(io);
     }
     require(session->local_port() == 0U, "dtls close notify shutdown");
-    require(events.size() == 3U && events[2].type == runtime_event_type::output_stopped && events[2].state == runtime_state::stopped &&
+    require(events.size() == 3U && events[2].kind == runtime_kind::output && events[2].state == runtime_state::stopped &&
                 events[2].end_reason == (server_shutdown ? runtime_end_reason::server_shutdown : runtime_end_reason::remote),
             "dtls runtime terminal event");
     session->shutdown();
