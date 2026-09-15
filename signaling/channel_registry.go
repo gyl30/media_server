@@ -113,12 +113,6 @@ func (r *channelRegistry) get(deviceID, channelID string) (channel, bool) {
 	return value, ok
 }
 
-func (r *channelRegistry) len(deviceID string) int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.channels[deviceID])
-}
-
 func (r *channelRegistry) list(deviceID string) []channel {
 	r.mu.RLock()
 	channels := make([]channel, 0, len(r.channels[deviceID]))
@@ -149,10 +143,4 @@ func (r *channelRegistry) expire(now time.Time) {
 			delete(r.pending, key)
 		}
 	}
-}
-
-func (r *channelRegistry) pendingLen() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.pending)
 }
