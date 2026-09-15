@@ -546,12 +546,6 @@ func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.Serv
 	}()
 }
 
-func (s *liveService) len() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.sessions)
-}
-
 func makeLiveView(session *liveSession) liveView {
 	state := session.state
 	if state == liveCleanupPending {

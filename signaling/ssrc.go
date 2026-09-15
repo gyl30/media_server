@@ -47,9 +47,3 @@ func (a *ssrcAllocator) release(ssrc uint32) {
 	defer a.mu.Unlock()
 	delete(a.active, ssrc)
 }
-
-func (a *ssrcAllocator) activeCount() int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return len(a.active)
-}
