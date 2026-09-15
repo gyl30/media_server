@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 var (
 	errRTSPPullStarting      = errors.New("RTSP pull is starting")
 	errRTSPPullStopping      = errors.New("RTSP pull is stopping")
+	errRTSPPullUnresolved    = errors.New("RTSP pull ownership is unresolved")
 	errRTSPPullStreamChanged = errors.New("RTSP pull stream name changed")
 )
 
@@ -43,21 +46,28 @@ func (s *infrastructureServer) endSourceControl() {
 	s.sourceControlWait.Done()
 }
 
-func (s *infrastructureServer) reserveRTSPPull(runtime rtspPullRuntime) (rtspPullRuntime, bool, error) {
+func (s *infrastructureServer) reserveRTSPPull(runtime rtspPullRuntime) (rtspPullRuntime, rtspPullRuntime, bool, error) {
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
 	previous, exists := s.rtspPulls[runtime.sourceID]
 	if exists && previous.starting {
-		return rtspPullRuntime{}, false, errRTSPPullStarting
+		return rtspPullRuntime{}, rtspPullRuntime{}, false, errRTSPPullStarting
 	}
 	if exists && previous.stopDone != nil {
-		return rtspPullRuntime{}, false, errRTSPPullStopping
+		return rtspPullRuntime{}, rtspPullRuntime{}, false, errRTSPPullStopping
+	}
+	if exists && !previous.createConfirmed {
+		return rtspPullRuntime{}, rtspPullRuntime{}, false, errRTSPPullUnresolved
 	}
 	if exists && previous.streamName != runtime.streamName {
-		return rtspPullRuntime{}, false, errRTSPPullStreamChanged
+		return rtspPullRuntime{}, rtspPullRuntime{}, false, errRTSPPullStreamChanged
 	}
+	if !s.registry.isOnline(runtime.server) {
+		return rtspPullRuntime{}, rtspPullRuntime{}, false, errMediaServerStale
+	}
+	runtime.streamID = uuid.NewString()
 	s.rtspPulls[runtime.sourceID] = runtime
-	return previous, exists, nil
+	return runtime, previous, exists, nil
 }
 
 func (s *infrastructureServer) finishRTSPPull(expected rtspPullRuntime) bool {
