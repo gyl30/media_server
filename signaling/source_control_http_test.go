@@ -47,6 +47,122 @@ func (b *cancelAtEOFBody) Read(buffer []byte) (int, error) {
 
 func (*cancelAtEOFBody) Close() error { return nil }
 
+type sourceMediaResponse struct {
+	status  int
+	release <-chan struct{}
+}
+
+type sourceMediaScript struct {
+	server          *httptest.Server
+	creates         chan rtspPullCreateRequest
+	deletes         chan sourceMediaCommand
+	createResponses chan sourceMediaResponse
+	deleteResponses chan sourceMediaResponse
+}
+
+func newSourceMediaScript(t *testing.T) *sourceMediaScript {
+	t.Helper()
+	script := &sourceMediaScript{
+		creates: make(chan rtspPullCreateRequest, 8), deletes: make(chan sourceMediaCommand, 8),
+		createResponses: make(chan sourceMediaResponse, 8), deleteResponses: make(chan sourceMediaResponse, 8),
+	}
+	script.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var response sourceMediaResponse
+		switch request.URL.Path {
+		case "/rtsp/pull/create":
+			var command rtspPullCreateRequest
+			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
+				t.Errorf("decode create: %v", err)
+			}
+			script.creates <- command
+			select {
+			case response = <-script.createResponses:
+			case <-request.Context().Done():
+				return
+			}
+		case "/rtsp/pull/delete":
+			var command struct {
+				StreamID   string `json:"stream_id"`
+				StreamName string `json:"stream_name"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
+				t.Errorf("decode delete: %v", err)
+			}
+			script.deletes <- sourceMediaCommand{
+				path: request.URL.Path, streamID: command.StreamID, streamName: command.StreamName,
+			}
+			select {
+			case response = <-script.deleteResponses:
+			case <-request.Context().Done():
+				return
+			}
+		default:
+			http.NotFound(writer, request)
+			return
+		}
+		if response.release != nil {
+			<-response.release
+		}
+		if response.status == 0 {
+			panic(http.ErrAbortHandler)
+		}
+		if (request.URL.Path == "/rtsp/pull/create" && response.status == http.StatusCreated) ||
+			(request.URL.Path == "/rtsp/pull/delete" && response.status == http.StatusOK) {
+			writeJSON(writer, response.status, map[string]string{"result": "ok"})
+			return
+		}
+		code := "operation_failed"
+		if response.status == http.StatusNotFound {
+			code = "not_found"
+		}
+		writeHTTPError(writer, response.status, code)
+	}))
+	t.Cleanup(script.server.Close)
+	return script
+}
+
+func retainUnresolvedSourceControlPull(
+	t *testing.T,
+	script *sourceMediaScript,
+	server *infrastructureServer,
+	source rtspSource,
+) rtspPullRuntime {
+	t.Helper()
+	script.createResponses <- sourceMediaResponse{}
+	script.deleteResponses <- sourceMediaResponse{}
+	startControlTestSource(t, server, source.sourceID, http.StatusBadGateway)
+	create := waitSourceCreateRequest(t, script.creates)
+	remove := waitSourceControlRequest(t, script.deletes)
+	if remove.streamID != create.StreamID || remove.streamName != create.StreamName {
+		t.Fatalf("compensating delete = %+v, create = %+v", remove, create)
+	}
+	runtime, ok := server.rtspSourceRuntime(source.sourceID)
+	if !ok || runtime.streamID != create.StreamID || runtime.starting || runtime.createConfirmed || runtime.stopDone != nil {
+		t.Fatalf("unresolved runtime = %+v, %v", runtime, ok)
+	}
+	if streamID, bound := server.runtimes.sourceBinding(source.sourceID); !bound || streamID != runtime.streamID {
+		t.Fatalf("unresolved source binding = %q, %v", streamID, bound)
+	}
+	return runtime
+}
+
+func postSourceControlRuntimeEvent(
+	t *testing.T,
+	server *infrastructureServer,
+	event observedRuntime,
+	want int,
+) {
+	t.Helper()
+	body, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal runtime event: %v", err)
+	}
+	response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", string(body), "application/json")
+	if response.Code != want {
+		t.Fatalf("runtime event status/body = %d %s, want %d", response.Code, response.Body.String(), want)
+	}
+}
+
 func TestSourceControlStartsStopsAndRestartsRuntime(t *testing.T) {
 	commands := make(chan sourceMediaCommand, 4)
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -581,84 +697,290 @@ func TestSourceControlCompensatesAmbiguousCreateFailure(t *testing.T) {
 	}
 }
 
-func TestSourceControlRetainsOwnershipWhenAmbiguousCreateCompensationFails(t *testing.T) {
-	created := make(chan rtspPullCreateRequest, 1)
-	deleted := make(chan sourceMediaCommand, 3)
-	deleteStatuses := make(chan int, 3)
-	deleteStatuses <- http.StatusNotFound
-	deleteStatuses <- http.StatusNotFound
-	deleteStatuses <- http.StatusNotFound
-	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/rtsp/pull/create":
-			var command rtspPullCreateRequest
-			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
-				t.Errorf("decode create: %v", err)
-			}
-			created <- command
-			writer.Header().Set("Content-Type", "text/plain")
-			writer.WriteHeader(http.StatusCreated)
-		case "/rtsp/pull/delete":
-			var command struct {
-				StreamID   string `json:"stream_id"`
-				StreamName string `json:"stream_name"`
-			}
-			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
-				t.Errorf("decode delete: %v", err)
-			}
-			deleted <- sourceMediaCommand{streamID: command.StreamID, streamName: command.StreamName}
-			if status := <-deleteStatuses; status != http.StatusOK {
-				writeHTTPError(writer, status, "operation_failed")
-			} else {
-				writeJSON(writer, status, map[string]string{"result": "ok"})
-			}
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
-	defer media.Close()
-	server := newSourceControlTestServer(t, media.URL)
+func TestSourceControlRejectsReplacementWhileCreateIsUnresolved(t *testing.T) {
+	script := newSourceMediaScript(t)
+	server := newSourceControlTestServer(t, script.server.URL)
 	source := createControlTestSource(t, server, "live/ambiguous-failed-cleanup", "", "")
+	runtime := retainUnresolvedSourceControlPull(t, script, server, source)
 
-	startControlTestSource(t, server, source.sourceID, http.StatusBadGateway)
-	create := <-created
-	firstDelete := waitSourceControlRequest(t, deleted)
+	script.createResponses <- sourceMediaResponse{status: http.StatusCreated}
+	startControlTestSource(t, server, source.sourceID, http.StatusConflict)
+	select {
+	case create := <-script.creates:
+		t.Fatalf("unresolved replacement sent create %+v", create)
+	default:
+	}
 	owned, ok := server.rtspSourceRuntime(source.sourceID)
-	if !ok || owned.streamID != create.StreamID || owned.starting || owned.createConfirmed {
-		t.Fatalf("retained ownership = %+v, %v", owned, ok)
+	if !ok || !sameRTSPPull(owned, runtime) || owned.createConfirmed {
+		t.Fatalf("unresolved ownership changed = %+v, %v", owned, ok)
 	}
-	if streamID, bound := server.runtimes.sourceBinding(source.sourceID); !bound || streamID != create.StreamID {
-		t.Fatalf("retained source binding = %q, %v", streamID, bound)
+	if streamID, bound := server.runtimes.sourceBinding(source.sourceID); !bound || streamID != runtime.streamID {
+		t.Fatalf("unresolved source binding = %q, %v", streamID, bound)
 	}
+	stored, err := server.sources.get(t.Context(), source.sourceID)
+	if err != nil || stored.desiredState != sourceDesiredRunning {
+		t.Fatalf("source after rejected replacement = %+v, %v", stored, err)
+	}
+}
 
-	stopControlTestSource(t, server, source.sourceID, http.StatusBadGateway)
-	secondDelete := waitSourceControlRequest(t, deleted)
-	if owned, ok = server.rtspSourceRuntime(source.sourceID); !ok || owned.streamID != create.StreamID {
-		t.Fatalf("404 retry released uncertain ownership = %+v, %v", owned, ok)
-	}
-	event := `{"type":"source_started","server_id":"media-1","instance_id":"instance-a",` +
-		`"stream_id":"` + create.StreamID + `","stream_name":"` + create.StreamName + `",` +
-		`"source_id":"` + source.sourceID + `","direction":"input","protocol":"rtsp",` +
-		`"state":"starting","stage":"resolving"}`
-	if response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", event, "application/json"); response.Code != http.StatusNoContent {
-		t.Fatalf("runtime event status/body = %d %s", response.Code, response.Body.String())
-	}
-	if owned, ok = server.rtspSourceRuntime(source.sourceID); !ok || !owned.createConfirmed {
-		t.Fatalf("runtime event did not confirm create = %+v, %v", owned, ok)
-	}
-	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
-	thirdDelete := waitSourceControlRequest(t, deleted)
-	for _, remove := range []sourceMediaCommand{firstDelete, secondDelete, thirdDelete} {
-		if remove.streamID != create.StreamID || remove.streamName != source.streamName {
-			t.Fatalf("delete attempt = %+v, create = %+v", remove, create)
-		}
+func TestSourceControlConfirmsAmbiguousCreateCleanupOnNotFound(t *testing.T) {
+	script := newSourceMediaScript(t)
+	server := newSourceControlTestServer(t, script.server.URL)
+	source := createControlTestSource(t, server, "live/ambiguous-not-found", "", "")
+	script.createResponses <- sourceMediaResponse{}
+	script.deleteResponses <- sourceMediaResponse{status: http.StatusNotFound}
+	startControlTestSource(t, server, source.sourceID, http.StatusBadGateway)
+	firstCreate := waitSourceCreateRequest(t, script.creates)
+	remove := waitSourceControlRequest(t, script.deletes)
+	if remove.streamID != firstCreate.StreamID || remove.streamName != firstCreate.StreamName {
+		t.Fatalf("compensating delete = %+v, create = %+v", remove, firstCreate)
 	}
 	if _, ok := server.rtspSourceRuntime(source.sourceID); ok {
-		t.Fatal("successful stop retained runtime ownership")
+		t.Fatal("not-found compensation retained runtime ownership")
 	}
 	observed, ok := server.runtimes.currentForSource(source.sourceID)
-	if !ok || observed.StreamID != create.StreamID || observed.State != "stopped" || observed.EndReason != "requested" {
-		t.Fatalf("stopped observed runtime = %+v, %v", observed, ok)
+	if !ok || observed.StreamID != firstCreate.StreamID || observed.State != "stopped" || observed.EndReason != "requested" {
+		t.Fatalf("not-found compensation observed runtime = %+v, %v", observed, ok)
+	}
+
+	script.createResponses <- sourceMediaResponse{status: http.StatusCreated}
+	secondID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
+	secondCreate := waitSourceCreateRequest(t, script.creates)
+	if secondID == firstCreate.StreamID || secondCreate.StreamID != secondID {
+		t.Fatalf("replacement stream IDs = %q/%q, create = %+v", firstCreate.StreamID, secondID, secondCreate)
+	}
+}
+
+func TestSourceControlStopsUnresolvedPull(t *testing.T) {
+	tests := []struct {
+		name       string
+		response   sourceMediaResponse
+		wantStatus int
+		resolved   bool
+	}{
+		{name: "success", response: sourceMediaResponse{status: http.StatusOK}, wantStatus: http.StatusOK, resolved: true},
+		{name: "not found", response: sourceMediaResponse{status: http.StatusNotFound}, wantStatus: http.StatusOK, resolved: true},
+		{name: "network failure", response: sourceMediaResponse{}, wantStatus: http.StatusBadGateway},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			script := newSourceMediaScript(t)
+			server := newSourceControlTestServer(t, script.server.URL)
+			source := createControlTestSource(t, server, "live/unresolved-stop", "", "")
+			runtime := retainUnresolvedSourceControlPull(t, script, server, source)
+
+			script.deleteResponses <- test.response
+			stopControlTestSource(t, server, source.sourceID, test.wantStatus)
+			remove := waitSourceControlRequest(t, script.deletes)
+			if remove.streamID != runtime.streamID || remove.streamName != runtime.streamName {
+				t.Fatalf("stop delete = %+v, runtime = %+v", remove, runtime)
+			}
+			if test.resolved {
+				if _, ok := server.rtspSourceRuntime(source.sourceID); ok {
+					t.Fatal("confirmed cleanup retained runtime ownership")
+				}
+				script.createResponses <- sourceMediaResponse{status: http.StatusCreated}
+				secondID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
+				secondCreate := waitSourceCreateRequest(t, script.creates)
+				if secondID == runtime.streamID || secondCreate.StreamID != secondID {
+					t.Fatalf("restart stream IDs = %q/%q, create = %+v", runtime.streamID, secondID, secondCreate)
+				}
+				return
+			}
+			owned, ok := server.rtspSourceRuntime(source.sourceID)
+			if !ok || !sameRTSPPull(owned, runtime) || owned.stopDone != nil || owned.createConfirmed {
+				t.Fatalf("failed cleanup ownership = %+v, %v", owned, ok)
+			}
+			script.createResponses <- sourceMediaResponse{status: http.StatusCreated}
+			startControlTestSource(t, server, source.sourceID, http.StatusConflict)
+			select {
+			case create := <-script.creates:
+				t.Fatalf("failed cleanup allowed replacement %+v", create)
+			default:
+			}
+		})
+	}
+}
+
+func TestSourceControlLateEventsResolveUnresolvedPull(t *testing.T) {
+	t.Run("started confirms owner", func(t *testing.T) {
+		script := newSourceMediaScript(t)
+		server := newSourceControlTestServer(t, script.server.URL)
+		source := createControlTestSource(t, server, "live/unresolved-started", "", "")
+		runtime := retainUnresolvedSourceControlPull(t, script, server, source)
+		event := observedRuntime{
+			Type: "source_started", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
+			StreamID: runtime.streamID, StreamName: runtime.streamName, SourceID: runtime.sourceID,
+			Direction: "input", Protocol: "rtsp", State: "starting", Stage: "resolving",
+		}
+		mismatched := runtime
+		mismatched.streamID = uuid.NewString()
+		if server.confirmRTSPPull(mismatched) {
+			t.Fatal("mismatched started event confirmed unresolved owner")
+		}
+		if owned, ok := server.rtspSourceRuntime(source.sourceID); !ok || owned.createConfirmed {
+			t.Fatalf("runtime after mismatched confirmation = %+v, %v", owned, ok)
+		}
+		postSourceControlRuntimeEvent(t, server, event, http.StatusNoContent)
+		owned, ok := server.rtspSourceRuntime(source.sourceID)
+		if !ok || owned.sourceID != runtime.sourceID || owned.streamID != runtime.streamID ||
+			owned.streamName != runtime.streamName || owned.server.serverID != runtime.server.serverID ||
+			owned.server.instanceID != runtime.server.instanceID || !owned.createConfirmed {
+			t.Fatalf("confirmed runtime = %+v, %v", owned, ok)
+		}
+		startControlTestSource(t, server, source.sourceID, http.StatusConflict)
+		select {
+		case create := <-script.creates:
+			t.Fatalf("confirmed runtime allowed replacement %+v", create)
+		default:
+		}
+	})
+
+	t.Run("stopped releases exact owner", func(t *testing.T) {
+		script := newSourceMediaScript(t)
+		server := newSourceControlTestServer(t, script.server.URL)
+		source := createControlTestSource(t, server, "live/unresolved-stopped", "", "")
+		runtime := retainUnresolvedSourceControlPull(t, script, server, source)
+		stopped := observedRuntime{
+			Type: "source_stopped", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
+			StreamID: runtime.streamID, StreamName: runtime.streamName, SourceID: runtime.sourceID,
+			Direction: "input", Protocol: "rtsp", State: "stopped", EndReason: "remote",
+		}
+		postSourceControlRuntimeEvent(t, server, stopped, http.StatusNoContent)
+		if _, ok := server.rtspSourceRuntime(source.sourceID); ok {
+			t.Fatal("late stopped event retained runtime ownership")
+		}
+
+		script.createResponses <- sourceMediaResponse{status: http.StatusCreated}
+		secondID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
+		secondCreate := waitSourceCreateRequest(t, script.creates)
+		if secondID == runtime.streamID || secondCreate.StreamID != secondID {
+			t.Fatalf("replacement stream IDs = %q/%q, create = %+v", runtime.streamID, secondID, secondCreate)
+		}
+		postSourceControlRuntimeEvent(t, server, stopped, http.StatusNoContent)
+		owned, ok := server.rtspSourceRuntime(source.sourceID)
+		if !ok || owned.streamID != secondID {
+			t.Fatalf("late stopped event removed replacement = %+v, %v", owned, ok)
+		}
+		if streamID, bound := server.runtimes.sourceBinding(source.sourceID); !bound || streamID != secondID {
+			t.Fatalf("replacement source binding = %q, %v", streamID, bound)
+		}
+	})
+}
+
+func TestSourceControlConcurrentStopsShareUnresolvedCleanup(t *testing.T) {
+	script := newSourceMediaScript(t)
+	server := newSourceControlTestServer(t, script.server.URL)
+	source := createControlTestSource(t, server, "live/unresolved-concurrent-stop", "", "")
+	runtime := retainUnresolvedSourceControlPull(t, script, server, source)
+	releaseDelete := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(releaseDelete)
+		}
+	}()
+	script.deleteResponses <- sourceMediaResponse{status: http.StatusOK, release: releaseDelete}
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() {
+			responses <- sourceRequest(t, server.handler(), http.MethodPost,
+				"/api/sources/"+source.sourceID+"/stop", "", "")
+		}()
+	}
+	remove := waitSourceControlRequest(t, script.deletes)
+	if remove.streamID != runtime.streamID || remove.streamName != runtime.streamName {
+		t.Fatalf("shared stop delete = %+v, runtime = %+v", remove, runtime)
+	}
+
+	script.createResponses <- sourceMediaResponse{status: http.StatusCreated}
+	startControlTestSource(t, server, source.sourceID, http.StatusConflict)
+	select {
+	case create := <-script.creates:
+		t.Fatalf("pending stop allowed replacement %+v", create)
+	default:
+	}
+	close(releaseDelete)
+	released = true
+	for range 2 {
+		select {
+		case response := <-responses:
+			if response.Code != http.StatusOK {
+				t.Fatalf("concurrent stop status/body = %d %s", response.Code, response.Body.String())
+			}
+		case <-time.After(time.Second):
+			t.Fatal("concurrent stop did not finish")
+		}
+	}
+	select {
+	case extra := <-script.deletes:
+		t.Fatalf("concurrent stop sent extra delete %+v", extra)
+	default:
+	}
+	if _, ok := server.rtspSourceRuntime(source.sourceID); ok {
+		t.Fatal("successful shared cleanup retained runtime ownership")
+	}
+}
+
+func TestRTSPPullReservationRejectsOfflineMediaServer(t *testing.T) {
+	server := newSourceControlTestServer(t, "http://127.0.0.1:1")
+	instance, ok := server.registry.selectOnline()
+	if !ok {
+		t.Fatal("missing online media server")
+	}
+	if offline := server.registry.expire(time.Now().Add(time.Hour), time.Minute); len(offline) != 1 {
+		t.Fatalf("expired media servers = %+v", offline)
+	}
+	runtime, _, _, err := server.reserveRTSPPull(rtspPullRuntime{
+		sourceID: uuid.NewString(), streamName: "live/offline-reservation", server: instance, starting: true,
+	})
+	if !errors.Is(err, errMediaServerStale) {
+		t.Fatalf("reserve error = %v", err)
+	}
+	if runtime.streamID != "" {
+		t.Fatalf("offline reservation allocated stream ID %q", runtime.streamID)
+	}
+	if len(server.rtspPulls) != 0 {
+		t.Fatalf("offline reservation retained %d owners", len(server.rtspPulls))
+	}
+}
+
+func TestSourceControlRecreatesUnresolvedPullAfterInstanceOffline(t *testing.T) {
+	script := newSourceMediaScript(t)
+	server := newSourceControlTestServer(t, script.server.URL)
+	source := createControlTestSource(t, server, "live/unresolved-offline", "", "")
+	runtime := retainUnresolvedSourceControlPull(t, script, server, source)
+	offline := server.registry.expire(time.Now().Add(time.Hour), time.Minute)
+	if len(offline) != 1 || offline[0].instanceID != runtime.server.instanceID {
+		t.Fatalf("expired media servers = %+v", offline)
+	}
+	server.removeRTSPPullsForMediaServer(offline[0])
+	server.runtimes.mediaServerOffline(offline[0].serverID, offline[0].instanceID)
+	if _, ok := server.rtspSourceRuntime(source.sourceID); ok {
+		t.Fatal("offline instance retained unresolved ownership")
+	}
+	replacement := mediaServerRegistration{
+		ServerID: "media-1", InstanceID: "instance-b", ControlURL: script.server.URL, MediaIP: "127.0.0.1",
+		RTMPPort: 1935, RTSPPort: 8554, HTTPPort: 8080,
+	}
+	if err := server.registry.register(replacement, time.Now()); err != nil {
+		t.Fatalf("register replacement media server: %v", err)
+	}
+	script.createResponses <- sourceMediaResponse{status: http.StatusCreated}
+	secondID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
+	secondCreate := waitSourceCreateRequest(t, script.creates)
+	if secondID == runtime.streamID || secondCreate.StreamID != secondID {
+		t.Fatalf("replacement stream IDs = %q/%q, create = %+v", runtime.streamID, secondID, secondCreate)
+	}
+	late := observedRuntime{
+		Type: "source_stopped", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
+		StreamID: runtime.streamID, StreamName: runtime.streamName, SourceID: runtime.sourceID,
+		Direction: "input", Protocol: "rtsp", State: "stopped", EndReason: "remote",
+	}
+	postSourceControlRuntimeEvent(t, server, late, http.StatusGone)
+	owned, ok := server.rtspSourceRuntime(source.sourceID)
+	if !ok || owned.streamID != secondID || owned.server.instanceID != replacement.InstanceID {
+		t.Fatalf("replacement runtime after stale event = %+v, %v", owned, ok)
 	}
 }
 
@@ -1264,5 +1586,16 @@ func waitSourceControlRequest(t *testing.T, requests <-chan sourceMediaCommand) 
 	case <-time.After(time.Second):
 		t.Fatal("media server request timeout")
 		return sourceMediaCommand{}
+	}
+}
+
+func waitSourceCreateRequest(t *testing.T, requests <-chan rtspPullCreateRequest) rtspPullCreateRequest {
+	t.Helper()
+	select {
+	case request := <-requests:
+		return request
+	case <-time.After(time.Second):
+		t.Fatal("media server create request timeout")
+		return rtspPullCreateRequest{}
 	}
 }
