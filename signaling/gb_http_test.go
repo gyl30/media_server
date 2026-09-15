@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -119,15 +120,19 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 		t.Fatalf("start status/body = %d %s", response.Code, response.Body.String())
 	}
 	var started struct {
-		Result     string    `json:"result"`
 		StreamID   string    `json:"stream_id"`
 		StreamName string    `json:"stream_name"`
 		State      liveState `json:"state"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &started); err != nil || started.Result != "ok" ||
+	decoder := json.NewDecoder(bytes.NewReader(response.Body.Bytes()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&started); err != nil ||
 		!validUUIDv4(started.StreamID) || started.StreamName != "gb/"+testDeviceID+"/"+testChannelID ||
 		started.State != liveStreaming {
 		t.Fatalf("start response = %+v, %v", started, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		t.Fatalf("start response has extra JSON: %v", err)
 	}
 	if strings.Contains(response.Body.String(), "ssrc") || strings.Contains(response.Body.String(), "rtp_port") {
 		t.Fatalf("public start exposed receiver details: %s", response.Body.String())
@@ -168,7 +173,7 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 	}
 	response = sourceRequest(t, server.handler(), http.MethodPost, path+"/stop",
 		`{"stream_id":"`+started.StreamID+`"}`, "application/json")
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("stop status/body = %d %s", response.Code, response.Body.String())
 	}
 	select {
