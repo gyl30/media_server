@@ -8,6 +8,8 @@ import (
 
 var errRuntimeConflict = errors.New("runtime state conflict")
 
+const maxRecentStoppedRuntimes = 500
+
 type observedRuntime struct {
 	Type       string `json:"type"`
 	ServerID   string `json:"server_id"`
@@ -27,6 +29,7 @@ type observedRuntimeRegistry struct {
 	mu              sync.RWMutex
 	byStreamID      map[string]observedRuntime
 	currentBySource map[string]string
+	recentStopped   []string
 	onChange        func(observedRuntime)
 }
 
@@ -83,12 +86,19 @@ func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExist
 		if current == event {
 			return false, nil
 		}
+	} else if event.SourceID != "" {
+		if currentStreamID, bound := r.currentBySource[event.SourceID]; bound && currentStreamID != event.StreamID {
+			return false, errRuntimeConflict
+		}
 	}
 	r.byStreamID[event.StreamID] = event
 	if event.SourceID != "" {
 		if _, bound := r.currentBySource[event.SourceID]; !bound {
-			r.currentBySource[event.SourceID] = event.StreamID
+			r.replaceSourceBindingLocked(event.SourceID, event.StreamID)
 		}
+	}
+	if event.State == "stopped" {
+		r.retainStoppedLocked(event.StreamID)
 	}
 	if r.onChange != nil {
 		r.onChange(event)
@@ -99,7 +109,7 @@ func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExist
 func (r *observedRuntimeRegistry) bindSource(sourceID, streamID string) (string, bool) {
 	r.mu.Lock()
 	previous, existed := r.currentBySource[sourceID]
-	r.currentBySource[sourceID] = streamID
+	r.replaceSourceBindingLocked(sourceID, streamID)
 	r.mu.Unlock()
 	return previous, existed
 }
@@ -111,10 +121,20 @@ func (r *observedRuntimeRegistry) restoreSourceBinding(sourceID, expected, previ
 		return
 	}
 	if hadPrevious {
-		r.currentBySource[sourceID] = previous
+		r.replaceSourceBindingLocked(sourceID, previous)
 		return
 	}
-	delete(r.currentBySource, sourceID)
+	r.replaceSourceBindingLocked(sourceID, "")
+}
+
+func (r *observedRuntimeRegistry) unbindSource(sourceID, expectedStreamID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.currentBySource[sourceID] != expectedStreamID {
+		return false
+	}
+	r.replaceSourceBindingLocked(sourceID, "")
+	return true
 }
 
 func (r *observedRuntimeRegistry) currentForSource(sourceID string) (observedRuntime, bool) {
@@ -151,12 +171,64 @@ func (r *observedRuntimeRegistry) mediaServerOffline(serverID, instanceID string
 		runtime.EndReason = "runtime_error"
 		runtime.Error = "media_server_offline"
 		r.byStreamID[streamID] = runtime
+		r.retainStoppedLocked(streamID)
 		changed = append(changed, runtime)
 		if r.onChange != nil {
 			r.onChange(runtime)
 		}
 	}
 	return changed
+}
+
+func (r *observedRuntimeRegistry) replaceSourceBindingLocked(sourceID, streamID string) {
+	previous, hadPrevious := r.currentBySource[sourceID]
+	if streamID == "" {
+		delete(r.currentBySource, sourceID)
+	} else {
+		r.currentBySource[sourceID] = streamID
+		r.removeRecentStoppedLocked(streamID)
+	}
+	if hadPrevious && previous != streamID {
+		r.retainStoppedLocked(previous)
+	}
+}
+
+func (r *observedRuntimeRegistry) retainStoppedLocked(streamID string) {
+	runtime, exists := r.byStreamID[streamID]
+	if !exists || runtime.State != "stopped" || r.sourceReferencesLocked(streamID) {
+		return
+	}
+	r.removeRecentStoppedLocked(streamID)
+	r.recentStopped = append(r.recentStopped, streamID)
+	if len(r.recentStopped) <= maxRecentStoppedRuntimes {
+		return
+	}
+	oldest := r.recentStopped[0]
+	delete(r.byStreamID, oldest)
+	copy(r.recentStopped, r.recentStopped[1:])
+	r.recentStopped[len(r.recentStopped)-1] = ""
+	r.recentStopped = r.recentStopped[:len(r.recentStopped)-1]
+}
+
+func (r *observedRuntimeRegistry) removeRecentStoppedLocked(streamID string) {
+	for index, candidate := range r.recentStopped {
+		if candidate != streamID {
+			continue
+		}
+		copy(r.recentStopped[index:], r.recentStopped[index+1:])
+		r.recentStopped[len(r.recentStopped)-1] = ""
+		r.recentStopped = r.recentStopped[:len(r.recentStopped)-1]
+		return
+	}
+}
+
+func (r *observedRuntimeRegistry) sourceReferencesLocked(streamID string) bool {
+	for _, currentStreamID := range r.currentBySource {
+		if currentStreamID == streamID {
+			return true
+		}
+	}
+	return false
 }
 
 func sameRuntimeIdentity(left, right observedRuntime) bool {
