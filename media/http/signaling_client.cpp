@@ -50,7 +50,6 @@ std::string publish_claim_body(const signaling_client_options& options,
         {"stream_id", stream_id},
         {"server_id", options.server_id},
         {"instance_id", options.instance_id},
-        {"direction", "input"},
         {"protocol", protocol},
         {"stream_name", stream_name},
     });
