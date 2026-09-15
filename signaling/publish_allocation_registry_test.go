@@ -14,10 +14,14 @@ func TestPublishAllocationRegistryExpiresPendingAllocation(t *testing.T) {
 	now := time.Date(2026, time.September, 14, 12, 0, 0, 0, time.UTC)
 	server := mediaServerInstance{serverID: "media-1", instanceID: "instance-a"}
 
-	allocation := registry.create("rtmp", "live/camera", server, now)
-	parsed, err := uuid.Parse(allocation.streamID)
-	if err != nil || parsed.Version() != 4 || parsed.String() != allocation.streamID {
-		t.Fatalf("stream ID = %q, parse error = %v", allocation.streamID, err)
+	streamID := registry.create("rtmp", "live/camera", server, now)
+	parsed, err := uuid.Parse(streamID)
+	if err != nil || parsed.Version() != 4 || parsed.String() != streamID {
+		t.Fatalf("stream ID = %q, parse error = %v", streamID, err)
+	}
+	allocation, ok := storedPublishAllocation(registry, streamID)
+	if !ok {
+		t.Fatal("created allocation is missing")
 	}
 	if allocation.protocol != "rtmp" || allocation.streamName != "live/camera" ||
 		allocation.serverID != server.serverID || allocation.instanceID != server.instanceID ||
@@ -26,13 +30,13 @@ func TestPublishAllocationRegistryExpiresPendingAllocation(t *testing.T) {
 	}
 
 	registry.expire(now.Add(publishAllocationTTL - time.Nanosecond))
-	allocation, ok := storedPublishAllocation(registry, allocation.streamID)
+	allocation, ok = storedPublishAllocation(registry, streamID)
 	if !ok {
 		t.Fatalf("allocation before deadline = %+v, ok = %v", allocation, ok)
 	}
 
 	registry.expire(now.Add(publishAllocationTTL))
-	if _, ok = storedPublishAllocation(registry, allocation.streamID); ok {
+	if _, ok = storedPublishAllocation(registry, streamID); ok {
 		t.Fatal("expired allocation retained")
 	}
 }
@@ -41,14 +45,14 @@ func TestPublishAllocationRegistryClaimsOnce(t *testing.T) {
 	registry := newPublishAllocationRegistry()
 	now := time.Date(2026, time.September, 14, 12, 0, 0, 0, time.UTC)
 	server := mediaServerInstance{serverID: "media-1", instanceID: "instance-a"}
-	allocation := registry.create("rtmp", "live/camera", server, now)
-	if err := registry.claim(allocation.streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(time.Second)); err != nil {
+	streamID := registry.create("rtmp", "live/camera", server, now)
+	if err := registry.claim(streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(time.Second)); err != nil {
 		t.Fatalf("claim() error = %v", err)
 	}
-	if _, ok := storedPublishAllocation(registry, allocation.streamID); ok {
+	if _, ok := storedPublishAllocation(registry, streamID); ok {
 		t.Fatal("claimed allocation retained")
 	}
-	if err := registry.claim(allocation.streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(2*time.Second)); !errors.Is(err, errPublishAllocationNotFound) {
+	if err := registry.claim(streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(2*time.Second)); !errors.Is(err, errPublishAllocationNotFound) {
 		t.Fatalf("duplicate claim error = %v", err)
 	}
 }
@@ -67,16 +71,16 @@ func TestPublishAllocationRegistryRejectsMismatchedClaims(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			registry := newPublishAllocationRegistry()
-			allocation := registry.create("rtmp", "live/camera", server, now)
-			if err := registry.claim(allocation.streamID, claim.protocol, claim.streamName,
+			streamID := registry.create("rtmp", "live/camera", server, now)
+			if err := registry.claim(streamID, claim.protocol, claim.streamName,
 				claim.serverID, claim.instanceID, now.Add(time.Second)); !errors.Is(err, errPublishAllocationConflict) {
 				t.Fatalf("claim() error = %v", err)
 			}
-			stored, ok := storedPublishAllocation(registry, allocation.streamID)
+			stored, ok := storedPublishAllocation(registry, streamID)
 			if !ok {
 				t.Fatalf("allocation after mismatch = %+v, ok = %v", stored, ok)
 			}
-			if err := registry.claim(allocation.streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(time.Second)); err != nil {
+			if err := registry.claim(streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(time.Second)); err != nil {
 				t.Fatalf("exact claim after mismatch error = %v", err)
 			}
 		})
@@ -91,11 +95,11 @@ func TestPublishAllocationRegistryRejectsMissingAndExpiredClaims(t *testing.T) {
 		t.Fatalf("missing claim error = %v", err)
 	}
 
-	allocation := registry.create("rtmp", "live/camera", mediaServerInstance{serverID: "media-1", instanceID: "instance-a"}, now)
-	if err := registry.claim(allocation.streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(publishAllocationTTL)); !errors.Is(err, errPublishAllocationNotFound) {
+	streamID := registry.create("rtmp", "live/camera", mediaServerInstance{serverID: "media-1", instanceID: "instance-a"}, now)
+	if err := registry.claim(streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(publishAllocationTTL)); !errors.Is(err, errPublishAllocationNotFound) {
 		t.Fatalf("expired claim error = %v", err)
 	}
-	if _, ok := storedPublishAllocation(registry, allocation.streamID); ok {
+	if _, ok := storedPublishAllocation(registry, streamID); ok {
 		t.Fatal("expired allocation retained after claim")
 	}
 }
@@ -103,7 +107,7 @@ func TestPublishAllocationRegistryRejectsMissingAndExpiredClaims(t *testing.T) {
 func TestPublishAllocationRegistryClaimIsAtomic(t *testing.T) {
 	registry := newPublishAllocationRegistry()
 	now := time.Date(2026, time.September, 14, 12, 0, 0, 0, time.UTC)
-	allocation := registry.create("rtmp", "live/camera", mediaServerInstance{serverID: "media-1", instanceID: "instance-a"}, now)
+	streamID := registry.create("rtmp", "live/camera", mediaServerInstance{serverID: "media-1", instanceID: "instance-a"}, now)
 	const count = 32
 	results := make(chan error, count)
 	var wait sync.WaitGroup
@@ -111,7 +115,7 @@ func TestPublishAllocationRegistryClaimIsAtomic(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			results <- registry.claim(allocation.streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(time.Second))
+			results <- registry.claim(streamID, "rtmp", "live/camera", "media-1", "instance-a", now.Add(time.Second))
 		}()
 	}
 	wait.Wait()
@@ -151,7 +155,7 @@ func TestPublishAllocationRegistryGeneratesUniqueRuntimeIDs(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			ids <- registry.create("rtsp", "live/camera", server, time.Now()).streamID
+			ids <- registry.create("rtsp", "live/camera", server, time.Now())
 		}()
 	}
 	wait.Wait()

@@ -16,7 +16,6 @@ var (
 )
 
 type publishAllocation struct {
-	streamID   string
 	protocol   string
 	streamName string
 	serverID   string
@@ -33,15 +32,16 @@ func newPublishAllocationRegistry() *publishAllocationRegistry {
 	return &publishAllocationRegistry{allocations: make(map[string]publishAllocation)}
 }
 
-func (r *publishAllocationRegistry) create(protocol, streamName string, server mediaServerInstance, now time.Time) publishAllocation {
+func (r *publishAllocationRegistry) create(protocol, streamName string, server mediaServerInstance, now time.Time) string {
+	streamID := uuid.NewString()
 	allocation := publishAllocation{
-		streamID: uuid.NewString(), protocol: protocol, streamName: streamName,
+		protocol: protocol, streamName: streamName,
 		serverID: server.serverID, instanceID: server.instanceID, expiresAt: now.Add(publishAllocationTTL),
 	}
 	r.mu.Lock()
-	r.allocations[allocation.streamID] = allocation
+	r.allocations[streamID] = allocation
 	r.mu.Unlock()
-	return allocation
+	return streamID
 }
 
 func (r *publishAllocationRegistry) claim(streamID, protocol, streamName, serverID, instanceID string, now time.Time) error {

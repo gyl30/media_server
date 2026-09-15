@@ -31,9 +31,9 @@ func (s *infrastructureServer) handlePublishAllocation(writer http.ResponseWrite
 		return
 	}
 
-	allocation := s.allocations.create(command.Protocol, command.StreamName, server, time.Now())
+	streamID := s.allocations.create(command.Protocol, command.StreamName, server, time.Now())
 	writeJSON(writer, http.StatusCreated, publishAllocationResponse{
-		StreamID: allocation.streamID, PublishURL: makePublishURL(command.Protocol, command.StreamName, allocation.streamID, server),
+		StreamID: streamID, PublishURL: makePublishURL(command.Protocol, command.StreamName, streamID, server),
 	})
 }
 
