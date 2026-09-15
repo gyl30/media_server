@@ -68,12 +68,6 @@ func (r *deviceRegistry) getOnline(deviceID string, now time.Time) (registeredDe
 	return device, ok && device.online && now.Before(device.expiresAt)
 }
 
-func (r *deviceRegistry) len() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return len(r.devices)
-}
-
 func (r *deviceRegistry) snapshot(now time.Time) []registeredDevice {
 	r.mu.RLock()
 	devices := make([]registeredDevice, 0, len(r.devices))
