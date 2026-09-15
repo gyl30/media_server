@@ -13,9 +13,12 @@ import (
 
 func TestRuntimeEventHTTPAndSnapshot(t *testing.T) {
 	server, registration := newRuntimeHTTPTestServer(t)
+	sourceID := "10000000-0000-4000-8000-000000000001"
+	streamID := "00000000-0000-4000-8000-000000000001"
+	server.runtimes.bindSource(sourceID, streamID)
 	event := `{"type":"source_started","server_id":"media-1","instance_id":"instance-a",` +
-		`"stream_id":"00000000-0000-4000-8000-000000000001","stream_name":"live/camera",` +
-		`"source_id":"10000000-0000-4000-8000-000000000001","direction":"input","protocol":"rtsp",` +
+		`"stream_id":"` + streamID + `","stream_name":"live/camera",` +
+		`"source_id":"` + sourceID + `","direction":"input","protocol":"rtsp",` +
 		`"state":"starting","stage":"resolving"}`
 	response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", event, "application/json")
 	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
@@ -70,14 +73,25 @@ func TestRuntimeEventHTTPRejectsInvalidStaleAndConflictingEvents(t *testing.T) {
 func TestRuntimeEventHTTPDoesNotRemoveReplacementPull(t *testing.T) {
 	server, registration := newRuntimeHTTPTestServer(t)
 	sourceID := "10000000-0000-4000-8000-000000000001"
+	oldStreamID := "20000000-0000-4000-8000-000000000001"
+	oldStarting := observedRuntime{
+		Type: "source_started", ServerID: registration.ServerID, InstanceID: registration.InstanceID,
+		StreamID: oldStreamID, StreamName: "live/camera", SourceID: sourceID,
+		Direction: "input", Protocol: "rtsp", State: "starting", Stage: "resolving",
+	}
+	server.runtimes.bindSource(sourceID, oldStreamID)
+	if _, err := server.runtimes.apply(oldStarting); err != nil {
+		t.Fatalf("apply old runtime error = %v", err)
+	}
 	replacement := rtspPullRuntime{
 		sourceID: sourceID, streamName: "live/camera",
 		server:   mediaServerInstance{serverID: registration.ServerID, instanceID: registration.InstanceID},
 		streamID: "30000000-0000-4000-8000-000000000001",
 	}
 	server.rtspPulls[sourceID] = replacement
+	server.runtimes.bindSource(sourceID, replacement.streamID)
 	oldStop := `{"type":"source_stopped","server_id":"media-1","instance_id":"instance-a",` +
-		`"stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera",` +
+		`"stream_id":"` + oldStreamID + `","stream_name":"live/camera",` +
 		`"source_id":"` + sourceID + `","direction":"input","protocol":"rtsp","state":"stopped","end_reason":"remote"}`
 	response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", oldStop, "application/json")
 	if response.Code != http.StatusNoContent {

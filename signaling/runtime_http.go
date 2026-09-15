@@ -61,6 +61,12 @@ func (s *infrastructureServer) handleRuntimeEvent(writer http.ResponseWriter, re
 		writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
 		return
 	}
+	if event.Type == "source_started" && event.Protocol == "rtsp" && event.SourceID != "" {
+		s.confirmRTSPPull(rtspPullRuntime{
+			sourceID: event.SourceID, streamName: event.StreamName,
+			server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
+		})
+	}
 	if event.State == "stopped" {
 		s.removeRTSPPull(rtspPullRuntime{
 			sourceID: event.SourceID, streamName: event.StreamName,
