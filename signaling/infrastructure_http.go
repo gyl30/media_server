@@ -27,6 +27,7 @@ type infrastructureServer struct {
 	runtimeEvents        *runtimeEventHub
 	rtspPullMu           sync.Mutex
 	rtspPulls            map[string]rtspPullRuntime
+	sourceOperationMu    sync.Mutex
 	sourceControlMu      sync.Mutex
 	sourceControlWait    sync.WaitGroup
 	sourceControlClosed  bool

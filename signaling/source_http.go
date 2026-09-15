@@ -120,13 +120,16 @@ func (s *infrastructureServer) handleSourceDelete(writer http.ResponseWriter, re
 		s.writeSourceRuntimeError(writer, "delete", sourceID, "", err)
 		return
 	}
+	s.sourceOperationMu.Lock()
 	currentStreamID, hasCurrent := s.runtimes.sourceBinding(sourceID)
-	if err := s.sources.deleteStopped(request.Context(), sourceID); err != nil {
+	err := s.sources.deleteStopped(request.Context(), sourceID)
+	if err == nil && hasCurrent {
+		s.runtimes.unbindSource(sourceID, currentStreamID)
+	}
+	s.sourceOperationMu.Unlock()
+	if err != nil {
 		s.writeSourceError(writer, "delete", sourceID, err)
 		return
-	}
-	if hasCurrent {
-		s.runtimes.unbindSource(sourceID, currentStreamID)
 	}
 	writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
 }

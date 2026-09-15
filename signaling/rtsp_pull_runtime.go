@@ -8,15 +8,18 @@ import (
 
 var (
 	errRTSPPullStarting      = errors.New("RTSP pull is starting")
+	errRTSPPullStopping      = errors.New("RTSP pull is stopping")
 	errRTSPPullStreamChanged = errors.New("RTSP pull stream name changed")
 )
 
 type rtspPullRuntime struct {
-	sourceID   string
-	streamID   string
-	streamName string
-	server     mediaServerInstance
-	starting   bool
+	sourceID        string
+	streamID        string
+	streamName      string
+	server          mediaServerInstance
+	starting        bool
+	createConfirmed bool
+	stopDone        chan struct{}
 }
 
 func (s *infrastructureServer) rtspSourceRuntime(sourceID string) (rtspPullRuntime, bool) {
@@ -47,6 +50,9 @@ func (s *infrastructureServer) reserveRTSPPull(runtime rtspPullRuntime) (rtspPul
 	if exists && previous.starting {
 		return rtspPullRuntime{}, false, errRTSPPullStarting
 	}
+	if exists && previous.stopDone != nil {
+		return rtspPullRuntime{}, false, errRTSPPullStopping
+	}
 	if exists && previous.streamName != runtime.streamName {
 		return rtspPullRuntime{}, false, errRTSPPullStreamChanged
 	}
@@ -62,6 +68,31 @@ func (s *infrastructureServer) finishRTSPPull(expected rtspPullRuntime) bool {
 		return false
 	}
 	runtime.starting = false
+	runtime.createConfirmed = true
+	s.rtspPulls[expected.sourceID] = runtime
+	return true
+}
+
+func (s *infrastructureServer) finishUnconfirmedRTSPPull(expected rtspPullRuntime) bool {
+	s.rtspPullMu.Lock()
+	defer s.rtspPullMu.Unlock()
+	runtime, ok := s.rtspPulls[expected.sourceID]
+	if !ok || !sameRTSPPull(runtime, expected) {
+		return false
+	}
+	runtime.starting = false
+	s.rtspPulls[expected.sourceID] = runtime
+	return true
+}
+
+func (s *infrastructureServer) confirmRTSPPull(expected rtspPullRuntime) bool {
+	s.rtspPullMu.Lock()
+	defer s.rtspPullMu.Unlock()
+	runtime, ok := s.rtspPulls[expected.sourceID]
+	if !ok || !sameRTSPPull(runtime, expected) {
+		return false
+	}
+	runtime.createConfirmed = true
 	s.rtspPulls[expected.sourceID] = runtime
 	return true
 }
@@ -81,26 +112,39 @@ func (s *infrastructureServer) rollbackRTSPPull(expected, previous rtspPullRunti
 	return true
 }
 
-func (s *infrastructureServer) takeRTSPPull(sourceID string) (rtspPullRuntime, bool, error) {
+func (s *infrastructureServer) beginRTSPPullStop(sourceID string) (rtspPullRuntime, <-chan struct{}, bool, error) {
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
 	runtime, ok := s.rtspPulls[sourceID]
 	if !ok {
-		return rtspPullRuntime{}, false, nil
+		return rtspPullRuntime{}, nil, false, nil
 	}
 	if runtime.starting {
-		return rtspPullRuntime{}, false, errRTSPPullStarting
+		return rtspPullRuntime{}, nil, false, errRTSPPullStarting
 	}
-	delete(s.rtspPulls, sourceID)
-	return runtime, true, nil
+	if runtime.stopDone != nil {
+		return rtspPullRuntime{}, runtime.stopDone, false, nil
+	}
+	runtime.stopDone = make(chan struct{})
+	s.rtspPulls[sourceID] = runtime
+	return runtime, nil, true, nil
 }
 
-func (s *infrastructureServer) restoreRTSPPull(runtime rtspPullRuntime) {
+func (s *infrastructureServer) finishRTSPPullStop(expected rtspPullRuntime, succeeded bool) bool {
 	s.rtspPullMu.Lock()
-	if _, exists := s.rtspPulls[runtime.sourceID]; !exists {
-		s.rtspPulls[runtime.sourceID] = runtime
+	defer s.rtspPullMu.Unlock()
+	runtime, ok := s.rtspPulls[expected.sourceID]
+	if !ok || !sameRTSPPull(runtime, expected) || runtime.stopDone != expected.stopDone {
+		return false
 	}
-	s.rtspPullMu.Unlock()
+	if succeeded {
+		delete(s.rtspPulls, expected.sourceID)
+	} else {
+		runtime.stopDone = nil
+		s.rtspPulls[expected.sourceID] = runtime
+	}
+	close(expected.stopDone)
+	return true
 }
 
 func (s *infrastructureServer) removeRTSPPull(expected rtspPullRuntime) bool {
@@ -114,6 +158,9 @@ func (s *infrastructureServer) removeRTSPPull(expected rtspPullRuntime) bool {
 		return false
 	}
 	delete(s.rtspPulls, expected.sourceID)
+	if runtime.stopDone != nil {
+		close(runtime.stopDone)
+	}
 	return true
 }
 
@@ -122,6 +169,9 @@ func (s *infrastructureServer) removeRTSPPullsForMediaServer(expected mediaServe
 	for sourceID, runtime := range s.rtspPulls {
 		if runtime.server.serverID == expected.serverID && runtime.server.instanceID == expected.instanceID {
 			delete(s.rtspPulls, sourceID)
+			if runtime.stopDone != nil {
+				close(runtime.stopDone)
+			}
 		}
 	}
 	s.rtspPullMu.Unlock()
@@ -136,6 +186,11 @@ func (s *infrastructureServer) shutdownRTSPPulls(ctx context.Context) {
 	s.rtspPullMu.Lock()
 	pulls := s.rtspPulls
 	s.rtspPulls = make(map[string]rtspPullRuntime)
+	for _, runtime := range pulls {
+		if runtime.stopDone != nil {
+			close(runtime.stopDone)
+		}
+	}
 	s.rtspPullMu.Unlock()
 
 	var wait sync.WaitGroup
