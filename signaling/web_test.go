@@ -75,3 +75,23 @@ func TestWebHandlerDoesNotShadowAPIRoutes(t *testing.T) {
 		t.Fatalf("root POST status = %d", methodResponse.Code)
 	}
 }
+
+func TestWebRuntimeEventsOnlyInvalidateSnapshot(t *testing.T) {
+	source, err := webFiles.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	javascript := string(source)
+	if strings.Contains(javascript, "state.runtimes.set(runtime.stream_id") {
+		t.Fatal("runtime SSE directly mutates snapshot state")
+	}
+	for _, expected := range []string{
+		`runtime.state === "stopped"`,
+		"preview.stopIfStream(runtime.stream_id)",
+		"scheduleSnapshotRefresh();",
+	} {
+		if !strings.Contains(javascript, expected) {
+			t.Fatalf("runtime SSE is missing %q", expected)
+		}
+	}
+}
