@@ -210,7 +210,7 @@ func TestSourceControlStartsStopsAndRestartsRuntime(t *testing.T) {
 	}
 	startControlTestSource(t, server, source.sourceID, http.StatusConflict)
 
-	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
+	stopControlTestSource(t, server, source.sourceID, http.StatusNoContent)
 	remove := waitSourceControlRequest(t, commands)
 	if remove.path != "/rtsp/pull/delete" || remove.streamID != firstID || remove.streamName != source.streamName {
 		t.Fatalf("delete command = %+v", remove)
@@ -219,7 +219,7 @@ func TestSourceControlStartsStopsAndRestartsRuntime(t *testing.T) {
 	if err != nil || stored.desiredState != sourceDesiredStopped {
 		t.Fatalf("source after stop = %+v, %v", stored, err)
 	}
-	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
+	stopControlTestSource(t, server, source.sourceID, http.StatusNoContent)
 
 	startingEvent.State = "stopped"
 	startingEvent.Stage = ""
@@ -300,7 +300,7 @@ func TestSourceControlStopRecoversFromLostTerminalEvent(t *testing.T) {
 	if _, err := server.runtimes.apply(active); err != nil {
 		t.Fatalf("apply(active) error = %v", err)
 	}
-	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
+	stopControlTestSource(t, server, source.sourceID, http.StatusNoContent)
 	current, ok := server.runtimes.currentForSource(source.sourceID)
 	if !ok || current.StreamID != firstID || current.Kind != "source" || current.State != "stopped" ||
 		current.EndReason != "requested" {
@@ -334,7 +334,7 @@ func TestSourceStopAcknowledgesRuntimeBeforeReleasingOwnership(t *testing.T) {
 		ownedDuringStopped <- ok && runtime.streamID == streamID
 	})
 
-	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
+	stopControlTestSource(t, server, source.sourceID, http.StatusNoContent)
 	if owned := <-ownedDuringStopped; !owned {
 		t.Fatal("runtime ownership was released before stopped acknowledgment")
 	}
@@ -750,8 +750,8 @@ func TestSourceControlStopsUnresolvedPull(t *testing.T) {
 		wantStatus int
 		resolved   bool
 	}{
-		{name: "success", response: sourceMediaResponse{status: http.StatusNoContent}, wantStatus: http.StatusOK, resolved: true},
-		{name: "not found", response: sourceMediaResponse{status: http.StatusNotFound}, wantStatus: http.StatusOK, resolved: true},
+		{name: "success", response: sourceMediaResponse{status: http.StatusNoContent}, wantStatus: http.StatusNoContent, resolved: true},
+		{name: "not found", response: sourceMediaResponse{status: http.StatusNotFound}, wantStatus: http.StatusNoContent, resolved: true},
 		{name: "network failure", response: sourceMediaResponse{}, wantStatus: http.StatusBadGateway},
 	}
 	for _, test := range tests {
@@ -897,7 +897,7 @@ func TestSourceControlConcurrentStopsShareUnresolvedCleanup(t *testing.T) {
 	for range 2 {
 		select {
 		case response := <-responses:
-			if response.Code != http.StatusOK {
+			if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 				t.Fatalf("concurrent stop status/body = %d %s", response.Code, response.Body.String())
 			}
 		case <-time.After(time.Second):
@@ -1011,7 +1011,7 @@ func TestSourceControlRetainsOwnershipWhenContextIsCanceledAfterCreate(t *testin
 		t.Fatalf("post-create read error triggered %d cleanup requests", deleteCalls)
 	}
 
-	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
+	stopControlTestSource(t, server, source.sourceID, http.StatusNoContent)
 	if deleteCalls != 1 {
 		t.Fatalf("stop delete calls = %d", deleteCalls)
 	}
@@ -1129,7 +1129,7 @@ func TestSourceControlUsesRuntimeNameAfterSourcePatch(t *testing.T) {
 		t.Fatalf("patch status/body = %d %s", response.Code, response.Body.String())
 	}
 	startControlTestSource(t, server, source.sourceID, http.StatusConflict)
-	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
+	stopControlTestSource(t, server, source.sourceID, http.StatusNoContent)
 	if name := <-deletes; name != "live/original" {
 		t.Fatalf("delete stream name = %q", name)
 	}
@@ -1166,7 +1166,7 @@ func TestSourceDeletePreservesSourceWhenRuntimeDeleteFails(t *testing.T) {
 		t.Fatal("failed delete did not restore runtime ownership")
 	}
 	response = sourceRequest(t, server.handler(), http.MethodDelete, "/api/sources/"+source.sourceID, "", "")
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("retry delete status/body = %d %s", response.Code, response.Body.String())
 	}
 	if _, err := server.sources.get(t.Context(), source.sourceID); !errors.Is(err, errSourceNotFound) {
@@ -1187,7 +1187,7 @@ func TestSourceDeleteUnbindsUnobservedRuntime(t *testing.T) {
 	server.runtimes.bindSource(source.sourceID, streamID)
 
 	response := sourceRequest(t, server.handler(), http.MethodDelete, "/api/sources/"+source.sourceID, "", "")
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("delete status/body = %d %s", response.Code, response.Body.String())
 	}
 	if _, bound := server.runtimes.currentBySource[source.sourceID]; bound {
@@ -1217,7 +1217,7 @@ func TestSourceDeleteChurnKeepsRuntimeRegistriesBounded(t *testing.T) {
 			t.Fatalf("apply runtime %d error = %v", index, err)
 		}
 		response := sourceRequest(t, server.handler(), http.MethodDelete, "/api/sources/"+source.sourceID, "", "")
-		if response.Code != http.StatusOK {
+		if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 			t.Fatalf("delete source %d status/body = %d %s", index, response.Code, response.Body.String())
 		}
 	}
@@ -1466,7 +1466,7 @@ func TestSourceDeleteWaitsForConcurrentStopCleanup(t *testing.T) {
 	if response := <-stopped; response.Code != http.StatusBadGateway {
 		t.Fatalf("stop status/body = %d %s", response.Code, response.Body.String())
 	}
-	if response := <-deleted; response.Code != http.StatusOK {
+	if response := <-deleted; response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("delete status/body = %d %s", response.Code, response.Body.String())
 	}
 	first := <-deletes
@@ -1553,8 +1553,13 @@ func startControlTestSource(t *testing.T, server *infrastructureServer, sourceID
 	var body struct {
 		StreamID string `json:"stream_id"`
 	}
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || !validUUIDv4(body.StreamID) {
+	decoder := json.NewDecoder(bytes.NewReader(response.Body.Bytes()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil || !validUUIDv4(body.StreamID) {
 		t.Fatalf("start response = %s, %v", response.Body.String(), err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		t.Fatalf("start response has extra JSON: %v", err)
 	}
 	return body.StreamID
 }
@@ -1564,6 +1569,9 @@ func stopControlTestSource(t *testing.T, server *infrastructureServer, sourceID 
 	response := sourceRequest(t, server.handler(), http.MethodPost, "/api/sources/"+sourceID+"/stop", "", "")
 	if response.Code != want {
 		t.Fatalf("stop status/body = %d %s, want %d", response.Code, response.Body.String(), want)
+	}
+	if want == http.StatusNoContent && response.Body.Len() != 0 {
+		t.Fatalf("stop response body = %q", response.Body.String())
 	}
 }
 

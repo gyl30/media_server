@@ -223,7 +223,7 @@ with open(sys.argv[1], encoding="utf-8") as source:
     response = json.load(source)
 stream_id = response["stream_id"]
 parsed_id = uuid.UUID(stream_id)
-assert response["result"] == "ok"
+assert set(response) == {"stream_id"}
 assert parsed_id.version == 4 and str(parsed_id) == stream_id
 print(stream_id)
 PY
@@ -240,18 +240,12 @@ source_action() {
     local status
     status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o "$response" -w '%{http_code}' \
         -X "$method" "http://127.0.0.1:$signaling_port/api/sources/$source_id$path_suffix")"
-    if [[ "$status" != "200" ]]; then
+    if [[ "$status" != "204" ]]; then
         echo "$method source $action returned $status" >&2
         cat "$response" >&2 2>/dev/null || true
         return 1
     fi
-    python3 - "$response" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as source:
-    assert json.load(source) == {"result": "ok"}
-PY
+    [[ ! -s "$response" ]]
 }
 
 stop_rtsp_source() {

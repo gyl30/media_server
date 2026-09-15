@@ -131,7 +131,7 @@ func (s *infrastructureServer) handleSourceDelete(writer http.ResponseWriter, re
 		s.writeSourceError(writer, "delete", sourceID, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (s *infrastructureServer) writeSourceError(writer http.ResponseWriter, operation, sourceID string, err error) {

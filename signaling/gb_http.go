@@ -79,7 +79,6 @@ func (s *infrastructureServer) handleChannelLiveStart(writer http.ResponseWriter
 		return
 	}
 	writeJSON(writer, http.StatusCreated, map[string]any{
-		"result":      "ok",
 		"stream_id":   view.streamID,
 		"stream_name": view.streamName,
 		"state":       view.state,
@@ -96,6 +95,6 @@ func (s *infrastructureServer) handleChannelLiveStop(writer http.ResponseWriter,
 		return
 	}
 	if s.stopLive(writer, request, deviceID, channelID, command.StreamID) {
-		writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+		writer.WriteHeader(http.StatusNoContent)
 	}
 }
