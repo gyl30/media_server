@@ -40,11 +40,7 @@ func (a *digestAuthenticator) challenge(deviceID string) (digest.Challenge, erro
 	nonce := hex.EncodeToString(random)
 	now := a.now()
 	a.mu.Lock()
-	for value, entry := range a.nonces {
-		if !now.Before(entry.expires) {
-			delete(a.nonces, value)
-		}
-	}
+	a.expireLocked(now)
 	a.nonces[nonce] = digestNonce{deviceID: deviceID, expires: now.Add(5 * time.Minute)}
 	a.mu.Unlock()
 	return digest.Challenge{
@@ -53,6 +49,20 @@ func (a *digestAuthenticator) challenge(deviceID string) (digest.Challenge, erro
 		Opaque:    "media-server-signaling",
 		Algorithm: "MD5",
 	}, nil
+}
+
+func (a *digestAuthenticator) expire(now time.Time) {
+	a.mu.Lock()
+	a.expireLocked(now)
+	a.mu.Unlock()
+}
+
+func (a *digestAuthenticator) expireLocked(now time.Time) {
+	for value, entry := range a.nonces {
+		if !now.Before(entry.expires) {
+			delete(a.nonces, value)
+		}
+	}
 }
 
 func (a *digestAuthenticator) verify(deviceID, method, requestURI, authorization string) bool {
