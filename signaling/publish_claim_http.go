@@ -34,7 +34,7 @@ func (s *infrastructureServer) handlePublishClaim(writer http.ResponseWriter, re
 	}
 	switch {
 	case err == nil:
-		writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+		writer.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, errPublishAllocationNotFound):
 		writeHTTPError(writer, http.StatusNotFound, "allocation_not_found")
 	default:

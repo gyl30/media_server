@@ -52,6 +52,15 @@ gb28181_http_response make_error_response(const gb28181_http_request& request,
     return make_json_response(request, status, std::move(body), allow);
 }
 
+gb28181_http_response make_empty_response(const gb28181_http_request& request, boost::beast::http::status status)
+{
+    gb28181_http_response response{status, request.version()};
+    response.set(boost::beast::http::field::server, "media_server");
+    response.keep_alive(false);
+    response.prepare_payload();
+    return response;
+}
+
 std::optional<gb28181_http_response> validate_request(const gb28181_http_request& request, const boost::urls::url_view& target)
 {
     if (!target.params().empty())
@@ -110,7 +119,6 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
         boost::json::object body;
-        body["result"] = "ok";
         body["rtp_port"] = local_ports->first;
         body["rtcp_port"] = local_ports->second;
         return make_json_response(request, boost::beast::http::status::created, std::move(body));
@@ -131,7 +139,7 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
         }
     }
 
-    return make_json_response(request, boost::beast::http::status::created, {{"result", "ok"}});
+    return make_empty_response(request, boost::beast::http::status::created);
 }
 
 gb28181_http_response handle_sender_create(const gb28181_http_request& request,
@@ -196,9 +204,7 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
         }
     }
 
-    boost::json::object body;
-    body["result"] = "ok";
-    return make_json_response(request, boost::beast::http::status::created, std::move(body));
+    return make_empty_response(request, boost::beast::http::status::created);
 }
 
 }    // namespace
@@ -247,9 +253,7 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
     }
     session->shutdown();
 
-    boost::json::object body;
-    body["result"] = "ok";
-    return make_json_response(request, boost::beast::http::status::ok, std::move(body));
+    return make_empty_response(request, boost::beast::http::status::no_content);
 }
 
 gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& request,
@@ -290,9 +294,7 @@ gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& 
     }
     session->shutdown();
 
-    boost::json::object body;
-    body["result"] = "ok";
-    return make_json_response(request, boost::beast::http::status::ok, std::move(body));
+    return make_empty_response(request, boost::beast::http::status::no_content);
 }
 
 }    // namespace media_server

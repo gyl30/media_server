@@ -78,6 +78,15 @@ void require_json_response(const gb28181_http_response& response, boost::beast::
     require(response.body() == body, message);
 }
 
+void require_empty_response(const gb28181_http_response& response, boost::beast::http::status status, std::string_view message)
+{
+    require(response.result() == status, message);
+    require(response.version() == 11, message);
+    require(!response.keep_alive(), message);
+    require(response[boost::beast::http::field::content_type].empty(), message);
+    require(response.body().empty(), message);
+}
+
 gb28181_http_response receiver_request(worker_context& worker,
                                        gb28181_http_request request,
                                        runtime_event_emitter_ptr runtime_events = {})
@@ -128,7 +137,7 @@ void test_receiver_handlers()
         receiver_request(worker, request("/gb28181/receiver/create", create_body), capture_events(events));
     require(create_response.result() == boost::beast::http::status::created, "receiver create response status");
     const auto create_result = boost::json::parse(create_response.body()).as_object();
-    require(create_result.at("result").as_string() == "ok", "receiver create response result");
+    require(create_result.size() == 2U, "receiver create response fields");
     const auto rtp_port = static_cast<std::uint16_t>(create_result.at("rtp_port").as_int64());
     const auto rtcp_port = static_cast<std::uint16_t>(create_result.at("rtcp_port").as_int64());
     require(rtp_port != 0 && (rtp_port & 1U) == 0U && rtcp_port == rtp_port + 1U, "receiver create response port pair");
@@ -171,7 +180,7 @@ void test_receiver_handlers()
                           R"({"error":"operation_failed"})",
                           "receiver stale delete rejected");
     const auto delete_response = receiver_request(worker, request("/gb28181/receiver/delete", delete_body));
-    require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "receiver delete response");
+    require_empty_response(delete_response, boost::beast::http::status::no_content, "receiver delete response");
 
     const auto closing_response = receiver_request(worker, request("/gb28181/receiver/delete", delete_body));
     require_json_response(closing_response,
@@ -227,7 +236,7 @@ void test_sender_handlers()
 
     std::vector<runtime_event> events;
     const auto create_response = sender_request(worker, request("/gb28181/sender/create", create_body), capture_events(events));
-    require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "sender create response");
+    require_empty_response(create_response, boost::beast::http::status::created, "sender create response");
     require(events.size() == 1U, "sender HTTP propagates event emitter");
     require_gb_event(events[0],
                      runtime_kind::output,
@@ -247,7 +256,7 @@ void test_sender_handlers()
     delete_body["stream_name"] = stream->name();
     delete_body["sender_id"] = "primary";
     const auto delete_response = sender_request(worker, request("/gb28181/sender/delete", delete_body));
-    require_json_response(delete_response, boost::beast::http::status::ok, R"({"result":"ok"})", "sender delete response");
+    require_empty_response(delete_response, boost::beast::http::status::no_content, "sender delete response");
 
     const auto closing_response = sender_request(worker, request("/gb28181/sender/delete", delete_body));
     require_json_response(closing_response,

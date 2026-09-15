@@ -63,6 +63,15 @@ rtsp_pull_http_response make_error_response(const rtsp_pull_http_request& reques
     return make_json_response(request, status, std::move(body), allow);
 }
 
+rtsp_pull_http_response make_empty_response(const rtsp_pull_http_request& request, boost::beast::http::status status)
+{
+    rtsp_pull_http_response response{status, request.version()};
+    response.set(boost::beast::http::field::server, "media_server");
+    response.keep_alive(false);
+    response.prepare_payload();
+    return response;
+}
+
 std::optional<boost::json::object> parse_object(std::string_view body)
 {
     boost::system::error_code error;
@@ -207,7 +216,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request,
         session->shutdown();
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
-    return make_json_response(request, boost::beast::http::status::created, {{"result", "ok"}});
+    return make_empty_response(request, boost::beast::http::status::created);
 }
 
 }    // namespace
@@ -249,7 +258,7 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
     session->shutdown();
-    return make_json_response(request, boost::beast::http::status::ok, {{"result", "ok"}});
+    return make_empty_response(request, boost::beast::http::status::no_content);
 }
 
 }    // namespace media_server

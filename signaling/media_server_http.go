@@ -70,14 +70,13 @@ func (c *mediaServerHTTPClient) createUDPReceiver(
 		StreamID: receiver.streamID, StreamName: receiver.streamName, Transport: "udp", PayloadType: receiver.payloadType, SSRC: receiver.ssrc,
 	}
 	responseBody := struct {
-		Result   string `json:"result"`
 		RTPPort  uint16 `json:"rtp_port"`
 		RTCPPort uint16 `json:"rtcp_port"`
 	}{}
 	if err := c.post(ctx, server.controlURL+"/gb28181/receiver/create", requestBody, http.StatusCreated, &responseBody); err != nil {
 		return gb28181ReceiverEndpoint{}, err
 	}
-	if responseBody.Result != "ok" || responseBody.RTPPort == 0 || responseBody.RTPPort%2 != 0 || responseBody.RTCPPort != responseBody.RTPPort+1 {
+	if responseBody.RTPPort == 0 || responseBody.RTPPort%2 != 0 || responseBody.RTCPPort != responseBody.RTPPort+1 {
 		return gb28181ReceiverEndpoint{}, fmt.Errorf("invalid media server create response")
 	}
 	return gb28181ReceiverEndpoint{
@@ -96,29 +95,11 @@ func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, server media
 		StreamID   string `json:"stream_id"`
 		StreamName string `json:"stream_name"`
 	}{StreamID: streamID, StreamName: streamName}
-	responseBody := struct {
-		Result string `json:"result"`
-	}{}
-	if err := c.post(ctx, server.controlURL+"/gb28181/receiver/delete", requestBody, http.StatusOK, &responseBody); err != nil {
-		return err
-	}
-	if responseBody.Result != "ok" {
-		return fmt.Errorf("invalid media server delete response")
-	}
-	return nil
+	return c.post(ctx, server.controlURL+"/gb28181/receiver/delete", requestBody, http.StatusNoContent, nil)
 }
 
 func (c *mediaServerHTTPClient) createRTSPPull(ctx context.Context, server mediaServerInstance, command rtspPullCreateRequest) error {
-	responseBody := struct {
-		Result string `json:"result"`
-	}{}
-	if err := c.post(ctx, server.controlURL+"/rtsp/pull/create", command, http.StatusCreated, &responseBody); err != nil {
-		return err
-	}
-	if responseBody.Result != "ok" {
-		return fmt.Errorf("invalid media server create response")
-	}
-	return nil
+	return c.post(ctx, server.controlURL+"/rtsp/pull/create", command, http.StatusCreated, nil)
 }
 
 func (c *mediaServerHTTPClient) deleteRTSPPull(ctx context.Context, server mediaServerInstance, streamID, streamName string) error {
@@ -126,16 +107,7 @@ func (c *mediaServerHTTPClient) deleteRTSPPull(ctx context.Context, server media
 		StreamID   string `json:"stream_id"`
 		StreamName string `json:"stream_name"`
 	}{StreamID: streamID, StreamName: streamName}
-	responseBody := struct {
-		Result string `json:"result"`
-	}{}
-	if err := c.post(ctx, server.controlURL+"/rtsp/pull/delete", requestBody, http.StatusOK, &responseBody); err != nil {
-		return err
-	}
-	if responseBody.Result != "ok" {
-		return fmt.Errorf("invalid media server delete response")
-	}
-	return nil
+	return c.post(ctx, server.controlURL+"/rtsp/pull/delete", requestBody, http.StatusNoContent, nil)
 }
 
 func (c *mediaServerHTTPClient) post(ctx context.Context, url string, requestBody any, successStatus int, responseBody any) error {
@@ -153,12 +125,12 @@ func (c *mediaServerHTTPClient) post(ctx context.Context, url string, requestBod
 		return fmt.Errorf("media server request failed: %w", err)
 	}
 	defer response.Body.Close()
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || !strings.EqualFold(mediaType, "application/json") {
-		return fmt.Errorf("invalid media server response content type")
-	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 64*1024))
 	if response.StatusCode != successStatus {
+		mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		if err != nil || !strings.EqualFold(mediaType, "application/json") {
+			return fmt.Errorf("invalid media server response content type")
+		}
+		decoder := json.NewDecoder(io.LimitReader(response.Body, 64*1024))
 		var failure struct {
 			Code string `json:"error"`
 		}
@@ -167,6 +139,14 @@ func (c *mediaServerHTTPClient) post(ctx context.Context, url string, requestBod
 		}
 		return &mediaServerHTTPRejection{status: response.StatusCode, code: failure.Code}
 	}
+	if responseBody == nil {
+		return nil
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(mediaType, "application/json") {
+		return fmt.Errorf("invalid media server response content type")
+	}
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 64*1024))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(responseBody); err != nil {
 		return fmt.Errorf("invalid media server response: %w", err)

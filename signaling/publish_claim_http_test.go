@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,17 +28,10 @@ func TestPublishClaimHTTP(t *testing.T) {
 	}
 
 	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", command)
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusNoContent || response.ContentLength != 0 {
 		t.Fatalf("status = %d body = %s", response.StatusCode, readBody(t, response))
 	}
-	var result map[string]string
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-		t.Fatalf("Decode() error = %v", err)
-	}
-	if len(result) != 1 || result["result"] != "ok" {
-		t.Fatalf("response = %#v", result)
-	}
+	response.Body.Close()
 	response = postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", command)
 	assertHTTPError(t, response, http.StatusNotFound, "allocation_not_found")
 }

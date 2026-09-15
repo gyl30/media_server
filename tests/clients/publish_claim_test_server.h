@@ -32,7 +32,7 @@ struct publish_claim_request
 class publish_claim_test_server final
 {
    public:
-    explicit publish_claim_test_server(boost::beast::http::status status = boost::beast::http::status::ok,
+    explicit publish_claim_test_server(boost::beast::http::status status = boost::beast::http::status::no_content,
                                        bool hold_response = false)
         : acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}),
           port_(acceptor_.local_endpoint().port()),
@@ -142,8 +142,11 @@ class publish_claim_test_server final
             }
 
             boost::beast::http::response<boost::beast::http::string_body> response(status_, request.version());
-            response.set(boost::beast::http::field::content_type, "application/json");
-            response.body() = response.result_int() >= 200 && response.result_int() < 300 ? R"({"result":"ok"})" : R"({"error":"rejected"})";
+            if (response.result_int() < 200 || response.result_int() >= 300)
+            {
+                response.set(boost::beast::http::field::content_type, "application/json");
+                response.body() = R"({"error":"rejected"})";
+            }
             response.prepare_payload();
             boost::beast::http::write(socket, response, error);
         }

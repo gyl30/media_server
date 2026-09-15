@@ -34,7 +34,7 @@ func TestLiveControlHTTPStartCancellationCancelsMediaCreate(t *testing.T) {
 				writeHTTPError(writer, http.StatusInternalServerError, "released")
 			}
 		case "/gb28181/receiver/delete":
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -183,7 +183,7 @@ func TestLiveControlRetainsAmbiguousCreateUntilCleanupSucceeds(t *testing.T) {
 	}
 	deleteStatuses := make(chan int, 2)
 	deleteStatuses <- http.StatusNotFound
-	deleteStatuses <- http.StatusOK
+	deleteStatuses <- http.StatusNoContent
 	deletes := make(chan string, 2)
 	var infrastructure *infrastructureServer
 	mediaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -213,8 +213,8 @@ func TestLiveControlRetainsAmbiguousCreateUntilCleanupSucceeds(t *testing.T) {
 				t.Errorf("decode delete: %v", err)
 			}
 			deletes <- command.StreamID
-			if status := <-deleteStatuses; status == http.StatusOK {
-				writeJSON(writer, status, map[string]string{"result": "ok"})
+			if status := <-deleteStatuses; status == http.StatusNoContent {
+				writer.WriteHeader(status)
 			} else {
 				writeHTTPError(writer, status, "operation_failed")
 			}
@@ -313,7 +313,7 @@ func TestLiveControlClosesObservedRuntimeAfterCreateCompensation(t *testing.T) {
 				t.Errorf("decode delete: %v", err)
 			}
 			deleted <- command.StreamID
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -466,7 +466,7 @@ func TestLiveControlRetainsInviteFailureUntilCleanupSucceeds(t *testing.T) {
 	deleted := make(chan string, 2)
 	deleteStatuses := make(chan int, 2)
 	deleteStatuses <- http.StatusServiceUnavailable
-	deleteStatuses <- http.StatusOK
+	deleteStatuses <- http.StatusNoContent
 	var infrastructure *infrastructureServer
 	mediaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -486,7 +486,7 @@ func TestLiveControlRetainsInviteFailureUntilCleanupSucceeds(t *testing.T) {
 				t.Errorf("apply starting runtime error = %v", err)
 			}
 			writeJSON(writer, http.StatusCreated, map[string]any{
-				"result": "ok", "rtp_port": 40000, "rtcp_port": 40001,
+				"rtp_port": 40000, "rtcp_port": 40001,
 			})
 		case "/gb28181/receiver/delete":
 			var command struct {
@@ -496,8 +496,8 @@ func TestLiveControlRetainsInviteFailureUntilCleanupSucceeds(t *testing.T) {
 				t.Errorf("decode delete: %v", err)
 			}
 			deleted <- command.StreamID
-			if status := <-deleteStatuses; status == http.StatusOK {
-				writeJSON(writer, status, map[string]string{"result": "ok"})
+			if status := <-deleteStatuses; status == http.StatusNoContent {
+				writer.WriteHeader(status)
 			} else {
 				writeHTTPError(writer, status, "operation_failed")
 			}
@@ -564,8 +564,8 @@ func TestLiveControlRetriesUnconfirmedRuntimeDelete(t *testing.T) {
 			t.Errorf("decode delete: %v", err)
 		}
 		deletes <- command.StreamID
-		if status := <-deleteStatuses; status == http.StatusOK {
-			writeJSON(writer, status, map[string]string{"result": "ok"})
+		if status := <-deleteStatuses; status == http.StatusNoContent {
+			writer.WriteHeader(status)
 		} else {
 			writeHTTPError(writer, status, "operation_failed")
 		}

@@ -39,8 +39,8 @@ struct captured_request
 class test_http_server
 {
    public:
-    explicit test_http_server(boost::beast::http::status status = boost::beast::http::status::ok,
-                              std::string response_body = R"({"result":"ok"})",
+    explicit test_http_server(boost::beast::http::status status = boost::beast::http::status::no_content,
+                              std::string response_body = {},
                               std::chrono::milliseconds response_delay = {})
         : acceptor_(io_, {boost::asio::ip::make_address("127.0.0.1"), 0}),
           port_(acceptor_.local_endpoint().port()),
@@ -105,8 +105,15 @@ class test_http_server
             std::this_thread::sleep_for(response_delay_);
             boost::beast::http::response<boost::beast::http::string_body> response{
                 static_cast<boost::beast::http::status>(status_.load()), request.version()};
-            response.set(boost::beast::http::field::content_type, "application/json");
-            response.body() = response.result_int() >= 200 && response.result_int() < 300 ? response_body_ : R"({"error":"rejected"})";
+            if (response.result_int() >= 200 && response.result_int() < 300)
+            {
+                response.body() = response_body_;
+            }
+            else
+            {
+                response.set(boost::beast::http::field::content_type, "application/json");
+                response.body() = R"({"error":"rejected"})";
+            }
             response.prepare_payload();
             boost::beast::http::write(socket, response, error);
         }
@@ -274,7 +281,7 @@ void test_result_classification()
     require(heartbeat.kind == media_server::signaling_result_kind::network_error, "heartbeat network error");
 }
 
-void test_success_requires_result_ok()
+void test_success_uses_status_only()
 {
     for (const std::string body : {R"({"result":"not-ok"})", R"({})", "{invalid"})
     {
@@ -282,8 +289,8 @@ void test_success_requires_result_ok()
         boost::asio::io_context io;
         media_server::signaling_client client(io, client_options(server.url()));
         const auto result = run_request(io, [&](boost::asio::yield_context& yield) { return client.register_once(yield); });
-        require(result.kind == media_server::signaling_result_kind::rejected && result.status == 200,
-                "invalid success body rejected");
+        require(result.kind == media_server::signaling_result_kind::accepted && result.status == 200,
+                "success body ignored");
     }
 }
 
@@ -312,7 +319,7 @@ void test_constructor_rejects_non_base_urls()
 
 void test_request_timeout()
 {
-    test_http_server server(boost::beast::http::status::ok, R"({"result":"ok"})", 2s);
+    test_http_server server(boost::beast::http::status::no_content, "", 2s);
     auto options = client_options(server.url());
     options.request_timeout = 20ms;
     boost::asio::io_context io;
@@ -410,7 +417,7 @@ void test_control_cancellation_ends_heartbeat_wait()
 
 void test_control_cancellation_ends_in_flight_heartbeat()
 {
-    test_http_server server(boost::beast::http::status::ok, R"({"result":"ok"})", 2s);
+    test_http_server server(boost::beast::http::status::no_content, "", 2s);
     auto options = client_options(server.url());
     options.heartbeat_interval = 1ms;
     options.request_timeout = 5s;
@@ -444,7 +451,7 @@ int main()
     test_publish_claim_uses_caller_executor_and_body();
     test_runtime_event_accepts_status_only_success();
     test_result_classification();
-    test_success_requires_result_ok();
+    test_success_uses_status_only();
     test_constructor_rejects_non_base_urls();
     test_request_timeout();
     test_completed_request_releases_cancellation_handler();

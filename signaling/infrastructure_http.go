@@ -91,7 +91,7 @@ func (s *infrastructureServer) handleMediaServerRegister(writer http.ResponseWri
 		writeHTTPError(writer, http.StatusConflict, "instance_conflict")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (s *infrastructureServer) handleMediaServerHeartbeat(writer http.ResponseWriter, request *http.Request) {
@@ -104,7 +104,7 @@ func (s *infrastructureServer) handleMediaServerHeartbeat(writer http.ResponseWr
 		writeHTTPError(writer, http.StatusGone, "stale_instance")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (s *infrastructureServer) serve(ctx context.Context) error {
