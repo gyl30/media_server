@@ -147,15 +147,18 @@ post_gb28181_receiver() {
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
     fi
-    python3 - "$response" <<'PY'
+    python3 - "$response" "$body" <<'PY'
 import json
 import sys
 
+request = json.loads(sys.argv[2])
 with open(sys.argv[1], encoding="utf-8") as source:
-    response = json.load(source)
-assert response["result"] == "ok"
-if "rtp_port" not in response:
+    response_body = source.read()
+if request["transport"] != "udp":
+    assert response_body == ""
     sys.exit(0)
+response = json.loads(response_body)
+assert set(response) == {"rtp_port", "rtcp_port"}
 rtp_port = int(response["rtp_port"])
 rtcp_port = int(response["rtcp_port"])
 assert rtp_port > 0 and rtp_port % 2 == 0 and rtcp_port == rtp_port + 1
@@ -179,7 +182,7 @@ post_gb28181_sender() {
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
     fi
-    [[ "$(<"$response")" == '{"result":"ok"}' ]]
+    [[ ! -s "$response" ]]
 }
 
 delete_gb28181_sender() {
@@ -192,13 +195,13 @@ delete_gb28181_sender() {
         -H 'Content-Type: application/json' \
         --data-binary "$body" \
         "http://${server_address}:${http_port}/gb28181/sender/delete")"
-    if [[ "$code" != "200" ]]; then
+    if [[ "$code" != "204" ]]; then
         echo "POST /gb28181/sender/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
     fi
-    [[ "$(<"$response")" == '{"result":"ok"}' ]]
+    [[ ! -s "$response" ]]
 }
 
 delete_gb28181_receiver() {
@@ -216,13 +219,13 @@ delete_gb28181_receiver() {
         [[ "$(<"$response")" == '{"error":"operation_failed"}' ]]
         return
     fi
-    if [[ "$code" != "200" ]]; then
+    if [[ "$code" != "204" ]]; then
         echo "POST /gb28181/receiver/delete returned $code" >&2
         cat "$response" >&2 || true
         cat "$work_dir/server.log" >&2 2>/dev/null || true
         return 1
     fi
-    [[ "$(<"$response")" == '{"result":"ok"}' ]]
+    [[ ! -s "$response" ]]
 }
 
 wait_tcp_receiver_shutdown() {

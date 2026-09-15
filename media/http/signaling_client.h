@@ -62,15 +62,8 @@ class signaling_client
     void run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler) const;
 
    private:
-    enum class success_response
-    {
-        result_ok,
-        status_only,
-    };
-
     signaling_request_result request(std::string_view target,
                                      std::string body,
-                                     success_response success,
                                      boost::asio::yield_context& yield) const;
 
     boost::asio::io_context& io_;

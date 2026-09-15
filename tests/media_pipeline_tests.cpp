@@ -1619,7 +1619,7 @@ class rtmp_publish_test_peer final
    public:
     explicit rtmp_publish_test_peer(std::string stream_name,
                                     std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
-                                    boost::beast::http::status claim_status = boost::beast::http::status::ok,
+                                    boost::beast::http::status claim_status = boost::beast::http::status::no_content,
                                     bool hold_claim_response = false,
                                     std::string stream_id = std::string(test_rtmp_stream_id),
                                     bool wait_for_start = true,
@@ -2301,7 +2301,7 @@ void test_rtmp_publish_claim_lifecycle()
     {
         rtmp_publish_test_peer peer("live/invalid-claim",
                                     std::chrono::milliseconds{15'000},
-                                    boost::beast::http::status::ok,
+                                    boost::beast::http::status::no_content,
                                     false,
                                     stream_id,
                                     false);
@@ -2326,7 +2326,7 @@ void test_rtmp_publish_claim_lifecycle()
     {
         rtmp_publish_test_peer peer("live/timed-out-claim",
                                     std::chrono::milliseconds{15'000},
-                                    boost::beast::http::status::ok,
+                                    boost::beast::http::status::no_content,
                                     true,
                                     std::string(test_rtmp_stream_id),
                                     false,
@@ -2389,7 +2389,7 @@ void test_rtmp_publish_claim_lifecycle()
     {
         rtmp_publish_test_peer peer("live/disconnected-claim",
                                     std::chrono::milliseconds{15'000},
-                                    boost::beast::http::status::ok,
+                                    boost::beast::http::status::no_content,
                                     true,
                                     std::string(test_rtmp_stream_id),
                                     false);
@@ -3250,9 +3250,9 @@ void test_gb28181_multi_sender_identity()
     require(create(first->name(), "b").result() == boost::beast::http::status::created, "gb multi sender second identity");
     require(create(first->name(), "a").result() == boost::beast::http::status::internal_server_error, "gb multi sender duplicate identity");
     require(create(second->name(), "a").result() == boost::beast::http::status::created, "gb multi sender identity scoped by stream");
-    require(remove(first->name(), "a").result() == boost::beast::http::status::ok, "gb multi sender remove first identity");
-    require(remove(first->name(), "b").result() == boost::beast::http::status::ok, "gb multi sender remove second identity");
-    require(remove(second->name(), "a").result() == boost::beast::http::status::ok, "gb multi sender remove other stream identity");
+    require(remove(first->name(), "a").result() == boost::beast::http::status::no_content, "gb multi sender remove first identity");
+    require(remove(first->name(), "b").result() == boost::beast::http::status::no_content, "gb multi sender remove second identity");
+    require(remove(second->name(), "a").result() == boost::beast::http::status::no_content, "gb multi sender remove other stream identity");
     require(remove(first->name(), "missing").result() == boost::beast::http::status::internal_server_error, "gb multi sender missing identity");
 
     io.run();
@@ -3500,10 +3500,11 @@ void test_gb28181_receiver_http_parameters()
                            std::string_view message,
                            std::string body,
                            std::string_view expected_body = "{\"error\":\"invalid_request\"}",
-                           std::string_view request_content_type = "application/json")
+                           std::string_view request_content_type = "application/json",
+                           std::string_view response_content_type = "application/json")
     {
         require_http_status(
-            acceptor, workers.context(0), workers, method, target, body, expected, message, request_content_type, "application/json", expected_body);
+            acceptor, workers.context(0), workers, method, target, body, expected, message, request_content_type, response_content_type, expected_body);
     };
     check(post,
           "/gb28181/receiver/create",
@@ -3597,29 +3598,49 @@ void test_gb28181_receiver_http_parameters()
           "{\"error\":\"operation_failed\"}");
     check(post,
           "/gb28181/receiver/delete",
-          boost::beast::http::status::ok,
+          boost::beast::http::status::no_content,
           "gb receiver deletes UDP receiver",
           "{\"stream_id\":\"" + std::string{udp_stream_id} + "\",\"stream_name\":\"live/gb-receiver-http\"}",
-          "{\"result\":\"ok\"}");
+          "",
+          "application/json",
+          "");
     check(post,
           "/gb28181/receiver/delete",
           boost::beast::http::status::bad_request,
           "gb receiver delete rejects extra field",
           "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440000\",\"stream_name\":\"live/gb-receiver-http\",\"transport\":\"udp\"}");
-    check(post, "/gb28181/receiver/create", boost::beast::http::status::created, "gb receiver tcp active", tcp_active_body, "{\"result\":\"ok\"}");
+    check(post,
+          "/gb28181/receiver/create",
+          boost::beast::http::status::created,
+          "gb receiver tcp active",
+          tcp_active_body,
+          "",
+          "application/json",
+          "");
     check(post,
           "/gb28181/receiver/delete",
-          boost::beast::http::status::ok,
+          boost::beast::http::status::no_content,
           "gb receiver deletes tcp active",
           "{\"stream_id\":\"" + std::string{tcp_active_stream_id} + "\",\"stream_name\":\"live/gb-receiver-http-active\"}",
-          "{\"result\":\"ok\"}");
-    check(post, "/gb28181/receiver/create", boost::beast::http::status::created, "gb receiver tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
+          "",
+          "application/json",
+          "");
+    check(post,
+          "/gb28181/receiver/create",
+          boost::beast::http::status::created,
+          "gb receiver tcp passive",
+          tcp_passive_body,
+          "",
+          "application/json",
+          "");
     check(post,
           "/gb28181/receiver/delete",
-          boost::beast::http::status::ok,
+          boost::beast::http::status::no_content,
           "gb receiver deletes tcp passive",
           "{\"stream_id\":\"" + std::string{tcp_passive_stream_id} + "\",\"stream_name\":\"live/gb-receiver-http-passive\"}",
-          "{\"result\":\"ok\"}");
+          "",
+          "application/json",
+          "");
     check(post,
           "/gb28181/receiver/delete",
           boost::beast::http::status::internal_server_error,
@@ -3682,10 +3703,11 @@ void test_gb28181_sender_http_parameters()
                            std::string_view message,
                            std::string body,
                            std::string_view expected_body = "{\"error\":\"invalid_request\"}",
-                           std::string_view request_content_type = "application/json")
+                           std::string_view request_content_type = "application/json",
+                           std::string_view response_content_type = "application/json")
     {
         require_http_status(
-            acceptor, workers.context(0), workers, method, target, body, expected, message, request_content_type, "application/json", expected_body);
+            acceptor, workers.context(0), workers, method, target, body, expected, message, request_content_type, response_content_type, expected_body);
     };
     check(post,
           "/gb28181/sender/create",
@@ -3732,7 +3754,7 @@ void test_gb28181_sender_http_parameters()
           "gb sender tcp rtcp port is invalid",
           tcp_active_body.substr(0, tcp_active_body.size() - 1) + ",\"remote_rtcp_port\":29021}");
 
-    check(post, "/gb28181/sender/create", boost::beast::http::status::created, "gb sender udp without rtcp", udp_body, "{\"result\":\"ok\"}");
+    check(post, "/gb28181/sender/create", boost::beast::http::status::created, "gb sender udp without rtcp", udp_body, "", "application/json", "");
     check(post,
           "/gb28181/sender/create",
           boost::beast::http::status::internal_server_error,
@@ -3746,7 +3768,9 @@ void test_gb28181_sender_http_parameters()
           "{\"stream_id\":\"" + std::string{udp_rtcp_stream_id} + "\",\"stream_name\":\"live/"
           "gb-sender-http\",\"sender_id\":\"udp-rtcp\",\"transport\":\"udp\",\"remote_address\":\"127.0.0.1\",\"remote_rtp_port\":29020,\"remote_rtcp_port\":29021,"
           "\"payload_type\":96,\"ssrc\":100001002,\"rtcp_enabled\":true}",
-          "{\"result\":\"ok\"}");
+          "",
+          "application/json",
+          "");
     check(post,
           "/gb28181/sender/delete",
           boost::beast::http::status::bad_request,
@@ -3754,34 +3778,42 @@ void test_gb28181_sender_http_parameters()
           "{\"stream_id\":\"550e8400-e29b-41d4-a716-446655440011\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-rtcp\",\"rtcp_enabled\":true}");
     check(post,
           "/gb28181/sender/delete",
-          boost::beast::http::status::ok,
+          boost::beast::http::status::no_content,
           "gb sender deletes udp default",
           "{\"stream_id\":\"" + std::string{udp_stream_id} +
               "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-default\"}",
-          "{\"result\":\"ok\"}");
+          "",
+          "application/json",
+          "");
     check(post,
           "/gb28181/sender/delete",
-          boost::beast::http::status::ok,
+          boost::beast::http::status::no_content,
           "gb sender deletes udp rtcp",
           "{\"stream_id\":\"" + std::string{udp_rtcp_stream_id} +
               "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"udp-rtcp\"}",
-          "{\"result\":\"ok\"}");
-    check(post, "/gb28181/sender/create", boost::beast::http::status::created, "gb sender tcp active", tcp_active_body, "{\"result\":\"ok\"}");
+          "",
+          "application/json",
+          "");
+    check(post, "/gb28181/sender/create", boost::beast::http::status::created, "gb sender tcp active", tcp_active_body, "", "application/json", "");
     check(post,
           "/gb28181/sender/delete",
-          boost::beast::http::status::ok,
+          boost::beast::http::status::no_content,
           "gb sender deletes tcp active",
           "{\"stream_id\":\"" + std::string{tcp_active_stream_id} +
               "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-active\"}",
-          "{\"result\":\"ok\"}");
-    check(post, "/gb28181/sender/create", boost::beast::http::status::created, "gb sender tcp passive", tcp_passive_body, "{\"result\":\"ok\"}");
+          "",
+          "application/json",
+          "");
+    check(post, "/gb28181/sender/create", boost::beast::http::status::created, "gb sender tcp passive", tcp_passive_body, "", "application/json", "");
     check(post,
           "/gb28181/sender/delete",
-          boost::beast::http::status::ok,
+          boost::beast::http::status::no_content,
           "gb sender deletes tcp passive",
           "{\"stream_id\":\"" + std::string{tcp_passive_stream_id} +
               "\",\"stream_name\":\"live/gb-sender-http\",\"sender_id\":\"tcp-passive\"}",
-          "{\"result\":\"ok\"}");
+          "",
+          "application/json",
+          "");
     check(post,
           "/gb28181/sender/delete",
           boost::beast::http::status::internal_server_error,
@@ -5645,7 +5677,7 @@ void test_rtsp_publish_claim_lifecycle()
     }
 
     {
-        test::publish_claim_test_server claim_server(boost::beast::http::status::ok, true);
+        test::publish_claim_test_server claim_server(boost::beast::http::status::no_content, true);
         worker_context worker;
         boost::asio::io_context client_io;
         boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -5692,7 +5724,7 @@ void test_rtsp_publish_claim_lifecycle()
     }
 
     {
-        test::publish_claim_test_server claim_server(boost::beast::http::status::ok, true);
+        test::publish_claim_test_server claim_server(boost::beast::http::status::no_content, true);
         worker_context worker;
         boost::asio::io_context client_io;
         boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -5863,7 +5895,7 @@ void test_rtsp_publish_claim_lifecycle()
     }
 
     {
-        test::publish_claim_test_server claim_server(boost::beast::http::status::ok, true);
+        test::publish_claim_test_server claim_server(boost::beast::http::status::no_content, true);
         worker_context worker;
         boost::asio::io_context client_io;
         boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -5891,7 +5923,7 @@ void test_rtsp_publish_claim_lifecycle()
     }
 
     {
-        test::publish_claim_test_server claim_server(boost::beast::http::status::ok, true);
+        test::publish_claim_test_server claim_server(boost::beast::http::status::no_content, true);
         worker_context worker;
         boost::asio::io_context client_io;
         boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});

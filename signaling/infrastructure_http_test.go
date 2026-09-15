@@ -21,7 +21,7 @@ func TestMediaServerInfrastructureHTTP(t *testing.T) {
 	registration := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
 	registration.ControlURL += "/"
 	response := postJSON(t, client, httpServer.URL+"/internal/media-servers/register", registration)
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusNoContent || response.ContentLength != 0 {
 		t.Fatalf("registration status = %d body = %s", response.StatusCode, readBody(t, response))
 	}
 	response.Body.Close()
@@ -37,7 +37,7 @@ func TestMediaServerInfrastructureHTTP(t *testing.T) {
 	response = postJSON(t, client, httpServer.URL+"/internal/media-servers/heartbeat", mediaServerHeartbeat{
 		ServerID: registration.ServerID, InstanceID: registration.InstanceID,
 	})
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusNoContent || response.ContentLength != 0 {
 		t.Fatalf("heartbeat status = %d body = %s", response.StatusCode, readBody(t, response))
 	}
 	response.Body.Close()

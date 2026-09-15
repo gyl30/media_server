@@ -530,7 +530,7 @@ void test_delivery_failure_does_not_stop_media_session()
     remove.body() = boost::json::serialize(boost::json::object{{"stream_id", id}, {"stream_name", name}});
     remove.prepare_payload();
     const auto removed = handle_gb_receiver(worker, std::move(remove), emitter);
-    require(removed.result() == boost::beast::http::status::ok, "event delivery failure permits normal receiver shutdown");
+    require(removed.result() == boost::beast::http::status::no_content, "event delivery failure permits normal receiver shutdown");
     worker.release_work();
     runner.join();
     require(server.wait_requests(2), "GB28181 stopped event remains best-effort after prior HTTP failure");

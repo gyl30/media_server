@@ -32,20 +32,16 @@ func (f sourceControlRoundTripFunc) RoundTrip(request *http.Request) (*http.Resp
 	return f(request)
 }
 
-type cancelAtEOFBody struct {
-	reader io.Reader
+type cancelOnCloseBody struct {
 	cancel context.CancelFunc
 }
 
-func (b *cancelAtEOFBody) Read(buffer []byte) (int, error) {
-	read, err := b.reader.Read(buffer)
-	if err == io.EOF {
-		b.cancel()
-	}
-	return read, err
-}
+func (*cancelOnCloseBody) Read([]byte) (int, error) { return 0, io.EOF }
 
-func (*cancelAtEOFBody) Close() error { return nil }
+func (b *cancelOnCloseBody) Close() error {
+	b.cancel()
+	return nil
+}
 
 type sourceMediaResponse struct {
 	status  int
@@ -107,8 +103,8 @@ func newSourceMediaScript(t *testing.T) *sourceMediaScript {
 			panic(http.ErrAbortHandler)
 		}
 		if (request.URL.Path == "/rtsp/pull/create" && response.status == http.StatusCreated) ||
-			(request.URL.Path == "/rtsp/pull/delete" && response.status == http.StatusOK) {
-			writeJSON(writer, response.status, map[string]string{"result": "ok"})
+			(request.URL.Path == "/rtsp/pull/delete" && response.status == http.StatusNoContent) {
+			writer.WriteHeader(response.status)
 			return
 		}
 		code := "operation_failed"
@@ -173,7 +169,7 @@ func TestSourceControlStartsStopsAndRestartsRuntime(t *testing.T) {
 				t.Errorf("decode create: %v", err)
 			}
 			commands <- sourceMediaCommand{path: request.URL.Path, body: command}
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 		case "/rtsp/pull/delete":
 			var command struct {
 				StreamID   string `json:"stream_id"`
@@ -183,7 +179,7 @@ func TestSourceControlStartsStopsAndRestartsRuntime(t *testing.T) {
 				t.Errorf("decode delete: %v", err)
 			}
 			commands <- sourceMediaCommand{path: request.URL.Path, streamID: command.StreamID, streamName: command.StreamName}
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -254,7 +250,7 @@ func TestSourceControlPersistsDesiredStateAcrossCommandFailure(t *testing.T) {
 			writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
 			return
 		}
-		writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+		writer.WriteHeader(http.StatusCreated)
 	}))
 	defer media.Close()
 	server := newSourceControlTestServer(t, media.URL)
@@ -284,7 +280,7 @@ func TestSourceControlStopRecoversFromLostTerminalEvent(t *testing.T) {
 				t.Errorf("decode create: %v", err)
 			}
 			creates = append(creates, command.StreamID)
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 		case "/rtsp/pull/delete":
 			writeHTTPError(writer, http.StatusNotFound, "not_found")
 		default:
@@ -320,10 +316,10 @@ func TestSourceControlStopRecoversFromLostTerminalEvent(t *testing.T) {
 func TestSourceStopAcknowledgesRuntimeBeforeReleasingOwnership(t *testing.T) {
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/rtsp/pull/create" {
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+		writer.WriteHeader(http.StatusNoContent)
 	}))
 	defer media.Close()
 	server := newSourceControlTestServer(t, media.URL)
@@ -353,7 +349,7 @@ func TestSourceControlSerializesConcurrentStarts(t *testing.T) {
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		close(createStarted)
 		<-releaseCreate
-		writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+		writer.WriteHeader(http.StatusCreated)
 	}))
 	defer media.Close()
 	server := newSourceControlTestServer(t, media.URL)
@@ -386,7 +382,7 @@ func TestSourceControlStopsRuntimeCreatedAfterPendingStop(t *testing.T) {
 		case "/rtsp/pull/create":
 			close(createStarted)
 			<-releaseCreate
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 		case "/rtsp/pull/delete":
 			var command struct {
 				StreamID   string `json:"stream_id"`
@@ -398,7 +394,7 @@ func TestSourceControlStopsRuntimeCreatedAfterPendingStop(t *testing.T) {
 			deleted <- sourceMediaCommand{
 				path: request.URL.Path, streamID: command.StreamID, streamName: command.StreamName,
 			}
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -464,7 +460,7 @@ func TestSourceControlReconcilesTerminalBeforeCreateResponse(t *testing.T) {
 			}
 			response.Body.Close()
 		}
-		writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+		writer.WriteHeader(http.StatusCreated)
 	}))
 	defer media.Close()
 	if err := registry.register(mediaServerRegistration{
@@ -548,7 +544,7 @@ func TestSourceControlRejectsCreateCompletedAfterMediaServerOffline(t *testing.T
 			}
 			createStarted <- command
 			<-releaseCreate
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 		case "/rtsp/pull/delete":
 			var command struct {
 				StreamID   string `json:"stream_id"`
@@ -560,7 +556,7 @@ func TestSourceControlRejectsCreateCompletedAfterMediaServerOffline(t *testing.T
 			deleted <- sourceMediaCommand{
 				path: request.URL.Path, streamID: command.StreamID, streamName: command.StreamName,
 			}
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -657,8 +653,7 @@ func TestSourceControlCompensatesAmbiguousCreateFailure(t *testing.T) {
 			}); err != nil {
 				t.Errorf("apply starting runtime error = %v", err)
 			}
-			writer.Header().Set("Content-Type", "text/plain")
-			writer.WriteHeader(http.StatusCreated)
+			panic(http.ErrAbortHandler)
 		case "/rtsp/pull/delete":
 			var command struct {
 				StreamID   string `json:"stream_id"`
@@ -670,7 +665,7 @@ func TestSourceControlCompensatesAmbiguousCreateFailure(t *testing.T) {
 			deleted <- sourceMediaCommand{
 				path: request.URL.Path, streamID: command.StreamID, streamName: command.StreamName,
 			}
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -755,7 +750,7 @@ func TestSourceControlStopsUnresolvedPull(t *testing.T) {
 		wantStatus int
 		resolved   bool
 	}{
-		{name: "success", response: sourceMediaResponse{status: http.StatusOK}, wantStatus: http.StatusOK, resolved: true},
+		{name: "success", response: sourceMediaResponse{status: http.StatusNoContent}, wantStatus: http.StatusOK, resolved: true},
 		{name: "not found", response: sourceMediaResponse{status: http.StatusNotFound}, wantStatus: http.StatusOK, resolved: true},
 		{name: "network failure", response: sourceMediaResponse{}, wantStatus: http.StatusBadGateway},
 	}
@@ -877,7 +872,7 @@ func TestSourceControlConcurrentStopsShareUnresolvedCleanup(t *testing.T) {
 			close(releaseDelete)
 		}
 	}()
-	script.deleteResponses <- sourceMediaResponse{status: http.StatusOK, release: releaseDelete}
+	script.deleteResponses <- sourceMediaResponse{status: http.StatusNoContent, release: releaseDelete}
 	responses := make(chan *httptest.ResponseRecorder, 2)
 	for range 2 {
 		go func() {
@@ -981,24 +976,22 @@ func TestSourceControlRecreatesUnresolvedPullAfterInstanceOffline(t *testing.T) 
 	}
 }
 
-func TestSourceControlRetainsOwnershipWhenPostCreateReadIsCanceled(t *testing.T) {
+func TestSourceControlRetainsOwnershipWhenContextIsCanceledAfterCreate(t *testing.T) {
 	server := newSourceControlTestServer(t, "http://media.example")
 	source := createControlTestSource(t, server, "live/canceled-read", "", "")
 	requestContext, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	deleteCalls := 0
 	server.media.client.Transport = sourceControlRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-		header := make(http.Header)
-		header.Set("Content-Type", "application/json")
-		body := io.ReadCloser(io.NopCloser(strings.NewReader(`{"result":"ok"}`)))
-		status := http.StatusCreated
+		body := io.ReadCloser(io.NopCloser(strings.NewReader("")))
+		status := http.StatusNoContent
 		if request.URL.Path == "/rtsp/pull/create" {
-			body = &cancelAtEOFBody{reader: strings.NewReader(`{"result":"ok"}`), cancel: cancel}
+			body = &cancelOnCloseBody{cancel: cancel}
+			status = http.StatusCreated
 		} else {
 			deleteCalls++
-			status = http.StatusOK
 		}
-		return &http.Response{StatusCode: status, Header: header, Body: body, Request: request}, nil
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: body, Request: request}, nil
 	})
 	request := httptest.NewRequestWithContext(
 		requestContext, http.MethodPost, "/api/sources/"+source.sourceID+"/start", nil)
@@ -1040,7 +1033,7 @@ func TestSourceControlShutdownWaitsForAdmittedCreate(t *testing.T) {
 			}
 			createStarted <- command
 			<-releaseCreate
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 		case "/rtsp/pull/delete":
 			var command struct {
 				StreamID   string `json:"stream_id"`
@@ -1052,7 +1045,7 @@ func TestSourceControlShutdownWaitsForAdmittedCreate(t *testing.T) {
 			deleted <- sourceMediaCommand{
 				path: request.URL.Path, streamID: command.StreamID, streamName: command.StreamName,
 			}
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -1121,10 +1114,10 @@ func TestSourceControlUsesRuntimeNameAfterSourcePatch(t *testing.T) {
 			}
 			_ = json.NewDecoder(request.Body).Decode(&command)
 			deletes <- command.StreamName
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 			return
 		}
-		writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+		writer.WriteHeader(http.StatusCreated)
 	}))
 	defer media.Close()
 	server := newSourceControlTestServer(t, media.URL)
@@ -1146,7 +1139,7 @@ func TestSourceDeletePreservesSourceWhenRuntimeDeleteFails(t *testing.T) {
 	var deletes int
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/rtsp/pull/create" {
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 			return
 		}
 		deletes++
@@ -1154,7 +1147,7 @@ func TestSourceDeletePreservesSourceWhenRuntimeDeleteFails(t *testing.T) {
 			writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+		writer.WriteHeader(http.StatusNoContent)
 	}))
 	defer media.Close()
 	server := newSourceControlTestServer(t, media.URL)
@@ -1259,7 +1252,7 @@ func TestSourceStartReservesBeforeConcurrentDelete(t *testing.T) {
 			}
 			createStarted <- command
 			<-releaseCreate
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 		case "/rtsp/pull/delete":
 			var command struct {
 				StreamID   string `json:"stream_id"`
@@ -1269,7 +1262,7 @@ func TestSourceStartReservesBeforeConcurrentDelete(t *testing.T) {
 				t.Errorf("decode delete: %v", err)
 			}
 			deleted <- sourceMediaCommand{path: request.URL.Path, streamID: command.StreamID, streamName: command.StreamName}
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -1352,11 +1345,11 @@ func TestSourceDeleteCannotRemoveConcurrentReplacement(t *testing.T) {
 				t.Errorf("decode create: %v", err)
 			}
 			creates <- command
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 		case "/rtsp/pull/delete":
 			close(deleteStarted)
 			<-releaseDelete
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -1420,7 +1413,7 @@ func TestSourceDeleteWaitsForConcurrentStopCleanup(t *testing.T) {
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/rtsp/pull/create":
-			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusCreated)
 		case "/rtsp/pull/delete":
 			var command struct {
 				StreamID   string `json:"stream_id"`
@@ -1436,7 +1429,7 @@ func TestSourceDeleteWaitsForConcurrentStopCleanup(t *testing.T) {
 				writeHTTPError(writer, http.StatusServiceUnavailable, "operation_failed")
 				return
 			}
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
