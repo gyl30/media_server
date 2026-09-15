@@ -67,6 +67,12 @@ func (r *observedRuntimeRegistry) acknowledgeSourceStopped(
 
 func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExistingStopped bool) (bool, error) {
 	current, exists := r.byStreamID[event.StreamID]
+	if event.SourceID != "" {
+		currentStreamID, bound := r.currentBySource[event.SourceID]
+		if !bound || (currentStreamID != event.StreamID && (!exists || event.State != "stopped")) {
+			return false, errRuntimeConflict
+		}
+	}
 	if exists {
 		if !sameRuntimeIdentity(current, event) {
 			return false, errRuntimeConflict
@@ -92,11 +98,6 @@ func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExist
 		}
 	}
 	r.byStreamID[event.StreamID] = event
-	if event.SourceID != "" {
-		if _, bound := r.currentBySource[event.SourceID]; !bound {
-			r.replaceSourceBindingLocked(event.SourceID, event.StreamID)
-		}
-	}
 	if event.State == "stopped" {
 		r.retainStoppedLocked(event.StreamID)
 	}
@@ -126,8 +127,10 @@ func (r *observedRuntimeRegistry) restoreSourceBinding(
 	if r.currentBySource[sourceID] != expected {
 		return
 	}
-	if _, observed := r.byStreamID[expected]; observed {
-		return
+	if runtime, observed := r.byStreamID[expected]; observed {
+		if runtime.State != "stopped" || !hadPrevious {
+			return
+		}
 	}
 	if hadPrevious {
 		if previousRuntime != nil {

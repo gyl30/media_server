@@ -20,12 +20,15 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	s.sourceOperationMu.Lock()
 	source, err := s.sources.setDesiredState(request.Context(), sourceID, sourceDesiredRunning)
 	if err != nil {
+		s.sourceOperationMu.Unlock()
 		s.writeSourceError(writer, "start", sourceID, err)
 		return
 	}
 	if runtime, ok := s.runtimes.currentForSource(sourceID); ok && runtime.State != "stopped" {
+		s.sourceOperationMu.Unlock()
 		writeHTTPError(writer, http.StatusConflict, "conflict")
 		return
 	}
@@ -35,6 +38,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 	if !hadPrevious || !s.registry.isOnline(server) {
 		server, hadPrevious = s.registry.selectOnline()
 		if !hadPrevious {
+			s.sourceOperationMu.Unlock()
 			writeHTTPError(writer, http.StatusServiceUnavailable, "no_media_server")
 			return
 		}
@@ -43,6 +47,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		sourceID: sourceID, streamID: uuid.NewString(), streamName: source.streamName, server: server, starting: true,
 	}
 	previous, hadPrevious, err = s.reserveRTSPPull(runtime)
+	s.sourceOperationMu.Unlock()
 	if err != nil {
 		s.writeSourceRuntimeError(writer, "start", sourceID, source.streamName, err)
 		return
@@ -51,18 +56,33 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 	command := makeSourceRTSPPullRequest(source, runtime.streamID)
 	if err := s.media.createRTSPPull(request.Context(), server, command); err != nil {
 		var rejection *mediaServerHTTPRejection
-		if !errors.As(err, &rejection) {
+		ambiguousCreate := !errors.As(err, &rejection)
+		cleanupConfirmed := !ambiguousCreate
+		if ambiguousCreate {
 			cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
 			cleanupErr := s.media.deleteRTSPPull(cleanupContext, server, runtime.streamID, runtime.streamName)
 			cancel()
-			if cleanupErr != nil && (!errors.As(cleanupErr, &rejection) || rejection.status != http.StatusNotFound) {
+			cleanupConfirmed = cleanupErr == nil
+			if !cleanupConfirmed {
 				s.logger.Warn("rtsp pull compensation failed", "source_id", sourceID, "stream_name", runtime.streamName,
 					"server_id", server.serverID, "error", cleanupErr)
 			}
 		}
-		s.rollbackRTSPPull(runtime, previous, hadPrevious)
-		s.runtimes.restoreSourceBinding(
-			sourceID, runtime.streamID, previousGeneration, hadPreviousGeneration, previousObserved)
+		if cleanupConfirmed {
+			s.rollbackRTSPPull(runtime, previous, hadPrevious)
+			if ambiguousCreate {
+				if _, stateErr := s.runtimes.acknowledgeSourceStopped(
+					server, runtime.streamID, runtime.streamName, sourceID, "rtsp"); stateErr != nil {
+					s.logger.Warn("rtsp pull compensation state cleanup failed", "source_id", sourceID,
+						"stream_name", runtime.streamName, "stream_id", runtime.streamID, "error", stateErr)
+				}
+			}
+			s.runtimes.restoreSourceBinding(
+				sourceID, runtime.streamID, previousGeneration, hadPreviousGeneration, previousObserved)
+		} else if !s.finishUnconfirmedRTSPPull(runtime) {
+			s.runtimes.restoreSourceBinding(
+				sourceID, runtime.streamID, previousGeneration, hadPreviousGeneration, previousObserved)
+		}
 		s.writeSourceRuntimeError(writer, "start", sourceID, source.streamName, err)
 		return
 	}
@@ -88,6 +108,10 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 	}
 	currentSource, sourceErr := s.sources.get(request.Context(), sourceID)
 	if sourceErr != nil {
+		if !errors.Is(sourceErr, errSourceNotFound) {
+			s.writeSourceRuntimeError(writer, "start", sourceID, source.streamName, sourceErr)
+			return
+		}
 		if s.removeRTSPPull(runtime) {
 			cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
 			cleanupErr := s.media.deleteRTSPPull(cleanupContext, server, runtime.streamID, runtime.streamName)
@@ -99,11 +123,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 			}
 		}
 		s.runtimes.unbindSource(sourceID, runtime.streamID)
-		if errors.Is(sourceErr, errSourceNotFound) {
-			writeHTTPError(writer, http.StatusConflict, "conflict")
-		} else {
-			s.writeSourceRuntimeError(writer, "start", sourceID, source.streamName, sourceErr)
-		}
+		writeHTTPError(writer, http.StatusConflict, "conflict")
 		return
 	}
 	if finished {
@@ -141,27 +161,45 @@ func (s *infrastructureServer) handleSourceStop(writer http.ResponseWriter, requ
 }
 
 func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string) error {
-	if _, err := s.sources.setDesiredState(ctx, sourceID, sourceDesiredStopped); err != nil {
-		return err
-	}
-	runtime, ok, err := s.takeRTSPPull(sourceID)
-	if err != nil || !ok {
-		return err
-	}
-	if err := s.media.deleteRTSPPull(ctx, runtime.server, runtime.streamID, runtime.streamName); err != nil {
-		var rejection *mediaServerHTTPRejection
-		if !errors.As(err, &rejection) || rejection.status != http.StatusNotFound {
-			s.restoreRTSPPull(runtime)
+	for {
+		s.sourceOperationMu.Lock()
+		if _, err := s.sources.setDesiredState(ctx, sourceID, sourceDesiredStopped); err != nil {
+			s.sourceOperationMu.Unlock()
 			return err
 		}
+		runtime, wait, owner, err := s.beginRTSPPullStop(sourceID)
+		s.sourceOperationMu.Unlock()
+		if err != nil || (!owner && wait == nil) {
+			return err
+		}
+		if !owner {
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		deleteErr := s.media.deleteRTSPPull(ctx, runtime.server, runtime.streamID, runtime.streamName)
+		if deleteErr != nil {
+			var rejection *mediaServerHTTPRejection
+			if runtime.createConfirmed && errors.As(deleteErr, &rejection) && rejection.status == http.StatusNotFound {
+				deleteErr = nil
+			}
+		}
+		if deleteErr != nil {
+			s.finishRTSPPullStop(runtime, false)
+			return deleteErr
+		}
+		_, err = s.runtimes.acknowledgeSourceStopped(
+			runtime.server, runtime.streamID, runtime.streamName, runtime.sourceID, "rtsp")
+		s.finishRTSPPullStop(runtime, true)
+		return err
 	}
-	_, err = s.runtimes.acknowledgeSourceStopped(
-		runtime.server, runtime.streamID, runtime.streamName, runtime.sourceID, "rtsp")
-	return err
 }
 
 func (s *infrastructureServer) writeSourceRuntimeError(writer http.ResponseWriter, operation, sourceID, streamName string, err error) {
-	if errors.Is(err, errRTSPPullStarting) || errors.Is(err, errRTSPPullStreamChanged) {
+	if errors.Is(err, errRTSPPullStarting) || errors.Is(err, errRTSPPullStopping) || errors.Is(err, errRTSPPullStreamChanged) {
 		writeHTTPError(writer, http.StatusConflict, "conflict")
 		return
 	}
