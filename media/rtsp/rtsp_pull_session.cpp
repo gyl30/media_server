@@ -284,11 +284,10 @@ void rtsp_pull_session::emit_starting()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = runtime_event_type::source_started,
+            .kind = runtime_kind::source,
             .stream_id = stream_id_,
             .stream_name = stream_name_,
             .source_id = source_id_,
-            .direction = runtime_direction::input,
             .protocol = runtime_protocol::rtsp,
             .state = runtime_state::starting,
             .stage = "resolving",
@@ -306,11 +305,10 @@ void rtsp_pull_session::emit_streaming()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = runtime_event_type::source_started,
+            .kind = runtime_kind::source,
             .stream_id = stream_id_,
             .stream_name = stream_name_,
             .source_id = source_id_,
-            .direction = runtime_direction::input,
             .protocol = runtime_protocol::rtsp,
             .state = runtime_state::streaming,
             .stage = "streaming",
@@ -329,11 +327,10 @@ void rtsp_pull_session::emit_stopped()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = terminal_event_type(runtime_event_type::source_stopped, end_reason_),
+            .kind = runtime_kind::source,
             .stream_id = stream_id_,
             .stream_name = stream_name_,
             .source_id = source_id_,
-            .direction = runtime_direction::input,
             .protocol = runtime_protocol::rtsp,
             .state = runtime_state::stopped,
             .end_reason = end_reason_,

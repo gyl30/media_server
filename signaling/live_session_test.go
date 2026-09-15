@@ -554,8 +554,8 @@ func TestLiveSessionByeTimeoutStillDeletesMedia(t *testing.T) {
 	infrastructure := newTestInfrastructureServer(t, testConfig(), mediaRegistry, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	infrastructure.live = live
 	if _, err := infrastructure.runtimes.apply(observedRuntime{
-		Type: "source_started", ServerID: view.server.serverID, InstanceID: view.server.instanceID,
-		StreamID: view.streamID, StreamName: view.streamName, Direction: "input", Protocol: "gb28181",
+		Kind: "source", ServerID: view.server.serverID, InstanceID: view.server.instanceID,
+		StreamID: view.streamID, StreamName: view.streamName, Protocol: "gb28181",
 		State: "streaming", Stage: "streaming",
 	}); err != nil {
 		t.Fatalf("apply runtime error = %v", err)

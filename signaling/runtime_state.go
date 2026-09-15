@@ -11,13 +11,12 @@ var errRuntimeConflict = errors.New("runtime state conflict")
 const maxRecentStoppedRuntimes = 500
 
 type observedRuntime struct {
-	Type       string `json:"type"`
+	Kind       string `json:"kind"`
 	ServerID   string `json:"server_id"`
 	InstanceID string `json:"instance_id"`
 	StreamID   string `json:"stream_id"`
 	StreamName string `json:"stream_name"`
 	SourceID   string `json:"source_id,omitempty"`
-	Direction  string `json:"direction"`
 	Protocol   string `json:"protocol"`
 	State      string `json:"state"`
 	Stage      string `json:"stage,omitempty"`
@@ -56,9 +55,9 @@ func (r *observedRuntimeRegistry) acknowledgeSourceStopped(
 	streamID, streamName, sourceID, protocol string,
 ) (bool, error) {
 	event := observedRuntime{
-		Type: "source_stopped", ServerID: server.serverID, InstanceID: server.instanceID,
+		Kind: "source", ServerID: server.serverID, InstanceID: server.instanceID,
 		StreamID: streamID, StreamName: streamName, SourceID: sourceID,
-		Direction: "input", Protocol: protocol, State: "stopped", EndReason: "requested",
+		Protocol: protocol, State: "stopped", EndReason: "requested",
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -84,9 +83,6 @@ func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExist
 			return false, errRuntimeConflict
 		}
 		if current.State == "streaming" && event.State == "starting" {
-			return false, errRuntimeConflict
-		}
-		if !validRuntimeTransition(current, event) {
 			return false, errRuntimeConflict
 		}
 		if current == event {
@@ -190,7 +186,6 @@ func (r *observedRuntimeRegistry) mediaServerOffline(serverID, instanceID string
 		if runtime.ServerID != serverID || runtime.InstanceID != instanceID || runtime.State == "stopped" {
 			continue
 		}
-		runtime.Type = "runtime_error"
 		runtime.State = "stopped"
 		runtime.EndReason = "runtime_error"
 		runtime.Error = "media_server_offline"
@@ -257,25 +252,6 @@ func (r *observedRuntimeRegistry) sourceReferencesLocked(streamID string) bool {
 
 func sameRuntimeIdentity(left, right observedRuntime) bool {
 	return left.ServerID == right.ServerID && left.InstanceID == right.InstanceID && left.StreamID == right.StreamID &&
-		left.StreamName == right.StreamName && left.SourceID == right.SourceID && left.Direction == right.Direction &&
+		left.StreamName == right.StreamName && left.SourceID == right.SourceID && left.Kind == right.Kind &&
 		left.Protocol == right.Protocol
-}
-
-func validRuntimeTransition(current, next observedRuntime) bool {
-	if next.State != "stopped" {
-		return next.Type == current.Type
-	}
-	if next.Type == "protocol_error" || next.Type == "runtime_error" {
-		return true
-	}
-	switch current.Type {
-	case "source_started":
-		return next.Type == "source_stopped"
-	case "publisher_connected":
-		return next.Type == "publisher_disconnected"
-	case "output_started":
-		return next.Type == "output_stopped"
-	default:
-		return false
-	}
 }

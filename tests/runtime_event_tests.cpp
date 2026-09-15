@@ -44,7 +44,7 @@ void require_identity(const runtime_event& event, std::string_view source_id = {
     require(event.stream_id == stream_id, "runtime event stream id");
     require(event.stream_name == "live/runtime-events", "runtime event stream name");
     require(source_id.empty() ? !event.source_id : event.source_id == source_id, "runtime event source id");
-    require(event.direction == runtime_direction::input, "runtime event direction");
+    require(event.kind == runtime_kind::source, "runtime event kind");
     require(event.protocol == runtime_protocol::rtsp, "runtime event protocol");
 }
 
@@ -81,11 +81,11 @@ void test_rtsp_pull_runtime_failure_events()
     require(events.size() == 2U, "runtime event stopped once");
     require(owner_worker, "runtime events emitted on owner worker");
     require_identity(events[0], source_id);
-    require(events[0].type == runtime_event_type::source_started && events[0].state == runtime_state::starting,
+    require(events[0].kind == runtime_kind::source && events[0].state == runtime_state::starting,
             "runtime event source starting");
     require(events[0].stage == "resolving" && !events[0].end_reason && !events[0].error, "runtime event starting fields");
     require_identity(events[1], source_id);
-    require(events[1].type == runtime_event_type::runtime_error && events[1].state == runtime_state::stopped,
+    require(events[1].kind == runtime_kind::source && events[1].state == runtime_state::stopped,
             "runtime event source runtime failure");
     require(events[1].end_reason == runtime_end_reason::runtime_error && events[1].error.has_value(), "runtime event failure fields");
     require(!streams.take_receiver_session("live/runtime-events"), "runtime event pull releases identity");
@@ -131,7 +131,7 @@ void test_rtsp_pull_first_shutdown_reason()
     worker.io().run();
     require(owner_worker, "runtime shutdown events emitted on owner worker");
     require(events.size() == 2U, "runtime shutdown transitions once");
-    require(events[1].type == runtime_event_type::source_stopped && events[1].state == runtime_state::stopped,
+    require(events[1].kind == runtime_kind::source && events[1].state == runtime_state::stopped,
             "runtime shutdown terminal event");
     require(events[1].end_reason == runtime_end_reason::server_shutdown && !events[1].error, "runtime shutdown first reason wins");
     require(!streams.take_receiver_session("live/runtime-events"), "runtime shutdown releases identity");
@@ -140,15 +140,12 @@ void test_rtsp_pull_first_shutdown_reason()
 
 void test_runtime_event_strings()
 {
-    require(to_string(runtime_event_type::publisher_connected) == "publisher_connected", "runtime event type string");
-    require(to_string(runtime_direction::output) == "output", "runtime event direction string");
+    require(to_string(runtime_kind::source) == "source", "runtime source kind string");
+    require(to_string(runtime_kind::publisher) == "publisher", "runtime publisher kind string");
+    require(to_string(runtime_kind::output) == "output", "runtime output kind string");
     require(to_string(runtime_protocol::whep) == "whep", "runtime event protocol string");
     require(to_string(runtime_state::streaming) == "streaming", "runtime event state string");
     require(to_string(runtime_end_reason::server_shutdown) == "server_shutdown", "runtime event end reason string");
-    require(terminal_event_type(runtime_event_type::source_stopped, runtime_end_reason::protocol_error) == runtime_event_type::protocol_error,
-            "runtime event protocol terminal type");
-    require(terminal_event_type(runtime_event_type::output_stopped, runtime_end_reason::timeout) == runtime_event_type::runtime_error,
-            "runtime event timeout terminal type");
 }
 
 }    // namespace

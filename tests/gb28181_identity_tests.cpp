@@ -77,17 +77,16 @@ void run_on_owner(worker_context& worker, Handler&& handler)
 }
 
 void require_gb_event(const runtime_event& event,
-                      runtime_event_type type,
+                      runtime_kind kind,
                       std::string_view stream_id,
                       std::string_view stream_name,
-                      runtime_direction direction,
                       runtime_state state,
                       std::string_view stage,
                       std::string_view message)
 {
     const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
-    require(event.type == type && event.server_id == "media-1" && event.instance_id == "instance-1" &&
-                event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id && event.direction == direction &&
+    require(event.kind == kind && event.server_id == "media-1" && event.instance_id == "instance-1" &&
+                event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id &&
                 event.protocol == runtime_protocol::gb28181 && event.state == state && stage_matches,
             message);
 }
@@ -295,18 +294,16 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
 
     require(events.values.size() == 2U, "gb receiver emits one starting and one stopped event");
     require_gb_event(events.values[0],
-                     runtime_event_type::source_started,
+                     runtime_kind::source,
                      stream_id,
                      stream_name,
-                     runtime_direction::input,
                      runtime_state::starting,
                      "listening",
                      "gb receiver starting event payload");
     require_gb_event(events.values[1],
-                     runtime_event_type::source_stopped,
+                     runtime_kind::source,
                      stream_id,
                      stream_name,
-                     runtime_direction::input,
                      runtime_state::stopped,
                      {},
                      "gb receiver stopped event payload");
@@ -353,18 +350,16 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
 
     require(events.values.size() == 2U, "gb sender emits one starting and one stopped event");
     require_gb_event(events.values[0],
-                     runtime_event_type::output_started,
+                     runtime_kind::output,
                      stream_id,
                      stream->name(),
-                     runtime_direction::output,
                      runtime_state::starting,
                      "listening",
                      "gb sender starting event payload");
     require_gb_event(events.values[1],
-                     runtime_event_type::output_stopped,
+                     runtime_kind::output,
                      stream_id,
                      stream->name(),
-                     runtime_direction::output,
                      runtime_state::stopped,
                      {},
                      "gb sender stopped event payload");
@@ -402,18 +397,16 @@ void test_tcp_timeout_unregisters_receiver_session()
 
     require(events.values.size() == 2U, "gb receiver timeout event count");
     require_gb_event(events.values[0],
-                     runtime_event_type::source_started,
+                     runtime_kind::source,
                      stream_id,
                      stream_name,
-                     runtime_direction::input,
                      runtime_state::starting,
                      "listening",
                      "gb receiver timeout starting payload");
     require_gb_event(events.values[1],
-                     runtime_event_type::runtime_error,
+                     runtime_kind::source,
                      stream_id,
                      stream_name,
-                     runtime_direction::input,
                      runtime_state::stopped,
                      {},
                      "gb receiver timeout terminal payload");
@@ -452,18 +445,16 @@ void test_tcp_timeout_unregisters_sender_session()
 
     require(events.values.size() == 2U, "gb sender timeout event count");
     require_gb_event(events.values[0],
-                     runtime_event_type::output_started,
+                     runtime_kind::output,
                      stream_id,
                      stream->name(),
-                     runtime_direction::output,
                      runtime_state::starting,
                      "listening",
                      "gb sender timeout starting payload");
     require_gb_event(events.values[1],
-                     runtime_event_type::runtime_error,
+                     runtime_kind::output,
                      stream_id,
                      stream->name(),
-                     runtime_direction::output,
                      runtime_state::stopped,
                      {},
                      "gb sender timeout terminal payload");

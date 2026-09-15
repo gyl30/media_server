@@ -245,7 +245,7 @@ function renderOverviewRuntimes() {
     const row = document.createElement("tr");
     row.append(
       textCell(runtime.stream_name, shortID(runtime.stream_id), { secondaryCode: true }),
-      textCell(runtime.protocol.toUpperCase(), runtime.direction),
+      textCell(runtime.protocol.toUpperCase(), runtimeKindLabel(runtime.kind)),
       badgeCell(runtime.state, toneForState(runtime.state), runtime.stage || ""),
       textCell(runtime.server_id, shortID(runtime.instance_id), { secondaryCode: true }),
     );
@@ -367,7 +367,7 @@ function runtimeDetail(runtime) {
   return "-";
 }
 
-function runtimeTypeLabel(value) {
+function runtimeKindLabel(value) {
   return String(value).replaceAll("_", " ");
 }
 
@@ -387,8 +387,8 @@ function renderRuntimes() {
     const row = document.createElement("tr");
     row.append(
       textCell(runtime.stream_name, runtime.stream_id, { secondaryCode: true }),
-      textCell(runtimeTypeLabel(runtime.type), runtime.source_id ? `source ${shortID(runtime.source_id)}` : ""),
-      textCell(runtime.protocol.toUpperCase(), runtime.direction),
+      textCell(runtimeKindLabel(runtime.kind), runtime.source_id ? `source ${shortID(runtime.source_id)}` : ""),
+      textCell(runtime.protocol.toUpperCase()),
       badgeCell(runtime.state, toneForState(runtime.state), runtime.stage || ""),
       textCell(runtime.server_id, shortID(runtime.instance_id), { secondaryCode: true }),
       textCell(runtimeDetail(runtime), runtime.end_reason && runtime.error ? runtime.end_reason : ""),

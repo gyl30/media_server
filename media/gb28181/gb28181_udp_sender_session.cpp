@@ -327,10 +327,9 @@ void gb28181_udp_sender_session::emit_starting()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = runtime_event_type::output_started,
+            .kind = runtime_kind::output,
             .stream_id = stream_id_,
             .stream_name = stream_name_,
-            .direction = runtime_direction::output,
             .protocol = runtime_protocol::gb28181,
             .state = runtime_state::starting,
         });
@@ -347,10 +346,9 @@ void gb28181_udp_sender_session::emit_streaming()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = runtime_event_type::output_started,
+            .kind = runtime_kind::output,
             .stream_id = stream_id_,
             .stream_name = stream_name_,
-            .direction = runtime_direction::output,
             .protocol = runtime_protocol::gb28181,
             .state = runtime_state::streaming,
             .stage = "streaming",
@@ -369,10 +367,9 @@ void gb28181_udp_sender_session::emit_stopped()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = terminal_event_type(runtime_event_type::output_stopped, end_reason_),
+            .kind = runtime_kind::output,
             .stream_id = stream_id_,
             .stream_name = stream_name_,
-            .direction = runtime_direction::output,
             .protocol = runtime_protocol::gb28181,
             .state = runtime_state::stopped,
             .end_reason = end_reason_,

@@ -210,13 +210,12 @@ void test_publish_claim_uses_caller_executor_and_body()
 void test_runtime_event_accepts_status_only_success()
 {
     media_server::runtime_event event{
-        .type = media_server::runtime_event_type::runtime_error,
+        .kind = media_server::runtime_kind::source,
         .server_id = "media-1",
         .instance_id = "instance-a",
         .stream_id = "00000000-0000-4000-8000-000000000001",
         .stream_name = "live/camera",
         .source_id = "10000000-0000-4000-8000-000000000001",
-        .direction = media_server::runtime_direction::input,
         .protocol = media_server::runtime_protocol::rtsp,
         .state = media_server::runtime_state::stopped,
         .stage = "connecting",
@@ -233,7 +232,7 @@ void test_runtime_event_accepts_status_only_success()
     const auto request = no_content.wait_requests(1).front();
     require(request.target == "/internal/runtime-events", "runtime event endpoint");
     const auto body = boost::json::parse(request.body).as_object();
-    require(body.size() == 12U && body.at("type") == "runtime_error" &&
+    require(body.size() == 11U && body.at("kind") == "source" &&
                 std::string(body.at("stream_id").as_string()) == event.stream_id,
             "runtime event body");
     require(std::string(body.at("source_id").as_string()) == *event.source_id &&

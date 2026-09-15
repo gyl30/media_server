@@ -58,12 +58,11 @@ std::string publish_claim_body(const signaling_client_options& options,
 std::string runtime_event_body(const runtime_event& event)
 {
     boost::json::object body{
-        {"type", to_string(event.type)},
+        {"kind", to_string(event.kind)},
         {"server_id", event.server_id},
         {"instance_id", event.instance_id},
         {"stream_id", event.stream_id},
         {"stream_name", event.stream_name},
-        {"direction", to_string(event.direction)},
         {"protocol", to_string(event.protocol)},
         {"state", to_string(event.state)},
     };

@@ -401,7 +401,7 @@ void test_service_shutdown_latches_output_reason()
     auto reader_barrier = std::make_shared<track_barrier_sink>();
     stream->add_sink(reader_barrier);
     require(reader_barrier->wait_for_track(), "service shutdown reason output reader attaches");
-    require(events.size() == 1U && events[0].type == media_server::runtime_event_type::output_started,
+    require(events.size() == 1U && events[0].kind == media_server::runtime_kind::output,
             "service shutdown reason output emits starting");
 
     std::raise(SIGTERM);
@@ -411,7 +411,7 @@ void test_service_shutdown_latches_output_reason()
     output_worker.io().restart();
     output_worker.run();
 
-    require(events.size() == 2U && events[1].type == media_server::runtime_event_type::output_stopped,
+    require(events.size() == 2U && events[1].kind == media_server::runtime_kind::output,
             "service shutdown reason output stops once");
     require(events[1].end_reason == media_server::runtime_end_reason::server_shutdown,
             "service shutdown reason is latched before source end");
