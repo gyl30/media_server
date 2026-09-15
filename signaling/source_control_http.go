@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-
-	"github.com/google/uuid"
 )
 
 func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, request *http.Request) {
@@ -44,9 +42,9 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		}
 	}
 	runtime := rtspPullRuntime{
-		sourceID: sourceID, streamID: uuid.NewString(), streamName: source.streamName, server: server, starting: true,
+		sourceID: sourceID, streamName: source.streamName, server: server, starting: true,
 	}
-	previous, hadPrevious, err = s.reserveRTSPPull(runtime)
+	runtime, previous, hadPrevious, err = s.reserveRTSPPull(runtime)
 	s.sourceOperationMu.Unlock()
 	if err != nil {
 		s.writeSourceRuntimeError(writer, "start", sourceID, source.streamName, err)
@@ -62,7 +60,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 			cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
 			cleanupErr := s.media.deleteRTSPPull(cleanupContext, server, runtime.streamID, runtime.streamName)
 			cancel()
-			cleanupConfirmed = cleanupErr == nil
+			cleanupConfirmed = cleanupErr == nil || isMediaServerNotFound(cleanupErr)
 			if !cleanupConfirmed {
 				s.logger.Warn("rtsp pull compensation failed", "source_id", sourceID, "stream_name", runtime.streamName,
 					"server_id", server.serverID, "error", cleanupErr)
@@ -181,11 +179,8 @@ func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string) 
 			}
 		}
 		deleteErr := s.media.deleteRTSPPull(ctx, runtime.server, runtime.streamID, runtime.streamName)
-		if deleteErr != nil {
-			var rejection *mediaServerHTTPRejection
-			if runtime.createConfirmed && errors.As(deleteErr, &rejection) && rejection.status == http.StatusNotFound {
-				deleteErr = nil
-			}
+		if isMediaServerNotFound(deleteErr) {
+			deleteErr = nil
 		}
 		if deleteErr != nil {
 			s.finishRTSPPullStop(runtime, false)
@@ -199,7 +194,12 @@ func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string) 
 }
 
 func (s *infrastructureServer) writeSourceRuntimeError(writer http.ResponseWriter, operation, sourceID, streamName string, err error) {
-	if errors.Is(err, errRTSPPullStarting) || errors.Is(err, errRTSPPullStopping) || errors.Is(err, errRTSPPullStreamChanged) {
+	if errors.Is(err, errMediaServerStale) {
+		writeHTTPError(writer, http.StatusServiceUnavailable, "no_media_server")
+		return
+	}
+	if errors.Is(err, errRTSPPullStarting) || errors.Is(err, errRTSPPullStopping) || errors.Is(err, errRTSPPullUnresolved) ||
+		errors.Is(err, errRTSPPullStreamChanged) {
 		writeHTTPError(writer, http.StatusConflict, "conflict")
 		return
 	}
@@ -221,6 +221,11 @@ func (s *infrastructureServer) writeSourceRuntimeError(writer http.ResponseWrite
 	s.logger.Error("source runtime operation failed", "operation", operation, "source_id", sourceID,
 		"stream_name", streamName, "error", err)
 	writeHTTPError(writer, http.StatusBadGateway, "source_"+operation+"_failed")
+}
+
+func isMediaServerNotFound(err error) bool {
+	var rejection *mediaServerHTTPRejection
+	return errors.As(err, &rejection) && rejection.status == http.StatusNotFound
 }
 
 func makeSourceRTSPPullRequest(source rtspSource, streamID string) rtspPullCreateRequest {
