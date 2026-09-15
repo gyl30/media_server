@@ -129,21 +129,52 @@ func TestObservedRuntimeSourceGenerationFencing(t *testing.T) {
 func TestObservedRuntimeRestoresOnlyCurrentSourceBinding(t *testing.T) {
 	runtimes := newObservedRuntimeRegistry()
 	sourceID := "10000000-0000-4000-8000-000000000002"
-	previous, hadPrevious := runtimes.bindSource(sourceID, "20000000-0000-4000-8000-000000000002")
+	previous, hadPrevious, previousRuntime := runtimes.bindSource(sourceID, "20000000-0000-4000-8000-000000000002")
 	if hadPrevious || previous != "" {
 		t.Fatalf("initial binding = %q, %v", previous, hadPrevious)
 	}
-	previous, hadPrevious = runtimes.bindSource(sourceID, "30000000-0000-4000-8000-000000000002")
+	previous, hadPrevious, previousRuntime = runtimes.bindSource(sourceID, "30000000-0000-4000-8000-000000000002")
 	if !hadPrevious || previous != "20000000-0000-4000-8000-000000000002" {
 		t.Fatalf("replacement binding = %q, %v", previous, hadPrevious)
 	}
-	runtimes.restoreSourceBinding(sourceID, "20000000-0000-4000-8000-000000000002", previous, hadPrevious)
+	runtimes.restoreSourceBinding(
+		sourceID, "20000000-0000-4000-8000-000000000002", previous, hadPrevious, previousRuntime)
 	if current := runtimes.currentBySource[sourceID]; current != "30000000-0000-4000-8000-000000000002" {
 		t.Fatalf("stale restore changed binding to %q", current)
 	}
-	runtimes.restoreSourceBinding(sourceID, "30000000-0000-4000-8000-000000000002", previous, hadPrevious)
+	runtimes.restoreSourceBinding(
+		sourceID, "30000000-0000-4000-8000-000000000002", previous, hadPrevious, previousRuntime)
 	if current := runtimes.currentBySource[sourceID]; current != "20000000-0000-4000-8000-000000000002" {
 		t.Fatalf("current restore binding = %q", current)
+	}
+}
+
+func TestObservedRuntimeRestoresEvictedPreviousSourceRuntime(t *testing.T) {
+	runtimes := newObservedRuntimeRegistry()
+	sourceID := "10000000-0000-4000-8000-000000000006"
+	previous := testHistoricalStoppedRuntime(7000)
+	previous.Type = "source_stopped"
+	previous.Protocol = "rtsp"
+	previous.SourceID = sourceID
+	if _, err := runtimes.apply(previous); err != nil {
+		t.Fatalf("apply(previous) error = %v", err)
+	}
+	replacementID := testHistoricalStoppedRuntime(7001).StreamID
+	previousID, hadPrevious, previousRuntime := runtimes.bindSource(sourceID, replacementID)
+	if !hadPrevious || previousID != previous.StreamID {
+		t.Fatalf("previous binding = %q, %v", previousID, hadPrevious)
+	}
+	for index := range maxRecentStoppedRuntimes {
+		if _, err := runtimes.apply(testHistoricalStoppedRuntime(8000 + index)); err != nil {
+			t.Fatalf("apply(history %d) error = %v", index, err)
+		}
+	}
+	if _, exists := runtimes.byStreamID[previous.StreamID]; exists {
+		t.Fatal("previous runtime was not evicted while replacement was current")
+	}
+	runtimes.restoreSourceBinding(sourceID, replacementID, previousID, hadPrevious, previousRuntime)
+	if current, exists := runtimes.currentForSource(sourceID); !exists || current != previous {
+		t.Fatalf("restored runtime = %+v, %v", current, exists)
 	}
 }
 

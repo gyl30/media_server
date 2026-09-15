@@ -106,25 +106,46 @@ func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExist
 	return true, nil
 }
 
-func (r *observedRuntimeRegistry) bindSource(sourceID, streamID string) (string, bool) {
+func (r *observedRuntimeRegistry) bindSource(sourceID, streamID string) (string, bool, *observedRuntime) {
 	r.mu.Lock()
 	previous, existed := r.currentBySource[sourceID]
+	var previousRuntime *observedRuntime
+	if runtime, ok := r.byStreamID[previous]; ok {
+		previousRuntime = &runtime
+	}
 	r.replaceSourceBindingLocked(sourceID, streamID)
 	r.mu.Unlock()
-	return previous, existed
+	return previous, existed, previousRuntime
 }
 
-func (r *observedRuntimeRegistry) restoreSourceBinding(sourceID, expected, previous string, hadPrevious bool) {
+func (r *observedRuntimeRegistry) restoreSourceBinding(
+	sourceID, expected, previous string, hadPrevious bool, previousRuntime *observedRuntime,
+) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.currentBySource[sourceID] != expected {
 		return
 	}
+	if _, observed := r.byStreamID[expected]; observed {
+		return
+	}
 	if hadPrevious {
+		if previousRuntime != nil {
+			if _, exists := r.byStreamID[previous]; !exists {
+				r.byStreamID[previous] = *previousRuntime
+			}
+		}
 		r.replaceSourceBindingLocked(sourceID, previous)
 		return
 	}
 	r.replaceSourceBindingLocked(sourceID, "")
+}
+
+func (r *observedRuntimeRegistry) sourceBinding(sourceID string) (string, bool) {
+	r.mu.RLock()
+	streamID, exists := r.currentBySource[sourceID]
+	r.mu.RUnlock()
+	return streamID, exists
 }
 
 func (r *observedRuntimeRegistry) unbindSource(sourceID, expectedStreamID string) bool {
