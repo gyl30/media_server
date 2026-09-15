@@ -657,21 +657,14 @@ function connectEvents() {
   events.addEventListener("runtime", (message) => {
     try {
       const runtime = JSON.parse(message.data);
-      if (runtime && typeof runtime.stream_id === "string") {
-        state.runtimes.set(runtime.stream_id, runtime);
-        renderMetrics();
-        renderOverviewRuntimes();
-        renderRuntimes();
-        if (runtime.state === "stopped") {
-          void preview.stopIfStream(runtime.stream_id).catch((error) => {
-            renderPreviewState({ state: "failed", target: "", streamID: runtime.stream_id, error: errorCode(error) });
-          });
-        }
-        scheduleSnapshotRefresh();
+      if (runtime && typeof runtime.stream_id === "string" && runtime.state === "stopped") {
+        void preview.stopIfStream(runtime.stream_id).catch((error) => {
+          renderPreviewState({ state: "failed", target: "", streamID: runtime.stream_id, error: errorCode(error) });
+        });
       }
     } catch {
-      scheduleSnapshotRefresh();
     }
+    scheduleSnapshotRefresh();
   });
   events.addEventListener("open", () => {
     setConnectionState("SSE connected", "is-online");
