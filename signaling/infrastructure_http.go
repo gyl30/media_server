@@ -71,15 +71,10 @@ func (s *infrastructureServer) handler() http.Handler {
 		routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
 	}
 
-	web := http.NewServeMux()
-	web.Handle("GET /", embeddedWebHandler())
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/internal/") {
-			routes.ServeHTTP(writer, request)
-			return
-		}
-		web.ServeHTTP(writer, request)
-	})
+	web := embeddedWebHandler()
+	routes.Handle("GET /{$}", web)
+	routes.Handle("GET /{asset}", web)
+	return routes
 }
 
 func (s *infrastructureServer) handleMediaServerRegister(writer http.ResponseWriter, request *http.Request) {

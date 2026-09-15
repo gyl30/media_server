@@ -214,7 +214,8 @@ func (r *observedRuntimeRegistry) replaceSourceBindingLocked(sourceID, streamID 
 
 func (r *observedRuntimeRegistry) retainStoppedLocked(streamID string) {
 	runtime, exists := r.byStreamID[streamID]
-	if !exists || runtime.State != "stopped" || r.sourceReferencesLocked(streamID) {
+	if !exists || runtime.State != "stopped" ||
+		(runtime.SourceID != "" && r.currentBySource[runtime.SourceID] == streamID) {
 		return
 	}
 	r.removeRecentStoppedLocked(streamID)
@@ -239,15 +240,6 @@ func (r *observedRuntimeRegistry) removeRecentStoppedLocked(streamID string) {
 		r.recentStopped = r.recentStopped[:len(r.recentStopped)-1]
 		return
 	}
-}
-
-func (r *observedRuntimeRegistry) sourceReferencesLocked(streamID string) bool {
-	for _, currentStreamID := range r.currentBySource {
-		if currentStreamID == streamID {
-			return true
-		}
-	}
-	return false
 }
 
 func sameRuntimeIdentity(left, right observedRuntime) bool {

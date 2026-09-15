@@ -62,6 +62,29 @@ func TestWebHandlerDoesNotShadowAPIRoutes(t *testing.T) {
 		runtimeResponse.Body.String() != "{\"runtimes\":[]}\n" {
 		t.Fatalf("runtime response = %d %q %q", runtimeResponse.Code, runtimeResponse.Header().Get("Content-Type"), runtimeResponse.Body.String())
 	}
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/not-found"},
+		{method: http.MethodPost, path: "/api/not-found"},
+		{method: http.MethodPost, path: "/internal/not-found"},
+	} {
+		response := httptest.NewRecorder()
+		server.handler().ServeHTTP(response, httptest.NewRequest(test.method, test.path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("%s %s status = %d", test.method, test.path, response.Code)
+		}
+	}
+
+	internalMethodResponse := httptest.NewRecorder()
+	server.handler().ServeHTTP(internalMethodResponse,
+		httptest.NewRequest(http.MethodGet, "/internal/media-servers/register", nil))
+	if internalMethodResponse.Code != http.StatusMethodNotAllowed ||
+		internalMethodResponse.Header().Get("Allow") != http.MethodPost {
+		t.Fatalf("internal wrong method response = %d %q",
+			internalMethodResponse.Code, internalMethodResponse.Header().Get("Allow"))
+	}
 
 	missingResponse := httptest.NewRecorder()
 	server.handler().ServeHTTP(missingResponse, httptest.NewRequest(http.MethodGet, "/missing.css", nil))
