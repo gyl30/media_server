@@ -67,13 +67,12 @@ func (c *mediaServerHTTPClient) createUDPReceiver(
 		StreamID: receiver.streamID, StreamName: receiver.streamName, Transport: "udp", PayloadType: receiver.payloadType, SSRC: receiver.ssrc,
 	}
 	responseBody := struct {
-		RTPPort  uint16 `json:"rtp_port"`
-		RTCPPort uint16 `json:"rtcp_port"`
+		RTPPort uint16 `json:"rtp_port"`
 	}{}
 	if err := c.post(ctx, server.controlURL+"/gb28181/receiver/create", requestBody, http.StatusCreated, &responseBody); err != nil {
 		return gb28181ReceiverEndpoint{}, err
 	}
-	if responseBody.RTPPort == 0 || responseBody.RTPPort%2 != 0 || responseBody.RTCPPort != responseBody.RTPPort+1 {
+	if responseBody.RTPPort == 0 || responseBody.RTPPort%2 != 0 {
 		return gb28181ReceiverEndpoint{}, fmt.Errorf("invalid media server create response")
 	}
 	return gb28181ReceiverEndpoint{

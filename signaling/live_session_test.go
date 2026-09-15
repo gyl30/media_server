@@ -827,7 +827,7 @@ func startLiveTestMediaServer(t *testing.T) (*mediaServerRegistry, *httptest.Ser
 			creates.Add(1)
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusCreated)
-			_, _ = io.WriteString(writer, `{"rtp_port":40000,"rtcp_port":40001}`)
+			_, _ = io.WriteString(writer, `{"rtp_port":40000}`)
 		case "/gb28181/receiver/delete":
 			deletes.Add(1)
 			writer.WriteHeader(http.StatusNoContent)

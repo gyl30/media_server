@@ -137,10 +137,10 @@ void test_receiver_handlers()
         receiver_request(worker, request("/gb28181/receiver/create", create_body), capture_events(events));
     require(create_response.result() == boost::beast::http::status::created, "receiver create response status");
     const auto create_result = boost::json::parse(create_response.body()).as_object();
-    require(create_result.size() == 2U, "receiver create response fields");
+    require(create_result.size() == 1U, "receiver create response fields");
     const auto rtp_port = static_cast<std::uint16_t>(create_result.at("rtp_port").as_int64());
-    const auto rtcp_port = static_cast<std::uint16_t>(create_result.at("rtcp_port").as_int64());
-    require(rtp_port != 0 && (rtp_port & 1U) == 0U && rtcp_port == rtp_port + 1U, "receiver create response port pair");
+    const auto rtcp_port = static_cast<std::uint16_t>(rtp_port + 1U);
+    require(rtp_port != 0 && (rtp_port & 1U) == 0U, "receiver create response RTP port");
     require(events.size() == 1U, "receiver HTTP propagates event emitter");
     require_gb_event(events[0],
                      runtime_kind::source,
@@ -202,7 +202,7 @@ void test_receiver_handlers()
             "receiver HTTP stopped event reason");
 
     const auto released = port_manager::instance().acquire_pair();
-    require(released && released->first == rtp_port && released->second == rtcp_port, "receiver delete releases returned port pair");
+    require(released && released->first == rtp_port && released->second == rtcp_port, "receiver delete releases allocated port pair");
     port_manager::instance().release(*released);
 
     const auto missing_response = receiver_request(worker, request("/gb28181/receiver/delete", delete_body));
