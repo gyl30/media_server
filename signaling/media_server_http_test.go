@@ -122,6 +122,20 @@ func TestMediaServerHTTPCreateAndDeleteRTSPPull(t *testing.T) {
 	}
 }
 
+func TestMediaServerHTTPDeleteReceiverPreservesMissingRuntimeRejection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
+	}))
+	defer server.Close()
+
+	client := newMediaServerHTTPClient(time.Second)
+	err := client.deleteReceiver(context.Background(), mediaServerInstance{controlURL: server.URL}, testStreamID, "gb/device/channel")
+	var rejection *mediaServerHTTPRejection
+	if !errors.As(err, &rejection) || rejection.status != http.StatusInternalServerError || rejection.code != "operation_failed" {
+		t.Fatalf("deleteReceiver() rejection = %#v, error = %v", rejection, err)
+	}
+}
+
 func TestMediaServerHTTPDistinguishesRejectionAndNetworkFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

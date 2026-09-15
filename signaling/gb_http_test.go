@@ -103,7 +103,7 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 	})
 	platform, _ := startRegistrar(t, testConfig())
 	registerLiveTestDevice(t, platform, device.addr)
-	mediaRegistry, _, _, deletes := startLiveTestMediaServer(t, http.StatusNotFound)
+	mediaRegistry, _, _, deletes := startLiveTestMediaServer(t)
 	allocator, err := newSSRCAllocator(platform.cfg.sipDomain)
 	if err != nil {
 		t.Fatalf("newSSRCAllocator() error = %v", err)
