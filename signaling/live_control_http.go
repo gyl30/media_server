@@ -33,6 +33,11 @@ func (s *infrastructureServer) handleLiveStart(writer http.ResponseWriter, reque
 func (s *infrastructureServer) startLive(writer http.ResponseWriter, request *http.Request, deviceID, channelID string) (liveView, bool) {
 	view, err := s.live.startLive(request.Context(), deviceID, channelID)
 	if err != nil {
+		if view.mediaStopped {
+			_, stateErr := s.runtimes.acknowledgeSourceStopped(
+				view.server, view.streamID, view.streamName, "", "gb28181")
+			err = errors.Join(err, stateErr)
+		}
 		switch {
 		case errors.Is(err, errLiveExists):
 			writeHTTPError(writer, http.StatusConflict, "live_exists")

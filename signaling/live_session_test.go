@@ -20,6 +20,17 @@ import (
 	"github.com/google/uuid"
 )
 
+type doneObservedContext struct {
+	context.Context
+	doneObserved chan struct{}
+	once         sync.Once
+}
+
+func (c *doneObservedContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.doneObserved) })
+	return c.Context.Done()
+}
+
 func TestLiveSessionInviteAckByeAndMediaLifecycle(t *testing.T) {
 	device := startLiveTestDevice(t, func(request *sip.Request) ([]byte, int) {
 		return []byte(strings.ReplaceAll(string(request.Body()), "a=recvonly", "a=sendonly")), sip.StatusOK
@@ -211,7 +222,7 @@ func TestLiveSessionStopWhilePreparingReleasesSessionAndSSRC(t *testing.T) {
 		}
 		if request.URL.Path == "/gb28181/receiver/delete" {
 			deletes.Add(1)
-			_, _ = io.WriteString(writer, `{"result":"ok"}`)
+			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
 			return
 		}
 		http.NotFound(writer, request)
@@ -287,7 +298,7 @@ func TestLiveSessionRejectsDuplicateInEveryActiveState(t *testing.T) {
 	live := newLiveService(platform, mediaRegistry, newMediaServerHTTPClient(time.Second), allocator, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	key := liveKey{deviceID: testDeviceID, channelID: testChannelID}
 
-	for _, state := range []liveState{livePreparing, liveInviting, liveStreaming, liveStopping} {
+	for _, state := range []liveState{livePreparing, liveInviting, liveStreaming, liveStopping, liveCleanupPending} {
 		_, cancel := context.WithCancel(context.Background())
 		live.sessions[key] = &liveSession{key: key, state: state, cancel: cancel, established: make(chan struct{})}
 		if _, err := live.startLive(context.Background(), testDeviceID, testChannelID); !errors.Is(err, errLiveExists) {
@@ -298,6 +309,156 @@ func TestLiveSessionRejectsDuplicateInEveryActiveState(t *testing.T) {
 	}
 	if allocator.activeCount() != 0 {
 		t.Fatalf("active SSRCs = %d", allocator.activeCount())
+	}
+}
+
+func TestLiveSessionStopWaitFollowsCleanupRetry(t *testing.T) {
+	live := &liveService{sessions: make(map[liveKey]*liveSession)}
+	key := liveKey{deviceID: testDeviceID, channelID: testChannelID}
+	_, cancel := context.WithCancel(context.Background())
+	session := &liveSession{
+		key: key, state: liveStopping, cancel: cancel, done: make(chan struct{}),
+	}
+	live.sessions[key] = session
+	completedAttempt := make(chan struct{})
+	close(completedAttempt)
+
+	waited := make(chan error, 1)
+	go func() {
+		waited <- live.waitForStop(context.Background(), session, completedAttempt)
+	}()
+	select {
+	case err := <-waited:
+		t.Fatalf("waitForStop() returned before retry completed: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	live.mu.Lock()
+	delete(live.sessions, key)
+	close(session.done)
+	live.mu.Unlock()
+	cancel()
+	select {
+	case err := <-waited:
+		if err != nil {
+			t.Fatalf("waitForStop() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waitForStop() did not observe retry completion")
+	}
+}
+
+func TestLiveSessionAmbiguousCreateFailureWakesConcurrentStops(t *testing.T) {
+	device := startLiveTestDevice(t, func(request *sip.Request) ([]byte, int) {
+		return []byte(strings.ReplaceAll(string(request.Body()), "a=recvonly", "a=sendonly")), sip.StatusOK
+	})
+	platform, _ := startRegistrar(t, testConfig())
+	registerLiveTestDevice(t, platform, device.addr)
+	createStarted := make(chan struct{})
+	releaseCreate := make(chan struct{}, 1)
+	deleteStarted := make(chan struct{})
+	releaseDelete := make(chan struct{}, 1)
+	defer func() {
+		select {
+		case releaseCreate <- struct{}{}:
+		default:
+		}
+		select {
+		case releaseDelete <- struct{}{}:
+		default:
+		}
+	}()
+	deletes := &atomic.Int32{}
+	mediaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/gb28181/receiver/create":
+			close(createStarted)
+			<-releaseCreate
+			writer.Header().Set("Content-Type", "text/plain")
+			writer.WriteHeader(http.StatusCreated)
+		case "/gb28181/receiver/delete":
+			if deletes.Add(1) == 1 {
+				close(deleteStarted)
+				<-releaseDelete
+				writeHTTPError(writer, http.StatusServiceUnavailable, "operation_failed")
+				return
+			}
+			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(mediaServer.Close)
+	mediaRegistry := newMediaServerRegistry()
+	if err := mediaRegistry.register(mediaServerRegistration{
+		ServerID: "media-1", InstanceID: "instance-a", ControlURL: mediaServer.URL, MediaIP: "127.0.0.1",
+	}, time.Now()); err != nil {
+		t.Fatalf("register media server error = %v", err)
+	}
+	allocator, _ := newSSRCAllocator(platform.cfg.sipDomain)
+	live := newLiveService(platform, mediaRegistry, newMediaServerHTTPClient(time.Second), allocator,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	started := make(chan error, 1)
+	go func() {
+		_, err := live.startLive(context.Background(), testDeviceID, testChannelID)
+		started <- err
+	}()
+	select {
+	case <-createStarted:
+	case <-time.After(time.Second):
+		t.Fatal("media create did not start")
+	}
+	firstStopContext := &doneObservedContext{Context: context.Background(), doneObserved: make(chan struct{})}
+	firstStop := make(chan error, 1)
+	go func() { firstStop <- live.stopLive(firstStopContext, testDeviceID, testChannelID) }()
+	select {
+	case <-firstStopContext.doneObserved:
+	case <-time.After(time.Second):
+		t.Fatal("first stop did not wait for create")
+	}
+	releaseCreate <- struct{}{}
+	select {
+	case <-deleteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("create compensation did not start")
+	}
+	secondStopContext := &doneObservedContext{Context: context.Background(), doneObserved: make(chan struct{})}
+	secondStop := make(chan error, 1)
+	go func() { secondStop <- live.stopLive(secondStopContext, testDeviceID, testChannelID) }()
+	select {
+	case <-secondStopContext.doneObserved:
+	case <-time.After(time.Second):
+		t.Fatal("second stop did not wait for cleanup")
+	}
+	releaseDelete <- struct{}{}
+
+	for name, result := range map[string]<-chan error{
+		"start": started, "first stop": firstStop, "second stop": secondStop,
+	} {
+		select {
+		case err := <-result:
+			if err == nil {
+				t.Fatalf("%s succeeded after cleanup failure", name)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s did not return after cleanup failure", name)
+		}
+	}
+	live.mu.Lock()
+	session := live.sessions[liveKey{deviceID: testDeviceID, channelID: testChannelID}]
+	live.mu.Unlock()
+	if session == nil || session.state != liveCleanupPending || live.len() != 1 || allocator.activeCount() != 1 {
+		t.Fatalf("retained cleanup state session=%+v live=%d ssrc=%d", session, live.len(), allocator.activeCount())
+	}
+
+	live.runtimeStopped(session.server.serverID, session.server.instanceID, session.streamID, session.streamName)
+	if deletes.Load() != 1 || live.len() != 0 || allocator.activeCount() != 0 {
+		t.Fatalf("runtime stop cleanup delete=%d live=%d ssrc=%d", deletes.Load(), live.len(), allocator.activeCount())
+	}
+	select {
+	case <-device.invites:
+		t.Fatal("INVITE was sent after canceled media create")
+	default:
 	}
 }
 
@@ -473,7 +634,7 @@ func TestStoppingSessionWaitsForCleanup(t *testing.T) {
 		t.Fatalf("stopLive() returned before cleanup: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}
-	close(session.done)
+	live.remove(session)
 	if err := <-stopped; err != nil {
 		t.Fatalf("stopLive() error = %v", err)
 	}
@@ -656,14 +817,10 @@ func registerLiveTestDevice(t *testing.T, platform *sipServer, deviceAddr string
 	}
 }
 
-func startLiveTestMediaServer(t *testing.T, deleteStatus ...int) (*mediaServerRegistry, *httptest.Server, *atomic.Int32, *atomic.Int32) {
+func startLiveTestMediaServer(t *testing.T) (*mediaServerRegistry, *httptest.Server, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 	creates := &atomic.Int32{}
 	deletes := &atomic.Int32{}
-	status := http.StatusOK
-	if len(deleteStatus) != 0 {
-		status = deleteStatus[0]
-	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
@@ -673,11 +830,6 @@ func startLiveTestMediaServer(t *testing.T, deleteStatus ...int) (*mediaServerRe
 			_, _ = io.WriteString(writer, `{"result":"ok","rtp_port":40000,"rtcp_port":40001}`)
 		case "/gb28181/receiver/delete":
 			deletes.Add(1)
-			if status == http.StatusNotFound {
-				writer.WriteHeader(status)
-				_, _ = io.WriteString(writer, `{"error":"not_found"}`)
-				return
-			}
 			_, _ = io.WriteString(writer, `{"result":"ok"}`)
 		default:
 			http.NotFound(writer, request)

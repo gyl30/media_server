@@ -28,10 +28,11 @@ var (
 type liveState string
 
 const (
-	livePreparing liveState = "preparing"
-	liveInviting  liveState = "inviting"
-	liveStreaming liveState = "streaming"
-	liveStopping  liveState = "stopping"
+	livePreparing      liveState = "preparing"
+	liveInviting       liveState = "inviting"
+	liveStreaming      liveState = "streaming"
+	liveStopping       liveState = "stopping"
+	liveCleanupPending liveState = "cleanup_pending"
 )
 
 type liveKey struct {
@@ -54,15 +55,17 @@ type liveSession struct {
 	done         chan struct{}
 	deleteMedia  bool
 	mediaStopped bool
+	cleanupErr   error
 }
 
 type liveView struct {
-	streamID   string
-	streamName string
-	server     mediaServerInstance
-	state      liveState
-	ssrc       uint32
-	rtpPort    uint16
+	streamID     string
+	streamName   string
+	server       mediaServerInstance
+	state        liveState
+	ssrc         uint32
+	rtpPort      uint16
+	mediaStopped bool
 }
 
 type liveService struct {
@@ -151,20 +154,42 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	})
 	if err != nil {
 		var rejection *mediaServerHTTPRejection
-		if !errors.As(err, &rejection) && s.shouldDeleteMedia(session) {
+		ambiguousCreate := !errors.As(err, &rejection)
+		deleteMedia := s.shouldDeleteMedia(session)
+		cleanupConfirmed := !ambiguousCreate || !deleteMedia
+		compensationAttempted := ambiguousCreate && deleteMedia
+		if compensationAttempted {
 			cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
-			_ = s.media.deleteReceiver(cleanupContext, server, session.streamID, session.streamName)
+			cleanupErr := s.media.deleteReceiver(cleanupContext, server, session.streamID, session.streamName)
 			cleanupCancel()
+			cleanupConfirmed = cleanupErr == nil
+			if !cleanupConfirmed {
+				s.logger.Warn("live create compensation failed", "stream_name", session.streamName,
+					"stream_id", session.streamID, "error", cleanupErr)
+			}
 		}
-		s.remove(session)
-		return liveView{}, err
+		s.mu.Lock()
+		if current, ok := s.sessions[session.key]; ok && current == session {
+			remoteStopped := !session.deleteMedia
+			cleanupConfirmed = cleanupConfirmed || remoteStopped
+			if cleanupConfirmed {
+				session.mediaStopped = session.mediaStopped || compensationAttempted || remoteStopped
+			} else {
+				markCleanupPendingLocked(session, err)
+			}
+		}
+		view := makeLiveView(session)
+		s.mu.Unlock()
+		if cleanupConfirmed {
+			s.remove(session)
+		}
+		return view, err
 	}
 	s.mu.Lock()
 	session.endpoint = endpoint
 	if session.state != livePreparing {
 		s.mu.Unlock()
-		s.cleanup(session, false, true)
-		return liveView{}, context.Canceled
+		return s.finishFailedStart(session, context.Canceled, false)
 	}
 	session.state = liveInviting
 	s.mu.Unlock()
@@ -173,8 +198,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		channelID: channelID, mediaIP: endpoint.address, rtpPort: endpoint.rtpPort, payloadType: endpoint.payloadType, ssrc: endpoint.ssrc,
 	})
 	if err != nil {
-		s.cleanup(session, false, true)
-		return liveView{}, err
+		return s.finishFailedStart(session, err, false)
 	}
 	recipient := *device.contact.Clone()
 	recipient.User = channelID
@@ -203,8 +227,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	}
 	dialog, err := dialogUA.WriteInvite(operationContext, request)
 	if err != nil {
-		s.cleanup(session, false, true)
-		return liveView{}, err
+		return s.finishFailedStart(session, err, false)
 	}
 	s.mu.Lock()
 	session.dialog = dialog
@@ -217,8 +240,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	inviteCancel()
 	if err != nil {
 		_ = dialog.Close()
-		s.cleanup(session, false, true)
-		return liveView{}, err
+		return s.finishFailedStart(session, err, false)
 	}
 	contentType := dialog.InviteResponse.ContentType()
 	mediaType := ""
@@ -230,27 +252,32 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		_ = dialog.Ack(ackContext)
 		_ = dialog.Bye(ackContext)
 		ackCancel()
-		s.cleanup(session, false, true)
-		return liveView{}, fmt.Errorf("invalid INVITE answer SDP")
+		return s.finishFailedStart(session, fmt.Errorf("invalid INVITE answer SDP"), false)
 	}
 	ackContext, ackCancel := context.WithTimeout(operationContext, s.byeTimeout)
 	err = dialog.Ack(ackContext)
 	ackCancel()
 	if err != nil {
 		_ = dialog.Close()
-		s.cleanup(session, false, true)
-		return liveView{}, err
+		return s.finishFailedStart(session, err, false)
 	}
 	s.mu.Lock()
 	if session.state != liveInviting {
 		s.mu.Unlock()
-		s.cleanup(session, true, true)
-		return liveView{}, context.Canceled
+		return s.finishFailedStart(session, context.Canceled, true)
 	}
 	session.state = liveStreaming
 	view := makeLiveView(session)
 	s.mu.Unlock()
 	return view, nil
+}
+
+func (s *liveService) finishFailedStart(session *liveSession, cause error, sendBye bool) (liveView, error) {
+	cleanupErr := s.cleanup(session, sendBye, true)
+	s.mu.Lock()
+	view := makeLiveView(session)
+	s.mu.Unlock()
+	return view, errors.Join(cause, cleanupErr)
 }
 
 func (s *liveService) live(deviceID, channelID string) (liveView, bool) {
@@ -310,31 +337,50 @@ func (s *liveService) stopSessionLocked(ctx context.Context, session *liveSessio
 	if !deleteMedia {
 		session.deleteMedia = false
 	}
+	if session.state == liveCleanupPending {
+		session.state = liveStopping
+		session.cleanupErr = nil
+		s.mu.Unlock()
+		return s.cleanup(session, false, true)
+	}
 	if session.state == livePreparing || session.state == liveInviting {
 		session.state = liveStopping
 		session.cancel()
 		established := session.established
 		s.mu.Unlock()
-		select {
-		case <-established:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return s.waitForStop(ctx, session, established)
 	}
 	if session.state == liveStopping {
 		done := session.done
 		s.mu.Unlock()
-		select {
-		case <-done:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return s.waitForStop(ctx, session, done)
 	}
 	session.state = liveStopping
 	s.mu.Unlock()
 	return s.cleanup(session, true, true)
+}
+
+func (s *liveService) waitForStop(ctx context.Context, session *liveSession, wait <-chan struct{}) error {
+	for {
+		select {
+		case <-wait:
+			s.mu.Lock()
+			current, exists := s.sessions[session.key]
+			if !exists || current != session {
+				s.mu.Unlock()
+				return nil
+			}
+			if session.state == liveCleanupPending {
+				err := session.cleanupErr
+				s.mu.Unlock()
+				return err
+			}
+			wait = session.done
+			s.mu.Unlock()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func (s *liveService) deviceOffline(ctx context.Context, deviceID string) {
@@ -406,11 +452,13 @@ func (s *liveService) cleanup(session *liveSession, sendBye, deleteMedia bool) e
 	} else if session.dialog != nil {
 		_ = session.dialog.Close()
 	}
-	if deleteRuntime && session.endpoint.rtpPort != 0 {
+	if deleteRuntime {
 		cleanupContext, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
 		if err := s.media.deleteReceiver(cleanupContext, session.server, session.streamID, session.streamName); err != nil {
 			var rejection *mediaServerHTTPRejection
-			if !errors.As(err, &rejection) || rejection.status != http.StatusNotFound {
+			missingCompletedRuntime := session.endpoint.rtpPort != 0 && errors.As(err, &rejection) &&
+				rejection.status == http.StatusInternalServerError && rejection.code == "operation_failed"
+			if !missingCompletedRuntime {
 				result = errors.Join(result, err)
 			} else {
 				mediaStopped = true
@@ -421,10 +469,25 @@ func (s *liveService) cleanup(session *liveSession, sendBye, deleteMedia bool) e
 		cancel()
 	}
 	s.mu.Lock()
+	mediaStopped = mediaStopped || !session.deleteMedia
 	session.mediaStopped = session.mediaStopped || mediaStopped
+	if !mediaStopped {
+		if current, ok := s.sessions[session.key]; ok && current == session {
+			markCleanupPendingLocked(session, result)
+		}
+		s.mu.Unlock()
+		return result
+	}
 	s.mu.Unlock()
 	s.remove(session)
 	return result
+}
+
+func markCleanupPendingLocked(session *liveSession, err error) {
+	session.state = liveCleanupPending
+	session.cleanupErr = err
+	close(session.done)
+	session.done = make(chan struct{})
 }
 
 func (s *liveService) shouldDeleteMedia(session *liveSession) bool {
@@ -490,8 +553,12 @@ func (s *liveService) len() int {
 }
 
 func makeLiveView(session *liveSession) liveView {
+	state := session.state
+	if state == liveCleanupPending {
+		state = liveStopping
+	}
 	return liveView{
-		streamID: session.streamID, streamName: session.streamName, server: session.server, state: session.state,
-		ssrc: session.ssrc, rtpPort: session.endpoint.rtpPort,
+		streamID: session.streamID, streamName: session.streamName, server: session.server, state: state,
+		ssrc: session.ssrc, rtpPort: session.endpoint.rtpPort, mediaStopped: session.mediaStopped,
 	}
 }
