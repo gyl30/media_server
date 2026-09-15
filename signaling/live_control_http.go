@@ -21,7 +21,6 @@ func (s *infrastructureServer) handleLiveStart(writer http.ResponseWriter, reque
 		return
 	}
 	writeJSON(writer, http.StatusCreated, map[string]any{
-		"result":      "ok",
 		"stream_id":   view.streamID,
 		"stream_name": view.streamName,
 		"state":       view.state,
@@ -62,10 +61,12 @@ func (s *infrastructureServer) handleLiveStop(writer http.ResponseWriter, reques
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	s.stopLive(writer, request, command.DeviceID, command.ChannelID, "")
+	if s.stopLive(writer, request, command.DeviceID, command.ChannelID, "") {
+		writer.WriteHeader(http.StatusNoContent)
+	}
 }
 
-func (s *infrastructureServer) stopLive(writer http.ResponseWriter, request *http.Request, deviceID, channelID, streamID string) {
+func (s *infrastructureServer) stopLive(writer http.ResponseWriter, request *http.Request, deviceID, channelID, streamID string) bool {
 	live, mediaStopped, err := s.live.stopLiveRuntime(request.Context(), deviceID, channelID, streamID)
 	if mediaStopped {
 		_, stateErr := s.runtimes.acknowledgeSourceStopped(
@@ -82,8 +83,7 @@ func (s *infrastructureServer) stopLive(writer http.ResponseWriter, request *htt
 			s.logger.Error("live stop failed", "device_id", deviceID, "channel_id", channelID, "error", err)
 			writeHTTPError(writer, http.StatusBadGateway, "live_stop_failed")
 		}
-		return
+		return false
 	}
-
-	writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+	return true
 }

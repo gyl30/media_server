@@ -17,7 +17,6 @@ type liveControlRequest struct {
 }
 
 type liveStartResponse struct {
-	Result     string `json:"result"`
 	StreamID   string `json:"stream_id"`
 	StreamName string `json:"stream_name"`
 	State      string `json:"state"`
@@ -46,7 +45,7 @@ func (c controlClient) startLive(ctx context.Context, deviceID, channelID string
 }
 
 func (c controlClient) stopLive(ctx context.Context, deviceID, channelID string) error {
-	return c.post(ctx, "/internal/live/stop", liveControlRequest{DeviceID: deviceID, ChannelID: channelID}, http.StatusOK, nil)
+	return c.post(ctx, "/internal/live/stop", liveControlRequest{DeviceID: deviceID, ChannelID: channelID}, http.StatusNoContent, nil)
 }
 
 func (c controlClient) post(ctx context.Context, path string, value any, expected int, output any) error {
