@@ -17,13 +17,13 @@ func TestPublishClaimHTTP(t *testing.T) {
 		t.Fatalf("register() error = %v", err)
 	}
 	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	allocation := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
+	streamID := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
 		serverID: "media-1", instanceID: "instance-a",
 	}, time.Now())
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 	command := map[string]string{
-		"stream_id": allocation.streamID, "server_id": "media-1", "instance_id": "instance-a",
+		"stream_id": streamID, "server_id": "media-1", "instance_id": "instance-a",
 		"protocol": "rtmp", "stream_name": "live/camera",
 	}
 
@@ -44,7 +44,7 @@ func TestPublishClaimHTTPFencesOfflineAllocatedInstance(t *testing.T) {
 		t.Fatalf("register old instance error = %v", err)
 	}
 	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	allocation := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
+	streamID := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
 		serverID: old.ServerID, instanceID: old.InstanceID,
 	}, now)
 	if offline := registry.expire(now.Add(16*time.Second), 15*time.Second); len(offline) != 1 {
@@ -58,21 +58,21 @@ func TestPublishClaimHTTPFencesOfflineAllocatedInstance(t *testing.T) {
 	defer httpServer.Close()
 
 	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", map[string]string{
-		"stream_id": allocation.streamID, "server_id": old.ServerID, "instance_id": old.InstanceID,
+		"stream_id": streamID, "server_id": old.ServerID, "instance_id": old.InstanceID,
 		"protocol": "rtmp", "stream_name": "live/camera",
 	})
 	assertHTTPError(t, response, http.StatusGone, "stale_instance")
-	stored, ok := storedPublishAllocation(server.allocations, allocation.streamID)
+	stored, ok := storedPublishAllocation(server.allocations, streamID)
 	if !ok {
 		t.Fatalf("allocation after stale claim = %+v, exists = %v", stored, ok)
 	}
 
 	response = postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", map[string]string{
-		"stream_id": allocation.streamID, "server_id": replacement.ServerID, "instance_id": replacement.InstanceID,
+		"stream_id": streamID, "server_id": replacement.ServerID, "instance_id": replacement.InstanceID,
 		"protocol": "rtmp", "stream_name": "live/camera",
 	})
 	assertHTTPError(t, response, http.StatusConflict, "allocation_conflict")
-	stored, ok = storedPublishAllocation(server.allocations, allocation.streamID)
+	stored, ok = storedPublishAllocation(server.allocations, streamID)
 	if !ok {
 		t.Fatalf("allocation after replacement claim = %+v, exists = %v", stored, ok)
 	}
@@ -128,14 +128,14 @@ func TestPublishClaimHTTPReportsExpiredAllocation(t *testing.T) {
 		t.Fatalf("register() error = %v", err)
 	}
 	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	allocation := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
+	streamID := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
 		serverID: "media-1", instanceID: "instance-a",
 	}, time.Now().Add(-publishAllocationTTL))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 
 	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", map[string]string{
-		"stream_id": allocation.streamID, "server_id": "media-1", "instance_id": "instance-a",
+		"stream_id": streamID, "server_id": "media-1", "instance_id": "instance-a",
 		"protocol": "rtmp", "stream_name": "live/camera",
 	})
 	assertHTTPError(t, response, http.StatusNotFound, "allocation_not_found")
