@@ -81,6 +81,7 @@ func decodeMANSCDP(body []byte, target any) error {
 }
 
 func (s *sipServer) expireDevices(now time.Time) {
+	s.auth.expire(now)
 	s.channels.expire(now)
 	for _, deviceID := range s.devices.expire(now, s.cfg.heartbeatTimeout) {
 		s.notifyDeviceOffline(deviceID)

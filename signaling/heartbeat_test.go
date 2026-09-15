@@ -70,6 +70,7 @@ func TestDeviceTimeoutTransitionsOfflineOnce(t *testing.T) {
 	var offline []string
 	server := sipServer{
 		cfg:             config{heartbeatTimeout: time.Minute},
+		auth:            newDigestAuthenticator("3402000000", "password"),
 		devices:         registry,
 		channels:        newChannelRegistry(),
 		onDeviceOffline: func(deviceID string) { offline = append(offline, deviceID) },
@@ -97,6 +98,7 @@ func TestRegistrationExpiryTransitionsOfflineOnce(t *testing.T) {
 	var offline []string
 	server := sipServer{
 		cfg:             config{heartbeatTimeout: time.Hour},
+		auth:            newDigestAuthenticator("3402000000", "password"),
 		devices:         registry,
 		channels:        newChannelRegistry(),
 		onDeviceOffline: func(deviceID string) { offline = append(offline, deviceID) },
@@ -108,6 +110,25 @@ func TestRegistrationExpiryTransitionsOfflineOnce(t *testing.T) {
 	}
 	if len(offline) != 1 || offline[0] != testDeviceID {
 		t.Fatalf("offline callbacks = %v", offline)
+	}
+}
+
+func TestSIPExpiryRemovesExpiredDigestNonces(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	auth := newDigestAuthenticator("3402000000", "password")
+	auth.nonces["expired"] = digestNonce{deviceID: testDeviceID, expires: now}
+	auth.nonces["current"] = digestNonce{deviceID: testDeviceID, expires: now.Add(time.Nanosecond)}
+	server := sipServer{
+		cfg: config{heartbeatTimeout: time.Minute}, auth: auth,
+		devices: newDeviceRegistry(), channels: newChannelRegistry(),
+	}
+
+	server.expireDevices(now)
+	if _, exists := auth.nonces["expired"]; exists {
+		t.Fatal("expired digest nonce remains")
+	}
+	if _, exists := auth.nonces["current"]; !exists {
+		t.Fatal("current digest nonce was removed")
 	}
 }
 
