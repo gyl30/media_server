@@ -47,7 +47,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		s.writeSourceRuntimeError(writer, "start", sourceID, source.streamName, err)
 		return
 	}
-	previousGeneration, hadPreviousGeneration := s.runtimes.bindSource(sourceID, runtime.streamID)
+	previousGeneration, hadPreviousGeneration, previousObserved := s.runtimes.bindSource(sourceID, runtime.streamID)
 	command := makeSourceRTSPPullRequest(source, runtime.streamID)
 	if err := s.media.createRTSPPull(request.Context(), server, command); err != nil {
 		var rejection *mediaServerHTTPRejection
@@ -60,9 +60,9 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 					"server_id", server.serverID, "error", cleanupErr)
 			}
 		}
-		if s.rollbackRTSPPull(runtime, previous, hadPrevious) {
-			s.runtimes.restoreSourceBinding(sourceID, runtime.streamID, previousGeneration, hadPreviousGeneration)
-		}
+		s.rollbackRTSPPull(runtime, previous, hadPrevious)
+		s.runtimes.restoreSourceBinding(
+			sourceID, runtime.streamID, previousGeneration, hadPreviousGeneration, previousObserved)
 		s.writeSourceRuntimeError(writer, "start", sourceID, source.streamName, err)
 		return
 	}
@@ -72,7 +72,8 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 			s.removeRTSPPull(runtime)
 		}
 		if observed, ok := s.runtimes.currentForSource(sourceID); !ok || observed.StreamID != runtime.streamID {
-			s.runtimes.restoreSourceBinding(sourceID, runtime.streamID, previousGeneration, hadPreviousGeneration)
+			s.runtimes.restoreSourceBinding(
+				sourceID, runtime.streamID, previousGeneration, hadPreviousGeneration, previousObserved)
 		}
 		cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
 		cleanupErr := s.media.deleteRTSPPull(cleanupContext, server, runtime.streamID, runtime.streamName)
@@ -85,10 +86,30 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		writeHTTPError(writer, http.StatusServiceUnavailable, "no_media_server")
 		return
 	}
+	currentSource, sourceErr := s.sources.get(request.Context(), sourceID)
+	if sourceErr != nil {
+		if s.removeRTSPPull(runtime) {
+			cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
+			cleanupErr := s.media.deleteRTSPPull(cleanupContext, server, runtime.streamID, runtime.streamName)
+			cancel()
+			var rejection *mediaServerHTTPRejection
+			if cleanupErr != nil && (!errors.As(cleanupErr, &rejection) || rejection.status != http.StatusNotFound) {
+				s.logger.Warn("deleted source rtsp pull cleanup failed", "source_id", sourceID, "stream_name", runtime.streamName,
+					"server_id", server.serverID, "error", cleanupErr)
+			}
+		}
+		s.runtimes.unbindSource(sourceID, runtime.streamID)
+		if errors.Is(sourceErr, errSourceNotFound) {
+			writeHTTPError(writer, http.StatusConflict, "conflict")
+		} else {
+			s.writeSourceRuntimeError(writer, "start", sourceID, source.streamName, sourceErr)
+		}
+		return
+	}
 	if finished {
 		if observed, ok := s.runtimes.currentForSource(sourceID); ok && observed.StreamID == runtime.streamID && observed.State == "stopped" {
 			s.removeRTSPPull(runtime)
-		} else if current, err := s.sources.get(request.Context(), sourceID); err == nil && current.desiredState == sourceDesiredStopped {
+		} else if currentSource.desiredState == sourceDesiredStopped {
 			if err := s.stopSource(request.Context(), sourceID); err != nil {
 				s.writeSourceRuntimeError(writer, "stop", sourceID, source.streamName, err)
 				return

@@ -432,6 +432,46 @@ func TestSourceControlRejectsCreateCompletedAfterMediaServerOffline(t *testing.T
 	}
 }
 
+func TestSourceControlRestoresBindingAfterOfflineCreateFailure(t *testing.T) {
+	createStarted := make(chan struct{})
+	releaseCreate := make(chan struct{})
+	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/rtsp/pull/create" {
+			http.NotFound(writer, request)
+			return
+		}
+		close(createStarted)
+		<-releaseCreate
+		writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
+	}))
+	defer media.Close()
+	server := newSourceControlTestServer(t, media.URL)
+	source := createControlTestSource(t, server, "live/offline-failure", "", "")
+	started := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		started <- sourceRequest(t, server.handler(), http.MethodPost, "/api/sources/"+source.sourceID+"/start", "", "")
+	}()
+	select {
+	case <-createStarted:
+	case <-time.After(time.Second):
+		t.Fatal("create did not start")
+	}
+	offline := server.registry.expire(time.Now().Add(time.Hour), time.Minute)
+	if len(offline) != 1 {
+		t.Fatalf("expired media servers = %d", len(offline))
+	}
+	server.removeRTSPPullsForMediaServer(offline[0])
+	server.runtimes.mediaServerOffline(offline[0].serverID, offline[0].instanceID)
+	close(releaseCreate)
+	response := <-started
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("failed create status/body = %d %s", response.Code, response.Body.String())
+	}
+	if _, bound := server.runtimes.currentBySource[source.sourceID]; bound {
+		t.Fatal("failed create retained unobserved source binding")
+	}
+}
+
 func TestSourceControlCompensatesAmbiguousCreateFailure(t *testing.T) {
 	created := make(chan rtspPullCreateRequest, 1)
 	deleted := make(chan sourceMediaCommand, 1)
@@ -633,6 +673,92 @@ func TestSourceDeletePreservesSourceWhenRuntimeDeleteFails(t *testing.T) {
 	}
 	if runtime, exists := server.runtimes.byStreamID[streamID]; !exists || runtime.State != "stopped" {
 		t.Fatalf("deleted source runtime = %+v, %v", runtime, exists)
+	}
+}
+
+func TestSourceDeleteUnbindsUnobservedRuntime(t *testing.T) {
+	server := newSourceControlTestServer(t, "http://127.0.0.1:1")
+	source := createControlTestSource(t, server, "live/delete-unobserved", "", "")
+	streamID := uuid.NewString()
+	server.runtimes.bindSource(source.sourceID, streamID)
+
+	response := sourceRequest(t, server.handler(), http.MethodDelete, "/api/sources/"+source.sourceID, "", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("delete status/body = %d %s", response.Code, response.Body.String())
+	}
+	if _, bound := server.runtimes.currentBySource[source.sourceID]; bound {
+		t.Fatal("deleted source retained unobserved runtime binding")
+	}
+}
+
+func TestSourceStartCompensatesConcurrentDelete(t *testing.T) {
+	commands := make(chan sourceMediaCommand, 2)
+	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/rtsp/pull/create":
+			var command rtspPullCreateRequest
+			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
+				t.Errorf("decode create: %v", err)
+			}
+			commands <- sourceMediaCommand{path: request.URL.Path, body: command}
+			writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok"})
+		case "/rtsp/pull/delete":
+			var command struct {
+				StreamID   string `json:"stream_id"`
+				StreamName string `json:"stream_name"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
+				t.Errorf("decode delete: %v", err)
+			}
+			commands <- sourceMediaCommand{path: request.URL.Path, streamID: command.StreamID, streamName: command.StreamName}
+			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer media.Close()
+	server := newSourceControlTestServer(t, media.URL)
+	source := createControlTestSource(t, server, "live/start-delete-race", "", "")
+
+	server.registry.mu.Lock()
+	started := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		started <- sourceRequest(t, server.handler(), http.MethodPost, "/api/sources/"+source.sourceID+"/start", "", "")
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		stored, err := server.sources.get(t.Context(), source.sourceID)
+		if err == nil && stored.desiredState == sourceDesiredRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			server.registry.mu.Unlock()
+			t.Fatalf("start did not update desired state: %+v, %v", stored, err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	deleted := sourceRequest(t, server.handler(), http.MethodDelete, "/api/sources/"+source.sourceID, "", "")
+	if deleted.Code != http.StatusOK {
+		server.registry.mu.Unlock()
+		t.Fatalf("delete status/body = %d %s", deleted.Code, deleted.Body.String())
+	}
+	server.registry.mu.Unlock()
+
+	response := <-started
+	if response.Code != http.StatusConflict {
+		t.Fatalf("racing start status/body = %d %s", response.Code, response.Body.String())
+	}
+	create := waitSourceControlRequest(t, commands)
+	remove := waitSourceControlRequest(t, commands)
+	if create.path != "/rtsp/pull/create" || remove.path != "/rtsp/pull/delete" ||
+		remove.streamID != create.body.StreamID || remove.streamName != source.streamName {
+		t.Fatalf("compensation commands = %+v / %+v", create, remove)
+	}
+	if _, ok := server.rtspSourceRuntime(source.sourceID); ok {
+		t.Fatal("concurrent delete retained runtime ownership")
+	}
+	if _, bound := server.runtimes.currentBySource[source.sourceID]; bound {
+		t.Fatal("concurrent delete retained source binding")
 	}
 }
 
