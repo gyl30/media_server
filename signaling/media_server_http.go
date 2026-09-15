@@ -31,7 +31,7 @@ type gb28181ReceiverEndpoint struct {
 
 type rtspPullCreateRequest struct {
 	StreamID   string  `json:"stream_id"`
-	SourceID   *string `json:"source_id,omitempty"`
+	SourceID   string  `json:"source_id"`
 	StreamName string  `json:"stream_name"`
 	URL        string  `json:"url"`
 	Username   *string `json:"username,omitempty"`

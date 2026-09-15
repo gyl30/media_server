@@ -95,11 +95,11 @@ func TestMediaServerHTTPCreateAndDeleteRTSPPull(t *testing.T) {
 
 	username := "admin"
 	password := ""
-	sourceID := "source-1"
+	sourceID := "10000000-0000-4000-8000-000000000001"
 	client := newMediaServerHTTPClient(time.Second)
 	instance := mediaServerInstance{controlURL: server.URL}
 	command := rtspPullCreateRequest{
-		StreamID: testStreamID, SourceID: &sourceID, StreamName: "live/camera", URL: "rtsp://192.0.2.10/live", Username: &username, Password: &password,
+		StreamID: testStreamID, SourceID: sourceID, StreamName: "live/camera", URL: "rtsp://192.0.2.10/live", Username: &username, Password: &password,
 	}
 	if err := client.createRTSPPull(context.Background(), instance, command); err != nil {
 		t.Fatalf("createRTSPPull() error = %v", err)

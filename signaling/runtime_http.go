@@ -130,7 +130,8 @@ func makeObservedRuntime(payload runtimeEventRequest) (observedRuntime, bool) {
 func validRuntimeEvent(event observedRuntime) bool {
 	if event.ServerID == "" || event.InstanceID == "" || !validUUIDv4(event.StreamID) || event.StreamName == "" ||
 		(event.Kind != "source" && event.Kind != "publisher" && event.Kind != "output") || !validRuntimeProtocol(event.Protocol) ||
-		(event.State != "starting" && event.State != "streaming" && event.State != "stopped") {
+		(event.State != "starting" && event.State != "streaming" && event.State != "stopped") ||
+		(event.Kind == "source" && event.Protocol == "rtsp" && event.SourceID == "") {
 		return false
 	}
 	if event.State == "stopped" {

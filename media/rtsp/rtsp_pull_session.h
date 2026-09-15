@@ -35,6 +35,7 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
    public:
     rtsp_pull_session(worker_context& worker,
                       std::string stream_id,
+                      std::string source_id,
                       std::string stream_name,
                       std::string url,
                       std::string username = {},
@@ -42,7 +43,6 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
                       std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
                       std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                       std::size_t max_write_queue_bytes = 1024U * 1024U,
-                      std::optional<std::string> source_id = {},
                       runtime_event_emitter_ptr runtime_events = {});
     ~rtsp_pull_session();
 
@@ -87,7 +87,7 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
 
     worker_context& worker_;
     std::string stream_id_;
-    std::optional<std::string> source_id_;
+    std::string source_id_;
     std::string stream_name_;
     std::string url_;
     std::string username_;
