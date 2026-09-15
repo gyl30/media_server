@@ -28,7 +28,7 @@ func TestMediaServerHTTPCreateUDPReceiverAndDelete(t *testing.T) {
 		case "/gb28181/receiver/create":
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusCreated)
-			_, _ = io.WriteString(writer, `{"rtp_port":40000,"rtcp_port":40001}`)
+			_, _ = io.WriteString(writer, `{"rtp_port":40000}`)
 		case "/gb28181/receiver/delete":
 			writer.WriteHeader(http.StatusNoContent)
 		default:
@@ -158,9 +158,9 @@ func TestMediaServerHTTPDistinguishesRejectionAndNetworkFailure(t *testing.T) {
 
 func TestMediaServerHTTPRejectsInvalidCreateResponse(t *testing.T) {
 	for _, body := range []string{
-		`{"rtp_port":40001,"rtcp_port":40002}`,
-		`{"rtp_port":40000,"rtcp_port":40002}`,
-		`{"rtp_port":0,"rtcp_port":1}`,
+		`{"rtp_port":40001}`,
+		`{"rtp_port":40000,"rtcp_port":40001}`,
+		`{"rtp_port":0}`,
 		`{}`,
 	} {
 		t.Run(body, func(t *testing.T) {
