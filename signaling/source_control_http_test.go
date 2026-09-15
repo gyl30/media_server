@@ -194,8 +194,8 @@ func TestSourceControlStartsStopsAndRestartsRuntime(t *testing.T) {
 
 	firstID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
 	create := waitSourceControlRequest(t, commands)
-	if create.path != "/rtsp/pull/create" || create.body.StreamID != firstID || create.body.SourceID == nil ||
-		*create.body.SourceID != source.sourceID || create.body.StreamName != source.streamName || create.body.URL != source.url ||
+	if create.path != "/rtsp/pull/create" || create.body.StreamID != firstID || create.body.SourceID != source.sourceID ||
+		create.body.StreamName != source.streamName || create.body.URL != source.url ||
 		create.body.Username == nil || *create.body.Username != "admin" || create.body.Password == nil || *create.body.Password != "secret" {
 		t.Fatalf("create command = %+v", create)
 	}
@@ -456,7 +456,7 @@ func TestSourceControlReconcilesTerminalBeforeCreateResponse(t *testing.T) {
 			event["instance_id"] = "instance-a"
 			event["stream_id"] = command.StreamID
 			event["stream_name"] = command.StreamName
-			event["source_id"] = *command.SourceID
+			event["source_id"] = command.SourceID
 			event["protocol"] = "rtsp"
 			response := postJSON(t, control.Client(), control.URL+"/internal/runtime-events", event)
 			if response.StatusCode != http.StatusNoContent {
@@ -507,7 +507,7 @@ func TestSourceControlDoesNotRestoreGenerationAfterTerminalCreateFailure(t *test
 			event["instance_id"] = "instance-a"
 			event["stream_id"] = command.StreamID
 			event["stream_name"] = command.StreamName
-			event["source_id"] = *command.SourceID
+			event["source_id"] = command.SourceID
 			event["protocol"] = "rtsp"
 			response := postJSON(t, control.Client(), control.URL+"/internal/runtime-events", event)
 			if response.StatusCode != http.StatusNoContent {
@@ -652,7 +652,7 @@ func TestSourceControlCompensatesAmbiguousCreateFailure(t *testing.T) {
 			created <- command
 			if _, err := server.runtimes.apply(observedRuntime{
 				Kind: "source", ServerID: "media-1", InstanceID: "instance-a",
-				StreamID: command.StreamID, StreamName: command.StreamName, SourceID: *command.SourceID,
+				StreamID: command.StreamID, StreamName: command.StreamName, SourceID: command.SourceID,
 				Protocol: "rtsp", State: "starting", Stage: "resolving",
 			}); err != nil {
 				t.Errorf("apply starting runtime error = %v", err)

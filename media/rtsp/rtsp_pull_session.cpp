@@ -90,6 +90,7 @@ bool remote_disconnect(const boost::system::error_code& error)
 
 rtsp_pull_session::rtsp_pull_session(worker_context& worker,
                                      std::string stream_id,
+                                     std::string source_id,
                                      std::string stream_name,
                                      std::string url,
                                      std::string username,
@@ -97,7 +98,6 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
                                      std::chrono::milliseconds establishment_timeout,
                                      std::chrono::milliseconds initial_tracks_timeout,
                                      std::size_t max_write_queue_bytes,
-                                     std::optional<std::string> source_id,
                                      runtime_event_emitter_ptr runtime_events)
     : worker_(worker),
       stream_id_(std::move(stream_id)),

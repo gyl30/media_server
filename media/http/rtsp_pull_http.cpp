@@ -22,7 +22,7 @@ namespace
 struct rtsp_pull_create_config
 {
     std::string stream_id;
-    std::optional<std::string> source_id;
+    std::string source_id;
     std::string stream_name;
     std::string url;
     std::string username;
@@ -115,28 +115,20 @@ std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body
     }
 
     auto stream_id = required_string(*object, "stream_id");
-    std::optional<std::string> source_id;
-    if (object->if_contains("source_id") != nullptr)
-    {
-        source_id = required_string(*object, "source_id");
-        if (!source_id)
-        {
-            return std::nullopt;
-        }
-    }
+    auto source_id = required_string(*object, "source_id");
     auto stream_name = required_string(*object, "stream_name");
     auto url = required_string(*object, "url");
     std::string username;
     std::string password;
-    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name || !url || !optional_string(*object, "username", username) ||
-        !optional_string(*object, "password", password) ||
+    if (!stream_id || !valid_stream_id(*stream_id) || !source_id || !valid_stream_id(*source_id) || !stream_name || !url ||
+        !optional_string(*object, "username", username) || !optional_string(*object, "password", password) ||
         (object->if_contains("password") != nullptr && username.empty()))
     {
         return std::nullopt;
     }
     return rtsp_pull_create_config{
         .stream_id = std::move(*stream_id),
-        .source_id = std::move(source_id),
+        .source_id = std::move(*source_id),
         .stream_name = std::move(*stream_name),
         .url = std::move(*url),
         .username = std::move(username),
@@ -196,6 +188,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request,
     const auto stream_name = config.stream_name;
     auto session = std::make_shared<rtsp_pull_session>(worker,
                                                        std::move(config.stream_id),
+                                                       std::move(config.source_id),
                                                        stream_name,
                                                        std::move(config.url),
                                                        std::move(config.username),
@@ -203,7 +196,6 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request,
                                                        std::chrono::milliseconds{15'000},
                                                        std::chrono::milliseconds{15'000},
                                                        1024U * 1024U,
-                                                       std::move(config.source_id),
                                                        std::move(runtime_events));
     if (!streams.add_receiver_session(stream_name, session))
     {

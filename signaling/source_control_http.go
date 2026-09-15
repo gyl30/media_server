@@ -230,7 +230,7 @@ func isMediaServerNotFound(err error) bool {
 
 func makeSourceRTSPPullRequest(source rtspSource, streamID string) rtspPullCreateRequest {
 	command := rtspPullCreateRequest{
-		StreamID: streamID, SourceID: &source.sourceID, StreamName: source.streamName, URL: source.url,
+		StreamID: streamID, SourceID: source.sourceID, StreamName: source.streamName, URL: source.url,
 	}
 	if source.username != "" {
 		command.Username = &source.username
