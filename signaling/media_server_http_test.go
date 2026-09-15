@@ -39,30 +39,31 @@ func TestMediaServerHTTPCreateUDPReceiverAndDelete(t *testing.T) {
 
 	client := newMediaServerHTTPClient(time.Second)
 	instance := mediaServerInstance{controlURL: server.URL, mediaIP: "192.0.2.20"}
+	streamName := "gb/34020000001320000001/34020000001320000002"
 	endpoint, err := client.createUDPReceiver(context.Background(), instance, gb28181ReceiverRequest{
 		streamID:    testStreamID,
-		streamName:  "gb/34020000001320000001/34020000001320000002",
+		streamName:  streamName,
 		payloadType: 96,
 		ssrc:        200000001,
 	})
 	if err != nil {
 		t.Fatalf("createUDPReceiver() error = %v", err)
 	}
-	if endpoint.address != instance.mediaIP || endpoint.rtpPort != 40000 || endpoint.rtcpPort != 40001 || endpoint.ssrc != 200000001 {
+	if endpoint.address != instance.mediaIP || endpoint.rtpPort != 40000 || endpoint.ssrc != 200000001 {
 		t.Fatalf("endpoint = %+v", endpoint)
 	}
 	create := <-requests
 	if len(create) != 5 || create["stream_id"] != testStreamID ||
-		create["stream_name"] != "gb/34020000001320000001/34020000001320000002" || create["transport"] != "udp" ||
+		create["stream_name"] != streamName || create["transport"] != "udp" ||
 		create["payload_type"] != float64(96) || create["ssrc"] != float64(200000001) {
 		t.Fatalf("create body = %#v", create)
 	}
 
-	if err := client.deleteReceiver(context.Background(), instance, endpoint.streamID, endpoint.streamName); err != nil {
+	if err := client.deleteReceiver(context.Background(), instance, testStreamID, streamName); err != nil {
 		t.Fatalf("deleteReceiver() error = %v", err)
 	}
 	remove := <-requests
-	if len(remove) != 2 || remove["stream_id"] != testStreamID || remove["stream_name"] != endpoint.streamName {
+	if len(remove) != 2 || remove["stream_id"] != testStreamID || remove["stream_name"] != streamName {
 		t.Fatalf("delete body = %#v", remove)
 	}
 }

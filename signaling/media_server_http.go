@@ -20,11 +20,8 @@ type gb28181ReceiverRequest struct {
 }
 
 type gb28181ReceiverEndpoint struct {
-	streamID    string
-	streamName  string
 	address     string
 	rtpPort     uint16
-	rtcpPort    uint16
 	payloadType uint8
 	ssrc        uint32
 }
@@ -80,11 +77,8 @@ func (c *mediaServerHTTPClient) createUDPReceiver(
 		return gb28181ReceiverEndpoint{}, fmt.Errorf("invalid media server create response")
 	}
 	return gb28181ReceiverEndpoint{
-		streamID:    receiver.streamID,
-		streamName:  receiver.streamName,
 		address:     server.mediaIP,
 		rtpPort:     responseBody.RTPPort,
-		rtcpPort:    responseBody.RTCPPort,
 		payloadType: receiver.payloadType,
 		ssrc:        receiver.ssrc,
 	}, nil
