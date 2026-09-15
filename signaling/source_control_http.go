@@ -136,7 +136,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 			return
 		}
 	}
-	writeJSON(writer, http.StatusCreated, map[string]string{"result": "ok", "stream_id": runtime.streamID})
+	writeJSON(writer, http.StatusCreated, map[string]string{"stream_id": runtime.streamID})
 }
 
 func (s *infrastructureServer) handleSourceStop(writer http.ResponseWriter, request *http.Request) {
@@ -155,7 +155,7 @@ func (s *infrastructureServer) handleSourceStop(writer http.ResponseWriter, requ
 		s.writeSourceRuntimeError(writer, "stop", sourceID, "", err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string) error {

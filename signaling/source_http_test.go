@@ -75,7 +75,7 @@ func TestSourceHTTPCreateListAndCredentialUpdates(t *testing.T) {
 	}
 
 	response = sourceRequest(t, handler, http.MethodDelete, "/api/sources/"+created.SourceID, "", "")
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("delete status/body = %d %s", response.Code, response.Body.String())
 	}
 	response = sourceRequest(t, handler, http.MethodGet, "/api/sources", "", "")
