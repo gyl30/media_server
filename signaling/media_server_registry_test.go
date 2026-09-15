@@ -61,9 +61,58 @@ func TestMediaServerNewInstanceAfterTimeoutKeepsOldFenced(t *testing.T) {
 	if err := registry.register(replacement, now.Add(17*time.Second)); err != nil {
 		t.Fatalf("replacement error = %v", err)
 	}
+	if err := registry.heartbeat(old.ServerID, old.InstanceID, now.Add(18*time.Second)); err != errMediaServerStale {
+		t.Fatalf("replaced heartbeat error = %v", err)
+	}
+	called := false
+	if registry.withOnlineInstance(old.ServerID, old.InstanceID, func() { called = true }) || called {
+		t.Fatal("replaced instance passed online fencing")
+	}
+	if len(registry.instances) != 1 {
+		t.Fatalf("instance count after replacement = %d", len(registry.instances))
+	}
 	selected, ok := registry.selectOnline()
 	if !ok || selected.instanceID != replacement.InstanceID {
 		t.Fatalf("selected = %+v, exists = %v", selected, ok)
+	}
+}
+
+func TestMediaServerRegistryBoundsRestartGenerations(t *testing.T) {
+	registry := newMediaServerRegistry()
+	base := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	var first mediaServerRegistration
+	var previous mediaServerRegistration
+	for generation := range 1001 {
+		now := base.Add(time.Duration(generation) * time.Minute)
+		registration := testMediaServerRegistration(
+			"media-1", fmt.Sprintf("instance-%04d", generation), "127.0.0.1")
+		if generation == 0 {
+			first = registration
+		}
+		if err := registry.register(registration, now); err != nil {
+			t.Fatalf("register generation %d error = %v", generation, err)
+		}
+		if generation > 0 {
+			if err := registry.heartbeat(previous.ServerID, previous.InstanceID, now); err != errMediaServerStale {
+				t.Fatalf("generation %d old heartbeat error = %v", generation, err)
+			}
+		}
+		if len(registry.instances) != 1 || len(registry.current) != 1 || len(registry.online) != 1 {
+			t.Fatalf("generation %d registry sizes = %d/%d/%d", generation,
+				len(registry.instances), len(registry.current), len(registry.online))
+		}
+		offline := registry.expire(now.Add(16*time.Second), 15*time.Second)
+		if len(offline) != 1 || offline[0].instanceID != registration.InstanceID {
+			t.Fatalf("generation %d offline = %+v", generation, offline)
+		}
+		current := registry.currentInstances()
+		if len(current) != 1 || current[0].instanceID != registration.InstanceID || current[0].online {
+			t.Fatalf("generation %d current = %+v", generation, current)
+		}
+		previous = registration
+	}
+	if err := registry.heartbeat(first.ServerID, first.InstanceID, base.Add(1002*time.Minute)); err != errMediaServerStale {
+		t.Fatalf("first generation heartbeat error = %v", err)
 	}
 }
 
