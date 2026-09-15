@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -107,6 +108,22 @@ func TestObservedRuntimeSourceGenerationFencing(t *testing.T) {
 	if !ok || current.StreamID != second.StreamID {
 		t.Fatalf("current after late revival = %+v, %v", current, ok)
 	}
+
+	for index := range 501 {
+		if _, err := runtimes.apply(testHistoricalStoppedRuntime(1000 + index)); err != nil {
+			t.Fatalf("apply(history %d) error = %v", index, err)
+		}
+	}
+	if _, exists := runtimes.byStreamID[first.StreamID]; exists {
+		t.Fatal("replaced generation was not subject to history retention")
+	}
+	if _, err := runtimes.apply(lateFirst); !errors.Is(err, errRuntimeConflict) {
+		t.Fatalf("evicted generation revival error = %v", err)
+	}
+	current, ok = runtimes.currentForSource(sourceID)
+	if !ok || current.StreamID != second.StreamID {
+		t.Fatalf("current after evicted revival = %+v, %v", current, ok)
+	}
 }
 
 func TestObservedRuntimeRestoresOnlyCurrentSourceBinding(t *testing.T) {
@@ -210,10 +227,119 @@ func TestObservedRuntimeAcknowledgesRequestedStopByGeneration(t *testing.T) {
 	}
 }
 
+func TestObservedRuntimeBoundsHistoricalStopped(t *testing.T) {
+	const retentionLimit = 500
+	runtimes := newObservedRuntimeRegistry()
+	for index := range 1001 {
+		event := testHistoricalStoppedRuntime(index)
+		if changed, err := runtimes.apply(event); err != nil || !changed {
+			t.Fatalf("apply(%d) = %v, %v", index, changed, err)
+		}
+	}
+	if snapshot := runtimes.snapshot(); len(snapshot) != retentionLimit {
+		t.Fatalf("snapshot size = %d", len(snapshot))
+	}
+	if _, exists := runtimes.byStreamID[testHistoricalStoppedRuntime(500).StreamID]; exists {
+		t.Fatal("old historical runtime was retained")
+	}
+	if newest := testHistoricalStoppedRuntime(1000); runtimes.byStreamID[newest.StreamID] != newest {
+		t.Fatalf("newest historical runtime = %+v", runtimes.byStreamID[newest.StreamID])
+	}
+}
+
+func TestObservedRuntimeRetentionPreservesActiveAndCurrentSource(t *testing.T) {
+	runtimes := newObservedRuntimeRegistry()
+	active := testHistoricalStoppedRuntime(2000)
+	active.Type = "publisher_connected"
+	active.State = "streaming"
+	active.Stage = "streaming"
+	active.EndReason = ""
+	if _, err := runtimes.apply(active); err != nil {
+		t.Fatalf("apply(active) error = %v", err)
+	}
+	pinned := testHistoricalStoppedRuntime(2001)
+	pinned.Type = "source_stopped"
+	pinned.Protocol = "rtsp"
+	pinned.SourceID = "10000000-0000-4000-8000-000000000004"
+	if _, err := runtimes.apply(pinned); err != nil {
+		t.Fatalf("apply(pinned) error = %v", err)
+	}
+	for index := range 1001 {
+		if _, err := runtimes.apply(testHistoricalStoppedRuntime(3000 + index)); err != nil {
+			t.Fatalf("apply(history %d) error = %v", index, err)
+		}
+	}
+	if stored, exists := runtimes.byStreamID[active.StreamID]; !exists || stored != active {
+		t.Fatalf("active runtime = %+v, %v", stored, exists)
+	}
+	if current, exists := runtimes.currentForSource(pinned.SourceID); !exists || current != pinned {
+		t.Fatalf("pinned runtime = %+v, %v", current, exists)
+	}
+	if snapshot := runtimes.snapshot(); len(snapshot) != 502 {
+		t.Fatalf("snapshot size = %d", len(snapshot))
+	}
+}
+
+func TestObservedRuntimeUnbindsOnlyExpectedSourceGeneration(t *testing.T) {
+	runtimes := newObservedRuntimeRegistry()
+	sourceID := "10000000-0000-4000-8000-000000000005"
+	first := testHistoricalStoppedRuntime(5001)
+	first.Type = "source_stopped"
+	first.Protocol = "rtsp"
+	first.SourceID = sourceID
+	runtimes.bindSource(sourceID, first.StreamID)
+	if _, err := runtimes.apply(first); err != nil {
+		t.Fatalf("apply(first) error = %v", err)
+	}
+	second := first
+	second.StreamID = testHistoricalStoppedRuntime(5002).StreamID
+	runtimes.bindSource(sourceID, second.StreamID)
+	if _, err := runtimes.apply(second); err != nil {
+		t.Fatalf("apply(second) error = %v", err)
+	}
+	if runtimes.unbindSource(sourceID, first.StreamID) {
+		t.Fatal("stale generation unbound replacement")
+	}
+	if current, exists := runtimes.currentForSource(sourceID); !exists || current != second {
+		t.Fatalf("current after stale unbind = %+v, %v", current, exists)
+	}
+	if !runtimes.unbindSource(sourceID, second.StreamID) {
+		t.Fatal("current generation was not unbound")
+	}
+	if _, exists := runtimes.currentBySource[sourceID]; exists {
+		t.Fatal("source binding was retained")
+	}
+	if stored, exists := runtimes.byStreamID[second.StreamID]; !exists || stored != second {
+		t.Fatalf("unbound stopped runtime = %+v, %v", stored, exists)
+	}
+}
+
+func TestObservedRuntimeDuplicateStoppedDoesNotRepeatRetention(t *testing.T) {
+	runtimes := newObservedRuntimeRegistry()
+	stopped := testHistoricalStoppedRuntime(6000)
+	if changed, err := runtimes.apply(stopped); err != nil || !changed {
+		t.Fatalf("apply(stopped) = %v, %v", changed, err)
+	}
+	if changed, err := runtimes.apply(stopped); err != nil || changed {
+		t.Fatalf("apply(duplicate) = %v, %v", changed, err)
+	}
+	if len(runtimes.recentStopped) != 1 || runtimes.recentStopped[0] != stopped.StreamID {
+		t.Fatalf("recent stopped = %v", runtimes.recentStopped)
+	}
+}
+
 func testObservedRuntime(streamID, state string) observedRuntime {
 	return observedRuntime{
 		Type: "source_started", ServerID: "media-1", InstanceID: "instance-a",
 		StreamID: streamID, StreamName: "live/camera", Direction: "input", Protocol: "rtsp",
 		State: state, Stage: state,
+	}
+}
+
+func testHistoricalStoppedRuntime(index int) observedRuntime {
+	return observedRuntime{
+		Type: "publisher_disconnected", ServerID: "media-1", InstanceID: "instance-a",
+		StreamID: fmt.Sprintf("00000000-0000-4000-8000-%012d", index), StreamName: "live/camera",
+		Direction: "input", Protocol: "rtmp", State: "stopped", EndReason: "remote",
 	}
 }
