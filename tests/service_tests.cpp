@@ -161,9 +161,7 @@ class controlled_registration_server
                 return;
             }
         }
-        boost::beast::http::response<boost::beast::http::string_body> response{boost::beast::http::status::ok, request.version()};
-        response.set(boost::beast::http::field::content_type, "application/json");
-        response.body() = R"({"result":"ok"})";
+        boost::beast::http::response<boost::beast::http::string_body> response{boost::beast::http::status::no_content, request.version()};
         response.prepare_payload();
         boost::beast::http::write(socket, response, error);
     }

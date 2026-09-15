@@ -220,12 +220,13 @@ void test_receiver_identity_is_reusable_after_shutdown()
     require_status(create_receiver(worker, first_stream_id, "live/gb-identity", description),
                    boost::beast::http::status::created,
                    "gb receiver first create");
-    require_status(delete_receiver(worker, first_stream_id, "live/gb-identity"), boost::beast::http::status::ok, "gb receiver remove");
+    require_status(
+        delete_receiver(worker, first_stream_id, "live/gb-identity"), boost::beast::http::status::no_content, "gb receiver remove");
     require_status(create_receiver(worker, second_stream_id, "live/gb-identity", description),
                    boost::beast::http::status::created,
                    "gb receiver reusable after shutdown");
     require_status(delete_receiver(worker, second_stream_id, "live/gb-identity"),
-                   boost::beast::http::status::ok,
+                   boost::beast::http::status::no_content,
                    "gb receiver final remove");
     io.run();
     clear_state();
@@ -246,7 +247,8 @@ void test_sender_identity_is_reusable_after_shutdown()
     require_status(create_sender(worker, *stream, first_stream_id, "primary", description),
                    boost::beast::http::status::created,
                    "gb sender first create");
-    require_status(delete_sender(worker, first_stream_id, stream->name(), "primary"), boost::beast::http::status::ok, "gb sender remove");
+    require_status(
+        delete_sender(worker, first_stream_id, stream->name(), "primary"), boost::beast::http::status::no_content, "gb sender remove");
     require_status(create_sender(worker, *stream, second_stream_id, "primary", description),
                    boost::beast::http::status::created,
                    "gb sender reusable after shutdown");
@@ -254,7 +256,7 @@ void test_sender_identity_is_reusable_after_shutdown()
                    boost::beast::http::status::internal_server_error,
                    "gb sender stale identity does not remove replacement");
     require_status(delete_sender(worker, second_stream_id, stream->name(), "primary"),
-                   boost::beast::http::status::ok,
+                   boost::beast::http::status::no_content,
                    "gb sender final remove");
     io.run();
     clear_state();

@@ -28,10 +28,9 @@ func TestMediaServerHTTPCreateUDPReceiverAndDelete(t *testing.T) {
 		case "/gb28181/receiver/create":
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusCreated)
-			_, _ = io.WriteString(writer, `{"result":"ok","rtp_port":40000,"rtcp_port":40001}`)
+			_, _ = io.WriteString(writer, `{"rtp_port":40000,"rtcp_port":40001}`)
 		case "/gb28181/receiver/delete":
-			writer.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(writer, `{"result":"ok"}`)
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -83,13 +82,11 @@ func TestMediaServerHTTPCreateAndDeleteRTSPPull(t *testing.T) {
 			t.Errorf("Decode() error = %v", err)
 		}
 		requests <- receivedRequest{path: request.URL.Path, body: body}
-		status := http.StatusOK
+		status := http.StatusNoContent
 		if request.URL.Path == "/rtsp/pull/create" {
 			status = http.StatusCreated
 		}
-		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(status)
-		_, _ = io.WriteString(writer, `{"result":"ok"}`)
 	}))
 	defer server.Close()
 
@@ -160,10 +157,10 @@ func TestMediaServerHTTPDistinguishesRejectionAndNetworkFailure(t *testing.T) {
 
 func TestMediaServerHTTPRejectsInvalidCreateResponse(t *testing.T) {
 	for _, body := range []string{
-		`{"result":"ok","rtp_port":40001,"rtcp_port":40002}`,
-		`{"result":"ok","rtp_port":40000,"rtcp_port":40002}`,
-		`{"result":"ok","rtp_port":0,"rtcp_port":1}`,
-		`{"result":"ok"}`,
+		`{"rtp_port":40001,"rtcp_port":40002}`,
+		`{"rtp_port":40000,"rtcp_port":40002}`,
+		`{"rtp_port":0,"rtcp_port":1}`,
+		`{}`,
 	} {
 		t.Run(body, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {

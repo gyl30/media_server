@@ -222,7 +222,7 @@ func TestLiveSessionStopWhilePreparingReleasesSessionAndSSRC(t *testing.T) {
 		}
 		if request.URL.Path == "/gb28181/receiver/delete" {
 			deletes.Add(1)
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 			return
 		}
 		http.NotFound(writer, request)
@@ -383,7 +383,7 @@ func TestLiveSessionAmbiguousCreateFailureWakesConcurrentStops(t *testing.T) {
 				writeHTTPError(writer, http.StatusServiceUnavailable, "operation_failed")
 				return
 			}
-			writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -822,15 +822,15 @@ func startLiveTestMediaServer(t *testing.T) (*mediaServerRegistry, *httptest.Ser
 	creates := &atomic.Int32{}
 	deletes := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/gb28181/receiver/create":
 			creates.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusCreated)
-			_, _ = io.WriteString(writer, `{"result":"ok","rtp_port":40000,"rtcp_port":40001}`)
+			_, _ = io.WriteString(writer, `{"rtp_port":40000,"rtcp_port":40001}`)
 		case "/gb28181/receiver/delete":
 			deletes.Add(1)
-			_, _ = io.WriteString(writer, `{"result":"ok"}`)
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}

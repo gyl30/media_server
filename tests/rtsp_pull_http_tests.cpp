@@ -76,7 +76,7 @@ void require_response(const rtsp_pull_http_response& response,
     }
     require(response.version() == 11, message);
     require(!response.keep_alive(), message);
-    require(response[boost::beast::http::field::content_type] == "application/json", message);
+    require(response[boost::beast::http::field::content_type] == (body.empty() ? "" : "application/json"), message);
     require(response.body() == body, message);
 }
 
@@ -100,11 +100,11 @@ void test_request_validation()
     const auto valid_url = "rtsp://127.0.0.1:9/live/source";
     require_response(handle(worker, request("/rtsp/pull/create", create_body("live/no-auth", valid_url))),
                      boost::beast::http::status::created,
-                     R"({"result":"ok"})",
+                     "",
                      "rtsp pull no auth create");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/no-auth"))),
-                     boost::beast::http::status::ok,
-                     R"({"result":"ok"})",
+                     boost::beast::http::status::no_content,
+                     "",
                      "rtsp pull no auth delete");
 
     auto auth = create_body("live/auth", valid_url);
@@ -112,11 +112,11 @@ void test_request_validation()
     auth["password"] = "";
     require_response(handle(worker, request("/rtsp/pull/create", std::move(auth))),
                      boost::beast::http::status::created,
-                     R"({"result":"ok"})",
+                     "",
                      "rtsp pull auth create");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/auth"))),
-                     boost::beast::http::status::ok,
-                     R"({"result":"ok"})",
+                     boost::beast::http::status::no_content,
+                     "",
                      "rtsp pull auth delete");
 
     const std::string invalid_bodies[]{
@@ -188,7 +188,7 @@ void test_stream_id_required()
     auto identified = create_body("live/identified", "rtsp://127.0.0.1:9/live/source");
     require_response(handle(worker, request("/rtsp/pull/create", std::move(identified))),
                      boost::beast::http::status::created,
-                     R"({"result":"ok"})",
+                     "",
                      "rtsp pull accepts stream id");
 
     require_response(handle(worker,
@@ -224,8 +224,8 @@ void test_stream_id_required()
                      R"({"error":"invalid_request"})",
                      "rtsp pull requires RFC 4122 stream id variant");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/identified"))),
-                     boost::beast::http::status::ok,
-                     R"({"result":"ok"})",
+                     boost::beast::http::status::no_content,
+                     "",
                      "rtsp pull identified delete");
     worker.release_work();
     worker.io().run();
@@ -242,19 +242,19 @@ void test_create_delete_recreate()
 
     require_response(handle(worker, request("/rtsp/pull/create", body)),
                      boost::beast::http::status::created,
-                     R"({"result":"ok"})",
+                     "",
                      "rtsp pull initial create");
     require_response(handle(worker, request("/rtsp/pull/create", body)),
                      boost::beast::http::status::conflict,
                      R"({"error":"conflict"})",
                      "rtsp pull duplicate create");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/recreate"))),
-                     boost::beast::http::status::ok,
-                     R"({"result":"ok"})",
+                     boost::beast::http::status::no_content,
+                     "",
                      "rtsp pull initial delete");
     require_response(handle(worker, request("/rtsp/pull/create", create_body("live/recreate", "rtsp://127.0.0.1:9/live/source", stream_id_b))),
                      boost::beast::http::status::created,
-                     R"({"result":"ok"})",
+                     "",
                      "rtsp pull immediate recreate");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/recreate", stream_id_a))),
                      boost::beast::http::status::not_found,
@@ -265,8 +265,8 @@ void test_create_delete_recreate()
                      R"({"error":"conflict"})",
                      "rtsp pull recreated identity retained");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/recreate", stream_id_b))),
-                     boost::beast::http::status::ok,
-                     R"({"result":"ok"})",
+                     boost::beast::http::status::no_content,
+                     "",
                      "rtsp pull recreated delete");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/recreate", stream_id_b))),
                      boost::beast::http::status::not_found,
@@ -332,18 +332,18 @@ void test_runtime_failure_releases_identity()
     const auto body = create_body("live/failure", "rtsp://127.0.0.1:" + std::to_string(port) + "/live/source");
     require_response(handle(worker, request("/rtsp/pull/create", body)),
                      boost::beast::http::status::created,
-                     R"({"result":"ok"})",
+                     "",
                      "rtsp pull failure create");
     worker.release_work();
     io.run();
     io.restart();
     require_response(handle(worker, request("/rtsp/pull/create", body)),
                      boost::beast::http::status::created,
-                     R"({"result":"ok"})",
+                     "",
                      "rtsp pull recreate after runtime failure");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/failure"))),
-                     boost::beast::http::status::ok,
-                     R"({"result":"ok"})",
+                     boost::beast::http::status::no_content,
+                     "",
                      "rtsp pull failure replacement delete");
     io.run();
     streams.clear();
@@ -358,7 +358,7 @@ void test_registry_shutdown_stops_pull()
     require_response(handle(worker,
                             request("/rtsp/pull/create", create_body("live/service-stop", "rtsp://127.0.0.1:9/live/source"))),
                      boost::beast::http::status::created,
-                     R"({"result":"ok"})",
+                     "",
                      "rtsp pull service stop create");
     streams.shutdown_sessions();
     worker.release_work();
