@@ -608,7 +608,7 @@ func TestSourceDeletePreservesSourceWhenRuntimeDeleteFails(t *testing.T) {
 	defer media.Close()
 	server := newSourceControlTestServer(t, media.URL)
 	source := createControlTestSource(t, server, "live/delete", "", "")
-	startControlTestSource(t, server, source.sourceID, http.StatusCreated)
+	streamID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
 
 	response := sourceRequest(t, server.handler(), http.MethodDelete, "/api/sources/"+source.sourceID, "", "")
 	if response.Code != http.StatusBadGateway {
@@ -627,6 +627,12 @@ func TestSourceDeletePreservesSourceWhenRuntimeDeleteFails(t *testing.T) {
 	}
 	if _, err := server.sources.get(t.Context(), source.sourceID); !errors.Is(err, errSourceNotFound) {
 		t.Fatalf("source after delete error = %v", err)
+	}
+	if _, bound := server.runtimes.currentBySource[source.sourceID]; bound {
+		t.Fatal("deleted source retained its runtime binding")
+	}
+	if runtime, exists := server.runtimes.byStreamID[streamID]; !exists || runtime.State != "stopped" {
+		t.Fatalf("deleted source runtime = %+v, %v", runtime, exists)
 	}
 }
 
