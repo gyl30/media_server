@@ -3,7 +3,6 @@
 
 #include <memory>
 
-#include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/signal_set.hpp>
 
 #include <boost/asio/spawn.hpp>
@@ -45,9 +44,6 @@ class service
     std::shared_ptr<const runtime_event_emitter> runtime_events_;
     std::unique_ptr<boost::asio::steady_timer> signaling_abort_timer_;
     std::unique_ptr<boost::asio::signal_set> signals_;
-    boost::asio::cancellation_signal control_cancellation_;
-    std::size_t pending_shutdown_workers_{};
-    bool stopping_{};
     int exit_code_{};
 };
 

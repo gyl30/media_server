@@ -10,9 +10,6 @@
 #include <spdlog/spdlog.h>
 
 #include "service.h"
-#include "media/hls/hls.h"
-#include "media/webrtc/whip.h"
-#include "media/webrtc/whep.h"
 #include "media/core/log.h"
 #include "media/core/runtime_event.h"
 #include "media/http/http_server.h"
@@ -21,7 +18,6 @@
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
 #include "media/net/io_context_pool.h"
-#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -32,50 +28,7 @@ service::~service() = default;
 
 void service::stop()
 {
-    if (stopping_)
-    {
-        return;
-    }
-    stopping_ = true;
-    signals_->cancel();
-    control_cancellation_.emit(boost::asio::cancellation_type::all);
-    if (signaling_abort_timer_)
-    {
-        signaling_abort_timer_->cancel();
-    }
-    // 先锁定现有 runtime 的停机原因，避免 source end 把 output 误报为远端结束。
-    whep::shutdown(runtime_end_reason::server_shutdown);
-    stream_registry::instance().shutdown_sessions(runtime_end_reason::server_shutdown);
-    rtmp_->shutdown();
-    rtsp_->shutdown();
-    http_->shutdown();
-
-    // 等入口会话处理完关闭请求，确保不会再创建新的媒体会话。
-    pending_shutdown_workers_ = workers_->size();
-    for (std::size_t index = 0; index < workers_->size(); ++index)
-    {
-        boost::asio::post(workers_->context(index).io(),
-                          [this]()
-                          {
-                              boost::asio::post(workers_->context(0).io(),
-                                                [this]()
-                                                {
-                                                    if (--pending_shutdown_workers_ != 0)
-                                                    {
-                                                        return;
-                                                    }
-                                                    whip::shutdown();
-                                                    whep::shutdown(runtime_end_reason::server_shutdown);
-                                                    stream_registry::instance().shutdown_sessions(
-                                                        runtime_end_reason::server_shutdown);
-                                                    if (runtime_event_reporter_)
-                                                    {
-                                                        runtime_event_reporter_->shutdown();
-                                                    }
-                                                    workers_->release_work();
-                                                });
-                          });
-    }
+    workers_->stop();
 }
 
 void service::schedule_signaling_abort()
@@ -99,7 +52,6 @@ void service::schedule_signaling_abort()
 
 void service::run_control(boost::asio::yield_context yield)
 {
-    yield.throw_if_cancelled(false);
     auto& control_io = workers_->context(0).io();
     const auto signaling = signaling_;
     if (signaling)
@@ -108,10 +60,6 @@ void service::run_control(boost::asio::yield_context yield)
         for (;;)
         {
             const auto registration = signaling->register_once(yield);
-            if (stopping_)
-            {
-                return;
-            }
             if (registration.kind == signaling_result_kind::accepted)
             {
                 break;
@@ -249,11 +197,9 @@ int service::run()
 
     boost::asio::spawn(control_io,
                        [this](boost::asio::yield_context yield) { run_control(yield); },
-                       boost::asio::bind_cancellation_slot(control_cancellation_.slot(), boost::asio::detached));
+                       boost::asio::detached);
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
-    hls::shutdown();
-    stream_registry::instance().clear();
     return exit_code_;
 }
 
