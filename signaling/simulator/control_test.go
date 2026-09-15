@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -21,15 +20,15 @@ func TestControlClientStartAndStop(t *testing.T) {
 		if command.DeviceID != "34020000001320000001" || command.ChannelID != "34020000001320000002" {
 			t.Errorf("command = %+v", command)
 		}
-		writer.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/internal/live/start":
 			starts++
+			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusCreated)
-			_, _ = writer.Write([]byte(`{"result":"ok","stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"gb/a/b","state":"streaming","ssrc":200000001,"rtp_port":40000}`))
+			_, _ = writer.Write([]byte(`{"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"gb/a/b","state":"streaming","ssrc":200000001,"rtp_port":40000}`))
 		case "/internal/live/stop":
 			stops++
-			_, _ = writer.Write([]byte(`{"result":"ok"}`))
+			writer.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(writer, request)
 		}
@@ -56,7 +55,7 @@ func TestControlClientStartAndStop(t *testing.T) {
 func TestControlClientReusesConnectionAfterStopResponse(t *testing.T) {
 	var connections atomic.Int32
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte(strings.Repeat("x", 4096)))
+		writer.WriteHeader(http.StatusNoContent)
 	}))
 	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateNew {

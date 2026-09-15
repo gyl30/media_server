@@ -107,19 +107,20 @@ func TestLiveControlHTTPStartAndStop(t *testing.T) {
 		t.Fatalf("start status = %d body = %s", response.StatusCode, readBody(t, response))
 	}
 	var started struct {
-		Result     string    `json:"result"`
 		StreamID   string    `json:"stream_id"`
 		StreamName string    `json:"stream_name"`
 		State      liveState `json:"state"`
 		SSRC       uint32    `json:"ssrc"`
 		RTPPort    uint16    `json:"rtp_port"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&started); err != nil {
+	decoder := json.NewDecoder(response.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&started); err != nil {
 		response.Body.Close()
 		t.Fatalf("Decode() error = %v", err)
 	}
 	response.Body.Close()
-	if started.Result != "ok" || started.StreamName != "gb/"+testDeviceID+"/"+testChannelID || started.State != liveStreaming || started.SSRC == 0 || started.RTPPort == 0 {
+	if started.StreamName != "gb/"+testDeviceID+"/"+testChannelID || started.State != liveStreaming || started.SSRC == 0 || started.RTPPort == 0 {
 		t.Fatalf("start response = %+v", started)
 	}
 	parsedStreamID, err := uuid.Parse(started.StreamID)
@@ -135,7 +136,7 @@ func TestLiveControlHTTPStartAndStop(t *testing.T) {
 	response = postJSON(t, httpServer.Client(), httpServer.URL+"/internal/live/stop", liveControlRequest{
 		DeviceID: testDeviceID, ChannelID: testChannelID,
 	})
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode != http.StatusNoContent || response.ContentLength != 0 {
 		t.Fatalf("stop status = %d body = %s", response.StatusCode, readBody(t, response))
 	}
 	response.Body.Close()
@@ -261,7 +262,7 @@ func TestLiveControlRetainsAmbiguousCreateUntilCleanupSucceeds(t *testing.T) {
 
 	response = sourceRequest(t, infrastructure.handler(), http.MethodPost, "/internal/live/stop",
 		`{"device_id":"`+testDeviceID+`","channel_id":"`+testChannelID+`"}`, "application/json")
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("retry stop status/body = %d %s", response.Code, response.Body.String())
 	}
 	if secondStreamID := <-deletes; secondStreamID != firstStreamID {
@@ -533,7 +534,7 @@ func TestLiveControlRetainsInviteFailureUntilCleanupSucceeds(t *testing.T) {
 	}
 	response = sourceRequest(t, infrastructure.handler(), http.MethodPost, "/internal/live/stop",
 		`{"device_id":"`+testDeviceID+`","channel_id":"`+testChannelID+`"}`, "application/json")
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusNoContent || response.Body.Len() != 0 {
 		t.Fatalf("stop status/body = %d %s", response.Code, response.Body.String())
 	}
 	if retryStreamID := <-deleted; retryStreamID != streamID {
@@ -616,6 +617,9 @@ func TestLiveControlRetriesUnconfirmedRuntimeDelete(t *testing.T) {
 		if response.Code != want {
 			t.Fatalf("stop status/body = %d %s, want %d", response.Code, response.Body.String(), want)
 		}
+		if want == http.StatusNoContent && response.Body.Len() != 0 {
+			t.Fatalf("stop body = %q", response.Body.String())
+		}
 		return response
 	}
 	stop(http.StatusBadGateway)
@@ -638,7 +642,7 @@ func TestLiveControlRetriesUnconfirmedRuntimeDelete(t *testing.T) {
 		t.Fatalf("observed after failed delete = %+v, %v", observed, ok)
 	}
 
-	stop(http.StatusOK)
+	stop(http.StatusNoContent)
 	if secondStreamID := <-deletes; secondStreamID != streamID {
 		t.Fatalf("second delete stream ID = %q", secondStreamID)
 	}

@@ -95,5 +95,7 @@ func (s *infrastructureServer) handleChannelLiveStop(writer http.ResponseWriter,
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	s.stopLive(writer, request, deviceID, channelID, command.StreamID)
+	if s.stopLive(writer, request, deviceID, channelID, command.StreamID) {
+		writeJSON(writer, http.StatusOK, map[string]string{"result": "ok"})
+	}
 }
