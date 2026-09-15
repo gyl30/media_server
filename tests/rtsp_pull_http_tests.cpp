@@ -21,6 +21,7 @@ namespace
 
 constexpr char stream_id_a[] = "550e8400-e29b-41d4-a716-446655440000";
 constexpr char stream_id_b[] = "550e8400-e29b-41d4-b716-446655440001";
+constexpr char source_id[] = "10000000-0000-4000-8000-000000000001";
 
 class foreign_receiver_session final : public stream_session
 {
@@ -81,7 +82,7 @@ void require_response(const rtsp_pull_http_response& response,
 
 boost::json::object create_body(std::string stream_name, std::string url, std::string_view stream_id = stream_id_a)
 {
-    return {{"stream_id", stream_id}, {"stream_name", std::move(stream_name)}, {"url", std::move(url)}};
+    return {{"stream_id", stream_id}, {"source_id", source_id}, {"stream_name", std::move(stream_name)}, {"url", std::move(url)}};
 }
 
 boost::json::object delete_body(std::string stream_name, std::string_view stream_id = stream_id_a)
@@ -107,7 +108,6 @@ void test_request_validation()
                      "rtsp pull no auth delete");
 
     auto auth = create_body("live/auth", valid_url);
-    auth["source_id"] = "source-auth";
     auth["username"] = "admin";
     auth["password"] = "";
     require_response(handle(worker, request("/rtsp/pull/create", std::move(auth))),
@@ -120,23 +120,28 @@ void test_request_validation()
                      "rtsp pull auth delete");
 
     const std::string invalid_bodies[]{
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","url":"rtsp://127.0.0.1/live"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/missing-url"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/password","url":"rtsp://127.0.0.1/live","password":"secret"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/password","url":"rtsp://127.0.0.1/live","username":"","password":""})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/userinfo","url":"rtsp://admin:secret@127.0.0.1/live"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/scheme","url":"http://127.0.0.1/live"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/authority","url":"rtsp:/live"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/host","url":"rtsp:///live"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/port","url":"rtsp://127.0.0.1:0/live"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/unknown","url":"rtsp://127.0.0.1/live","unknown":true})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":1,"url":"rtsp://127.0.0.1/live"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/type","url":"rtsp://127.0.0.1/live","username":1})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/type","url":"rtsp://127.0.0.1/live","password":1})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/missing-url"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/missing-source","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/password","url":"rtsp://127.0.0.1/live","password":"secret"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/password","url":"rtsp://127.0.0.1/live","username":"","password":""})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/userinfo","url":"rtsp://admin:secret@127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/scheme","url":"http://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/authority","url":"rtsp:/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/host","url":"rtsp:///live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/port","url":"rtsp://127.0.0.1:0/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/unknown","url":"rtsp://127.0.0.1/live","unknown":true})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":1,"url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/type","url":"rtsp://127.0.0.1/live","username":1})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/type","url":"rtsp://127.0.0.1/live","password":1})",
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"","stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"invalid","stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"100E8400-E29B-4000-8000-000000000001","stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-1000-8000-000000000001","stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-0000-000000000001","stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":null,"stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":1,"stream_name":"live/source-id","url":"rtsp://127.0.0.1/live"})",
-        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/trailing","url":"rtsp://127.0.0.1/live"} {})",
+        R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","stream_name":"live/trailing","url":"rtsp://127.0.0.1/live"} {})",
         "{",
         "[]",
     };
@@ -188,7 +193,9 @@ void test_stream_id_required()
 
     require_response(handle(worker,
                             request("/rtsp/pull/create",
-                                    {{"stream_name", "live/missing-id"}, {"url", "rtsp://127.0.0.1:9/live/source"}})),
+                                    {{"source_id", source_id},
+                                     {"stream_name", "live/missing-id"},
+                                     {"url", "rtsp://127.0.0.1:9/live/source"}})),
                      boost::beast::http::status::bad_request,
                      R"({"error":"invalid_request"})",
                      "rtsp pull requires stream id");
@@ -293,12 +300,12 @@ void test_delayed_shutdown_preserves_replacement()
     auto& streams = stream_registry::instance();
     streams.clear();
 
-    auto old_session = std::make_shared<rtsp_pull_session>(worker, stream_id_a, "live/replacement", "rtsp://127.0.0.1:9/live/old");
+    auto old_session = std::make_shared<rtsp_pull_session>(worker, stream_id_a, source_id, "live/replacement", "rtsp://127.0.0.1:9/live/old");
     require(streams.add_receiver_session("live/replacement", old_session), "rtsp pull old identity");
     auto removed = streams.take_receiver_session("live/replacement");
     require(removed.get() == old_session.get(), "rtsp pull old identity removed");
 
-    auto replacement = std::make_shared<rtsp_pull_session>(worker, stream_id_b, "live/replacement", "rtsp://127.0.0.1:9/live/new");
+    auto replacement = std::make_shared<rtsp_pull_session>(worker, stream_id_b, source_id, "live/replacement", "rtsp://127.0.0.1:9/live/new");
     require(streams.add_receiver_session("live/replacement", replacement), "rtsp pull replacement identity");
     old_session->shutdown();
     worker.release_work();

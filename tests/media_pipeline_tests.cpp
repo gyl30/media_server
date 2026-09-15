@@ -127,6 +127,7 @@ namespace
 
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+constexpr std::string_view rtsp_pull_source_id = "10000000-0000-4000-8000-000000000001";
 
 using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
 static_assert(std::is_constructible_v<rtsp_publish_session, worker_context&, boost::asio::ip::address, rtsp_write_handler>);
@@ -4202,17 +4203,17 @@ void test_rtsp_pull_url_contract()
     worker_context client_worker;
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
-    auto invalid = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
+    auto invalid = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/invalid", "rtsp://127.0.0.1:99999/live/test");
     require(!invalid->startup(), "rtsp invalid port rejected");
     require(!streams.find("relay/invalid"), "rtsp invalid url leaves registry unchanged");
 
     const auto port = acceptor.local_endpoint().port();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/test";
     const auto credential_url = "rtsp://us%65r:p%40ss@127.0.0.1:" + std::to_string(port) + "/live/test";
-    auto userinfo = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/userinfo", credential_url);
+    auto userinfo = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/userinfo", credential_url);
     require(!userinfo->startup(), "rtsp url userinfo rejected");
 
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/auth", request_url, "user", "p@ss");
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/auth", request_url, "user", "p@ss");
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp auth pull startup");
     pull.reset();
@@ -4267,7 +4268,7 @@ void test_rtsp_pull_establishment_timeout()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/timeout";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/timeout", request_url, "", "", std::chrono::milliseconds(100));
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/timeout", request_url, "", "", std::chrono::milliseconds(100));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp establishment timeout pull startup");
     pull.reset();
@@ -4305,7 +4306,7 @@ void test_rtsp_pull_establishment_progress_timeout()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-timeout";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/play-timeout", request_url, "", "", std::chrono::milliseconds(800));
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/play-timeout", request_url, "", "", std::chrono::milliseconds(800));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp establishment progress timeout pull startup");
     pull.reset();
@@ -4370,7 +4371,7 @@ void test_rtsp_pull_selects_single_audio_and_video()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/multi";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/single-av", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/single-av", request_url);
     require(pull->startup(), "rtsp single audio video pull startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4443,7 +4444,7 @@ void test_rtsp_pull_opus_passthrough_case(std::string_view fmtp, std::uint16_t e
     streams.clear();
     const auto stream_name = "relay/opus-" + std::to_string(expected_channels) + "-" + std::to_string(fmtp.size());
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, stream_name, request_url);
     require(pull->startup(), "rtsp pull opus startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4578,7 +4579,7 @@ void test_rtsp_pull_rejects_invalid_opus_rate()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/opus-rate";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/opus-rate", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/opus-rate", request_url);
     require(pull->startup(), "rtsp invalid opus rate startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4645,7 +4646,7 @@ void test_rtsp_pull_g711_passthrough_case(codec_id codec, bool explicit_rtpmap)
     streams.clear();
     const auto stream_name = "relay/" + std::string(to_string(codec)) + (explicit_rtpmap ? "-rtpmap" : "-static");
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, stream_name, request_url);
     require(pull->startup(), "rtsp pull g711 startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -4770,7 +4771,7 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
     streams.clear();
     const auto stream_name = std::string("relay/rtp-info");
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/rtp-info";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, stream_name, request_url);
     require(pull->startup(), "rtsp rtp-info pull startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -5032,7 +5033,7 @@ void test_rtsp_pull_rejects_mismatched_g711_rtpmap()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/g711-mismatch";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/g711-mismatch", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/g711-mismatch", request_url);
     require(pull->startup(), "rtsp mismatched g711 startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
@@ -5082,7 +5083,7 @@ void test_rtsp_pull_rejects_audio_only_source()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/audio-only";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/audio-only", request_url);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/audio-only", request_url);
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp audio only pull startup");
     pull.reset();
@@ -5135,10 +5136,11 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
-    constexpr std::string_view source_id = "source-topology";
+    constexpr std::string_view source_id = rtsp_pull_source_id;
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/topology";
     auto pull = std::make_shared<rtsp_pull_session>(client_worker,
                                                    std::string{stream_id},
+                                                   std::string{source_id},
                                                    "relay/topology",
                                                    request_url,
                                                    "",
@@ -5146,7 +5148,6 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
                                                    std::chrono::milliseconds(500),
                                                    std::chrono::milliseconds(50),
                                                    1024U * 1024U,
-                                                   std::string{source_id},
                                                    runtime_events.emitter());
     std::promise<bool> startup_result;
     auto startup_future = startup_result.get_future();
@@ -5289,7 +5290,7 @@ void test_rtsp_pull_initial_tracks_timeout()
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/initial-tracks-timeout";
     auto pull = std::make_shared<rtsp_pull_session>(
-        client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/initial-tracks-timeout", request_url, "", "", std::chrono::milliseconds(500), std::chrono::milliseconds(100));
+        client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/initial-tracks-timeout", request_url, "", "", std::chrono::milliseconds(500), std::chrono::milliseconds(100));
     const std::weak_ptr<rtsp_pull_session> weak_pull = pull;
     require(pull->startup(), "rtsp initial tracks timeout pull startup");
     pull.reset();
@@ -5385,7 +5386,7 @@ void test_rtsp_pull_independent_keepalive()
     auto& streams = media_server::stream_registry::instance();
     streams.clear();
     const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/keepalive";
-    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", "relay/keepalive", request_url, "", "", std::chrono::milliseconds(750));
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker, "550e8400-e29b-41d4-a716-446655440000", std::string{rtsp_pull_source_id}, "relay/keepalive", request_url, "", "", std::chrono::milliseconds(750));
     require(pull->startup(), "rtsp keepalive pull startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });
