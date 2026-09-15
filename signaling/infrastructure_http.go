@@ -46,38 +46,40 @@ func newInfrastructureServer(cfg config, registry *mediaServerRegistry, sources 
 }
 
 func (s *infrastructureServer) handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /internal/media-servers/register", s.handleMediaServerRegister)
-	mux.HandleFunc("POST /internal/media-servers/heartbeat", s.handleMediaServerHeartbeat)
-	mux.HandleFunc("POST /api/publish/allocations", s.handlePublishAllocation)
-	mux.HandleFunc("GET /api/sources", s.handleSourceList)
-	mux.HandleFunc("POST /api/sources", s.handleSourceCreate)
-	mux.HandleFunc("PATCH /api/sources/{source_id}", s.handleSourcePatch)
-	mux.HandleFunc("DELETE /api/sources/{source_id}", s.handleSourceDelete)
-	mux.HandleFunc("POST /api/sources/{source_id}/start", s.handleSourceStart)
-	mux.HandleFunc("POST /api/sources/{source_id}/stop", s.handleSourceStop)
-	mux.HandleFunc("GET /api/media-servers", s.handleMediaServerList)
-	mux.HandleFunc("GET /api/runtimes", s.handleRuntimeList)
-	mux.HandleFunc("GET /api/events", s.handleRuntimeEvents)
-	mux.HandleFunc("POST /api/preview/start", s.handlePreviewStart)
-	mux.HandleFunc("POST /internal/publish/claim", s.handlePublishClaim)
-	mux.HandleFunc("POST /internal/runtime-events", s.handleRuntimeEvent)
+	routes := http.NewServeMux()
+	routes.HandleFunc("POST /internal/media-servers/register", s.handleMediaServerRegister)
+	routes.HandleFunc("POST /internal/media-servers/heartbeat", s.handleMediaServerHeartbeat)
+	routes.HandleFunc("POST /api/publish/allocations", s.handlePublishAllocation)
+	routes.HandleFunc("GET /api/sources", s.handleSourceList)
+	routes.HandleFunc("POST /api/sources", s.handleSourceCreate)
+	routes.HandleFunc("PATCH /api/sources/{source_id}", s.handleSourcePatch)
+	routes.HandleFunc("DELETE /api/sources/{source_id}", s.handleSourceDelete)
+	routes.HandleFunc("POST /api/sources/{source_id}/start", s.handleSourceStart)
+	routes.HandleFunc("POST /api/sources/{source_id}/stop", s.handleSourceStop)
+	routes.HandleFunc("GET /api/media-servers", s.handleMediaServerList)
+	routes.HandleFunc("GET /api/runtimes", s.handleRuntimeList)
+	routes.HandleFunc("GET /api/events", s.handleRuntimeEvents)
+	routes.HandleFunc("POST /api/preview/start", s.handlePreviewStart)
+	routes.HandleFunc("POST /internal/publish/claim", s.handlePublishClaim)
+	routes.HandleFunc("POST /internal/runtime-events", s.handleRuntimeEvent)
 	if s.live != nil {
-		mux.HandleFunc("POST /internal/live/start", s.handleLiveStart)
-		mux.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
-		mux.HandleFunc("GET /api/devices", s.handleDeviceList)
-		mux.HandleFunc("GET /api/devices/{device_id}/channels", s.handleChannelList)
-		mux.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
-		mux.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
+		routes.HandleFunc("POST /internal/live/start", s.handleLiveStart)
+		routes.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
+		routes.HandleFunc("GET /api/devices", s.handleDeviceList)
+		routes.HandleFunc("GET /api/devices/{device_id}/channels", s.handleChannelList)
+		routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
+		routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
 	}
-	mux.Handle("GET /{$}", embeddedWebFile("index.html"))
-	mux.Handle("GET /style.css", embeddedWebFile("style.css"))
-	mux.Handle("GET /app.js", embeddedWebFile("app.js"))
-	mux.Handle("GET /api.js", embeddedWebFile("api.js"))
-	mux.Handle("GET /whep.js", embeddedWebFile("whep.js"))
-	mux.Handle("GET /icons.svg", embeddedWebFile("icons.svg"))
-	mux.Handle("GET /favicon.svg", embeddedWebFile("favicon.svg"))
-	return mux
+
+	web := http.NewServeMux()
+	web.Handle("GET /", embeddedWebHandler())
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/internal/") {
+			routes.ServeHTTP(writer, request)
+			return
+		}
+		web.ServeHTTP(writer, request)
+	})
 }
 
 func (s *infrastructureServer) handleMediaServerRegister(writer http.ResponseWriter, request *http.Request) {
