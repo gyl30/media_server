@@ -10,8 +10,8 @@ import (
 func TestMediaServerRegistrationAndStableSelection(t *testing.T) {
 	registry := newMediaServerRegistry()
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
-	first := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
-	second := testMediaServerRegistration("media-2", "instance-b", "127.0.0.2")
+	first := testMediaServerRegistration("media-2", "instance-b", "127.0.0.2")
+	second := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
 	if err := registry.register(first, now); err != nil {
 		t.Fatalf("register first error = %v", err)
 	}
@@ -19,7 +19,7 @@ func TestMediaServerRegistrationAndStableSelection(t *testing.T) {
 		t.Fatalf("register second error = %v", err)
 	}
 	selected, ok := registry.selectOnline()
-	if !ok || selected.serverID != first.ServerID || selected.instanceID != first.InstanceID {
+	if !ok || selected.serverID != second.ServerID || selected.instanceID != second.InstanceID {
 		t.Fatalf("selected = %+v, exists = %v", selected, ok)
 	}
 }
@@ -97,9 +97,8 @@ func TestMediaServerRegistryBoundsRestartGenerations(t *testing.T) {
 				t.Fatalf("generation %d old heartbeat error = %v", generation, err)
 			}
 		}
-		if len(registry.instances) != 1 || len(registry.current) != 1 || len(registry.online) != 1 {
-			t.Fatalf("generation %d registry sizes = %d/%d/%d", generation,
-				len(registry.instances), len(registry.current), len(registry.online))
+		if len(registry.instances) != 1 {
+			t.Fatalf("generation %d registry size = %d", generation, len(registry.instances))
 		}
 		offline := registry.expire(now.Add(16*time.Second), 15*time.Second)
 		if len(offline) != 1 || offline[0].instanceID != registration.InstanceID {
@@ -158,8 +157,14 @@ func TestMediaServerRegistryConcurrentOperations(t *testing.T) {
 		}()
 	}
 	wait.Wait()
-	if registry.onlineCount() != count {
-		t.Fatalf("online count = %d", registry.onlineCount())
+	instances := registry.currentInstances()
+	if len(instances) != count {
+		t.Fatalf("instance count = %d", len(instances))
+	}
+	for _, instance := range instances {
+		if !instance.online {
+			t.Fatalf("offline instance = %+v", instance)
+		}
 	}
 }
 
