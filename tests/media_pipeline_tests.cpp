@@ -5751,7 +5751,7 @@ void test_rtsp_publish_claim_lifecycle()
         boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
         const auto claim = claim_server.wait_request();
         const auto body = boost::json::parse(claim.body).as_object();
-        require(claim.target == "/internal/publish/claim" && body.size() == 6U, "rtsp publish claim request");
+        require(claim.target == "/internal/publish/claim" && body.size() == 5U, "rtsp publish claim request");
         require(std::string_view(body.at("stream_id").as_string()) == stream_id && body.at("protocol") == "rtsp" &&
                     body.at("stream_name") == "live/claim-pending",
                 "rtsp publish claim identity");
