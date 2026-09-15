@@ -205,8 +205,8 @@ func TestSourceControlStartsStopsAndRestartsRuntime(t *testing.T) {
 	}
 
 	startingEvent := observedRuntime{
-		Type: "source_started", ServerID: "media-1", InstanceID: "instance-a", StreamID: firstID,
-		StreamName: source.streamName, SourceID: source.sourceID, Direction: "input", Protocol: "rtsp",
+		Kind: "source", ServerID: "media-1", InstanceID: "instance-a", StreamID: firstID,
+		StreamName: source.streamName, SourceID: source.sourceID, Protocol: "rtsp",
 		State: "starting", Stage: "resolving",
 	}
 	if _, err := server.runtimes.apply(startingEvent); err != nil {
@@ -225,7 +225,6 @@ func TestSourceControlStartsStopsAndRestartsRuntime(t *testing.T) {
 	}
 	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
 
-	startingEvent.Type = "source_stopped"
 	startingEvent.State = "stopped"
 	startingEvent.Stage = ""
 	startingEvent.EndReason = "requested"
@@ -298,8 +297,8 @@ func TestSourceControlStopRecoversFromLostTerminalEvent(t *testing.T) {
 
 	firstID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
 	active := observedRuntime{
-		Type: "source_started", ServerID: "media-1", InstanceID: "instance-a", StreamID: firstID,
-		StreamName: source.streamName, SourceID: source.sourceID, Direction: "input", Protocol: "rtsp",
+		Kind: "source", ServerID: "media-1", InstanceID: "instance-a", StreamID: firstID,
+		StreamName: source.streamName, SourceID: source.sourceID, Protocol: "rtsp",
 		State: "streaming", Stage: "streaming",
 	}
 	if _, err := server.runtimes.apply(active); err != nil {
@@ -307,7 +306,7 @@ func TestSourceControlStopRecoversFromLostTerminalEvent(t *testing.T) {
 	}
 	stopControlTestSource(t, server, source.sourceID, http.StatusOK)
 	current, ok := server.runtimes.currentForSource(source.sourceID)
-	if !ok || current.StreamID != firstID || current.Type != "source_stopped" || current.State != "stopped" ||
+	if !ok || current.StreamID != firstID || current.Kind != "source" || current.State != "stopped" ||
 		current.EndReason != "requested" {
 		t.Fatalf("observed after acknowledged stop = %+v, %v", current, ok)
 	}
@@ -450,15 +449,14 @@ func TestSourceControlReconcilesTerminalBeforeCreateResponse(t *testing.T) {
 		}
 		streamIDs = append(streamIDs, command.StreamID)
 		for _, event := range []map[string]any{
-			{"type": "source_started", "state": "starting", "stage": "resolving"},
-			{"type": "runtime_error", "state": "stopped", "end_reason": "runtime_error", "error": "connect_failed"},
+			{"kind": "source", "state": "starting", "stage": "resolving"},
+			{"kind": "source", "state": "stopped", "end_reason": "runtime_error", "error": "connect_failed"},
 		} {
 			event["server_id"] = "media-1"
 			event["instance_id"] = "instance-a"
 			event["stream_id"] = command.StreamID
 			event["stream_name"] = command.StreamName
 			event["source_id"] = *command.SourceID
-			event["direction"] = "input"
 			event["protocol"] = "rtsp"
 			response := postJSON(t, control.Client(), control.URL+"/internal/runtime-events", event)
 			if response.StatusCode != http.StatusNoContent {
@@ -502,15 +500,14 @@ func TestSourceControlDoesNotRestoreGenerationAfterTerminalCreateFailure(t *test
 			t.Errorf("decode create: %v", err)
 		}
 		for _, event := range []map[string]any{
-			{"type": "source_started", "state": "starting", "stage": "resolving"},
-			{"type": "runtime_error", "state": "stopped", "end_reason": "runtime_error", "error": "startup_failed"},
+			{"kind": "source", "state": "starting", "stage": "resolving"},
+			{"kind": "source", "state": "stopped", "end_reason": "runtime_error", "error": "startup_failed"},
 		} {
 			event["server_id"] = "media-1"
 			event["instance_id"] = "instance-a"
 			event["stream_id"] = command.StreamID
 			event["stream_name"] = command.StreamName
 			event["source_id"] = *command.SourceID
-			event["direction"] = "input"
 			event["protocol"] = "rtsp"
 			response := postJSON(t, control.Client(), control.URL+"/internal/runtime-events", event)
 			if response.StatusCode != http.StatusNoContent {
@@ -654,9 +651,9 @@ func TestSourceControlCompensatesAmbiguousCreateFailure(t *testing.T) {
 			}
 			created <- command
 			if _, err := server.runtimes.apply(observedRuntime{
-				Type: "source_started", ServerID: "media-1", InstanceID: "instance-a",
+				Kind: "source", ServerID: "media-1", InstanceID: "instance-a",
 				StreamID: command.StreamID, StreamName: command.StreamName, SourceID: *command.SourceID,
-				Direction: "input", Protocol: "rtsp", State: "starting", Stage: "resolving",
+				Protocol: "rtsp", State: "starting", Stage: "resolving",
 			}); err != nil {
 				t.Errorf("apply starting runtime error = %v", err)
 			}
@@ -809,9 +806,9 @@ func TestSourceControlLateEventsResolveUnresolvedPull(t *testing.T) {
 		source := createControlTestSource(t, server, "live/unresolved-started", "", "")
 		runtime := retainUnresolvedSourceControlPull(t, script, server, source)
 		event := observedRuntime{
-			Type: "source_started", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
+			Kind: "source", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
 			StreamID: runtime.streamID, StreamName: runtime.streamName, SourceID: runtime.sourceID,
-			Direction: "input", Protocol: "rtsp", State: "starting", Stage: "resolving",
+			Protocol: "rtsp", State: "starting", Stage: "resolving",
 		}
 		mismatched := runtime
 		mismatched.streamID = uuid.NewString()
@@ -842,9 +839,9 @@ func TestSourceControlLateEventsResolveUnresolvedPull(t *testing.T) {
 		source := createControlTestSource(t, server, "live/unresolved-stopped", "", "")
 		runtime := retainUnresolvedSourceControlPull(t, script, server, source)
 		stopped := observedRuntime{
-			Type: "source_stopped", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
+			Kind: "source", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
 			StreamID: runtime.streamID, StreamName: runtime.streamName, SourceID: runtime.sourceID,
-			Direction: "input", Protocol: "rtsp", State: "stopped", EndReason: "remote",
+			Protocol: "rtsp", State: "stopped", EndReason: "remote",
 		}
 		postSourceControlRuntimeEvent(t, server, stopped, http.StatusNoContent)
 		if _, ok := server.rtspSourceRuntime(source.sourceID); ok {
@@ -973,9 +970,9 @@ func TestSourceControlRecreatesUnresolvedPullAfterInstanceOffline(t *testing.T) 
 		t.Fatalf("replacement stream IDs = %q/%q, create = %+v", runtime.streamID, secondID, secondCreate)
 	}
 	late := observedRuntime{
-		Type: "source_stopped", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
+		Kind: "source", ServerID: runtime.server.serverID, InstanceID: runtime.server.instanceID,
 		StreamID: runtime.streamID, StreamName: runtime.streamName, SourceID: runtime.sourceID,
-		Direction: "input", Protocol: "rtsp", State: "stopped", EndReason: "remote",
+		Protocol: "rtsp", State: "stopped", EndReason: "remote",
 	}
 	postSourceControlRuntimeEvent(t, server, late, http.StatusGone)
 	owned, ok := server.rtspSourceRuntime(source.sourceID)
@@ -1217,9 +1214,9 @@ func TestSourceDeleteChurnKeepsRuntimeRegistriesBounded(t *testing.T) {
 			t.Fatalf("create source %d error = %v", index, err)
 		}
 		runtime := observedRuntime{
-			Type: "source_stopped", ServerID: "media-1", InstanceID: "instance-a",
+			Kind: "source", ServerID: "media-1", InstanceID: "instance-a",
 			StreamID:   fmt.Sprintf("20000000-0000-4000-8000-%012d", index),
-			StreamName: source.streamName, SourceID: source.sourceID, Direction: "input", Protocol: "rtsp",
+			StreamName: source.streamName, SourceID: source.sourceID, Protocol: "rtsp",
 			State: "stopped", EndReason: "requested",
 		}
 		server.runtimes.bindSource(source.sourceID, runtime.StreamID)
@@ -1370,8 +1367,8 @@ func TestSourceDeleteCannotRemoveConcurrentReplacement(t *testing.T) {
 	firstID := startControlTestSource(t, server, source.sourceID, http.StatusCreated)
 	<-creates
 	firstEvent := observedRuntime{
-		Type: "source_started", ServerID: "media-1", InstanceID: "instance-a", StreamID: firstID,
-		StreamName: source.streamName, SourceID: source.sourceID, Direction: "input", Protocol: "rtsp",
+		Kind: "source", ServerID: "media-1", InstanceID: "instance-a", StreamID: firstID,
+		StreamName: source.streamName, SourceID: source.sourceID, Protocol: "rtsp",
 		State: "starting", Stage: "resolving",
 	}
 	if _, err := server.runtimes.apply(firstEvent); err != nil {
@@ -1386,7 +1383,6 @@ func TestSourceDeleteCannotRemoveConcurrentReplacement(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("delete did not start")
 	}
-	firstEvent.Type = "source_stopped"
 	firstEvent.State = "stopped"
 	firstEvent.Stage = ""
 	firstEvent.EndReason = "requested"

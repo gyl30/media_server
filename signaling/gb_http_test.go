@@ -137,8 +137,8 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 		t.Fatal("media server is not online")
 	}
 	if _, err := server.runtimes.apply(observedRuntime{
-		Type: "source_started", ServerID: instance.serverID, InstanceID: instance.instanceID,
-		StreamID: started.StreamID, StreamName: started.StreamName, Direction: "input", Protocol: "gb28181",
+		Kind: "source", ServerID: instance.serverID, InstanceID: instance.instanceID,
+		StreamID: started.StreamID, StreamName: started.StreamName, Protocol: "gb28181",
 		State: "streaming", Stage: "streaming",
 	}); err != nil {
 		t.Fatalf("apply GB runtime error = %v", err)
@@ -180,7 +180,7 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 		t.Fatalf("cleanup live=%d ssrc=%d deletes=%d", live.len(), allocator.activeCount(), deletes.Load())
 	}
 	observed := server.runtimes.snapshot()
-	if len(observed) != 1 || observed[0].StreamID != started.StreamID || observed[0].Type != "source_stopped" ||
+	if len(observed) != 1 || observed[0].StreamID != started.StreamID || observed[0].Kind != "source" ||
 		observed[0].State != "stopped" || observed[0].EndReason != "requested" {
 		t.Fatalf("observed after GB stop = %+v", observed)
 	}

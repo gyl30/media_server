@@ -733,10 +733,9 @@ void rtsp_server_connection::emit_starting()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = runtime_event_type::publisher_connected,
+            .kind = runtime_kind::publisher,
             .stream_id = publisher_stream_id_,
             .stream_name = publisher_stream_name_,
-            .direction = runtime_direction::input,
             .protocol = runtime_protocol::rtsp,
             .state = runtime_state::starting,
             .stage = "announce",
@@ -754,10 +753,9 @@ void rtsp_server_connection::emit_streaming()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = runtime_event_type::publisher_connected,
+            .kind = runtime_kind::publisher,
             .stream_id = publisher_stream_id_,
             .stream_name = publisher_stream_name_,
-            .direction = runtime_direction::input,
             .protocol = runtime_protocol::rtsp,
             .state = runtime_state::streaming,
             .stage = "streaming",
@@ -776,10 +774,9 @@ void rtsp_server_connection::emit_stopped()
     if (runtime_events_)
     {
         runtime_events_->emit(runtime_event{
-            .type = terminal_event_type(runtime_event_type::publisher_disconnected, end_reason_),
+            .kind = runtime_kind::publisher,
             .stream_id = publisher_stream_id_,
             .stream_name = publisher_stream_name_,
-            .direction = runtime_direction::input,
             .protocol = runtime_protocol::rtsp,
             .state = runtime_state::stopped,
             .stage = end_stage_.empty() ? std::nullopt : std::optional<std::string>{end_stage_},

@@ -8,13 +8,12 @@ import (
 )
 
 type runtimeEventRequest struct {
-	Type       string          `json:"type"`
+	Kind       string          `json:"kind"`
 	ServerID   string          `json:"server_id"`
 	InstanceID string          `json:"instance_id"`
 	StreamID   string          `json:"stream_id"`
 	StreamName string          `json:"stream_name"`
 	SourceID   json.RawMessage `json:"source_id"`
-	Direction  string          `json:"direction"`
 	Protocol   string          `json:"protocol"`
 	State      string          `json:"state"`
 	Stage      json.RawMessage `json:"stage"`
@@ -61,18 +60,20 @@ func (s *infrastructureServer) handleRuntimeEvent(writer http.ResponseWriter, re
 		writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
 		return
 	}
-	if event.Type == "source_started" && event.Protocol == "rtsp" && event.SourceID != "" {
+	if event.Kind == "source" && event.Protocol == "rtsp" && event.State != "stopped" && event.SourceID != "" {
 		s.confirmRTSPPull(rtspPullRuntime{
 			sourceID: event.SourceID, streamName: event.StreamName,
 			server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
 		})
 	}
 	if event.State == "stopped" {
-		s.removeRTSPPull(rtspPullRuntime{
-			sourceID: event.SourceID, streamName: event.StreamName,
-			server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
-		})
-		if s.live != nil && event.Protocol == "gb28181" && event.Direction == "input" {
+		if event.Kind == "source" && event.Protocol == "rtsp" && event.SourceID != "" {
+			s.removeRTSPPull(rtspPullRuntime{
+				sourceID: event.SourceID, streamName: event.StreamName,
+				server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
+			})
+		}
+		if s.live != nil && event.Kind == "source" && event.Protocol == "gb28181" {
 			s.live.runtimeStopped(event.ServerID, event.InstanceID, event.StreamID, event.StreamName)
 		}
 	}
@@ -107,8 +108,8 @@ func makeObservedRuntime(payload runtimeEventRequest) (observedRuntime, bool) {
 		return observedRuntime{}, false
 	}
 	event := observedRuntime{
-		Type: payload.Type, ServerID: payload.ServerID, InstanceID: payload.InstanceID,
-		StreamID: payload.StreamID, StreamName: payload.StreamName, Direction: payload.Direction,
+		Kind: payload.Kind, ServerID: payload.ServerID, InstanceID: payload.InstanceID,
+		StreamID: payload.StreamID, StreamName: payload.StreamName,
 		Protocol: payload.Protocol, State: payload.State,
 	}
 	if sourceID != nil {
@@ -128,7 +129,7 @@ func makeObservedRuntime(payload runtimeEventRequest) (observedRuntime, bool) {
 
 func validRuntimeEvent(event observedRuntime) bool {
 	if event.ServerID == "" || event.InstanceID == "" || !validUUIDv4(event.StreamID) || event.StreamName == "" ||
-		(event.Direction != "input" && event.Direction != "output") || !validRuntimeProtocol(event.Protocol) ||
+		(event.Kind != "source" && event.Kind != "publisher" && event.Kind != "output") || !validRuntimeProtocol(event.Protocol) ||
 		(event.State != "starting" && event.State != "streaming" && event.State != "stopped") {
 		return false
 	}
@@ -139,24 +140,7 @@ func validRuntimeEvent(event observedRuntime) bool {
 	} else if event.EndReason != "" || event.Error != "" {
 		return false
 	}
-	switch event.Type {
-	case "source_started":
-		return event.Direction == "input" && event.State != "stopped"
-	case "source_stopped":
-		return event.Direction == "input" && event.State == "stopped"
-	case "publisher_connected":
-		return event.Direction == "input" && event.State != "stopped"
-	case "publisher_disconnected":
-		return event.Direction == "input" && event.State == "stopped"
-	case "output_started":
-		return event.Direction == "output" && event.State != "stopped"
-	case "output_stopped":
-		return event.Direction == "output" && event.State == "stopped"
-	case "protocol_error", "runtime_error":
-		return event.State == "stopped"
-	default:
-		return false
-	}
+	return true
 }
 
 func validRuntimeProtocol(value string) bool {

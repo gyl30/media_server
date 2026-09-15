@@ -526,7 +526,7 @@ class runtime_event_capture final
 };
 
 void require_publisher_event(const runtime_event& event,
-                             runtime_event_type type,
+                             runtime_kind kind,
                              runtime_protocol protocol,
                              runtime_state state,
                              std::string_view stream_id,
@@ -536,9 +536,9 @@ void require_publisher_event(const runtime_event& event,
                              std::optional<std::string_view> source_id = std::nullopt)
 {
     const bool source_matches = source_id ? event.source_id == *source_id : !event.source_id;
-    require(event.type == type && event.server_id == "media-1" && event.instance_id == "instance-a" &&
+    require(event.kind == kind && event.server_id == "media-1" && event.instance_id == "instance-a" &&
                 event.stream_id == stream_id && event.stream_name == stream_name && source_matches &&
-                event.direction == runtime_direction::input && event.protocol == protocol && event.state == state &&
+                event.protocol == protocol && event.state == state &&
                 event.stage && *event.stage == stage,
             message);
 }
@@ -2342,7 +2342,7 @@ void test_rtmp_publish_claim_lifecycle()
         auto events = peer.runtime_events();
         require(events.size() == 1U, "accepted RTMP claim emits starting once");
         require_publisher_event(events[0],
-                                runtime_event_type::publisher_connected,
+                                runtime_kind::publisher,
                                 runtime_protocol::rtmp,
                                 runtime_state::starting,
                                 test_rtmp_stream_id,
@@ -2359,7 +2359,7 @@ void test_rtmp_publish_claim_lifecycle()
         events = peer.runtime_events();
         require(events.size() == 2U, "RTMP registry readiness emits streaming once");
         require_publisher_event(events[1],
-                                runtime_event_type::publisher_connected,
+                                runtime_kind::publisher,
                                 runtime_protocol::rtmp,
                                 runtime_state::streaming,
                                 test_rtmp_stream_id,
@@ -2374,7 +2374,7 @@ void test_rtmp_publish_claim_lifecycle()
         events = peer.runtime_events();
         require(events.size() == 3U, "RTMP remote disconnect emits terminal once");
         require_publisher_event(events[2],
-                                runtime_event_type::publisher_disconnected,
+                                runtime_kind::publisher,
                                 runtime_protocol::rtmp,
                                 runtime_state::stopped,
                                 test_rtmp_stream_id,
@@ -5158,7 +5158,7 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     auto events = runtime_events.events();
     require(events.size() == 1U, "rtsp pull emits starting once");
     require_publisher_event(events[0],
-                            runtime_event_type::source_started,
+                            runtime_kind::source,
                             runtime_protocol::rtsp,
                             runtime_state::starting,
                             stream_id,
@@ -5247,7 +5247,7 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     events = runtime_events.events();
     require(events.size() == 2U, "rtsp pull tracks ready emits streaming once");
     require_publisher_event(events[1],
-                            runtime_event_type::source_started,
+                            runtime_kind::source,
                             runtime_protocol::rtsp,
                             runtime_state::streaming,
                             stream_id,
@@ -5270,9 +5270,9 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     runner.join();
     events = runtime_events.events();
     require(events.size() == 3U, "rtsp pull requested shutdown emits stopped once");
-    require(events[2].type == runtime_event_type::source_stopped && events[2].server_id == "media-1" &&
+    require(events[2].kind == runtime_kind::source && events[2].server_id == "media-1" &&
                 events[2].instance_id == "instance-a" && events[2].stream_id == stream_id && events[2].stream_name == "relay/topology" &&
-                events[2].source_id == source_id && events[2].direction == runtime_direction::input &&
+                events[2].source_id == source_id &&
                 events[2].protocol == runtime_protocol::rtsp &&
                 events[2].state == runtime_state::stopped && !events[2].stage && events[2].end_reason == runtime_end_reason::requested &&
                 !events[2].error,
@@ -5743,7 +5743,7 @@ void test_rtsp_publish_claim_lifecycle()
         auto events = runtime_events.events();
         require(events.size() == 1U, "accepted RTSP claim emits starting once");
         require_publisher_event(events[0],
-                                runtime_event_type::publisher_connected,
+                                runtime_kind::publisher,
                                 runtime_protocol::rtsp,
                                 runtime_state::starting,
                                 stream_id,
@@ -5772,7 +5772,7 @@ void test_rtsp_publish_claim_lifecycle()
         require(events.size() == 2U && stream_registry::instance().find("live/claim-pending"),
                 "RTSP registry readiness emits streaming once");
         require_publisher_event(events[1],
-                                runtime_event_type::publisher_connected,
+                                runtime_kind::publisher,
                                 runtime_protocol::rtsp,
                                 runtime_state::streaming,
                                 stream_id,
@@ -5798,7 +5798,7 @@ void test_rtsp_publish_claim_lifecycle()
         events = runtime_events.events();
         require(events.size() == 3U, "RTSP late shutdown does not duplicate terminal event");
         require_publisher_event(events[2],
-                                runtime_event_type::publisher_disconnected,
+                                runtime_kind::publisher,
                                 runtime_protocol::rtsp,
                                 runtime_state::stopped,
                                 stream_id,

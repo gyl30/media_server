@@ -75,7 +75,6 @@ void run_on_owner(worker_context& worker, Handler&& handler)
 }
 
 void require_gb_event(const runtime_event& event,
-                      runtime_event_type type,
                       std::string_view stream_id,
                       std::string_view stream_name,
                       runtime_state state,
@@ -83,9 +82,9 @@ void require_gb_event(const runtime_event& event,
                       std::string_view message)
 {
     const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
-    require(event.type == type && event.server_id == "media-1" && event.instance_id == "instance-1" &&
+    require(event.kind == runtime_kind::output && event.server_id == "media-1" && event.instance_id == "instance-1" &&
                 event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id &&
-                event.direction == runtime_direction::output && event.protocol == runtime_protocol::gb28181 && event.state == state &&
+                event.protocol == runtime_protocol::gb28181 && event.state == state &&
                 stage_matches,
             message);
 }
@@ -146,7 +145,6 @@ void test_udp_sender_session_sends_rtp()
     require(started, "gb udp sender session startup");
     require(events.values.size() == 1U, "gb udp sender starting event count");
     require_gb_event(events.values[0],
-                     runtime_event_type::output_started,
                      stream_id,
                      source->name(),
                      runtime_state::starting,
@@ -175,7 +173,6 @@ void test_udp_sender_session_sends_rtp()
     require(rtp_receiver.available() > 0, "gb udp sender sends RTP");
     require(events.values.size() == 2U, "gb udp sender streaming event count");
     require_gb_event(events.values[1],
-                     runtime_event_type::output_started,
                      stream_id,
                      source->name(),
                      runtime_state::streaming,
@@ -193,7 +190,6 @@ void test_udp_sender_session_sends_rtp()
     io.run();
     require(events.values.size() == 3U, "gb udp sender stopped event count");
     require_gb_event(events.values[2],
-                     runtime_event_type::output_stopped,
                      stream_id,
                      source->name(),
                      runtime_state::stopped,
@@ -275,7 +271,6 @@ void test_udp_sender_queue_overflow_drops_packet()
     require(rtp_receiver.available() == 0U, "gb udp overflow drops new packet");
     require(events.values.size() == 1U, "gb udp overflow does not report streaming or stop");
     require_gb_event(events.values[0],
-                     runtime_event_type::output_started,
                      stream_id,
                      source->name(),
                      runtime_state::starting,
@@ -292,7 +287,6 @@ void test_udp_sender_queue_overflow_drops_packet()
     require(weak_session.expired(), "gb udp overflow shutdown releases session");
     require(events.values.size() == 2U, "gb udp overflow terminal event count");
     require_gb_event(events.values[1],
-                     runtime_event_type::output_stopped,
                      stream_id,
                      source->name(),
                      runtime_state::stopped,

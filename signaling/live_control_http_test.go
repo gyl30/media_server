@@ -197,9 +197,9 @@ func TestLiveControlRetainsAmbiguousCreateUntilCleanupSucceeds(t *testing.T) {
 				t.Errorf("decode create: %v", err)
 			}
 			if _, err := infrastructure.runtimes.apply(observedRuntime{
-				Type: "source_started", ServerID: "media-1", InstanceID: "instance-a",
+				Kind: "source", ServerID: "media-1", InstanceID: "instance-a",
 				StreamID: command.StreamID, StreamName: command.StreamName,
-				Direction: "input", Protocol: "gb28181", State: "starting", Stage: "receiving",
+				Protocol: "gb28181", State: "starting", Stage: "receiving",
 			}); err != nil {
 				t.Errorf("apply starting runtime error = %v", err)
 			}
@@ -297,9 +297,9 @@ func TestLiveControlClosesObservedRuntimeAfterCreateCompensation(t *testing.T) {
 				t.Errorf("decode create: %v", err)
 			}
 			if _, err := infrastructure.runtimes.apply(observedRuntime{
-				Type: "source_started", ServerID: "media-1", InstanceID: "instance-a",
+				Kind: "source", ServerID: "media-1", InstanceID: "instance-a",
 				StreamID: command.StreamID, StreamName: command.StreamName,
-				Direction: "input", Protocol: "gb28181", State: "starting", Stage: "receiving",
+				Protocol: "gb28181", State: "starting", Stage: "receiving",
 			}); err != nil {
 				t.Errorf("apply starting runtime error = %v", err)
 			}
@@ -376,9 +376,9 @@ func TestLiveControlRuntimeStopWinsCreateCompensationFailure(t *testing.T) {
 				streamName string
 			}{streamID: command.StreamID, streamName: command.StreamName}
 			if _, err := infrastructure.runtimes.apply(observedRuntime{
-				Type: "source_started", ServerID: "media-1", InstanceID: "instance-a",
+				Kind: "source", ServerID: "media-1", InstanceID: "instance-a",
 				StreamID: command.StreamID, StreamName: command.StreamName,
-				Direction: "input", Protocol: "gb28181", State: "starting", Stage: "receiving",
+				Protocol: "gb28181", State: "starting", Stage: "receiving",
 			}); err != nil {
 				t.Errorf("apply starting runtime error = %v", err)
 			}
@@ -416,9 +416,9 @@ func TestLiveControlRuntimeStopWinsCreateCompensationFailure(t *testing.T) {
 	}
 	stopResult := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		body := `{"type":"source_stopped","server_id":"media-1","instance_id":"instance-a",` +
+		body := `{"kind":"source","server_id":"media-1","instance_id":"instance-a",` +
 			`"stream_id":"` + command.streamID + `","stream_name":"` + command.streamName + `",` +
-			`"direction":"input","protocol":"gb28181","state":"stopped","end_reason":"remote"}`
+			`"protocol":"gb28181","state":"stopped","end_reason":"remote"}`
 		stopResult <- sourceRequest(t, infrastructure.handler(), http.MethodPost, "/internal/runtime-events", body, "application/json")
 	}()
 	deadline := time.Now().Add(time.Second)
@@ -479,9 +479,9 @@ func TestLiveControlRetainsInviteFailureUntilCleanupSucceeds(t *testing.T) {
 				t.Errorf("decode create: %v", err)
 			}
 			if _, err := infrastructure.runtimes.apply(observedRuntime{
-				Type: "source_started", ServerID: "media-1", InstanceID: "instance-a",
+				Kind: "source", ServerID: "media-1", InstanceID: "instance-a",
 				StreamID: command.StreamID, StreamName: command.StreamName,
-				Direction: "input", Protocol: "gb28181", State: "starting", Stage: "receiving",
+				Protocol: "gb28181", State: "starting", Stage: "receiving",
 			}); err != nil {
 				t.Errorf("apply starting runtime error = %v", err)
 			}
@@ -603,8 +603,8 @@ func TestLiveControlRetriesUnconfirmedRuntimeDelete(t *testing.T) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	infrastructure.live = live
 	if _, err := infrastructure.runtimes.apply(observedRuntime{
-		Type: "source_started", ServerID: registration.ServerID, InstanceID: registration.InstanceID,
-		StreamID: streamID, StreamName: streamName, Direction: "input", Protocol: "gb28181",
+		Kind: "source", ServerID: registration.ServerID, InstanceID: registration.InstanceID,
+		StreamID: streamID, StreamName: streamName, Protocol: "gb28181",
 		State: "streaming", Stage: "streaming",
 	}); err != nil {
 		t.Fatalf("apply runtime error = %v", err)

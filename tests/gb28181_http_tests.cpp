@@ -45,17 +45,16 @@ runtime_event_emitter_ptr capture_events(std::vector<runtime_event>& events)
 }
 
 void require_gb_event(const runtime_event& event,
-                      runtime_event_type type,
+                      runtime_kind kind,
                       std::string_view stream_id,
                       std::string_view stream_name,
-                      runtime_direction direction,
                       runtime_state state,
                       std::string_view stage,
                       std::string_view message)
 {
     const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
-    require(event.type == type && event.server_id == "media-1" && event.instance_id == "instance-1" &&
-                event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id && event.direction == direction &&
+    require(event.kind == kind && event.server_id == "media-1" && event.instance_id == "instance-1" &&
+                event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id &&
                 event.protocol == runtime_protocol::gb28181 && event.state == state && stage_matches,
             message);
 }
@@ -135,10 +134,9 @@ void test_receiver_handlers()
     require(rtp_port != 0 && (rtp_port & 1U) == 0U && rtcp_port == rtp_port + 1U, "receiver create response port pair");
     require(events.size() == 1U, "receiver HTTP propagates event emitter");
     require_gb_event(events[0],
-                     runtime_event_type::source_started,
+                     runtime_kind::source,
                      stream_id_a,
                      "live/http-handler-receiver",
-                     runtime_direction::input,
                      runtime_state::starting,
                      "listening",
                      "receiver HTTP starting event payload");
@@ -185,10 +183,9 @@ void test_receiver_handlers()
 
     require(events.size() == 2U, "receiver HTTP delete emits terminal event");
     require_gb_event(events[1],
-                     runtime_event_type::source_stopped,
+                     runtime_kind::source,
                      stream_id_a,
                      "live/http-handler-receiver",
-                     runtime_direction::input,
                      runtime_state::stopped,
                      {},
                      "receiver HTTP stopped event payload");
@@ -233,10 +230,9 @@ void test_sender_handlers()
     require_json_response(create_response, boost::beast::http::status::created, R"({"result":"ok"})", "sender create response");
     require(events.size() == 1U, "sender HTTP propagates event emitter");
     require_gb_event(events[0],
-                     runtime_event_type::output_started,
+                     runtime_kind::output,
                      stream_id_a,
                      stream->name(),
-                     runtime_direction::output,
                      runtime_state::starting,
                      {},
                      "sender HTTP starting event payload");
@@ -263,10 +259,9 @@ void test_sender_handlers()
 
     require(events.size() == 2U, "sender HTTP delete emits terminal event");
     require_gb_event(events[1],
-                     runtime_event_type::output_stopped,
+                     runtime_kind::output,
                      stream_id_a,
                      stream->name(),
-                     runtime_direction::output,
                      runtime_state::stopped,
                      {},
                      "sender HTTP stopped event payload");
