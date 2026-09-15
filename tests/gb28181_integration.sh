@@ -158,10 +158,10 @@ if request["transport"] != "udp":
     assert response_body == ""
     sys.exit(0)
 response = json.loads(response_body)
-assert set(response) == {"rtp_port", "rtcp_port"}
+assert set(response) == {"rtp_port"}
 rtp_port = int(response["rtp_port"])
-rtcp_port = int(response["rtcp_port"])
-assert rtp_port > 0 and rtp_port % 2 == 0 and rtcp_port == rtp_port + 1
+rtcp_port = rtp_port + 1
+assert rtp_port > 0 and rtp_port % 2 == 0
 print(rtp_port, rtcp_port)
 PY
 }

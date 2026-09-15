@@ -120,7 +120,6 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
         }
         boost::json::object body;
         body["rtp_port"] = local_ports->first;
-        body["rtcp_port"] = local_ports->second;
         return make_json_response(request, boost::beast::http::status::created, std::move(body));
     }
     else

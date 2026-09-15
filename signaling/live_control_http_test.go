@@ -486,9 +486,7 @@ func TestLiveControlRetainsInviteFailureUntilCleanupSucceeds(t *testing.T) {
 			}); err != nil {
 				t.Errorf("apply starting runtime error = %v", err)
 			}
-			writeJSON(writer, http.StatusCreated, map[string]any{
-				"rtp_port": 40000, "rtcp_port": 40001,
-			})
+			writeJSON(writer, http.StatusCreated, map[string]any{"rtp_port": 40000})
 		case "/gb28181/receiver/delete":
 			var command struct {
 				StreamID string `json:"stream_id"`
