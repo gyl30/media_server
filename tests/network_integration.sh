@@ -401,7 +401,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
     -g 25 -keyint_min 25 -sc_threshold 0 \
     -c:a aac -b:a 96k -ac 2 \
-    -t 22 -f flv "$main_publish_url" \
+    -f flv "$main_publish_url" \
     >"$work_dir/publisher.log" 2>&1 &
 publish_pid=$!
 
@@ -467,7 +467,8 @@ wait_runtime_state "$pull_signaling_http_port" "$replacement_stream_id" source r
 wait_http_stream_absent 18081 relay/test
 delete_rtsp_source rtsp_pull_recreate "$pull_signaling_http_port" "$pull_source_id"
 
-wait "$publish_pid"
+kill -INT "$publish_pid" 2>/dev/null || true
+wait "$publish_pid" 2>/dev/null || true
 publish_pid=""
 wait_runtime_state "$main_signaling_http_port" "$main_publish_stream_id" publisher rtmp live/test stopped
 

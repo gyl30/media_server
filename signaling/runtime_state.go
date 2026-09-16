@@ -96,6 +96,9 @@ func (r *observedRuntimeRegistry) acknowledgeSourceStopped(
 
 func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExistingStopped bool) (bool, error) {
 	current, exists := r.byStreamID[event.StreamID]
+	if exists && current == event {
+		return false, nil
+	}
 	if event.SourceID != "" {
 		currentStreamID, bound := r.currentBySource[event.SourceID]
 		if !bound || (currentStreamID != event.StreamID && (!exists || event.State != "stopped")) {
@@ -107,16 +110,13 @@ func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExist
 			return false, errRuntimeConflict
 		}
 		if current.State == "stopped" {
-			if current == event || acceptExistingStopped {
+			if acceptExistingStopped {
 				return false, nil
 			}
 			return false, errRuntimeConflict
 		}
 		if current.State == "streaming" && event.State == "starting" {
 			return false, errRuntimeConflict
-		}
-		if current == event {
-			return false, nil
 		}
 	} else if event.SourceID != "" {
 		if currentStreamID, bound := r.currentBySource[event.SourceID]; bound && currentStreamID != event.StreamID {
