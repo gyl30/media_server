@@ -183,14 +183,7 @@ int service::run()
     http_ = std::make_shared<http_server>(*workers_, config_, runtime_events_);
 
     signals_ = std::make_unique<boost::asio::signal_set>(control_io, SIGINT, SIGTERM);
-    signals_->async_wait(
-        [this](const boost::system::error_code& error, int)
-        {
-            if (!error)
-            {
-                stop();
-            }
-        });
+    signals_->async_wait([this](const boost::system::error_code&, int) { stop(); });
 
     boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_control(yield); }, boost::asio::detached);
     spdlog::info("worker threads {}", workers_->size());

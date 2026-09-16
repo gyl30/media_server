@@ -428,11 +428,7 @@ bool video_transcoder::receive_decoded(std::vector<media_frame>& output)
     {
         av_frame_unref(state_->decoded_frame);
         const int result = avcodec_receive_frame(state_->decoder, state_->decoded_frame);
-        if (result == AVERROR(EAGAIN))
-        {
-            return true;
-        }
-        if (result == AVERROR_EOF)
+        if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
         {
             return true;
         }
@@ -575,11 +571,7 @@ bool video_transcoder::receive_encoded(std::vector<media_frame>& output)
     {
         av_packet_unref(state_->output_packet);
         const int result = avcodec_receive_packet(state_->encoder, state_->output_packet);
-        if (result == AVERROR(EAGAIN))
-        {
-            return true;
-        }
-        if (result == AVERROR_EOF)
+        if (result == AVERROR(EAGAIN) || result == AVERROR_EOF)
         {
             return true;
         }
