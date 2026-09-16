@@ -12,6 +12,7 @@
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_event.h"
 #include "media/http/signaling_client.h"
 #include "media/gb28181/gb28181_tcp_receiver_session.h"
 
@@ -216,14 +217,8 @@ void gb28181_tcp_receiver_session::emit_starting()
         return;
     }
     runtime_started_ = true;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::source,
-        .stream_id = stream_id_,
-        .stream_name = receiver_.stream_name(),
-        .protocol = runtime_protocol::gb28181,
-        .state = runtime_state::starting,
-        .stage = config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting",
-    });
+    signaling_client::instance().report(gb28181_event::source_starting(
+        stream_id_, receiver_.stream_name(), config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting"));
 }
 
 void gb28181_tcp_receiver_session::emit_streaming()
@@ -233,14 +228,7 @@ void gb28181_tcp_receiver_session::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::source,
-        .stream_id = stream_id_,
-        .stream_name = receiver_.stream_name(),
-        .protocol = runtime_protocol::gb28181,
-        .state = runtime_state::streaming,
-        .stage = "streaming",
-    });
+    signaling_client::instance().report(gb28181_event::source_streaming(stream_id_, receiver_.stream_name()));
 }
 
 void gb28181_tcp_receiver_session::emit_stopped()
@@ -251,15 +239,7 @@ void gb28181_tcp_receiver_session::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::source,
-        .stream_id = stream_id_,
-        .stream_name = receiver_.stream_name(),
-        .protocol = runtime_protocol::gb28181,
-        .state = runtime_state::stopped,
-        .end_reason = end_reason_,
-        .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
-    });
+    signaling_client::instance().report(gb28181_event::source_stopped(stream_id_, receiver_.stream_name(), end_reason_, end_error_));
 }
 
 }    // namespace media_server

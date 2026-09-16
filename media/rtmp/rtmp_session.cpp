@@ -10,6 +10,7 @@
 #include <boost/asio/bind_cancellation_slot.hpp>
 
 #include "media/core/stream_id.h"
+#include "media/rtmp/rtmp_event.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -485,14 +486,7 @@ void rtmp_session::emit_starting()
         return;
     }
     runtime_started_ = true;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::publisher,
-        .stream_id = stream_id_,
-        .stream_name = stream_name_,
-        .protocol = runtime_protocol::rtmp,
-        .state = runtime_state::starting,
-        .stage = "publish",
-    });
+    signaling_client::instance().report(rtmp_event::publisher_starting(stream_id_, stream_name_));
 }
 
 void rtmp_session::emit_streaming()
@@ -502,14 +496,7 @@ void rtmp_session::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::publisher,
-        .stream_id = stream_id_,
-        .stream_name = stream_name_,
-        .protocol = runtime_protocol::rtmp,
-        .state = runtime_state::streaming,
-        .stage = "streaming",
-    });
+    signaling_client::instance().report(rtmp_event::publisher_streaming(stream_id_, stream_name_));
 }
 
 void rtmp_session::emit_stopped()
@@ -520,16 +507,7 @@ void rtmp_session::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::publisher,
-        .stream_id = stream_id_,
-        .stream_name = stream_name_,
-        .protocol = runtime_protocol::rtmp,
-        .state = runtime_state::stopped,
-        .stage = end_stage_.empty() ? std::nullopt : std::optional<std::string>{end_stage_},
-        .end_reason = end_reason_,
-        .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
-    });
+    signaling_client::instance().report(rtmp_event::publisher_stopped(stream_id_, stream_name_, end_reason_, end_stage_, end_error_));
 }
 
 std::string rtmp_session::make_stream_name(std::string_view app, std::string_view stream)
