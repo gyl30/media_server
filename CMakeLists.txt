@@ -319,7 +319,25 @@ if(BUILD_TESTING)
 
     add_executable(signaling_client_tests tests/signaling_client_tests.cpp)
     target_link_libraries(signaling_client_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME signaling_client_tests COMMAND signaling_client_tests)
+    foreach(test_case IN ITEMS
+        unconfigured
+        registration
+        claim
+        event_no_content
+        event_accepted
+        rejected
+        temporary_failure
+        network_error
+        status_only
+        invalid_url
+        timeout
+        cancellation_release
+        heartbeat_rejection
+        heartbeat_wait_cancellation
+        heartbeat_request_cancellation
+    )
+        add_test(NAME signaling_client_${test_case} COMMAND signaling_client_tests ${test_case})
+    endforeach()
 
     add_executable(service_tests
         tests/service_tests.cpp
@@ -327,7 +345,9 @@ if(BUILD_TESTING)
         service.cpp
     )
     target_link_libraries(service_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME service_tests COMMAND service_tests)
+    foreach(test_case IN ITEMS invalid_bind invalid_webrtc registration registration_stop)
+        add_test(NAME service_${test_case} COMMAND service_tests ${test_case})
+    endforeach()
 
     add_executable(media_pipeline_tests
         tests/media_pipeline_tests.cpp
@@ -336,6 +356,26 @@ if(BUILD_TESTING)
     )
     target_link_libraries(media_pipeline_tests PRIVATE media_core media_server_link_options)
     add_test(NAME media_pipeline_tests COMMAND media_pipeline_tests)
+    foreach(test_case IN ITEMS
+        rtmp_claim_invalid
+        rtmp_claim_conflict
+        rtmp_claim_server_error
+        rtmp_claim_timeout
+        rtmp_claim_events
+        rtmp_claim_disconnect
+        rtsp_pull_topology
+        rtsp_publish_opus_fmtp
+        rtsp_claim_network_error
+        rtsp_claim_disconnect
+        rtsp_claim_accepted
+        rtsp_claim_conflict
+        rtsp_claim_server_error
+        rtsp_claim_timeout
+        rtsp_claim_shutdown
+        rtsp_server_contract
+    )
+        add_test(NAME media_pipeline_${test_case} COMMAND media_pipeline_tests ${test_case})
+    endforeach()
 
     add_executable(rtsp_server_connection_tests tests/rtsp_server_connection_tests.cpp)
     target_link_libraries(rtsp_server_connection_tests PRIVATE media_core media_server_link_options)
@@ -394,11 +434,26 @@ if(BUILD_TESTING)
 
     add_executable(runtime_event_tests tests/runtime_event_tests.cpp)
     target_link_libraries(runtime_event_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME runtime_event_tests COMMAND runtime_event_tests)
+    foreach(test_case IN ITEMS strings failure shutdown_reason)
+        add_test(NAME runtime_event_${test_case} COMMAND runtime_event_tests ${test_case})
+    endforeach()
 
     add_executable(event_reporter_tests tests/event_reporter_tests.cpp)
     target_link_libraries(event_reporter_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME event_reporter_tests COMMAND event_reporter_tests)
+    foreach(test_case IN ITEMS
+        fifo
+        http_failures
+        network_failure
+        capacity
+        overflow
+        coalescing
+        nonblocking
+        media_independence
+        io_stop_in_flight
+        io_stop_reconnect
+    )
+        add_test(NAME event_reporter_${test_case} COMMAND event_reporter_tests ${test_case})
+    endforeach()
 
     add_executable(port_manager_tests tests/port_manager_tests.cpp)
     target_link_libraries(port_manager_tests PRIVATE media_core media_server_link_options)

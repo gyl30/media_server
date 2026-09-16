@@ -226,24 +226,6 @@ media_server::runtime_event event(std::size_t value)
     };
 }
 
-void test_mock_and_capture_modes()
-{
-    auto& reporter = media_server::event_reporter::instance();
-    reporter.configure_mock();
-    reporter.report(event(0));
-
-    std::vector<media_server::runtime_event> captured;
-    reporter.configure_handler("media-capture", "instance-capture", [&](media_server::runtime_event value) { captured.push_back(std::move(value)); });
-    reporter.report(event(1));
-    require(captured.size() == 1U, "capture reporter receives event");
-    require(captured.front().server_id == "media-capture" && captured.front().instance_id == "instance-capture",
-            "capture reporter fills event identity");
-
-    reporter.configure_mock();
-    reporter.report(event(2));
-    require(captured.size() == 1U, "mock reporter is no-op");
-}
-
 media_server::signaling_client_options client_options(std::string url)
 {
     return {
@@ -272,9 +254,7 @@ class reporter_fixture
 
     ~reporter_fixture()
     {
-        media_server::event_reporter::instance().configure_mock();
-        media_server::signaling_client::instance().configure_mock();
-        work_.reset();
+        io_.stop();
         if (runner_.joinable())
         {
             runner_.join();
@@ -301,12 +281,7 @@ class reporter_fixture
         require(condition.wait_for(lock, 2s, [&]() { return reached; }), "reporter owner barrier");
     }
 
-    void shutdown()
-    {
-        media_server::event_reporter::instance().configure_mock();
-        media_server::signaling_client::instance().configure_mock();
-        work_.reset();
-    }
+    void stop() { io_.stop(); }
 
     [[nodiscard]] boost::asio::io_context& io() { return io_; }
 
@@ -431,11 +406,10 @@ void test_report_coalesces_before_owner_context()
     scripted_http_server server({response_action::hold_no_content});
     boost::asio::io_context io;
     media_server::signaling_client::instance().configure(io, client_options(server.url()));
-    auto& reporter = media_server::event_reporter::instance();
-    reporter.configure(io, "media-1", "instance-a");
+    media_server::event_reporter::instance().configure(io, "media-1", "instance-a");
     for (std::size_t index = 0; index <= 500U; ++index)
     {
-        reporter.report(event(index));
+        media_server::event_reporter::instance().report(event(index));
     }
 
     bool barrier_reached{};
@@ -449,10 +423,8 @@ void test_report_coalesces_before_owner_context()
     require(barrier_reached, "reporter owner barrier reached");
     require(handlers < 10U, "runtime event ingress coalesces owner handlers");
 
-    reporter.configure_mock();
-    media_server::signaling_client::instance().configure_mock();
+    io.stop();
     server.release_hold();
-    io.run_for(500ms);
 }
 
 void test_emit_never_blocks_worker()
@@ -528,7 +500,7 @@ void test_delivery_failure_does_not_stop_media_session()
     media_server::stream_registry::instance().clear();
 }
 
-void test_shutdown_cancels_reconnect_without_drain()
+void test_io_stop_ends_reconnect_without_drain()
 {
     scripted_http_server server({response_action::disconnect});
     reporter_fixture fixture(server.url());
@@ -537,12 +509,12 @@ void test_shutdown_cancels_reconnect_without_drain()
     require(server.wait_requests(1), "shutdown test reaches network failure");
     require(!server.wait_requests(2, 1s), "shutdown test enters reconnect wait");
     const auto started = std::chrono::steady_clock::now();
-    fixture.shutdown();
-    require(std::chrono::steady_clock::now() - started < 500ms, "reporter shutdown does not drain backlog");
-    require(!server.wait_requests(2, 200ms), "reporter shutdown does not send queued event");
+    fixture.stop();
+    require(std::chrono::steady_clock::now() - started < 500ms, "io stop does not drain reporter backlog");
+    require(!server.wait_requests(2, 200ms), "io stop does not send queued event");
 }
 
-void test_shutdown_cancels_in_flight_without_drain()
+void test_io_stop_ends_in_flight_without_drain()
 {
     scripted_http_server server({response_action::hold_no_content});
     reporter_fixture fixture(server.url());
@@ -550,29 +522,64 @@ void test_shutdown_cancels_in_flight_without_drain()
     fixture.report(event(2));
     require(server.wait_requests(1), "in-flight shutdown test holds HTTP response");
     const auto started = std::chrono::steady_clock::now();
-    fixture.shutdown();
-    require(std::chrono::steady_clock::now() - started < 500ms, "in-flight shutdown does not wait for response or drain backlog");
+    fixture.stop();
+    require(std::chrono::steady_clock::now() - started < 500ms, "io stop does not wait for response or drain backlog");
     server.release_hold();
-    require(!server.wait_requests(2, 200ms), "in-flight shutdown does not send queued event");
+    require(!server.wait_requests(2, 200ms), "io stop does not send queued event");
 }
 
 }    // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    require(argc == 2, "event reporter test case required");
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::stream_registry::instance().clear();
-    test_mock_and_capture_modes();
-    test_fifo_and_event_body();
-    test_http_failures_drop_attempted_and_continue();
-    test_network_failure_drops_attempted_and_delays_backlog();
-    test_queue_accepts_exact_capacity();
-    test_queue_overflow_clears_backlog_and_keeps_newest();
-    test_report_coalesces_before_owner_context();
-    test_emit_never_blocks_worker();
-    test_delivery_failure_does_not_stop_media_session();
-    test_shutdown_cancels_in_flight_without_drain();
-    test_shutdown_cancels_reconnect_without_drain();
+    const std::string_view test{argv[1]};
+    if (test == "fifo")
+    {
+        test_fifo_and_event_body();
+    }
+    else if (test == "http_failures")
+    {
+        test_http_failures_drop_attempted_and_continue();
+    }
+    else if (test == "network_failure")
+    {
+        test_network_failure_drops_attempted_and_delays_backlog();
+    }
+    else if (test == "capacity")
+    {
+        test_queue_accepts_exact_capacity();
+    }
+    else if (test == "overflow")
+    {
+        test_queue_overflow_clears_backlog_and_keeps_newest();
+    }
+    else if (test == "coalescing")
+    {
+        test_report_coalesces_before_owner_context();
+    }
+    else if (test == "nonblocking")
+    {
+        test_emit_never_blocks_worker();
+    }
+    else if (test == "media_independence")
+    {
+        test_delivery_failure_does_not_stop_media_session();
+    }
+    else if (test == "io_stop_in_flight")
+    {
+        test_io_stop_ends_in_flight_without_drain();
+    }
+    else if (test == "io_stop_reconnect")
+    {
+        test_io_stop_ends_reconnect_without_drain();
+    }
+    else
+    {
+        throw std::runtime_error("unknown event reporter test case");
+    }
     media_server::stream_registry::instance().clear();
     media_server::port_manager::destroy();
     return 0;

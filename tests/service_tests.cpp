@@ -212,25 +212,37 @@ void test_signal_stops_registration_wait()
 
 }    // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    require(argc == 2, "service test case required");
     media_server::stream_registry::instance().clear();
+    const std::string_view test{argv[1]};
+    if (test == "invalid_bind")
     {
         media_server::config cfg;
         cfg.bind_address = "0.0.0.0";
         media_server::service service(std::move(cfg));
         require(service.run() == 1, "service rejects unspecified bind address");
     }
-
+    else if (test == "invalid_webrtc")
     {
         media_server::config cfg;
         cfg.webrtc_address = "invalid-address";
         media_server::service service(std::move(cfg));
         require(service.run() == 1, "service rejects invalid webrtc address");
     }
-
-    test_signaling_registration_precedes_media_listeners();
-    test_signal_stops_registration_wait();
+    else if (test == "registration")
+    {
+        test_signaling_registration_precedes_media_listeners();
+    }
+    else if (test == "registration_stop")
+    {
+        test_signal_stops_registration_wait();
+    }
+    else
+    {
+        throw std::runtime_error("unknown service test case");
+    }
 
     std::cout << "[pass] service tests\n";
     media_server::stream_registry::instance().clear();

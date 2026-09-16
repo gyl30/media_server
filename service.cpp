@@ -49,11 +49,10 @@ void service::schedule_signaling_abort()
 void service::run_control(boost::asio::yield_context yield)
 {
     auto& control_io = workers_->context(0).io();
-    auto& signaling = signaling_client::instance();
     boost::asio::steady_timer retry_timer(control_io);
     for (;;)
     {
-        const auto registration = signaling.register_once(yield);
+        const auto registration = signaling_client::instance().register_once(yield);
         if (registration.kind == signaling_result_kind::accepted)
         {
             break;
@@ -121,7 +120,7 @@ void service::run_control(boost::asio::yield_context yield)
     spdlog::info("rtsp play path app/stream");
     spdlog::info("http flv path app/stream.flv");
 
-    signaling.run_heartbeat(yield, [this]() { schedule_signaling_abort(); });
+    signaling_client::instance().run_heartbeat(yield, [this]() { schedule_signaling_abort(); });
 }
 
 int service::run()
@@ -144,10 +143,6 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_io = workers_->context(0).io();
-    auto& signaling = signaling_client::instance();
-    auto& reporter = event_reporter::instance();
-    signaling.configure_mock();
-    reporter.configure_mock();
     if (!config_.signaling_url.empty())
     {
         const auto instance_id = boost::uuids::to_string(boost::uuids::random_generator{}());
@@ -161,8 +156,8 @@ int service::run()
             .rtsp_port = config_.rtsp_port,
             .http_port = config_.http_port,
         };
-        signaling.configure(control_io, std::move(options));
-        reporter.configure(control_io, config_.server_id, instance_id);
+        signaling_client::instance().configure(control_io, std::move(options));
+        event_reporter::instance().configure(control_io, config_.server_id, instance_id);
     }
 
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_);
@@ -175,8 +170,6 @@ int service::run()
     boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_control(yield); }, boost::asio::detached);
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
-    reporter.configure_mock();
-    signaling.configure_mock();
     return exit_code_;
 }
 

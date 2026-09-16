@@ -1,19 +1,21 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <vector>
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
 
 #include <boost/asio/post.hpp>
+#include <boost/json/parse.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
 #include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
 #include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
+#include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_pull_session.h"
+#include "tests/clients/publish_claim_test_server.h"
 
 namespace media_server
 {
@@ -31,41 +33,44 @@ void require(bool condition, std::string_view message)
     }
 }
 
-void capture_events(std::vector<runtime_event>& events, worker_context& worker, bool& owner_worker)
+void configure_reporting(worker_context& worker, std::string url)
 {
-    event_reporter::instance().configure_handler("media-1",
-                                                 "instance-1",
-                                                 [&events, &worker, &owner_worker](runtime_event event)
-                                                 {
-                                                     owner_worker = owner_worker && worker.io().get_executor().running_in_this_thread();
-                                                     events.push_back(std::move(event));
-                                                 });
+    signaling_client::instance().configure(worker.io(),
+                                           {
+                                               .signaling_url = std::move(url),
+                                               .server_id = "media-1",
+                                               .instance_id = "instance-1",
+                                               .control_url = "http://127.0.0.1:8080",
+                                               .media_ip = "127.0.0.1",
+                                               .rtmp_port = 1935,
+                                               .rtsp_port = 8554,
+                                               .http_port = 8080,
+                                           });
+    event_reporter::instance().configure(worker.io(), "media-1", "instance-1");
 }
 
-void require_identity(const runtime_event& event)
+void require_identity(const boost::json::object& event)
 {
-    require(event.server_id == "media-1", "runtime event server id");
-    require(event.instance_id == "instance-1", "runtime event instance id");
-    require(event.stream_id == stream_id, "runtime event stream id");
-    require(event.stream_name == "live/runtime-events", "runtime event stream name");
-    require(event.source_id == source_id, "runtime event source id");
-    require(event.kind == runtime_kind::source, "runtime event kind");
-    require(event.protocol == runtime_protocol::rtsp, "runtime event protocol");
+    require(event.at("server_id") == "media-1", "runtime event server id");
+    require(event.at("instance_id") == "instance-1", "runtime event instance id");
+    require(event.at("stream_id") == stream_id, "runtime event stream id");
+    require(event.at("stream_name") == "live/runtime-events", "runtime event stream name");
+    require(event.at("source_id") == source_id, "runtime event source id");
+    require(event.at("kind") == "source", "runtime event kind");
+    require(event.at("protocol") == "rtsp", "runtime event protocol");
 }
 
 void test_rtsp_pull_runtime_failure_events()
 {
     worker_context worker;
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
+    test::publish_claim_test_server server;
+    configure_reporting(worker, server.url());
 
     boost::asio::ip::tcp::acceptor endpoint(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
     const auto port = endpoint.local_endpoint().port();
     endpoint.close();
 
-    std::vector<runtime_event> events;
-    bool owner_worker = true;
-    capture_events(events, worker, owner_worker);
     auto session = std::make_shared<rtsp_pull_session>(worker,
                                                        stream_id,
                                                        source_id,
@@ -76,40 +81,40 @@ void test_rtsp_pull_runtime_failure_events()
                                                        std::chrono::milliseconds{200},
                                                        std::chrono::milliseconds{200},
                                                        1024U * 1024U);
-    require(streams.add_receiver_session("live/runtime-events", session), "runtime event receiver reservation");
+    require(stream_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event receiver reservation");
     boost::asio::post(worker.io(), [session]() { require(session->startup(), "runtime event pull startup"); });
 
     worker.release_work();
     worker.io().run();
 
-    require(events.size() == 2U, "runtime event stopped once");
-    require(owner_worker, "runtime events emitted on owner worker");
-    require_identity(events[0]);
-    require(events[0].kind == runtime_kind::source && events[0].state == runtime_state::starting, "runtime event source starting");
-    require(events[0].stage == "resolving" && !events[0].end_reason && !events[0].error, "runtime event starting fields");
-    require_identity(events[1]);
-    require(events[1].kind == runtime_kind::source && events[1].state == runtime_state::stopped, "runtime event source runtime failure");
-    require(events[1].end_reason == runtime_end_reason::runtime_error && events[1].error.has_value(), "runtime event failure fields");
-    require(!streams.take_receiver_session("live/runtime-events"), "runtime event pull releases identity");
+    const auto requests = server.requests();
+    require(requests.size() == 2U, "runtime event stopped once");
+    const auto starting = boost::json::parse(requests[0].body).as_object();
+    const auto stopped = boost::json::parse(requests[1].body).as_object();
+    require_identity(starting);
+    require(starting.at("state") == "starting", "runtime event source starting");
+    require(starting.at("stage") == "resolving" && !starting.contains("end_reason") && !starting.contains("error"), "runtime event starting fields");
+    require_identity(stopped);
+    require(stopped.at("state") == "stopped", "runtime event source runtime failure");
+    require(stopped.at("end_reason") == "runtime_error" && stopped.contains("error"), "runtime event failure fields");
+    require(!stream_registry::instance().take_receiver_session("live/runtime-events"), "runtime event pull releases identity");
 
     session->shutdown();
     worker.io().restart();
     worker.io().run();
-    require(events.size() == 2U, "runtime event repeated shutdown ignored");
-    streams.clear();
+    require(server.requests().size() == 2U, "runtime event repeated shutdown ignored");
+    stream_registry::instance().clear();
 }
 
 void test_rtsp_pull_first_shutdown_reason()
 {
     worker_context worker;
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
+    test::publish_claim_test_server server;
+    configure_reporting(worker, server.url());
 
     boost::asio::ip::tcp::acceptor endpoint(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
     const auto port = endpoint.local_endpoint().port();
-    std::vector<runtime_event> events;
-    bool owner_worker = true;
-    capture_events(events, worker, owner_worker);
     auto session = std::make_shared<rtsp_pull_session>(worker,
                                                        stream_id,
                                                        source_id,
@@ -120,7 +125,7 @@ void test_rtsp_pull_first_shutdown_reason()
                                                        std::chrono::seconds{5},
                                                        std::chrono::seconds{5},
                                                        1024U * 1024U);
-    require(streams.add_receiver_session("live/runtime-events", session), "runtime event shutdown reservation");
+    require(stream_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event shutdown reservation");
     boost::asio::post(worker.io(),
                       [session]()
                       {
@@ -131,12 +136,13 @@ void test_rtsp_pull_first_shutdown_reason()
 
     worker.release_work();
     worker.io().run();
-    require(owner_worker, "runtime shutdown events emitted on owner worker");
-    require(events.size() == 2U, "runtime shutdown transitions once");
-    require(events[1].kind == runtime_kind::source && events[1].state == runtime_state::stopped, "runtime shutdown terminal event");
-    require(events[1].end_reason == runtime_end_reason::server_shutdown && !events[1].error, "runtime shutdown first reason wins");
-    require(!streams.take_receiver_session("live/runtime-events"), "runtime shutdown releases identity");
-    streams.clear();
+    const auto requests = server.requests();
+    require(requests.size() == 2U, "runtime shutdown transitions once");
+    const auto stopped = boost::json::parse(requests[1].body).as_object();
+    require(stopped.at("state") == "stopped", "runtime shutdown terminal event");
+    require(stopped.at("end_reason") == "server_shutdown" && !stopped.contains("error"), "runtime shutdown first reason wins");
+    require(!stream_registry::instance().take_receiver_session("live/runtime-events"), "runtime shutdown releases identity");
+    stream_registry::instance().clear();
 }
 
 void test_runtime_event_strings()
@@ -152,16 +158,28 @@ void test_runtime_event_strings()
 }    // namespace
 }    // namespace media_server
 
-int main()
+int main(int argc, char** argv)
 {
     try
     {
-        media_server::test_runtime_event_strings();
-        std::cout << "[pass] runtime_event_strings\n";
-        media_server::test_rtsp_pull_runtime_failure_events();
-        std::cout << "[pass] rtsp_pull_runtime_failure_events\n";
-        media_server::test_rtsp_pull_first_shutdown_reason();
-        std::cout << "[pass] rtsp_pull_first_shutdown_reason\n";
+        media_server::require(argc == 2, "runtime event test case required");
+        const std::string_view test{argv[1]};
+        if (test == "strings")
+        {
+            media_server::test_runtime_event_strings();
+        }
+        else if (test == "failure")
+        {
+            media_server::test_rtsp_pull_runtime_failure_events();
+        }
+        else if (test == "shutdown_reason")
+        {
+            media_server::test_rtsp_pull_first_shutdown_reason();
+        }
+        else
+        {
+            throw std::runtime_error("unknown runtime event test case");
+        }
     }
     catch (const std::exception& error)
     {
