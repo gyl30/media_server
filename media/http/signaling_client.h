@@ -1,18 +1,15 @@
 #ifndef MEDIA_HTTP_SIGNALING_CLIENT_H
 #define MEDIA_HTTP_SIGNALING_CLIENT_H
 
-#include <mutex>
 #include <memory>
 #include <chrono>
 #include <string>
 #include <cstdint>
-#include <optional>
 #include <functional>
 #include <string_view>
 
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/steady_timer.hpp>
 
 namespace media_server
 {
@@ -54,7 +51,6 @@ class signaling_client
     [[nodiscard]] static signaling_client& instance();
 
     void configure(boost::asio::io_context& io, signaling_client_options options);
-    void configure_mock();
 
     signaling_request_result register_once(boost::asio::yield_context& yield) const;
     signaling_request_result heartbeat_once(boost::asio::yield_context& yield) const;
@@ -68,25 +64,18 @@ class signaling_client
    private:
     struct request_state;
 
-    signaling_request_result heartbeat_once(std::uint64_t generation, boost::asio::yield_context& yield) const;
     signaling_request_result request(std::string_view target,
                                      std::string body,
                                      std::string host,
                                      std::string port,
                                      std::chrono::milliseconds timeout,
-                                     std::optional<std::uint64_t> heartbeat_generation,
                                      boost::asio::yield_context& yield) const;
-    static void cancel_request(std::shared_ptr<request_state> state);
 
    private:
-    mutable std::mutex mutex_;
     boost::asio::io_context* io_{};
     signaling_client_options options_;
     std::string host_;
     std::string port_;
-    std::weak_ptr<boost::asio::steady_timer> heartbeat_timer_;
-    mutable std::weak_ptr<request_state> heartbeat_request_;
-    std::uint64_t generation_{};
 };
 
 }    // namespace media_server

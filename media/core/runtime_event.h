@@ -3,7 +3,6 @@
 
 #include <string>
 #include <optional>
-#include <functional>
 #include <string_view>
 
 namespace media_server
@@ -55,8 +54,6 @@ struct runtime_event
     std::optional<runtime_end_reason> end_reason{};
     std::optional<std::string> error{};
 };
-
-using runtime_event_handler = std::function<void(runtime_event)>;
 
 [[nodiscard]] constexpr std::string_view to_string(runtime_kind value) noexcept
 {

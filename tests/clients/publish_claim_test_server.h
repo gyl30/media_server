@@ -63,6 +63,26 @@ class publish_claim_test_server final
         return requests_.size();
     }
 
+    [[nodiscard]] std::size_t request_count(std::string_view target) const
+    {
+        std::lock_guard lock(mutex_);
+        return static_cast<std::size_t>(std::ranges::count_if(requests_, [target](const auto& request) { return request.target == target; }));
+    }
+
+    [[nodiscard]] std::vector<publish_claim_request> requests() const
+    {
+        std::lock_guard lock(mutex_);
+        return requests_;
+    }
+
+    [[nodiscard]] std::vector<publish_claim_request> requests(std::string_view target) const
+    {
+        std::lock_guard lock(mutex_);
+        std::vector<publish_claim_request> matching;
+        std::ranges::copy_if(requests_, std::back_inserter(matching), [target](const auto& request) { return request.target == target; });
+        return matching;
+    }
+
     publish_claim_request wait_request()
     {
         std::unique_lock lock(mutex_);
@@ -71,6 +91,31 @@ class publish_claim_test_server final
             throw std::runtime_error("publish claim request timeout");
         }
         return requests_.front();
+    }
+
+    publish_claim_request wait_request(std::string_view target)
+    {
+        std::unique_lock lock(mutex_);
+        if (!condition_.wait_for(lock,
+                                 std::chrono::seconds(2),
+                                 [this, target]()
+                                 { return std::ranges::any_of(requests_, [target](const auto& request) { return request.target == target; }); }))
+        {
+            throw std::runtime_error("request timeout");
+        }
+        return *std::ranges::find_if(requests_, [target](const auto& request) { return request.target == target; });
+    }
+
+    [[nodiscard]] bool wait_target_count(std::string_view target, std::size_t count)
+    {
+        std::unique_lock lock(mutex_);
+        return condition_.wait_for(lock,
+                                   std::chrono::seconds(2),
+                                   [this, target, count]()
+                                   {
+                                       return static_cast<std::size_t>(std::ranges::count_if(
+                                                  requests_, [target](const auto& request) { return request.target == target; })) >= count;
+                                   });
     }
 
     [[nodiscard]] bool wait_target(std::string_view target)

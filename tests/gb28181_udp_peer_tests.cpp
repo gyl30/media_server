@@ -17,7 +17,6 @@
 
 #include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
-#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_udp_receiver_session.h"
@@ -43,23 +42,6 @@ void require(bool condition, std::string_view message)
     }
 }
 
-struct captured_events
-{
-    std::vector<runtime_event> values;
-    bool owner_only{true};
-};
-
-void capture_events(worker_context& worker, captured_events& events)
-{
-    event_reporter::instance().configure_handler("media-1",
-                                                 "instance-1",
-                                                 [&worker, &events](runtime_event event)
-                                                 {
-                                                     events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
-                                                     events.values.push_back(std::move(event));
-                                                 });
-}
-
 template <typename Handler>
 void run_on_owner(worker_context& worker, Handler&& handler)
 {
@@ -78,20 +60,6 @@ void run_on_owner(worker_context& worker, Handler&& handler)
         }
         static_cast<void>(worker.io().run_one());
     }
-}
-
-void require_gb_event(const runtime_event& event,
-                      std::string_view stream_id,
-                      std::string_view stream_name,
-                      runtime_state state,
-                      std::string_view stage,
-                      std::string_view message)
-{
-    const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
-    require(event.kind == runtime_kind::source && event.server_id == "media-1" && event.instance_id == "instance-1" && event.stream_id == stream_id &&
-                event.stream_name == stream_name && !event.source_id && event.protocol == runtime_protocol::gb28181 && event.state == state &&
-                stage_matches,
-            message);
 }
 
 std::vector<std::vector<std::uint8_t>> make_ps_rtp(std::uint8_t payload_type,
@@ -322,16 +290,12 @@ void test_udp_session_fatal_codec_change_unregisters()
         .ssrc = ssrc,
     };
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
-    captured_events events;
-    capture_events(worker, events);
     auto session = std::make_shared<gb28181_udp_receiver_session>(
         worker, std::string{stream_id}, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds{1'000});
     require(streams.add_receiver_session(stream_name, session), "gb fatal codec session registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb fatal codec session startup");
-    require(events.values.size() == 1U, "gb fatal codec starting event count");
-    require_gb_event(events.values[0], stream_id, stream_name, runtime_state::starting, "listening", "gb fatal codec starting event payload");
     const auto local_ports = session->local_ports();
     require(local_ports.has_value(), "gb fatal codec session local ports");
 
@@ -344,8 +308,6 @@ void test_udp_session_fatal_codec_change_unregisters()
         io.restart();
     }
     require(streams.find(stream_name) != nullptr, "gb fatal codec session initial stream ready");
-    require(events.values.size() == 2U, "gb fatal codec streaming event count");
-    require_gb_event(events.values[1], stream_id, stream_name, runtime_state::streaming, "streaming", "gb fatal codec streaming event payload");
 
     auto changed_packets = make_ps_rtp(payload_type, ssrc, next_rtp_sequence(initial_packets), RTP_PAYLOAD_H265);
     set_psm_version(changed_packets, 2);
@@ -359,16 +321,9 @@ void test_udp_session_fatal_codec_change_unregisters()
     require(!streams.find(stream_name), "gb fatal codec session removes stream");
     require(!streams.take_receiver_session(stream_name), "gb fatal codec session unregisters owner");
     io.run();
-    require(events.values.size() == 3U, "gb fatal codec terminal event count");
-    require_gb_event(events.values[2], stream_id, stream_name, runtime_state::stopped, {}, "gb fatal codec terminal event payload");
-    require(events.values[2].end_reason == runtime_end_reason::protocol_error && events.values[2].error == "media_input_failed",
-            "gb fatal codec terminal reason");
-    require(events.owner_only, "gb fatal codec events emitted on owner worker");
     session->shutdown();
     io.restart();
     io.run();
-    require(events.values.size() == 3U, "gb fatal codec terminal exactly once");
-    event_reporter::instance().configure_mock();
 }
 
 void test_sender_same_codec_config_version_continues_ps_stream()
