@@ -1,19 +1,19 @@
 #include <chrono>
 #include <limits>
+#include <vector>
 #include <utility>
 #include <algorithm>
-#include <vector>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/cancel_after.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/dispatch.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/post.hpp>
+#include <boost/asio/cancel_after.hpp>
 
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
-#include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 
 namespace media_server
@@ -54,10 +54,7 @@ bool gb28181_tcp_sender_session::startup()
         listener_->startup(error);
         if (error)
         {
-            spdlog::error("gb28181 tcp sender listener startup failed stream {} sender {} error {}",
-                          stream_->name(),
-                          sender_id_,
-                          error.message());
+            spdlog::error("gb28181 tcp sender listener startup failed stream {} sender {} error {}", stream_->name(), sender_id_, error.message());
             listener_.reset();
             return false;
         }
@@ -96,10 +93,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     {
         if (error != boost::asio::error::operation_aborted)
         {
-            spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}",
-                         stream_->name(),
-                         sender_id_,
-                         error.message());
+            spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_->name(), sender_id_, error.message());
         }
         shutdown(error == boost::asio::error::timed_out ? runtime_end_reason::timeout : runtime_end_reason::runtime_error,
                  error == boost::asio::error::timed_out ? "establishment_timeout" : error.message());
@@ -138,10 +132,10 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     {
         return;
     }
-    const auto reason = error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
-                                error == boost::asio::error::connection_aborted
-                            ? runtime_end_reason::remote
-                            : runtime_end_reason::runtime_error;
+    const auto reason =
+        error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted
+            ? runtime_end_reason::remote
+            : runtime_end_reason::runtime_error;
     shutdown(reason, reason == runtime_end_reason::remote ? std::string{} : error.message());
 }
 

@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <functional>
 #include <utility>
+#include <functional>
 
 #include <boost/asio/steady_timer.hpp>
 
@@ -26,9 +26,9 @@ class rtsp_publish_tcp_session final : public std::enable_shared_from_this<rtsp_
 {
    public:
     rtsp_publish_tcp_session(worker_context& worker,
-                           std::string stream_name,
-                           std::vector<rtsp_publish_track_description> descriptions,
-                           std::function<void(std::span<const std::uint8_t>)> write);
+                             std::string stream_name,
+                             std::vector<rtsp_publish_track_description> descriptions,
+                             std::function<void(std::span<const std::uint8_t>)> write);
     ~rtsp_publish_tcp_session();
 
    private:
@@ -47,6 +47,7 @@ class rtsp_publish_tcp_session final : public std::enable_shared_from_this<rtsp_
     void schedule_rtcp();
     void safe_shutdown();
 
+   private:
     worker_context& worker_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     rtsp_publish_media media_;

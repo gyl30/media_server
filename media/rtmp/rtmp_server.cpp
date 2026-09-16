@@ -1,5 +1,5 @@
-#include <utility>
 #include <chrono>
+#include <utility>
 
 #include <boost/asio/detached.hpp>
 
@@ -47,8 +47,8 @@ void rtmp_server::run(boost::asio::yield_context yield)
             return;
         }
 
-        auto session = std::make_shared<rtmp_session>(*worker, std::move(socket), signaling_, config_.rtmp_video,
-                                                      std::chrono::milliseconds{15'000}, 1024U * 1024U, runtime_events_);
+        auto session = std::make_shared<rtmp_session>(
+            *worker, std::move(socket), signaling_, config_.rtmp_video, std::chrono::milliseconds{15'000}, 1024U * 1024U, runtime_events_);
         session->startup();
     }
 }

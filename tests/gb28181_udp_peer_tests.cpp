@@ -1,5 +1,4 @@
 #include <array>
-#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -7,26 +6,27 @@
 #include <cstdint>
 #include <iostream>
 #include <optional>
+#include <algorithm>
 #include <stdexcept>
 #include <string_view>
 
+#include <boost/asio/post.hpp>
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/post.hpp>
 
+#include "media/net/port_manager.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_udp_receiver_session.h"
-#include "media/net/port_manager.h"
-#include "media/net/worker_context.h"
 
 extern "C"
 {
-#include "rtsp-muxer.h"
-#include "rtp-packet.h"
-#include "rtp-profile.h"
 #include "mpeg-util.h"
+#include "rtp-packet.h"
+#include "rtsp-muxer.h"
+#include "rtp-profile.h"
 }
 
 namespace media_server
@@ -50,14 +50,13 @@ struct captured_events
 
 runtime_event_emitter_ptr capture_events(worker_context& worker, captured_events& events)
 {
-    return std::make_shared<runtime_event_emitter>(
-        "media-1",
-        "instance-1",
-        [&worker, &events](runtime_event event)
-        {
-            events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
-            events.values.push_back(std::move(event));
-        });
+    return std::make_shared<runtime_event_emitter>("media-1",
+                                                   "instance-1",
+                                                   [&worker, &events](runtime_event event)
+                                                   {
+                                                       events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
+                                                       events.values.push_back(std::move(event));
+                                                   });
 }
 
 template <typename Handler>
@@ -88,18 +87,17 @@ void require_gb_event(const runtime_event& event,
                       std::string_view message)
 {
     const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
-    require(event.kind == runtime_kind::source && event.server_id == "media-1" && event.instance_id == "instance-1" &&
-                event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id &&
-                event.protocol == runtime_protocol::gb28181 && event.state == state &&
+    require(event.kind == runtime_kind::source && event.server_id == "media-1" && event.instance_id == "instance-1" && event.stream_id == stream_id &&
+                event.stream_name == stream_name && !event.source_id && event.protocol == runtime_protocol::gb28181 && event.state == state &&
                 stage_matches,
             message);
 }
 
 std::vector<std::vector<std::uint8_t>> make_ps_rtp(std::uint8_t payload_type,
-                                                       std::uint32_t ssrc,
-                                                       std::uint16_t sequence = 1,
-                                                       int video_codec = RTP_PAYLOAD_H264,
-                                                       std::optional<int> audio_codec = std::nullopt)
+                                                   std::uint32_t ssrc,
+                                                   std::uint16_t sequence = 1,
+                                                   int video_codec = RTP_PAYLOAD_H264,
+                                                   std::optional<int> audio_codec = std::nullopt)
 {
     std::vector<std::vector<std::uint8_t>> packets;
     const auto collect = +[](void* param, int, const void* packet, int bytes, std::uint32_t, int)
@@ -116,8 +114,8 @@ std::vector<std::vector<std::uint8_t>> make_ps_rtp(std::uint8_t payload_type,
     };
     auto* muxer = rtsp_muxer_create(collect, &packets);
     require(muxer != nullptr, "gb peer ps muxer create");
-    const auto payload = rtsp_muxer_add_payload(
-        muxer, "RTP/AVP", 90'000, payload_type, "PS", sequence, ssrc, 0, config.data(), static_cast<int>(config.size()));
+    const auto payload =
+        rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, payload_type, "PS", sequence, ssrc, 0, config.data(), static_cast<int>(config.size()));
     require(payload >= 0, "gb peer ps payload");
     const auto video_media = rtsp_muxer_add_media(muxer, payload, video_codec, config.data(), static_cast<int>(config.size()));
     require(video_media >= 0, "gb peer ps video media");
@@ -139,8 +137,7 @@ std::vector<std::vector<std::uint8_t>> make_ps_rtp(std::uint8_t payload_type,
                 "gb peer ps audio frame");
     }
     const std::array<std::uint8_t, 8> p_frame{0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x11};
-    require(rtsp_muxer_input(muxer, video_media, 40, 40, p_frame.data(), static_cast<int>(p_frame.size()), 0) == 0,
-            "gb peer ps second frame");
+    require(rtsp_muxer_input(muxer, video_media, 40, 40, p_frame.data(), static_cast<int>(p_frame.size()), 0) == 0, "gb peer ps second frame");
     require(rtsp_muxer_destroy(muxer) == 0 && !packets.empty(), "gb peer ps packets");
     return packets;
 }
@@ -176,8 +173,7 @@ std::uint16_t next_rtp_sequence(const std::vector<std::vector<std::uint8_t>>& pa
 {
     require(!packets.empty(), "gb peer rtp sequence packets");
     rtp_packet_t packet{};
-    require(rtp_packet_deserialize(&packet, packets.back().data(), static_cast<int>(packets.back().size())) == 0,
-            "gb peer rtp sequence packet");
+    require(rtp_packet_deserialize(&packet, packets.back().data(), static_cast<int>(packets.back().size())) == 0, "gb peer rtp sequence packet");
     return static_cast<std::uint16_t>(packet.rtp.seq + 1U);
 }
 
@@ -235,8 +231,7 @@ void test_receiver_ignores_malformed_media()
         require(receiver.receive_rtp(packet) == gb28181_rtp_receive_result::accepted, "gb valid media accepted after malformed packets");
     }
     const auto stream = streams.find("live/gb-malformed");
-    require(stream && stream->tracks().size() == 1U && stream->tracks().front().codec == codec_id::h264,
-            "gb valid media still publishes h264 track");
+    require(stream && stream->tracks().size() == 1U && stream->tracks().front().codec == codec_id::h264, "gb valid media still publishes h264 track");
     receiver.shutdown();
     require(!streams.find("live/gb-malformed"), "gb malformed regression cleanup");
 }
@@ -292,8 +287,7 @@ void test_receiver_audio_codec_change_is_fatal()
         require(media.receive_rtp(packet) == gb28181_rtp_receive_result::accepted, "gb audio codec initial packet accepted");
     }
     const auto stream = streams.find("live/gb-audio-codec-change");
-    require(stream != nullptr && stream->tracks().size() == 2U && stream->tracks()[1].codec == codec_id::g711a,
-            "gb audio codec initial g711a track");
+    require(stream != nullptr && stream->tracks().size() == 2U && stream->tracks()[1].codec == codec_id::g711a, "gb audio codec initial g711a track");
 
     auto changed_packets = make_ps_rtp(payload_type, ssrc, next_rtp_sequence(initial_packets), RTP_PAYLOAD_H264, RTP_PAYLOAD_PCMU);
     set_psm_version(changed_packets, 3);
@@ -329,23 +323,18 @@ void test_udp_session_fatal_codec_change_unregisters()
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
     auto session = std::make_shared<gb28181_udp_receiver_session>(worker,
-                                                                   std::string{stream_id},
-                                                                   stream_name,
-                                                                   description,
-                                                                   boost::asio::ip::address_v4::loopback(),
-                                                                   std::chrono::milliseconds{1'000},
-                                                                   capture_events(worker, events));
+                                                                  std::string{stream_id},
+                                                                  stream_name,
+                                                                  description,
+                                                                  boost::asio::ip::address_v4::loopback(),
+                                                                  std::chrono::milliseconds{1'000},
+                                                                  capture_events(worker, events));
     require(streams.add_receiver_session(stream_name, session), "gb fatal codec session registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb fatal codec session startup");
     require(events.values.size() == 1U, "gb fatal codec starting event count");
-    require_gb_event(events.values[0],
-                     stream_id,
-                     stream_name,
-                     runtime_state::starting,
-                     "listening",
-                     "gb fatal codec starting event payload");
+    require_gb_event(events.values[0], stream_id, stream_name, runtime_state::starting, "listening", "gb fatal codec starting event payload");
     const auto local_ports = session->local_ports();
     require(local_ports.has_value(), "gb fatal codec session local ports");
 
@@ -359,12 +348,7 @@ void test_udp_session_fatal_codec_change_unregisters()
     }
     require(streams.find(stream_name) != nullptr, "gb fatal codec session initial stream ready");
     require(events.values.size() == 2U, "gb fatal codec streaming event count");
-    require_gb_event(events.values[1],
-                     stream_id,
-                     stream_name,
-                     runtime_state::streaming,
-                     "streaming",
-                     "gb fatal codec streaming event payload");
+    require_gb_event(events.values[1], stream_id, stream_name, runtime_state::streaming, "streaming", "gb fatal codec streaming event payload");
 
     auto changed_packets = make_ps_rtp(payload_type, ssrc, next_rtp_sequence(initial_packets), RTP_PAYLOAD_H265);
     set_psm_version(changed_packets, 2);
@@ -379,12 +363,7 @@ void test_udp_session_fatal_codec_change_unregisters()
     require(!streams.take_receiver_session(stream_name), "gb fatal codec session unregisters owner");
     io.run();
     require(events.values.size() == 3U, "gb fatal codec terminal event count");
-    require_gb_event(events.values[2],
-                     stream_id,
-                     stream_name,
-                     runtime_state::stopped,
-                     {},
-                     "gb fatal codec terminal event payload");
+    require_gb_event(events.values[2], stream_id, stream_name, runtime_state::stopped, {}, "gb fatal codec terminal event payload");
     require(events.values[2].end_reason == runtime_end_reason::protocol_error && events.values[2].error == "media_input_failed",
             "gb fatal codec terminal reason");
     require(events.owner_only, "gb fatal codec events emitted on owner worker");
@@ -411,8 +390,8 @@ void test_sender_same_codec_config_version_continues_ps_stream()
         0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80,
     };
     const std::vector<std::uint8_t> updated_config{
-        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1f, 0xac, 0xd9, 0x40, 0x50, 0x05, 0xba, 0x6a, 0x02, 0x1a, 0x02, 0x80,
-        0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x1e, 0x47, 0x8c, 0x18, 0xcb, 0x00, 0x00, 0x00, 0x01, 0x68, 0xef, 0xbc, 0xb0,
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1f, 0xac, 0xd9, 0x40, 0x50, 0x05, 0xba, 0x6a, 0x02, 0x1a, 0x02, 0x80, 0x00,
+        0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x1e, 0x47, 0x8c, 0x18, 0xcb, 0x00, 0x00, 0x00, 0x01, 0x68, 0xef, 0xbc, 0xb0,
     };
     const auto make_frame = [](std::int64_t pts_ns, bool key_frame, const std::vector<std::uint8_t>& config)
     {
@@ -476,10 +455,11 @@ void test_sender_same_codec_config_version_continues_ps_stream()
     sender->on_read(media_read_batch{
         .next_cursor = 2,
         .tracks = initial_snapshot,
-        .entries = {
-            {.config_version = initial_track.config_version, .frame = make_frame(0, true, initial_config)},
-            {.config_version = initial_track.config_version, .frame = make_frame(40'000'000, false, initial_config)},
-        },
+        .entries =
+            {
+                {.config_version = initial_track.config_version, .frame = make_frame(0, true, initial_config)},
+                {.config_version = initial_track.config_version, .frame = make_frame(40'000'000, false, initial_config)},
+            },
     });
     require(packet_count > 0U, "gb sender config initial ps output");
     const auto received = streams.find("live/gb-sender-config-received");
@@ -500,10 +480,11 @@ void test_sender_same_codec_config_version_continues_ps_stream()
     sender->on_read(media_read_batch{
         .next_cursor = 4,
         .tracks = updated_snapshot,
-        .entries = {
-            {.config_version = 1, .frame = make_frame(80'000'000, true, initial_config)},
-            {.config_version = updated_track.config_version, .frame = make_frame(120'000'000, false, updated_config)},
-        },
+        .entries =
+            {
+                {.config_version = 1, .frame = make_frame(80'000'000, true, initial_config)},
+                {.config_version = updated_track.config_version, .frame = make_frame(120'000'000, false, updated_config)},
+            },
     });
     require(packet_count == before_resync_packets, "gb sender config drops stale generation and waits for key frame");
     require(end_count == 0U, "gb sender config same codec update stays open");
@@ -558,8 +539,7 @@ void test_rtcp_peer_learning_overrides_rtp_plus_one()
     }
     require(sender.is_open() && default_rtcp.is_open() && !bind_error, "gb rtcp peer remote port pair");
     boost::asio::ip::udp::socket actual_rtcp(io, {boost::asio::ip::address_v4::loopback(), 0});
-    boost::asio::ip::udp::socket foreign_rtcp(
-        io, {boost::asio::ip::make_address_v4("127.0.0.2"), 0});
+    boost::asio::ip::udp::socket foreign_rtcp(io, {boost::asio::ip::make_address_v4("127.0.0.2"), 0});
 
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
@@ -697,9 +677,12 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
         .payload_type = payload_type,
         .ssrc = ssrc,
     };
-    auto session =
-        std::make_shared<gb28181_udp_receiver_session>(
-            worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds::zero());
+    auto session = std::make_shared<gb28181_udp_receiver_session>(worker,
+                                                                  "550e8400-e29b-41d4-a716-446655440000",
+                                                                  stream_name,
+                                                                  description,
+                                                                  boost::asio::ip::address_v4::loopback(),
+                                                                  std::chrono::milliseconds::zero());
     require(streams.add_receiver_session(stream_name, session), "gb rtcp shutdown session registry add");
     require(session->startup(), "gb rtcp shutdown session startup");
 

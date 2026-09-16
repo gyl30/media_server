@@ -1,13 +1,13 @@
 #ifndef MEDIA_RTSP_RTSP_PULL_MEDIA_H
 #define MEDIA_RTSP_RTSP_PULL_MEDIA_H
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <optional>
 #include <span>
+#include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 
 #include "media/core/media_stream.h"
 
@@ -53,6 +53,7 @@ class rtsp_pull_media final
     [[nodiscard]] bool update_track_from_packet(const avpacket_t& packet);
     [[nodiscard]] bool try_initialize_tracks();
 
+   private:
     worker_context& worker_;
     std::string media_stream_name_;
     std::vector<rtsp_pull_track_description> descriptions_;

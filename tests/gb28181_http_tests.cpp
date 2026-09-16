@@ -1,20 +1,20 @@
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
-#include <vector>
 
 #include <boost/json.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/io_context.hpp>
 
+#include "media/net/port_manager.h"
 #include "media/core/media_stream.h"
 #include "media/http/gb28181_http.h"
-#include "media/core/stream_registry.h"
-#include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
@@ -40,8 +40,7 @@ void require(bool condition, std::string_view message)
 
 runtime_event_emitter_ptr capture_events(std::vector<runtime_event>& events)
 {
-    return std::make_shared<runtime_event_emitter>(
-        "media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
+    return std::make_shared<runtime_event_emitter>("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
 }
 
 void require_gb_event(const runtime_event& event,
@@ -53,9 +52,9 @@ void require_gb_event(const runtime_event& event,
                       std::string_view message)
 {
     const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
-    require(event.kind == kind && event.server_id == "media-1" && event.instance_id == "instance-1" &&
-                event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id &&
-                event.protocol == runtime_protocol::gb28181 && event.state == state && stage_matches,
+    require(event.kind == kind && event.server_id == "media-1" && event.instance_id == "instance-1" && event.stream_id == stream_id &&
+                event.stream_name == stream_name && !event.source_id && event.protocol == runtime_protocol::gb28181 && event.state == state &&
+                stage_matches,
             message);
 }
 
@@ -87,24 +86,18 @@ void require_empty_response(const gb28181_http_response& response, boost::beast:
     require(response.body().empty(), message);
 }
 
-gb28181_http_response receiver_request(worker_context& worker,
-                                       gb28181_http_request request,
-                                       runtime_event_emitter_ptr runtime_events = {})
+gb28181_http_response receiver_request(worker_context& worker, gb28181_http_request request, runtime_event_emitter_ptr runtime_events = {})
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "receiver request target");
-    return handle_gb28181_receiver_request(
-        request, worker, *target, boost::asio::ip::address_v4::loopback(), std::move(runtime_events));
+    return handle_gb28181_receiver_request(request, worker, *target, boost::asio::ip::address_v4::loopback(), std::move(runtime_events));
 }
 
-gb28181_http_response sender_request(worker_context& worker,
-                                     gb28181_http_request request,
-                                     runtime_event_emitter_ptr runtime_events = {})
+gb28181_http_response sender_request(worker_context& worker, gb28181_http_request request, runtime_event_emitter_ptr runtime_events = {})
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "sender request target");
-    return handle_gb28181_sender_request(
-        request, worker, *target, boost::asio::ip::address_v4::loopback(), std::move(runtime_events));
+    return handle_gb28181_sender_request(request, worker, *target, boost::asio::ip::address_v4::loopback(), std::move(runtime_events));
 }
 
 media_track make_video_track()
@@ -133,8 +126,7 @@ void test_receiver_handlers()
     create_body["ssrc"] = 100;
 
     std::vector<runtime_event> events;
-    const auto create_response =
-        receiver_request(worker, request("/gb28181/receiver/create", create_body), capture_events(events));
+    const auto create_response = receiver_request(worker, request("/gb28181/receiver/create", create_body), capture_events(events));
     require(create_response.result() == boost::beast::http::status::created, "receiver create response status");
     const auto create_result = boost::json::parse(create_response.body()).as_object();
     require(create_result.size() == 1U, "receiver create response fields");
@@ -198,8 +190,7 @@ void test_receiver_handlers()
                      runtime_state::stopped,
                      {},
                      "receiver HTTP stopped event payload");
-    require(events[1].end_reason == runtime_end_reason::requested && !events[1].error,
-            "receiver HTTP stopped event reason");
+    require(events[1].end_reason == runtime_end_reason::requested && !events[1].error, "receiver HTTP stopped event reason");
 
     const auto released = port_manager::instance().acquire_pair();
     require(released && released->first == rtp_port && released->second == rtcp_port, "receiver delete releases allocated port pair");
@@ -238,13 +229,7 @@ void test_sender_handlers()
     const auto create_response = sender_request(worker, request("/gb28181/sender/create", create_body), capture_events(events));
     require_empty_response(create_response, boost::beast::http::status::created, "sender create response");
     require(events.size() == 1U, "sender HTTP propagates event emitter");
-    require_gb_event(events[0],
-                     runtime_kind::output,
-                     stream_id_a,
-                     stream->name(),
-                     runtime_state::starting,
-                     {},
-                     "sender HTTP starting event payload");
+    require_gb_event(events[0], runtime_kind::output, stream_id_a, stream->name(), runtime_state::starting, {}, "sender HTTP starting event payload");
 
     const auto duplicate_response = sender_request(worker, request("/gb28181/sender/create", create_body));
     require_json_response(
@@ -267,15 +252,8 @@ void test_sender_handlers()
     io.restart();
 
     require(events.size() == 2U, "sender HTTP delete emits terminal event");
-    require_gb_event(events[1],
-                     runtime_kind::output,
-                     stream_id_a,
-                     stream->name(),
-                     runtime_state::stopped,
-                     {},
-                     "sender HTTP stopped event payload");
-    require(events[1].end_reason == runtime_end_reason::requested && !events[1].error,
-            "sender HTTP stopped event reason");
+    require_gb_event(events[1], runtime_kind::output, stream_id_a, stream->name(), runtime_state::stopped, {}, "sender HTTP stopped event payload");
+    require(events[1].end_reason == runtime_end_reason::requested && !events[1].error, "sender HTTP stopped event reason");
 
     const auto missing_response = sender_request(worker, request("/gb28181/sender/delete", delete_body));
     require_json_response(missing_response,
@@ -293,8 +271,8 @@ void test_receiver_delete_preserves_foreign_session()
 
     auto foreign = std::make_shared<foreign_receiver_session>();
     require(streams.add_receiver_session("live/foreign", foreign), "gb receiver foreign identity");
-    const auto response = receiver_request(
-        worker, request("/gb28181/receiver/delete", {{"stream_id", stream_id_a}, {"stream_name", "live/foreign"}}));
+    const auto response =
+        receiver_request(worker, request("/gb28181/receiver/delete", {{"stream_id", stream_id_a}, {"stream_name", "live/foreign"}}));
     require_json_response(response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",

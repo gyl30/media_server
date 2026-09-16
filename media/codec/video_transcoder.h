@@ -44,6 +44,7 @@ class video_transcoder final
     bool encode_decoded(std::vector<media_frame>& output);
     bool receive_encoded(std::vector<media_frame>& output);
 
+   private:
     std::unique_ptr<state> state_;
 };
 

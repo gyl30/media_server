@@ -3,8 +3,8 @@
 #include <charconv>
 
 #include <boost/asio/post.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/asio/detached.hpp>
 
 #include "media/hls/hls.h"
 #include "media/net/worker_context.h"
@@ -13,11 +13,8 @@
 namespace media_server
 {
 
-hls_http_session::hls_http_session(worker_context& worker,
-                                   boost::beast::tcp_stream stream,
-                                   request_type request,
-                                   const config& config,
-                                   std::function<void()> on_shutdown)
+hls_http_session::hls_http_session(
+    worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config, std::function<void()> on_shutdown)
     : worker_(worker),
       stream_(std::move(stream)),
       request_(std::move(request)),
@@ -169,11 +166,8 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
     send_binary_response(boost::beast::http::status::ok, fragmented_mp4 ? "video/mp4" : "video/mp2t", *segment, yield);
 }
 
-void hls_http_session::send_text_response(boost::beast::http::status status,
-                                          std::string_view content_type,
-                                          std::string body,
-                                          boost::asio::yield_context& yield,
-                                          std::string_view allow)
+void hls_http_session::send_text_response(
+    boost::beast::http::status status, std::string_view content_type, std::string body, boost::asio::yield_context& yield, std::string_view allow)
 {
     boost::beast::http::response<boost::beast::http::string_body> response(status, request_.version());
     response.set(boost::beast::http::field::server, "media_server");

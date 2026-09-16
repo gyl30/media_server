@@ -7,8 +7,8 @@
 #include <boost/system/error_code.hpp>
 
 #include "config.h"
-#include "media/core/runtime_event.h"
 #include "media/net/tcp_listener.h"
+#include "media/core/runtime_event.h"
 #include "media/net/io_context_pool.h"
 
 namespace media_server
@@ -23,6 +23,7 @@ class http_server final : public std::enable_shared_from_this<http_server>
    private:
     void run(boost::asio::yield_context yield);
 
+   private:
     io_context_pool& workers_;
     worker_context& worker_;
     const config& config_;

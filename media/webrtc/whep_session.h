@@ -5,10 +5,10 @@
 #include <span>
 #include <deque>
 #include <chrono>
-#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -17,15 +17,15 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/net/port_manager.h"
-#include "media/net/udp_yield_transport.h"
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
-#include "media/core/runtime_event.h"
 #include "media/webrtc/webrtc_sdp.h"
-#include "media/webrtc/webrtc_packetizer.h"
+#include "media/core/runtime_event.h"
 #include "media/webrtc/dtls_transport.h"
 #include "media/webrtc/srtp_transport.h"
+#include "media/net/udp_yield_transport.h"
 #include "media/webrtc/dtls_certificate.h"
+#include "media/webrtc/webrtc_packetizer.h"
 #include "media/codec/video_transcode_config.h"
 
 namespace media_server
@@ -102,6 +102,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void emit_streaming();
     void emit_stopped();
 
+   private:
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;

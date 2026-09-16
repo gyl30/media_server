@@ -1,5 +1,5 @@
-#include <boost/asio/buffer.hpp>
 #include <boost/asio/error.hpp>
+#include <boost/asio/buffer.hpp>
 
 #include "media/net/udp_yield_transport.h"
 
@@ -62,10 +62,7 @@ std::size_t udp_yield_transport::write(std::span<const std::uint8_t> data,
     return socket_.async_send_to(boost::asio::buffer(data), endpoint, yield[error]);
 }
 
-boost::asio::ip::udp::endpoint udp_yield_transport::local_endpoint(boost::system::error_code& error) const
-{
-    return socket_.local_endpoint(error);
-}
+boost::asio::ip::udp::endpoint udp_yield_transport::local_endpoint(boost::system::error_code& error) const { return socket_.local_endpoint(error); }
 
 void udp_yield_transport::shutdown()
 {

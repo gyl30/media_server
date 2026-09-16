@@ -1,7 +1,7 @@
 #include <utility>
 
-#include <boost/asio/buffer.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/asio/buffer.hpp>
 
 #include "media/net/tcp_yield_transport.h"
 
@@ -20,15 +20,9 @@ std::size_t tcp_yield_transport::write(std::span<const std::uint8_t> data, boost
     return boost::asio::async_write(socket_, boost::asio::buffer(data), yield[error]);
 }
 
-boost::asio::ip::tcp::endpoint tcp_yield_transport::local_endpoint(boost::system::error_code& error) const
-{
-    return socket_.local_endpoint(error);
-}
+boost::asio::ip::tcp::endpoint tcp_yield_transport::local_endpoint(boost::system::error_code& error) const { return socket_.local_endpoint(error); }
 
-boost::asio::ip::tcp::endpoint tcp_yield_transport::remote_endpoint(boost::system::error_code& error) const
-{
-    return socket_.remote_endpoint(error);
-}
+boost::asio::ip::tcp::endpoint tcp_yield_transport::remote_endpoint(boost::system::error_code& error) const { return socket_.remote_endpoint(error); }
 
 void tcp_yield_transport::shutdown()
 {

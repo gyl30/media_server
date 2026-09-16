@@ -35,6 +35,7 @@ class flv_muxer final
     void startup_video_transcoder(const media_track& track);
     void input_av1(const media_frame& frame);
 
+   private:
     packet_handler packet_handler_;
     video_transcode_config video_config_;
     flv_muxer_t* muxer_{};

@@ -28,11 +28,11 @@ constexpr track_id audio_track_id = 2;
 }    // namespace
 
 rtmp_publish_session::rtmp_publish_session(worker_context& worker,
-                                       std::string stream_name,
-                                       std::chrono::milliseconds initial_tracks_timeout,
-                                       shutdown_handler on_shutdown,
-                                       runtime_shutdown_handler on_runtime_shutdown,
-                                       streaming_handler on_streaming)
+                                           std::string stream_name,
+                                           std::chrono::milliseconds initial_tracks_timeout,
+                                           shutdown_handler on_shutdown,
+                                           runtime_shutdown_handler on_runtime_shutdown,
+                                           streaming_handler on_streaming)
     : worker_(worker),
       initial_tracks_timer_(worker_.io()),
       initial_tracks_timeout_(initial_tracks_timeout),

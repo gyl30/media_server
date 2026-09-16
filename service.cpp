@@ -1,23 +1,23 @@
+#include <chrono>
 #include <memory>
 #include <csignal>
 #include <cstdlib>
-#include <chrono>
 #include <utility>
 
 #include <boost/asio.hpp>
-#include <boost/uuid/random_generator.hpp>
-#include <boost/uuid/uuid_io.hpp>
 #include <spdlog/spdlog.h>
+#include <boost/uuid/uuid_io.hpp>
+#include <boost/uuid/random_generator.hpp>
 
 #include "service.h"
 #include "media/core/log.h"
-#include "media/core/runtime_event.h"
 #include "media/http/http_server.h"
-#include "media/http/runtime_event_reporter.h"
-#include "media/http/signaling_client.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
+#include "media/core/runtime_event.h"
 #include "media/net/io_context_pool.h"
+#include "media/http/signaling_client.h"
+#include "media/http/runtime_event_reporter.h"
 
 namespace media_server
 {
@@ -26,10 +26,7 @@ service::service(config cfg) : config_(std::move(cfg)) {}
 
 service::~service() = default;
 
-void service::stop()
-{
-    workers_->stop();
-}
+void service::stop() { workers_->stop(); }
 
 void service::schedule_signaling_abort()
 {
@@ -169,16 +166,16 @@ int service::run()
         };
         signaling_ = std::make_shared<signaling_client>(control_io, std::move(options));
         runtime_event_reporter_ = std::make_shared<runtime_event_reporter>(control_io, signaling_);
-        runtime_events_ = std::make_shared<runtime_event_emitter>(
-            config_.server_id,
-            instance_id,
-            [reporter = std::weak_ptr<runtime_event_reporter>(runtime_event_reporter_)](runtime_event event)
-            {
-                if (const auto value = reporter.lock())
-                {
-                    value->report(std::move(event));
-                }
-            });
+        runtime_events_ =
+            std::make_shared<runtime_event_emitter>(config_.server_id,
+                                                    instance_id,
+                                                    [reporter = std::weak_ptr<runtime_event_reporter>(runtime_event_reporter_)](runtime_event event)
+                                                    {
+                                                        if (const auto value = reporter.lock())
+                                                        {
+                                                            value->report(std::move(event));
+                                                        }
+                                                    });
     }
 
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_, signaling_, runtime_events_);
@@ -195,9 +192,7 @@ int service::run()
             }
         });
 
-    boost::asio::spawn(control_io,
-                       [this](boost::asio::yield_context yield) { run_control(yield); },
-                       boost::asio::detached);
+    boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_control(yield); }, boost::asio::detached);
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
     return exit_code_;

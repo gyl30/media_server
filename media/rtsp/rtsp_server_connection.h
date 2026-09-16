@@ -9,14 +9,14 @@
 #include <vector>
 #include <cstdint>
 
+#include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/asio/cancellation_signal.hpp>
-#include <boost/asio/spawn.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 
-#include "media/net/tcp_yield_transport.h"
 #include "media/core/runtime_event.h"
+#include "media/net/tcp_yield_transport.h"
 #include "media/codec/video_transcode_config.h"
 
 extern "C"
@@ -77,6 +77,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void record_control_activity();
     void schedule_inactivity_timeout();
 
+   private:
     worker_context& worker_;
     video_transcode_codec video_codec_;
     std::shared_ptr<signaling_client> signaling_;

@@ -2,24 +2,21 @@
 #include <utility>
 
 #include <boost/asio/post.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
 
-#include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
-#include "media/http/http_flv_streamer.h"
+#include "media/core/stream_registry.h"
 #include "media/http/http_flv_session.h"
+#include "media/http/http_flv_streamer.h"
 
 namespace media_server
 {
 
-http_flv_session::http_flv_session(worker_context& worker,
-                                   boost::beast::tcp_stream stream,
-                                   request_type request,
-                                   const config& config,
-                                   std::function<void()> on_shutdown)
+http_flv_session::http_flv_session(
+    worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config, std::function<void()> on_shutdown)
     : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config), on_shutdown_(std::move(on_shutdown))
 {
 }
@@ -96,11 +93,10 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     }
 
     const auto self = shared_from_this();
-    streamer_ = std::make_shared<http_flv_streamer>(
-        [self](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        { self->enqueue(generation, std::move(data), bootstrap); },
-        [self]() { self->shutdown(); },
-        config_.http_video);
+    streamer_ = std::make_shared<http_flv_streamer>([self](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
+                                                    { self->enqueue(generation, std::move(data), bootstrap); },
+                                                    [self]() { self->shutdown(); },
+                                                    config_.http_video);
 
     reader_ = media_stream->add_reader(streamer_, worker_);
 
@@ -116,11 +112,8 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     }
 }
 
-void http_flv_session::send_text_response(boost::beast::http::status status,
-                                          std::string_view content_type,
-                                          std::string body,
-                                          boost::asio::yield_context& yield,
-                                          std::string_view allow)
+void http_flv_session::send_text_response(
+    boost::beast::http::status status, std::string_view content_type, std::string body, boost::asio::yield_context& yield, std::string_view allow)
 {
     boost::beast::http::response<boost::beast::http::string_body> response(status, request_.version());
     response.set(boost::beast::http::field::server, "media_server");
@@ -166,10 +159,10 @@ void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_
 
     write_in_progress_ = true;
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(),
-                       [self, generation, data = std::move(data)](boost::asio::yield_context yield) mutable
-                       { self->run_write(generation, std::move(data), yield); },
-                       boost::asio::detached);
+    boost::asio::spawn(
+        worker_.io(),
+        [self, generation, data = std::move(data)](boost::asio::yield_context yield) mutable { self->run_write(generation, std::move(data), yield); },
+        boost::asio::detached);
 }
 
 void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield)

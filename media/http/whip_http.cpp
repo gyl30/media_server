@@ -3,19 +3,16 @@
 #include <utility>
 
 #include "media/webrtc/whip.h"
-#include "media/net/worker_context.h"
 #include "media/http/whip_http.h"
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
 namespace
 {
 
-whip_http_string_response make_string_response(const whip_http_request& request,
-                                               boost::beast::http::status status,
-                                               std::string_view content_type,
-                                               std::string body,
-                                               std::string_view allow = {})
+whip_http_string_response make_string_response(
+    const whip_http_request& request, boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {})
 {
     whip_http_string_response response{status, request.version()};
     response.set(boost::beast::http::field::server, "media_server");
@@ -42,8 +39,10 @@ whip_http_string_response make_empty_response(const whip_http_request& request, 
     return response;
 }
 
-whip_http_string_response make_error_response(
-    const whip_http_request& request, boost::beast::http::status status, std::string body, std::string_view allow = {})
+whip_http_string_response make_error_response(const whip_http_request& request,
+                                              boost::beast::http::status status,
+                                              std::string body,
+                                              std::string_view allow = {})
 {
     return make_string_response(request, status, "text/plain", std::move(body), allow);
 }

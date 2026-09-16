@@ -1,15 +1,15 @@
 #ifndef MEDIA_HTTP_RUNTIME_EVENT_REPORTER_H
 #define MEDIA_HTTP_RUNTIME_EVENT_REPORTER_H
 
-#include <cstddef>
 #include <deque>
-#include <memory>
 #include <mutex>
+#include <memory>
+#include <cstddef>
 #include <optional>
 
-#include <boost/asio/cancellation_signal.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/cancellation_signal.hpp>
 
 #include "media/core/runtime_event.h"
 
@@ -30,8 +30,6 @@ class runtime_event_reporter final : public std::enable_shared_from_this<runtime
     void shutdown();
 
    private:
-    static constexpr std::size_t max_pending_events = 500U;
-
     void start_writer();
     void run_writer(boost::asio::yield_context yield);
     [[nodiscard]] std::optional<runtime_event> take_next_event();
@@ -39,6 +37,8 @@ class runtime_event_reporter final : public std::enable_shared_from_this<runtime
     void finish_writer();
     void safe_shutdown();
 
+   private:
+    static constexpr std::size_t max_pending_events = 500U;
     boost::asio::io_context& io_;
     std::shared_ptr<const signaling_client> signaling_;
     std::mutex mutex_;

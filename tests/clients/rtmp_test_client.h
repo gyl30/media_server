@@ -1,14 +1,14 @@
 #ifndef MEDIA_SERVER_TESTS_CLIENTS_RTMP_TEST_CLIENT_H
 #define MEDIA_SERVER_TESTS_CLIENTS_RTMP_TEST_CLIENT_H
 
-#include <cstdint>
-#include <cstddef>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
 
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
 
 struct rtmp_client_t;
 
@@ -21,8 +21,10 @@ class rtmp_test_client final
     rtmp_test_client(boost::asio::io_context& io, std::string app, std::string stream);
     ~rtmp_test_client();
 
-    boost::asio::awaitable<boost::system::error_code> publish(
-        std::string host, std::uint16_t port, std::vector<std::uint8_t> metadata, std::vector<std::uint8_t> video_config);
+    boost::asio::awaitable<boost::system::error_code> publish(std::string host,
+                                                              std::uint16_t port,
+                                                              std::vector<std::uint8_t> metadata,
+                                                              std::vector<std::uint8_t> video_config);
     boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port);
 
     [[nodiscard]] const std::vector<std::uint8_t>& video() const noexcept { return video_; }
@@ -33,6 +35,7 @@ class rtmp_test_client final
     static int ignore_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
     boost::asio::awaitable<boost::system::error_code> flush();
 
+   private:
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket socket_;
     std::string app_;

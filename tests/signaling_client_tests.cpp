@@ -1,18 +1,18 @@
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
-#include <cstdint>
 #include <memory>
-#include <mutex>
-#include <optional>
-#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdint>
+#include <optional>
+#include <stdexcept>
+#include <condition_variable>
 
 #include <boost/asio.hpp>
-#include <boost/beast.hpp>
 #include <boost/json.hpp>
+#include <boost/beast.hpp>
 
 #include "media/core/runtime_event.h"
 #include "media/http/signaling_client.h"
@@ -103,8 +103,8 @@ class test_http_server
             }
             condition_.notify_all();
             std::this_thread::sleep_for(response_delay_);
-            boost::beast::http::response<boost::beast::http::string_body> response{
-                static_cast<boost::beast::http::status>(status_.load()), request.version()};
+            boost::beast::http::response<boost::beast::http::string_body> response{static_cast<boost::beast::http::status>(status_.load()),
+                                                                                   request.version()};
             if (response.result_int() >= 200 && response.result_int() < 300)
             {
                 response.body() = response_body_;
@@ -119,6 +119,7 @@ class test_http_server
         }
     }
 
+   private:
     boost::asio::io_context io_;
     boost::asio::ip::tcp::acceptor acceptor_;
     std::uint16_t port_;
@@ -155,15 +156,11 @@ std::uint16_t unused_port()
     return acceptor.local_endpoint().port();
 }
 
-
 template <typename Operation>
 media_server::signaling_request_result run_request(boost::asio::io_context& io, Operation&& operation)
 {
     std::optional<media_server::signaling_request_result> result;
-    boost::asio::spawn(
-        io,
-        [&](boost::asio::yield_context yield) { result = operation(yield); },
-        boost::asio::detached);
+    boost::asio::spawn(io, [&](boost::asio::yield_context yield) { result = operation(yield); }, boost::asio::detached);
     io.run();
     io.restart();
     require(result.has_value(), "signaling request completed");
@@ -232,21 +229,18 @@ void test_runtime_event_accepts_status_only_success()
     test_http_server no_content(boost::beast::http::status::no_content, "");
     boost::asio::io_context no_content_io;
     media_server::signaling_client no_content_client(no_content_io, client_options(no_content.url()));
-    const auto no_content_result = run_request(
-        no_content_io, [&](boost::asio::yield_context& yield) { return no_content_client.report_runtime_event(event, yield); });
+    const auto no_content_result =
+        run_request(no_content_io, [&](boost::asio::yield_context& yield) { return no_content_client.report_runtime_event(event, yield); });
     require(no_content_result.kind == media_server::signaling_result_kind::accepted && no_content_result.status == 204,
             "runtime event accepts empty 204 response");
     const auto request = no_content.wait_requests(1).front();
     require(request.target == "/internal/runtime-events", "runtime event endpoint");
     const auto body = boost::json::parse(request.body).as_object();
-    require(body.size() == 11U && body.at("kind") == "source" &&
-                std::string(body.at("stream_id").as_string()) == event.stream_id,
+    require(body.size() == 11U && body.at("kind") == "source" && std::string(body.at("stream_id").as_string()) == event.stream_id,
             "runtime event body");
-    require(std::string(body.at("source_id").as_string()) == *event.source_id &&
-                std::string(body.at("stage").as_string()) == *event.stage,
+    require(std::string(body.at("source_id").as_string()) == *event.source_id && std::string(body.at("stage").as_string()) == *event.stage,
             "runtime event optional identity and stage");
-    require(body.at("end_reason") == "runtime_error" && std::string(body.at("error").as_string()) == *event.error,
-            "runtime event terminal fields");
+    require(body.at("end_reason") == "runtime_error" && std::string(body.at("error").as_string()) == *event.error, "runtime event terminal fields");
 
     test_http_server accepted(boost::beast::http::status::accepted, "not-json");
     boost::asio::io_context accepted_io;
@@ -289,8 +283,7 @@ void test_success_uses_status_only()
         boost::asio::io_context io;
         media_server::signaling_client client(io, client_options(server.url()));
         const auto result = run_request(io, [&](boost::asio::yield_context& yield) { return client.register_once(yield); });
-        require(result.kind == media_server::signaling_result_kind::accepted && result.status == 200,
-                "success body ignored");
+        require(result.kind == media_server::signaling_result_kind::accepted && result.status == 200, "success body ignored");
     }
 }
 
@@ -365,14 +358,13 @@ void test_heartbeat_rejection()
         io,
         [&](boost::asio::yield_context yield)
         {
-            client.run_heartbeat(
-                yield,
-                [&]()
-                {
-                    std::lock_guard lock(mutex);
-                    fenced = true;
-                    condition.notify_all();
-                });
+            client.run_heartbeat(yield,
+                                 [&]()
+                                 {
+                                     std::lock_guard lock(mutex);
+                                     fenced = true;
+                                     condition.notify_all();
+                                 });
         },
         boost::asio::detached);
     std::jthread runner([&]() { io.run(); });

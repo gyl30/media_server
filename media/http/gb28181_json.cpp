@@ -6,8 +6,8 @@
 #include <boost/json.hpp>
 #include <boost/asio/ip/address.hpp>
 
-#include "media/http/gb28181_json.h"
 #include "media/core/stream_id.h"
+#include "media/http/gb28181_json.h"
 
 namespace media_server
 {
@@ -222,8 +222,7 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
 
         case gb28181_transport::tcp_active:
         {
-            if (!has_only_fields(
-                    *object, {"stream_id", "stream_name", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
+            if (!has_only_fields(*object, {"stream_id", "stream_name", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -254,8 +253,7 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
         }
     }
 
-    return gb28181_receiver_config{
-        .stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name), .transport = std::move(config)};
+    return gb28181_receiver_config{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name), .transport = std::move(config)};
 }
 
 std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body)
@@ -336,8 +334,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
 
         case gb28181_transport::tcp_passive:
         {
-            if (!has_only_fields(
-                    *object, {"stream_id", "stream_name", "sender_id", "transport", "listen_port", "payload_type", "ssrc"}))
+            if (!has_only_fields(*object, {"stream_id", "stream_name", "sender_id", "transport", "listen_port", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -351,12 +348,11 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
         }
     }
 
-    return gb28181_sender_config{
-        .stream_id = std::move(*stream_id),
-        .stream_name = std::move(*stream_name),
-        .sender_id = std::move(*sender_id),
-        .transport = std::move(config),
-        .rtcp_enabled = rtcp_enabled};
+    return gb28181_sender_config{.stream_id = std::move(*stream_id),
+                                 .stream_name = std::move(*stream_name),
+                                 .sender_id = std::move(*sender_id),
+                                 .transport = std::move(config),
+                                 .rtcp_enabled = rtcp_enabled};
 }
 
 std::optional<gb28181_receiver_identity> parse_gb28181_receiver_delete(std::string_view body)
@@ -389,8 +385,7 @@ std::optional<gb28181_sender_identity> parse_gb28181_sender_delete(std::string_v
     {
         return std::nullopt;
     }
-    return gb28181_sender_identity{
-        .stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name), .sender_id = std::move(*sender_id)};
+    return gb28181_sender_identity{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name), .sender_id = std::move(*sender_id)};
 }
 
 }    // namespace media_server

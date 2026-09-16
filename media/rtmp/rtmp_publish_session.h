@@ -12,9 +12,9 @@
 
 #include <boost/asio/steady_timer.hpp>
 
-#include "media/rtmp/rtmp_timestamp.h"
 #include "media/core/media_stream.h"
 #include "media/core/runtime_event.h"
+#include "media/rtmp/rtmp_timestamp.h"
 
 struct flv_demuxer_t;
 
@@ -31,11 +31,11 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     using streaming_handler = std::function<void()>;
 
     rtmp_publish_session(worker_context& worker,
-                       std::string stream_name,
-                       std::chrono::milliseconds initial_tracks_timeout,
-                       shutdown_handler on_shutdown,
-                       runtime_shutdown_handler on_runtime_shutdown = {},
-                       streaming_handler on_streaming = {});
+                         std::string stream_name,
+                         std::chrono::milliseconds initial_tracks_timeout,
+                         shutdown_handler on_shutdown,
+                         runtime_shutdown_handler on_runtime_shutdown = {},
+                         streaming_handler on_streaming = {});
     ~rtmp_publish_session();
 
     bool startup();
@@ -56,6 +56,7 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     void try_initialize_tracks();
     void notify_shutdown(runtime_end_reason reason, std::string stage, std::string error);
 
+   private:
     worker_context& worker_;
     boost::asio::steady_timer initial_tracks_timer_;
     std::chrono::milliseconds initial_tracks_timeout_;

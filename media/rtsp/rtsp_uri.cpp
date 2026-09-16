@@ -2,8 +2,8 @@
 
 #include <boost/url/parse.hpp>
 
-#include "media/core/stream_id.h"
 #include "media/rtsp/rtsp_uri.h"
+#include "media/core/stream_id.h"
 
 namespace media_server
 {

@@ -1,12 +1,12 @@
 #include <memory>
-#include <stdexcept>
 #include <utility>
+#include <stdexcept>
 
 #include <boost/asio.hpp>
-#include <boost/beast.hpp>
 #include <boost/json.hpp>
-#include <boost/url/parse.hpp>
+#include <boost/beast.hpp>
 #include <spdlog/spdlog.h>
+#include <boost/url/parse.hpp>
 
 #include "media/core/runtime_event.h"
 #include "media/http/signaling_client.h"
@@ -136,9 +136,7 @@ signaling_request_result signaling_client::report_runtime_event(const runtime_ev
     return request("/internal/runtime-events", runtime_event_body(event), yield);
 }
 
-signaling_request_result signaling_client::request(std::string_view target,
-                                                   std::string body,
-                                                   boost::asio::yield_context& yield) const
+signaling_request_result signaling_client::request(std::string_view target, std::string body, boost::asio::yield_context& yield) const
 {
     namespace http = beast::http;
 
@@ -207,8 +205,8 @@ signaling_request_result signaling_client::request(std::string_view target,
     const auto status = static_cast<unsigned int>(response.result_int());
     if (response.result_int() < 200 || response.result_int() >= 300)
     {
-        const auto kind = response.result_int() >= 500 && response.result_int() < 600 ? signaling_result_kind::temporary_failure
-                                                                                      : signaling_result_kind::rejected;
+        const auto kind =
+            response.result_int() >= 500 && response.result_int() < 600 ? signaling_result_kind::temporary_failure : signaling_result_kind::rejected;
         finish();
         return {.kind = kind, .status = status, .error = {}};
     }

@@ -72,6 +72,7 @@ class hls_segmenter final : public media_sink
     bool reserve_fmp4_sample(std::size_t bytes);
     bool finish_fmp4_segment(std::int64_t end_pts_ns);
 
+   private:
     mutable std::mutex mutex_;
     video_transcode_config video_config_;
     double target_duration_seconds_{};

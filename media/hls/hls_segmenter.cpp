@@ -9,8 +9,8 @@
 
 #include <spdlog/spdlog.h>
 
-#include "media/hls/hls_segmenter.h"
 #include "media/codec/codec_utils.h"
+#include "media/hls/hls_segmenter.h"
 
 extern "C"
 {

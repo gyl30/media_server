@@ -1,17 +1,17 @@
+#include <span>
 #include <chrono>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
-#include <span>
 #include <stdexcept>
-#include <string>
 #include <string_view>
 
 #include <boost/asio/ip/address.hpp>
 
-#include "media/core/stream_registry.h"
 #include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_publish_session.h"
 
 extern "C"
@@ -56,23 +56,14 @@ int announce_callback(void* param, rtsp_server_t* server, const char* uri, const
     return status == 200 ? publish->accept_announce(server) : rtsp_server_reply_announce(server, status);
 }
 
-int setup_callback(void* param,
-                   rtsp_server_t* server,
-                   const char* uri,
-                   const char* session,
-                   const rtsp_header_transport_t transports[],
-                   std::size_t count)
+int setup_callback(
+    void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     return static_cast<server_fixture*>(param)->publish->on_setup(
         server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
 }
 
-int record_callback(void* param,
-                    rtsp_server_t* server,
-                    const char* uri,
-                    const char* session,
-                    const std::int64_t* npt,
-                    const double* scale)
+int record_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     return static_cast<server_fixture*>(param)->publish->on_record(server, uri, session, npt, scale);
 }
@@ -107,10 +98,7 @@ void test_rtcp_scheduler_releases_after_shutdown()
     worker.release_work();
     auto& io = worker.io();
 
-    rtsp_publish_session publish(worker,
-                                 boost::asio::ip::address_v4::loopback(),
-                                 [](std::span<const std::uint8_t>) {},
-                                 0ms);
+    rtsp_publish_session publish(worker, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}, 0ms);
     publish.set_shutdown_handler([]() {});
 
     server_fixture fixture{.publish = &publish, .response = {}};
@@ -127,37 +115,39 @@ void test_rtcp_scheduler_releases_after_shutdown()
     const std::string uri = "rtsp://127.0.0.1/live/rtcp-scheduler";
     const std::string announce_uri = uri + "?stream_id=00000000-0000-4000-8000-000000000001";
     const std::string track_uri = uri + "/trackID=0";
-    const auto sdp =
-        std::string("v=0\r\n") +
-        "o=- 0 0 IN IP4 127.0.0.1\r\n"
-        "s=media_server\r\n"
-        "c=IN IP4 127.0.0.1\r\n"
-        "t=0 0\r\n"
-        "m=video 0 RTP/AVP 96\r\n"
-        "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;"
-        "sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
-        "a=control:" + track_uri + "\r\n";
+    const auto sdp = std::string("v=0\r\n") +
+                     "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                     "s=media_server\r\n"
+                     "c=IN IP4 127.0.0.1\r\n"
+                     "t=0 0\r\n"
+                     "m=video 0 RTP/AVP 96\r\n"
+                     "a=rtpmap:96 H264/90000\r\n"
+                     "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;"
+                     "sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                     "a=control:" +
+                     track_uri + "\r\n";
 
-    const auto announce =
-        "ANNOUNCE " + announce_uri + " RTSP/1.0\r\n"
-        "CSeq: 1\r\n"
-        "Content-Type: application/sdp\r\n"
-        "Content-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
+    const auto announce = "ANNOUNCE " + announce_uri +
+                          " RTSP/1.0\r\n"
+                          "CSeq: 1\r\n"
+                          "Content-Type: application/sdp\r\n"
+                          "Content-Length: " +
+                          std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
     require(input_request(server, fixture, announce).starts_with("RTSP/1.0 200"), "rtsp publish udp ANNOUNCE");
 
-    const auto setup =
-        "SETUP " + track_uri + " RTSP/1.0\r\n"
-        "CSeq: 2\r\n"
-        "Transport: RTP/AVP;unicast;client_port=40000-40001;mode=record\r\n\r\n";
+    const auto setup = "SETUP " + track_uri +
+                       " RTSP/1.0\r\n"
+                       "CSeq: 2\r\n"
+                       "Transport: RTP/AVP;unicast;client_port=40000-40001;mode=record\r\n\r\n";
     const auto setup_response = input_request(server, fixture, setup);
     require(setup_response.starts_with("RTSP/1.0 200"), "rtsp publish udp SETUP");
     const auto session = session_id(setup_response);
 
-    const auto record =
-        "RECORD " + uri + " RTSP/1.0\r\n"
-        "CSeq: 3\r\n"
-        "Session: " + session + "\r\n\r\n";
+    const auto record = "RECORD " + uri +
+                        " RTSP/1.0\r\n"
+                        "CSeq: 3\r\n"
+                        "Session: " +
+                        session + "\r\n\r\n";
     require(input_request(server, fixture, record).starts_with("RTSP/1.0 200"), "rtsp publish udp RECORD");
 
     publish.shutdown();

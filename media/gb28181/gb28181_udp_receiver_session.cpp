@@ -1,18 +1,18 @@
+#include <span>
 #include <array>
 #include <chrono>
 #include <limits>
-#include <span>
 #include <vector>
 #include <utility>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/detached.hpp>
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/dispatch.hpp>
 
-#include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_udp_receiver_session.h"
 
 namespace media_server
@@ -88,10 +88,8 @@ bool gb28181_udp_receiver_session::startup()
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtcp(yield); }, boost::asio::detached);
     schedule_rtcp();
 
-    spdlog::info("gb28181 udp session started stream {} rtp_port {} rtcp_port {}",
-                 receiver_.stream_name(),
-                 local_ports_->first,
-                 local_ports_->second);
+    spdlog::info(
+        "gb28181 udp session started stream {} rtp_port {} rtcp_port {}", receiver_.stream_name(), local_ports_->first, local_ports_->second);
     emit_starting();
     return true;
 }
@@ -209,11 +207,9 @@ void gb28181_udp_receiver_session::schedule_rtcp()
             }
 
             std::optional<boost::asio::ip::udp::endpoint> target = self->remote_rtcp_endpoint_;
-            if (!target && self->remote_rtp_endpoint_ &&
-                self->remote_rtp_endpoint_->port() != std::numeric_limits<std::uint16_t>::max())
+            if (!target && self->remote_rtp_endpoint_ && self->remote_rtp_endpoint_->port() != std::numeric_limits<std::uint16_t>::max())
             {
-                target.emplace(self->remote_rtp_endpoint_->address(),
-                               static_cast<std::uint16_t>(self->remote_rtp_endpoint_->port() + 1U));
+                target.emplace(self->remote_rtp_endpoint_->address(), static_cast<std::uint16_t>(self->remote_rtp_endpoint_->port() + 1U));
             }
             if (!target)
             {

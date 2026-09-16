@@ -11,8 +11,8 @@
 #include <boost/asio/detached.hpp>
 
 #include "media/net/port_manager.h"
-#include "media/webrtc/stun_message.h"
 #include "media/net/worker_context.h"
+#include "media/webrtc/stun_message.h"
 #include "media/webrtc/whip_session.h"
 
 namespace media_server
@@ -38,10 +38,7 @@ std::string random_hex(std::size_t byte_count)
     return result;
 }
 
-bool is_rtcp(std::span<const std::uint8_t> packet)
-{
-    return packet.size() >= 2U && packet[1] >= 192U && packet[1] <= 223U;
-}
+bool is_rtcp(std::span<const std::uint8_t> packet) { return packet.size() >= 2U && packet[1] >= 192U && packet[1] <= 223U; }
 
 }    // namespace
 
@@ -436,15 +433,15 @@ bool whip_session::startup_media()
         return false;
     }
 
-    auto receiver = std::make_unique<whip_media_receiver>(
-        worker_,
-        stream_name_,
-        whip_media_receiver_config{
-            .video_codec = *answer_.video_codec,
-            .video_payload_type = *answer_.video_payload_type,
-            .audio_payload_type = answer_.audio_payload_type.value_or(-1),
-            .audio_channel_count = static_cast<std::uint16_t>(answer_.audio_channel_count.value_or(2)),
-        });
+    auto receiver =
+        std::make_unique<whip_media_receiver>(worker_,
+                                              stream_name_,
+                                              whip_media_receiver_config{
+                                                  .video_codec = *answer_.video_codec,
+                                                  .video_payload_type = *answer_.video_payload_type,
+                                                  .audio_payload_type = answer_.audio_payload_type.value_or(-1),
+                                                  .audio_channel_count = static_cast<std::uint16_t>(answer_.audio_channel_count.value_or(2)),
+                                              });
     if (!receiver->startup())
     {
         srtp->shutdown();

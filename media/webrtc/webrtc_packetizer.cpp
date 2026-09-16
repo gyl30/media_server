@@ -488,8 +488,11 @@ bool webrtc_packetizer::add_audio_track(const media_track& track)
             .rtp_extension_bytes = 4U + (((config_.audio_mid_extension_id > 14 ? 2U : 1U) + config_.audio_mid.size() + 3U) & ~std::size_t{3U}),
             .waiting_key_frame = false,
         });
-    spdlog::debug(
-        "webrtc audio packetizer track ready id {} codec {} pt {} clock {}", track.id, to_string(track.codec), config_.audio_payload_type, clock_rate);
+    spdlog::debug("webrtc audio packetizer track ready id {} codec {} pt {} clock {}",
+                  track.id,
+                  to_string(track.codec),
+                  config_.audio_payload_type,
+                  clock_rate);
     return true;
 }
 

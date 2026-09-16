@@ -1,20 +1,20 @@
 #include <array>
 #include <chrono>
+#include <vector>
 #include <utility>
 #include <optional>
 #include <algorithm>
 #include <string_view>
-#include <vector>
 
 #include <spdlog/spdlog.h>
 #include <boost/url/url.hpp>
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/dispatch.hpp>
 
-#include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_sdp.h"
+#include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_pull_media.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
@@ -83,8 +83,7 @@ bool should_setup_media(rtsp_client_t* client, int media)
 
 bool remote_disconnect(const boost::system::error_code& error)
 {
-    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
-           error == boost::asio::error::connection_aborted;
+    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
 }
 }    // namespace
 
@@ -143,10 +142,10 @@ bool rtsp_pull_session::startup()
     schedule_establishment_timeout();
 
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(),
-                       [self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield)
-                       { self->run(host, port, yield); },
-                       boost::asio::detached);
+    boost::asio::spawn(
+        worker_.io(),
+        [self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); },
+        boost::asio::detached);
     emit_starting();
     return true;
 }
@@ -467,11 +466,8 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     handler.onteardown = &rtsp_pull_session::teardown_callback;
     handler.onrtp = &rtsp_pull_session::rtp_callback;
 
-    auto* client = rtsp_client_create(url_.c_str(),
-                                      username_.empty() ? nullptr : username_.c_str(),
-                                      username_.empty() ? nullptr : password_.c_str(),
-                                      &handler,
-                                      this);
+    auto* client = rtsp_client_create(
+        url_.c_str(), username_.empty() ? nullptr : username_.c_str(), username_.empty() ? nullptr : password_.c_str(), &handler, this);
     if (client == nullptr)
     {
         shutdown(runtime_end_reason::runtime_error, "rtsp_client_create_failed");

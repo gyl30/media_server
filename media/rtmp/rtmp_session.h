@@ -1,21 +1,21 @@
 #ifndef MEDIA_RTMP_RTMP_SESSION_H
 #define MEDIA_RTMP_RTMP_SESSION_H
 
-#include <chrono>
 #include <deque>
+#include <chrono>
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
+#include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/cancellation_signal.hpp>
-#include <boost/asio/spawn.hpp>
 
-#include "media/net/tcp_yield_transport.h"
 #include "media/core/runtime_event.h"
+#include "media/net/tcp_yield_transport.h"
 #include "media/codec/video_transcode_config.h"
 
 struct rtmp_server_t;
@@ -75,6 +75,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     void emit_stopped();
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
+   private:
     worker_context& worker_;
     tcp_yield_transport transport_;
     std::shared_ptr<signaling_client> signaling_;

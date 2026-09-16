@@ -1,15 +1,15 @@
 #ifndef MEDIA_SERVER_TESTS_CLIENTS_RTSP_TEST_CLIENT_H
 #define MEDIA_SERVER_TESTS_CLIENTS_RTSP_TEST_CLIENT_H
 
-#include <cstddef>
-#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
 
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
 
 struct rtsp_client_t;
 struct rtsp_rtp_info_t;
@@ -23,8 +23,7 @@ class rtsp_test_client final
     rtsp_test_client(boost::asio::io_context& io, std::string path);
     ~rtsp_test_client();
 
-    boost::asio::awaitable<boost::system::error_code> publish(
-        std::string host, std::uint16_t port, std::string sdp, std::vector<std::uint8_t> rtp);
+    boost::asio::awaitable<boost::system::error_code> publish(std::string host, std::uint16_t port, std::string sdp, std::vector<std::uint8_t> rtp);
     boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port, std::size_t rtp_media_count = 1);
 
     [[nodiscard]] const std::string& sdp() const noexcept { return sdp_; }
@@ -62,6 +61,7 @@ class rtsp_test_client final
     boost::asio::awaitable<boost::system::error_code> flush();
     boost::asio::awaitable<boost::system::error_code> start(std::string host, std::uint16_t port, mode operation);
 
+   private:
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket socket_;
     std::string path_;

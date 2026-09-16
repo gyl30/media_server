@@ -5,8 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/system/error_code.hpp>
 
 namespace media_server

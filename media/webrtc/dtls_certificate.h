@@ -35,6 +35,7 @@ class dtls_certificate final
 
     dtls_certificate(pkey_ptr private_key, x509_ptr certificate, std::string fingerprint);
 
+   private:
     pkey_ptr private_key_;
     x509_ptr certificate_;
     std::string fingerprint_;

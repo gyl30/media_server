@@ -65,6 +65,7 @@ class dtls_transport final
     std::optional<dtls_srtp_keying_material> export_srtp_keying_material() const;
     bool pump_outgoing();
 
+   private:
     std::shared_ptr<dtls_certificate> certificate_;
     std::string remote_fingerprint_;
     send_handler send_handler_;

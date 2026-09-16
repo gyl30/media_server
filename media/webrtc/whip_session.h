@@ -4,10 +4,10 @@
 #include <span>
 #include <deque>
 #include <chrono>
-#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -15,10 +15,10 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include "media/net/udp_yield_transport.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/dtls_transport.h"
 #include "media/webrtc/srtp_transport.h"
+#include "media/net/udp_yield_transport.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/whip_media_receiver.h"
 
@@ -82,6 +82,7 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     void startup_establishment_timeout();
     void refresh_ice_activity_timeout();
 
+   private:
     worker_context& worker_;
     std::string stream_name_;
     boost::asio::ip::address advertised_address_;

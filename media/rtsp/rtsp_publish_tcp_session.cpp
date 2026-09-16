@@ -17,9 +17,9 @@ namespace media_server
 {
 
 rtsp_publish_tcp_session::rtsp_publish_tcp_session(worker_context& worker,
-                                               std::string stream_name,
-                                               std::vector<rtsp_publish_track_description> descriptions,
-                                               std::function<void(std::span<const std::uint8_t>)> write)
+                                                   std::string stream_name,
+                                                   std::vector<rtsp_publish_track_description> descriptions,
+                                                   std::function<void(std::span<const std::uint8_t>)> write)
     : worker_(worker),
       write_handler_(std::move(write)),
       media_(worker_, std::move(stream_name), std::move(descriptions)),
@@ -31,9 +31,9 @@ rtsp_publish_tcp_session::rtsp_publish_tcp_session(worker_context& worker,
 rtsp_publish_tcp_session::~rtsp_publish_tcp_session() = default;
 
 int rtsp_publish_tcp_session::startup(rtsp_server_t* server,
-                                    std::size_t track_index,
-                                    const rtsp_header_transport_t& transport,
-                                    const std::string& session_id)
+                                      std::size_t track_index,
+                                      const rtsp_header_transport_t& transport,
+                                      const std::string& session_id)
 {
     if (!media_.startup(session_id))
     {
@@ -59,9 +59,9 @@ bool rtsp_publish_tcp_session::on_interleaved(std::uint8_t channel, std::span<co
 }
 
 int rtsp_publish_tcp_session::on_setup(rtsp_server_t* server,
-                                     std::size_t track_index,
-                                     const rtsp_header_transport_t& transport,
-                                     const std::string& session_id)
+                                       std::size_t track_index,
+                                       const rtsp_header_transport_t& transport,
+                                       const std::string& session_id)
 {
     if (track_states_[track_index].rtp_channel >= 0)
     {

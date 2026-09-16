@@ -4,12 +4,12 @@
 #include <string_view>
 #include <type_traits>
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "media/net/tcp_yield_transport.h"
 
@@ -58,19 +58,20 @@ void test_read_write()
     bool completed = false;
 
     boost::asio::write(client, boost::asio::buffer(inbound));
-    boost::asio::spawn(io,
-                       [&](boost::asio::yield_context yield)
-                       {
-                           boost::system::error_code read_error;
-                           const auto bytes = transport.read(received, yield, read_error);
-                           require(!read_error && bytes == inbound.size() && received == inbound, "tcp yield transport read");
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            boost::system::error_code read_error;
+            const auto bytes = transport.read(received, yield, read_error);
+            require(!read_error && bytes == inbound.size() && received == inbound, "tcp yield transport read");
 
-                           boost::system::error_code write_error;
-                           const auto written = transport.write(outbound, yield, write_error);
-                           require(!write_error && written == outbound.size(), "tcp yield transport write");
-                           completed = true;
-                       },
-                       boost::asio::detached);
+            boost::system::error_code write_error;
+            const auto written = transport.write(outbound, yield, write_error);
+            require(!write_error && written == outbound.size(), "tcp yield transport write");
+            completed = true;
+        },
+        boost::asio::detached);
     io.run();
     require(completed, "tcp yield transport coroutine completed");
 
@@ -91,13 +92,14 @@ void test_shutdown_cancels_read()
     std::array<std::uint8_t, 1> data{};
     boost::system::error_code read_error;
     bool completed = false;
-    boost::asio::spawn(io,
-                       [&](boost::asio::yield_context yield)
-                       {
-                           static_cast<void>(transport.read(data, yield, read_error));
-                           completed = true;
-                       },
-                       boost::asio::detached);
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            static_cast<void>(transport.read(data, yield, read_error));
+            completed = true;
+        },
+        boost::asio::detached);
 
     require(io.run_one() == 1, "tcp yield transport pending read starts");
     transport.shutdown();

@@ -7,8 +7,8 @@
 #include <cstdint>
 #include <optional>
 
-#include "media/codec/audio_transcoder.h"
 #include "media/core/media_stream.h"
+#include "media/codec/audio_transcoder.h"
 
 extern "C"
 {
@@ -50,6 +50,7 @@ class whip_media_receiver final
     bool publish_stream();
     bool apply_sender_report(rtsp_demuxer_t* demuxer);
 
+   private:
     worker_context& worker_;
     std::string stream_name_;
     whip_media_receiver_config config_;

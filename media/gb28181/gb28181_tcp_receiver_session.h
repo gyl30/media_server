@@ -4,17 +4,17 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <cstdint>
+#include <string_view>
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 #include "media/net/tcp_listener.h"
-#include "media/net/tcp_yield_transport.h"
 #include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
+#include "media/net/tcp_yield_transport.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
 
 namespace media_server
@@ -25,12 +25,12 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
 {
    public:
     gb28181_tcp_receiver_session(worker_context& worker,
-                                  std::string stream_id,
-                                  std::string stream_name,
-                                  gb28181_transport_config config,
-                                  boost::asio::ip::address bind_address,
-                                  std::chrono::milliseconds establishment_timeout,
-                                  runtime_event_emitter_ptr runtime_events = {});
+                                 std::string stream_id,
+                                 std::string stream_name,
+                                 gb28181_transport_config config,
+                                 boost::asio::ip::address bind_address,
+                                 std::chrono::milliseconds establishment_timeout,
+                                 runtime_event_emitter_ptr runtime_events = {});
 
     [[nodiscard]] bool startup();
     void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
@@ -43,6 +43,7 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
     void emit_streaming();
     void emit_stopped();
 
+   private:
     worker_context& worker_;
     std::string stream_id_;
     gb28181_transport_config config_;

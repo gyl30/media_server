@@ -64,6 +64,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     void dispatch_reader_tracks(const std::shared_ptr<media_reader_state>& state, media_track_snapshot_ptr tracks);
     void dispatch_reader_end(const std::shared_ptr<media_reader_state>& state);
 
+   private:
     std::string name_;
     worker_context& worker_;
     std::map<track_id, media_track> tracks_;

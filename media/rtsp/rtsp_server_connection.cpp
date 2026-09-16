@@ -1,23 +1,23 @@
-#include <algorithm>
 #include <array>
 #include <chrono>
-#include <exception>
-#include <vector>
 #include <string>
+#include <vector>
 #include <cstdlib>
 #include <utility>
+#include <algorithm>
+#include <exception>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/dispatch.hpp>
-#include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 
-#include "media/http/signaling_client.h"
 #include "media/net/worker_context.h"
-#include "media/rtsp/rtsp_publish_session.h"
+#include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_play_session.h"
+#include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
 extern "C"
@@ -34,8 +34,7 @@ constexpr std::size_t max_publish_claim_input_bytes = 64U * 1024U;
 
 bool remote_disconnect(const boost::system::error_code& error)
 {
-    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
-           error == boost::asio::error::connection_aborted;
+    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
 }
 }    // namespace
 
@@ -63,9 +62,10 @@ rtsp_server_connection::~rtsp_server_connection() = default;
 void rtsp_server_connection::startup()
 {
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(),
-                       [self](boost::asio::yield_context yield) { self->run(yield); },
-                       boost::asio::bind_cancellation_slot(run_cancellation_.slot(), boost::asio::detached));
+    boost::asio::spawn(
+        worker_.io(),
+        [self](boost::asio::yield_context yield) { self->run(yield); },
+        boost::asio::bind_cancellation_slot(run_cancellation_.slot(), boost::asio::detached));
 }
 
 void rtsp_server_connection::run(boost::asio::yield_context yield)
@@ -269,17 +269,17 @@ bool rtsp_server_connection::start_publish_claim_reader(boost::asio::yield_conte
     boost::asio::spawn(
         worker_.io(),
         [self](boost::asio::yield_context reader_yield) { self->run_publish_claim_reader(reader_yield); },
-        boost::asio::bind_cancellation_slot(
-            publish_claim_reader_cancellation_.slot(),
-            [self](std::exception_ptr exception)
-            {
-                self->publish_claim_reader_running_ = false;
-                self->publish_claim_reader_barrier_.cancel();
-                if (exception)
-                {
-                    self->shutdown_with_stage(runtime_end_reason::runtime_error, "claim", "publish_claim_reader_failed");
-                }
-            }));
+        boost::asio::bind_cancellation_slot(publish_claim_reader_cancellation_.slot(),
+                                            [self](std::exception_ptr exception)
+                                            {
+                                                self->publish_claim_reader_running_ = false;
+                                                self->publish_claim_reader_barrier_.cancel();
+                                                if (exception)
+                                                {
+                                                    self->shutdown_with_stage(
+                                                        runtime_end_reason::runtime_error, "claim", "publish_claim_reader_failed");
+                                                }
+                                            }));
 
     if (!publish_claim_reader_started_)
     {
@@ -347,10 +347,7 @@ void rtsp_server_connection::run_publish_claim_reader(boost::asio::yield_context
     }
 }
 
-void rtsp_server_connection::shutdown(runtime_end_reason reason, std::string error)
-{
-    shutdown_with_stage(reason, {}, std::move(error));
-}
+void rtsp_server_connection::shutdown(runtime_end_reason reason, std::string error) { shutdown_with_stage(reason, {}, std::move(error)); }
 
 void rtsp_server_connection::shutdown_with_stage(runtime_end_reason reason, std::string stage, std::string error)
 {
@@ -418,10 +415,8 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     if (!self->play_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_play_session>(self->worker_,
-                                                                self->video_codec_,
-                                                                self->local_address_,
-                                                                [owner](std::span<const std::uint8_t> data) { owner->write(data); });
+        auto next_session = std::make_shared<rtsp_play_session>(
+            self->worker_, self->video_codec_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
         next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
         self->play_session_ = std::move(next_session);
     }
@@ -444,10 +439,8 @@ int rtsp_server_connection::setup_callback(
     if (!self->play_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_play_session>(self->worker_,
-                                                                self->video_codec_,
-                                                                self->local_address_,
-                                                                [owner](std::span<const std::uint8_t> data) { owner->write(data); });
+        auto next_session = std::make_shared<rtsp_play_session>(
+            self->worker_, self->video_codec_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
         next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
         self->play_session_ = std::move(next_session);
     }
@@ -517,11 +510,10 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     const auto owner = self->shared_from_this();
     auto next_session = std::make_shared<rtsp_publish_session>(
         self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-    next_session->set_shutdown_handler(
-        [owner]() { owner->shutdown_with_stage(runtime_end_reason::runtime_error, "transport", "publish_transport_failed"); });
-    next_session->set_runtime_shutdown_handler(
-        [owner](runtime_end_reason reason, std::string stage, std::string error)
-        { owner->shutdown_with_stage(reason, std::move(stage), std::move(error)); });
+    next_session->set_shutdown_handler([owner]()
+                                       { owner->shutdown_with_stage(runtime_end_reason::runtime_error, "transport", "publish_transport_failed"); });
+    next_session->set_runtime_shutdown_handler([owner](runtime_end_reason reason, std::string stage, std::string error)
+                                               { owner->shutdown_with_stage(reason, std::move(stage), std::move(error)); });
     next_session->set_streaming_handler([owner]() { owner->emit_streaming(); });
     const auto status = next_session->prepare_announce(server, uri != nullptr ? uri : "", sdp, length);
     if (status != 200)

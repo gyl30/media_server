@@ -34,8 +34,7 @@ class stream_registry final
     bool add_receiver_session(std::string stream_name, std::shared_ptr<stream_session> session);
     [[nodiscard]] std::shared_ptr<stream_session> take_receiver_session(std::string_view stream_name);
     template <typename Session>
-    [[nodiscard]] std::shared_ptr<Session> take_receiver_session_as(std::string_view stream_name,
-                                                                    std::string_view expected_stream_id = {})
+    [[nodiscard]] std::shared_ptr<Session> take_receiver_session_as(std::string_view stream_name, std::string_view expected_stream_id = {})
     {
         std::scoped_lock lock(mutex_);
         const auto iterator = streams_.find(stream_name);
@@ -78,6 +77,7 @@ class stream_registry final
 
     static bool empty(const stream_entry& entry);
 
+   private:
     mutable std::mutex mutex_;
     std::map<std::string, stream_entry, std::less<>> streams_;
 };

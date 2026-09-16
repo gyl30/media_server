@@ -1,12 +1,12 @@
+#include <span>
 #include <array>
 #include <chrono>
-#include <span>
 #include <utility>
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/detached.hpp>
 #include <boost/asio/error.hpp>
+#include <boost/asio/detached.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_publish_udp_session.h"
@@ -20,10 +20,10 @@ namespace media_server
 {
 
 rtsp_publish_udp_session::rtsp_publish_udp_session(worker_context& worker,
-                                               boost::asio::ip::address bind_address,
-                                               std::string stream_name,
-                                               std::vector<rtsp_publish_track_description> descriptions,
-                                               std::chrono::milliseconds rtcp_interval)
+                                                   boost::asio::ip::address bind_address,
+                                                   std::string stream_name,
+                                                   std::vector<rtsp_publish_track_description> descriptions,
+                                                   std::chrono::milliseconds rtcp_interval)
     : worker_(worker),
       bind_address_(std::move(bind_address)),
       media_(worker_, std::move(stream_name), std::move(descriptions)),
@@ -34,9 +34,9 @@ rtsp_publish_udp_session::rtsp_publish_udp_session(worker_context& worker,
 }
 
 int rtsp_publish_udp_session::startup(rtsp_server_t* server,
-                                    std::size_t track_index,
-                                    const rtsp_header_transport_t& transport,
-                                    const std::string& session_id)
+                                      std::size_t track_index,
+                                      const rtsp_header_transport_t& transport,
+                                      const std::string& session_id)
 {
     if (!media_.startup(session_id))
     {
@@ -111,9 +111,9 @@ void rtsp_publish_udp_session::run_rtcp(std::size_t track_index, boost::asio::yi
 }
 
 int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
-                                     std::size_t track_index,
-                                     const rtsp_header_transport_t& transport,
-                                     const std::string& session_id)
+                                       std::size_t track_index,
+                                       const rtsp_header_transport_t& transport,
+                                       const std::string& session_id)
 {
     auto& state = track_states_[track_index];
     if (state.local_ports)
@@ -171,8 +171,10 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     state.local_ports = local_ports;
 
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self, track_index](boost::asio::yield_context yield) { self->run_rtp(track_index, yield); }, boost::asio::detached);
-    boost::asio::spawn(worker_.io(), [self, track_index](boost::asio::yield_context yield) { self->run_rtcp(track_index, yield); }, boost::asio::detached);
+    boost::asio::spawn(
+        worker_.io(), [self, track_index](boost::asio::yield_context yield) { self->run_rtp(track_index, yield); }, boost::asio::detached);
+    boost::asio::spawn(
+        worker_.io(), [self, track_index](boost::asio::yield_context yield) { self->run_rtcp(track_index, yield); }, boost::asio::detached);
 
     rtsp_server_set_session_timeout(server, 60);
     const auto response = "RTP/AVP;unicast;client_port=" + std::to_string(transport.rtp.u.client_port1) + "-" +
@@ -217,10 +219,7 @@ void rtsp_publish_udp_session::schedule_rtcp()
                 return;
             }
 
-            boost::asio::spawn(
-                self->worker_.io(),
-                [self](boost::asio::yield_context yield) { self->run_rtcp_write(yield); },
-                boost::asio::detached);
+            boost::asio::spawn(self->worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtcp_write(yield); }, boost::asio::detached);
         });
 }
 
@@ -237,8 +236,7 @@ void rtsp_publish_udp_session::run_rtcp_write(boost::asio::yield_context yield)
             continue;
         }
 
-        static_cast<void>(state.rtcp_transport->write(
-            std::span{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint, yield, error));
+        static_cast<void>(state.rtcp_transport->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint, yield, error));
         if (error)
         {
             if (error != boost::asio::error::operation_aborted && shutdown_handler_)
