@@ -37,47 +37,43 @@ void require(bool condition, const char* message)
 void test_single_reservation()
 {
     port_manager::init(100, 103);
-    auto& manager = port_manager::instance();
-    const auto first = manager.acquire();
-    const auto second = manager.acquire();
+    const auto first = port_manager::instance().acquire();
+    const auto second = port_manager::instance().acquire();
     require(first && second && *first != *second, "single reservations are unique");
-    manager.release(*first);
-    const auto reused = manager.acquire();
+    port_manager::instance().release(*first);
+    const auto reused = port_manager::instance().acquire();
     require(reused && *reused == *first, "released single port is reusable");
-    manager.release(*second);
-    manager.release(*reused);
-    manager.release(*reused);
+    port_manager::instance().release(*second);
+    port_manager::instance().release(*reused);
+    port_manager::instance().release(*reused);
     port_manager::destroy();
 }
 
 void test_pair_reservation()
 {
     port_manager::init(200, 205);
-    auto& manager = port_manager::instance();
-    const auto pair = manager.acquire_pair();
+    const auto pair = port_manager::instance().acquire_pair();
     require(pair && (pair->first % 2U) == 0U && pair->second == pair->first + 1U, "pair is adjacent even odd");
-    const auto single = manager.acquire();
+    const auto single = port_manager::instance().acquire();
     require(single && *single != pair->first && *single != pair->second, "pair ports are reserved atomically");
-    manager.release(*single);
-    manager.release(*pair);
-    const auto reused = manager.acquire_pair();
+    port_manager::instance().release(*single);
+    port_manager::instance().release(*pair);
+    const auto reused = port_manager::instance().acquire_pair();
     require(reused && reused->first == pair->first && reused->second == pair->second, "released pair is reusable");
-    manager.release(*reused);
+    port_manager::instance().release(*reused);
     port_manager::destroy();
 }
 
 void test_exhaustion()
 {
     port_manager::init(300, 301);
-    auto& manager = port_manager::instance();
-    require(manager.acquire() && manager.acquire(), "single range fills");
-    require(!manager.acquire(), "single range exhaustion");
+    require(port_manager::instance().acquire() && port_manager::instance().acquire(), "single range fills");
+    require(!port_manager::instance().acquire(), "single range exhaustion");
     port_manager::destroy();
 
     port_manager::init(302, 303);
-    auto& pair_manager = port_manager::instance();
-    require(pair_manager.acquire_pair().has_value(), "pair range fills");
-    require(!pair_manager.acquire_pair(), "pair range exhaustion");
+    require(port_manager::instance().acquire_pair().has_value(), "pair range fills");
+    require(!port_manager::instance().acquire_pair(), "pair range exhaustion");
     port_manager::destroy();
 }
 

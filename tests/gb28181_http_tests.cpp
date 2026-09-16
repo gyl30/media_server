@@ -217,19 +217,18 @@ void test_sender_handlers()
 void test_receiver_delete_preserves_foreign_session()
 {
     worker_context worker;
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
 
     auto foreign = std::make_shared<foreign_receiver_session>();
-    require(streams.add_receiver_session("live/foreign", foreign), "gb receiver foreign identity");
+    require(stream_registry::instance().add_receiver_session("live/foreign", foreign), "gb receiver foreign identity");
     const auto response =
         receiver_request(worker, request("/gb28181/receiver/delete", {{"stream_id", stream_id_a}, {"stream_name", "live/foreign"}}));
     require_json_response(response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
                           "gb receiver delete preserves foreign session");
-    require(streams.take_receiver_session("live/foreign") == foreign, "gb receiver foreign identity retained");
-    streams.clear();
+    require(stream_registry::instance().take_receiver_session("live/foreign") == foreign, "gb receiver foreign identity retained");
+    stream_registry::instance().clear();
 }
 
 void test_request_namespace_dispatch()

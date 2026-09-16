@@ -61,8 +61,7 @@ void test_udp_sender_session_sends_rtp()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
 
     boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -83,7 +82,7 @@ void test_udp_sender_session_sends_rtp()
                 .codec_config = config,
             }}),
             "gb udp sender source tracks");
-    require(streams.add(source), "gb udp sender source registry");
+    require(stream_registry::instance().add(source), "gb udp sender source registry");
 
     const gb28181_transport_config description{
         .mode = gb28181_transport::udp,
@@ -103,7 +102,7 @@ void test_udp_sender_session_sends_rtp()
                                                                 false,
                                                                 std::chrono::milliseconds{25'000},
                                                                 1024U * 1024U);
-    require(streams.add_sender_session(source->name(), "udp-sender", session), "gb udp sender session registry");
+    require(stream_registry::instance().add_sender_session(source->name(), "udp-sender", session), "gb udp sender session registry");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb udp sender session startup");
@@ -144,8 +143,7 @@ void test_udp_sender_queue_overflow_drops_packet()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
 
     boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -164,7 +162,7 @@ void test_udp_sender_queue_overflow_drops_packet()
                 .codec_config = config,
             }}),
             "gb udp overflow source tracks");
-    require(streams.add(source), "gb udp overflow source registry");
+    require(stream_registry::instance().add(source), "gb udp overflow source registry");
 
     const gb28181_transport_config description{
         .mode = gb28181_transport::udp,
@@ -184,7 +182,7 @@ void test_udp_sender_queue_overflow_drops_packet()
                                                                 false,
                                                                 std::chrono::milliseconds{25'000},
                                                                 0U);
-    require(streams.add_sender_session(source->name(), "udp-overflow", session), "gb udp overflow sender registry");
+    require(stream_registry::instance().add_sender_session(source->name(), "udp-overflow", session), "gb udp overflow sender registry");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb udp overflow session startup");
@@ -205,7 +203,7 @@ void test_udp_sender_queue_overflow_drops_packet()
     io.restart();
 
     require(rtp_receiver.available() == 0U, "gb udp overflow drops new packet");
-    auto registered = streams.take_sender_session(source->name(), "udp-overflow");
+    auto registered = stream_registry::instance().take_sender_session(source->name(), "udp-overflow");
     require(registered.get() == session.get(), "gb udp overflow keeps session running");
 
     std::weak_ptr<gb28181_udp_sender_session> weak_session = session;
@@ -221,8 +219,7 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
 
     boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -243,7 +240,7 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
                 .codec_config = config,
             }}),
             "gb udp sender rtcp source tracks");
-    require(streams.add(source), "gb udp sender rtcp source registry");
+    require(stream_registry::instance().add(source), "gb udp sender rtcp source registry");
 
     const gb28181_transport_config description{
         .mode = gb28181_transport::udp,
@@ -261,7 +258,7 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
                                                                 "udp-sender-rtcp",
                                                                 true,
                                                                 std::chrono::milliseconds::zero());
-    require(streams.add_sender_session(source->name(), "udp-sender-rtcp", session), "gb udp sender rtcp session registry");
+    require(stream_registry::instance().add_sender_session(source->name(), "udp-sender-rtcp", session), "gb udp sender rtcp session registry");
     require(session->startup(), "gb udp sender rtcp session startup");
 
     io.run_for(std::chrono::milliseconds(20));

@@ -1023,10 +1023,10 @@ class whep_http_test_peer final
    public:
     whep_http_test_peer() : workers_(1), acceptor_(workers_.context(0).io(), {boost::asio::ip::address_v4::loopback(), 0})
     {
-        streams_.clear();
+        stream_registry::instance().clear();
         stream_ = std::make_shared<media_stream>("live/camera", workers_.context(0));
         require(stream_->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
-        require(streams_.add(stream_), "whep http registry add");
+        require(stream_registry::instance().add(stream_), "whep http registry add");
         runner_ = std::jthread([this]() { workers_.run(); });
     }
 
@@ -1126,7 +1126,6 @@ class whep_http_test_peer final
 
    private:
     config config_;
-    stream_registry& streams_ = stream_registry::instance();
     io_context_pool workers_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::io_context client_io_;
@@ -2689,11 +2688,10 @@ void test_whep_session_lifecycle()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
     auto stream = std::make_shared<media_stream>("live/test", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
-    require(streams.add(stream), "whep registry add");
+    require(stream_registry::instance().add(stream), "whep registry add");
 
     const config application_config;
     auto missing_ice_offer = webrtc_offer_sdp;
@@ -2730,14 +2728,14 @@ void test_whep_session_lifecycle()
     const auto third = whep::create(worker, std::string{replacement_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
     require(third.error == whep::create_error::none, "whep recreate viewer");
 
-    streams.remove(*stream);
+    stream_registry::instance().remove(*stream);
     stream->end();
     drain_io(io);
     require(!whep::remove(third.session_id), "whep source end releases session");
 
     auto replacement = std::make_shared<media_stream>("live/test", worker);
     require(replacement->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
-    require(streams.add(replacement), "whep replacement registry add");
+    require(stream_registry::instance().add(replacement), "whep replacement registry add");
 
     const auto replacement_session = whep::create(worker, std::string{updated_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
     require(replacement_session.error == whep::create_error::none, "whep create after republish");
@@ -2762,11 +2760,10 @@ void test_whep_opus_source_session_lifecycle()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
     auto stream = std::make_shared<media_stream>("live/opus", worker);
     require(stream->set_tracks({make_video_track(), make_opus_track(1)}), "whep opus source tracks");
-    require(streams.add(stream), "whep opus source registry add");
+    require(stream_registry::instance().add(stream), "whep opus source registry add");
 
     const config application_config;
     auto compatible_sdp = webrtc_offer_sdp;
@@ -3412,8 +3409,7 @@ void test_whip_session_ingest(codec_id video_codec)
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
 
     auto server_certificate = dtls_certificate::create();
     auto client_certificate = dtls_certificate::create();
@@ -3542,7 +3538,7 @@ void test_whip_session_ingest(codec_id video_codec)
     {
         io.run_for(std::chrono::milliseconds(10));
         io.restart();
-        published = streams.find(stream_name);
+        published = stream_registry::instance().find(stream_name);
     }
     require(published != nullptr, "whip session publishes received stream");
     const auto tracks = published->tracks();
@@ -3597,7 +3593,7 @@ void test_whip_session_ingest(codec_id video_codec)
         io.restart();
     }
     require(session->local_port() == 0U, "whip authenticated invalid media shuts down session");
-    require(streams.find(stream_name) == nullptr, "whip session shutdown removes stream");
+    require(stream_registry::instance().find(stream_name) == nullptr, "whip session shutdown removes stream");
     require(sink->ends == 1, "whip invalid media ends consumer exactly once");
 
     session->shutdown();
