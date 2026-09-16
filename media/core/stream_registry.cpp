@@ -152,39 +152,6 @@ void stream_registry::remove_sender_session(std::string_view stream_name, std::s
     }
 }
 
-void stream_registry::shutdown_sessions(runtime_end_reason reason)
-{
-    std::vector<std::shared_ptr<stream_session>> sessions;
-    {
-        std::scoped_lock lock(mutex_);
-        for (auto& [name, entry] : streams_)
-        {
-            if (entry.receiver_session)
-            {
-                sessions.push_back(entry.receiver_session);
-            }
-            for (const auto& [id, session] : entry.sender_sessions)
-            {
-                sessions.push_back(session);
-            }
-        }
-    }
-    for (const auto& session : sessions)
-    {
-        session->shutdown(reason);
-    }
-}
-
-void stream_registry::clear()
-{
-    // 先在锁内摘除全局引用，再在锁外释放对象，避免在 registry mutex 内执行析构。
-    std::map<std::string, stream_entry, std::less<>> streams;
-    {
-        std::scoped_lock lock(mutex_);
-        streams.swap(streams_);
-    }
-}
-
 bool stream_registry::empty(const stream_entry& entry) { return !entry.stream && !entry.receiver_session && entry.sender_sessions.empty(); }
 
 }    // namespace media_server

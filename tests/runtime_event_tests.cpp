@@ -93,7 +93,6 @@ void wait_runtime_events(const test::publish_claim_test_server& server, std::siz
 void test_rtsp_pull_runtime_failure_events()
 {
     worker_context worker;
-    stream_registry::instance().clear();
     test::publish_claim_test_server server;
     configure_reporting(worker, server.url());
 
@@ -134,13 +133,11 @@ void test_rtsp_pull_runtime_failure_events()
     require(runtime_events(server).size() == 2U, "runtime event repeated shutdown ignored");
     worker.stop();
     runner.join();
-    stream_registry::instance().clear();
 }
 
 void test_rtsp_pull_first_shutdown_reason()
 {
     worker_context worker;
-    stream_registry::instance().clear();
     test::publish_claim_test_server server;
     configure_reporting(worker, server.url());
 
@@ -179,7 +176,6 @@ void test_rtsp_pull_first_shutdown_reason()
     require(!stream_registry::instance().take_receiver_session("live/runtime-events"), "runtime shutdown releases identity");
     worker.stop();
     runner.join();
-    stream_registry::instance().clear();
 }
 
 void test_runtime_event_strings()

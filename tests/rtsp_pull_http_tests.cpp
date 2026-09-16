@@ -88,7 +88,6 @@ void test_request_validation()
 {
     worker_context worker;
     auto& io = worker.io();
-    stream_registry::instance().clear();
 
     const auto valid_url = "rtsp://127.0.0.1:9/live/source";
     require_response(handle(worker, request("/rtsp/pull/create", create_body("live/no-auth", valid_url))),
@@ -164,13 +163,11 @@ void test_request_validation()
 
     worker.release_work();
     io.run();
-    stream_registry::instance().clear();
 }
 
 void test_stream_id_required()
 {
     worker_context worker;
-    stream_registry::instance().clear();
 
     auto identified = create_body("live/identified", "rtsp://127.0.0.1:9/live/source");
     require_response(
@@ -206,14 +203,12 @@ void test_stream_id_required()
                      "rtsp pull identified delete");
     worker.release_work();
     worker.io().run();
-    stream_registry::instance().clear();
 }
 
 void test_create_delete_recreate()
 {
     worker_context worker;
     auto& io = worker.io();
-    stream_registry::instance().clear();
     const auto body = create_body("live/recreate", "rtsp://127.0.0.1:9/live/source");
 
     require_response(handle(worker, request("/rtsp/pull/create", body)), boost::beast::http::status::created, "", "rtsp pull initial create");
@@ -248,13 +243,11 @@ void test_create_delete_recreate()
 
     worker.release_work();
     io.run();
-    stream_registry::instance().clear();
 }
 
 void test_delete_preserves_foreign_receiver()
 {
     worker_context worker;
-    stream_registry::instance().clear();
 
     auto foreign = std::make_shared<foreign_receiver_session>();
     require(stream_registry::instance().add_receiver_session("live/foreign", foreign), "rtsp pull foreign receiver identity");
@@ -263,13 +256,11 @@ void test_delete_preserves_foreign_receiver()
                      R"({"error":"not_found"})",
                      "rtsp pull delete preserves foreign receiver");
     require(stream_registry::instance().take_receiver_session("live/foreign") == foreign, "rtsp pull foreign receiver retained");
-    stream_registry::instance().clear();
 }
 
 void test_delayed_shutdown_preserves_replacement()
 {
     worker_context worker;
-    stream_registry::instance().clear();
 
     auto old_session = std::make_shared<rtsp_pull_session>(worker, stream_id_a, source_id, "live/replacement", "rtsp://127.0.0.1:9/live/old");
     require(stream_registry::instance().add_receiver_session("live/replacement", old_session), "rtsp pull old identity");
@@ -287,14 +278,12 @@ void test_delayed_shutdown_preserves_replacement()
     replacement->shutdown();
     worker.io().restart();
     worker.io().run();
-    stream_registry::instance().clear();
 }
 
 void test_runtime_failure_releases_identity()
 {
     worker_context worker;
     auto& io = worker.io();
-    stream_registry::instance().clear();
 
     boost::asio::ip::tcp::acceptor endpoint(io, {boost::asio::ip::address_v4::loopback(), 0});
     const auto port = endpoint.local_endpoint().port();
@@ -311,26 +300,6 @@ void test_runtime_failure_releases_identity()
                      "",
                      "rtsp pull failure replacement delete");
     io.run();
-    stream_registry::instance().clear();
-}
-
-void test_registry_shutdown_stops_pull()
-{
-    worker_context worker;
-    stream_registry::instance().clear();
-
-    require_response(handle(worker, request("/rtsp/pull/create", create_body("live/service-stop", "rtsp://127.0.0.1:9/live/source"))),
-                     boost::beast::http::status::created,
-                     "",
-                     "rtsp pull service stop create");
-    stream_registry::instance().shutdown_sessions();
-    worker.release_work();
-    worker.io().run();
-    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/service-stop"))),
-                     boost::beast::http::status::not_found,
-                     R"({"error":"not_found"})",
-                     "rtsp pull service stop removes identity");
-    stream_registry::instance().clear();
 }
 
 }    // namespace
@@ -346,13 +315,11 @@ int main()
         media_server::test_delete_preserves_foreign_receiver();
         media_server::test_delayed_shutdown_preserves_replacement();
         media_server::test_runtime_failure_releases_identity();
-        media_server::test_registry_shutdown_stops_pull();
         std::cout << "[pass] rtsp_pull_http\n";
         return 0;
     }
     catch (const std::exception& error)
     {
-        media_server::stream_registry::instance().clear();
         std::cerr << "[fail] rtsp_pull_http: " << error.what() << '\n';
         return 1;
     }

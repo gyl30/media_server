@@ -16,7 +16,6 @@
 
 #include "config.h"
 #include "service.h"
-#include "media/core/stream_registry.h"
 
 namespace
 {
@@ -215,7 +214,6 @@ void test_signal_stops_registration_wait()
 int main(int argc, char** argv)
 {
     require(argc == 2, "service test case required");
-    media_server::stream_registry::instance().clear();
     const std::string_view test{argv[1]};
     if (test == "invalid_bind")
     {
@@ -245,6 +243,5 @@ int main(int argc, char** argv)
     }
 
     std::cout << "[pass] service tests\n";
-    media_server::stream_registry::instance().clear();
     return 0;
 }

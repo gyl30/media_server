@@ -1022,7 +1022,6 @@ class whep_http_test_peer final
    public:
     whep_http_test_peer() : workers_(1), acceptor_(workers_.context(0).io(), {boost::asio::ip::address_v4::loopback(), 0})
     {
-        stream_registry::instance().clear();
         stream_ = std::make_shared<media_stream>("live/camera", workers_.context(0));
         require(stream_->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
         require(stream_registry::instance().add(stream_), "whep http registry add");
@@ -1033,6 +1032,7 @@ class whep_http_test_peer final
     {
         boost::asio::post(workers_.context(0).io(), [this]() { workers_.release_work(); });
         runner_.join();
+        stream_registry::instance().remove(*stream_);
         hls::shutdown();
     }
 
@@ -2687,7 +2687,6 @@ void test_whep_session_lifecycle()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    stream_registry::instance().clear();
     auto stream = std::make_shared<media_stream>("live/test", worker);
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(stream_registry::instance().add(stream), "whep registry add");
@@ -2759,7 +2758,6 @@ void test_whep_opus_source_session_lifecycle()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    stream_registry::instance().clear();
     auto stream = std::make_shared<media_stream>("live/opus", worker);
     require(stream->set_tracks({make_video_track(), make_opus_track(1)}), "whep opus source tracks");
     require(stream_registry::instance().add(stream), "whep opus source registry add");
@@ -3408,7 +3406,6 @@ void test_whip_session_ingest(codec_id video_codec)
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    stream_registry::instance().clear();
 
     auto server_certificate = dtls_certificate::create();
     auto client_certificate = dtls_certificate::create();
@@ -3854,10 +3851,63 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
 }    // namespace
 }    // namespace media_server
 
-int main()
+int main(int argc, char* argv[])
 {
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
-    media_server::stream_registry::instance().clear();
+    if (argc > 2)
+    {
+        throw std::runtime_error("too many WebRTC signaling test arguments");
+    }
+    if (argc == 2)
+    {
+        const std::string_view scenario{argv[1]};
+        if (scenario == "http_head_response_contract")
+        {
+            media_server::test_http_head_response_contract();
+        }
+        else if (scenario == "http_method_contract")
+        {
+            media_server::test_http_method_contract();
+        }
+        else if (scenario == "whep_http_cors")
+        {
+            media_server::test_whep_http_cors();
+        }
+        else if (scenario == "whip_http_lifecycle")
+        {
+            media_server::test_whip_http_lifecycle();
+        }
+        else if (scenario == "webrtc_module_shutdown")
+        {
+            media_server::test_webrtc_module_shutdown();
+        }
+        else if (scenario == "whip_http_self_shutdown_releases_reservation")
+        {
+            media_server::test_whip_http_self_shutdown_releases_reservation();
+        }
+        else if (scenario == "whep_session_lifecycle")
+        {
+            media_server::test_whep_session_lifecycle();
+        }
+        else if (scenario == "whep_opus_source_session_lifecycle")
+        {
+            media_server::test_whep_opus_source_session_lifecycle();
+        }
+        else if (scenario == "whip_session_ingest")
+        {
+            media_server::test_whip_session_ingest(media_server::codec_id::h264);
+        }
+        else if (scenario == "whip_h265_session_ingest")
+        {
+            media_server::test_whip_session_ingest(media_server::codec_id::h265);
+        }
+        else
+        {
+            throw std::runtime_error("unknown WebRTC signaling test scenario");
+        }
+        std::cout << "[pass] " << scenario << '\n';
+        return 0;
+    }
     media_server::test_srtp_bidirectional_transport();
     std::cout << "[pass] srtp_bidirectional_transport\n";
     media_server::test_dtls_srtp_key_export();
@@ -3896,28 +3946,12 @@ int main()
     std::cout << "[pass] webrtc_transport_contract\n";
     media_server::test_whep_session_startup_errors();
     std::cout << "[pass] whep_session_startup_errors\n";
-    media_server::test_whep_session_lifecycle();
-    std::cout << "[pass] whep_session_lifecycle\n";
-    media_server::test_whep_opus_source_session_lifecycle();
-    std::cout << "[pass] whep_opus_source_session_lifecycle\n";
     media_server::test_whep_negotiated_track_lifecycle();
     std::cout << "[pass] whep_negotiated_track_lifecycle\n";
     media_server::test_whep_self_owned_lifecycle();
     std::cout << "[pass] whep_self_owned_lifecycle\n";
-    media_server::test_http_head_response_contract();
-    std::cout << "[pass] http_head_response_contract\n";
-    media_server::test_http_method_contract();
-    std::cout << "[pass] http_method_contract\n";
     media_server::test_whep_http_namespace_dispatch();
     std::cout << "[pass] whep_http_namespace_dispatch\n";
-    media_server::test_whep_http_cors();
-    std::cout << "[pass] whep_http_cors\n";
-    media_server::test_whip_http_lifecycle();
-    std::cout << "[pass] whip_http_lifecycle\n";
-    media_server::test_webrtc_module_shutdown();
-    std::cout << "[pass] webrtc_module_shutdown\n";
-    media_server::test_whip_http_self_shutdown_releases_reservation();
-    std::cout << "[pass] whip_http_self_shutdown_releases_reservation\n";
     media_server::test_whep_multi_session_isolation();
     std::cout << "[pass] whep_multi_session_isolation\n";
     media_server::test_whep_establishment_timeout();
@@ -3940,10 +3974,6 @@ int main()
     std::cout << "[pass] whep_ice_lite\n";
     media_server::test_whep_selected_bundle_transport();
     std::cout << "[pass] whep_selected_bundle_transport\n";
-    media_server::test_whip_session_ingest(media_server::codec_id::h264);
-    std::cout << "[pass] whip_session_ingest\n";
-    media_server::test_whip_session_ingest(media_server::codec_id::h265);
-    std::cout << "[pass] whip_h265_session_ingest\n";
     media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AEAD_AES_128_GCM", true);
     std::cout << "[pass] whep_dtls_h264_gcm128\n";
     media_server::test_whep_dtls(media_server::codec_id::h265, "SRTP_AEAD_AES_256_GCM", false);
@@ -3951,7 +3981,5 @@ int main()
     media_server::test_whep_dtls(media_server::codec_id::h264, "SRTP_AES128_CM_SHA1_80", false);
     std::cout << "[pass] whep_dtls_h264_sha1_80\n";
     std::cout << "all tests passed\n";
-    media_server::stream_registry::instance().clear();
-    media_server::port_manager::destroy();
     return 0;
 }

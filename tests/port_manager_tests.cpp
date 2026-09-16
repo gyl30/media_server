@@ -6,6 +6,7 @@
 #include <concepts>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/io_context.hpp>
@@ -46,7 +47,6 @@ void test_single_reservation()
     port_manager::instance().release(*second);
     port_manager::instance().release(*reused);
     port_manager::instance().release(*reused);
-    port_manager::destroy();
 }
 
 void test_pair_reservation()
@@ -61,20 +61,20 @@ void test_pair_reservation()
     const auto reused = port_manager::instance().acquire_pair();
     require(reused && reused->first == pair->first && reused->second == pair->second, "released pair is reusable");
     port_manager::instance().release(*reused);
-    port_manager::destroy();
 }
 
-void test_exhaustion()
+void test_single_exhaustion()
 {
     port_manager::init(300, 301);
     require(port_manager::instance().acquire() && port_manager::instance().acquire(), "single range fills");
     require(!port_manager::instance().acquire(), "single range exhaustion");
-    port_manager::destroy();
+}
 
+void test_pair_exhaustion()
+{
     port_manager::init(302, 303);
     require(port_manager::instance().acquire_pair().has_value(), "pair range fills");
     require(!port_manager::instance().acquire_pair(), "pair range exhaustion");
-    port_manager::destroy();
 }
 
 void test_concurrent_reservation()
@@ -114,7 +114,6 @@ void test_concurrent_reservation()
     {
         port_manager::instance().release(port);
     }
-    port_manager::destroy();
 }
 
 media_track make_video_track()
@@ -171,8 +170,6 @@ void test_udp_sender_releases_pair_after_shutdown()
     const auto pair = port_manager::instance().acquire_pair();
     require(pair && pair->first == 32'400 && pair->second == 32'401, "port release after shutdown");
     port_manager::instance().release(*pair);
-    stream_registry::instance().clear();
-    port_manager::destroy();
 }
 
 void test_udp_sender_releases_pair_after_bind_failure()
@@ -197,8 +194,6 @@ void test_udp_sender_releases_pair_after_bind_failure()
     const auto pair = port_manager::instance().acquire_pair();
     require(pair && pair->first == 32'410 && pair->second == 32'411, "port release after bind failure");
     port_manager::instance().release(*pair);
-    stream_registry::instance().clear();
-    port_manager::destroy();
 }
 
 void test_udp_receiver_releases_pair_after_bind_failure()
@@ -216,7 +211,6 @@ void test_udp_receiver_releases_pair_after_bind_failure()
     const auto pair = port_manager::instance().acquire_pair();
     require(pair && pair->first == 32'420 && pair->second == 32'421, "receiver port release after bind failure");
     port_manager::instance().release(*pair);
-    port_manager::destroy();
 }
 
 void test_udp_receiver_rejects_unavailable_local_address()
@@ -232,27 +226,58 @@ void test_udp_receiver_rejects_unavailable_local_address()
     const auto pair = port_manager::instance().acquire_pair();
     require(pair && pair->first == 32'430 && pair->second == 32'431, "receiver unavailable address releases pair");
     port_manager::instance().release(*pair);
-    port_manager::destroy();
 }
 
 }    // namespace
 }    // namespace media_server
 
-int main()
+int main(int argc, char** argv)
 {
     try
     {
-        media_server::test_single_reservation();
-        media_server::test_pair_reservation();
-        media_server::test_exhaustion();
-        media_server::test_concurrent_reservation();
-        media_server::stream_registry::instance().clear();
-        media_server::test_udp_sender_releases_pair_after_shutdown();
-        media_server::test_udp_sender_releases_pair_after_bind_failure();
-        media_server::test_udp_receiver_releases_pair_after_bind_failure();
-        media_server::test_udp_receiver_rejects_unavailable_local_address();
-        media_server::stream_registry::instance().clear();
-        std::cout << "[pass] port_manager_tests\n";
+        media_server::require(argc == 2, "port manager test case required");
+        const std::string_view test{argv[1]};
+        if (test == "single_reservation")
+        {
+            media_server::test_single_reservation();
+        }
+        else if (test == "pair_reservation")
+        {
+            media_server::test_pair_reservation();
+        }
+        else if (test == "single_exhaustion")
+        {
+            media_server::test_single_exhaustion();
+        }
+        else if (test == "pair_exhaustion")
+        {
+            media_server::test_pair_exhaustion();
+        }
+        else if (test == "concurrent_reservation")
+        {
+            media_server::test_concurrent_reservation();
+        }
+        else if (test == "udp_sender_shutdown_release")
+        {
+            media_server::test_udp_sender_releases_pair_after_shutdown();
+        }
+        else if (test == "udp_sender_bind_failure_release")
+        {
+            media_server::test_udp_sender_releases_pair_after_bind_failure();
+        }
+        else if (test == "udp_receiver_bind_failure_release")
+        {
+            media_server::test_udp_receiver_releases_pair_after_bind_failure();
+        }
+        else if (test == "udp_receiver_address_failure_release")
+        {
+            media_server::test_udp_receiver_rejects_unavailable_local_address();
+        }
+        else
+        {
+            throw std::runtime_error("unknown port manager test case");
+        }
+        std::cout << "[pass] port_manager_" << test << '\n';
         return 0;
     }
     catch (const std::exception& error)

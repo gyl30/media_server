@@ -240,7 +240,6 @@ void test_udp_setup_internal_failure_closes_connection()
     connection->shutdown();
     runner.join();
     port_manager::instance().release(*reserved);
-    port_manager::destroy();
 
     require(announce_response.starts_with("RTSP/1.0 200"), "UDP internal failure ANNOUNCE response");
     require(setup_response.empty(), "UDP internal setup failure must not send RTSP response");
@@ -306,7 +305,6 @@ void test_record_internal_failure_closes_connection()
 
     connection->shutdown();
     runner.join();
-    media_server::stream_registry::instance().clear();
 
     require(announce_response.starts_with("RTSP/1.0 200"), "record internal failure ANNOUNCE response");
     require(setup_response.starts_with("RTSP/1.0 200"), "record internal failure SETUP response");

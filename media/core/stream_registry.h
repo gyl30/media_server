@@ -62,9 +62,6 @@ class stream_registry final
                                                                       std::string_view expected_stream_id = {});
     void remove_sender_session(std::string_view stream_name, std::string_view sender_id, const stream_session& expected);
 
-    void shutdown_sessions(runtime_end_reason reason = runtime_end_reason::server_shutdown);
-    void clear();
-
    private:
     struct stream_entry
     {

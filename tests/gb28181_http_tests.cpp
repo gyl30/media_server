@@ -96,7 +96,6 @@ void test_receiver_handlers()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    stream_registry::instance().clear();
     boost::json::object create_body;
     create_body["stream_id"] = stream_id_a;
     create_body["stream_name"] = "live/http-handler-receiver";
@@ -160,7 +159,6 @@ void test_receiver_handlers()
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
                           "receiver delete after shutdown response");
-    stream_registry::instance().clear();
 }
 
 void test_sender_handlers()
@@ -169,7 +167,6 @@ void test_sender_handlers()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    stream_registry::instance().clear();
     auto stream = std::make_shared<media_stream>("live/http-handler-sender", worker);
     require(stream->set_tracks({make_video_track()}), "sender handler tracks");
     require(stream_registry::instance().add(stream), "sender handler stream");
@@ -211,13 +208,11 @@ void test_sender_handlers()
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
                           "sender delete after shutdown response");
-    stream_registry::instance().clear();
 }
 
 void test_receiver_delete_preserves_foreign_session()
 {
     worker_context worker;
-    stream_registry::instance().clear();
 
     auto foreign = std::make_shared<foreign_receiver_session>();
     require(stream_registry::instance().add_receiver_session("live/foreign", foreign), "gb receiver foreign identity");
@@ -228,7 +223,6 @@ void test_receiver_delete_preserves_foreign_session()
                           R"({"error":"operation_failed"})",
                           "gb receiver delete preserves foreign session");
     require(stream_registry::instance().take_receiver_session("live/foreign") == foreign, "gb receiver foreign identity retained");
-    stream_registry::instance().clear();
 }
 
 void test_request_namespace_dispatch()
@@ -249,7 +243,6 @@ void test_request_namespace_dispatch()
 int main()
 {
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
-    media_server::stream_registry::instance().clear();
     try
     {
         media_server::test_receiver_handlers();
@@ -257,14 +250,10 @@ int main()
         media_server::test_sender_handlers();
         media_server::test_request_namespace_dispatch();
         std::cout << "[pass] gb28181_http_handlers\n";
-        media_server::stream_registry::instance().clear();
-        media_server::port_manager::destroy();
         return 0;
     }
     catch (const std::exception& error)
     {
-        media_server::stream_registry::instance().clear();
-        media_server::port_manager::destroy();
         std::cerr << "[fail] gb28181_http_handlers: " << error.what() << '\n';
         return 1;
     }

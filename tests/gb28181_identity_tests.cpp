@@ -164,15 +164,12 @@ gb28181_http_response delete_sender(worker_context& worker, std::string_view str
     return sender_request(worker, request("/gb28181/sender/delete", std::move(body)));
 }
 
-void clear_state() { stream_registry::instance().clear(); }
-
 void test_receiver_identity_is_reusable_after_shutdown()
 {
     worker_context worker;
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    clear_state();
     const auto description = make_tcp_active_transport(65'000, 10'000'2001);
     constexpr std::string_view first_stream_id = "550e8400-e29b-41d4-a716-446655440000";
     constexpr std::string_view second_stream_id = "550e8400-e29b-41d4-a716-446655440001";
@@ -185,7 +182,6 @@ void test_receiver_identity_is_reusable_after_shutdown()
                    "gb receiver reusable after shutdown");
     require_status(delete_receiver(worker, second_stream_id, "live/gb-identity"), boost::beast::http::status::no_content, "gb receiver final remove");
     io.run();
-    clear_state();
 }
 
 void test_sender_identity_is_reusable_after_shutdown()
@@ -194,7 +190,6 @@ void test_sender_identity_is_reusable_after_shutdown()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    clear_state();
     const auto stream = add_video_stream(worker, "live/gb-sender-identity");
     const auto description = make_tcp_active_transport(65'000, 10'000'2002);
     constexpr std::string_view first_stream_id = "550e8400-e29b-41d4-a716-446655440002";
@@ -212,7 +207,6 @@ void test_sender_identity_is_reusable_after_shutdown()
     require_status(
         delete_sender(worker, second_stream_id, stream->name(), "primary"), boost::beast::http::status::no_content, "gb sender final remove");
     io.run();
-    clear_state();
 }
 
 void test_tcp_receiver_repeated_shutdown_is_idempotent()
@@ -221,7 +215,6 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    clear_state();
     const std::string stream_name = "live/gb-receiver-repeated-shutdown";
     const auto description = make_tcp_passive_transport(0, 10'000'2007);
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
@@ -243,7 +236,6 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
 
     const auto remaining = stream_registry::instance().take_receiver_session(stream_name);
     require(!remaining, "gb receiver repeated shutdown unregisters session");
-    clear_state();
 }
 
 void test_tcp_sender_repeated_shutdown_is_idempotent()
@@ -252,7 +244,6 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    clear_state();
     const auto stream = add_video_stream(worker, "live/gb-sender-repeated-shutdown");
     const auto description = make_tcp_passive_transport(0, 10'000'2008);
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
@@ -280,7 +271,6 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
 
     const auto remaining = stream_registry::instance().take_sender_session(stream->name(), "repeated-shutdown");
     require(!remaining, "gb sender repeated shutdown unregisters session");
-    clear_state();
 }
 
 void test_tcp_timeout_unregisters_receiver_session()
@@ -289,7 +279,6 @@ void test_tcp_timeout_unregisters_receiver_session()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    clear_state();
     const std::string stream_name = "live/gb-receiver-timeout";
     const auto description = make_tcp_passive_transport(0, 10'000'2005);
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
@@ -303,7 +292,6 @@ void test_tcp_timeout_unregisters_receiver_session()
 
     const auto remaining = stream_registry::instance().take_receiver_session(stream_name);
     require(!remaining, "gb receiver timeout unregisters session");
-    clear_state();
 }
 
 void test_tcp_timeout_unregisters_sender_session()
@@ -312,7 +300,6 @@ void test_tcp_timeout_unregisters_sender_session()
     worker.release_work();
     worker.io().restart();
     auto& io = worker.io();
-    clear_state();
     const auto stream = add_video_stream(worker, "live/gb-sender-timeout");
     const auto description = make_tcp_passive_transport(0, 10'000'2006);
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
@@ -332,7 +319,6 @@ void test_tcp_timeout_unregisters_sender_session()
 
     const auto remaining = stream_registry::instance().take_sender_session(stream->name(), "timeout");
     require(!remaining, "gb sender timeout unregisters session");
-    clear_state();
 }
 
 }    // namespace
@@ -340,7 +326,6 @@ void test_tcp_timeout_unregisters_sender_session()
 
 int main()
 {
-    media_server::stream_registry::instance().clear();
     int failures = 0;
     const auto run = [&failures](std::string_view name, auto&& test)
     {
@@ -362,6 +347,5 @@ int main()
     run("tcp_sender_repeated_shutdown_is_idempotent", media_server::test_tcp_sender_repeated_shutdown_is_idempotent);
     run("tcp_timeout_unregisters_receiver_session", media_server::test_tcp_timeout_unregisters_receiver_session);
     run("tcp_timeout_unregisters_sender_session", media_server::test_tcp_timeout_unregisters_sender_session);
-    media_server::stream_registry::instance().clear();
     return failures == 0 ? 0 : 1;
 }
