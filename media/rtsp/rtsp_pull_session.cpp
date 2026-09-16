@@ -14,6 +14,7 @@
 #include <boost/asio/dispatch.hpp>
 
 #include "media/rtsp/rtsp_sdp.h"
+#include "media/rtsp/rtsp_event.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_pull_media.h"
 #include "media/http/signaling_client.h"
@@ -279,15 +280,7 @@ void rtsp_pull_session::emit_starting()
         return;
     }
     runtime_started_ = true;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::source,
-        .stream_id = stream_id_,
-        .stream_name = stream_name_,
-        .source_id = source_id_,
-        .protocol = runtime_protocol::rtsp,
-        .state = runtime_state::starting,
-        .stage = "resolving",
-    });
+    signaling_client::instance().report(rtsp_event::source_starting(stream_id_, stream_name_, source_id_));
 }
 
 void rtsp_pull_session::emit_streaming()
@@ -297,15 +290,7 @@ void rtsp_pull_session::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::source,
-        .stream_id = stream_id_,
-        .stream_name = stream_name_,
-        .source_id = source_id_,
-        .protocol = runtime_protocol::rtsp,
-        .state = runtime_state::streaming,
-        .stage = "streaming",
-    });
+    signaling_client::instance().report(rtsp_event::source_streaming(stream_id_, stream_name_, source_id_));
 }
 
 void rtsp_pull_session::emit_stopped()
@@ -316,16 +301,7 @@ void rtsp_pull_session::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    signaling_client::instance().report(runtime_event{
-        .kind = runtime_kind::source,
-        .stream_id = stream_id_,
-        .stream_name = stream_name_,
-        .source_id = source_id_,
-        .protocol = runtime_protocol::rtsp,
-        .state = runtime_state::stopped,
-        .end_reason = end_reason_,
-        .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
-    });
+    signaling_client::instance().report(rtsp_event::source_stopped(stream_id_, stream_name_, source_id_, end_reason_, end_error_));
 }
 
 int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
