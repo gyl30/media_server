@@ -74,13 +74,13 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     const auto peer = transport_.remote_endpoint(endpoint_error);
     if (endpoint_error)
     {
-        shutdown_with_stage(runtime_end_reason::runtime_error, "transport", endpoint_error.message());
+        shutdown_on_owner(runtime_end_reason::runtime_error, "transport", endpoint_error.message());
         return;
     }
     const auto local = transport_.local_endpoint(endpoint_error);
     if (endpoint_error)
     {
-        shutdown_with_stage(runtime_end_reason::runtime_error, "transport", endpoint_error.message());
+        shutdown_on_owner(runtime_end_reason::runtime_error, "transport", endpoint_error.message());
         return;
     }
 
@@ -99,7 +99,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     auto* rtsp_context = rtsp_server_create(peer_address.c_str(), peer.port(), &rtsp_handler, this, this);
     if (rtsp_context == nullptr)
     {
-        shutdown_with_stage(runtime_end_reason::runtime_error, "setup", "rtsp_server_create_failed");
+        shutdown_on_owner(runtime_end_reason::runtime_error, "setup", "rtsp_server_create_failed");
         return;
     }
     local_address_ = local.address();
@@ -134,11 +134,11 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
             {
                 if (remote_disconnect(error))
                 {
-                    shutdown_with_stage(runtime_end_reason::remote, "transport");
+                    shutdown_on_owner(runtime_end_reason::remote, "transport");
                 }
                 else
                 {
-                    shutdown_with_stage(runtime_end_reason::runtime_error, "transport", error.message());
+                    shutdown_on_owner(runtime_end_reason::runtime_error, "transport", error.message());
                 }
                 break;
             }
@@ -152,7 +152,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
             {
                 if (!publish_session_ && !play_session_)
                 {
-                    shutdown_with_stage(runtime_end_reason::protocol_error, "control", "unexpected_interleaved_packet");
+                    shutdown_on_owner(runtime_end_reason::protocol_error, "control", "unexpected_interleaved_packet");
                     stop = true;
                     break;
                 }
@@ -169,7 +169,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 {
                     if (!ending_)
                     {
-                        shutdown_with_stage(runtime_end_reason::protocol_error, "control", "rtsp_input_failed");
+                        shutdown_on_owner(runtime_end_reason::protocol_error, "control", "rtsp_input_failed");
                     }
                     stop = true;
                     break;
@@ -177,7 +177,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 consumed = remaining.size() - remaining_bytes;
                 if (result == 0 && consumed == 0)
                 {
-                    shutdown_with_stage(runtime_end_reason::protocol_error, "control", "rtsp_input_made_no_progress");
+                    shutdown_on_owner(runtime_end_reason::protocol_error, "control", "rtsp_input_made_no_progress");
                     stop = true;
                     break;
                 }
@@ -185,7 +185,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
 
             if (consumed == 0 || consumed > remaining.size())
             {
-                shutdown_with_stage(runtime_end_reason::protocol_error, "control", "invalid_rtsp_input_consumption");
+                shutdown_on_owner(runtime_end_reason::protocol_error, "control", "invalid_rtsp_input_consumption");
                 stop = true;
                 break;
             }
@@ -211,7 +211,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     }
     if (!closing_after_write_)
     {
-        shutdown_with_stage(runtime_end_reason::runtime_error, "control", "rtsp_connection_ended");
+        shutdown_on_owner(runtime_end_reason::runtime_error, "control", "rtsp_connection_ended");
     }
 }
 
@@ -240,7 +240,7 @@ bool rtsp_server_connection::run_publish_claim(rtsp_server_t* server, boost::asi
         record_control_activity();
         if (publish->accept_announce(server) != 0)
         {
-            shutdown_with_stage(runtime_end_reason::runtime_error, "control", "announce_reply_failed");
+            shutdown_on_owner(runtime_end_reason::runtime_error, "control", "announce_reply_failed");
             return false;
         }
         return !ending_ && !closed_;
@@ -271,7 +271,7 @@ bool rtsp_server_connection::start_publish_claim_reader(boost::asio::yield_conte
                                                 self->publish_claim_reader_barrier_.cancel();
                                                 if (exception)
                                                 {
-                                                    self->shutdown_with_stage(
+                                                    self->shutdown_on_owner(
                                                         runtime_end_reason::runtime_error, "claim", "publish_claim_reader_failed");
                                                 }
                                             }));
@@ -314,7 +314,7 @@ void rtsp_server_connection::run_publish_claim_reader(boost::asio::yield_context
         const auto bytes = transport_.read(std::span{buffer}.first(capacity), yield, error);
         if (publish_claim_input_.size() + bytes > max_publish_claim_input_bytes)
         {
-            shutdown_with_stage(runtime_end_reason::protocol_error, "control", "publish_claim_input_overflow");
+            shutdown_on_owner(runtime_end_reason::protocol_error, "control", "publish_claim_input_overflow");
             return;
         }
         publish_claim_input_.insert(publish_claim_input_.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
@@ -326,40 +326,44 @@ void rtsp_server_connection::run_publish_claim_reader(boost::asio::yield_context
             }
             if (remote_disconnect(error))
             {
-                shutdown_with_stage(runtime_end_reason::remote, "transport");
+                shutdown_on_owner(runtime_end_reason::remote, "transport");
             }
             else
             {
-                shutdown_with_stage(runtime_end_reason::runtime_error, "transport", error.message());
+                shutdown_on_owner(runtime_end_reason::runtime_error, "transport", error.message());
             }
             return;
         }
         if (bytes == 0)
         {
-            shutdown_with_stage(runtime_end_reason::remote, "transport");
+            shutdown_on_owner(runtime_end_reason::remote, "transport");
             return;
         }
     }
 }
 
-void rtsp_server_connection::shutdown(runtime_end_reason reason, std::string error) { shutdown_with_stage(reason, {}, std::move(error)); }
-
-void rtsp_server_connection::shutdown_with_stage(runtime_end_reason reason, std::string stage, std::string error)
+void rtsp_server_connection::shutdown(runtime_end_reason reason, std::string error)
 {
     const auto self = shared_from_this();
     boost::asio::dispatch(worker_.io(),
-                          [self, reason, stage = std::move(stage), error = std::move(error)]() mutable
-                          {
-                              if (self->ending_ || self->closed_)
-                              {
-                                  return;
-                              }
-                              self->ending_ = true;
-                              self->end_reason_ = reason;
-                              self->end_stage_ = std::move(stage);
-                              self->end_error_ = std::move(error);
-                              boost::asio::post(self->worker_.io(), [self]() { self->safe_shutdown(); });
-                          });
+                          [self, reason, error = std::move(error)]() mutable { self->shutdown_on_owner(reason, {}, std::move(error)); });
+}
+
+void rtsp_server_connection::shutdown_on_owner(runtime_end_reason reason, std::string stage, std::string error)
+{
+    if (ending_ || closed_)
+    {
+        return;
+    }
+    ending_ = true;
+    if (runtime_started_)
+    {
+        runtime_started_ = false;
+        runtime_streaming_ = false;
+        signaling_client::instance().report(rtsp_event::publisher_stopped(publisher_stream_id_, publisher_stream_name_, reason, stage, error));
+    }
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 int rtsp_server_connection::send_callback(void* param, const void* data, std::size_t bytes)
@@ -380,7 +384,7 @@ void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t chan
     {
         if (!self->publish_session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes)))
         {
-            self->shutdown_with_stage(runtime_end_reason::protocol_error, "media", "media_input_failed");
+            self->shutdown_on_owner(runtime_end_reason::protocol_error, "media", "media_input_failed");
         }
         return;
     }
@@ -388,11 +392,11 @@ void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t chan
     {
         if (!self->play_session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes)))
         {
-            self->shutdown_with_stage(runtime_end_reason::runtime_error, "media", "play_media_input_failed");
+            self->shutdown_on_owner(runtime_end_reason::runtime_error, "media", "play_media_input_failed");
         }
         return;
     }
-    self->shutdown_with_stage(runtime_end_reason::protocol_error, "control", "unexpected_interleaved_packet");
+    self->shutdown_on_owner(runtime_end_reason::protocol_error, "control", "unexpected_interleaved_packet");
 }
 
 int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server, const char* uri)
@@ -412,7 +416,7 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
         const auto owner = self->shared_from_this();
         auto next_session = std::make_shared<rtsp_play_session>(
             self->worker_, self->video_codec_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
+        next_session->set_shutdown_handler([owner]() { owner->shutdown_on_owner(runtime_end_reason::requested); });
         self->play_session_ = std::move(next_session);
     }
     return self->play_session_->on_describe(server, uri != nullptr ? uri : "");
@@ -436,7 +440,7 @@ int rtsp_server_connection::setup_callback(
         const auto owner = self->shared_from_this();
         auto next_session = std::make_shared<rtsp_play_session>(
             self->worker_, self->video_codec_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
+        next_session->set_shutdown_handler([owner]() { owner->shutdown_on_owner(runtime_end_reason::requested); });
         self->play_session_ = std::move(next_session);
     }
     return self->play_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
@@ -501,9 +505,9 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     auto next_session = std::make_shared<rtsp_publish_session>(
         self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
     next_session->set_shutdown_handler([owner]()
-                                       { owner->shutdown_with_stage(runtime_end_reason::runtime_error, "transport", "publish_transport_failed"); });
+                                       { owner->shutdown_on_owner(runtime_end_reason::runtime_error, "transport", "publish_transport_failed"); });
     next_session->set_runtime_shutdown_handler([owner](runtime_end_reason reason, std::string stage, std::string error)
-                                               { owner->shutdown_with_stage(reason, std::move(stage), std::move(error)); });
+                                               { owner->shutdown_on_owner(reason, std::move(stage), std::move(error)); });
     next_session->set_streaming_handler([owner]() { owner->emit_streaming(); });
     const auto status = next_session->prepare_announce(server, uri != nullptr ? uri : "", sdp, length);
     if (status != 200)
@@ -574,14 +578,14 @@ void rtsp_server_connection::write(std::span<const std::uint8_t> data)
     {
         if (close_after_write)
         {
-            shutdown_with_stage(runtime_end_reason::requested, "claim");
+            shutdown_on_owner(runtime_end_reason::requested, "claim");
         }
         return;
     }
 
     if (data.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data.size())
     {
-        shutdown_with_stage(runtime_end_reason::runtime_error, "transport", "write_queue_overflow");
+        shutdown_on_owner(runtime_end_reason::runtime_error, "transport", "write_queue_overflow");
         return;
     }
 
@@ -609,7 +613,7 @@ int rtsp_server_connection::reply_announce_and_close(rtsp_server_t* server, int 
     close_next_write_ = false;
     if (!closing_after_write_)
     {
-        shutdown_with_stage(runtime_end_reason::requested, "claim");
+        shutdown_on_owner(runtime_end_reason::requested, "claim");
     }
     return result;
 }
@@ -638,11 +642,11 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         {
             if (remote_disconnect(error))
             {
-                shutdown_with_stage(runtime_end_reason::remote, "transport");
+                shutdown_on_owner(runtime_end_reason::remote, "transport");
             }
             else
             {
-                shutdown_with_stage(runtime_end_reason::runtime_error, "transport", error.message());
+                shutdown_on_owner(runtime_end_reason::runtime_error, "transport", error.message());
             }
             return;
         }
@@ -651,7 +655,7 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         write_queue_.pop_front();
         if (entry.close_after_write)
         {
-            shutdown_with_stage(runtime_end_reason::requested, "claim");
+            shutdown_on_owner(runtime_end_reason::requested, "claim");
             return;
         }
     }
@@ -675,7 +679,7 @@ void rtsp_server_connection::schedule_inactivity_timeout()
                 self->schedule_inactivity_timeout();
                 return;
             }
-            self->shutdown_with_stage(runtime_end_reason::timeout, "control", "inactivity_timeout");
+            self->shutdown_on_owner(runtime_end_reason::timeout, "control", "inactivity_timeout");
         });
 }
 
@@ -702,7 +706,6 @@ void rtsp_server_connection::safe_shutdown()
         play_session_.reset();
     }
     transport_.shutdown();
-    emit_stopped();
 }
 
 void rtsp_server_connection::emit_starting()
@@ -723,18 +726,6 @@ void rtsp_server_connection::emit_streaming()
     }
     runtime_streaming_ = true;
     signaling_client::instance().report(rtsp_event::publisher_streaming(publisher_stream_id_, publisher_stream_name_));
-}
-
-void rtsp_server_connection::emit_stopped()
-{
-    if (!runtime_started_)
-    {
-        return;
-    }
-    runtime_started_ = false;
-    runtime_streaming_ = false;
-    signaling_client::instance().report(
-        rtsp_event::publisher_stopped(publisher_stream_id_, publisher_stream_name_, end_reason_, end_stage_, end_error_));
 }
 
 }    // namespace media_server

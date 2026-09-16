@@ -64,11 +64,10 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     int reply_announce_and_close(rtsp_server_t* server, int status);
-    void shutdown_with_stage(runtime_end_reason reason, std::string stage, std::string error = {});
+    void shutdown_on_owner(runtime_end_reason reason, std::string stage = {}, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
-    void emit_stopped();
     void record_control_activity();
     void schedule_inactivity_timeout();
 
@@ -96,9 +95,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     boost::asio::ip::address local_address_;
     std::string publisher_stream_id_;
     std::string publisher_stream_name_;
-    runtime_end_reason end_reason_{runtime_end_reason::requested};
-    std::string end_stage_;
-    std::string end_error_;
     bool publish_claim_pending_{};
     bool publish_claim_reader_started_{};
     bool publish_claim_reader_running_{};

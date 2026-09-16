@@ -122,8 +122,8 @@ bool gb28181_udp_sender_session::startup()
         config_.payload_type,
         config_.ssrc,
         [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
-        [self]() { self->shutdown(runtime_end_reason::remote); },
-        [self]() { self->shutdown(runtime_end_reason::runtime_error, "sender_mux_failed"); });
+        [self]() { self->shutdown_on_owner(runtime_end_reason::remote); },
+        [self]() { self->shutdown_on_owner(runtime_end_reason::runtime_error, "sender_mux_failed"); });
     if (!sender_->startup())
     {
         sender_->shutdown();
@@ -153,18 +153,24 @@ bool gb28181_udp_sender_session::startup()
 void gb28181_udp_sender_session::shutdown(runtime_end_reason reason, std::string error)
 {
     const auto self = shared_from_this();
-    boost::asio::dispatch(worker_.io(),
-                          [self, reason, error = std::move(error)]() mutable
-                          {
-                              if (self->ending_ || self->closed_)
-                              {
-                                  return;
-                              }
-                              self->ending_ = true;
-                              self->end_reason_ = reason;
-                              self->end_error_ = std::move(error);
-                              boost::asio::post(self->worker_.io(), [self]() { self->safe_shutdown(); });
-                          });
+    boost::asio::dispatch(worker_.io(), [self, reason, error = std::move(error)]() mutable { self->shutdown_on_owner(reason, std::move(error)); });
+}
+
+void gb28181_udp_sender_session::shutdown_on_owner(runtime_end_reason reason, std::string error)
+{
+    if (ending_ || closed_)
+    {
+        return;
+    }
+    ending_ = true;
+    if (runtime_started_)
+    {
+        runtime_started_ = false;
+        runtime_streaming_ = false;
+        signaling_client::instance().report(gb28181_event::output_stopped(stream_id_, stream_name_, reason, error));
+    }
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 std::string_view gb28181_udp_sender_session::stream_id() const noexcept { return stream_id_; }
@@ -183,7 +189,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
         static_cast<void>(rtp_transport_.write(std::span<const std::uint8_t>{data->data(), data->size()}, remote_rtp_endpoint_, yield, error));
         if (error)
         {
-            shutdown(runtime_end_reason::runtime_error, error.message());
+            shutdown_on_owner(runtime_end_reason::runtime_error, error.message());
             return;
         }
         if (!local_ports_)
@@ -235,7 +241,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
                         std::span<const std::uint8_t>{packet->data(), packet->size()}, self->remote_rtcp_endpoint_, yield, write_error));
                     if (write_error)
                     {
-                        self->shutdown(runtime_end_reason::runtime_error, write_error.message());
+                        self->shutdown_on_owner(runtime_end_reason::runtime_error, write_error.message());
                         return;
                     }
                     self->schedule_rtcp();
@@ -262,7 +268,7 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     }
     if (rtcp_sender_ != nullptr && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
     {
-        shutdown(runtime_end_reason::runtime_error, "rtcp_sender_input_failed");
+        shutdown_on_owner(runtime_end_reason::runtime_error, "rtcp_sender_input_failed");
         return;
     }
 
@@ -313,7 +319,6 @@ void gb28181_udp_sender_session::safe_shutdown()
     rtcp_started_ = false;
     spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream_name_, sender_id_);
     stream_.reset();
-    emit_stopped();
 }
 
 void gb28181_udp_sender_session::emit_starting()
@@ -334,17 +339,6 @@ void gb28181_udp_sender_session::emit_streaming()
     }
     runtime_streaming_ = true;
     signaling_client::instance().report(gb28181_event::output_streaming(stream_id_, stream_name_));
-}
-
-void gb28181_udp_sender_session::emit_stopped()
-{
-    if (!runtime_started_)
-    {
-        return;
-    }
-    runtime_started_ = false;
-    runtime_streaming_ = false;
-    signaling_client::instance().report(gb28181_event::output_stopped(stream_id_, stream_name_, end_reason_, end_error_));
 }
 
 }    // namespace media_server

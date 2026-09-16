@@ -1,4 +1,5 @@
 #include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -125,7 +126,7 @@ void test_rtsp_pull_runtime_failure_events()
     require(starting.at("stage") == "resolving" && !starting.contains("end_reason") && !starting.contains("error"), "runtime event starting fields");
     require_identity(stopped);
     require(stopped.at("state") == "stopped", "runtime event source runtime failure");
-    require(stopped.at("end_reason") == "runtime_error" && stopped.contains("error"), "runtime event failure fields");
+    require(stopped.at("end_reason") == "runtime_error" && stopped.contains("error") && !stopped.contains("stage"), "runtime event failure fields");
     require(!stream_registry::instance().take_receiver_session("live/runtime-events"), "runtime event pull releases identity");
 
     session->shutdown();
@@ -156,21 +157,25 @@ void test_rtsp_pull_first_shutdown_reason()
                                                        std::chrono::seconds{5},
                                                        1024U * 1024U);
     require(stream_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event shutdown reservation");
+    std::promise<void> started;
+    auto ready = started.get_future();
+    std::jthread runner([&worker]() { worker.run(); });
     boost::asio::post(worker.io(),
-                      [session]()
+                      [session, &started]()
                       {
                           require(session->startup(), "runtime event shutdown startup");
-                          session->shutdown(runtime_end_reason::server_shutdown);
-                          session->shutdown(runtime_end_reason::requested);
+                          started.set_value();
                       });
-
-    std::jthread runner([&worker]() { worker.run(); });
+    ready.get();
+    session->shutdown(runtime_end_reason::server_shutdown, "first_error");
+    session->shutdown(runtime_end_reason::requested, "late_error");
     wait_runtime_events(server, 2U);
     const auto events = runtime_events(server);
     require(events.size() == 2U, "runtime shutdown transitions once");
     const auto& stopped = events[1];
     require(stopped.at("state") == "stopped", "runtime shutdown terminal event");
-    require(stopped.at("end_reason") == "server_shutdown" && !stopped.contains("error"), "runtime shutdown first reason wins");
+    require(stopped.at("end_reason") == "server_shutdown" && stopped.at("error") == "first_error" && !stopped.contains("stage"),
+            "runtime shutdown first reason wins");
     require(!stream_registry::instance().take_receiver_session("live/runtime-events"), "runtime shutdown releases identity");
     worker.stop();
     runner.join();

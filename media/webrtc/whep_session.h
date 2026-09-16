@@ -79,6 +79,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
         boost::asio::ip::udp::endpoint endpoint;
     };
 
+    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void shutdown_udp_transport();
     void run_udp(boost::asio::yield_context yield);
@@ -99,7 +100,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void refresh_ice_activity_timeout();
     void emit_starting();
     void emit_streaming();
-    void emit_stopped();
 
    private:
     std::shared_ptr<media_stream> stream_;
@@ -131,8 +131,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::uint16_t local_port_{};
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
-    runtime_end_reason end_reason_{runtime_end_reason::requested};
-    std::string end_error_;
     bool started_{};
     bool runtime_started_{};
     bool runtime_streaming_{};
