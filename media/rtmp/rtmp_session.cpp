@@ -12,7 +12,6 @@
 #include "media/core/stream_id.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
-#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/http/signaling_client.h"
 #include "media/rtmp/rtmp_play_session.h"
@@ -486,7 +485,7 @@ void rtmp_session::emit_starting()
         return;
     }
     runtime_started_ = true;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::publisher,
         .stream_id = stream_id_,
         .stream_name = stream_name_,
@@ -503,7 +502,7 @@ void rtmp_session::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::publisher,
         .stream_id = stream_id_,
         .stream_name = stream_name_,
@@ -521,7 +520,7 @@ void rtmp_session::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::publisher,
         .stream_id = stream_id_,
         .stream_name = stream_name_,

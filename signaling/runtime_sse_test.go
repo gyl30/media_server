@@ -178,7 +178,7 @@ func TestRuntimeSSEDeliversAppliedStateAndCloses(t *testing.T) {
 	event := testObservedRuntime("00000000-0000-4000-8000-000000000031", "starting")
 	event.Kind = "publisher"
 	event.Protocol = "rtmp"
-	eventResponse := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/runtime-events", event)
+	eventResponse := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/runtime-events", runtimeEventBatchValue(event))
 	if eventResponse.StatusCode != http.StatusNoContent {
 		t.Fatalf("runtime event status/body = %d %s", eventResponse.StatusCode, readBody(t, eventResponse))
 	}

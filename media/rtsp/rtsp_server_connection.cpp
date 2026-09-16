@@ -15,7 +15,6 @@
 #include <boost/asio/bind_cancellation_slot.hpp>
 
 #include "media/net/worker_context.h"
-#include "media/http/event_reporter.h"
 #include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_publish_session.h"
@@ -712,7 +711,7 @@ void rtsp_server_connection::emit_starting()
         return;
     }
     runtime_started_ = true;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::publisher,
         .stream_id = publisher_stream_id_,
         .stream_name = publisher_stream_name_,
@@ -729,7 +728,7 @@ void rtsp_server_connection::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::publisher,
         .stream_id = publisher_stream_id_,
         .stream_name = publisher_stream_name_,
@@ -747,7 +746,7 @@ void rtsp_server_connection::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::publisher,
         .stream_id = publisher_stream_id_,
         .stream_name = publisher_stream_name_,

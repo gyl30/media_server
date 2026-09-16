@@ -12,8 +12,8 @@
 #include <boost/asio/cancel_after.hpp>
 
 #include "media/net/worker_context.h"
-#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
+#include "media/http/signaling_client.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 
@@ -263,7 +263,7 @@ void gb28181_tcp_sender_session::emit_starting()
         return;
     }
     runtime_started_ = true;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::output,
         .stream_id = stream_id_,
         .stream_name = stream_name_,
@@ -280,7 +280,7 @@ void gb28181_tcp_sender_session::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::output,
         .stream_id = stream_id_,
         .stream_name = stream_name_,
@@ -298,7 +298,7 @@ void gb28181_tcp_sender_session::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    event_reporter::instance().report(runtime_event{
+    signaling_client::instance().report(runtime_event{
         .kind = runtime_kind::output,
         .stream_id = stream_id_,
         .stream_name = stream_name_,

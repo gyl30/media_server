@@ -224,7 +224,6 @@ add_library(media_core STATIC
     media/http/gb28181_json.cpp
     media/http/gb28181_http.cpp
     media/http/rtsp_pull_http.cpp
-    media/http/event_reporter.cpp
     media/http/signaling_client.cpp
     media/http/whep_http.cpp
     media/http/whip_http.cpp
@@ -323,8 +322,6 @@ if(BUILD_TESTING)
         unconfigured
         registration
         claim
-        event_no_content
-        event_accepted
         rejected
         temporary_failure
         network_error
@@ -438,21 +435,19 @@ if(BUILD_TESTING)
         add_test(NAME runtime_event_${test_case} COMMAND runtime_event_tests ${test_case})
     endforeach()
 
-    add_executable(event_reporter_tests tests/event_reporter_tests.cpp)
-    target_link_libraries(event_reporter_tests PRIVATE media_core media_server_link_options)
+    add_executable(signaling_event_tests tests/signaling_event_tests.cpp)
+    target_link_libraries(signaling_event_tests PRIVATE media_core media_server_link_options)
     foreach(test_case IN ITEMS
-        fifo
-        http_failures
-        network_failure
+        unconfigured
+        heartbeat_failure
+        batch
+        retry
+        retry_order
         capacity
         overflow
-        coalescing
         nonblocking
-        media_independence
-        io_stop_in_flight
-        io_stop_reconnect
     )
-        add_test(NAME event_reporter_${test_case} COMMAND event_reporter_tests ${test_case})
+        add_test(NAME signaling_event_${test_case} COMMAND signaling_event_tests ${test_case})
     endforeach()
 
     add_executable(port_manager_tests tests/port_manager_tests.cpp)

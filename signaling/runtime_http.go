@@ -9,8 +9,6 @@ import (
 
 type runtimeEventRequest struct {
 	Kind       string          `json:"kind"`
-	ServerID   string          `json:"server_id"`
-	InstanceID string          `json:"instance_id"`
 	StreamID   string          `json:"stream_id"`
 	StreamName string          `json:"stream_name"`
 	SourceID   json.RawMessage `json:"source_id"`
@@ -19,6 +17,12 @@ type runtimeEventRequest struct {
 	Stage      json.RawMessage `json:"stage"`
 	EndReason  json.RawMessage `json:"end_reason"`
 	Error      json.RawMessage `json:"error"`
+}
+
+type runtimeEventBatchRequest struct {
+	ServerID   string                `json:"server_id"`
+	InstanceID string                `json:"instance_id"`
+	Events     []runtimeEventRequest `json:"events"`
 }
 
 type mediaServerResponse struct {
@@ -33,49 +37,70 @@ type mediaServerResponse struct {
 }
 
 func (s *infrastructureServer) handleRuntimeEvent(writer http.ResponseWriter, request *http.Request) {
-	var payload runtimeEventRequest
+	var payload runtimeEventBatchRequest
 	if !decodeJSON(writer, request, &payload) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	event, valid := makeObservedRuntime(payload)
-	if !valid {
+	if payload.ServerID == "" || payload.InstanceID == "" || len(payload.Events) == 0 {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	events := make([]observedRuntime, len(payload.Events))
+	latest := make(map[string]observedRuntime)
+	for index, eventPayload := range payload.Events {
+		event, valid := makeObservedRuntime(eventPayload, payload.ServerID, payload.InstanceID)
+		if !valid {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		if previous, exists := latest[event.StreamID]; exists {
+			if !sameRuntimeIdentity(previous, event) || (previous.State == "stopped" && previous != event) ||
+				(previous.State == "streaming" && event.State == "starting") {
+				writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+				return
+			}
+		}
+		events[index] = event
+		latest[event.StreamID] = event
+	}
+
 	var applyErr error
-	online := s.registry.withOnlineInstance(event.ServerID, event.InstanceID, func() {
-		_, applyErr = s.runtimes.apply(event)
+	var applied []observedRuntime
+	online := s.registry.withOnlineInstance(payload.ServerID, payload.InstanceID, func() {
+		applied, applyErr = s.runtimes.applyBatch(events)
 	})
 	if !online {
 		writeHTTPError(writer, http.StatusGone, "stale_instance")
 		return
+	}
+	for _, event := range applied {
+		if event.Kind == "source" && event.Protocol == "rtsp" && event.State != "stopped" && event.SourceID != "" {
+			s.confirmRTSPPull(rtspPullRuntime{
+				sourceID: event.SourceID, streamName: event.StreamName,
+				server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
+			})
+		}
+		if event.State == "stopped" {
+			if event.Kind == "source" && event.Protocol == "rtsp" && event.SourceID != "" {
+				s.removeRTSPPull(rtspPullRuntime{
+					sourceID: event.SourceID, streamName: event.StreamName,
+					server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
+				})
+			}
+			if s.live != nil && event.Kind == "source" && event.Protocol == "gb28181" {
+				s.live.runtimeStopped(event.ServerID, event.InstanceID, event.StreamID, event.StreamName)
+			}
+		}
 	}
 	if errors.Is(applyErr, errRuntimeConflict) {
 		writeHTTPError(writer, http.StatusConflict, "runtime_conflict")
 		return
 	}
 	if applyErr != nil {
-		s.logger.Error("apply runtime event failed", "stream_id", event.StreamID, "error", applyErr)
+		s.logger.Error("apply runtime event failed", "error", applyErr)
 		writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
 		return
-	}
-	if event.Kind == "source" && event.Protocol == "rtsp" && event.State != "stopped" && event.SourceID != "" {
-		s.confirmRTSPPull(rtspPullRuntime{
-			sourceID: event.SourceID, streamName: event.StreamName,
-			server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
-		})
-	}
-	if event.State == "stopped" {
-		if event.Kind == "source" && event.Protocol == "rtsp" && event.SourceID != "" {
-			s.removeRTSPPull(rtspPullRuntime{
-				sourceID: event.SourceID, streamName: event.StreamName,
-				server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
-			})
-		}
-		if s.live != nil && event.Kind == "source" && event.Protocol == "gb28181" {
-			s.live.runtimeStopped(event.ServerID, event.InstanceID, event.StreamID, event.StreamName)
-		}
 	}
 	writer.WriteHeader(http.StatusNoContent)
 }
@@ -97,7 +122,7 @@ func (s *infrastructureServer) handleMediaServerList(writer http.ResponseWriter,
 	writeJSON(writer, http.StatusOK, map[string]any{"media_servers": response})
 }
 
-func makeObservedRuntime(payload runtimeEventRequest) (observedRuntime, bool) {
+func makeObservedRuntime(payload runtimeEventRequest, serverID, instanceID string) (observedRuntime, bool) {
 	sourceID, sourceIDValid := decodeOptionalString(payload.SourceID)
 	stage, stageValid := decodeOptionalString(payload.Stage)
 	endReason, endReasonValid := decodeOptionalString(payload.EndReason)
@@ -108,7 +133,7 @@ func makeObservedRuntime(payload runtimeEventRequest) (observedRuntime, bool) {
 		return observedRuntime{}, false
 	}
 	event := observedRuntime{
-		Kind: payload.Kind, ServerID: payload.ServerID, InstanceID: payload.InstanceID,
+		Kind: payload.Kind, ServerID: serverID, InstanceID: instanceID,
 		StreamID: payload.StreamID, StreamName: payload.StreamName,
 		Protocol: payload.Protocol, State: payload.State,
 	}

@@ -39,7 +39,6 @@
 #include "media/http/http_session.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/net/worker_context.h"
-#include "media/http/event_reporter.h"
 #include "media/net/io_context_pool.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"

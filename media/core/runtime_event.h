@@ -43,8 +43,6 @@ enum class runtime_end_reason
 struct runtime_event
 {
     runtime_kind kind{};
-    std::string server_id{};
-    std::string instance_id{};
     std::string stream_id{};
     std::string stream_name{};
     std::optional<std::string> source_id{};

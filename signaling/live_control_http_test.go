@@ -417,10 +417,9 @@ func TestLiveControlRuntimeStopWinsCreateCompensationFailure(t *testing.T) {
 	}
 	stopResult := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		body := `{"kind":"source","server_id":"media-1","instance_id":"instance-a",` +
-			`"stream_id":"` + command.streamID + `","stream_name":"` + command.streamName + `",` +
+		body := `{"kind":"source","stream_id":"` + command.streamID + `","stream_name":"` + command.streamName + `",` +
 			`"protocol":"gb28181","state":"stopped","end_reason":"remote"}`
-		stopResult <- sourceRequest(t, infrastructure.handler(), http.MethodPost, "/internal/runtime-events", body, "application/json")
+		stopResult <- sourceRequest(t, infrastructure.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(body), "application/json")
 	}()
 	deadline := time.Now().Add(time.Second)
 	for {
