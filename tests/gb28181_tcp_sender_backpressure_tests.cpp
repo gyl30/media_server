@@ -64,8 +64,7 @@ void test_tcp_sender_write_backlog_limit()
 {
     worker_context worker;
     auto& io = worker.io();
-    auto& streams = stream_registry::instance();
-    streams.clear();
+    stream_registry::instance().clear();
 
     constexpr track_id video_track_id = 1;
     const std::vector<std::uint8_t> config{
@@ -82,7 +81,7 @@ void test_tcp_sender_write_backlog_limit()
                 .codec_config = config,
             }}),
             "gb tcp backpressure source tracks");
-    require(streams.add(source), "gb tcp backpressure source registry");
+    require(stream_registry::instance().add(source), "gb tcp backpressure source registry");
 
     boost::asio::io_context peer_io;
     tcp::acceptor receiver(peer_io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -95,7 +94,7 @@ void test_tcp_sender_write_backlog_limit()
     };
     auto session = std::make_shared<gb28181_tcp_sender_session>(
         worker, "550e8400-e29b-41d4-a716-446655440000", source, "backpressure", description, boost::asio::ip::address_v4::loopback(), 1s, 0U);
-    require(streams.add_sender_session(source->name(), "backpressure", session), "gb tcp backpressure session registry");
+    require(stream_registry::instance().add_sender_session(source->name(), "backpressure", session), "gb tcp backpressure session registry");
     require(session->startup(), "gb tcp backpressure startup");
 
     worker.release_work();
@@ -124,7 +123,7 @@ void test_tcp_sender_write_backlog_limit()
     session->shutdown();
     runner.join();
     require(closed, "gb tcp write backlog limit closes connection");
-    streams.clear();
+    stream_registry::instance().clear();
 }
 
 }    // namespace

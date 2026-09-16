@@ -184,8 +184,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
 
-    auto& streams = stream_registry::instance();
-    if (streams.find(config.stream_name))
+    if (stream_registry::instance().find(config.stream_name))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
     }
@@ -201,13 +200,13 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
                                                        std::chrono::milliseconds{15'000},
                                                        std::chrono::milliseconds{15'000},
                                                        1024U * 1024U);
-    if (!streams.add_receiver_session(stream_name, session))
+    if (!stream_registry::instance().add_receiver_session(stream_name, session))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
     }
     if (!session->startup())
     {
-        streams.remove_receiver_session(stream_name, *session);
+        stream_registry::instance().remove_receiver_session(stream_name, *session);
         session->shutdown();
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
