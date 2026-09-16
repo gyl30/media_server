@@ -18,11 +18,6 @@ int main(int argc, char** argv)
     }
 
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
-    int service_result;
-    {
-        media_server::service service(std::move(cfg));
-        service_result = service.run();
-    }
-    media_server::port_manager::destroy();
-    return service_result;
+    media_server::service service(std::move(cfg));
+    return service.run();
 }

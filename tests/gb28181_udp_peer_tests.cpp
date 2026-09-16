@@ -159,7 +159,6 @@ void test_ps_fixture_creates_stream()
 {
     worker_context worker;
     worker.release_work();
-    stream_registry::instance().clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
     gb28181_rtp_receiver media(worker, "live/gb-peer-fixture", payload_type, ssrc);
@@ -177,7 +176,6 @@ void test_receiver_ignores_malformed_media()
 {
     worker_context worker;
     worker.release_work();
-    stream_registry::instance().clear();
     gb28181_rtp_receiver receiver(worker, "live/gb-malformed", 96, 0x12345678U);
     require(receiver.startup(), "gb malformed receiver startup");
     const std::vector<std::vector<std::uint8_t>> invalid_rtp{
@@ -207,7 +205,6 @@ void test_receiver_video_codec_change_is_fatal()
 {
     worker_context worker;
     worker.release_work();
-    stream_registry::instance().clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
     gb28181_rtp_receiver media(worker, "live/gb-video-codec-change", payload_type, ssrc);
@@ -240,7 +237,6 @@ void test_receiver_audio_codec_change_is_fatal()
 {
     worker_context worker;
     worker.release_work();
-    stream_registry::instance().clear();
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
     gb28181_rtp_receiver media(worker, "live/gb-audio-codec-change", payload_type, ssrc);
@@ -274,7 +270,6 @@ void test_udp_session_fatal_codec_change_unregisters()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    stream_registry::instance().clear();
     boost::asio::ip::udp::socket sender(io, {boost::asio::ip::address_v4::loopback(), 0});
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
@@ -327,7 +322,6 @@ void test_sender_same_codec_config_version_continues_ps_stream()
     worker.release_work();
     auto& io = worker.io();
     io.restart();
-    stream_registry::instance().clear();
 
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x12345678U;
@@ -458,7 +452,6 @@ void test_rtcp_peer_learning_overrides_rtp_plus_one()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    stream_registry::instance().clear();
     boost::asio::ip::udp::socket sender(io);
     boost::asio::ip::udp::socket default_rtcp(io);
     boost::system::error_code bind_error;
@@ -558,7 +551,6 @@ void test_first_valid_rtp_packet_pins_peer_when_unsignaled()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    stream_registry::instance().clear();
     boost::asio::ip::udp::socket expected(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket wrong(io, {boost::asio::ip::address_v4::loopback(), 0});
     constexpr std::uint8_t payload_type = 96;
@@ -612,7 +604,6 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    stream_registry::instance().clear();
 
     constexpr std::uint8_t payload_type = 96;
     constexpr std::uint32_t ssrc = 0x1234567aU;
@@ -650,7 +641,6 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
 int main()
 {
     media_server::port_manager::init(32'200, 32'399);
-    media_server::stream_registry::instance().clear();
     try
     {
         for (int iteration = 0; iteration < 10; ++iteration)
@@ -674,13 +664,9 @@ int main()
         std::cout << "[pass] rtcp_peer_learning_overrides_rtp_plus_one\n";
         media_server::test_first_valid_rtp_packet_pins_peer_when_unsignaled();
         std::cout << "[pass] first_valid_rtp_packet_pins_peer_when_unsignaled\n";
-        media_server::stream_registry::instance().clear();
-        media_server::port_manager::destroy();
     }
     catch (const std::exception& error)
     {
-        media_server::stream_registry::instance().clear();
-        media_server::port_manager::destroy();
         std::cerr << "[fail] " << error.what() << '\n';
         return 1;
     }

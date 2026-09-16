@@ -61,7 +61,6 @@ void test_udp_sender_session_sends_rtp()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    stream_registry::instance().clear();
 
     boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -143,7 +142,6 @@ void test_udp_sender_queue_overflow_drops_packet()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    stream_registry::instance().clear();
 
     boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -219,7 +217,6 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
     worker_context worker;
     worker.release_work();
     auto& io = worker.io();
-    stream_registry::instance().clear();
 
     boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
     boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
@@ -290,27 +287,37 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
 }    // namespace
 }    // namespace media_server
 
-int main()
+int main(int argc, char* argv[])
 {
     media_server::port_manager::init(32'500, 32'599);
-    media_server::stream_registry::instance().clear();
     try
     {
-        for (int iteration = 0; iteration < 10; ++iteration)
+        if (argc != 2)
+        {
+            throw std::runtime_error("gb28181 UDP sender test scenario required");
+        }
+        const std::string_view scenario{argv[1]};
+        if (scenario == "sends_rtp")
         {
             media_server::test_udp_sender_session_sends_rtp();
+        }
+        else if (scenario == "queue_overflow")
+        {
             media_server::test_udp_sender_queue_overflow_drops_packet();
+        }
+        else if (scenario == "rtcp_shutdown")
+        {
             media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
         }
-        media_server::stream_registry::instance().clear();
-        media_server::port_manager::destroy();
-        std::cout << "[pass] gb28181_udp_sender_tests\n";
+        else
+        {
+            throw std::runtime_error("unknown gb28181 UDP sender test scenario");
+        }
+        std::cout << "[pass] " << scenario << '\n';
         return 0;
     }
     catch (const std::exception& error)
     {
-        media_server::stream_registry::instance().clear();
-        media_server::port_manager::destroy();
         std::cerr << "[fail] gb28181_udp_sender_tests: " << error.what() << '\n';
         return 1;
     }

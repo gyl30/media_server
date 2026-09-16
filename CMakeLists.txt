@@ -357,6 +357,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(media_pipeline_tests PRIVATE media_core media_server_link_options)
     add_test(NAME media_pipeline_tests COMMAND media_pipeline_tests)
+    set_tests_properties(media_pipeline_tests PROPERTIES RUN_SERIAL TRUE)
     foreach(test_case IN ITEMS
         rtmp_claim_invalid
         rtmp_claim_conflict
@@ -374,8 +375,64 @@ if(BUILD_TESTING)
         rtsp_claim_timeout
         rtsp_claim_shutdown
         rtsp_server_contract
+        rtmp_publish_initial_topology
+        rtmp_publish_initial_tracks_timeout
+        rtmp_publish_recreate_lifecycle
+        rtmp_publish_codec_configuration_updates
+        rtmp_publish_rejects_video_codec_change
+        rtmp_publish_rejects_audio_codec_change
+        rtmp_rejects_live_playback_control
+        rtmp_play_pull_codecs_and_order
+        rtmp_play_config_reset_and_end
+        rtmp_tcp_error_lifecycle
+        rtmp_coroutine_publish_client
+        rtmp_coroutine_play_client
+        rtsp_coroutine_publish_client
+        rtsp_coroutine_play_client
+        gb28181_tcp_active_connect_successful
+        gb28181_tcp_active_connection_refused
+        gb28181_multi_sender_identity
+        gb28181_receiver_http_parameters
+        gb28181_sender_http_parameters
+        http_flv_client_disconnect
+        http_flv_stream_end_during_write
+        http_flv_pending_bootstrap_end
+        rtsp_pull_url_contract
+        rtsp_pull_establishment_timeout
+        rtsp_pull_establishment_progress_timeout
+        rtsp_pull_selects_single_audio_and_video
+        rtsp_pull_opus_passthrough
+        rtsp_pull_rejects_invalid_opus_rate
+        rtsp_pull_g711_passthrough
+        rtsp_pull_rtp_info_aligns_media_timestamps
+        rtsp_publish_rtcp_sender_reports_align_media_timestamps
+        rtsp_pull_rejects_mismatched_g711_rtpmap
+        rtsp_pull_rejects_audio_only_source
+        rtsp_pull_initial_tracks_timeout
+        rtsp_pull_independent_keepalive
+        rtsp_play_session_contract
+        rtsp_play_recreate_lifecycle
+        rtsp_play_media_delivery
+        rtsp_play_audio_video_order
+        rtsp_play_h265
+        rtsp_play_av1
+        rtsp_play_opus_passthrough_boundaries
+        rtsp_play_g711_passthrough
+        rtsp_play_setup_track_lifecycle
+        rtsp_play_unsetup_audio_update_keeps_video_continuity
+        rtsp_play_rejects_stale_description
+        stream_registry_generation_lifecycle
+        stream_registry_session_identity_lifecycle
+        hls_module_lifecycle
+        rtsp_input_output_boundaries
+        rtmp_duplicate_publisher_preserves_source
+        rtmp_input_output_boundaries
+        whip_media_receiver
+        whip_hls_output
+        whip_rtmp_output
     )
         add_test(NAME media_pipeline_${test_case} COMMAND media_pipeline_tests ${test_case})
+        set_tests_properties(media_pipeline_${test_case} PROPERTIES RUN_SERIAL TRUE)
     endforeach()
 
     add_executable(rtsp_server_connection_tests tests/rtsp_server_connection_tests.cpp)
@@ -408,7 +465,12 @@ if(BUILD_TESTING)
 
     add_executable(gb28181_udp_sender_tests tests/gb28181_udp_sender_tests.cpp)
     target_link_libraries(gb28181_udp_sender_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME gb28181_udp_sender_tests COMMAND gb28181_udp_sender_tests)
+    foreach(test_case IN ITEMS sends_rtp queue_overflow rtcp_shutdown)
+        foreach(iteration RANGE 1 10)
+            add_test(NAME gb28181_udp_sender_${test_case}_${iteration} COMMAND gb28181_udp_sender_tests ${test_case})
+            set_tests_properties(gb28181_udp_sender_${test_case}_${iteration} PROPERTIES RUN_SERIAL TRUE)
+        endforeach()
+    endforeach()
 
     add_executable(gb28181_tcp_sender_backpressure_tests tests/gb28181_tcp_sender_backpressure_tests.cpp)
     target_link_libraries(gb28181_tcp_sender_backpressure_tests PRIVATE media_core media_server_link_options)
@@ -456,7 +518,19 @@ if(BUILD_TESTING)
 
     add_executable(port_manager_tests tests/port_manager_tests.cpp)
     target_link_libraries(port_manager_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME port_manager_tests COMMAND port_manager_tests)
+    foreach(test_case IN ITEMS
+        single_reservation
+        pair_reservation
+        single_exhaustion
+        pair_exhaustion
+        concurrent_reservation
+        udp_sender_shutdown_release
+        udp_sender_bind_failure_release
+        udp_receiver_bind_failure_release
+        udp_receiver_address_failure_release
+    )
+        add_test(NAME port_manager_${test_case} COMMAND port_manager_tests ${test_case})
+    endforeach()
 
     add_executable(ireader_rtcp_tests tests/ireader_rtcp_tests.cpp)
     target_link_libraries(ireader_rtcp_tests PRIVATE
@@ -468,4 +542,20 @@ if(BUILD_TESTING)
     add_executable(webrtc_signaling_tests tests/webrtc_signaling_tests.cpp)
     target_link_libraries(webrtc_signaling_tests PRIVATE media_core media_server_link_options)
     add_test(NAME webrtc_signaling_tests COMMAND webrtc_signaling_tests)
+    set_tests_properties(webrtc_signaling_tests PROPERTIES RUN_SERIAL TRUE)
+    foreach(test_case IN ITEMS
+        http_head_response_contract
+        http_method_contract
+        whep_http_cors
+        whip_http_lifecycle
+        webrtc_module_shutdown
+        whip_http_self_shutdown_releases_reservation
+        whep_session_lifecycle
+        whep_opus_source_session_lifecycle
+        whip_session_ingest
+        whip_h265_session_ingest
+    )
+        add_test(NAME webrtc_signaling_${test_case} COMMAND webrtc_signaling_tests ${test_case})
+        set_tests_properties(webrtc_signaling_${test_case} PROPERTIES RUN_SERIAL TRUE)
+    endforeach()
 endif()

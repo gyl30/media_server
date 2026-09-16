@@ -11,7 +11,6 @@
 
 #include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
-#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_publish_session.h"
 
 extern "C"
@@ -163,22 +162,17 @@ void test_rtcp_scheduler_releases_after_shutdown()
 int main()
 {
     media_server::port_manager::init(33'000, 33'099);
-    media_server::stream_registry::instance().clear();
     try
     {
         for (int iteration = 0; iteration < 10; ++iteration)
         {
             media_server::test_rtcp_scheduler_releases_after_shutdown();
         }
-        media_server::stream_registry::instance().clear();
-        media_server::port_manager::destroy();
         std::cout << "[pass] rtsp_publish_udp_rtcp_scheduler_shutdown\n";
         return 0;
     }
     catch (const std::exception& error)
     {
-        media_server::stream_registry::instance().clear();
-        media_server::port_manager::destroy();
         std::cerr << "[fail] rtsp_publish_udp_rtcp_scheduler_shutdown: " << error.what() << '\n';
         return 1;
     }

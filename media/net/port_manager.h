@@ -21,7 +21,6 @@ class port_manager final
 
     static void init(int start_port, int end_port);
     [[nodiscard]] static port_manager& instance();
-    static void destroy();
 
     [[nodiscard]] std::optional<std::uint16_t> acquire();
     [[nodiscard]] std::optional<port_pair> acquire_pair();

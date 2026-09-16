@@ -27,8 +27,6 @@ port_manager& port_manager::instance()
     return *instance_;
 }
 
-void port_manager::destroy() { instance_.reset(); }
-
 port_manager::port_manager(int start_port, int end_port)
 {
     if (start_port <= 0 || start_port > end_port || end_port > std::numeric_limits<std::uint16_t>::max())
