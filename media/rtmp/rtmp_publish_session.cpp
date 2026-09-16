@@ -362,7 +362,7 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
     if (codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
     {
         const auto result = initialize_g711_track(codec);
-        if (result != 0 || !tracks_initialized_)
+        if (result != 0)
         {
             return result;
         }

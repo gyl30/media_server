@@ -8007,13 +8007,8 @@ void test_flv_config_cache_lifecycle()
     std::optional<std::int32_t> video_composition_time;
     std::optional<std::uint32_t> video_timestamp;
     flv_muxer muxer(
-        [&capture,
-         &demuxer,
-         &video_sequence_headers,
-         &audio_sequence_headers,
-         &video_sequence_header_timestamps,
-         &video_composition_time,
-         &video_timestamp](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        [&demuxer, &video_sequence_headers, &audio_sequence_headers, &video_sequence_header_timestamps, &video_composition_time, &video_timestamp](
+            int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
             require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "flv config demuxer input");
             if (data.size() < 2U)

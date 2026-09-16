@@ -11,7 +11,6 @@ http_flv_streamer::http_flv_streamer(write_handler on_write, end_handler on_end,
       muxer_(
           [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
           {
-              static_cast<void>(timestamp);
               if (writer_ != nullptr)
               {
                   static_cast<void>(flv_writer_input(writer_, type, data.data(), data.size(), timestamp));
