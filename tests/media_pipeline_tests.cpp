@@ -55,7 +55,6 @@
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/webrtc/whep_session.h"
-#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
@@ -467,14 +466,24 @@ std::vector<boost::json::object> runtime_events(const test::publish_claim_test_s
     std::vector<boost::json::object> events;
     for (const auto& request : server.requests("/internal/runtime-events"))
     {
-        events.push_back(boost::json::parse(request.body).as_object());
+        const auto body = boost::json::parse(request.body).as_object();
+        require(body.at("server_id") == "media-1" && body.at("instance_id") == "instance-a", "runtime event batch identity");
+        for (const auto& event : body.at("events").as_array())
+        {
+            events.push_back(event.as_object());
+        }
     }
     return events;
 }
 
 void wait_runtime_event_count(test::publish_claim_test_server& server, std::size_t count)
 {
-    require(server.wait_target_count("/internal/runtime-events", count), "publisher runtime event count");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (runtime_events(server).size() < count && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(runtime_events(server).size() >= count, "publisher runtime event count");
 }
 
 void require_publisher_event(const boost::json::object& event,
@@ -489,8 +498,7 @@ void require_publisher_event(const boost::json::object& event,
 {
     const auto* event_source_id = event.if_contains("source_id");
     const bool source_matches = source_id ? event_source_id != nullptr && event_source_id->as_string() == *source_id : event_source_id == nullptr;
-    require(event.at("kind").as_string() == to_string(kind) && event.at("server_id").as_string() == "media-1" &&
-                event.at("instance_id").as_string() == "instance-a" && event.at("stream_id").as_string() == stream_id &&
+    require(event.at("kind").as_string() == to_string(kind) && event.at("stream_id").as_string() == stream_id &&
                 event.at("stream_name").as_string() == stream_name && source_matches && event.at("protocol").as_string() == to_string(protocol) &&
                 event.at("state").as_string() == to_string(state) && event.at("stage").as_string() == stage,
             message);
@@ -1536,7 +1544,7 @@ signaling_client_options make_publish_claim_client_options(std::string url, std:
         .rtmp_port = 1935,
         .rtsp_port = 8554,
         .http_port = 8080,
-        .heartbeat_interval = std::chrono::seconds(5),
+        .heartbeat_interval = std::chrono::milliseconds(20),
         .request_timeout = request_timeout,
     };
 }
@@ -1545,8 +1553,9 @@ void configure_control_plane(worker_context& worker,
                              const test::publish_claim_test_server& server,
                              std::chrono::milliseconds request_timeout = std::chrono::seconds(2))
 {
-    signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(server.url(), request_timeout));
-    event_reporter::instance().configure(worker.io(), "media-1", "instance-a");
+    signaling_client::instance().configure(make_publish_claim_client_options(server.url(), request_timeout));
+    boost::asio::spawn(
+        worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield, []() {}); }, boost::asio::detached);
 }
 
 rtmp_status parse_rtmp_status(std::span<const std::uint8_t> payload)
@@ -1586,7 +1595,8 @@ class rtmp_publish_test_peer final
         : claim_server_(claim_status, hold_claim_response),
           acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}),
           client_socket_(worker_.io()),
-          stream_name_(std::move(stream_name))
+          stream_name_(std::move(stream_name)),
+          control_plane_(control_plane)
     {
         stream_registry::instance().clear();
         if (control_plane)
@@ -1623,7 +1633,14 @@ class rtmp_publish_test_peer final
         client_ = nullptr;
         boost::system::error_code error;
         client_socket_.close(error);
-        worker_.release_work();
+        if (control_plane_)
+        {
+            worker_.stop();
+        }
+        else
+        {
+            worker_.release_work();
+        }
         runner_.join();
     }
 
@@ -1957,6 +1974,7 @@ class rtmp_publish_test_peer final
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_socket_;
     std::string stream_name_;
+    bool control_plane_{};
     rtmp_client_t* client_{};
     std::weak_ptr<rtmp_session> session_;
     std::jthread runner_;
@@ -5289,11 +5307,11 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     wait_runtime_event_count(event_server, 3U);
     boost::system::error_code error;
     socket.close(error);
+    client_worker.stop();
     runner.join();
     events = runtime_events(event_server);
     require(events.size() == 3U, "rtsp pull requested shutdown emits stopped once");
-    require(events[2].at("kind").as_string() == "source" && events[2].at("server_id").as_string() == "media-1" &&
-                events[2].at("instance_id").as_string() == "instance-a" && events[2].at("stream_id").as_string() == stream_id &&
+    require(events[2].at("kind").as_string() == "source" && events[2].at("stream_id").as_string() == stream_id &&
                 events[2].at("stream_name").as_string() == "relay/topology" && events[2].at("source_id").as_string() == source_id &&
                 events[2].at("protocol").as_string() == "rtsp" && events[2].at("state").as_string() == "stopped" && !events[2].contains("stage") &&
                 events[2].at("end_reason").as_string() == "requested" && !events[2].contains("error"),
@@ -5514,7 +5532,7 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     stream_registry::instance().clear();
     config application_config;
     application_config.rtsp_port = port;
-    signaling_client::instance().configure(workers.context(0).io(), make_publish_claim_client_options(claim_server.url()));
+    signaling_client::instance().configure(make_publish_claim_client_options(claim_server.url()));
     auto server = std::make_shared<rtsp_server>(workers, application_config);
     boost::system::error_code startup_error;
     server->startup(startup_error);
@@ -5656,7 +5674,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(unavailable_url));
+        signaling_client::instance().configure(make_publish_claim_client_options(unavailable_url));
         auto connection =
             std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
         connection->startup();
@@ -5669,6 +5687,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         require(response.starts_with("RTSP/1.0 503"), "rtsp publish claim network failure status");
         require(wait_for_rtsp_close(client, std::chrono::seconds(1)), "rtsp network claim failure closes after response");
         connection->shutdown();
+        worker.stop();
         runner.join();
         return;
     }
@@ -5693,7 +5712,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
 
         const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-disconnect";
         boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
-        require(claim_server.wait_request().target == "/internal/publish/claim", "rtsp disconnected claim attempted");
+        require(claim_server.wait_request("/internal/publish/claim").target == "/internal/publish/claim", "rtsp disconnected claim attempted");
         boost::asio::write(client, boost::asio::buffer("OPTIONS " + base + " RTSP/1.0\r\nCSeq: 2\r\n\r\n"));
         boost::system::error_code close_error;
         client.close(close_error);
@@ -5706,6 +5725,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         const auto expired_while_claim_pending = weak.expired();
         const auto pending_events = runtime_events(claim_server);
         claim_server.release_response();
+        worker.stop();
         runner.join();
         require(expired_while_claim_pending && !stream_registry::instance().find("live/claim-disconnect"),
                 "publisher disconnect during pending rtsp claim leaves no runtime");
@@ -5732,7 +5752,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
 
         const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-pending";
         boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
-        const auto claim = claim_server.wait_request();
+        const auto claim = claim_server.wait_request("/internal/publish/claim");
         const auto body = boost::json::parse(claim.body).as_object();
         require(claim.target == "/internal/publish/claim" && body.size() == 5U, "rtsp publish claim request");
         require(std::string_view(body.at("stream_id").as_string()) == stream_id && body.at("protocol") == "rtsp" &&
@@ -5821,7 +5841,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
                                 "RTSP remote terminal event");
         require(events[2].at("end_reason").as_string() == "remote" && !events[2].contains("error"), "RTSP remote terminal reason");
 
-        worker.release_work();
+        worker.stop();
         runner.join();
         return;
     }
@@ -5862,6 +5882,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         require(weak.expired() && !stream_registry::instance().find("live/claim-rejected"), "rtsp rejected claim leaves no runtime");
+        worker.stop();
         runner.join();
         require(runtime_events(claim_server).empty(), "rejected RTSP claim emits no runtime event");
         return;
@@ -5877,7 +5898,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(claim_server.url(), std::chrono::milliseconds(50)));
+        signaling_client::instance().configure(make_publish_claim_client_options(claim_server.url(), std::chrono::milliseconds(50)));
         auto connection =
             std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
         connection->startup();
@@ -5886,7 +5907,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
 
         const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-timeout";
         boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
-        require(claim_server.wait_request().target == "/internal/publish/claim", "rtsp timed claim attempted");
+        require(claim_server.wait_request("/internal/publish/claim").target == "/internal/publish/claim", "rtsp timed claim attempted");
         const auto response = read_rtsp_headers_until(client, std::chrono::seconds(1));
         require(response.starts_with("RTSP/1.0 503"), "rtsp publish claim timeout status");
         require(wait_for_rtsp_close(client, std::chrono::seconds(1)), "rtsp timed out claim closes after response");
@@ -5916,7 +5937,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
 
         const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/claim-shutdown";
         boost::asio::write(client, boost::asio::buffer(make_announce(base, stream_id)));
-        require(claim_server.wait_request().target == "/internal/publish/claim", "rtsp pending claim attempted");
+        require(claim_server.wait_request("/internal/publish/claim").target == "/internal/publish/claim", "rtsp pending claim attempted");
         connection->shutdown();
         std::promise<void> shutdown_barrier;
         auto shutdown_barrier_future = shutdown_barrier.get_future();
@@ -5930,6 +5951,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         require(weak.expired() && !stream_registry::instance().find("live/claim-shutdown"), "late rtsp claim completion does not revive connection");
+        worker.stop();
         runner.join();
         require(runtime_events(claim_server).empty(), "RTSP shutdown during claim emits no runtime event");
         return;
@@ -5948,7 +5970,7 @@ void test_rtsp_publish_server_contract()
     stream_registry::instance().clear();
     config application_config;
     application_config.rtsp_port = port;
-    signaling_client::instance().configure(workers.context(0).io(), make_publish_claim_client_options(claim_server.url()));
+    signaling_client::instance().configure(make_publish_claim_client_options(claim_server.url()));
     auto server = std::make_shared<rtsp_server>(workers, application_config);
     boost::system::error_code startup_error;
     server->startup(startup_error);

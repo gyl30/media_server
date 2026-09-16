@@ -149,7 +149,7 @@ func postSourceControlRuntimeEvent(
 	want int,
 ) {
 	t.Helper()
-	body, err := json.Marshal(event)
+	body, err := json.Marshal(runtimeEventBatchValue(event))
 	if err != nil {
 		t.Fatalf("marshal runtime event: %v", err)
 	}
@@ -444,22 +444,23 @@ func TestSourceControlReconcilesTerminalBeforeCreateResponse(t *testing.T) {
 			t.Errorf("decode create: %v", err)
 		}
 		streamIDs = append(streamIDs, command.StreamID)
-		for _, event := range []map[string]any{
+		events := []map[string]any{
 			{"kind": "source", "state": "starting", "stage": "resolving"},
 			{"kind": "source", "state": "stopped", "end_reason": "runtime_error", "error": "connect_failed"},
-		} {
-			event["server_id"] = "media-1"
-			event["instance_id"] = "instance-a"
+		}
+		for _, event := range events {
 			event["stream_id"] = command.StreamID
 			event["stream_name"] = command.StreamName
 			event["source_id"] = command.SourceID
 			event["protocol"] = "rtsp"
-			response := postJSON(t, control.Client(), control.URL+"/internal/runtime-events", event)
-			if response.StatusCode != http.StatusNoContent {
-				t.Errorf("event status/body = %d %s", response.StatusCode, readBody(t, response))
-			}
-			response.Body.Close()
 		}
+		response := postJSON(t, control.Client(), control.URL+"/internal/runtime-events", map[string]any{
+			"server_id": "media-1", "instance_id": "instance-a", "events": events,
+		})
+		if response.StatusCode != http.StatusNoContent {
+			t.Errorf("event status/body = %d %s", response.StatusCode, readBody(t, response))
+		}
+		response.Body.Close()
 		writer.WriteHeader(http.StatusCreated)
 	}))
 	defer media.Close()
@@ -495,22 +496,23 @@ func TestSourceControlDoesNotRestoreGenerationAfterTerminalCreateFailure(t *test
 		if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
 			t.Errorf("decode create: %v", err)
 		}
-		for _, event := range []map[string]any{
+		events := []map[string]any{
 			{"kind": "source", "state": "starting", "stage": "resolving"},
 			{"kind": "source", "state": "stopped", "end_reason": "runtime_error", "error": "startup_failed"},
-		} {
-			event["server_id"] = "media-1"
-			event["instance_id"] = "instance-a"
+		}
+		for _, event := range events {
 			event["stream_id"] = command.StreamID
 			event["stream_name"] = command.StreamName
 			event["source_id"] = command.SourceID
 			event["protocol"] = "rtsp"
-			response := postJSON(t, control.Client(), control.URL+"/internal/runtime-events", event)
-			if response.StatusCode != http.StatusNoContent {
-				t.Errorf("event status/body = %d %s", response.StatusCode, readBody(t, response))
-			}
-			response.Body.Close()
 		}
+		response := postJSON(t, control.Client(), control.URL+"/internal/runtime-events", map[string]any{
+			"server_id": "media-1", "instance_id": "instance-a", "events": events,
+		})
+		if response.StatusCode != http.StatusNoContent {
+			t.Errorf("event status/body = %d %s", response.StatusCode, readBody(t, response))
+		}
+		response.Body.Close()
 		writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
 	}))
 	defer media.Close()

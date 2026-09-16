@@ -1,5 +1,6 @@
 #include <memory>
 #include <utility>
+#include <iterator>
 #include <stdexcept>
 
 #include <boost/asio.hpp>
@@ -55,12 +56,10 @@ std::string publish_claim_body(const signaling_client_options& options,
     });
 }
 
-std::string runtime_event_body(const runtime_event& event)
+boost::json::object runtime_event_json(const runtime_event& event)
 {
     boost::json::object body{
         {"kind", to_string(event.kind)},
-        {"server_id", event.server_id},
-        {"instance_id", event.instance_id},
         {"stream_id", event.stream_id},
         {"stream_name", event.stream_name},
         {"protocol", to_string(event.protocol)},
@@ -82,7 +81,22 @@ std::string runtime_event_body(const runtime_event& event)
     {
         body.emplace("error", *event.error);
     }
-    return boost::json::serialize(body);
+    return body;
+}
+
+std::string runtime_event_batch_body(const signaling_client_options& options, const std::vector<runtime_event>& batch)
+{
+    boost::json::array events;
+    events.reserve(batch.size());
+    for (const auto& event : batch)
+    {
+        events.push_back(runtime_event_json(event));
+    }
+    return boost::json::serialize(boost::json::object{
+        {"server_id", options.server_id},
+        {"instance_id", options.instance_id},
+        {"events", std::move(events)},
+    });
 }
 
 }    // namespace
@@ -106,7 +120,7 @@ signaling_client& signaling_client::instance()
     return value;
 }
 
-void signaling_client::configure(boost::asio::io_context& io, signaling_client_options options)
+void signaling_client::configure(signaling_client_options options)
 {
     const auto parsed = boost::urls::parse_uri(options.signaling_url);
     if (!parsed || parsed->scheme() != "http" || parsed->host().empty() || parsed->has_userinfo() ||
@@ -116,7 +130,6 @@ void signaling_client::configure(boost::asio::io_context& io, signaling_client_o
     }
     const std::string host{parsed->host()};
     const std::string port = parsed->has_port() ? std::string{parsed->port()} : "80";
-    io_ = &io;
     options_ = std::move(options);
     host_ = host;
     port_ = port;
@@ -124,7 +137,7 @@ void signaling_client::configure(boost::asio::io_context& io, signaling_client_o
 
 signaling_request_result signaling_client::register_once(boost::asio::yield_context& yield) const
 {
-    if (io_ == nullptr)
+    if (host_.empty())
     {
         return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
     }
@@ -133,7 +146,7 @@ signaling_request_result signaling_client::register_once(boost::asio::yield_cont
 
 signaling_request_result signaling_client::heartbeat_once(boost::asio::yield_context& yield) const
 {
-    if (io_ == nullptr)
+    if (host_.empty())
     {
         return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
     }
@@ -145,7 +158,7 @@ signaling_request_result signaling_client::claim_publish(std::string_view stream
                                                          std::string_view stream_name,
                                                          boost::asio::yield_context& yield) const
 {
-    if (io_ == nullptr)
+    if (host_.empty())
     {
         return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
     }
@@ -153,13 +166,29 @@ signaling_request_result signaling_client::claim_publish(std::string_view stream
         "/internal/publish/claim", publish_claim_body(options_, stream_id, protocol, stream_name), host_, port_, options_.request_timeout, yield);
 }
 
-signaling_request_result signaling_client::report_runtime_event(const runtime_event& event, boost::asio::yield_context& yield) const
+void signaling_client::report(runtime_event event)
 {
-    if (io_ == nullptr)
+    if (host_.empty())
     {
-        return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
+        return;
     }
-    return request("/internal/runtime-events", runtime_event_body(event), host_, port_, options_.request_timeout, yield);
+    bool overflow{};
+    std::size_t pending{};
+    const auto newest_stream_id = event.stream_id;
+    {
+        std::scoped_lock lock(event_mutex_);
+        if (pending_events_.size() >= max_pending_events)
+        {
+            overflow = true;
+            pending = pending_events_.size();
+            pending_events_.clear();
+        }
+        pending_events_.push_back(std::move(event));
+    }
+    if (overflow)
+    {
+        spdlog::warn("runtime event queue full pending {} limit {} newest stream_id {}", pending, max_pending_events, newest_stream_id);
+    }
 }
 
 signaling_request_result signaling_client::request(std::string_view target,
@@ -245,9 +274,9 @@ signaling_request_result signaling_client::request(std::string_view target,
     return {.kind = signaling_result_kind::accepted, .status = status, .error = {}};
 }
 
-void signaling_client::run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler)
+void signaling_client::run(boost::asio::yield_context& yield, std::function<void()> fenced_handler)
 {
-    if (io_ == nullptr)
+    if (host_.empty())
     {
         return;
     }
@@ -278,6 +307,53 @@ void signaling_client::run_heartbeat(boost::asio::yield_context& yield, std::fun
             spdlog::critical("signaling heartbeat rejected status {}", result.status);
             fenced_handler();
             return;
+        }
+
+        std::vector<runtime_event> batch;
+        {
+            std::scoped_lock lock(event_mutex_);
+            if (pending_events_.empty())
+            {
+                continue;
+            }
+            batch.swap(pending_events_);
+        }
+        const auto event_result =
+            request("/internal/runtime-events", runtime_event_batch_body(options_, batch), host_, port_, options_.request_timeout, yield);
+        if (event_result.kind == signaling_result_kind::accepted)
+        {
+            continue;
+        }
+        if (event_result.kind == signaling_result_kind::network_error)
+        {
+            spdlog::warn("runtime event batch network error {}; retaining {} events", event_result.error, batch.size());
+        }
+        else
+        {
+            spdlog::warn("runtime event batch delivery failed status {}; retaining {} events", event_result.status, batch.size());
+        }
+
+        bool overflow{};
+        std::size_t pending{};
+        {
+            std::scoped_lock lock(event_mutex_);
+            pending = pending_events_.size();
+            if (batch.size() + pending_events_.size() > max_pending_events)
+            {
+                overflow = true;
+            }
+            else
+            {
+                batch.insert(batch.end(), std::make_move_iterator(pending_events_.begin()), std::make_move_iterator(pending_events_.end()));
+                pending_events_.swap(batch);
+            }
+        }
+        if (overflow)
+        {
+            spdlog::warn("runtime event retry backlog {} with {} newer events exceeds limit {}; dropping old backlog",
+                         batch.size(),
+                         pending,
+                         max_pending_events);
         }
     }
 }

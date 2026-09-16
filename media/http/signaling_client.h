@@ -1,20 +1,21 @@
 #ifndef MEDIA_HTTP_SIGNALING_CLIENT_H
 #define MEDIA_HTTP_SIGNALING_CLIENT_H
 
-#include <memory>
+#include <mutex>
 #include <chrono>
 #include <string>
+#include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string_view>
 
 #include <boost/asio/spawn.hpp>
-#include <boost/asio/io_context.hpp>
+
+#include "media/core/runtime_event.h"
 
 namespace media_server
 {
-
-struct runtime_event;
 
 enum class signaling_result_kind
 {
@@ -50,7 +51,7 @@ class signaling_client
    public:
     [[nodiscard]] static signaling_client& instance();
 
-    void configure(boost::asio::io_context& io, signaling_client_options options);
+    void configure(signaling_client_options options);
 
     signaling_request_result register_once(boost::asio::yield_context& yield) const;
     signaling_request_result heartbeat_once(boost::asio::yield_context& yield) const;
@@ -58,8 +59,8 @@ class signaling_client
                                            std::string_view protocol,
                                            std::string_view stream_name,
                                            boost::asio::yield_context& yield) const;
-    signaling_request_result report_runtime_event(const runtime_event& event, boost::asio::yield_context& yield) const;
-    void run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler);
+    void report(runtime_event event);
+    void run(boost::asio::yield_context& yield, std::function<void()> fenced_handler);
 
    private:
     struct request_state;
@@ -72,7 +73,9 @@ class signaling_client
                                      boost::asio::yield_context& yield) const;
 
    private:
-    boost::asio::io_context* io_{};
+    static constexpr std::size_t max_pending_events = 500U;
+    std::mutex event_mutex_;
+    std::vector<runtime_event> pending_events_;
     signaling_client_options options_;
     std::string host_;
     std::string port_;

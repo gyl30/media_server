@@ -14,7 +14,6 @@
 #include <boost/json.hpp>
 #include <boost/beast.hpp>
 
-#include "media/core/runtime_event.h"
 #include "media/http/signaling_client.h"
 
 namespace
@@ -149,10 +148,7 @@ media_server::signaling_client_options client_options(std::string url)
     };
 }
 
-void configure_client(boost::asio::io_context& io, media_server::signaling_client_options options)
-{
-    media_server::signaling_client::instance().configure(io, std::move(options));
-}
+void configure_client(media_server::signaling_client_options options) { media_server::signaling_client::instance().configure(std::move(options)); }
 
 std::uint16_t unused_port()
 {
@@ -184,16 +180,9 @@ void test_unconfigured_accepts_without_network()
         io,
         [&](boost::asio::yield_context& yield)
         { return media_server::signaling_client::instance().claim_publish("00000000-0000-4000-8000-000000000001", "rtmp", "live/camera", yield); });
-    const auto reported = run_request(io,
-                                      [&](boost::asio::yield_context& yield)
-                                      {
-                                          const media_server::runtime_event event{};
-                                          return media_server::signaling_client::instance().report_runtime_event(event, yield);
-                                      });
     require(registration.kind == media_server::signaling_result_kind::accepted, "unconfigured registration accepted");
     require(heartbeat.kind == media_server::signaling_result_kind::accepted, "unconfigured heartbeat accepted");
     require(claim.kind == media_server::signaling_result_kind::accepted, "unconfigured publish claim accepted");
-    require(reported.kind == media_server::signaling_result_kind::accepted, "unconfigured runtime event accepted");
 
     bool fenced{};
     bool completed{};
@@ -201,7 +190,7 @@ void test_unconfigured_accepts_without_network()
         io,
         [&](boost::asio::yield_context yield)
         {
-            media_server::signaling_client::instance().run_heartbeat(yield, [&]() { fenced = true; });
+            media_server::signaling_client::instance().run(yield, [&]() { fenced = true; });
             completed = true;
         },
         boost::asio::detached);
@@ -213,7 +202,7 @@ void test_registration_and_heartbeat_body()
 {
     test_http_server server;
     boost::asio::io_context io;
-    configure_client(io, client_options(server.url()));
+    configure_client(client_options(server.url()));
     const auto registration_result =
         run_request(io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(registration_result.kind == media_server::signaling_result_kind::accepted, "registration accepted");
@@ -238,9 +227,8 @@ void test_registration_and_heartbeat_body()
 void test_publish_claim_uses_caller_executor_and_body()
 {
     test_http_server server;
-    boost::asio::io_context construction_io;
     boost::asio::io_context worker_io;
-    configure_client(construction_io, client_options(server.url()));
+    configure_client(client_options(server.url()));
     const auto result = run_request(
         worker_io,
         [&](boost::asio::yield_context& yield)
@@ -256,62 +244,11 @@ void test_publish_claim_uses_caller_executor_and_body()
     require(body.at("stream_name") == "live/camera", "publish claim stream name");
 }
 
-media_server::runtime_event runtime_event()
-{
-    return {
-        .kind = media_server::runtime_kind::source,
-        .server_id = "media-1",
-        .instance_id = "instance-a",
-        .stream_id = "00000000-0000-4000-8000-000000000001",
-        .stream_name = "live/camera",
-        .source_id = "10000000-0000-4000-8000-000000000001",
-        .protocol = media_server::runtime_protocol::rtsp,
-        .state = media_server::runtime_state::stopped,
-        .stage = "connecting",
-        .end_reason = media_server::runtime_end_reason::runtime_error,
-        .error = "connection_failed",
-    };
-}
-
-void test_runtime_event_no_content()
-{
-    const auto event = runtime_event();
-    test_http_server no_content(boost::beast::http::status::no_content, "");
-    boost::asio::io_context no_content_io;
-    configure_client(no_content_io, client_options(no_content.url()));
-    const auto no_content_result =
-        run_request(no_content_io,
-                    [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().report_runtime_event(event, yield); });
-    require(no_content_result.kind == media_server::signaling_result_kind::accepted && no_content_result.status == 204,
-            "runtime event accepts empty 204 response");
-    const auto request = no_content.wait_requests(1).front();
-    require(request.target == "/internal/runtime-events", "runtime event endpoint");
-    const auto body = boost::json::parse(request.body).as_object();
-    require(body.size() == 11U && body.at("kind") == "source" && std::string(body.at("stream_id").as_string()) == event.stream_id,
-            "runtime event body");
-    require(std::string(body.at("source_id").as_string()) == *event.source_id && std::string(body.at("stage").as_string()) == *event.stage,
-            "runtime event optional identity and stage");
-    require(body.at("end_reason") == "runtime_error" && std::string(body.at("error").as_string()) == *event.error, "runtime event terminal fields");
-}
-
-void test_runtime_event_accepted()
-{
-    const auto event = runtime_event();
-    test_http_server accepted(boost::beast::http::status::accepted, "not-json");
-    boost::asio::io_context accepted_io;
-    configure_client(accepted_io, client_options(accepted.url()));
-    const auto accepted_result =
-        run_request(accepted_io,
-                    [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().report_runtime_event(event, yield); });
-    require(accepted_result.kind == media_server::signaling_result_kind::accepted && accepted_result.status == 202,
-            "runtime event accepts non-JSON 202 response");
-}
-
 void test_rejected_result()
 {
     test_http_server server(boost::beast::http::status::conflict);
     boost::asio::io_context rejected_io;
-    configure_client(rejected_io, client_options(server.url()));
+    configure_client(client_options(server.url()));
     const auto rejected_result =
         run_request(rejected_io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(rejected_result.kind == media_server::signaling_result_kind::rejected && rejected_result.status == 409, "registration rejected");
@@ -321,7 +258,7 @@ void test_temporary_failure_result()
 {
     test_http_server temporary(boost::beast::http::status::internal_server_error);
     boost::asio::io_context temporary_io;
-    configure_client(temporary_io, client_options(temporary.url()));
+    configure_client(client_options(temporary.url()));
     const auto temporary_result =
         run_request(temporary_io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(temporary_result.kind == media_server::signaling_result_kind::temporary_failure && temporary_result.status == 500,
@@ -332,7 +269,7 @@ void test_network_error_result()
 {
     auto options = client_options("http://127.0.0.1:" + std::to_string(unused_port()));
     boost::asio::io_context unavailable_io;
-    configure_client(unavailable_io, std::move(options));
+    configure_client(std::move(options));
     const auto registration = run_request(
         unavailable_io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(registration.kind == media_server::signaling_result_kind::network_error, "registration network error");
@@ -345,7 +282,7 @@ void test_success_uses_status_only()
 {
     test_http_server server(boost::beast::http::status::ok, "{invalid");
     boost::asio::io_context io;
-    configure_client(io, client_options(server.url()));
+    configure_client(client_options(server.url()));
     const auto result =
         run_request(io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(result.kind == media_server::signaling_result_kind::accepted && result.status == 200, "success body ignored");
@@ -363,8 +300,7 @@ void test_constructor_rejects_non_base_urls()
         bool rejected = false;
         try
         {
-            boost::asio::io_context io;
-            media_server::signaling_client::instance().configure(io, client_options(url));
+            media_server::signaling_client::instance().configure(client_options(url));
         }
         catch (const std::invalid_argument&)
         {
@@ -380,7 +316,7 @@ void test_request_timeout()
     auto options = client_options(server.url());
     options.request_timeout = 20ms;
     boost::asio::io_context io;
-    configure_client(io, std::move(options));
+    configure_client(std::move(options));
     const auto started = std::chrono::steady_clock::now();
     const auto result =
         run_request(io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
@@ -392,7 +328,7 @@ void test_completed_request_releases_cancellation_handler()
 {
     auto options = client_options("http://127.0.0.1:" + std::to_string(unused_port()));
     boost::asio::io_context io;
-    configure_client(io, std::move(options));
+    configure_client(std::move(options));
     boost::asio::cancellation_signal cancellation;
     bool completed = false;
     bool handler_released = false;
@@ -415,7 +351,7 @@ void test_heartbeat_rejection()
 {
     test_http_server server(boost::beast::http::status::internal_server_error);
     boost::asio::io_context io;
-    configure_client(io, client_options(server.url()));
+    configure_client(client_options(server.url()));
     std::mutex mutex;
     std::condition_variable condition;
     bool fenced = false;
@@ -423,13 +359,13 @@ void test_heartbeat_rejection()
         io,
         [&](boost::asio::yield_context yield)
         {
-            media_server::signaling_client::instance().run_heartbeat(yield,
-                                                                     [&]()
-                                                                     {
-                                                                         std::lock_guard lock(mutex);
-                                                                         fenced = true;
-                                                                         condition.notify_all();
-                                                                     });
+            media_server::signaling_client::instance().run(yield,
+                                                           [&]()
+                                                           {
+                                                               std::lock_guard lock(mutex);
+                                                               fenced = true;
+                                                               condition.notify_all();
+                                                           });
         },
         boost::asio::detached);
     std::jthread runner([&]() { io.run(); });
@@ -452,7 +388,7 @@ void test_control_cancellation_ends_heartbeat_wait()
     auto options = client_options(server.url());
     options.heartbeat_interval = 1h;
     boost::asio::io_context io;
-    configure_client(io, std::move(options));
+    configure_client(std::move(options));
     boost::asio::cancellation_signal cancellation;
     bool completed = false;
     boost::asio::spawn(
@@ -460,7 +396,7 @@ void test_control_cancellation_ends_heartbeat_wait()
         [&](boost::asio::yield_context yield)
         {
             yield.throw_if_cancelled(false);
-            media_server::signaling_client::instance().run_heartbeat(yield, []() {});
+            media_server::signaling_client::instance().run(yield, []() {});
             completed = true;
         },
         boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::detached));
@@ -479,7 +415,7 @@ void test_control_cancellation_ends_in_flight_heartbeat()
     options.heartbeat_interval = 1ms;
     options.request_timeout = 5s;
     boost::asio::io_context io;
-    configure_client(io, std::move(options));
+    configure_client(std::move(options));
     boost::asio::cancellation_signal cancellation;
     bool completed = false;
     boost::asio::spawn(
@@ -487,7 +423,7 @@ void test_control_cancellation_ends_in_flight_heartbeat()
         [&](boost::asio::yield_context yield)
         {
             yield.throw_if_cancelled(false);
-            media_server::signaling_client::instance().run_heartbeat(yield, []() {});
+            media_server::signaling_client::instance().run(yield, []() {});
             completed = true;
         },
         boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::detached));
@@ -517,14 +453,6 @@ int main(int argc, char** argv)
     else if (test == "claim")
     {
         test_publish_claim_uses_caller_executor_and_body();
-    }
-    else if (test == "event_no_content")
-    {
-        test_runtime_event_no_content();
-    }
-    else if (test == "event_accepted")
-    {
-        test_runtime_event_accepted();
     }
     else if (test == "rejected")
     {

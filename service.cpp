@@ -15,7 +15,6 @@
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
 #include "media/net/io_context_pool.h"
-#include "media/http/event_reporter.h"
 #include "media/http/signaling_client.h"
 
 namespace media_server
@@ -120,7 +119,7 @@ void service::run_control(boost::asio::yield_context yield)
     spdlog::info("rtsp play path app/stream");
     spdlog::info("http flv path app/stream.flv");
 
-    signaling_client::instance().run_heartbeat(yield, [this]() { schedule_signaling_abort(); });
+    signaling_client::instance().run(yield, [this]() { schedule_signaling_abort(); });
 }
 
 int service::run()
@@ -156,8 +155,7 @@ int service::run()
             .rtsp_port = config_.rtsp_port,
             .http_port = config_.http_port,
         };
-        signaling_client::instance().configure(control_io, std::move(options));
-        event_reporter::instance().configure(control_io, config_.server_id, instance_id);
+        signaling_client::instance().configure(std::move(options));
     }
 
     rtmp_ = std::make_shared<rtmp_server>(*workers_, config_);

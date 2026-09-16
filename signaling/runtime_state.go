@@ -50,6 +50,36 @@ func (r *observedRuntimeRegistry) apply(event observedRuntime) (bool, error) {
 	return r.applyLocked(event, false)
 }
 
+func (r *observedRuntimeRegistry) applyBatch(events []observedRuntime) ([]observedRuntime, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	counts := make(map[string]int)
+	for _, event := range events {
+		counts[event.StreamID]++
+	}
+	resumeAfter := make(map[string]int)
+	for index, event := range events {
+		if _, found := resumeAfter[event.StreamID]; found || counts[event.StreamID] == 1 {
+			continue
+		}
+		if current, exists := r.byStreamID[event.StreamID]; exists && current == event {
+			resumeAfter[event.StreamID] = index
+		}
+	}
+	applied := make([]observedRuntime, 0, len(events))
+	for index, event := range events {
+		if resume, exists := resumeAfter[event.StreamID]; exists && index <= resume {
+			continue
+		}
+		_, err := r.applyLocked(event, false)
+		if err != nil {
+			return applied, err
+		}
+		applied = append(applied, event)
+	}
+	return applied, nil
+}
+
 func (r *observedRuntimeRegistry) acknowledgeSourceStopped(
 	server mediaServerInstance,
 	streamID, streamName, sourceID, protocol string,

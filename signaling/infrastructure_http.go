@@ -153,7 +153,7 @@ func decodeJSON(writer http.ResponseWriter, request *http.Request, target any) b
 	if err != nil || !strings.EqualFold(mediaType, "application/json") {
 		return false
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 64*1024))
+	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 512*1024))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return false
