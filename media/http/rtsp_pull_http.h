@@ -4,8 +4,6 @@
 #include <boost/beast/http.hpp>
 #include <boost/url/url_view.hpp>
 
-#include "media/core/runtime_event.h"
-
 namespace media_server
 {
 class worker_context;
@@ -15,8 +13,7 @@ using rtsp_pull_http_response = boost::beast::http::response<boost::beast::http:
 
 [[nodiscard]] rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& request,
                                                                worker_context& worker,
-                                                               const boost::urls::url_view& target,
-                                                               runtime_event_emitter_ptr runtime_events = {});
+                                                               const boost::urls::url_view& target);
 
 }    // namespace media_server
 

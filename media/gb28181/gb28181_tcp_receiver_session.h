@@ -29,8 +29,7 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
                                  std::string stream_name,
                                  gb28181_transport_config config,
                                  boost::asio::ip::address bind_address,
-                                 std::chrono::milliseconds establishment_timeout,
-                                 runtime_event_emitter_ptr runtime_events = {});
+                                 std::chrono::milliseconds establishment_timeout);
 
     [[nodiscard]] bool startup();
     void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
@@ -53,7 +52,6 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::unique_ptr<tcp_yield_transport> transport_;
-    runtime_event_emitter_ptr runtime_events_;
     runtime_end_reason end_reason_{runtime_end_reason::requested};
     std::string end_error_;
     bool started_{};

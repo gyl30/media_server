@@ -5,8 +5,6 @@
 #include <boost/url/url_view.hpp>
 #include <boost/asio/ip/address.hpp>
 
-#include "media/core/runtime_event.h"
-
 namespace media_server
 {
 class worker_context;
@@ -17,13 +15,11 @@ using gb28181_http_response = boost::beast::http::response<boost::beast::http::s
 [[nodiscard]] gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request& request,
                                                                     worker_context& worker,
                                                                     const boost::urls::url_view& target,
-                                                                    boost::asio::ip::address bind_address,
-                                                                    runtime_event_emitter_ptr runtime_events = {});
+                                                                    boost::asio::ip::address bind_address);
 [[nodiscard]] gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& request,
                                                                   worker_context& worker,
                                                                   const boost::urls::url_view& target,
-                                                                  boost::asio::ip::address bind_address,
-                                                                  runtime_event_emitter_ptr runtime_events = {});
+                                                                  boost::asio::ip::address bind_address);
 
 }    // namespace media_server
 

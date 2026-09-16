@@ -42,8 +42,7 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
                       std::string password = {},
                       std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
                       std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
-                      std::size_t max_write_queue_bytes = 1024U * 1024U,
-                      runtime_event_emitter_ptr runtime_events = {});
+                      std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtsp_pull_session();
 
     [[nodiscard]] static bool valid_url(std::string_view url);
@@ -103,7 +102,6 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::unique_ptr<rtsp_pull_media> media_;
-    runtime_event_emitter_ptr runtime_events_;
     runtime_end_reason end_reason_{runtime_end_reason::requested};
     std::string end_error_;
     rtsp_client_t* client_{};

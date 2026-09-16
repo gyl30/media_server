@@ -83,14 +83,10 @@ whep_http_string_response handle_whep_session_get(const whep_http_request& reque
     return make_empty_response(request, boost::beast::http::status::no_content);
 }
 
-whep_http_string_response handle_whep_post(const whep_http_request& request,
-                                           worker_context& worker,
-                                           std::string stream_id,
-                                           std::string stream_name,
-                                           const config& application_config,
-                                           runtime_event_emitter_ptr runtime_events)
+whep_http_string_response handle_whep_post(
+    const whep_http_request& request, worker_context& worker, std::string stream_id, std::string stream_name, const config& application_config)
 {
-    auto result = whep::create(worker, std::move(stream_id), stream_name, request.body(), application_config, std::move(runtime_events));
+    auto result = whep::create(worker, std::move(stream_id), stream_name, request.body(), application_config);
     switch (result.error)
     {
         case whep::create_error::none:
@@ -128,8 +124,7 @@ whep_http_string_response handle_whep_delete(const whep_http_request& request, s
 whep_http_string_response handle_whep_request(const whep_http_request& request,
                                               worker_context& worker,
                                               const boost::urls::url_view& target,
-                                              const config& application_config,
-                                              runtime_event_emitter_ptr runtime_events)
+                                              const config& application_config)
 {
     std::vector<std::string> path;
     for (const auto segment : target.segments())
@@ -181,7 +176,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
             }
             stream_name.append(segment);
         }
-        return handle_whep_post(request, worker, std::string{stream_id}, std::move(stream_name), application_config, std::move(runtime_events));
+        return handle_whep_post(request, worker, std::string{stream_id}, std::move(stream_name), application_config);
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {

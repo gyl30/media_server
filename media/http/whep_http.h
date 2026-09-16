@@ -8,7 +8,6 @@
 #include <boost/url/url_view.hpp>
 
 #include "config.h"
-#include "media/core/runtime_event.h"
 
 namespace media_server
 {
@@ -20,8 +19,7 @@ using whep_http_string_response = boost::beast::http::response<boost::beast::htt
 [[nodiscard]] whep_http_string_response handle_whep_request(const whep_http_request& request,
                                                             worker_context& worker,
                                                             const boost::urls::url_view& target,
-                                                            const config& application_config,
-                                                            runtime_event_emitter_ptr runtime_events = {});
+                                                            const config& application_config);
 
 }    // namespace media_server
 

@@ -14,6 +14,7 @@
 #include "media/core/media_stream.h"
 #include "media/http/gb28181_http.h"
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 
 namespace media_server
@@ -38,9 +39,9 @@ void require(bool condition, std::string_view message)
     }
 }
 
-runtime_event_emitter_ptr capture_events(std::vector<runtime_event>& events)
+void capture_events(std::vector<runtime_event>& events)
 {
-    return std::make_shared<runtime_event_emitter>("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
+    event_reporter::instance().configure_handler("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
 }
 
 void require_gb_event(const runtime_event& event,
@@ -86,18 +87,18 @@ void require_empty_response(const gb28181_http_response& response, boost::beast:
     require(response.body().empty(), message);
 }
 
-gb28181_http_response receiver_request(worker_context& worker, gb28181_http_request request, runtime_event_emitter_ptr runtime_events = {})
+gb28181_http_response receiver_request(worker_context& worker, gb28181_http_request request)
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "receiver request target");
-    return handle_gb28181_receiver_request(request, worker, *target, boost::asio::ip::address_v4::loopback(), std::move(runtime_events));
+    return handle_gb28181_receiver_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
 }
 
-gb28181_http_response sender_request(worker_context& worker, gb28181_http_request request, runtime_event_emitter_ptr runtime_events = {})
+gb28181_http_response sender_request(worker_context& worker, gb28181_http_request request)
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "sender request target");
-    return handle_gb28181_sender_request(request, worker, *target, boost::asio::ip::address_v4::loopback(), std::move(runtime_events));
+    return handle_gb28181_sender_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
 }
 
 media_track make_video_track()
@@ -126,7 +127,8 @@ void test_receiver_handlers()
     create_body["ssrc"] = 100;
 
     std::vector<runtime_event> events;
-    const auto create_response = receiver_request(worker, request("/gb28181/receiver/create", create_body), capture_events(events));
+    capture_events(events);
+    const auto create_response = receiver_request(worker, request("/gb28181/receiver/create", create_body));
     require(create_response.result() == boost::beast::http::status::created, "receiver create response status");
     const auto create_result = boost::json::parse(create_response.body()).as_object();
     require(create_result.size() == 1U, "receiver create response fields");
@@ -226,7 +228,8 @@ void test_sender_handlers()
     create_body["ssrc"] = 101;
 
     std::vector<runtime_event> events;
-    const auto create_response = sender_request(worker, request("/gb28181/sender/create", create_body), capture_events(events));
+    capture_events(events);
+    const auto create_response = sender_request(worker, request("/gb28181/sender/create", create_body));
     require_empty_response(create_response, boost::beast::http::status::created, "sender create response");
     require(events.size() == 1U, "sender HTTP propagates event emitter");
     require_gb_event(events[0], runtime_kind::output, stream_id_a, stream->name(), runtime_state::starting, {}, "sender HTTP starting event payload");

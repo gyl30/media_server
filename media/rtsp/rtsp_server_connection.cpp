@@ -15,6 +15,7 @@
 #include <boost/asio/bind_cancellation_slot.hpp>
 
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_publish_session.h"
@@ -41,19 +42,15 @@ bool remote_disconnect(const boost::system::error_code& error)
 rtsp_server_connection::rtsp_server_connection(worker_context& worker,
                                                boost::asio::ip::tcp::socket socket,
                                                video_transcode_codec video_codec,
-                                               std::shared_ptr<signaling_client> signaling,
                                                std::chrono::milliseconds inactivity_timeout,
-                                               std::size_t max_write_queue_bytes,
-                                               runtime_event_emitter_ptr runtime_events)
+                                               std::size_t max_write_queue_bytes)
     : worker_(worker),
       video_codec_(video_codec),
-      signaling_(std::move(signaling)),
       transport_(std::move(socket)),
       inactivity_timer_(worker_.io()),
       publish_claim_reader_barrier_(worker_.io()),
       inactivity_timeout_(inactivity_timeout),
-      max_write_queue_bytes_(max_write_queue_bytes),
-      runtime_events_(std::move(runtime_events))
+      max_write_queue_bytes_(max_write_queue_bytes)
 {
 }
 
@@ -229,7 +226,7 @@ bool rtsp_server_connection::run_publish_claim(rtsp_server_t* server, boost::asi
     {
         return false;
     }
-    const auto result = signaling_->claim_publish(stream_id, "rtsp", stream_name, yield);
+    const auto result = signaling_client::instance().claim_publish(stream_id, "rtsp", stream_name, yield);
     stop_publish_claim_reader(yield);
     if (ending_ || closed_ || !publish_claim_pending_ || publish_session_ != publish)
     {
@@ -502,11 +499,6 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     {
         return rtsp_server_reply_announce(server, 455);
     }
-    if (!self->signaling_)
-    {
-        return self->reply_announce_and_close(server, 503);
-    }
-
     const auto owner = self->shared_from_this();
     auto next_session = std::make_shared<rtsp_publish_session>(
         self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
@@ -722,17 +714,14 @@ void rtsp_server_connection::emit_starting()
         return;
     }
     runtime_started_ = true;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::publisher,
-            .stream_id = publisher_stream_id_,
-            .stream_name = publisher_stream_name_,
-            .protocol = runtime_protocol::rtsp,
-            .state = runtime_state::starting,
-            .stage = "announce",
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::publisher,
+        .stream_id = publisher_stream_id_,
+        .stream_name = publisher_stream_name_,
+        .protocol = runtime_protocol::rtsp,
+        .state = runtime_state::starting,
+        .stage = "announce",
+    });
 }
 
 void rtsp_server_connection::emit_streaming()
@@ -742,17 +731,14 @@ void rtsp_server_connection::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::publisher,
-            .stream_id = publisher_stream_id_,
-            .stream_name = publisher_stream_name_,
-            .protocol = runtime_protocol::rtsp,
-            .state = runtime_state::streaming,
-            .stage = "streaming",
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::publisher,
+        .stream_id = publisher_stream_id_,
+        .stream_name = publisher_stream_name_,
+        .protocol = runtime_protocol::rtsp,
+        .state = runtime_state::streaming,
+        .stage = "streaming",
+    });
 }
 
 void rtsp_server_connection::emit_stopped()
@@ -763,19 +749,16 @@ void rtsp_server_connection::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::publisher,
-            .stream_id = publisher_stream_id_,
-            .stream_name = publisher_stream_name_,
-            .protocol = runtime_protocol::rtsp,
-            .state = runtime_state::stopped,
-            .stage = end_stage_.empty() ? std::nullopt : std::optional<std::string>{end_stage_},
-            .end_reason = end_reason_,
-            .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::publisher,
+        .stream_id = publisher_stream_id_,
+        .stream_name = publisher_stream_name_,
+        .protocol = runtime_protocol::rtsp,
+        .state = runtime_state::stopped,
+        .stage = end_stage_.empty() ? std::nullopt : std::optional<std::string>{end_stage_},
+        .end_reason = end_reason_,
+        .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
+    });
 }
 
 }    // namespace media_server

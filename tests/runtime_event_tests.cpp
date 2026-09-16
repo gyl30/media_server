@@ -11,6 +11,7 @@
 
 #include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
@@ -30,15 +31,15 @@ void require(bool condition, std::string_view message)
     }
 }
 
-runtime_event_emitter_ptr capture_events(std::vector<runtime_event>& events, worker_context& worker, bool& owner_worker)
+void capture_events(std::vector<runtime_event>& events, worker_context& worker, bool& owner_worker)
 {
-    return std::make_shared<runtime_event_emitter>("media-1",
-                                                   "instance-1",
-                                                   [&events, &worker, &owner_worker](runtime_event event)
-                                                   {
-                                                       owner_worker = owner_worker && worker.io().get_executor().running_in_this_thread();
-                                                       events.push_back(std::move(event));
-                                                   });
+    event_reporter::instance().configure_handler("media-1",
+                                                 "instance-1",
+                                                 [&events, &worker, &owner_worker](runtime_event event)
+                                                 {
+                                                     owner_worker = owner_worker && worker.io().get_executor().running_in_this_thread();
+                                                     events.push_back(std::move(event));
+                                                 });
 }
 
 void require_identity(const runtime_event& event)
@@ -64,6 +65,7 @@ void test_rtsp_pull_runtime_failure_events()
 
     std::vector<runtime_event> events;
     bool owner_worker = true;
+    capture_events(events, worker, owner_worker);
     auto session = std::make_shared<rtsp_pull_session>(worker,
                                                        stream_id,
                                                        source_id,
@@ -73,8 +75,7 @@ void test_rtsp_pull_runtime_failure_events()
                                                        "",
                                                        std::chrono::milliseconds{200},
                                                        std::chrono::milliseconds{200},
-                                                       1024U * 1024U,
-                                                       capture_events(events, worker, owner_worker));
+                                                       1024U * 1024U);
     require(streams.add_receiver_session("live/runtime-events", session), "runtime event receiver reservation");
     boost::asio::post(worker.io(), [session]() { require(session->startup(), "runtime event pull startup"); });
 
@@ -108,6 +109,7 @@ void test_rtsp_pull_first_shutdown_reason()
     const auto port = endpoint.local_endpoint().port();
     std::vector<runtime_event> events;
     bool owner_worker = true;
+    capture_events(events, worker, owner_worker);
     auto session = std::make_shared<rtsp_pull_session>(worker,
                                                        stream_id,
                                                        source_id,
@@ -117,8 +119,7 @@ void test_rtsp_pull_first_shutdown_reason()
                                                        "",
                                                        std::chrono::seconds{5},
                                                        std::chrono::seconds{5},
-                                                       1024U * 1024U,
-                                                       capture_events(events, worker, owner_worker));
+                                                       1024U * 1024U);
     require(streams.add_receiver_session("live/runtime-events", session), "runtime event shutdown reservation");
     boost::asio::post(worker.io(),
                       [session]()

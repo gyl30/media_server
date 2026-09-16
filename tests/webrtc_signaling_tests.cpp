@@ -39,6 +39,7 @@
 #include "media/http/http_session.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/net/io_context_pool.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
@@ -2705,10 +2706,9 @@ void test_whep_session_lifecycle()
             "whep semantic invalid offer");
 
     std::vector<runtime_event> events;
-    const auto runtime_events =
-        std::make_shared<runtime_event_emitter>("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
-    const auto first = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config, runtime_events);
-    const auto duplicate = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config, runtime_events);
+    event_reporter::instance().configure_handler("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
+    const auto first = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    const auto duplicate = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
     require(duplicate.error == whep::create_error::stream_id_conflict, "whep reject duplicate runtime stream id");
     require(events.size() == 1U && events.front().state == runtime_state::starting, "whep duplicate emits no runtime event");
     const auto second = whep::create(worker, std::string{alternate_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
@@ -2757,6 +2757,7 @@ void test_whep_session_lifecycle()
     require(updated_session.error == whep::create_error::none, "whep create after config change");
     require(whep::remove(updated_session.session_id), "whep remove updated session");
     drain_io(io);
+    event_reporter::instance().configure_mock();
 }
 
 void test_whep_opus_source_session_lifecycle()
@@ -2968,8 +2969,7 @@ void test_whep_establishment_timeout()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "establishment timeout certificate");
     std::vector<runtime_event> events;
-    const auto runtime_events =
-        std::make_shared<runtime_event_emitter>("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
+    event_reporter::instance().configure_handler("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
 
     auto session = std::make_shared<whep_session>(worker,
                                                   std::string{control_stream_id},
@@ -2981,8 +2981,7 @@ void test_whep_establishment_timeout()
                                                       .ice_activity = std::chrono::seconds(1),
                                                   },
                                                   video_transcode_config{},
-                                                  1024U * 1024U,
-                                                  runtime_events);
+                                                  1024U * 1024U);
     require(session->startup(*offer) == whep_session_startup_error::none, "establishment timeout session startup");
     require(session->local_port() != 0, "establishment timeout socket open");
     require(events.size() == 1U && events[0].kind == runtime_kind::output && events[0].state == runtime_state::starting &&
@@ -3002,6 +3001,7 @@ void test_whep_establishment_timeout()
     drain_io(io);
     require(session->local_port() == 0, "establishment timeout repeated shutdown ignored");
     require(events.size() == 2U, "establishment timeout event exactly once");
+    event_reporter::instance().configure_mock();
 }
 
 void test_whep_ice_activity_timeout()
@@ -3620,6 +3620,7 @@ void test_whip_session_ingest(codec_id video_codec)
     peer_srtp.shutdown();
     boost::system::error_code error;
     client_socket.close(error);
+    event_reporter::instance().configure_mock();
 }
 
 void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_shutdown)
@@ -3650,8 +3651,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     require(offer.has_value(), "dtls parse offer");
 
     std::vector<runtime_event> events;
-    const auto runtime_events =
-        std::make_shared<runtime_event_emitter>("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
+    event_reporter::instance().configure_handler("media-1", "instance-1", [&events](runtime_event event) { events.push_back(std::move(event)); });
     auto session = std::make_shared<whep_session>(worker,
                                                   std::string{control_stream_id},
                                                   stream,
@@ -3659,8 +3659,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
                                                   server_certificate,
                                                   whep_session_timeouts{},
                                                   video_transcode_config{},
-                                                  1024U * 1024U,
-                                                  runtime_events);
+                                                  1024U * 1024U);
     require(session->startup(*offer) == whep_session_startup_error::none, "dtls session startup");
     require(events.size() == 1U && events[0].kind == runtime_kind::output && events[0].state == runtime_state::starting &&
                 events[0].stream_id == control_stream_id && events[0].stream_name == "live/dtls",

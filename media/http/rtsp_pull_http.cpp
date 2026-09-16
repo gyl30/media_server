@@ -177,10 +177,7 @@ std::optional<rtsp_pull_http_response> validate_request(const rtsp_pull_http_req
     return std::nullopt;
 }
 
-rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request,
-                                      worker_context& worker,
-                                      rtsp_pull_create_config config,
-                                      runtime_event_emitter_ptr runtime_events)
+rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, worker_context& worker, rtsp_pull_create_config config)
 {
     if (!rtsp_pull_session::valid_url(config.url))
     {
@@ -203,8 +200,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request,
                                                        std::move(config.password),
                                                        std::chrono::milliseconds{15'000},
                                                        std::chrono::milliseconds{15'000},
-                                                       1024U * 1024U,
-                                                       std::move(runtime_events));
+                                                       1024U * 1024U);
     if (!streams.add_receiver_session(stream_name, session))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
@@ -220,10 +216,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request,
 
 }    // namespace
 
-rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& request,
-                                                 worker_context& worker,
-                                                 const boost::urls::url_view& target,
-                                                 runtime_event_emitter_ptr runtime_events)
+rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& request, worker_context& worker, const boost::urls::url_view& target)
 {
     const auto path = target.encoded_path();
     if (path != "/rtsp/pull/create" && path != "/rtsp/pull/delete")
@@ -242,7 +235,7 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
         {
             return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
         }
-        return handle_create(request, worker, std::move(*config), std::move(runtime_events));
+        return handle_create(request, worker, std::move(*config));
     }
 
     const auto identity = parse_delete_identity(request.body());

@@ -55,8 +55,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
                  std::shared_ptr<dtls_certificate> certificate,
                  whep_session_timeouts timeouts = {},
                  video_transcode_config video = {},
-                 std::size_t max_write_queue_bytes = 1024U * 1024U,
-                 runtime_event_emitter_ptr runtime_events = {});
+                 std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
     void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
@@ -108,7 +107,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::shared_ptr<dtls_certificate> certificate_;
     video_transcode_config video_config_;
     whep_session_timeouts timeouts_;
-    runtime_event_emitter_ptr runtime_events_;
     std::map<track_id, media_track> negotiated_tracks_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
