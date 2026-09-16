@@ -72,10 +72,10 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
+    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
-    void emit_stopped();
     void record_establishment_progress();
     void schedule_establishment_timeout();
     void schedule_keepalive();
@@ -102,8 +102,6 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::unique_ptr<rtsp_pull_media> media_;
-    runtime_end_reason end_reason_{runtime_end_reason::requested};
-    std::string end_error_;
     rtsp_client_t* client_{};
     std::chrono::milliseconds establishment_timeout_;
     std::chrono::milliseconds initial_tracks_timeout_;

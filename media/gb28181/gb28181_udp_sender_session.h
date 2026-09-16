@@ -50,10 +50,10 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     void run_rtp_write(boost::asio::yield_context yield);
     void schedule_rtcp();
     void send_packet(std::vector<std::uint8_t> packet);
+    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
-    void emit_stopped();
 
    private:
     worker_context& worker_;
@@ -74,8 +74,6 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::optional<port_manager::port_pair> local_ports_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
-    runtime_end_reason end_reason_{runtime_end_reason::requested};
-    std::string end_error_;
     void* rtcp_sender_{};
     bool rtcp_enabled_{};
     bool rtcp_started_{};

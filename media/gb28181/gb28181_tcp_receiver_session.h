@@ -37,10 +37,10 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
 
    private:
     void run(boost::asio::yield_context yield);
+    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
-    void emit_stopped();
 
    private:
     worker_context& worker_;
@@ -52,8 +52,6 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::unique_ptr<tcp_yield_transport> transport_;
-    runtime_end_reason end_reason_{runtime_end_reason::requested};
-    std::string end_error_;
     bool started_{};
     bool runtime_started_{};
     bool runtime_streaming_{};

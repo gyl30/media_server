@@ -153,18 +153,24 @@ bool rtsp_pull_session::startup()
 void rtsp_pull_session::shutdown(runtime_end_reason reason, std::string error)
 {
     const auto self = shared_from_this();
-    boost::asio::dispatch(worker_.io(),
-                          [self, reason, error = std::move(error)]() mutable
-                          {
-                              if (self->ending_ || self->closed_)
-                              {
-                                  return;
-                              }
-                              self->ending_ = true;
-                              self->end_reason_ = reason;
-                              self->end_error_ = std::move(error);
-                              boost::asio::post(self->worker_.io(), [self]() { self->safe_shutdown(); });
-                          });
+    boost::asio::dispatch(worker_.io(), [self, reason, error = std::move(error)]() mutable { self->shutdown_on_owner(reason, std::move(error)); });
+}
+
+void rtsp_pull_session::shutdown_on_owner(runtime_end_reason reason, std::string error)
+{
+    if (ending_ || closed_)
+    {
+        return;
+    }
+    ending_ = true;
+    if (runtime_started_)
+    {
+        runtime_started_ = false;
+        runtime_streaming_ = false;
+        signaling_client::instance().report(rtsp_event::source_stopped(stream_id_, stream_name_, source_id_, reason, error));
+    }
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void rtsp_pull_session::record_establishment_progress() { last_establishment_progress_ = std::chrono::steady_clock::now(); }
@@ -189,7 +195,7 @@ void rtsp_pull_session::schedule_establishment_timeout()
             }
 
             spdlog::warn("rtsp pull establishment timeout stream {}", self->stream_name_);
-            self->shutdown(runtime_end_reason::timeout, "establishment_timeout");
+            self->shutdown_on_owner(runtime_end_reason::timeout, "establishment_timeout");
         });
 }
 
@@ -206,7 +212,7 @@ void rtsp_pull_session::schedule_keepalive()
             }
             if (rtsp_client_options(self->client_, nullptr) != 0)
             {
-                self->shutdown(runtime_end_reason::protocol_error, "keepalive_failed");
+                self->shutdown_on_owner(runtime_end_reason::protocol_error, "keepalive_failed");
                 return;
             }
             self->schedule_keepalive();
@@ -269,7 +275,6 @@ void rtsp_pull_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    emit_stopped();
     spdlog::debug("rtsp pull shutdown {}", stream_name_);
 }
 
@@ -291,17 +296,6 @@ void rtsp_pull_session::emit_streaming()
     }
     runtime_streaming_ = true;
     signaling_client::instance().report(rtsp_event::source_streaming(stream_id_, stream_name_, source_id_));
-}
-
-void rtsp_pull_session::emit_stopped()
-{
-    if (!runtime_started_)
-    {
-        return;
-    }
-    runtime_started_ = false;
-    runtime_streaming_ = false;
-    signaling_client::instance().report(rtsp_event::source_stopped(stream_id_, stream_name_, source_id_, end_reason_, end_error_));
 }
 
 int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
@@ -404,7 +398,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     }
     if (error)
     {
-        shutdown(runtime_end_reason::runtime_error, error.message());
+        shutdown_on_owner(runtime_end_reason::runtime_error, error.message());
         return;
     }
 
@@ -416,7 +410,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     }
     if (error)
     {
-        shutdown(runtime_end_reason::runtime_error, error.message());
+        shutdown_on_owner(runtime_end_reason::runtime_error, error.message());
         return;
     }
 
@@ -436,7 +430,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
         url_.c_str(), username_.empty() ? nullptr : username_.c_str(), username_.empty() ? nullptr : password_.c_str(), &handler, this);
     if (client == nullptr)
     {
-        shutdown(runtime_end_reason::runtime_error, "rtsp_client_create_failed");
+        shutdown_on_owner(runtime_end_reason::runtime_error, "rtsp_client_create_failed");
         return;
     }
     client_ = client;
@@ -445,7 +439,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     bool stop = rtsp_client_describe(client_) != 0;
     if (stop)
     {
-        shutdown(runtime_end_reason::protocol_error, "describe_failed");
+        shutdown_on_owner(runtime_end_reason::protocol_error, "describe_failed");
     }
     std::vector<std::uint8_t> buffer(64 * 1024);
     while (!stop)
@@ -458,12 +452,12 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
         if (error)
         {
             const auto reason = remote_disconnect(error) ? runtime_end_reason::remote : runtime_end_reason::runtime_error;
-            shutdown(reason, reason == runtime_end_reason::remote ? std::string{} : error.message());
+            shutdown_on_owner(reason, reason == runtime_end_reason::remote ? std::string{} : error.message());
             break;
         }
         if (rtsp_client_input(client_, buffer.data(), bytes) != 0)
         {
-            shutdown(runtime_end_reason::protocol_error, "rtsp_input_failed");
+            shutdown_on_owner(runtime_end_reason::protocol_error, "rtsp_input_failed");
             break;
         }
     }
@@ -472,7 +466,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     rtsp_client_destroy(client);
     if (!ending_ && !closed_)
     {
-        shutdown(runtime_end_reason::remote);
+        shutdown_on_owner(runtime_end_reason::remote);
     }
 }
 
@@ -485,7 +479,7 @@ void rtsp_pull_session::write(std::span<const std::uint8_t> data)
 
     if (data.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data.size())
     {
-        shutdown(runtime_end_reason::runtime_error, "write_queue_full");
+        shutdown_on_owner(runtime_end_reason::runtime_error, "write_queue_full");
         return;
     }
 
@@ -517,7 +511,7 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
         }
         if (error)
         {
-            shutdown(runtime_end_reason::runtime_error, error.message());
+            shutdown_on_owner(runtime_end_reason::runtime_error, error.message());
             return;
         }
 
@@ -604,7 +598,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
             if (now >= last_establishment_progress_ + establishment_timeout_)
             {
                 spdlog::warn("rtsp pull establishment timeout stream {}", stream_name_);
-                shutdown(runtime_end_reason::timeout, "establishment_timeout");
+                shutdown_on_owner(runtime_end_reason::timeout, "establishment_timeout");
                 return;
             }
             media_started_ = true;
@@ -623,20 +617,20 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
                             return;
                         }
                         spdlog::warn("rtsp pull initial tracks timeout stream {}", self->stream_name_);
-                        self->shutdown(runtime_end_reason::timeout, "initial_tracks_timeout");
+                        self->shutdown_on_owner(runtime_end_reason::timeout, "initial_tracks_timeout");
                     });
             }
         }
         else if (!media_->tracks_initialized() && std::chrono::steady_clock::now() >= startup_timer_.expiry())
         {
-            shutdown(runtime_end_reason::timeout, "initial_tracks_timeout");
+            shutdown_on_owner(runtime_end_reason::timeout, "initial_tracks_timeout");
             return;
         }
     }
 
     if (!media_->input_packet(channel, std::span{static_cast<const std::uint8_t*>(data), bytes}))
     {
-        shutdown(runtime_end_reason::protocol_error, "media_input_failed");
+        shutdown_on_owner(runtime_end_reason::protocol_error, "media_input_failed");
         return;
     }
     if (!rtcp && media_->tracks_initialized())
