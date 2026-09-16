@@ -356,6 +356,16 @@ func TestObservedRuntimeUnbindsOnlyExpectedSourceGeneration(t *testing.T) {
 	if stored, exists := runtimes.byStreamID[second.StreamID]; !exists || stored != second {
 		t.Fatalf("unbound stopped runtime = %+v, %v", stored, exists)
 	}
+	if changed, err := runtimes.apply(second); err != nil || changed {
+		t.Fatalf("replay unbound stopped runtime = %v, %v", changed, err)
+	}
+	lateStreaming := second
+	lateStreaming.State = "streaming"
+	lateStreaming.Stage = "streaming"
+	lateStreaming.EndReason = ""
+	if _, err := runtimes.apply(lateStreaming); !errors.Is(err, errRuntimeConflict) {
+		t.Fatalf("late unbound streaming error = %v", err)
+	}
 }
 
 func TestObservedRuntimeDoesNotRebindUnboundSource(t *testing.T) {
