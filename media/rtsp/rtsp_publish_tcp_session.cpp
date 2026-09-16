@@ -28,8 +28,6 @@ rtsp_publish_tcp_session::rtsp_publish_tcp_session(worker_context& worker,
 {
 }
 
-rtsp_publish_tcp_session::~rtsp_publish_tcp_session() = default;
-
 int rtsp_publish_tcp_session::startup(rtsp_server_t* server,
                                       std::size_t track_index,
                                       const rtsp_header_transport_t& transport,

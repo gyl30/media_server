@@ -43,8 +43,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
                  video_transcode_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
-    ~rtmp_session();
-
     void startup();
     void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
 

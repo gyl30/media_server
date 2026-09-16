@@ -22,8 +22,6 @@ class flv_muxer final
     using packet_handler = std::function<void(int, std::span<const std::uint8_t>, std::uint32_t)>;
 
     explicit flv_muxer(packet_handler handler, video_transcode_config video = {});
-    ~flv_muxer();
-
     void shutdown();
     void on_track(const media_track& track);
     void on_frame(const media_frame& frame);

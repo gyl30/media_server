@@ -167,7 +167,7 @@ void test_receiver_handlers()
     boost::json::object delete_body;
     delete_body["stream_id"] = stream_id_a;
     delete_body["stream_name"] = "live/http-handler-receiver";
-    auto stale_delete_body = delete_body;
+    auto stale_delete_body{delete_body};
     stale_delete_body["stream_id"] = stream_id_b;
     require_json_response(receiver_request(worker, request("/gb28181/receiver/delete", std::move(stale_delete_body))),
                           boost::beast::http::status::internal_server_error,

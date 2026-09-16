@@ -71,8 +71,6 @@ gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string s
 {
 }
 
-gb28181_rtp_receiver::~gb28181_rtp_receiver() = default;
-
 bool gb28181_rtp_receiver::startup()
 {
     if (closed_ || demuxer_ != nullptr || stream_name_.empty())

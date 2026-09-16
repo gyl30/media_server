@@ -36,8 +36,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
                          shutdown_handler on_shutdown,
                          runtime_shutdown_handler on_runtime_shutdown = {},
                          streaming_handler on_streaming = {});
-    ~rtmp_publish_session();
-
     bool startup();
     void shutdown();
 

@@ -29,8 +29,6 @@ rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_strea
 {
 }
 
-rtsp_pull_media::~rtsp_pull_media() = default;
-
 bool rtsp_pull_media::startup()
 {
     if (closed_ || media_stream_ || descriptions_.empty())

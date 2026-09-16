@@ -45,8 +45,6 @@ webrtc_packetizer::webrtc_packetizer(webrtc_packetizer_config config, packet_han
 {
 }
 
-webrtc_packetizer::~webrtc_packetizer() = default;
-
 bool webrtc_packetizer::on_track(const media_track& track)
 {
     if (muxer_ == nullptr)

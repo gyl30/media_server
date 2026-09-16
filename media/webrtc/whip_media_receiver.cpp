@@ -42,8 +42,6 @@ whip_media_receiver::whip_media_receiver(worker_context& worker, std::string str
 {
 }
 
-whip_media_receiver::~whip_media_receiver() = default;
-
 bool whip_media_receiver::startup()
 {
     if (closed_ || media_stream_ || stream_name_.empty() || (config_.video_codec != codec_id::h264 && config_.video_codec != codec_id::h265) ||

@@ -33,8 +33,6 @@ rtsp_publish_media::rtsp_publish_media(worker_context& worker,
 {
 }
 
-rtsp_publish_media::~rtsp_publish_media() = default;
-
 bool rtsp_publish_media::startup(const std::string& rtcp_cname)
 {
     if (closed_ || media_stream_ || descriptions_.empty())

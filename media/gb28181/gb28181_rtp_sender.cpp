@@ -34,8 +34,6 @@ gb28181_rtp_sender::gb28181_rtp_sender(worker_context& worker,
 {
 }
 
-gb28181_rtp_sender::~gb28181_rtp_sender() = default;
-
 bool gb28181_rtp_sender::supported_tracks(const std::vector<media_track>& tracks)
 {
     if (tracks.empty())
