@@ -55,6 +55,7 @@
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/webrtc/whep_session.h"
+#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
@@ -244,12 +245,8 @@ static_assert(std::is_constructible_v<rtmp_play_session,
                                       flv_muxer::packet_handler,
                                       video_transcode_config,
                                       rtmp_play_session::end_handler>);
-static_assert(std::is_constructible_v<rtmp_session,
-                                      worker_context&,
-                                      boost::asio::ip::tcp::socket,
-                                      std::shared_ptr<signaling_client>,
-                                      video_transcode_config,
-                                      std::chrono::milliseconds>);
+static_assert(
+    std::is_constructible_v<rtmp_session, worker_context&, boost::asio::ip::tcp::socket, video_transcode_config, std::chrono::milliseconds>);
 static_assert(std::is_constructible_v<rtsp_server_connection, worker_context&, boost::asio::ip::tcp::socket, video_transcode_codec>);
 
 [[noreturn]] void fail(std::string_view message);
@@ -468,20 +465,19 @@ void require(bool condition, std::string_view message)
 class runtime_event_capture final
 {
    public:
-    explicit runtime_event_capture(worker_context& worker)
-        : worker_(worker),
-          emitter_(std::make_shared<runtime_event_emitter>("media-1",
-                                                           "instance-a",
-                                                           [this](runtime_event event)
-                                                           {
-                                                               std::lock_guard lock(mutex_);
-                                                               owner_worker_ = owner_worker_ && worker_.io().get_executor().running_in_this_thread();
-                                                               events_.push_back(std::move(event));
-                                                           }))
+    explicit runtime_event_capture(worker_context& worker) : worker_(worker)
     {
+        event_reporter::instance().configure_handler("media-1",
+                                                     "instance-a",
+                                                     [this](runtime_event event)
+                                                     {
+                                                         std::lock_guard lock(mutex_);
+                                                         owner_worker_ = owner_worker_ && worker_.io().get_executor().running_in_this_thread();
+                                                         events_.push_back(std::move(event));
+                                                     });
     }
 
-    [[nodiscard]] runtime_event_emitter_ptr emitter() const { return emitter_; }
+    ~runtime_event_capture() { event_reporter::instance().configure_mock(); }
 
     [[nodiscard]] std::vector<runtime_event> events() const
     {
@@ -510,7 +506,6 @@ class runtime_event_capture final
     mutable std::mutex mutex_;
     std::vector<runtime_event> events_;
     bool owner_worker_{true};
-    runtime_event_emitter_ptr emitter_;
 };
 
 void require_publisher_event(const runtime_event& event,
@@ -1615,16 +1610,11 @@ class rtmp_publish_test_peer final
           stream_name_(std::move(stream_name))
     {
         streams_.clear();
-        signaling_ = std::make_shared<signaling_client>(worker_.io(), make_publish_claim_client_options(claim_server_.url(), claim_timeout));
+        signaling_client::instance().configure(worker_.io(), make_publish_claim_client_options(claim_server_.url(), claim_timeout));
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto session = std::make_shared<rtmp_session>(worker_,
-                                                      std::move(server_socket),
-                                                      signaling_,
-                                                      video_transcode_config{},
-                                                      initial_tracks_timeout,
-                                                      1024U * 1024U,
-                                                      runtime_events_.emitter());
+        auto session =
+            std::make_shared<rtmp_session>(worker_, std::move(server_socket), video_transcode_config{}, initial_tracks_timeout, 1024U * 1024U);
         session_ = session;
         session->startup();
         runner_ = std::jthread([this]() { worker_.run(); });
@@ -1985,7 +1975,6 @@ class rtmp_publish_test_peer final
     test::publish_claim_test_server claim_server_;
     worker_context worker_;
     runtime_event_capture runtime_events_;
-    std::shared_ptr<signaling_client> signaling_;
     stream_registry& streams_ = stream_registry::instance();
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_socket_;
@@ -2385,12 +2374,11 @@ void test_rtmp_publish_claim_lifecycle()
 
 void test_rtmp_coroutine_publish_client()
 {
-    test::publish_claim_test_server claim_server;
     worker_context server_worker;
     auto& streams = stream_registry::instance();
     streams.clear();
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
-    auto signaling = std::make_shared<signaling_client>(server_worker.io(), make_publish_claim_client_options(claim_server.url()));
+    signaling_client::instance().configure_mock();
 
     boost::asio::io_context client_io;
     test::rtmp_test_client client(client_io, "live", "coroutine-publish?stream_id=" + std::string(test_rtmp_stream_id));
@@ -2408,7 +2396,7 @@ void test_rtmp_coroutine_publish_client()
                                         boost::asio::use_future);
     std::jthread client_runner([&client_io]() { client_io.run(); });
 
-    auto session = std::make_shared<rtmp_session>(server_worker, acceptor.accept(), std::move(signaling));
+    auto session = std::make_shared<rtmp_session>(server_worker, acceptor.accept());
     session->startup();
     std::jthread server_runner([&server_worker]() { server_worker.run(); });
 
@@ -2461,7 +2449,6 @@ void test_rtmp_coroutine_play_client()
 
 void test_rtsp_coroutine_publish_client()
 {
-    test::publish_claim_test_server claim_server;
     worker_context server_worker;
     auto& streams = stream_registry::instance();
     streams.clear();
@@ -2484,8 +2471,8 @@ void test_rtsp_coroutine_publish_client()
     auto future = boost::asio::co_spawn(client_io, client.publish("127.0.0.1", acceptor.local_endpoint().port(), sdp, rtp), boost::asio::use_future);
     std::jthread client_runner([&client_io]() { client_io.run(); });
 
-    auto signaling = std::make_shared<signaling_client>(server_worker.io(), make_publish_claim_client_options(claim_server.url()));
-    auto connection = std::make_shared<rtsp_server_connection>(server_worker, acceptor.accept(), video_transcode_codec{}, std::move(signaling));
+    signaling_client::instance().configure_mock();
+    auto connection = std::make_shared<rtsp_server_connection>(server_worker, acceptor.accept(), video_transcode_codec{});
     connection->startup();
     std::jthread server_runner([&server_worker]() { server_worker.run(); });
 
@@ -5199,8 +5186,7 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
                                                     "",
                                                     std::chrono::milliseconds(500),
                                                     std::chrono::milliseconds(50),
-                                                    1024U * 1024U,
-                                                    runtime_events.emitter());
+                                                    1024U * 1024U);
     std::promise<bool> startup_result;
     auto startup_future = startup_result.get_future();
     boost::asio::post(client_worker.io(), [pull, &startup_result]() { startup_result.set_value(pull->startup()); });
@@ -5548,8 +5534,8 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     streams.clear();
     config application_config;
     application_config.rtsp_port = port;
-    auto signaling = std::make_shared<signaling_client>(workers.context(0).io(), make_publish_claim_client_options(claim_server.url()));
-    auto server = std::make_shared<rtsp_server>(workers, application_config, std::move(signaling));
+    signaling_client::instance().configure(workers.context(0).io(), make_publish_claim_client_options(claim_server.url()));
+    auto server = std::make_shared<rtsp_server>(workers, application_config);
     boost::system::error_code startup_error;
     server->startup(startup_error);
     require(!startup_error, "rtsp opus whitespace server startup");
@@ -5689,9 +5675,9 @@ void test_rtsp_publish_claim_lifecycle()
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(unavailable_url));
-        auto connection = std::make_shared<rtsp_server_connection>(
-            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+        signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(unavailable_url));
+        auto connection =
+            std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
         connection->startup();
         worker.release_work();
         std::jthread runner([&worker]() { worker.run(); });
@@ -5714,16 +5700,10 @@ void test_rtsp_publish_claim_lifecycle()
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        auto signaling =
-            std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url(), std::chrono::seconds(10)));
+        signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(claim_server.url(), std::chrono::seconds(10)));
         runtime_event_capture runtime_events(worker);
-        auto connection = std::make_shared<rtsp_server_connection>(worker,
-                                                                   std::move(server_socket),
-                                                                   video_transcode_codec::passthrough,
-                                                                   std::move(signaling),
-                                                                   std::chrono::seconds(5),
-                                                                   1024U * 1024U,
-                                                                   runtime_events.emitter());
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5), 1024U * 1024U);
         std::weak_ptr<rtsp_server_connection> weak = connection;
         connection->startup();
         worker.release_work();
@@ -5760,15 +5740,10 @@ void test_rtsp_publish_claim_lifecycle()
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url()));
+        signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(claim_server.url()));
         runtime_event_capture runtime_events(worker);
-        auto connection = std::make_shared<rtsp_server_connection>(worker,
-                                                                   std::move(server_socket),
-                                                                   video_transcode_codec::passthrough,
-                                                                   std::move(signaling),
-                                                                   std::chrono::seconds(5),
-                                                                   1024U * 1024U,
-                                                                   runtime_events.emitter());
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5), 1024U * 1024U);
         connection->startup();
         std::jthread runner([&worker]() { worker.run(); });
 
@@ -5881,15 +5856,10 @@ void test_rtsp_publish_claim_lifecycle()
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url()));
+        signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(claim_server.url()));
         runtime_event_capture runtime_events(worker);
-        auto connection = std::make_shared<rtsp_server_connection>(worker,
-                                                                   std::move(server_socket),
-                                                                   video_transcode_codec::passthrough,
-                                                                   std::move(signaling),
-                                                                   std::chrono::seconds(5),
-                                                                   1024U * 1024U,
-                                                                   runtime_events.emitter());
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5), 1024U * 1024U);
         std::weak_ptr<rtsp_server_connection> weak = connection;
         connection->startup();
         connection.reset();
@@ -5924,10 +5894,9 @@ void test_rtsp_publish_claim_lifecycle()
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        auto signaling =
-            std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url(), std::chrono::milliseconds(50)));
-        auto connection = std::make_shared<rtsp_server_connection>(
-            worker, std::move(server_socket), video_transcode_codec::passthrough, std::move(signaling), std::chrono::seconds(5));
+        signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(claim_server.url(), std::chrono::milliseconds(50)));
+        auto connection =
+            std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
         connection->startup();
         worker.release_work();
         std::jthread runner([&worker]() { worker.run(); });
@@ -5952,15 +5921,10 @@ void test_rtsp_publish_claim_lifecycle()
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        auto signaling = std::make_shared<signaling_client>(worker.io(), make_publish_claim_client_options(claim_server.url()));
+        signaling_client::instance().configure(worker.io(), make_publish_claim_client_options(claim_server.url()));
         runtime_event_capture runtime_events(worker);
-        auto connection = std::make_shared<rtsp_server_connection>(worker,
-                                                                   std::move(server_socket),
-                                                                   video_transcode_codec::passthrough,
-                                                                   std::move(signaling),
-                                                                   std::chrono::seconds(5),
-                                                                   1024U * 1024U,
-                                                                   runtime_events.emitter());
+        auto connection = std::make_shared<rtsp_server_connection>(
+            worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5), 1024U * 1024U);
         std::weak_ptr<rtsp_server_connection> weak = connection;
         connection->startup();
         worker.release_work();
@@ -5998,8 +5962,8 @@ void test_rtsp_publish_server_contract()
     streams.clear();
     config application_config;
     application_config.rtsp_port = port;
-    auto signaling = std::make_shared<signaling_client>(workers.context(0).io(), make_publish_claim_client_options(claim_server.url()));
-    auto server = std::make_shared<rtsp_server>(workers, application_config, std::move(signaling));
+    signaling_client::instance().configure(workers.context(0).io(), make_publish_claim_client_options(claim_server.url()));
+    auto server = std::make_shared<rtsp_server>(workers, application_config);
     boost::system::error_code startup_error;
     server->startup(startup_error);
     require(!startup_error, "rtsp publish server startup");

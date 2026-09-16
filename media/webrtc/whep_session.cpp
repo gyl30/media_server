@@ -12,6 +12,7 @@
 #include <boost/asio/dispatch.hpp>
 
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
 
@@ -48,14 +49,12 @@ whep_session::whep_session(worker_context& worker,
                            std::shared_ptr<dtls_certificate> certificate,
                            whep_session_timeouts timeouts,
                            video_transcode_config video,
-                           std::size_t max_write_queue_bytes,
-                           runtime_event_emitter_ptr runtime_events)
+                           std::size_t max_write_queue_bytes)
     : stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
       video_config_(video),
       timeouts_(timeouts),
-      runtime_events_(std::move(runtime_events)),
       worker_(worker),
       udp_transport_(worker_.io()),
       max_write_queue_bytes_(max_write_queue_bytes),
@@ -809,17 +808,14 @@ void whep_session::emit_starting()
         return;
     }
     runtime_started_ = true;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::output,
-            .stream_id = stream_id_,
-            .stream_name = stream_name_,
-            .protocol = runtime_protocol::whep,
-            .state = runtime_state::starting,
-            .stage = "ice",
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::output,
+        .stream_id = stream_id_,
+        .stream_name = stream_name_,
+        .protocol = runtime_protocol::whep,
+        .state = runtime_state::starting,
+        .stage = "ice",
+    });
 }
 
 void whep_session::emit_streaming()
@@ -829,17 +825,14 @@ void whep_session::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::output,
-            .stream_id = stream_id_,
-            .stream_name = stream_name_,
-            .protocol = runtime_protocol::whep,
-            .state = runtime_state::streaming,
-            .stage = "streaming",
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::output,
+        .stream_id = stream_id_,
+        .stream_name = stream_name_,
+        .protocol = runtime_protocol::whep,
+        .state = runtime_state::streaming,
+        .stage = "streaming",
+    });
 }
 
 void whep_session::emit_stopped()
@@ -850,18 +843,15 @@ void whep_session::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::output,
-            .stream_id = stream_id_,
-            .stream_name = stream_name_,
-            .protocol = runtime_protocol::whep,
-            .state = runtime_state::stopped,
-            .end_reason = end_reason_,
-            .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::output,
+        .stream_id = stream_id_,
+        .stream_name = stream_name_,
+        .protocol = runtime_protocol::whep,
+        .state = runtime_state::stopped,
+        .end_reason = end_reason_,
+        .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
+    });
 }
 
 }    // namespace media_server

@@ -8,7 +8,6 @@
 
 #include "config.h"
 #include "media/net/tcp_listener.h"
-#include "media/core/runtime_event.h"
 #include "media/net/io_context_pool.h"
 
 namespace media_server
@@ -16,7 +15,7 @@ namespace media_server
 class http_server final : public std::enable_shared_from_this<http_server>
 {
    public:
-    http_server(io_context_pool& workers, const config& config, runtime_event_emitter_ptr runtime_events = {});
+    http_server(io_context_pool& workers, const config& config);
 
     void startup(boost::system::error_code& error);
 
@@ -27,7 +26,6 @@ class http_server final : public std::enable_shared_from_this<http_server>
     io_context_pool& workers_;
     worker_context& worker_;
     const config& config_;
-    runtime_event_emitter_ptr runtime_events_;
     tcp_listener listener_;
 };
 }    // namespace media_server

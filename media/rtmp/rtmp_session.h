@@ -32,7 +32,6 @@ struct rtmp_publish_target
 [[nodiscard]] std::optional<rtmp_publish_target> parse_rtmp_publish_target(std::string_view app, std::string_view stream);
 
 class worker_context;
-class signaling_client;
 class rtmp_publish_session;
 class rtmp_play_session;
 
@@ -41,11 +40,9 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
    public:
     rtmp_session(worker_context& worker,
                  boost::asio::ip::tcp::socket socket,
-                 std::shared_ptr<signaling_client> signaling = {},
                  video_transcode_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
-                 std::size_t max_write_queue_bytes = 1024U * 1024U,
-                 runtime_event_emitter_ptr runtime_events = {});
+                 std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtmp_session();
 
     void startup();
@@ -78,7 +75,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
    private:
     worker_context& worker_;
     tcp_yield_transport transport_;
-    std::shared_ptr<signaling_client> signaling_;
     std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
@@ -90,7 +86,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     boost::asio::cancellation_signal publish_claim_cancellation_;
     std::string stream_id_;
     std::string stream_name_;
-    runtime_event_emitter_ptr runtime_events_;
     runtime_end_reason end_reason_{runtime_end_reason::requested};
     std::string end_stage_;
     std::string end_error_;

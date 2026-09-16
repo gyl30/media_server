@@ -15,6 +15,7 @@
 #include "media/core/media_stream.h"
 #include "media/http/gb28181_http.h"
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
@@ -44,15 +45,15 @@ struct captured_events
     bool owner_only{true};
 };
 
-runtime_event_emitter_ptr capture_events(worker_context& worker, captured_events& events)
+void capture_events(worker_context& worker, captured_events& events)
 {
-    return std::make_shared<runtime_event_emitter>("media-1",
-                                                   "instance-1",
-                                                   [&worker, &events](runtime_event event)
-                                                   {
-                                                       events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
-                                                       events.values.push_back(std::move(event));
-                                                   });
+    event_reporter::instance().configure_handler("media-1",
+                                                 "instance-1",
+                                                 [&worker, &events](runtime_event event)
+                                                 {
+                                                     events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
+                                                     events.values.push_back(std::move(event));
+                                                 });
 }
 
 template <typename Handler>
@@ -259,13 +260,9 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
     const auto description = make_tcp_passive_transport(0, 10'000'2007);
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
-    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker,
-                                                                  std::string{stream_id},
-                                                                  stream_name,
-                                                                  description,
-                                                                  boost::asio::ip::address_v4::loopback(),
-                                                                  std::chrono::seconds(1),
-                                                                  capture_events(worker, events));
+    capture_events(worker, events);
+    auto session = std::make_shared<gb28181_tcp_receiver_session>(
+        worker, std::string{stream_id}, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
     require(stream_registry::instance().add_receiver_session(stream_name, session), "gb receiver repeated shutdown registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
@@ -302,6 +299,7 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
     const auto description = make_tcp_passive_transport(0, 10'000'2008);
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
+    capture_events(worker, events);
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
                                                                 std::string{stream_id},
                                                                 stream,
@@ -309,8 +307,7 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),
                                                                 std::chrono::seconds(1),
-                                                                1024U * 1024U,
-                                                                capture_events(worker, events));
+                                                                1024U * 1024U);
     require(stream_registry::instance().add_sender_session(stream->name(), "repeated-shutdown", session), "gb sender repeated shutdown registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
@@ -348,13 +345,9 @@ void test_tcp_timeout_unregisters_receiver_session()
     const auto description = make_tcp_passive_transport(0, 10'000'2005);
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
-    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker,
-                                                                  std::string{stream_id},
-                                                                  stream_name,
-                                                                  description,
-                                                                  boost::asio::ip::address_v4::loopback(),
-                                                                  std::chrono::milliseconds(5),
-                                                                  capture_events(worker, events));
+    capture_events(worker, events);
+    auto session = std::make_shared<gb28181_tcp_receiver_session>(
+        worker, std::string{stream_id}, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
     require(stream_registry::instance().add_receiver_session(stream_name, session), "gb receiver timeout registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
@@ -385,6 +378,7 @@ void test_tcp_timeout_unregisters_sender_session()
     const auto description = make_tcp_passive_transport(0, 10'000'2006);
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
+    capture_events(worker, events);
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
                                                                 std::string{stream_id},
                                                                 stream,
@@ -392,8 +386,7 @@ void test_tcp_timeout_unregisters_sender_session()
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),
                                                                 std::chrono::milliseconds(5),
-                                                                1024U * 1024U,
-                                                                capture_events(worker, events));
+                                                                1024U * 1024U);
     require(stream_registry::instance().add_sender_session(stream->name(), "timeout", session), "gb sender timeout registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });

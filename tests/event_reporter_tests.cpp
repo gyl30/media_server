@@ -22,9 +22,9 @@
 #include "media/http/gb28181_http.h"
 #include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/http/signaling_client.h"
-#include "media/http/runtime_event_reporter.h"
 
 namespace
 {
@@ -226,6 +226,24 @@ media_server::runtime_event event(std::size_t value)
     };
 }
 
+void test_mock_and_capture_modes()
+{
+    auto& reporter = media_server::event_reporter::instance();
+    reporter.configure_mock();
+    reporter.report(event(0));
+
+    std::vector<media_server::runtime_event> captured;
+    reporter.configure_handler("media-capture", "instance-capture", [&](media_server::runtime_event value) { captured.push_back(std::move(value)); });
+    reporter.report(event(1));
+    require(captured.size() == 1U, "capture reporter receives event");
+    require(captured.front().server_id == "media-capture" && captured.front().instance_id == "instance-capture",
+            "capture reporter fills event identity");
+
+    reporter.configure_mock();
+    reporter.report(event(2));
+    require(captured.size() == 1U, "mock reporter is no-op");
+}
+
 media_server::signaling_client_options client_options(std::string url)
 {
     return {
@@ -245,20 +263,17 @@ media_server::signaling_client_options client_options(std::string url)
 class reporter_fixture
 {
    public:
-    explicit reporter_fixture(std::string url)
-        : work_(boost::asio::make_work_guard(io_)),
-          client_(std::make_shared<media_server::signaling_client>(io_, client_options(std::move(url)))),
-          reporter_(std::make_shared<media_server::runtime_event_reporter>(io_, client_)),
-          runner_([this]() { io_.run(); })
+    explicit reporter_fixture(std::string url) : work_(boost::asio::make_work_guard(io_))
     {
+        media_server::signaling_client::instance().configure(io_, client_options(std::move(url)));
+        media_server::event_reporter::instance().configure(io_, "media-1", "instance-a");
+        runner_ = std::jthread([this]() { io_.run(); });
     }
 
     ~reporter_fixture()
     {
-        if (reporter_)
-        {
-            reporter_->shutdown();
-        }
+        media_server::event_reporter::instance().configure_mock();
+        media_server::signaling_client::instance().configure_mock();
         work_.reset();
         if (runner_.joinable())
         {
@@ -266,7 +281,7 @@ class reporter_fixture
         }
     }
 
-    void report(media_server::runtime_event value) { reporter_->report(std::move(value)); }
+    void report(media_server::runtime_event value) { media_server::event_reporter::instance().report(std::move(value)); }
 
     void barrier()
     {
@@ -288,19 +303,16 @@ class reporter_fixture
 
     void shutdown()
     {
-        reporter_->shutdown();
-        reporter_.reset();
+        media_server::event_reporter::instance().configure_mock();
+        media_server::signaling_client::instance().configure_mock();
         work_.reset();
     }
 
-    [[nodiscard]] std::weak_ptr<media_server::runtime_event_reporter> weak_reporter() const { return reporter_; }
     [[nodiscard]] boost::asio::io_context& io() { return io_; }
 
    private:
     boost::asio::io_context io_;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
-    std::shared_ptr<media_server::signaling_client> client_;
-    std::shared_ptr<media_server::runtime_event_reporter> reporter_;
     std::jthread runner_;
 };
 
@@ -418,11 +430,12 @@ void test_report_coalesces_before_owner_context()
 {
     scripted_http_server server({response_action::hold_no_content});
     boost::asio::io_context io;
-    auto client = std::make_shared<media_server::signaling_client>(io, client_options(server.url()));
-    auto reporter = std::make_shared<media_server::runtime_event_reporter>(io, client);
+    media_server::signaling_client::instance().configure(io, client_options(server.url()));
+    auto& reporter = media_server::event_reporter::instance();
+    reporter.configure(io, "media-1", "instance-a");
     for (std::size_t index = 0; index <= 500U; ++index)
     {
-        reporter->report(event(index));
+        reporter.report(event(index));
     }
 
     bool barrier_reached{};
@@ -436,7 +449,8 @@ void test_report_coalesces_before_owner_context()
     require(barrier_reached, "reporter owner barrier reached");
     require(handlers < 10U, "runtime event ingress coalesces owner handlers");
 
-    reporter->shutdown();
+    reporter.configure_mock();
+    media_server::signaling_client::instance().configure_mock();
     server.release_hold();
     io.run_for(500ms);
 }
@@ -450,14 +464,10 @@ void test_emit_never_blocks_worker()
 
     boost::asio::io_context worker;
     bool completed{};
-    const auto reporter = fixture.weak_reporter().lock();
-    require(reporter != nullptr, "nonblocking reporter exists");
-    const auto emitter = std::make_shared<media_server::runtime_event_emitter>(
-        "media-1", "instance-a", [reporter](media_server::runtime_event value) { reporter->report(std::move(value)); });
     boost::asio::post(worker,
                       [&]()
                       {
-                          emitter->emit(event(1));
+                          media_server::event_reporter::instance().report(event(1));
                           completed = true;
                       });
     const auto started = std::chrono::steady_clock::now();
@@ -481,14 +491,11 @@ media_server::gb28181_http_request gb_receiver_request(std::string stream_name, 
     return request;
 }
 
-media_server::gb28181_http_response handle_gb_receiver(media_server::worker_context& worker,
-                                                       media_server::gb28181_http_request request,
-                                                       media_server::runtime_event_emitter_ptr runtime_events)
+media_server::gb28181_http_response handle_gb_receiver(media_server::worker_context& worker, media_server::gb28181_http_request request)
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "GB28181 test request target");
-    return media_server::handle_gb28181_receiver_request(
-        request, worker, *target, boost::asio::ip::address_v4::loopback(), std::move(runtime_events));
+    return media_server::handle_gb28181_receiver_request(request, worker, *target, boost::asio::ip::address_v4::loopback());
 }
 
 void test_delivery_failure_does_not_stop_media_session()
@@ -496,19 +503,9 @@ void test_delivery_failure_does_not_stop_media_session()
     scripted_http_server server({response_action::server_error});
     reporter_fixture fixture(server.url());
     media_server::worker_context worker;
-    const auto reporter = fixture.weak_reporter();
-    const auto emitter = std::make_shared<media_server::runtime_event_emitter>("media-1",
-                                                                               "instance-a",
-                                                                               [reporter](media_server::runtime_event value)
-                                                                               {
-                                                                                   if (const auto target = reporter.lock())
-                                                                                   {
-                                                                                       target->report(std::move(value));
-                                                                                   }
-                                                                               });
     constexpr std::string_view name = "live/event-delivery-failure";
     const auto id = stream_id(700);
-    const auto create = handle_gb_receiver(worker, gb_receiver_request(std::string(name), id), emitter);
+    const auto create = handle_gb_receiver(worker, gb_receiver_request(std::string(name), id));
     require(create.result() == boost::beast::http::status::created, "GB28181 receiver starts before event failure");
     std::jthread runner([&]() { worker.run(); });
     require(server.wait_requests(1), "GB28181 starting event delivery attempted");
@@ -516,14 +513,14 @@ void test_delivery_failure_does_not_stop_media_session()
     fixture.report(event(701));
     require(server.wait_requests(2), "reporter continues after GB28181 event HTTP failure");
 
-    const auto duplicate = handle_gb_receiver(worker, gb_receiver_request(std::string(name), id), emitter);
+    const auto duplicate = handle_gb_receiver(worker, gb_receiver_request(std::string(name), id));
     require(duplicate.result() == boost::beast::http::status::internal_server_error, "event delivery failure leaves receiver session running");
 
     media_server::gb28181_http_request remove{boost::beast::http::verb::post, "/gb28181/receiver/delete", 11};
     remove.set(boost::beast::http::field::content_type, "application/json");
     remove.body() = boost::json::serialize(boost::json::object{{"stream_id", id}, {"stream_name", name}});
     remove.prepare_payload();
-    const auto removed = handle_gb_receiver(worker, std::move(remove), emitter);
+    const auto removed = handle_gb_receiver(worker, std::move(remove));
     require(removed.result() == boost::beast::http::status::no_content, "event delivery failure permits normal receiver shutdown");
     worker.release_work();
     runner.join();
@@ -539,14 +536,8 @@ void test_shutdown_cancels_reconnect_without_drain()
     fixture.report(event(2));
     require(server.wait_requests(1), "shutdown test reaches network failure");
     require(!server.wait_requests(2, 1s), "shutdown test enters reconnect wait");
-    const auto weak = fixture.weak_reporter();
     const auto started = std::chrono::steady_clock::now();
     fixture.shutdown();
-    while (!weak.expired() && std::chrono::steady_clock::now() - started < 500ms)
-    {
-        std::this_thread::sleep_for(5ms);
-    }
-    require(weak.expired(), "reporter shutdown cancels reconnect timer");
     require(std::chrono::steady_clock::now() - started < 500ms, "reporter shutdown does not drain backlog");
     require(!server.wait_requests(2, 200ms), "reporter shutdown does not send queued event");
 }
@@ -558,14 +549,8 @@ void test_shutdown_cancels_in_flight_without_drain()
     fixture.report(event(1));
     fixture.report(event(2));
     require(server.wait_requests(1), "in-flight shutdown test holds HTTP response");
-    const auto weak = fixture.weak_reporter();
     const auto started = std::chrono::steady_clock::now();
     fixture.shutdown();
-    while (!weak.expired() && std::chrono::steady_clock::now() - started < 500ms)
-    {
-        std::this_thread::sleep_for(5ms);
-    }
-    require(weak.expired(), "reporter shutdown cancels in-flight HTTP request");
     require(std::chrono::steady_clock::now() - started < 500ms, "in-flight shutdown does not wait for response or drain backlog");
     server.release_hold();
     require(!server.wait_requests(2, 200ms), "in-flight shutdown does not send queued event");
@@ -577,6 +562,7 @@ int main()
 {
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::stream_registry::instance().clear();
+    test_mock_and_capture_modes();
     test_fifo_and_event_body();
     test_http_failures_drop_attempted_and_continue();
     test_network_failure_drops_attempted_and_delays_backlog();

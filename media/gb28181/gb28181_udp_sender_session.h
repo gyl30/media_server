@@ -38,8 +38,7 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
                                std::string sender_id,
                                bool rtcp_enabled,
                                std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{25'000},
-                               std::size_t max_write_queue_bytes = 1024U * 1024U,
-                               runtime_event_emitter_ptr runtime_events = {});
+                               std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] bool startup();
     void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
@@ -75,7 +74,6 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::optional<port_manager::port_pair> local_ports_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
-    runtime_event_emitter_ptr runtime_events_;
     runtime_end_reason end_reason_{runtime_end_reason::requested};
     std::string end_error_;
     void* rtcp_sender_{};

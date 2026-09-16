@@ -31,8 +31,7 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
                                  std::string stream_name,
                                  gb28181_transport_config config,
                                  boost::asio::ip::address bind_address,
-                                 std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000},
-                                 runtime_event_emitter_ptr runtime_events = {});
+                                 std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     [[nodiscard]] bool startup();
     void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
@@ -63,7 +62,6 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     std::chrono::milliseconds rtcp_interval_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
-    runtime_event_emitter_ptr runtime_events_;
     runtime_end_reason end_reason_{runtime_end_reason::requested};
     std::string end_error_;
     bool started_{};

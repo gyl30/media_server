@@ -17,6 +17,7 @@
 
 #include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_udp_receiver_session.h"
@@ -48,15 +49,15 @@ struct captured_events
     bool owner_only{true};
 };
 
-runtime_event_emitter_ptr capture_events(worker_context& worker, captured_events& events)
+void capture_events(worker_context& worker, captured_events& events)
 {
-    return std::make_shared<runtime_event_emitter>("media-1",
-                                                   "instance-1",
-                                                   [&worker, &events](runtime_event event)
-                                                   {
-                                                       events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
-                                                       events.values.push_back(std::move(event));
-                                                   });
+    event_reporter::instance().configure_handler("media-1",
+                                                 "instance-1",
+                                                 [&worker, &events](runtime_event event)
+                                                 {
+                                                     events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
+                                                     events.values.push_back(std::move(event));
+                                                 });
 }
 
 template <typename Handler>
@@ -322,13 +323,9 @@ void test_udp_session_fatal_codec_change_unregisters()
     };
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
-    auto session = std::make_shared<gb28181_udp_receiver_session>(worker,
-                                                                  std::string{stream_id},
-                                                                  stream_name,
-                                                                  description,
-                                                                  boost::asio::ip::address_v4::loopback(),
-                                                                  std::chrono::milliseconds{1'000},
-                                                                  capture_events(worker, events));
+    capture_events(worker, events);
+    auto session = std::make_shared<gb28181_udp_receiver_session>(
+        worker, std::string{stream_id}, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds{1'000});
     require(streams.add_receiver_session(stream_name, session), "gb fatal codec session registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
@@ -371,6 +368,7 @@ void test_udp_session_fatal_codec_change_unregisters()
     io.restart();
     io.run();
     require(events.values.size() == 3U, "gb fatal codec terminal exactly once");
+    event_reporter::instance().configure_mock();
 }
 
 void test_sender_same_codec_config_version_continues_ps_stream()

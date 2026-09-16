@@ -14,10 +14,9 @@
 #include "media/http/http_server.h"
 #include "media/rtmp/rtmp_server.h"
 #include "media/rtsp/rtsp_server.h"
-#include "media/core/runtime_event.h"
 #include "media/net/io_context_pool.h"
+#include "media/http/event_reporter.h"
 #include "media/http/signaling_client.h"
-#include "media/http/runtime_event_reporter.h"
 
 namespace media_server
 {
@@ -50,45 +49,42 @@ void service::schedule_signaling_abort()
 void service::run_control(boost::asio::yield_context yield)
 {
     auto& control_io = workers_->context(0).io();
-    const auto signaling = signaling_;
-    if (signaling)
+    auto& signaling = signaling_client::instance();
+    boost::asio::steady_timer retry_timer(control_io);
+    for (;;)
     {
-        boost::asio::steady_timer retry_timer(control_io);
-        for (;;)
+        const auto registration = signaling.register_once(yield);
+        if (registration.kind == signaling_result_kind::accepted)
         {
-            const auto registration = signaling->register_once(yield);
-            if (registration.kind == signaling_result_kind::accepted)
-            {
-                break;
-            }
-            if (registration.kind == signaling_result_kind::rejected)
-            {
-                spdlog::critical("signaling registration rejected status {}; aborting in 5 seconds", registration.status);
-                boost::asio::steady_timer abort_timer(control_io, std::chrono::seconds{5});
-                boost::system::error_code error;
-                abort_timer.async_wait(yield[error]);
-                if (!error)
-                {
-                    std::abort();
-                }
-                return;
-            }
-            if (registration.kind == signaling_result_kind::temporary_failure)
-            {
-                spdlog::warn("signaling registration temporary failure status {}; retrying in 1 second", registration.status);
-            }
-            else
-            {
-                spdlog::warn("signaling registration network error {}; retrying in 1 second", registration.error);
-            }
-
-            retry_timer.expires_after(std::chrono::seconds{1});
+            break;
+        }
+        if (registration.kind == signaling_result_kind::rejected)
+        {
+            spdlog::critical("signaling registration rejected status {}; aborting in 5 seconds", registration.status);
+            boost::asio::steady_timer abort_timer(control_io, std::chrono::seconds{5});
             boost::system::error_code error;
-            retry_timer.async_wait(yield[error]);
-            if (error)
+            abort_timer.async_wait(yield[error]);
+            if (!error)
             {
-                return;
+                std::abort();
             }
+            return;
+        }
+        if (registration.kind == signaling_result_kind::temporary_failure)
+        {
+            spdlog::warn("signaling registration temporary failure status {}; retrying in 1 second", registration.status);
+        }
+        else
+        {
+            spdlog::warn("signaling registration network error {}; retrying in 1 second", registration.error);
+        }
+
+        retry_timer.expires_after(std::chrono::seconds{1});
+        boost::system::error_code error;
+        retry_timer.async_wait(yield[error]);
+        if (error)
+        {
+            return;
         }
     }
 
@@ -125,10 +121,7 @@ void service::run_control(boost::asio::yield_context yield)
     spdlog::info("rtsp play path app/stream");
     spdlog::info("http flv path app/stream.flv");
 
-    if (signaling)
-    {
-        signaling->run_heartbeat(yield, [this]() { schedule_signaling_abort(); });
-    }
+    signaling.run_heartbeat(yield, [this]() { schedule_signaling_abort(); });
 }
 
 int service::run()
@@ -151,6 +144,10 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_io = workers_->context(0).io();
+    auto& signaling = signaling_client::instance();
+    auto& reporter = event_reporter::instance();
+    signaling.configure_mock();
+    reporter.configure_mock();
     if (!config_.signaling_url.empty())
     {
         const auto instance_id = boost::uuids::to_string(boost::uuids::random_generator{}());
@@ -164,23 +161,13 @@ int service::run()
             .rtsp_port = config_.rtsp_port,
             .http_port = config_.http_port,
         };
-        signaling_ = std::make_shared<signaling_client>(control_io, std::move(options));
-        runtime_event_reporter_ = std::make_shared<runtime_event_reporter>(control_io, signaling_);
-        runtime_events_ =
-            std::make_shared<runtime_event_emitter>(config_.server_id,
-                                                    instance_id,
-                                                    [reporter = std::weak_ptr<runtime_event_reporter>(runtime_event_reporter_)](runtime_event event)
-                                                    {
-                                                        if (const auto value = reporter.lock())
-                                                        {
-                                                            value->report(std::move(event));
-                                                        }
-                                                    });
+        signaling.configure(control_io, std::move(options));
+        reporter.configure(control_io, config_.server_id, instance_id);
     }
 
-    rtmp_ = std::make_shared<rtmp_server>(*workers_, config_, signaling_, runtime_events_);
-    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_, signaling_, runtime_events_);
-    http_ = std::make_shared<http_server>(*workers_, config_, runtime_events_);
+    rtmp_ = std::make_shared<rtmp_server>(*workers_, config_);
+    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_);
+    http_ = std::make_shared<http_server>(*workers_, config_);
 
     signals_ = std::make_unique<boost::asio::signal_set>(control_io, SIGINT, SIGTERM);
     signals_->async_wait([this](const boost::system::error_code&, int) { stop(); });
@@ -188,6 +175,8 @@ int service::run()
     boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_control(yield); }, boost::asio::detached);
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
+    reporter.configure_mock();
+    signaling.configure_mock();
     return exit_code_;
 }
 

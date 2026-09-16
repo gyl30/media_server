@@ -1,9 +1,7 @@
 #ifndef MEDIA_CORE_RUNTIME_EVENT_H
 #define MEDIA_CORE_RUNTIME_EVENT_H
 
-#include <memory>
 #include <string>
-#include <utility>
 #include <optional>
 #include <functional>
 #include <string_view>
@@ -59,33 +57,6 @@ struct runtime_event
 };
 
 using runtime_event_handler = std::function<void(runtime_event)>;
-
-class runtime_event_emitter final
-{
-   public:
-    runtime_event_emitter(std::string server_id, std::string instance_id, runtime_event_handler handler)
-        : server_id_(std::move(server_id)), instance_id_(std::move(instance_id)), handler_(std::move(handler))
-    {
-    }
-
-    void emit(runtime_event event) const
-    {
-        if (!handler_)
-        {
-            return;
-        }
-        event.server_id = server_id_;
-        event.instance_id = instance_id_;
-        handler_(std::move(event));
-    }
-
-   private:
-    std::string server_id_;
-    std::string instance_id_;
-    runtime_event_handler handler_;
-};
-
-using runtime_event_emitter_ptr = std::shared_ptr<const runtime_event_emitter>;
 
 [[nodiscard]] constexpr std::string_view to_string(runtime_kind value) noexcept
 {

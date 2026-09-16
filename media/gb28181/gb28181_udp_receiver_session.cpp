@@ -12,6 +12,7 @@
 #include <boost/asio/dispatch.hpp>
 
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_udp_receiver_session.h"
 
@@ -23,8 +24,7 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
                                                            std::string stream_name,
                                                            gb28181_transport_config config,
                                                            boost::asio::ip::address bind_address,
-                                                           std::chrono::milliseconds rtcp_interval,
-                                                           runtime_event_emitter_ptr runtime_events)
+                                                           std::chrono::milliseconds rtcp_interval)
     : worker_(worker),
       stream_id_(std::move(stream_id)),
       config_(std::move(config)),
@@ -33,8 +33,7 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
       rtp_transport_(worker_.io()),
       rtcp_transport_(worker_.io()),
       rtcp_timer_(worker_.io()),
-      rtcp_interval_(rtcp_interval),
-      runtime_events_(std::move(runtime_events))
+      rtcp_interval_(rtcp_interval)
 {
 }
 
@@ -282,17 +281,14 @@ void gb28181_udp_receiver_session::emit_starting()
         return;
     }
     runtime_started_ = true;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::source,
-            .stream_id = stream_id_,
-            .stream_name = receiver_.stream_name(),
-            .protocol = runtime_protocol::gb28181,
-            .state = runtime_state::starting,
-            .stage = "listening",
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::source,
+        .stream_id = stream_id_,
+        .stream_name = receiver_.stream_name(),
+        .protocol = runtime_protocol::gb28181,
+        .state = runtime_state::starting,
+        .stage = "listening",
+    });
 }
 
 void gb28181_udp_receiver_session::emit_streaming()
@@ -302,17 +298,14 @@ void gb28181_udp_receiver_session::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::source,
-            .stream_id = stream_id_,
-            .stream_name = receiver_.stream_name(),
-            .protocol = runtime_protocol::gb28181,
-            .state = runtime_state::streaming,
-            .stage = "streaming",
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::source,
+        .stream_id = stream_id_,
+        .stream_name = receiver_.stream_name(),
+        .protocol = runtime_protocol::gb28181,
+        .state = runtime_state::streaming,
+        .stage = "streaming",
+    });
 }
 
 void gb28181_udp_receiver_session::emit_stopped()
@@ -323,18 +316,15 @@ void gb28181_udp_receiver_session::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::source,
-            .stream_id = stream_id_,
-            .stream_name = receiver_.stream_name(),
-            .protocol = runtime_protocol::gb28181,
-            .state = runtime_state::stopped,
-            .end_reason = end_reason_,
-            .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::source,
+        .stream_id = stream_id_,
+        .stream_name = receiver_.stream_name(),
+        .protocol = runtime_protocol::gb28181,
+        .state = runtime_state::stopped,
+        .end_reason = end_reason_,
+        .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
+    });
 }
 
 }    // namespace media_server

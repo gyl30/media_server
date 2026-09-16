@@ -9,15 +9,10 @@
 namespace media_server
 {
 
-rtmp_server::rtmp_server(io_context_pool& workers,
-                         const config& config,
-                         std::shared_ptr<signaling_client> signaling,
-                         runtime_event_emitter_ptr runtime_events)
+rtmp_server::rtmp_server(io_context_pool& workers, const config& config)
     : workers_(workers),
       worker_(workers.next()),
       config_(config),
-      signaling_(std::move(signaling)),
-      runtime_events_(std::move(runtime_events)),
       listener_(worker_.io(), config.rtmp_port, boost::asio::ip::make_address(config.bind_address))
 {
 }
@@ -47,8 +42,8 @@ void rtmp_server::run(boost::asio::yield_context yield)
             return;
         }
 
-        auto session = std::make_shared<rtmp_session>(
-            *worker, std::move(socket), signaling_, config_.rtmp_video, std::chrono::milliseconds{15'000}, 1024U * 1024U, runtime_events_);
+        auto session =
+            std::make_shared<rtmp_session>(*worker, std::move(socket), config_.rtmp_video, std::chrono::milliseconds{15'000}, 1024U * 1024U);
         session->startup();
     }
 }

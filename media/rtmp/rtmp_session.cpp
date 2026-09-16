@@ -12,6 +12,7 @@
 #include "media/core/stream_id.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
+#include "media/http/event_reporter.h"
 #include "media/core/stream_registry.h"
 #include "media/http/signaling_client.h"
 #include "media/rtmp/rtmp_play_session.h"
@@ -86,18 +87,14 @@ std::optional<rtmp_publish_target> parse_rtmp_publish_target(std::string_view ap
 
 rtmp_session::rtmp_session(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
-                           std::shared_ptr<signaling_client> signaling,
                            video_transcode_config video,
                            std::chrono::milliseconds initial_tracks_timeout,
-                           std::size_t max_write_queue_bytes,
-                           runtime_event_emitter_ptr runtime_events)
+                           std::size_t max_write_queue_bytes)
     : worker_(worker),
       transport_(std::move(socket)),
-      signaling_(std::move(signaling)),
       max_write_queue_bytes_(max_write_queue_bytes),
       initial_tracks_timeout_(initial_tracks_timeout),
-      video_config_(video),
-      runtime_events_(std::move(runtime_events))
+      video_config_(video)
 {
 }
 
@@ -380,7 +377,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     }
 
     const auto target = parse_rtmp_publish_target(app, stream);
-    if (!signaling_ || !target)
+    if (!target)
     {
         shutdown_with_stage(runtime_end_reason::protocol_error, "control", "invalid_publish_target");
         return -1;
@@ -400,7 +397,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
 void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
 {
     yield.throw_if_cancelled(false);
-    const auto result = signaling_->claim_publish(stream_id_, "rtmp", stream_name_, yield);
+    const auto result = signaling_client::instance().claim_publish(stream_id_, "rtmp", stream_name_, yield);
     if (ending_ || closed_ || rtmp_context_ == nullptr || !publish_claim_pending_)
     {
         return;
@@ -491,17 +488,14 @@ void rtmp_session::emit_starting()
         return;
     }
     runtime_started_ = true;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::publisher,
-            .stream_id = stream_id_,
-            .stream_name = stream_name_,
-            .protocol = runtime_protocol::rtmp,
-            .state = runtime_state::starting,
-            .stage = "publish",
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::publisher,
+        .stream_id = stream_id_,
+        .stream_name = stream_name_,
+        .protocol = runtime_protocol::rtmp,
+        .state = runtime_state::starting,
+        .stage = "publish",
+    });
 }
 
 void rtmp_session::emit_streaming()
@@ -511,17 +505,14 @@ void rtmp_session::emit_streaming()
         return;
     }
     runtime_streaming_ = true;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::publisher,
-            .stream_id = stream_id_,
-            .stream_name = stream_name_,
-            .protocol = runtime_protocol::rtmp,
-            .state = runtime_state::streaming,
-            .stage = "streaming",
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::publisher,
+        .stream_id = stream_id_,
+        .stream_name = stream_name_,
+        .protocol = runtime_protocol::rtmp,
+        .state = runtime_state::streaming,
+        .stage = "streaming",
+    });
 }
 
 void rtmp_session::emit_stopped()
@@ -532,19 +523,16 @@ void rtmp_session::emit_stopped()
     }
     runtime_started_ = false;
     runtime_streaming_ = false;
-    if (runtime_events_)
-    {
-        runtime_events_->emit(runtime_event{
-            .kind = runtime_kind::publisher,
-            .stream_id = stream_id_,
-            .stream_name = stream_name_,
-            .protocol = runtime_protocol::rtmp,
-            .state = runtime_state::stopped,
-            .stage = end_stage_.empty() ? std::nullopt : std::optional<std::string>{end_stage_},
-            .end_reason = end_reason_,
-            .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
-        });
-    }
+    event_reporter::instance().report(runtime_event{
+        .kind = runtime_kind::publisher,
+        .stream_id = stream_id_,
+        .stream_name = stream_name_,
+        .protocol = runtime_protocol::rtmp,
+        .state = runtime_state::stopped,
+        .stage = end_stage_.empty() ? std::nullopt : std::optional<std::string>{end_stage_},
+        .end_reason = end_reason_,
+        .error = end_error_.empty() ? std::nullopt : std::optional<std::string>{end_error_},
+    });
 }
 
 std::string rtmp_session::make_stream_name(std::string_view app, std::string_view stream)

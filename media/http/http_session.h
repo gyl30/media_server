@@ -10,7 +10,6 @@
 #include <boost/asio/ip/tcp.hpp>
 
 #include "config.h"
-#include "media/core/runtime_event.h"
 
 namespace media_server
 {
@@ -22,11 +21,7 @@ class http_flv_session;
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
-    http_session(worker_context& worker,
-                 boost::asio::ip::tcp::socket socket,
-                 io_context_pool& workers,
-                 const config& config,
-                 runtime_event_emitter_ptr runtime_events = {});
+    http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, io_context_pool& workers, const config& config);
 
     void startup();
     void shutdown();
@@ -50,7 +45,6 @@ class http_session final : public std::enable_shared_from_this<http_session>
     boost::beast::tcp_stream stream_;
     io_context_pool& workers_;
     const config& config_;
-    runtime_event_emitter_ptr runtime_events_;
     std::shared_ptr<hls_http_session> hls_;
     std::shared_ptr<http_flv_session> flv_;
     bool closed_{};

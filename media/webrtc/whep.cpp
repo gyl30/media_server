@@ -62,12 +62,8 @@ void release_stream_session(const std::shared_ptr<whep_session>& expected)
 
 }    // namespace
 
-create_result create(worker_context& worker,
-                     std::string stream_id,
-                     std::string_view stream_name,
-                     std::string_view offer_sdp,
-                     const config& application_config,
-                     runtime_event_emitter_ptr runtime_events)
+create_result create(
+    worker_context& worker, std::string stream_id, std::string_view stream_name, std::string_view offer_sdp, const config& application_config)
 {
     spdlog::debug("whep create stream {} offer_bytes {}", stream_name, offer_sdp.size());
 
@@ -130,8 +126,7 @@ create_result create(worker_context& worker,
                                                   std::move(certificate),
                                                   whep_session_timeouts{},
                                                   application_config.whep_video,
-                                                  1024U * 1024U,
-                                                  std::move(runtime_events));
+                                                  1024U * 1024U);
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
