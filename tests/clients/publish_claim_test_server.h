@@ -55,9 +55,6 @@ class publish_claim_test_server final
         thread_.join();
     }
 
-    publish_claim_test_server(const publish_claim_test_server&) = delete;
-    publish_claim_test_server& operator=(const publish_claim_test_server&) = delete;
-
     [[nodiscard]] std::string url() const { return "http://127.0.0.1:" + std::to_string(port_); }
 
     [[nodiscard]] std::size_t request_count() const

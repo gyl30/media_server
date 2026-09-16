@@ -39,8 +39,6 @@ class webrtc_packetizer final
     using packet_handler = std::function<void(std::span<const std::uint8_t>)>;
 
     webrtc_packetizer(webrtc_packetizer_config config, packet_handler rtp_handler, packet_handler rtcp_handler = {});
-    ~webrtc_packetizer();
-
     bool on_track(const media_track& track);
     bool on_frame(const media_frame& frame);
     void shutdown();

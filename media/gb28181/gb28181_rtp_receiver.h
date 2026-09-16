@@ -33,8 +33,6 @@ class gb28181_rtp_receiver final
 {
    public:
     gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
-    ~gb28181_rtp_receiver();
-
     [[nodiscard]] bool startup();
     [[nodiscard]] gb28181_rtp_receive_result receive_rtp(std::span<const std::uint8_t> data);
     [[nodiscard]] int receive_rtcp(std::span<const std::uint8_t> data);

@@ -43,8 +43,6 @@ rtmp_publish_session::rtmp_publish_session(worker_context& worker,
 {
 }
 
-rtmp_publish_session::~rtmp_publish_session() = default;
-
 bool rtmp_publish_session::startup()
 {
     demuxer_ = flv_demuxer_create(&rtmp_publish_session::demux_callback, this);

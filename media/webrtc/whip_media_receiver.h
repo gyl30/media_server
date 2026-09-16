@@ -35,8 +35,6 @@ class whip_media_receiver final
 {
    public:
     whip_media_receiver(worker_context& worker, std::string stream_name, whip_media_receiver_config config);
-    ~whip_media_receiver();
-
     [[nodiscard]] bool startup();
     [[nodiscard]] bool input_rtp(std::span<const std::uint8_t> packet);
     [[nodiscard]] bool input_rtcp(std::span<const std::uint8_t> packet);

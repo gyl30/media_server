@@ -38,8 +38,6 @@ class rtsp_pull_media final
 {
    public:
     rtsp_pull_media(worker_context& worker, std::string media_stream_name, std::vector<rtsp_pull_track_description> descriptions);
-    ~rtsp_pull_media();
-
     [[nodiscard]] bool startup();
     [[nodiscard]] bool input_packet(std::uint8_t channel, std::span<const std::uint8_t> data);
     int set_rtp_info(std::size_t media, std::uint16_t sequence, std::uint32_t timestamp);

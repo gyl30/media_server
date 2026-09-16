@@ -29,8 +29,6 @@ class rtsp_publish_tcp_session final : public std::enable_shared_from_this<rtsp_
                              std::string stream_name,
                              std::vector<rtsp_publish_track_description> descriptions,
                              std::function<void(std::span<const std::uint8_t>)> write);
-    ~rtsp_publish_tcp_session();
-
    private:
     friend class rtsp_publish_session;
 

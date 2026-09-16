@@ -39,8 +39,6 @@ class rtsp_publish_media final
 {
    public:
     rtsp_publish_media(worker_context& worker, std::string media_stream_name, std::vector<rtsp_publish_track_description> descriptions);
-    ~rtsp_publish_media();
-
     [[nodiscard]] bool startup(const std::string& rtcp_cname);
     [[nodiscard]] bool start_recording();
     [[nodiscard]] bool input_packet(std::size_t track_index, std::span<const std::uint8_t> data);

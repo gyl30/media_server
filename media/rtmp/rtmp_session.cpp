@@ -98,8 +98,6 @@ rtmp_session::rtmp_session(worker_context& worker,
 {
 }
 
-rtmp_session::~rtmp_session() = default;
-
 void rtmp_session::startup()
 {
     const auto self = shared_from_this();

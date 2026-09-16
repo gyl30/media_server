@@ -22,8 +22,6 @@ flv_muxer::flv_muxer(packet_handler handler, video_transcode_config video)
     }
 }
 
-flv_muxer::~flv_muxer() = default;
-
 void flv_muxer::shutdown()
 {
     packet_handler_ = {};

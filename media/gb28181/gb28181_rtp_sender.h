@@ -30,8 +30,6 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
                        packet_handler on_packet,
                        end_handler on_end,
                        failure_handler on_failure = {});
-    ~gb28181_rtp_sender() override;
-
     [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
 
     [[nodiscard]] bool startup();

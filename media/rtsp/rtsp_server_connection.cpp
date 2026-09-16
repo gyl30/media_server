@@ -54,8 +54,6 @@ rtsp_server_connection::rtsp_server_connection(worker_context& worker,
 {
 }
 
-rtsp_server_connection::~rtsp_server_connection() = default;
-
 void rtsp_server_connection::startup()
 {
     const auto self = shared_from_this();

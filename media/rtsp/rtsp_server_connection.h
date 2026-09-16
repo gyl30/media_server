@@ -39,8 +39,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
                            video_transcode_codec video_codec,
                            std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
                            std::size_t max_write_queue_bytes = 1024U * 1024U);
-    ~rtsp_server_connection();
-
     void startup();
     void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
 
