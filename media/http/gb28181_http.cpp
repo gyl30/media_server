@@ -7,15 +7,15 @@
 
 #include <boost/json.hpp>
 
-#include "media/net/worker_context.h"
 #include "media/http/gb28181_http.h"
 #include "media/http/gb28181_json.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_tcp_receiver_session.h"
-#include "media/gb28181/gb28181_udp_receiver_session.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
+#include "media/gb28181/gb28181_tcp_receiver_session.h"
+#include "media/gb28181/gb28181_udp_receiver_session.h"
 
 namespace media_server
 {
@@ -93,13 +93,8 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
 
     if (config.transport.mode == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_receiver_session>(worker,
-                                                                      config.stream_id,
-                                                                      stream_name,
-                                                                      config.transport,
-                                                                      bind_address,
-                                                                      std::chrono::milliseconds{1'000},
-                                                                      runtime_events);
+        auto session = std::make_shared<gb28181_udp_receiver_session>(
+            worker, config.stream_id, stream_name, config.transport, bind_address, std::chrono::milliseconds{1'000}, runtime_events);
         if (!streams.add_receiver_session(stream_name, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -142,10 +137,10 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
 }
 
 gb28181_http_response handle_sender_create(const gb28181_http_request& request,
-                                            worker_context& worker,
-                                            gb28181_sender_config config,
-                                            boost::asio::ip::address bind_address,
-                                            runtime_event_emitter_ptr runtime_events)
+                                           worker_context& worker,
+                                           gb28181_sender_config config,
+                                           boost::asio::ip::address bind_address,
+                                           runtime_event_emitter_ptr runtime_events)
 {
     const auto stream_name = config.stream_name;
     const auto sender_id = config.sender_id;
@@ -158,17 +153,16 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
 
     if (config.transport.mode == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_sender_session>(
-            worker,
-            config.stream_id,
-            stream,
-            config.transport,
-            std::move(bind_address),
-            sender_id,
-            config.rtcp_enabled,
-            std::chrono::milliseconds{25'000},
-            1024U * 1024U,
-            runtime_events);
+        auto session = std::make_shared<gb28181_udp_sender_session>(worker,
+                                                                    config.stream_id,
+                                                                    stream,
+                                                                    config.transport,
+                                                                    std::move(bind_address),
+                                                                    sender_id,
+                                                                    config.rtcp_enabled,
+                                                                    std::chrono::milliseconds{25'000},
+                                                                    1024U * 1024U,
+                                                                    runtime_events);
         if (!streams.add_sender_session(stream_name, sender_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
@@ -209,10 +203,10 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
 }    // namespace
 
 gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request& request,
-                                                   worker_context& worker,
-                                                   const boost::urls::url_view& target,
-                                                   boost::asio::ip::address bind_address,
-                                                   runtime_event_emitter_ptr runtime_events)
+                                                      worker_context& worker,
+                                                      const boost::urls::url_view& target,
+                                                      boost::asio::ip::address bind_address,
+                                                      runtime_event_emitter_ptr runtime_events)
 {
     const auto path = target.encoded_path();
     if (path != "/gb28181/receiver/create" && path != "/gb28181/receiver/delete")

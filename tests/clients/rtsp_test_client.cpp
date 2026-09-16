@@ -1,12 +1,12 @@
-#include "tests/clients/rtsp_test_client.h"
-
 #include <array>
 #include <utility>
 
-#include <boost/asio/connect.hpp>
-#include <boost/asio/redirect_error.hpp>
-#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/asio/connect.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/redirect_error.hpp>
+
+#include "tests/clients/rtsp_test_client.h"
 
 extern "C"
 {
@@ -17,18 +17,14 @@ extern "C"
 namespace media_server::test
 {
 
-rtsp_test_client::rtsp_test_client(boost::asio::io_context& io, std::string path)
-    : resolver_(io), socket_(io), path_(std::move(path))
-{
-}
+rtsp_test_client::rtsp_test_client(boost::asio::io_context& io, std::string path) : resolver_(io), socket_(io), path_(std::move(path)) {}
 
-rtsp_test_client::~rtsp_test_client()
-{
-    rtsp_client_destroy(client_);
-}
+rtsp_test_client::~rtsp_test_client() { rtsp_client_destroy(client_); }
 
-boost::asio::awaitable<boost::system::error_code> rtsp_test_client::publish(
-    std::string host, std::uint16_t port, std::string sdp, std::vector<std::uint8_t> rtp)
+boost::asio::awaitable<boost::system::error_code> rtsp_test_client::publish(std::string host,
+                                                                            std::uint16_t port,
+                                                                            std::string sdp,
+                                                                            std::vector<std::uint8_t> rtp)
 {
     sdp_ = std::move(sdp);
     auto error = co_await start(std::move(host), port, mode::publish);
@@ -56,7 +52,8 @@ boost::asio::awaitable<boost::system::error_code> rtsp_test_client::play(std::st
     std::array<std::uint8_t, 8192> read_buffer{};
     while (rtp_by_channel_.size() < rtp_media_count)
     {
-        const auto bytes = co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        const auto bytes =
+            co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
         if (error || rtsp_client_input(client_, read_buffer.data(), bytes) != 0)
         {
             co_return error ? error : boost::asio::error::operation_aborted;
@@ -71,7 +68,8 @@ boost::asio::awaitable<boost::system::error_code> rtsp_test_client::start(std::s
     mode_ = operation;
     completed_ = false;
     uri_ = "rtsp://" + host + ':' + std::to_string(port) + path_;
-    const auto endpoints = co_await resolver_.async_resolve(host, std::to_string(port), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+    const auto endpoints =
+        co_await resolver_.async_resolve(host, std::to_string(port), boost::asio::redirect_error(boost::asio::use_awaitable, error));
     if (error)
     {
         co_return error;
@@ -107,7 +105,8 @@ boost::asio::awaitable<boost::system::error_code> rtsp_test_client::start(std::s
         {
             co_return error;
         }
-        const auto bytes = co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        const auto bytes =
+            co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
         if (error || rtsp_client_input(client_, read_buffer.data(), bytes) != 0)
         {
             co_return error ? error : boost::asio::error::operation_aborted;
@@ -160,34 +159,19 @@ int rtsp_test_client::setup_callback(void* param, int, std::int64_t)
     return result;
 }
 
-int rtsp_test_client::play_callback(void* param,
-                                    int,
-                                    const std::uint64_t*,
-                                    const std::uint64_t*,
-                                    const double*,
-                                    const ::rtsp_rtp_info_t*,
-                                    int)
+int rtsp_test_client::play_callback(void* param, int, const std::uint64_t*, const std::uint64_t*, const double*, const ::rtsp_rtp_info_t*, int)
 {
     static_cast<rtsp_test_client*>(param)->completed_ = true;
     return 0;
 }
 
-int rtsp_test_client::record_callback(void* param,
-                                      int,
-                                      const std::uint64_t*,
-                                      const std::uint64_t*,
-                                      const double*,
-                                      const ::rtsp_rtp_info_t*,
-                                      int)
+int rtsp_test_client::record_callback(void* param, int, const std::uint64_t*, const std::uint64_t*, const double*, const ::rtsp_rtp_info_t*, int)
 {
     static_cast<rtsp_test_client*>(param)->completed_ = true;
     return 0;
 }
 
-int rtsp_test_client::ignore_callback(void*)
-{
-    return 0;
-}
+int rtsp_test_client::ignore_callback(void*) { return 0; }
 
 void rtsp_test_client::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
 {

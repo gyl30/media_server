@@ -4,12 +4,12 @@
 #include <string_view>
 #include <type_traits>
 
-#include <boost/asio/buffer.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/asio/error.hpp>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "media/net/udp_yield_transport.h"
 
@@ -65,21 +65,22 @@ void test_read_write()
     require(peer.send_to(boost::asio::buffer(inbound), local) == inbound.size(), "udp yield transport peer send");
 
     bool completed = false;
-    boost::asio::spawn(io,
-                       [&](boost::asio::yield_context yield)
-                       {
-                           boost::asio::ip::udp::endpoint remote;
-                           boost::system::error_code read_error;
-                           const auto bytes = transport.read(received, remote, yield, read_error);
-                           require(!read_error && bytes == inbound.size() && received == inbound, "udp yield transport read");
-                           require(remote == peer.local_endpoint(), "udp yield transport read endpoint");
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            boost::asio::ip::udp::endpoint remote;
+            boost::system::error_code read_error;
+            const auto bytes = transport.read(received, remote, yield, read_error);
+            require(!read_error && bytes == inbound.size() && received == inbound, "udp yield transport read");
+            require(remote == peer.local_endpoint(), "udp yield transport read endpoint");
 
-                           boost::system::error_code write_error;
-                           const auto written = transport.write(outbound, remote, yield, write_error);
-                           require(!write_error && written == outbound.size(), "udp yield transport write");
-                           completed = true;
-                       },
-                       boost::asio::detached);
+            boost::system::error_code write_error;
+            const auto written = transport.write(outbound, remote, yield, write_error);
+            require(!write_error && written == outbound.size(), "udp yield transport write");
+            completed = true;
+        },
+        boost::asio::detached);
     io.run();
     require(completed, "udp yield transport coroutine completed");
 
@@ -113,15 +114,16 @@ void test_connect_filters_peer()
     std::array<std::uint8_t, 1> received{};
     boost::asio::ip::udp::endpoint remote;
     bool completed = false;
-    boost::asio::spawn(io,
-                       [&](boost::asio::yield_context yield)
-                       {
-                           boost::system::error_code read_error;
-                           const auto bytes = transport.read(received, remote, yield, read_error);
-                           require(!read_error && bytes == accepted.size() && received == accepted, "udp yield transport connected read");
-                           completed = true;
-                       },
-                       boost::asio::detached);
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            boost::system::error_code read_error;
+            const auto bytes = transport.read(received, remote, yield, read_error);
+            require(!read_error && bytes == accepted.size() && received == accepted, "udp yield transport connected read");
+            completed = true;
+        },
+        boost::asio::detached);
     io.run();
     require(completed && remote == first.local_endpoint(), "udp yield transport connected peer filter");
     transport.shutdown();
@@ -139,13 +141,14 @@ void test_shutdown_cancels_read()
     boost::asio::ip::udp::endpoint remote;
     boost::system::error_code read_error;
     bool completed = false;
-    boost::asio::spawn(io,
-                       [&](boost::asio::yield_context yield)
-                       {
-                           static_cast<void>(transport.read(data, remote, yield, read_error));
-                           completed = true;
-                       },
-                       boost::asio::detached);
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            static_cast<void>(transport.read(data, remote, yield, read_error));
+            completed = true;
+        },
+        boost::asio::detached);
 
     require(io.run_one() == 1, "udp yield transport pending read starts");
     transport.shutdown();

@@ -1,12 +1,12 @@
 #ifndef MEDIA_HLS_H
 #define MEDIA_HLS_H
 
-#include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
+#include <cstdint>
+#include <optional>
+#include <string_view>
 
 #include "config.h"
 

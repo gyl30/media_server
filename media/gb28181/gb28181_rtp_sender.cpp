@@ -18,12 +18,12 @@ namespace media_server
 {
 
 gb28181_rtp_sender::gb28181_rtp_sender(worker_context& worker,
-                                           std::shared_ptr<media_stream> stream,
-                                           std::uint8_t payload_type,
-                                           std::uint32_t ssrc,
-                                           packet_handler on_packet,
-                                           end_handler on_end,
-                                           failure_handler on_failure)
+                                       std::shared_ptr<media_stream> stream,
+                                       std::uint8_t payload_type,
+                                       std::uint32_t ssrc,
+                                       packet_handler on_packet,
+                                       end_handler on_end,
+                                       failure_handler on_failure)
     : worker_(worker),
       stream_(std::move(stream)),
       payload_type_(payload_type),

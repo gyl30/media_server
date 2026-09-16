@@ -73,10 +73,7 @@ void media_reader_handle::remove() const
     }
 }
 
-media_stream::media_stream(std::string name, worker_context& worker)
-    : name_(std::move(name)), worker_(worker)
-{
-}
+media_stream::media_stream(std::string name, worker_context& worker) : name_(std::move(name)), worker_(worker) {}
 
 const std::string& media_stream::name() const noexcept { return name_; }
 

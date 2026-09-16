@@ -6,8 +6,8 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
-#include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/webrtc/whip_media_receiver.h"
 
 extern "C"
@@ -60,8 +60,7 @@ bool whip_media_receiver::startup()
 
     video_demuxer_ = rtsp_demuxer_create(0, 500, &whip_media_receiver::packet_callback, this);
     const auto* video_encoding = config_.video_codec == codec_id::h264 ? "H264" : "H265";
-    if (video_demuxer_ == nullptr ||
-        rtsp_demuxer_add_payload(video_demuxer_, 90'000, config_.video_payload_type, video_encoding, nullptr) != 0)
+    if (video_demuxer_ == nullptr || rtsp_demuxer_add_payload(video_demuxer_, 90'000, config_.video_payload_type, video_encoding, nullptr) != 0)
     {
         shutdown();
         return false;

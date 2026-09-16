@@ -4,8 +4,8 @@
 
 #include "media/webrtc/whep.h"
 #include "media/core/stream_id.h"
-#include "media/net/worker_context.h"
 #include "media/http/whep_http.h"
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
@@ -181,8 +181,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
             }
             stream_name.append(segment);
         }
-        return handle_whep_post(
-            request, worker, std::string{stream_id}, std::move(stream_name), application_config, std::move(runtime_events));
+        return handle_whep_post(request, worker, std::string{stream_id}, std::move(stream_name), application_config, std::move(runtime_events));
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {

@@ -5,8 +5,8 @@
 #include <vector>
 #include <functional>
 
-#include "media/core/media_reader.h"
 #include "media/flv/flv_muxer.h"
+#include "media/core/media_reader.h"
 
 extern "C"
 {
@@ -35,6 +35,7 @@ class http_flv_streamer final : public media_reader
     void process_batch();
     void finish();
 
+   private:
     write_handler write_handler_;
     end_handler end_handler_;
     std::map<track_id, media_track> reader_tracks_;

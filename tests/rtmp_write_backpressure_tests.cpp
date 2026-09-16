@@ -1,18 +1,18 @@
 #include <array>
 #include <chrono>
-#include <cstdint>
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <thread>
+#include <cstdint>
 #include <utility>
+#include <iostream>
+#include <stdexcept>
+#include <string_view>
 
 #include <boost/asio.hpp>
 
-#include "media/net/worker_context.h"
 #include "media/rtmp/rtmp_session.h"
+#include "media/net/worker_context.h"
 
 extern "C"
 {
@@ -74,8 +74,7 @@ void test_rtmp_write_backlog_limit()
     tcp::socket server_socket(worker.io());
     acceptor.accept(server_socket);
 
-    auto session =
-        std::make_shared<rtmp_session>(worker, std::move(server_socket), nullptr, video_transcode_config{}, 5s, 0U);
+    auto session = std::make_shared<rtmp_session>(worker, std::move(server_socket), nullptr, video_transcode_config{}, 5s, 0U);
     session->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });

@@ -1,30 +1,30 @@
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
-#include <memory>
-#include <mutex>
 #include <sstream>
-#include <stdexcept>
-#include <string>
-#include <thread>
 #include <utility>
-#include <vector>
+#include <stdexcept>
+#include <condition_variable>
 
 #include <boost/asio.hpp>
-#include <boost/beast.hpp>
 #include <boost/json.hpp>
+#include <boost/beast.hpp>
 #include <boost/url/parse.hpp>
 
-#include "media/core/runtime_event.h"
-#include "media/core/stream_registry.h"
-#include "media/http/gb28181_http.h"
-#include "media/http/runtime_event_reporter.h"
-#include "media/http/signaling_client.h"
 #include "media/net/port_manager.h"
+#include "media/http/gb28181_http.h"
+#include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
+#include "media/http/signaling_client.h"
+#include "media/http/runtime_event_reporter.h"
 
 namespace
 {
@@ -189,6 +189,7 @@ class scripted_http_server
         }
     }
 
+   private:
     boost::asio::io_context io_;
     boost::asio::ip::tcp::acceptor acceptor_;
     std::uint16_t port_;
@@ -272,16 +273,15 @@ class reporter_fixture
         std::mutex mutex;
         std::condition_variable condition;
         bool reached{};
-        boost::asio::post(
-            io_,
-            [&]()
-            {
-                {
-                    std::lock_guard lock(mutex);
-                    reached = true;
-                }
-                condition.notify_all();
-            });
+        boost::asio::post(io_,
+                          [&]()
+                          {
+                              {
+                                  std::lock_guard lock(mutex);
+                                  reached = true;
+                              }
+                              condition.notify_all();
+                          });
         std::unique_lock lock(mutex);
         require(condition.wait_for(lock, 2s, [&]() { return reached; }), "reporter owner barrier");
     }
@@ -324,17 +324,14 @@ void test_fifo_and_event_body()
         require(requests[index].target == "/internal/runtime-events", "runtime event target");
         const auto body = boost::json::parse(requests[index].body).as_object();
         require(json_string(body.at("stream_id")) == stream_id(index + 1U), "runtime event FIFO stream id");
-        require(body.at("server_id") == "media-1" && body.at("instance_id") == "instance-a",
-                "runtime event server identity");
+        require(body.at("server_id") == "media-1" && body.at("instance_id") == "instance-a", "runtime event server identity");
     }
     const auto body = boost::json::parse(requests.front().body).as_object();
     require(body.size() == 11U, "runtime event optional fields serialized");
-    require(body.at("kind") == "source" && body.at("protocol") == "rtsp",
-            "runtime event enum fields serialized");
+    require(body.at("kind") == "source" && body.at("protocol") == "rtsp", "runtime event enum fields serialized");
     require(body.at("state") == "stopped" && body.at("stage") == "connecting", "runtime event state serialized");
     require(body.at("source_id") == "10000000-0000-4000-8000-000000000001", "runtime event source id serialized");
-    require(body.at("end_reason") == "runtime_error" && body.at("error") == "connection_failed",
-            "runtime event terminal fields serialized");
+    require(body.at("end_reason") == "runtime_error" && body.at("error") == "connection_failed", "runtime event terminal fields serialized");
     const auto second = boost::json::parse(requests[1].body).as_object();
     require(second.size() == 8U && !second.contains("source_id") && !second.contains("end_reason") && !second.contains("error"),
             "runtime event absent optional fields omitted");
@@ -457,13 +454,12 @@ void test_emit_never_blocks_worker()
     require(reporter != nullptr, "nonblocking reporter exists");
     const auto emitter = std::make_shared<media_server::runtime_event_emitter>(
         "media-1", "instance-a", [reporter](media_server::runtime_event value) { reporter->report(std::move(value)); });
-    boost::asio::post(
-        worker,
-        [&]()
-        {
-            emitter->emit(event(1));
-            completed = true;
-        });
+    boost::asio::post(worker,
+                      [&]()
+                      {
+                          emitter->emit(event(1));
+                          completed = true;
+                      });
     const auto started = std::chrono::steady_clock::now();
     worker.run();
     require(completed && std::chrono::steady_clock::now() - started < 100ms, "runtime event emission does not block worker");
@@ -486,8 +482,8 @@ media_server::gb28181_http_request gb_receiver_request(std::string stream_name, 
 }
 
 media_server::gb28181_http_response handle_gb_receiver(media_server::worker_context& worker,
-                                                        media_server::gb28181_http_request request,
-                                                        media_server::runtime_event_emitter_ptr runtime_events)
+                                                       media_server::gb28181_http_request request,
+                                                       media_server::runtime_event_emitter_ptr runtime_events)
 {
     const auto target = boost::urls::parse_origin_form(request.target());
     require(target.has_value(), "GB28181 test request target");
@@ -501,16 +497,15 @@ void test_delivery_failure_does_not_stop_media_session()
     reporter_fixture fixture(server.url());
     media_server::worker_context worker;
     const auto reporter = fixture.weak_reporter();
-    const auto emitter = std::make_shared<media_server::runtime_event_emitter>(
-        "media-1",
-        "instance-a",
-        [reporter](media_server::runtime_event value)
-        {
-            if (const auto target = reporter.lock())
-            {
-                target->report(std::move(value));
-            }
-        });
+    const auto emitter = std::make_shared<media_server::runtime_event_emitter>("media-1",
+                                                                               "instance-a",
+                                                                               [reporter](media_server::runtime_event value)
+                                                                               {
+                                                                                   if (const auto target = reporter.lock())
+                                                                                   {
+                                                                                       target->report(std::move(value));
+                                                                                   }
+                                                                               });
     constexpr std::string_view name = "live/event-delivery-failure";
     const auto id = stream_id(700);
     const auto create = handle_gb_receiver(worker, gb_receiver_request(std::string(name), id), emitter);
@@ -522,8 +517,7 @@ void test_delivery_failure_does_not_stop_media_session()
     require(server.wait_requests(2), "reporter continues after GB28181 event HTTP failure");
 
     const auto duplicate = handle_gb_receiver(worker, gb_receiver_request(std::string(name), id), emitter);
-    require(duplicate.result() == boost::beast::http::status::internal_server_error,
-            "event delivery failure leaves receiver session running");
+    require(duplicate.result() == boost::beast::http::status::internal_server_error, "event delivery failure leaves receiver session running");
 
     media_server::gb28181_http_request remove{boost::beast::http::verb::post, "/gb28181/receiver/delete", 11};
     remove.set(boost::beast::http::field::content_type, "application/json");

@@ -52,6 +52,7 @@ class media_reader_handle final
 
     media_reader_handle(std::weak_ptr<media_stream> stream, std::shared_ptr<media_reader_state> state);
 
+   private:
     std::weak_ptr<media_stream> stream_;
     std::shared_ptr<media_reader_state> state_;
 };

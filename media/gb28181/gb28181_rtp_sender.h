@@ -24,12 +24,12 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
     using failure_handler = std::function<void()>;
 
     gb28181_rtp_sender(worker_context& worker,
-                         std::shared_ptr<media_stream> stream,
-                         std::uint8_t payload_type,
-                         std::uint32_t ssrc,
-                         packet_handler on_packet,
-                         end_handler on_end,
-                         failure_handler on_failure = {});
+                       std::shared_ptr<media_stream> stream,
+                       std::uint8_t payload_type,
+                       std::uint32_t ssrc,
+                       packet_handler on_packet,
+                       end_handler on_end,
+                       failure_handler on_failure = {});
     ~gb28181_rtp_sender() override;
 
     [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
@@ -56,6 +56,7 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
     void apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(const void* data, int bytes);
 
+   private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     std::uint8_t payload_type_{};

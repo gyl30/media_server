@@ -1,12 +1,12 @@
-#include "tests/clients/rtmp_test_client.h"
-
 #include <array>
 #include <utility>
 
-#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/write.hpp>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/write.hpp>
+#include <boost/asio/redirect_error.hpp>
+
+#include "tests/clients/rtmp_test_client.h"
 
 extern "C"
 {
@@ -22,16 +22,16 @@ rtmp_test_client::rtmp_test_client(boost::asio::io_context& io, std::string app,
 {
 }
 
-rtmp_test_client::~rtmp_test_client()
-{
-    rtmp_client_destroy(client_);
-}
+rtmp_test_client::~rtmp_test_client() { rtmp_client_destroy(client_); }
 
-boost::asio::awaitable<boost::system::error_code> rtmp_test_client::publish(
-    std::string host, std::uint16_t port, std::vector<std::uint8_t> metadata, std::vector<std::uint8_t> video_config)
+boost::asio::awaitable<boost::system::error_code> rtmp_test_client::publish(std::string host,
+                                                                            std::uint16_t port,
+                                                                            std::vector<std::uint8_t> metadata,
+                                                                            std::vector<std::uint8_t> video_config)
 {
     boost::system::error_code error;
-    const auto endpoints = co_await resolver_.async_resolve(host, std::to_string(port), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+    const auto endpoints =
+        co_await resolver_.async_resolve(host, std::to_string(port), boost::asio::redirect_error(boost::asio::use_awaitable, error));
     if (error)
     {
         co_return error;
@@ -59,7 +59,8 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::publish(
         {
             co_return error;
         }
-        const auto bytes = co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        const auto bytes =
+            co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
         if (error || rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
         {
             co_return error ? error : boost::asio::error::operation_aborted;
@@ -77,7 +78,8 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::publish(
 boost::asio::awaitable<boost::system::error_code> rtmp_test_client::play(std::string host, std::uint16_t port)
 {
     boost::system::error_code error;
-    const auto endpoints = co_await resolver_.async_resolve(host, std::to_string(port), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+    const auto endpoints =
+        co_await resolver_.async_resolve(host, std::to_string(port), boost::asio::redirect_error(boost::asio::use_awaitable, error));
     if (error)
     {
         co_return error;
@@ -108,7 +110,8 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::play(std::st
         {
             co_return error;
         }
-        const auto bytes = co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        const auto bytes =
+            co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
         if (error || rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
         {
             co_return error ? error : boost::asio::error::operation_aborted;
@@ -142,10 +145,7 @@ int rtmp_test_client::video_callback(void* param, const void* data, std::size_t 
     return 0;
 }
 
-int rtmp_test_client::ignore_callback(void*, const void*, std::size_t, std::uint32_t)
-{
-    return 0;
-}
+int rtmp_test_client::ignore_callback(void*, const void*, std::size_t, std::uint32_t) { return 0; }
 
 boost::asio::awaitable<boost::system::error_code> rtmp_test_client::flush()
 {

@@ -27,8 +27,8 @@ constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
 rtsp_publish_media::rtsp_publish_media(worker_context& worker,
-                                   std::string media_stream_name,
-                                   std::vector<rtsp_publish_track_description> descriptions)
+                                       std::string media_stream_name,
+                                       std::vector<rtsp_publish_track_description> descriptions)
     : worker_(worker), media_stream_name_(std::move(media_stream_name)), descriptions_(std::move(descriptions))
 {
 }
@@ -182,7 +182,10 @@ bool rtsp_publish_media::recording() const noexcept { return recording_; }
 
 bool rtsp_publish_media::protocol_error() const noexcept { return protocol_error_; }
 
-int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet) { return static_cast<rtsp_publish_media*>(param)->on_demuxed_packet(packet); }
+int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet)
+{
+    return static_cast<rtsp_publish_media*>(param)->on_demuxed_packet(packet);
+}
 
 int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
 {
@@ -254,8 +257,9 @@ bool rtsp_publish_media::update_track_from_packet(const avpacket_t& packet)
         return false;
     }
 
-    const auto state = std::find_if(
-        descriptions_.begin(), descriptions_.end(), [track](const rtsp_publish_track_description& value) { return value.track.codec == track->codec; });
+    const auto state = std::find_if(descriptions_.begin(),
+                                    descriptions_.end(),
+                                    [track](const rtsp_publish_track_description& value) { return value.track.codec == track->codec; });
     if (state == descriptions_.end() || !media_stream_->update_track(*track))
     {
         return false;

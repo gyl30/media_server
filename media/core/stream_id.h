@@ -4,9 +4,9 @@
 #include <stdexcept>
 #include <string_view>
 
-#include <boost/uuid/string_generator.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <boost/uuid/string_generator.hpp>
 
 namespace media_server
 {

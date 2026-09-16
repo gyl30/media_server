@@ -1,24 +1,24 @@
-#include <charconv>
 #include <chrono>
+#include <limits>
+#include <thread>
+#include <vector>
 #include <cstdint>
 #include <fstream>
+#include <utility>
+#include <charconv>
 #include <iostream>
-#include <limits>
 #include <optional>
 #include <string_view>
-#include <thread>
-#include <utility>
-#include <vector>
 
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/asio/ip/udp.hpp>
 
 extern "C"
 {
-#include "rtp-profile.h"
 #include "rtsp-muxer.h"
+#include "rtp-profile.h"
 }
 
 namespace
@@ -165,8 +165,7 @@ int main(int argc, char** argv)
                                                 0,
                                                 config.data(),
                                                 static_cast<int>(config.size()));
-    const auto media = payload < 0 ? -1 : rtsp_muxer_add_media(
-                                              muxer, payload, RTP_PAYLOAD_H264, config.data(), static_cast<int>(config.size()));
+    const auto media = payload < 0 ? -1 : rtsp_muxer_add_media(muxer, payload, RTP_PAYLOAD_H264, config.data(), static_cast<int>(config.size()));
     if (media < 0)
     {
         static_cast<void>(rtsp_muxer_destroy(muxer));
@@ -193,13 +192,7 @@ int main(int argc, char** argv)
             }
         }
         const auto timestamp = static_cast<std::int64_t>(index * 40U);
-        if (rtsp_muxer_input(muxer,
-                             media,
-                             timestamp,
-                             timestamp,
-                             data.data() + start,
-                             static_cast<int>(end - start),
-                             keyframe ? 1 : 0) != 0 ||
+        if (rtsp_muxer_input(muxer, media, timestamp, timestamp, data.data() + start, static_cast<int>(end - start), keyframe ? 1 : 0) != 0 ||
             sender.error)
         {
             static_cast<void>(rtsp_muxer_destroy(muxer));

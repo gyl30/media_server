@@ -1,17 +1,17 @@
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
+#include <iostream>
+#include <stdexcept>
+#include <string_view>
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/json.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
-#include "media/core/stream_registry.h"
-#include "media/http/rtsp_pull_http.h"
 #include "media/net/worker_context.h"
+#include "media/http/rtsp_pull_http.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
 namespace media_server
@@ -53,10 +53,7 @@ rtsp_pull_http_request request(std::string target,
     return value;
 }
 
-rtsp_pull_http_request request(std::string target, boost::json::object body)
-{
-    return request(std::move(target), boost::json::serialize(body));
-}
+rtsp_pull_http_request request(std::string target, boost::json::object body) { return request(std::move(target), boost::json::serialize(body)); }
 
 rtsp_pull_http_response handle(worker_context& worker, const rtsp_pull_http_request& value)
 {
@@ -65,10 +62,7 @@ rtsp_pull_http_response handle(worker_context& worker, const rtsp_pull_http_requ
     return handle_rtsp_pull_request(value, worker, *target);
 }
 
-void require_response(const rtsp_pull_http_response& response,
-                      boost::beast::http::status status,
-                      std::string_view body,
-                      std::string_view message)
+void require_response(const rtsp_pull_http_response& response, boost::beast::http::status status, std::string_view body, std::string_view message)
 {
     if (response.result() != status)
     {
@@ -110,14 +104,9 @@ void test_request_validation()
     auto auth = create_body("live/auth", valid_url);
     auth["username"] = "admin";
     auth["password"] = "";
-    require_response(handle(worker, request("/rtsp/pull/create", std::move(auth))),
-                     boost::beast::http::status::created,
-                     "",
-                     "rtsp pull auth create");
-    require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/auth"))),
-                     boost::beast::http::status::no_content,
-                     "",
-                     "rtsp pull auth delete");
+    require_response(handle(worker, request("/rtsp/pull/create", std::move(auth))), boost::beast::http::status::created, "", "rtsp pull auth create");
+    require_response(
+        handle(worker, request("/rtsp/pull/delete", delete_body("live/auth"))), boost::beast::http::status::no_content, "", "rtsp pull auth delete");
 
     const std::string invalid_bodies[]{
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","source_id":"10000000-0000-4000-8000-000000000001","url":"rtsp://127.0.0.1/live"})",
@@ -186,40 +175,30 @@ void test_stream_id_required()
     streams.clear();
 
     auto identified = create_body("live/identified", "rtsp://127.0.0.1:9/live/source");
-    require_response(handle(worker, request("/rtsp/pull/create", std::move(identified))),
-                     boost::beast::http::status::created,
-                     "",
-                     "rtsp pull accepts stream id");
+    require_response(
+        handle(worker, request("/rtsp/pull/create", std::move(identified))), boost::beast::http::status::created, "", "rtsp pull accepts stream id");
 
     require_response(handle(worker,
                             request("/rtsp/pull/create",
-                                    {{"source_id", source_id},
-                                     {"stream_name", "live/missing-id"},
-                                     {"url", "rtsp://127.0.0.1:9/live/source"}})),
+                                    {{"source_id", source_id}, {"stream_name", "live/missing-id"}, {"url", "rtsp://127.0.0.1:9/live/source"}})),
                      boost::beast::http::status::bad_request,
                      R"({"error":"invalid_request"})",
                      "rtsp pull requires stream id");
     require_response(handle(worker,
                             request("/rtsp/pull/create",
-                                    create_body("live/uppercase-id",
-                                                "rtsp://127.0.0.1:9/live/source",
-                                                "550E8400-E29B-41D4-A716-446655440000"))),
+                                    create_body("live/uppercase-id", "rtsp://127.0.0.1:9/live/source", "550E8400-E29B-41D4-A716-446655440000"))),
                      boost::beast::http::status::bad_request,
                      R"({"error":"invalid_request"})",
                      "rtsp pull rejects noncanonical stream id");
+    require_response(
+        handle(worker,
+               request("/rtsp/pull/create", create_body("live/non-v4-id", "rtsp://127.0.0.1:9/live/source", "550e8400-e29b-11d4-a716-446655440000"))),
+        boost::beast::http::status::bad_request,
+        R"({"error":"invalid_request"})",
+        "rtsp pull requires version four stream id");
     require_response(handle(worker,
                             request("/rtsp/pull/create",
-                                    create_body("live/non-v4-id",
-                                                "rtsp://127.0.0.1:9/live/source",
-                                                "550e8400-e29b-11d4-a716-446655440000"))),
-                     boost::beast::http::status::bad_request,
-                     R"({"error":"invalid_request"})",
-                     "rtsp pull requires version four stream id");
-    require_response(handle(worker,
-                            request("/rtsp/pull/create",
-                                    create_body("live/non-rfc-variant",
-                                                "rtsp://127.0.0.1:9/live/source",
-                                                "550e8400-e29b-41d4-0716-446655440000"))),
+                                    create_body("live/non-rfc-variant", "rtsp://127.0.0.1:9/live/source", "550e8400-e29b-41d4-0716-446655440000"))),
                      boost::beast::http::status::bad_request,
                      R"({"error":"invalid_request"})",
                      "rtsp pull requires RFC 4122 stream id variant");
@@ -240,10 +219,7 @@ void test_create_delete_recreate()
     streams.clear();
     const auto body = create_body("live/recreate", "rtsp://127.0.0.1:9/live/source");
 
-    require_response(handle(worker, request("/rtsp/pull/create", body)),
-                     boost::beast::http::status::created,
-                     "",
-                     "rtsp pull initial create");
+    require_response(handle(worker, request("/rtsp/pull/create", body)), boost::beast::http::status::created, "", "rtsp pull initial create");
     require_response(handle(worker, request("/rtsp/pull/create", body)),
                      boost::beast::http::status::conflict,
                      R"({"error":"conflict"})",
@@ -330,17 +306,12 @@ void test_runtime_failure_releases_identity()
     const auto port = endpoint.local_endpoint().port();
     endpoint.close();
     const auto body = create_body("live/failure", "rtsp://127.0.0.1:" + std::to_string(port) + "/live/source");
-    require_response(handle(worker, request("/rtsp/pull/create", body)),
-                     boost::beast::http::status::created,
-                     "",
-                     "rtsp pull failure create");
+    require_response(handle(worker, request("/rtsp/pull/create", body)), boost::beast::http::status::created, "", "rtsp pull failure create");
     worker.release_work();
     io.run();
     io.restart();
-    require_response(handle(worker, request("/rtsp/pull/create", body)),
-                     boost::beast::http::status::created,
-                     "",
-                     "rtsp pull recreate after runtime failure");
+    require_response(
+        handle(worker, request("/rtsp/pull/create", body)), boost::beast::http::status::created, "", "rtsp pull recreate after runtime failure");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/failure"))),
                      boost::beast::http::status::no_content,
                      "",
@@ -355,8 +326,7 @@ void test_registry_shutdown_stops_pull()
     auto& streams = stream_registry::instance();
     streams.clear();
 
-    require_response(handle(worker,
-                            request("/rtsp/pull/create", create_body("live/service-stop", "rtsp://127.0.0.1:9/live/source"))),
+    require_response(handle(worker, request("/rtsp/pull/create", create_body("live/service-stop", "rtsp://127.0.0.1:9/live/source"))),
                      boost::beast::http::status::created,
                      "",
                      "rtsp pull service stop create");

@@ -8,11 +8,11 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/dispatch.hpp>
 
-#include "media/webrtc/stun_message.h"
 #include "media/net/worker_context.h"
+#include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
 
 namespace media_server

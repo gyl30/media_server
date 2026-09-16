@@ -3,9 +3,8 @@
 
 #include <memory>
 
-#include <boost/asio/signal_set.hpp>
-
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/signal_set.hpp>
 #include <boost/asio/steady_timer.hpp>
 
 #include "config.h"
@@ -34,6 +33,7 @@ class service
     void stop();
     void schedule_signaling_abort();
 
+   private:
     config config_;
     std::unique_ptr<io_context_pool> workers_;
     std::shared_ptr<rtmp_server> rtmp_;

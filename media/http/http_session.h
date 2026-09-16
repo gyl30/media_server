@@ -45,6 +45,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
                             std::string_view allow = {});
     void safe_shutdown();
 
+   private:
     worker_context& worker_;
     boost::beast::tcp_stream stream_;
     io_context_pool& workers_;

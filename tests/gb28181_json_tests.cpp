@@ -23,21 +23,19 @@ void test_receiver_configs()
 {
     const auto udp = parse_gb28181_receiver_config(
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","transport":"udp","payload_type":96,"ssrc":0})");
-    require(udp && udp->stream_name == "live/camera" && udp->transport.mode == gb28181_transport::udp &&
-                udp->transport.payload_type == 96 && udp->transport.ssrc == 0,
+    require(udp && udp->stream_name == "live/camera" && udp->transport.mode == gb28181_transport::udp && udp->transport.payload_type == 96 &&
+                udp->transport.ssrc == 0,
             "receiver udp");
 
     const auto tcp_active = parse_gb28181_receiver_config(
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/tcp","transport":"tcp_active","remote_address":"192.168.1.10","remote_port":30000,"payload_type":96,"ssrc":100})");
     require(tcp_active && tcp_active->transport.mode == gb28181_transport::tcp_active &&
-                tcp_active->transport.remote_address.to_string() == "192.168.1.10" &&
-                tcp_active->transport.remote_port == 30000,
+                tcp_active->transport.remote_address.to_string() == "192.168.1.10" && tcp_active->transport.remote_port == 30000,
             "receiver tcp active");
 
     const auto tcp_passive = parse_gb28181_receiver_config(
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/tcp","transport":"tcp_passive","listen_port":30000,"payload_type":96,"ssrc":100})");
-    require(tcp_passive && tcp_passive->transport.mode == gb28181_transport::tcp_passive &&
-                tcp_passive->transport.listen_port == 30000,
+    require(tcp_passive && tcp_passive->transport.mode == gb28181_transport::tcp_passive && tcp_passive->transport.listen_port == 30000,
             "receiver tcp passive");
 
     const std::string invalid[] = {
@@ -69,8 +67,8 @@ void test_sender_configs()
 {
     const auto udp = parse_gb28181_sender_config(
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","sender_id":"platform-a","transport":"udp","remote_address":"192.168.1.20","remote_rtp_port":32000,"payload_type":96,"ssrc":100})");
-    require(udp && udp->sender_id == "platform-a" && !udp->rtcp_enabled &&
-                udp->transport.remote_rtp_port == 32000 && udp->transport.remote_rtcp_port == 0,
+    require(udp && udp->sender_id == "platform-a" && !udp->rtcp_enabled && udp->transport.remote_rtp_port == 32000 &&
+                udp->transport.remote_rtcp_port == 0,
             "sender udp");
 
     const auto rtcp = parse_gb28181_sender_config(
@@ -79,14 +77,12 @@ void test_sender_configs()
 
     const auto tcp_active = parse_gb28181_sender_config(
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","sender_id":"platform-a","transport":"tcp_active","remote_address":"192.168.1.20","remote_port":32000,"payload_type":96,"ssrc":100})");
-    require(tcp_active && tcp_active->transport.mode == gb28181_transport::tcp_active &&
-                tcp_active->transport.remote_port == 32000,
+    require(tcp_active && tcp_active->transport.mode == gb28181_transport::tcp_active && tcp_active->transport.remote_port == 32000,
             "sender tcp active");
 
     const auto tcp_passive = parse_gb28181_sender_config(
         R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","sender_id":"platform-a","transport":"tcp_passive","listen_port":32000,"payload_type":96,"ssrc":100})");
-    require(tcp_passive && tcp_passive->transport.mode == gb28181_transport::tcp_passive &&
-                tcp_passive->transport.listen_port == 32000,
+    require(tcp_passive && tcp_passive->transport.mode == gb28181_transport::tcp_passive && tcp_passive->transport.listen_port == 32000,
             "sender tcp passive");
 
     const std::string invalid[] = {
@@ -113,17 +109,21 @@ void test_sender_configs()
 void test_delete_configs()
 {
     const auto receiver = parse_gb28181_receiver_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera"})");
-    require(receiver && receiver->stream_name == "live/camera" && receiver->stream_id == "550e8400-e29b-41d4-a716-446655440000",
-            "receiver delete");
+    require(receiver && receiver->stream_name == "live/camera" && receiver->stream_id == "550e8400-e29b-41d4-a716-446655440000", "receiver delete");
     require(!parse_gb28181_receiver_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":""})"), "empty receiver delete");
-    require(!parse_gb28181_receiver_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","extra":1})"), "receiver delete extra field");
+    require(!parse_gb28181_receiver_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","extra":1})"),
+            "receiver delete extra field");
 
-    const auto sender = parse_gb28181_sender_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","sender_id":"platform-a"})");
+    const auto sender =
+        parse_gb28181_sender_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","sender_id":"platform-a"})");
     require(sender && sender->stream_name == "live/camera" && sender->sender_id == "platform-a" &&
                 sender->stream_id == "550e8400-e29b-41d4-a716-446655440000",
             "sender delete");
-    require(!parse_gb28181_sender_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera"})"), "missing sender delete id");
-    require(!parse_gb28181_sender_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","output_id":"platform-a"})"), "old sender delete id rejected");
+    require(!parse_gb28181_sender_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera"})"),
+            "missing sender delete id");
+    require(
+        !parse_gb28181_sender_delete(R"({"stream_id":"550e8400-e29b-41d4-a716-446655440000","stream_name":"live/camera","output_id":"platform-a"})"),
+        "old sender delete id rejected");
 }
 
 }    // namespace

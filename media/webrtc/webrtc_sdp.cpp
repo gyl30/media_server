@@ -1016,7 +1016,6 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
     };
 }
 
-
 std::optional<webrtc_answer> make_whip_answer(const webrtc_offer& offer, const webrtc_answer_config& config)
 {
     if (config.port == 0 || config.ice_ufrag.empty() || config.ice_pwd.empty() || config.fingerprint.empty())
@@ -1089,10 +1088,10 @@ std::optional<webrtc_answer> make_whip_answer(const webrtc_offer& offer, const w
         {
             for (const auto payload_type : media.payload_types)
             {
-                const auto iterator = std::find_if(media.codecs.begin(),
-                                                   media.codecs.end(),
-                                                   [payload_type](const webrtc_codec_offer& offered)
-                                                   { return offered.payload_type == payload_type; });
+                const auto iterator =
+                    std::find_if(media.codecs.begin(),
+                                 media.codecs.end(),
+                                 [payload_type](const webrtc_codec_offer& offered) { return offered.payload_type == payload_type; });
                 if (iterator == media.codecs.end())
                 {
                     continue;

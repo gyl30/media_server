@@ -1,17 +1,17 @@
-#include <algorithm>
 #include <chrono>
-#include <initializer_list>
 #include <memory>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
+#include <optional>
+#include <algorithm>
+#include <string_view>
+#include <initializer_list>
 
 #include <boost/json.hpp>
 
 #include "media/core/stream_id.h"
-#include "media/core/stream_registry.h"
 #include "media/http/rtsp_pull_http.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
 namespace media_server
@@ -85,9 +85,8 @@ std::optional<boost::json::object> parse_object(std::string_view body)
 
 bool has_only_fields(const boost::json::object& object, std::initializer_list<std::string_view> fields)
 {
-    return std::ranges::all_of(object, [fields](const auto& member) {
-        return std::find(fields.begin(), fields.end(), std::string_view{member.key()}) != fields.end();
-    });
+    return std::ranges::all_of(
+        object, [fields](const auto& member) { return std::find(fields.begin(), fields.end(), std::string_view{member.key()}) != fields.end(); });
 }
 
 std::optional<std::string> required_string(const boost::json::object& object, std::string_view key)
@@ -251,8 +250,7 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session =
-        stream_registry::instance().take_receiver_session_as<rtsp_pull_session>(identity->stream_name, identity->stream_id);
+    auto session = stream_registry::instance().take_receiver_session_as<rtsp_pull_session>(identity->stream_name, identity->stream_id);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");

@@ -1,24 +1,24 @@
 #ifndef MEDIA_SERVER_TESTS_CLIENTS_PUBLISH_CLAIM_TEST_SERVER_H
 #define MEDIA_SERVER_TESTS_CLIENTS_PUBLISH_CLAIM_TEST_SERVER_H
 
-#include <algorithm>
-#include <chrono>
-#include <condition_variable>
-#include <cstddef>
-#include <cstdint>
 #include <mutex>
-#include <stdexcept>
+#include <chrono>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <algorithm>
+#include <stdexcept>
+#include <string_view>
+#include <condition_variable>
 
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/beast/core/flat_buffer.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/beast/http/read.hpp>
-#include <boost/beast/http/string_body.hpp>
 #include <boost/beast/http/write.hpp>
+#include <boost/beast/core/flat_buffer.hpp>
+#include <boost/beast/http/string_body.hpp>
 
 namespace media_server::test
 {
@@ -32,8 +32,7 @@ struct publish_claim_request
 class publish_claim_test_server final
 {
    public:
-    explicit publish_claim_test_server(boost::beast::http::status status = boost::beast::http::status::no_content,
-                                       bool hold_response = false)
+    explicit publish_claim_test_server(boost::beast::http::status status = boost::beast::http::status::no_content, bool hold_response = false)
         : acceptor_(io_, {boost::asio::ip::address_v4::loopback(), 0}),
           port_(acceptor_.local_endpoint().port()),
           status_(status),
@@ -80,13 +79,10 @@ class publish_claim_test_server final
     [[nodiscard]] bool wait_target(std::string_view target)
     {
         std::unique_lock lock(mutex_);
-        return condition_.wait_for(
-            lock,
-            std::chrono::seconds(2),
-            [this, target]()
-            {
-                return std::ranges::any_of(requests_, [target](const auto& request) { return request.target == target; });
-            });
+        return condition_.wait_for(lock,
+                                   std::chrono::seconds(2),
+                                   [this, target]()
+                                   { return std::ranges::any_of(requests_, [target](const auto& request) { return request.target == target; }); });
     }
 
     void release_response()
@@ -152,6 +148,7 @@ class publish_claim_test_server final
         }
     }
 
+   private:
     boost::asio::io_context io_;
     boost::asio::ip::tcp::acceptor acceptor_;
     std::uint16_t port_{};

@@ -63,10 +63,7 @@ void release_stream(std::string_view stream_name)
 
 }    // namespace
 
-create_result create(worker_context& worker,
-                     std::string_view stream_name,
-                     std::string_view offer_sdp,
-                     const config& application_config)
+create_result create(worker_context& worker, std::string_view stream_name, std::string_view offer_sdp, const config& application_config)
 {
     spdlog::debug("whip create stream {} offer_bytes {}", stream_name, offer_sdp.size());
 

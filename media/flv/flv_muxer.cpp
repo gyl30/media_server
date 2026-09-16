@@ -1,7 +1,7 @@
 #include <spdlog/spdlog.h>
 
-#include "media/codec/codec_utils.h"
 #include "media/flv/flv_muxer.h"
+#include "media/codec/codec_utils.h"
 
 extern "C"
 {

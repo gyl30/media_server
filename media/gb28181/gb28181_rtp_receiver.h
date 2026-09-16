@@ -61,6 +61,7 @@ class gb28181_rtp_receiver final
     bool update_track_from_packet(const avpacket_t& packet);
     bool try_start_recording();
 
+   private:
     worker_context& worker_;
     std::string stream_name_;
     std::uint8_t payload_type_{};

@@ -1,17 +1,17 @@
-#include <cstddef>
 #include <span>
-#include <utility>
 #include <vector>
+#include <cstddef>
+#include <utility>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/cancel_after.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/dispatch.hpp>
-#include <boost/asio/error.hpp>
-#include <boost/asio/post.hpp>
+#include <boost/asio/cancel_after.hpp>
 
-#include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_tcp_receiver_session.h"
 
 namespace media_server
@@ -20,8 +20,7 @@ namespace
 {
 bool remote_disconnect(const boost::system::error_code& error)
 {
-    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
-           error == boost::asio::error::connection_aborted;
+    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
 }
 }    // namespace
 
@@ -153,8 +152,7 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         std::size_t offset = 0;
         while (input_buffer.size() - offset >= 2U)
         {
-            const auto packet_bytes =
-                static_cast<std::size_t>((static_cast<std::uint16_t>(input_buffer[offset]) << 8U) | input_buffer[offset + 1U]);
+            const auto packet_bytes = static_cast<std::size_t>((static_cast<std::uint16_t>(input_buffer[offset]) << 8U) | input_buffer[offset + 1U]);
             if (input_buffer.size() - offset < packet_bytes + 2U)
             {
                 break;

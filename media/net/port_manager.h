@@ -1,11 +1,11 @@
 #ifndef MEDIA_NET_PORT_MANAGER_H
 #define MEDIA_NET_PORT_MANAGER_H
 
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <optional>
 #include <set>
+#include <mutex>
+#include <memory>
+#include <cstdint>
+#include <optional>
 
 namespace media_server
 {
@@ -32,6 +32,7 @@ class port_manager final
    private:
     port_manager(int start_port, int end_port);
 
+   private:
     static std::unique_ptr<port_manager> instance_;
 
     std::uint16_t start_port_{};

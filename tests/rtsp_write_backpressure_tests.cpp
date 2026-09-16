@@ -1,13 +1,13 @@
 #include <array>
 #include <chrono>
-#include <cstdint>
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <thread>
+#include <cstdint>
 #include <utility>
+#include <iostream>
+#include <stdexcept>
+#include <string_view>
 
 #include <boost/asio.hpp>
 
@@ -71,14 +71,12 @@ void test_rtsp_server_write_backlog_limit()
     tcp::socket server_socket(worker.io());
     acceptor.accept(server_socket);
 
-    auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 5s, 0U);
+    auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 5s, 0U);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });
 
-    const std::string request =
-        "OPTIONS rtsp://127.0.0.1/live/test RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n";
+    const std::string request = "OPTIONS rtsp://127.0.0.1/live/test RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n";
     boost::system::error_code error;
     boost::asio::write(client, boost::asio::buffer(request), error);
     require(!error, "RTSP server backlog request write");
@@ -94,20 +92,18 @@ void test_rtsp_pull_write_backlog_limit()
     boost::asio::io_context server_io;
     tcp::acceptor acceptor(server_io, {boost::asio::ip::address_v4::loopback(), 0});
     worker_context client_worker;
-    const auto request_url =
-        "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/backpressure";
+    const auto request_url = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/backpressure";
 
-    auto pull = std::make_shared<rtsp_pull_session>(
-        client_worker,
-        "550e8400-e29b-41d4-a716-446655440000",
-        "10000000-0000-4000-8000-000000000001",
-        "relay/backpressure",
-        request_url,
-        "",
-        "",
-        5s,
-        5s,
-        0U);
+    auto pull = std::make_shared<rtsp_pull_session>(client_worker,
+                                                    "550e8400-e29b-41d4-a716-446655440000",
+                                                    "10000000-0000-4000-8000-000000000001",
+                                                    "relay/backpressure",
+                                                    request_url,
+                                                    "",
+                                                    "",
+                                                    5s,
+                                                    5s,
+                                                    0U);
     require(pull->startup(), "RTSP pull backlog startup");
     client_worker.release_work();
     std::jthread runner([&client_worker]() { client_worker.run(); });

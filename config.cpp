@@ -4,9 +4,9 @@
 #include <iostream>
 #include <string_view>
 
-#include <boost/program_options.hpp>
-#include <boost/asio/ip/address.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/program_options.hpp>
 
 #include "config.h"
 
@@ -51,8 +51,8 @@ bool valid_http_base_url(std::string_view text)
         return false;
     }
     const auto url = *parsed;
-    return url.scheme() == "http" && !url.host().empty() && !url.has_userinfo() && (url.path().empty() || url.path() == "/") &&
-           !url.has_query() && !url.has_fragment();
+    return url.scheme() == "http" && !url.host().empty() && !url.has_userinfo() && (url.path().empty() || url.path() == "/") && !url.has_query() &&
+           !url.has_fragment();
 }
 
 void print_usage(const boost::program_options::options_description& options) { std::cout << "usage: media_server [options]\n" << options << '\n'; }
@@ -143,7 +143,8 @@ int parse_config(int argc, char** argv, config* cfg)
         return 1;
     }
 
-    const bool has_signaling_value = !result.signaling_url.empty() || !result.server_id.empty() || !result.control_url.empty() || !result.media_ip.empty();
+    const bool has_signaling_value =
+        !result.signaling_url.empty() || !result.server_id.empty() || !result.control_url.empty() || !result.media_ip.empty();
     if (has_signaling_value && (result.signaling_url.empty() || result.server_id.empty() || result.control_url.empty() || result.media_ip.empty() ||
                                 !valid_http_base_url(result.signaling_url) || !valid_http_base_url(result.control_url)))
     {

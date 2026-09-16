@@ -11,8 +11,8 @@
 #include <boost/asio/post.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
-#include "media/net/worker_context.h"
 #include "media/codec/codec_utils.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/codec/video_transcoder.h"
 #include "media/rtsp/rtsp_play_session.h"
@@ -57,9 +57,9 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_play_session::rtsp_play_session(worker_context& worker,
-                                         video_transcode_codec video_codec,
-                                         boost::asio::ip::address local_address,
-                                         std::function<void(std::span<const std::uint8_t>)> write)
+                                     video_transcode_codec video_codec,
+                                     boost::asio::ip::address local_address,
+                                     std::function<void(std::span<const std::uint8_t>)> write)
     : worker_(worker), video_codec_(video_codec), local_address_(std::move(local_address)), write_handler_(std::move(write))
 {
 }

@@ -53,6 +53,7 @@ class audio_transcoder final
     bool prepare_encoded_frame(int sample_count);
     bool receive_encoded(std::vector<media_frame>& output);
 
+   private:
     std::unique_ptr<state> state_;
 };
 

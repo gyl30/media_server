@@ -4,8 +4,8 @@
 #include <spdlog/spdlog.h>
 
 #include "media/codec/codec_utils.h"
-#include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
 
 extern "C"
@@ -66,10 +66,7 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 
 }    // namespace
 
-gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker,
-                                         std::string stream_name,
-                                         std::uint8_t payload_type,
-                                         std::uint32_t expected_ssrc)
+gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
     : worker_(worker), stream_name_(std::move(stream_name)), payload_type_(payload_type), expected_ssrc_(expected_ssrc)
 {
 }

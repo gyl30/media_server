@@ -11,8 +11,8 @@
 #include <optional>
 #include <functional>
 
-#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 
@@ -33,10 +33,10 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
 {
    public:
     rtsp_publish_udp_session(worker_context& worker,
-                           boost::asio::ip::address bind_address,
-                           std::string stream_name,
-                           std::vector<rtsp_publish_track_description> descriptions,
-                           std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
+                             boost::asio::ip::address bind_address,
+                             std::string stream_name,
+                             std::vector<rtsp_publish_track_description> descriptions,
+                             std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
@@ -61,6 +61,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     int on_record(rtsp_server_t* server);
     void safe_shutdown();
 
+   private:
     worker_context& worker_;
     std::function<void()> shutdown_handler_;
     boost::asio::ip::address bind_address_;

@@ -2,13 +2,13 @@
 #define MEDIA_HTTP_SIGNALING_CLIENT_H
 
 #include <chrono>
+#include <string>
 #include <cstdint>
 #include <functional>
-#include <string>
 #include <string_view>
 
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/io_context.hpp>
 
 namespace media_server
 {
@@ -62,10 +62,9 @@ class signaling_client
     void run_heartbeat(boost::asio::yield_context& yield, std::function<void()> fenced_handler) const;
 
    private:
-    signaling_request_result request(std::string_view target,
-                                     std::string body,
-                                     boost::asio::yield_context& yield) const;
+    signaling_request_result request(std::string_view target, std::string body, boost::asio::yield_context& yield) const;
 
+   private:
     boost::asio::io_context& io_;
     signaling_client_options options_;
     std::string host_;

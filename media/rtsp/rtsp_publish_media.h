@@ -2,13 +2,13 @@
 #define MEDIA_RTSP_RTSP_PUBLISH_MEDIA_H
 
 #include <span>
-#include <functional>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
+#include <functional>
 
 #include "media/core/media_stream.h"
 
@@ -58,6 +58,7 @@ class rtsp_publish_media final
     int on_demuxed_packet(avpacket_t* packet);
     bool update_track_from_packet(const avpacket_t& packet);
 
+   private:
     worker_context& worker_;
     std::string media_stream_name_;
     std::vector<rtsp_publish_track_description> descriptions_;

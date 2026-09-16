@@ -1,11 +1,11 @@
 #ifndef MEDIA_SERVER_CONFIG_H
 #define MEDIA_SERVER_CONFIG_H
 
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
 #include <string>
 #include <thread>
+#include <cstddef>
+#include <cstdint>
+#include <algorithm>
 
 #include "media/codec/video_transcode_config.h"
 

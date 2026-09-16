@@ -1,24 +1,24 @@
 #include <chrono>
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <utility>
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
-#include <vector>
 
 #include <boost/json.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/post.hpp>
 
-#include "media/net/worker_context.h"
 #include "media/core/media_stream.h"
 #include "media/http/gb28181_http.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
-#include "media/gb28181/gb28181_tcp_receiver_session.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
+#include "media/gb28181/gb28181_tcp_receiver_session.h"
 
 namespace media_server
 {
@@ -46,14 +46,13 @@ struct captured_events
 
 runtime_event_emitter_ptr capture_events(worker_context& worker, captured_events& events)
 {
-    return std::make_shared<runtime_event_emitter>(
-        "media-1",
-        "instance-1",
-        [&worker, &events](runtime_event event)
-        {
-            events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
-            events.values.push_back(std::move(event));
-        });
+    return std::make_shared<runtime_event_emitter>("media-1",
+                                                   "instance-1",
+                                                   [&worker, &events](runtime_event event)
+                                                   {
+                                                       events.owner_only = events.owner_only && worker.io().get_executor().running_in_this_thread();
+                                                       events.values.push_back(std::move(event));
+                                                   });
 }
 
 template <typename Handler>
@@ -85,9 +84,9 @@ void require_gb_event(const runtime_event& event,
                       std::string_view message)
 {
     const bool stage_matches = stage.empty() ? !event.stage : event.stage == stage;
-    require(event.kind == kind && event.server_id == "media-1" && event.instance_id == "instance-1" &&
-                event.stream_id == stream_id && event.stream_name == stream_name && !event.source_id &&
-                event.protocol == runtime_protocol::gb28181 && event.state == state && stage_matches,
+    require(event.kind == kind && event.server_id == "media-1" && event.instance_id == "instance-1" && event.stream_id == stream_id &&
+                event.stream_name == stream_name && !event.source_id && event.protocol == runtime_protocol::gb28181 && event.state == state &&
+                stage_matches,
             message);
 }
 
@@ -117,18 +116,15 @@ gb28181_http_response sender_request(worker_context& worker, gb28181_http_reques
 gb28181_transport_config make_tcp_active_transport(std::uint16_t port, std::uint32_t ssrc)
 {
     return gb28181_transport_config{.mode = gb28181_transport::tcp_active,
-                               .remote_address = boost::asio::ip::address_v4::loopback(),
-                               .remote_port = port,
-                               .payload_type = 96,
-                               .ssrc = ssrc};
+                                    .remote_address = boost::asio::ip::address_v4::loopback(),
+                                    .remote_port = port,
+                                    .payload_type = 96,
+                                    .ssrc = ssrc};
 }
 
 gb28181_transport_config make_tcp_passive_transport(std::uint16_t port, std::uint32_t ssrc)
 {
-    return gb28181_transport_config{.mode = gb28181_transport::tcp_passive,
-                               .listen_port = port,
-                               .payload_type = 96,
-                               .ssrc = ssrc};
+    return gb28181_transport_config{.mode = gb28181_transport::tcp_passive, .listen_port = port, .payload_type = 96, .ssrc = ssrc};
 }
 
 gb28181_http_response create_receiver(worker_context& worker,
@@ -192,10 +188,7 @@ gb28181_http_response create_sender(worker_context& worker,
     return sender_request(worker, request("/gb28181/sender/create", std::move(body)));
 }
 
-gb28181_http_response delete_sender(worker_context& worker,
-                                    std::string_view stream_id,
-                                    std::string_view stream_name,
-                                    std::string_view sender_id)
+gb28181_http_response delete_sender(worker_context& worker, std::string_view stream_id, std::string_view stream_name, std::string_view sender_id)
 {
     boost::json::object body;
     body["stream_id"] = stream_id;
@@ -217,17 +210,13 @@ void test_receiver_identity_is_reusable_after_shutdown()
     constexpr std::string_view first_stream_id = "550e8400-e29b-41d4-a716-446655440000";
     constexpr std::string_view second_stream_id = "550e8400-e29b-41d4-a716-446655440001";
 
-    require_status(create_receiver(worker, first_stream_id, "live/gb-identity", description),
-                   boost::beast::http::status::created,
-                   "gb receiver first create");
     require_status(
-        delete_receiver(worker, first_stream_id, "live/gb-identity"), boost::beast::http::status::no_content, "gb receiver remove");
+        create_receiver(worker, first_stream_id, "live/gb-identity", description), boost::beast::http::status::created, "gb receiver first create");
+    require_status(delete_receiver(worker, first_stream_id, "live/gb-identity"), boost::beast::http::status::no_content, "gb receiver remove");
     require_status(create_receiver(worker, second_stream_id, "live/gb-identity", description),
                    boost::beast::http::status::created,
                    "gb receiver reusable after shutdown");
-    require_status(delete_receiver(worker, second_stream_id, "live/gb-identity"),
-                   boost::beast::http::status::no_content,
-                   "gb receiver final remove");
+    require_status(delete_receiver(worker, second_stream_id, "live/gb-identity"), boost::beast::http::status::no_content, "gb receiver final remove");
     io.run();
     clear_state();
 }
@@ -244,20 +233,17 @@ void test_sender_identity_is_reusable_after_shutdown()
     constexpr std::string_view first_stream_id = "550e8400-e29b-41d4-a716-446655440002";
     constexpr std::string_view second_stream_id = "550e8400-e29b-41d4-a716-446655440003";
 
-    require_status(create_sender(worker, *stream, first_stream_id, "primary", description),
-                   boost::beast::http::status::created,
-                   "gb sender first create");
     require_status(
-        delete_sender(worker, first_stream_id, stream->name(), "primary"), boost::beast::http::status::no_content, "gb sender remove");
+        create_sender(worker, *stream, first_stream_id, "primary", description), boost::beast::http::status::created, "gb sender first create");
+    require_status(delete_sender(worker, first_stream_id, stream->name(), "primary"), boost::beast::http::status::no_content, "gb sender remove");
     require_status(create_sender(worker, *stream, second_stream_id, "primary", description),
                    boost::beast::http::status::created,
                    "gb sender reusable after shutdown");
     require_status(delete_sender(worker, first_stream_id, stream->name(), "primary"),
                    boost::beast::http::status::internal_server_error,
                    "gb sender stale identity does not remove replacement");
-    require_status(delete_sender(worker, second_stream_id, stream->name(), "primary"),
-                   boost::beast::http::status::no_content,
-                   "gb sender final remove");
+    require_status(
+        delete_sender(worker, second_stream_id, stream->name(), "primary"), boost::beast::http::status::no_content, "gb sender final remove");
     io.run();
     clear_state();
 }
@@ -274,12 +260,12 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
     auto session = std::make_shared<gb28181_tcp_receiver_session>(worker,
-                                                                   std::string{stream_id},
-                                                                   stream_name,
-                                                                   description,
-                                                                   boost::asio::ip::address_v4::loopback(),
-                                                                   std::chrono::seconds(1),
-                                                                   capture_events(worker, events));
+                                                                  std::string{stream_id},
+                                                                  stream_name,
+                                                                  description,
+                                                                  boost::asio::ip::address_v4::loopback(),
+                                                                  std::chrono::seconds(1),
+                                                                  capture_events(worker, events));
     require(stream_registry::instance().add_receiver_session(stream_name, session), "gb receiver repeated shutdown registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
@@ -295,22 +281,10 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
     io.run();
 
     require(events.values.size() == 2U, "gb receiver emits one starting and one stopped event");
-    require_gb_event(events.values[0],
-                     runtime_kind::source,
-                     stream_id,
-                     stream_name,
-                     runtime_state::starting,
-                     "listening",
-                     "gb receiver starting event payload");
-    require_gb_event(events.values[1],
-                     runtime_kind::source,
-                     stream_id,
-                     stream_name,
-                     runtime_state::stopped,
-                     {},
-                     "gb receiver stopped event payload");
-    require(events.values[1].end_reason == runtime_end_reason::server_shutdown && !events.values[1].error,
-            "gb receiver first shutdown reason wins");
+    require_gb_event(
+        events.values[0], runtime_kind::source, stream_id, stream_name, runtime_state::starting, "listening", "gb receiver starting event payload");
+    require_gb_event(events.values[1], runtime_kind::source, stream_id, stream_name, runtime_state::stopped, {}, "gb receiver stopped event payload");
+    require(events.values[1].end_reason == runtime_end_reason::server_shutdown && !events.values[1].error, "gb receiver first shutdown reason wins");
     require(events.owner_only, "gb receiver events emitted on owner worker");
     const auto remaining = stream_registry::instance().take_receiver_session(stream_name);
     require(!remaining, "gb receiver repeated shutdown unregisters session");
@@ -329,7 +303,8 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
-                                                                std::string{stream_id}, stream,
+                                                                std::string{stream_id},
+                                                                stream,
                                                                 "repeated-shutdown",
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),
@@ -351,22 +326,11 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
     io.run();
 
     require(events.values.size() == 2U, "gb sender emits one starting and one stopped event");
-    require_gb_event(events.values[0],
-                     runtime_kind::output,
-                     stream_id,
-                     stream->name(),
-                     runtime_state::starting,
-                     "listening",
-                     "gb sender starting event payload");
-    require_gb_event(events.values[1],
-                     runtime_kind::output,
-                     stream_id,
-                     stream->name(),
-                     runtime_state::stopped,
-                     {},
-                     "gb sender stopped event payload");
-    require(events.values[1].end_reason == runtime_end_reason::server_shutdown && !events.values[1].error,
-            "gb sender first shutdown reason wins");
+    require_gb_event(
+        events.values[0], runtime_kind::output, stream_id, stream->name(), runtime_state::starting, "listening", "gb sender starting event payload");
+    require_gb_event(
+        events.values[1], runtime_kind::output, stream_id, stream->name(), runtime_state::stopped, {}, "gb sender stopped event payload");
+    require(events.values[1].end_reason == runtime_end_reason::server_shutdown && !events.values[1].error, "gb sender first shutdown reason wins");
     require(events.owner_only, "gb sender events emitted on owner worker");
     const auto remaining = stream_registry::instance().take_sender_session(stream->name(), "repeated-shutdown");
     require(!remaining, "gb sender repeated shutdown unregisters session");
@@ -385,12 +349,12 @@ void test_tcp_timeout_unregisters_receiver_session()
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
     auto session = std::make_shared<gb28181_tcp_receiver_session>(worker,
-                                                                   std::string{stream_id},
-                                                                   stream_name,
-                                                                   description,
-                                                                   boost::asio::ip::address_v4::loopback(),
-                                                                   std::chrono::milliseconds(5),
-                                                                   capture_events(worker, events));
+                                                                  std::string{stream_id},
+                                                                  stream_name,
+                                                                  description,
+                                                                  boost::asio::ip::address_v4::loopback(),
+                                                                  std::chrono::milliseconds(5),
+                                                                  capture_events(worker, events));
     require(stream_registry::instance().add_receiver_session(stream_name, session), "gb receiver timeout registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
@@ -398,20 +362,10 @@ void test_tcp_timeout_unregisters_receiver_session()
     io.run();
 
     require(events.values.size() == 2U, "gb receiver timeout event count");
-    require_gb_event(events.values[0],
-                     runtime_kind::source,
-                     stream_id,
-                     stream_name,
-                     runtime_state::starting,
-                     "listening",
-                     "gb receiver timeout starting payload");
-    require_gb_event(events.values[1],
-                     runtime_kind::source,
-                     stream_id,
-                     stream_name,
-                     runtime_state::stopped,
-                     {},
-                     "gb receiver timeout terminal payload");
+    require_gb_event(
+        events.values[0], runtime_kind::source, stream_id, stream_name, runtime_state::starting, "listening", "gb receiver timeout starting payload");
+    require_gb_event(
+        events.values[1], runtime_kind::source, stream_id, stream_name, runtime_state::stopped, {}, "gb receiver timeout terminal payload");
     require(events.values[1].end_reason == runtime_end_reason::timeout && events.values[1].error == "establishment_timeout",
             "gb receiver timeout reason");
     require(events.owner_only, "gb receiver timeout events emitted on owner worker");
@@ -432,7 +386,8 @@ void test_tcp_timeout_unregisters_sender_session()
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     captured_events events;
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker,
-                                                                std::string{stream_id}, stream,
+                                                                std::string{stream_id},
+                                                                stream,
                                                                 "timeout",
                                                                 description,
                                                                 boost::asio::ip::address_v4::loopback(),
@@ -453,13 +408,8 @@ void test_tcp_timeout_unregisters_sender_session()
                      runtime_state::starting,
                      "listening",
                      "gb sender timeout starting payload");
-    require_gb_event(events.values[1],
-                     runtime_kind::output,
-                     stream_id,
-                     stream->name(),
-                     runtime_state::stopped,
-                     {},
-                     "gb sender timeout terminal payload");
+    require_gb_event(
+        events.values[1], runtime_kind::output, stream_id, stream->name(), runtime_state::stopped, {}, "gb sender timeout terminal payload");
     require(events.values[1].end_reason == runtime_end_reason::timeout && events.values[1].error == "establishment_timeout",
             "gb sender timeout reason");
     require(events.owner_only, "gb sender timeout events emitted on owner worker");

@@ -1,20 +1,20 @@
 #ifndef MEDIA_RTSP_RTSP_PULL_SESSION_H
 #define MEDIA_RTSP_RTSP_PULL_SESSION_H
 
-#include <chrono>
-#include <cstddef>
-#include <deque>
-#include <memory>
 #include <span>
+#include <deque>
+#include <chrono>
+#include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
 #include <boost/asio.hpp>
 
-#include "media/core/stream_registry.h"
 #include "media/core/runtime_event.h"
+#include "media/core/stream_registry.h"
 #include "media/net/tcp_yield_transport.h"
 
 extern "C"
@@ -85,6 +85,7 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     int on_setup(int timeout, std::int64_t duration);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
 
+   private:
     worker_context& worker_;
     std::string stream_id_;
     std::string source_id_;

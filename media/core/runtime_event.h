@@ -1,12 +1,12 @@
 #ifndef MEDIA_CORE_RUNTIME_EVENT_H
 #define MEDIA_CORE_RUNTIME_EVENT_H
 
-#include <functional>
 #include <memory>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
+#include <optional>
+#include <functional>
+#include <string_view>
 
 namespace media_server
 {

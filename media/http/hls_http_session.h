@@ -2,15 +2,15 @@
 #define MEDIA_HTTP_HLS_HTTP_SESSION_H
 
 #include <memory>
-#include <functional>
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include <string_view>
 
+#include <boost/asio/spawn.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/asio/spawn.hpp>
 #include <boost/asio/steady_timer.hpp>
 
 #include "config.h"
@@ -24,8 +24,8 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config,
-                     std::function<void()> on_shutdown = {});
+    hls_http_session(
+        worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config, std::function<void()> on_shutdown = {});
 
     void startup();
     void shutdown();
@@ -44,6 +44,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
                               boost::asio::yield_context& yield);
     void safe_shutdown();
 
+   private:
     worker_context& worker_;
     boost::beast::tcp_stream stream_;
     request_type request_;

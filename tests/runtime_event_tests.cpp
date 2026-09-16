@@ -1,17 +1,17 @@
 #include <chrono>
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
+#include <iostream>
+#include <stdexcept>
+#include <string_view>
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 #include "media/core/runtime_event.h"
-#include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
 namespace media_server
@@ -32,10 +32,13 @@ void require(bool condition, std::string_view message)
 
 runtime_event_emitter_ptr capture_events(std::vector<runtime_event>& events, worker_context& worker, bool& owner_worker)
 {
-    return std::make_shared<runtime_event_emitter>("media-1", "instance-1", [&events, &worker, &owner_worker](runtime_event event) {
-        owner_worker = owner_worker && worker.io().get_executor().running_in_this_thread();
-        events.push_back(std::move(event));
-    });
+    return std::make_shared<runtime_event_emitter>("media-1",
+                                                   "instance-1",
+                                                   [&events, &worker, &owner_worker](runtime_event event)
+                                                   {
+                                                       owner_worker = owner_worker && worker.io().get_executor().running_in_this_thread();
+                                                       events.push_back(std::move(event));
+                                                   });
 }
 
 void require_identity(const runtime_event& event)
@@ -81,12 +84,10 @@ void test_rtsp_pull_runtime_failure_events()
     require(events.size() == 2U, "runtime event stopped once");
     require(owner_worker, "runtime events emitted on owner worker");
     require_identity(events[0]);
-    require(events[0].kind == runtime_kind::source && events[0].state == runtime_state::starting,
-            "runtime event source starting");
+    require(events[0].kind == runtime_kind::source && events[0].state == runtime_state::starting, "runtime event source starting");
     require(events[0].stage == "resolving" && !events[0].end_reason && !events[0].error, "runtime event starting fields");
     require_identity(events[1]);
-    require(events[1].kind == runtime_kind::source && events[1].state == runtime_state::stopped,
-            "runtime event source runtime failure");
+    require(events[1].kind == runtime_kind::source && events[1].state == runtime_state::stopped, "runtime event source runtime failure");
     require(events[1].end_reason == runtime_end_reason::runtime_error && events[1].error.has_value(), "runtime event failure fields");
     require(!streams.take_receiver_session("live/runtime-events"), "runtime event pull releases identity");
 
@@ -131,8 +132,7 @@ void test_rtsp_pull_first_shutdown_reason()
     worker.io().run();
     require(owner_worker, "runtime shutdown events emitted on owner worker");
     require(events.size() == 2U, "runtime shutdown transitions once");
-    require(events[1].kind == runtime_kind::source && events[1].state == runtime_state::stopped,
-            "runtime shutdown terminal event");
+    require(events[1].kind == runtime_kind::source && events[1].state == runtime_state::stopped, "runtime shutdown terminal event");
     require(events[1].end_reason == runtime_end_reason::server_shutdown && !events[1].error, "runtime shutdown first reason wins");
     require(!streams.take_receiver_session("live/runtime-events"), "runtime shutdown releases identity");
     streams.clear();

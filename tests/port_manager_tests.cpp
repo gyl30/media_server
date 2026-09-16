@@ -1,22 +1,22 @@
-#include <cstdint>
-#include <iostream>
-#include <mutex>
 #include <set>
-#include <stdexcept>
+#include <mutex>
 #include <thread>
-#include <concepts>
 #include <vector>
+#include <cstdint>
+#include <concepts>
+#include <iostream>
+#include <stdexcept>
 
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/io_context.hpp>
 
+#include "media/net/port_manager.h"
 #include "media/core/media_stream.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
-#include "media/gb28181/gb28181_udp_receiver_session.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
-#include "media/net/port_manager.h"
-#include "media/net/worker_context.h"
+#include "media/gb28181/gb28181_udp_receiver_session.h"
 
 namespace media_server
 {
@@ -135,11 +135,11 @@ media_track make_video_track()
 gb28181_transport_config make_udp_sender_transport()
 {
     return gb28181_transport_config{.mode = gb28181_transport::udp,
-                               .remote_address = boost::asio::ip::address_v4::loopback(),
-                               .remote_rtp_port = 50'000,
-                               .remote_rtcp_port = 50'001,
-                               .payload_type = 96,
-                               .ssrc = 10'000'2001};
+                                    .remote_address = boost::asio::ip::address_v4::loopback(),
+                                    .remote_rtp_port = 50'000,
+                                    .remote_rtcp_port = 50'001,
+                                    .payload_type = 96,
+                                    .ssrc = 10'000'2001};
 }
 
 void test_udp_sender_releases_pair_after_shutdown()
@@ -152,8 +152,13 @@ void test_udp_sender_releases_pair_after_shutdown()
     auto stream = std::make_shared<media_stream>("live/port-release", worker);
     require(stream->set_tracks({make_video_track()}), "port release stream tracks");
     require(stream_registry::instance().add(stream), "port release stream registry");
-    auto session = std::make_shared<gb28181_udp_sender_session>(
-        worker, "550e8400-e29b-41d4-a716-446655440000", stream, make_udp_sender_transport(), boost::asio::ip::address_v4::loopback(), "sender", false);
+    auto session = std::make_shared<gb28181_udp_sender_session>(worker,
+                                                                "550e8400-e29b-41d4-a716-446655440000",
+                                                                stream,
+                                                                make_udp_sender_transport(),
+                                                                boost::asio::ip::address_v4::loopback(),
+                                                                "sender",
+                                                                false);
     require(stream_registry::instance().add_sender_session(stream->name(), "sender", session), "port release sender registry");
     require(session->startup(), "port release sender startup");
 
@@ -184,8 +189,13 @@ void test_udp_sender_releases_pair_after_bind_failure()
     auto stream = std::make_shared<media_stream>("live/port-bind-failure", worker);
     require(stream->set_tracks({make_video_track()}), "port bind failure stream tracks");
     require(stream_registry::instance().add(stream), "port bind failure stream registry");
-    auto session = std::make_shared<gb28181_udp_sender_session>(
-        worker, "550e8400-e29b-41d4-a716-446655440000", stream, make_udp_sender_transport(), boost::asio::ip::address_v4::loopback(), "sender", false);
+    auto session = std::make_shared<gb28181_udp_sender_session>(worker,
+                                                                "550e8400-e29b-41d4-a716-446655440000",
+                                                                stream,
+                                                                make_udp_sender_transport(),
+                                                                boost::asio::ip::address_v4::loopback(),
+                                                                "sender",
+                                                                false);
     require(!session->startup(), "port bind failure sender startup");
 
     const auto pair = port_manager::instance().acquire_pair();
@@ -202,9 +212,7 @@ void test_udp_receiver_releases_pair_after_bind_failure()
     auto& io = worker.io();
     port_manager::init(32'420, 32'421);
     boost::asio::ip::udp::socket occupied(io, {boost::asio::ip::address_v4::loopback(), 32'420});
-    const gb28181_transport_config description{.mode = gb28181_transport::udp,
-                                          .payload_type = 96,
-                                          .ssrc = 10'000'2001};
+    const gb28181_transport_config description{.mode = gb28181_transport::udp, .payload_type = 96, .ssrc = 10'000'2001};
     auto session = std::make_shared<gb28181_udp_receiver_session>(
         worker, "550e8400-e29b-41d4-a716-446655440000", "live/receiver-port-bind-failure", description, boost::asio::ip::address_v4::loopback());
     require(!session->startup(), "receiver port bind failure startup");
@@ -220,9 +228,7 @@ void test_udp_receiver_rejects_unavailable_local_address()
     worker_context worker;
     worker.release_work();
     port_manager::init(32'430, 32'431);
-    const gb28181_transport_config description{.mode = gb28181_transport::udp,
-                                          .payload_type = 96,
-                                          .ssrc = 10'000'2001};
+    const gb28181_transport_config description{.mode = gb28181_transport::udp, .payload_type = 96, .ssrc = 10'000'2001};
     auto session = std::make_shared<gb28181_udp_receiver_session>(
         worker, "550e8400-e29b-41d4-a716-446655440000", "live/receiver-unavailable-address", description, boost::asio::ip::make_address("192.0.2.1"));
     require(!session->startup(), "receiver unavailable local address rejected");

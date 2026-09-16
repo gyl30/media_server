@@ -34,13 +34,10 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_publish_session::rtsp_publish_session(worker_context& worker,
-                                       boost::asio::ip::address bind_address,
-                                       std::function<void(std::span<const std::uint8_t>)> write,
-                                       std::chrono::milliseconds rtcp_interval)
-    : worker_(worker),
-      bind_address_(std::move(bind_address)),
-      rtcp_interval_(rtcp_interval),
-      write_handler_(std::move(write))
+                                           boost::asio::ip::address bind_address,
+                                           std::function<void(std::span<const std::uint8_t>)> write,
+                                           std::chrono::milliseconds rtcp_interval)
+    : worker_(worker), bind_address_(std::move(bind_address)), rtcp_interval_(rtcp_interval), write_handler_(std::move(write))
 {
 }
 
@@ -241,8 +238,7 @@ int rtsp_publish_session::on_setup(
         return result;
     }
 
-    auto child =
-        std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_, rtcp_interval_);
+    auto child = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_, rtcp_interval_);
     child->media_.set_streaming_handler([this]() { notify_streaming_if_ready(); });
     child->set_shutdown_handler(
         [this]()

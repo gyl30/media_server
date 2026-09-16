@@ -1,15 +1,15 @@
 #include <array>
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
-#include <csignal>
-#include <cstdint>
-#include <iostream>
-#include <mutex>
-#include <stdexcept>
 #include <string>
 #include <thread>
+#include <csignal>
+#include <cstdint>
 #include <utility>
+#include <iostream>
+#include <stdexcept>
+#include <condition_variable>
 
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
@@ -83,9 +83,7 @@ class controlled_registration_server
 {
    public:
     controlled_registration_server()
-        : acceptor_(io_, {boost::asio::ip::make_address("127.0.0.1"), 0}),
-          port_(acceptor_.local_endpoint().port()),
-          thread_([this]() { run(); })
+        : acceptor_(io_, {boost::asio::ip::make_address("127.0.0.1"), 0}), port_(acceptor_.local_endpoint().port()), thread_([this]() { run(); })
     {
     }
 
@@ -158,6 +156,7 @@ class controlled_registration_server
         boost::beast::http::write(socket, response, error);
     }
 
+   private:
     boost::asio::io_context io_;
     boost::asio::ip::tcp::acceptor acceptor_;
     std::uint16_t port_;

@@ -1,24 +1,24 @@
 #ifndef MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 #define MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 
-#include <chrono>
-#include <cstddef>
 #include <deque>
+#include <chrono>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
+#include <string_view>
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
+#include "media/net/tcp_listener.h"
 #include "media/core/media_stream.h"
 #include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
-#include "media/net/tcp_listener.h"
-#include "media/net/tcp_yield_transport.h"
 #include "media/gb28181/gb28181_types.h"
+#include "media/net/tcp_yield_transport.h"
 
 namespace media_server
 {
@@ -52,6 +52,7 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     void emit_streaming();
     void emit_stopped();
 
+   private:
     worker_context& worker_;
     std::string stream_id_;
     std::shared_ptr<media_stream> stream_;

@@ -2,20 +2,20 @@
 #include <utility>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/detached.hpp>
-#include <boost/asio/dispatch.hpp>
-#include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 
+#include "media/core/stream_id.h"
 #include "media/rtmp/rtmp_session.h"
-#include "media/http/signaling_client.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/core/stream_id.h"
-#include "media/rtmp/rtmp_publish_session.h"
+#include "media/http/signaling_client.h"
 #include "media/rtmp/rtmp_play_session.h"
+#include "media/rtmp/rtmp_publish_session.h"
 
 extern "C"
 {
@@ -30,8 +30,7 @@ namespace
 {
 bool remote_disconnect(const boost::system::error_code& error)
 {
-    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset ||
-           error == boost::asio::error::connection_aborted;
+    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
 }
 }    // namespace
 
@@ -442,10 +441,7 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
     spdlog::info("rtmp publish {}", stream_name_);
 }
 
-void rtmp_session::shutdown(runtime_end_reason reason, std::string error)
-{
-    shutdown_with_stage(reason, {}, std::move(error));
-}
+void rtmp_session::shutdown(runtime_end_reason reason, std::string error) { shutdown_with_stage(reason, {}, std::move(error)); }
 
 void rtmp_session::shutdown_with_stage(runtime_end_reason reason, std::string stage, std::string error)
 {

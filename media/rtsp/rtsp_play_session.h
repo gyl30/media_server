@@ -11,6 +11,7 @@
 #include <string_view>
 
 #include <boost/asio/ip/address.hpp>
+
 #include "media/core/media_reader.h"
 #include "media/codec/video_transcoder.h"
 #include "media/codec/video_transcode_config.h"
@@ -28,19 +29,16 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 {
    public:
     rtsp_play_session(worker_context& worker,
-                        video_transcode_codec video_codec,
-                        boost::asio::ip::address local_address,
-                        std::function<void(std::span<const std::uint8_t>)> write);
+                      video_transcode_codec video_codec,
+                      boost::asio::ip::address local_address,
+                      std::function<void(std::span<const std::uint8_t>)> write);
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_describe(rtsp_server_t* server, std::string_view uri);
-    int on_setup(rtsp_server_t* server,
-                 std::string_view uri,
-                 std::string_view session,
-                 const rtsp_header_transport_t transports[],
-                 std::size_t count);
+    int on_setup(
+        rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
     void shutdown();
@@ -68,6 +66,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     [[nodiscard]] int presentation_status() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
+   private:
     worker_context& worker_;
     video_transcode_codec video_codec_;
     boost::asio::ip::address local_address_;

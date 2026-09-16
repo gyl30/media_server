@@ -4,8 +4,8 @@
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
 
-#include "media/http/runtime_event_reporter.h"
 #include "media/http/signaling_client.h"
+#include "media/http/runtime_event_reporter.h"
 
 namespace media_server
 {
@@ -92,9 +92,7 @@ void runtime_event_reporter::run_writer(boost::asio::yield_context yield)
             continue;
         }
 
-        spdlog::warn("runtime event delivery network error stream {} error {}; reconnecting in 5 seconds",
-                     event->stream_id,
-                     result.error);
+        spdlog::warn("runtime event delivery network error stream {} error {}; reconnecting in 5 seconds", event->stream_id, result.error);
         reconnect_timer.expires_after(5s);
         boost::system::error_code error;
         reconnect_timer.async_wait(yield[error]);

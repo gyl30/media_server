@@ -1,13 +1,13 @@
+#include <span>
 #include <array>
 #include <chrono>
-#include <span>
 #include <utility>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/detached.hpp>
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/dispatch.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -180,8 +180,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 
         const auto data = write_queue_.front();
         boost::system::error_code error;
-        static_cast<void>(
-            rtp_transport_.write(std::span<const std::uint8_t>{data->data(), data->size()}, remote_rtp_endpoint_, yield, error));
+        static_cast<void>(rtp_transport_.write(std::span<const std::uint8_t>{data->data(), data->size()}, remote_rtp_endpoint_, yield, error));
         if (error)
         {
             shutdown(runtime_end_reason::runtime_error, error.message());

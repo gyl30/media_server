@@ -1,21 +1,21 @@
 #include <array>
 #include <chrono>
-#include <cstdint>
-#include <iostream>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <thread>
-#include <stdexcept>
+#include <cstdint>
 #include <utility>
+#include <iostream>
+#include <stdexcept>
+#include <string_view>
 
 #include <boost/asio.hpp>
 
+#include "media/net/port_manager.h"
 #include "media/core/media_stream.h"
+#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/http/signaling_client.h"
-#include "media/net/port_manager.h"
-#include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_server_connection.h"
 #include "tests/clients/publish_claim_test_server.h"
 
@@ -122,46 +122,42 @@ std::string send_request(tcp::socket& socket, const std::string& request)
 
 std::string send_options(tcp::socket& socket, int cseq)
 {
-    const auto request =
-        "OPTIONS rtsp://127.0.0.1/live/test RTSP/1.0\r\nCSeq: " + std::to_string(cseq) + "\r\nContent-Length: 0\r\n\r\n";
+    const auto request = "OPTIONS rtsp://127.0.0.1/live/test RTSP/1.0\r\nCSeq: " + std::to_string(cseq) + "\r\nContent-Length: 0\r\n\r\n";
     return send_request(socket, request);
 }
 
 std::string publish_announce(std::string_view uri)
 {
     const auto track_uri = std::string(uri) + "/trackID=0";
-    const auto sdp =
-        std::string("v=0\r\n") +
-        "o=- 0 0 IN IP4 127.0.0.1\r\n"
-        "s=media_server\r\n"
-        "c=IN IP4 127.0.0.1\r\n"
-        "t=0 0\r\n"
-        "m=video 0 RTP/AVP 96\r\n"
-        "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;"
-        "sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
-        "a=control:" + track_uri + "\r\n";
+    const auto sdp = std::string("v=0\r\n") +
+                     "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                     "s=media_server\r\n"
+                     "c=IN IP4 127.0.0.1\r\n"
+                     "t=0 0\r\n"
+                     "m=video 0 RTP/AVP 96\r\n"
+                     "a=rtpmap:96 H264/90000\r\n"
+                     "a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;"
+                     "sprop-parameter-sets=Z0LAH9oB4AiflwFuQA==,aM48gA==\r\n"
+                     "a=control:" +
+                     track_uri + "\r\n";
 
     return "ANNOUNCE " + std::string(uri) + "?stream_id=00000000-0000-4000-8000-000000000001" +
-           " RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " +
-           std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
+           " RTSP/1.0\r\nCSeq: 1\r\nContent-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
 }
 
-std::shared_ptr<media_server::signaling_client> make_signaling(
-    worker_context& worker, const media_server::test::publish_claim_test_server& server)
+std::shared_ptr<media_server::signaling_client> make_signaling(worker_context& worker, const media_server::test::publish_claim_test_server& server)
 {
-    return std::make_shared<media_server::signaling_client>(
-        worker.io(),
-        media_server::signaling_client_options{
-            .signaling_url = server.url(),
-            .server_id = "media-1",
-            .instance_id = "instance-a",
-            .control_url = "http://127.0.0.1:8080",
-            .media_ip = "127.0.0.1",
-            .rtmp_port = 1935,
-            .rtsp_port = 8554,
-            .http_port = 8080,
-        });
+    return std::make_shared<media_server::signaling_client>(worker.io(),
+                                                            media_server::signaling_client_options{
+                                                                .signaling_url = server.url(),
+                                                                .server_id = "media-1",
+                                                                .instance_id = "instance-a",
+                                                                .control_url = "http://127.0.0.1:8080",
+                                                                .media_ip = "127.0.0.1",
+                                                                .rtmp_port = 1935,
+                                                                .rtsp_port = 8554,
+                                                                .http_port = 8080,
+                                                            });
 }
 
 void test_idle_connection_timeout()
@@ -174,8 +170,7 @@ void test_idle_connection_timeout()
     tcp::socket server_socket(worker.io());
     acceptor.accept(server_socket);
 
-    auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 100ms);
+    auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 100ms);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });
@@ -196,8 +191,7 @@ void test_control_activity_refreshes_timeout()
     tcp::socket server_socket(worker.io());
     acceptor.accept(server_socket);
 
-    auto connection =
-        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 200ms);
+    auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, nullptr, 200ms);
     connection->startup();
     worker.release_work();
     std::jthread runner([&worker]() { worker.run(); });
@@ -240,8 +234,7 @@ void test_udp_setup_internal_failure_closes_connection()
     const std::string uri = "rtsp://127.0.0.1/live/udp-internal-failure";
     const auto announce_response = send_request(client, publish_announce(uri));
     const auto setup_request =
-        "SETUP " + uri +
-        "/trackID=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP;unicast;client_port=40000-40001;mode=record\r\n\r\n";
+        "SETUP " + uri + "/trackID=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP;unicast;client_port=40000-40001;mode=record\r\n\r\n";
     const auto setup_response = send_request(client, setup_request);
     const bool closed = wait_for_close(client, 500ms);
 
@@ -287,8 +280,7 @@ void test_record_internal_failure_closes_connection()
     const std::string uri = "rtsp://127.0.0.1/live/record-internal-failure";
     const auto announce_response = send_request(client, publish_announce(uri));
     const auto setup_request =
-        "SETUP " + uri +
-        "/trackID=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
+        "SETUP " + uri + "/trackID=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
     const auto setup_response = send_request(client, setup_request);
 
     std::string session;
@@ -309,8 +301,7 @@ void test_record_internal_failure_closes_connection()
         }
     }
 
-    const auto record_request =
-        "RECORD " + uri + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n";
+    const auto record_request = "RECORD " + uri + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n";
     const auto record_response = send_request(client, record_request);
     const bool closed = wait_for_close(client, 500ms);
 

@@ -1,5 +1,5 @@
-#include <utility>
 #include <chrono>
+#include <utility>
 
 #include <boost/asio/detached.hpp>
 
@@ -47,9 +47,8 @@ void rtsp_server::run(boost::asio::yield_context yield)
             return;
         }
 
-        auto connection = std::make_shared<rtsp_server_connection>(*worker, std::move(socket), config_.rtsp_video.codec,
-                                                                   signaling_, std::chrono::milliseconds{60'000},
-                                                                   1024U * 1024U, runtime_events_);
+        auto connection = std::make_shared<rtsp_server_connection>(
+            *worker, std::move(socket), config_.rtsp_video.codec, signaling_, std::chrono::milliseconds{60'000}, 1024U * 1024U, runtime_events_);
         connection->startup();
     }
 }

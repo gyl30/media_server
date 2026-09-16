@@ -2,15 +2,15 @@
 #define MEDIA_HTTP_HTTP_FLV_SESSION_H
 
 #include <memory>
-#include <functional>
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include <string_view>
 
+#include <boost/asio/spawn.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/asio/spawn.hpp>
 
 #include "config.h"
 #include "media/core/media_reader.h"
@@ -26,8 +26,8 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config,
-                     std::function<void()> on_shutdown = {});
+    http_flv_session(
+        worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config, std::function<void()> on_shutdown = {});
 
     void startup();
     void shutdown();
@@ -44,6 +44,7 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     void run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield);
     void safe_shutdown();
 
+   private:
     worker_context& worker_;
     boost::beast::tcp_stream stream_;
     request_type request_;

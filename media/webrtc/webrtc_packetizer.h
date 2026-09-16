@@ -71,6 +71,7 @@ class webrtc_packetizer final
     bool input_video(track_state& state, const media_frame& frame);
     bool input_audio(track_state& state, const media_frame& frame);
 
+   private:
     webrtc_packetizer_config config_;
     packet_handler rtp_handler_;
     packet_handler rtcp_handler_;

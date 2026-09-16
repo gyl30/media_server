@@ -8,8 +8,8 @@
 
 #include <spdlog/spdlog.h>
 
-#include "media/codec/audio_transcoder.h"
 #include "media/codec/codec_utils.h"
+#include "media/codec/audio_transcoder.h"
 
 extern "C"
 {
@@ -219,8 +219,7 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
 
 bool audio_transcoder::allocate_buffers()
 {
-    state_->fifo =
-        av_audio_fifo_alloc(state_->encoder->sample_fmt, state_->encoder->ch_layout.nb_channels, std::max(state_->encoder->frame_size, 1));
+    state_->fifo = av_audio_fifo_alloc(state_->encoder->sample_fmt, state_->encoder->ch_layout.nb_channels, std::max(state_->encoder->frame_size, 1));
     state_->decoded_frame = av_frame_alloc();
     state_->encoded_frame = av_frame_alloc();
     state_->input_packet = av_packet_alloc();
@@ -240,9 +239,8 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
 
     const bool aac_to_opus = config.input.codec == codec_id::aac && config.output.codec == codec_id::opus;
     const bool opus_to_aac = config.input.codec == codec_id::opus && config.output.codec == codec_id::aac;
-    const bool input_codec_config_valid =
-        (config.input.codec == codec_id::aac && !config.input_codec_config.empty()) ||
-        (config.input.codec == codec_id::opus && config.input_codec_config.empty());
+    const bool input_codec_config_valid = (config.input.codec == codec_id::aac && !config.input_codec_config.empty()) ||
+                                          (config.input.codec == codec_id::opus && config.input_codec_config.empty());
     if ((!aac_to_opus && !opus_to_aac) || config.input.sample_rate == 0 ||
         config.input.sample_rate > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) || config.input.channel_count == 0 ||
         (config.input.codec == codec_id::opus && (config.input.sample_rate != 48'000 || config.input.channel_count > 2)) ||
@@ -673,9 +671,9 @@ bool audio_transcoder::receive_encoded(std::vector<media_frame>& output)
         std::vector<std::uint8_t> payload;
         if (state_->output_codec == codec_id::aac)
         {
-            payload = make_adts_frame(
-                state_->output_codec_config,
-                std::span<const std::uint8_t>(state_->output_packet->data, static_cast<std::size_t>(state_->output_packet->size)));
+            payload =
+                make_adts_frame(state_->output_codec_config,
+                                std::span<const std::uint8_t>(state_->output_packet->data, static_cast<std::size_t>(state_->output_packet->size)));
             if (payload.empty())
             {
                 spdlog::error("audio transcoder aac adts frame create failed");

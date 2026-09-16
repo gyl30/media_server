@@ -1,8 +1,8 @@
 #ifndef MEDIA_GB28181_GB28181_TYPES_H
 #define MEDIA_GB28181_GB28181_TYPES_H
 
-#include <cstdint>
 #include <string>
+#include <cstdint>
 
 #include <boost/asio/ip/address.hpp>
 

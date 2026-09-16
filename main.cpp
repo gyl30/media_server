@@ -1,8 +1,8 @@
 #include <utility>
 
 #include "config.h"
-#include "media/net/port_manager.h"
 #include "service.h"
+#include "media/net/port_manager.h"
 
 int main(int argc, char** argv)
 {

@@ -6,9 +6,9 @@
 #include <cstdint>
 #include <functional>
 
+#include "media/flv/flv_muxer.h"
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
-#include "media/flv/flv_muxer.h"
 
 namespace media_server
 {
@@ -21,10 +21,10 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
     using end_handler = std::function<void()>;
 
     rtmp_play_session(worker_context& worker,
-                        std::shared_ptr<media_stream> stream,
-                        flv_muxer::packet_handler packet_handler,
-                        video_transcode_config video,
-                        end_handler on_end);
+                      std::shared_ptr<media_stream> stream,
+                      flv_muxer::packet_handler packet_handler,
+                      video_transcode_config video,
+                      end_handler on_end);
 
     void startup();
     void shutdown();
@@ -36,6 +36,7 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
    private:
     void apply_tracks(const media_track_snapshot_ptr& tracks);
 
+   private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     flv_muxer muxer_;
