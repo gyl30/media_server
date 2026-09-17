@@ -93,7 +93,10 @@ bool rtsp_pull_media::input_packet(std::uint8_t channel, std::span<const std::ui
     {
         static_cast<void>(try_initialize_tracks());
     }
-    static_cast<void>(rtsp_demuxer_input(demuxers_[media], data.data(), static_cast<int>(data.size())));
+    if (rtsp_demuxer_input(demuxers_[media], data.data(), static_cast<int>(data.size())) < 0)
+    {
+        return false;
+    }
     return !fatal_;
 }
 

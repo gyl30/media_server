@@ -64,6 +64,7 @@
 #include "media/http/http_flv_streamer.h"
 #include "media/rtmp/rtmp_play_session.h"
 #include "media/rtsp/rtsp_play_session.h"
+#include "media/rtsp/rtsp_pull_media.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_publish_media.h"
 #include "media/webrtc/webrtc_packetizer.h"
@@ -5315,6 +5316,28 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
                             "",
                             "rtsp pull stopped lifecycle",
                             source_id);
+}
+
+void test_rtsp_pull_propagates_demux_error()
+{
+    worker_context worker;
+    rtsp_pull_media media(worker,
+                          "relay/demux-error",
+                          {rtsp_pull_track_description{
+                              .kind = media_kind::video,
+                              .clock_rate = 90'000,
+                              .payload_type = 96,
+                              .encoding = "H264",
+                              .fmtp = "packetization-mode=1",
+                              .initial_track = make_video_track(),
+                          }});
+    require(media.startup(), "rtsp pull demux error startup");
+
+    std::array<std::uint8_t, 12> malformed{};
+    malformed[0] = 0x8f;
+    malformed[1] = 96;
+    require(!media.input_packet(0, malformed), "rtsp pull propagates demux error");
+    media.shutdown();
 }
 
 void test_rtsp_pull_initial_tracks_timeout()
@@ -12325,6 +12348,10 @@ int main(int argc, char* argv[])
         else if (scenario == "rtsp_pull_topology")
         {
             media_server::test_rtsp_pull_uses_complete_sdp_topology_without_track_wait();
+        }
+        else if (scenario == "rtsp_pull_demux_error")
+        {
+            media_server::test_rtsp_pull_propagates_demux_error();
         }
         else if (scenario == "rtsp_publish_opus_fmtp")
         {
