@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 #include <cstddef>
-#include <cstdint>
 #include <string_view>
 
 #include <boost/asio/spawn.hpp>
 
+#include "config.h"
 #include "media/core/runtime_event.h"
 
 namespace media_server
@@ -31,26 +31,15 @@ struct signaling_request_result
     std::string error;
 };
 
-struct signaling_client_options
-{
-    std::string signaling_url;
-    std::string server_id;
-    std::string instance_id;
-    std::string control_url;
-    std::string media_ip;
-    std::uint16_t rtmp_port{};
-    std::uint16_t rtsp_port{};
-    std::uint16_t http_port{};
-    std::chrono::milliseconds heartbeat_interval{std::chrono::seconds{5}};
-    std::chrono::milliseconds request_timeout{std::chrono::seconds{3}};
-};
-
 class signaling_client
 {
    public:
     [[nodiscard]] static signaling_client& instance();
 
-    void configure(signaling_client_options options);
+    void configure(const config& cfg,
+                   std::string instance_id,
+                   std::chrono::milliseconds heartbeat_interval = std::chrono::seconds{5},
+                   std::chrono::milliseconds request_timeout = std::chrono::seconds{3});
 
     signaling_request_result register_once(boost::asio::yield_context& yield) const;
     signaling_request_result heartbeat_once(boost::asio::yield_context& yield) const;
@@ -73,7 +62,10 @@ class signaling_client
     static constexpr std::size_t max_pending_events = 500U;
     std::mutex event_mutex_;
     std::vector<runtime_event> pending_events_;
-    signaling_client_options options_;
+    config config_;
+    std::string instance_id_;
+    std::chrono::milliseconds heartbeat_interval_{std::chrono::seconds{5}};
+    std::chrono::milliseconds request_timeout_{std::chrono::seconds{3}};
     std::string host_;
     std::string port_;
 };

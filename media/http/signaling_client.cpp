@@ -18,36 +18,37 @@ namespace media_server
 namespace
 {
 
-std::string registration_body(const signaling_client_options& options)
+std::string registration_body(const config& cfg, std::string_view instance_id)
 {
     return boost::json::serialize(boost::json::object{
-        {"server_id", options.server_id},
-        {"instance_id", options.instance_id},
-        {"control_url", options.control_url},
-        {"media_ip", options.media_ip},
-        {"rtmp_port", options.rtmp_port},
-        {"rtsp_port", options.rtsp_port},
-        {"http_port", options.http_port},
+        {"server_id", cfg.server_id},
+        {"instance_id", instance_id},
+        {"control_url", cfg.control_url},
+        {"media_ip", cfg.media_ip},
+        {"rtmp_port", cfg.rtmp_port},
+        {"rtsp_port", cfg.rtsp_port},
+        {"http_port", cfg.http_port},
     });
 }
 
-std::string heartbeat_body(const signaling_client_options& options)
+std::string heartbeat_body(const config& cfg, std::string_view instance_id)
 {
     return boost::json::serialize(boost::json::object{
-        {"server_id", options.server_id},
-        {"instance_id", options.instance_id},
+        {"server_id", cfg.server_id},
+        {"instance_id", instance_id},
     });
 }
 
-std::string publish_claim_body(const signaling_client_options& options,
+std::string publish_claim_body(const config& cfg,
+                               std::string_view instance_id,
                                std::string_view stream_id,
                                std::string_view protocol,
                                std::string_view stream_name)
 {
     return boost::json::serialize(boost::json::object{
         {"stream_id", stream_id},
-        {"server_id", options.server_id},
-        {"instance_id", options.instance_id},
+        {"server_id", cfg.server_id},
+        {"instance_id", instance_id},
         {"protocol", protocol},
         {"stream_name", stream_name},
     });
@@ -77,7 +78,7 @@ boost::json::object runtime_event_json(const runtime_event& event)
     return body;
 }
 
-std::string runtime_event_batch_body(const signaling_client_options& options, const std::vector<runtime_event>& batch)
+std::string runtime_event_batch_body(const config& cfg, std::string_view instance_id, const std::vector<runtime_event>& batch)
 {
     boost::json::array events;
     events.reserve(batch.size());
@@ -86,8 +87,8 @@ std::string runtime_event_batch_body(const signaling_client_options& options, co
         events.push_back(runtime_event_json(event));
     }
     return boost::json::serialize(boost::json::object{
-        {"server_id", options.server_id},
-        {"instance_id", options.instance_id},
+        {"server_id", cfg.server_id},
+        {"instance_id", instance_id},
         {"events", std::move(events)},
     });
 }
@@ -100,19 +101,35 @@ signaling_client& signaling_client::instance()
     return value;
 }
 
-void signaling_client::configure(signaling_client_options options)
+void signaling_client::configure(const config& cfg,
+                                 std::string instance_id,
+                                 std::chrono::milliseconds heartbeat_interval,
+                                 std::chrono::milliseconds request_timeout)
 {
-    const auto parsed = boost::urls::parse_uri(options.signaling_url);
+    if (cfg.signaling_url.empty())
+    {
+        config_ = cfg;
+        instance_id_ = std::move(instance_id);
+        heartbeat_interval_ = heartbeat_interval;
+        request_timeout_ = request_timeout;
+        host_.clear();
+        port_.clear();
+        return;
+    }
+
+    const auto parsed = boost::urls::parse_uri(cfg.signaling_url);
     if (!parsed || parsed->scheme() != "http" || parsed->host().empty() || parsed->has_userinfo() ||
         (!parsed->path().empty() && parsed->path() != "/") || parsed->has_query() || parsed->has_fragment())
     {
         throw std::invalid_argument("invalid signaling URL");
     }
-    const std::string host{parsed->host()};
-    const std::string port = parsed->has_port() ? std::string{parsed->port()} : "80";
-    options_ = std::move(options);
-    host_ = host;
-    port_ = port;
+
+    config_ = cfg;
+    instance_id_ = std::move(instance_id);
+    heartbeat_interval_ = heartbeat_interval;
+    request_timeout_ = request_timeout;
+    host_ = std::string{parsed->host()};
+    port_ = parsed->has_port() ? std::string{parsed->port()} : "80";
 }
 
 signaling_request_result signaling_client::register_once(boost::asio::yield_context& yield) const
@@ -121,7 +138,7 @@ signaling_request_result signaling_client::register_once(boost::asio::yield_cont
     {
         return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
     }
-    return request("/internal/media-servers/register", registration_body(options_), host_, port_, options_.request_timeout, yield);
+    return request("/internal/media-servers/register", registration_body(config_, instance_id_), host_, port_, request_timeout_, yield);
 }
 
 signaling_request_result signaling_client::heartbeat_once(boost::asio::yield_context& yield) const
@@ -130,7 +147,7 @@ signaling_request_result signaling_client::heartbeat_once(boost::asio::yield_con
     {
         return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
     }
-    return request("/internal/media-servers/heartbeat", heartbeat_body(options_), host_, port_, options_.request_timeout, yield);
+    return request("/internal/media-servers/heartbeat", heartbeat_body(config_, instance_id_), host_, port_, request_timeout_, yield);
 }
 
 signaling_request_result signaling_client::claim_publish(std::string_view stream_id,
@@ -143,7 +160,7 @@ signaling_request_result signaling_client::claim_publish(std::string_view stream
         return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
     }
     return request(
-        "/internal/publish/claim", publish_claim_body(options_, stream_id, protocol, stream_name), host_, port_, options_.request_timeout, yield);
+        "/internal/publish/claim", publish_claim_body(config_, instance_id_, stream_id, protocol, stream_name), host_, port_, request_timeout_, yield);
 }
 
 void signaling_client::report(runtime_event event)
@@ -237,7 +254,7 @@ void signaling_client::run(boost::asio::yield_context& yield)
     std::vector<runtime_event> events;
     for (;;)
     {
-        timer.expires_after(options_.heartbeat_interval);
+        timer.expires_after(heartbeat_interval_);
         timer.async_wait(yield);
 
         const auto result = heartbeat_once(yield);
@@ -273,7 +290,7 @@ void signaling_client::run(boost::asio::yield_context& yield)
             continue;
         }
         const auto event_result =
-            request("/internal/runtime-events", runtime_event_batch_body(options_, events), host_, port_, options_.request_timeout, yield);
+            request("/internal/runtime-events", runtime_event_batch_body(config_, instance_id_, events), host_, port_, request_timeout_, yield);
         if (event_result.kind == signaling_result_kind::accepted)
         {
             events.clear();

@@ -194,20 +194,17 @@ media_server::runtime_event event(std::size_t value)
     };
 }
 
-media_server::signaling_client_options client_options(std::string url)
+media_server::config client_config(std::string url)
 {
-    return {
-        .signaling_url = std::move(url),
-        .server_id = "media-1",
-        .instance_id = "instance-a",
-        .control_url = "http://127.0.0.1:8080",
-        .media_ip = "127.0.0.1",
-        .rtmp_port = 1935,
-        .rtsp_port = 8554,
-        .http_port = 8080,
-        .heartbeat_interval = 20ms,
-        .request_timeout = 500ms,
-    };
+    media_server::config cfg;
+    cfg.signaling_url = std::move(url);
+    cfg.server_id = "media-1";
+    cfg.control_url = "http://127.0.0.1:8080";
+    cfg.media_ip = "127.0.0.1";
+    cfg.rtmp_port = 1935;
+    cfg.rtsp_port = 8554;
+    cfg.http_port = 8080;
+    return cfg;
 }
 
 class client_fixture
@@ -215,7 +212,7 @@ class client_fixture
    public:
     explicit client_fixture(std::string url) : work_(boost::asio::make_work_guard(io_))
     {
-        media_server::signaling_client::instance().configure(client_options(std::move(url)));
+        media_server::signaling_client::instance().configure(client_config(std::move(url)), "instance-a", 20ms, 500ms);
     }
 
     ~client_fixture() { stop(); }

@@ -1539,27 +1539,32 @@ void test_rtmp_publish_target_parsing()
 
 constexpr std::string_view test_rtmp_stream_id = "00000000-0000-4000-8000-000000000001";
 
-signaling_client_options make_publish_claim_client_options(std::string url, std::chrono::milliseconds request_timeout = std::chrono::seconds(2))
+config make_publish_claim_config(std::string url)
 {
-    return {
-        .signaling_url = std::move(url),
-        .server_id = "media-1",
-        .instance_id = "instance-a",
-        .control_url = "http://127.0.0.1:8080",
-        .media_ip = "127.0.0.1",
-        .rtmp_port = 1935,
-        .rtsp_port = 8554,
-        .http_port = 8080,
-        .heartbeat_interval = std::chrono::milliseconds(20),
-        .request_timeout = request_timeout,
-    };
+    config cfg;
+    cfg.signaling_url = std::move(url);
+    cfg.server_id = "media-1";
+    cfg.control_url = "http://127.0.0.1:8080";
+    cfg.media_ip = "127.0.0.1";
+    cfg.rtmp_port = 1935;
+    cfg.rtsp_port = 8554;
+    cfg.http_port = 8080;
+    return cfg;
+}
+
+void configure_signaling_client(std::string url, std::chrono::milliseconds request_timeout = std::chrono::seconds(2))
+{
+    signaling_client::instance().configure(make_publish_claim_config(std::move(url)),
+                                           "instance-a",
+                                           std::chrono::milliseconds(20),
+                                           request_timeout);
 }
 
 void configure_control_plane(worker_context& worker,
                              const test::publish_claim_test_server& server,
                              std::chrono::milliseconds request_timeout = std::chrono::seconds(2))
 {
-    signaling_client::instance().configure(make_publish_claim_client_options(server.url(), request_timeout));
+    configure_signaling_client(server.url(), request_timeout);
     boost::asio::spawn(
         worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
 }
@@ -5527,7 +5532,7 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     probe.close();
     config application_config;
     application_config.rtsp_port = port;
-    signaling_client::instance().configure(make_publish_claim_client_options(claim_server.url()));
+    configure_signaling_client(claim_server.url());
     auto server = std::make_shared<rtsp_server>(workers, application_config);
     boost::system::error_code startup_error;
     server->startup(startup_error);
@@ -5669,7 +5674,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        signaling_client::instance().configure(make_publish_claim_client_options(unavailable_url));
+        configure_signaling_client(unavailable_url);
         auto connection =
             std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
         connection->startup();
@@ -5908,7 +5913,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         client.connect(acceptor.local_endpoint());
         boost::asio::ip::tcp::socket server_socket(worker.io());
         acceptor.accept(server_socket);
-        signaling_client::instance().configure(make_publish_claim_client_options(claim_server.url(), std::chrono::milliseconds(50)));
+        configure_signaling_client(claim_server.url(), std::chrono::milliseconds(50));
         auto connection =
             std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
         connection->startup();
@@ -5979,7 +5984,7 @@ void test_rtsp_publish_server_contract()
     probe.close();
     config application_config;
     application_config.rtsp_port = port;
-    signaling_client::instance().configure(make_publish_claim_client_options(claim_server.url()));
+    configure_signaling_client(claim_server.url());
     auto server = std::make_shared<rtsp_server>(workers, application_config);
     boost::system::error_code startup_error;
     server->startup(startup_error);

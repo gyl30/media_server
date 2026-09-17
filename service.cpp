@@ -118,21 +118,8 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_io = workers_->context(0).io();
-    if (!config_.signaling_url.empty())
-    {
-        const auto instance_id = boost::uuids::to_string(boost::uuids::random_generator{}());
-        signaling_client_options options{
-            .signaling_url = config_.signaling_url,
-            .server_id = config_.server_id,
-            .instance_id = instance_id,
-            .control_url = config_.control_url,
-            .media_ip = config_.media_ip,
-            .rtmp_port = config_.rtmp_port,
-            .rtsp_port = config_.rtsp_port,
-            .http_port = config_.http_port,
-        };
-        signaling_client::instance().configure(std::move(options));
-    }
+    const auto instance_id = boost::uuids::to_string(boost::uuids::random_generator{}());
+    signaling_client::instance().configure(config_, instance_id);
 
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
     signals.async_wait([this](const boost::system::error_code&, int) { stop(); });
