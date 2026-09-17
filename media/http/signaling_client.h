@@ -63,8 +63,6 @@ class signaling_client
     void run(boost::asio::yield_context& yield, std::function<void()> fenced_handler);
 
    private:
-    struct request_state;
-
     signaling_request_result request(std::string_view target,
                                      std::string body,
                                      std::string host,

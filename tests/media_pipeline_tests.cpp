@@ -1874,10 +1874,15 @@ class rtmp_publish_test_peer final
 
     void disconnect_and_wait()
     {
-        boost::system::error_code error;
-        client_socket_.close(error);
+        disconnect();
         wait_session_closed();
         wait_stream_removed();
+    }
+
+    void disconnect()
+    {
+        boost::system::error_code error;
+        client_socket_.close(error);
     }
 
    private:
@@ -2389,9 +2394,11 @@ void test_rtmp_publish_claim_lifecycle(std::string_view scenario)
         require(std::string_view(body.at("stream_id").as_string()) == test_rtmp_stream_id &&
                     body.at("stream_name").as_string() == "live/disconnected-claim",
                 "pending RTMP claim identity");
-        peer.disconnect_and_wait();
-        peer.release_claim_response();
+        peer.disconnect();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        require(!peer.stream_exists() && peer.runtime_events().empty(), "pending RTMP claim remains invisible after disconnect");
+        peer.release_claim_response();
+        peer.wait_session_closed();
         require(!peer.stream_exists(), "late RTMP claim completion does not revive session");
         require(peer.runtime_events().empty(), "late RTMP claim completion emits no runtime event");
         return;
@@ -5686,20 +5693,24 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         boost::system::error_code close_error;
         client.close(close_error);
         connection.reset();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const auto retained_while_claim_pending = !weak.expired();
+        const auto pending_events = runtime_events(claim_server);
+        claim_server.release_response();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        const auto expired_while_claim_pending = weak.expired();
-        const auto pending_events = runtime_events(claim_server);
-        claim_server.release_response();
+        wait_runtime_event_count(claim_server, 2U);
+        const auto completed_events = runtime_events(claim_server);
         worker.stop();
         runner.join();
-        require(expired_while_claim_pending && !stream_registry::instance().find("live/claim-disconnect"),
-                "publisher disconnect during pending rtsp claim leaves no runtime");
+        require(retained_while_claim_pending && weak.expired() && !stream_registry::instance().find("live/claim-disconnect"),
+                "publisher disconnect waits for pending rtsp claim without creating runtime");
         require(pending_events.empty(), "RTSP disconnect during pending claim emits no runtime event");
-        require(runtime_events(claim_server).empty(), "RTSP disconnect during claim emits no runtime event");
+        require(completed_events.size() == 2U && completed_events[0].at("state") == "starting" && completed_events[1].at("state") == "stopped",
+                "RTSP disconnect is observed after pending claim completes");
         return;
     }
 

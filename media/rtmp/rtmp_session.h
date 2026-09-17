@@ -12,7 +12,6 @@
 
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 
 #include "media/net/tcp_yield_transport.h"
 #include "media/codec/video_transcode_config.h"
@@ -76,7 +75,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     rtmp_server_t* rtmp_context_{};
     std::shared_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;
-    boost::asio::cancellation_signal publish_claim_cancellation_;
     std::string stream_id_;
     std::string stream_name_;
     bool publish_claim_pending_{};

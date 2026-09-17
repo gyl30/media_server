@@ -332,7 +332,6 @@ if(BUILD_TESTING)
         status_only
         invalid_url
         timeout
-        cancellation_release
         heartbeat_rejection
         heartbeat_wait_cancellation
         heartbeat_request_cancellation

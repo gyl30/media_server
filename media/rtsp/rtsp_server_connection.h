@@ -13,7 +13,6 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/cancellation_signal.hpp>
 
 #include "media/net/tcp_yield_transport.h"
 #include "media/codec/video_transcode_config.h"
@@ -57,9 +56,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
 
     void run(boost::asio::yield_context yield);
     bool run_publish_claim(rtsp_server_t* server, boost::asio::yield_context& yield);
-    bool start_publish_claim_reader(boost::asio::yield_context& yield);
-    void stop_publish_claim_reader(boost::asio::yield_context& yield);
-    void run_publish_claim_reader(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     int reply_announce_and_close(rtsp_server_t* server, int status);
@@ -72,7 +68,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     video_transcode_codec video_codec_;
     tcp_yield_transport transport_;
     boost::asio::steady_timer inactivity_timer_;
-    boost::asio::steady_timer publish_claim_reader_barrier_;
     std::chrono::milliseconds inactivity_timeout_;
     std::chrono::steady_clock::time_point last_control_activity_{};
     std::size_t max_write_queue_bytes_;
@@ -85,16 +80,10 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     std::deque<write_entry> write_queue_;
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
-    boost::asio::cancellation_signal run_cancellation_;
-    boost::asio::cancellation_signal publish_claim_reader_cancellation_;
-    std::vector<std::uint8_t> publish_claim_input_;
     boost::asio::ip::address local_address_;
     std::string publisher_stream_id_;
     std::string publisher_stream_name_;
     bool publish_claim_pending_{};
-    bool publish_claim_reader_started_{};
-    bool publish_claim_reader_running_{};
-    bool publish_claim_reader_stopping_{};
     bool close_next_write_{};
     bool closing_after_write_{};
     bool closed_{};
