@@ -231,14 +231,12 @@ add_library(media_core STATIC
     media/http/http_server.cpp
     media/gb28181/gb28181_rtp_receiver.cpp
     media/gb28181/gb28181_rtp_sender.cpp
-    media/gb28181/gb28181_event.cpp
     media/gb28181/gb28181_udp_receiver_session.cpp
     media/gb28181/gb28181_udp_sender_session.cpp
     media/gb28181/gb28181_tcp_sender_session.cpp
     media/gb28181/gb28181_tcp_receiver_session.cpp
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
-    media/webrtc/whep_event.cpp
     media/webrtc/stun_message.cpp
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
@@ -250,12 +248,10 @@ add_library(media_core STATIC
     media/webrtc/webrtc_packetizer.cpp
     media/rtmp/rtmp_publish_session.cpp
     media/rtmp/rtmp_play_session.cpp
-    media/rtmp/rtmp_event.cpp
     media/rtmp/rtmp_session.cpp
     media/rtmp/rtmp_server.cpp
     media/rtsp/rtsp_sdp.cpp
     media/rtsp/rtsp_uri.cpp
-    media/rtsp/rtsp_event.cpp
     media/rtsp/rtsp_pull_session.cpp
     media/rtsp/rtsp_pull_media.cpp
     media/rtsp/rtsp_publish_session.cpp
@@ -498,7 +494,7 @@ if(BUILD_TESTING)
 
     add_executable(runtime_event_tests tests/runtime_event_tests.cpp)
     target_link_libraries(runtime_event_tests PRIVATE media_core media_server_link_options)
-    foreach(test_case IN ITEMS strings factories failure ordinary_shutdown)
+    foreach(test_case IN ITEMS strings creation failure ordinary_shutdown)
         add_test(NAME runtime_event_${test_case} COMMAND runtime_event_tests ${test_case})
     endforeach()
 

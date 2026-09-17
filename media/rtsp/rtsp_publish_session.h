@@ -25,7 +25,7 @@ class worker_context;
 class rtsp_publish_tcp_session;
 class rtsp_publish_udp_session;
 
-class rtsp_publish_session final
+class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publish_session>
 {
    public:
     rtsp_publish_session(worker_context& worker,
@@ -45,6 +45,9 @@ class rtsp_publish_session final
     int accept_announce(rtsp_server_t* server);
     int on_record(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
     void shutdown();
+
+   private:
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

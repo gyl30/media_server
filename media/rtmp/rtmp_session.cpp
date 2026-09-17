@@ -8,7 +8,7 @@
 #include <boost/asio/detached.hpp>
 
 #include "media/core/stream_id.h"
-#include "media/rtmp/rtmp_event.h"
+#include "media/core/runtime_event.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -140,34 +140,45 @@ void rtmp_session::run(boost::asio::yield_context yield)
         {
             if (remote_disconnect(error))
             {
-                if (publish_ && !stream_id_.empty())
+                if (publish_)
                 {
-                    publish_->set_shutdown_handler({});
-                    signaling_client::instance().report(
-                        rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::remote, "transport"));
-                    stream_id_.clear();
+                    signaling_client::instance().report(make_event(event_kind::publisher,
+                                                                   event_protocol::rtmp,
+                                                                   event_state::remote_closed,
+                                                                   publish_->stream_id(),
+                                                                   publish_->stream_name(),
+                                                                   {},
+                                                                   "transport"));
                 }
             }
             else
             {
-                if (publish_ && !stream_id_.empty())
+                if (publish_)
                 {
-                    publish_->set_shutdown_handler({});
-                    signaling_client::instance().report(
-                        rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "transport", error.message()));
-                    stream_id_.clear();
+                    signaling_client::instance().report(make_event(event_kind::publisher,
+                                                                   event_protocol::rtmp,
+                                                                   event_state::runtime_error,
+                                                                   publish_->stream_id(),
+                                                                   publish_->stream_name(),
+                                                                   {},
+                                                                   "transport",
+                                                                   error.message()));
                 }
             }
             break;
         }
         if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
         {
-            if (publish_ && !stream_id_.empty())
+            if (publish_)
             {
-                publish_->set_shutdown_handler({});
-                signaling_client::instance().report(rtmp_event::publisher_stopped(
-                    stream_id_, stream_name_, runtime_end_reason::protocol_error, publish_ ? "media" : "control", "rtmp_input_failed"));
-                stream_id_.clear();
+                signaling_client::instance().report(make_event(event_kind::publisher,
+                                                               event_protocol::rtmp,
+                                                               event_state::protocol_error,
+                                                               publish_->stream_id(),
+                                                               publish_->stream_name(),
+                                                               {},
+                                                               "media",
+                                                               "rtmp_input_failed"));
             }
             shutdown();
             break;
@@ -253,12 +264,16 @@ void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
 
     if (data->size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data->size())
     {
-        if (publish_ && !stream_id_.empty())
+        if (publish_)
         {
-            publish_->set_shutdown_handler({});
-            signaling_client::instance().report(
-                rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "transport", "write_queue_overflow"));
-            stream_id_.clear();
+            signaling_client::instance().report(make_event(event_kind::publisher,
+                                                           event_protocol::rtmp,
+                                                           event_state::runtime_error,
+                                                           publish_->stream_id(),
+                                                           publish_->stream_name(),
+                                                           {},
+                                                           "transport",
+                                                           "write_queue_overflow"));
         }
         shutdown();
         return;
@@ -298,22 +313,29 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         {
             if (remote_disconnect(error))
             {
-                if (publish_ && !stream_id_.empty())
+                if (publish_)
                 {
-                    publish_->set_shutdown_handler({});
-                    signaling_client::instance().report(
-                        rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::remote, "transport"));
-                    stream_id_.clear();
+                    signaling_client::instance().report(make_event(event_kind::publisher,
+                                                                   event_protocol::rtmp,
+                                                                   event_state::remote_closed,
+                                                                   publish_->stream_id(),
+                                                                   publish_->stream_name(),
+                                                                   {},
+                                                                   "transport"));
                 }
             }
             else
             {
-                if (publish_ && !stream_id_.empty())
+                if (publish_)
                 {
-                    publish_->set_shutdown_handler({});
-                    signaling_client::instance().report(
-                        rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "transport", error.message()));
-                    stream_id_.clear();
+                    signaling_client::instance().report(make_event(event_kind::publisher,
+                                                                   event_protocol::rtmp,
+                                                                   event_state::runtime_error,
+                                                                   publish_->stream_id(),
+                                                                   publish_->stream_name(),
+                                                                   {},
+                                                                   "transport",
+                                                                   error.message()));
                 }
             }
             shutdown();
@@ -443,7 +465,6 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
         return;
     }
 
-    signaling_client::instance().report(rtmp_event::publisher_starting(stream_id_, stream_name_));
     const auto self = shared_from_this();
     auto publish = std::make_shared<rtmp_publish_session>(worker_,
                                                           stream_id_,
@@ -451,14 +472,12 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
                                                           initial_tracks_timeout_,
                                                           [self]()
                                                           {
-                                                              self->stream_id_.clear();
                                                               self->shutdown();
                                                           });
     if (!publish->startup())
     {
         static_cast<void>(rtmp_server_start(rtmp_context_, -1, "publish startup failed"));
-        signaling_client::instance().report(
-            rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "setup", "publish_startup_failed"));
+        publish->shutdown();
         stream_id_.clear();
         shutdown();
         return;
@@ -467,13 +486,14 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
     publish_ = std::move(publish);
     if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0)
     {
-        if (!stream_id_.empty())
-        {
-            publish_->set_shutdown_handler({});
-            signaling_client::instance().report(
-                rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "control", "rtmp_publish_start_failed"));
-            stream_id_.clear();
-        }
+        signaling_client::instance().report(make_event(event_kind::publisher,
+                                                       event_protocol::rtmp,
+                                                       event_state::runtime_error,
+                                                       publish_->stream_id(),
+                                                       publish_->stream_name(),
+                                                       {},
+                                                       "control",
+                                                       "rtmp_publish_start_failed"));
         shutdown();
         return;
     }

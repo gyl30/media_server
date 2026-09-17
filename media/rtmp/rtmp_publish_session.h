@@ -33,8 +33,9 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
                          std::chrono::milliseconds initial_tracks_timeout,
                          shutdown_handler on_shutdown);
     bool startup();
-    void set_shutdown_handler(shutdown_handler handler);
     void shutdown();
+    [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
+    [[nodiscard]] const std::string& stream_name() const noexcept { return stream_->name(); }
 
     int on_video(const void* data, std::size_t bytes, std::uint32_t timestamp);
     int on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp);
@@ -49,6 +50,7 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     int initialize_g711_track(int codec);
     int publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     void try_initialize_tracks();
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

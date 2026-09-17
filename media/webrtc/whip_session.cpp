@@ -188,13 +188,6 @@ void whip_session::safe_shutdown()
     dtls_.reset();
     certificate_.reset();
     answer_ = {};
-    shutdown_udp_transport();
-
-    spdlog::info("webrtc whip session shutdown {}", id_);
-}
-
-void whip_session::shutdown_udp_transport()
-{
     udp_transport_.shutdown();
     local_port_ = 0;
     if (local_port_reservation_ != 0)
@@ -202,6 +195,8 @@ void whip_session::shutdown_udp_transport()
         port_manager::instance().release(local_port_reservation_);
         local_port_reservation_ = 0;
     }
+
+    spdlog::info("webrtc whip session shutdown {}", id_);
 }
 
 const std::string& whip_session::id() const noexcept { return id_; }

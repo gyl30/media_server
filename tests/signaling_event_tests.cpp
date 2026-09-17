@@ -184,12 +184,12 @@ std::string stream_id(std::size_t value)
 media_server::runtime_event event(std::size_t value)
 {
     return {
-        .kind = media_server::runtime_kind::source,
+        .kind = media_server::event_kind::source,
         .stream_id = stream_id(value),
         .stream_name = "live/camera-" + std::to_string(value),
         .source_id = "10000000-0000-4000-8000-000000000001",
-        .protocol = media_server::runtime_protocol::rtsp,
-        .state = media_server::runtime_state::starting,
+        .protocol = media_server::event_protocol::rtsp,
+        .state = media_server::event_state::starting,
         .stage = "connecting",
     };
 }
@@ -282,8 +282,7 @@ void test_batch_order_and_identity()
     scripted_http_server server;
     client_fixture fixture(server.url());
     auto first = event(1);
-    first.state = media_server::runtime_state::stopped;
-    first.end_reason = media_server::runtime_end_reason::runtime_error;
+    first.state = media_server::event_state::runtime_error;
     first.error = "connection_failed";
     media_server::signaling_client::instance().report(std::move(first));
     media_server::signaling_client::instance().report(event(2));
@@ -305,7 +304,7 @@ void test_batch_order_and_identity()
         require(!value.contains("server_id") && !value.contains("instance_id"), "event does not duplicate server identity");
     }
     const auto& terminal = events.front().as_object();
-    require(terminal.at("end_reason") == "runtime_error" && terminal.at("error") == "connection_failed", "terminal event fields serialized");
+    require(terminal.at("state") == "runtime_error" && terminal.at("error") == "connection_failed", "fact event fields serialized");
 }
 
 void test_failed_batch_is_retried()

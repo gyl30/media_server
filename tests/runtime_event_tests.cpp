@@ -12,14 +12,10 @@
 #include <boost/json/parse.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
-#include "media/rtmp/rtmp_event.h"
-#include "media/rtsp/rtsp_event.h"
-#include "media/webrtc/whep_event.h"
 #include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/http/signaling_client.h"
-#include "media/gb28181/gb28181_event.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "tests/clients/publish_claim_test_server.h"
 
@@ -114,7 +110,7 @@ void test_rtsp_pull_runtime_failure_events()
     boost::asio::post(worker.io(), [session]() { require(session->startup(), "runtime event pull startup"); });
 
     std::jthread runner([&worker]() { worker.run(); });
-    const bool received = wait_runtime_events(server, 2U);
+    const bool received = wait_runtime_events(server, 3U);
 
     const auto events = runtime_events(server);
     const bool released = !stream_registry::instance().take_receiver_session("live/runtime-events");
@@ -125,20 +121,23 @@ void test_rtsp_pull_runtime_failure_events()
     runner.join();
 
     require(received, "runtime event count");
-    require(events.size() == 2U, "runtime event stopped once");
+    require(events.size() == 3U, "runtime failure emits fact and stopped once");
     const auto& starting = events[0];
-    const auto& stopped = events[1];
+    const auto& failure = events[1];
+    const auto& stopped = events[2];
     require_identity(starting);
     require(starting.at("state") == "starting", "runtime event source starting");
-    require(starting.at("stage") == "resolving" && !starting.contains("end_reason") && !starting.contains("error"), "runtime event starting fields");
+    require(starting.at("stage") == "resolving" && !starting.contains("error"), "runtime event starting fields");
+    require_identity(failure);
+    require(failure.at("state") == "runtime_error" && failure.contains("error") && !failure.contains("stage"),
+            "runtime event failure fact");
     require_identity(stopped);
-    require(stopped.at("state") == "stopped", "runtime event source runtime failure");
-    require(stopped.at("end_reason") == "runtime_error" && stopped.contains("error") && !stopped.contains("stage"), "runtime event failure fields");
+    require(stopped.at("state") == "stopped" && !stopped.contains("error") && !stopped.contains("stage"), "runtime event stopped lifecycle");
     require(released, "runtime event pull releases identity");
-    require(final_event_count == 2U, "ordinary shutdown emits no runtime event");
+    require(final_event_count == 3U, "late shutdown does not duplicate stopped");
 }
 
-void test_rtsp_pull_ordinary_shutdown_is_silent()
+void test_rtsp_pull_ordinary_shutdown_reports_stopped()
 {
     worker_context worker;
     test::publish_claim_test_server server;
@@ -170,117 +169,49 @@ void test_rtsp_pull_ordinary_shutdown_is_silent()
     const bool received = wait_runtime_events(server, 1U);
     session->shutdown();
     session->shutdown();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const bool stopped = wait_runtime_events(server, 2U);
     const auto events = runtime_events(server);
     const bool released = !stream_registry::instance().take_receiver_session("live/runtime-events");
     worker.stop();
     runner.join();
 
     require(received, "runtime event count");
-    require(events.size() == 1U && events[0].at("state") == "starting", "ordinary shutdown emits no terminal event");
+    require(stopped && events.size() == 2U && events[0].at("state") == "starting" && events[1].at("state") == "stopped",
+            "ordinary shutdown emits stopped once");
     require(released, "runtime shutdown releases identity");
 }
 
 void test_runtime_event_strings()
 {
-    require(to_string(runtime_kind::source) == "source", "runtime source kind string");
-    require(to_string(runtime_kind::publisher) == "publisher", "runtime publisher kind string");
-    require(to_string(runtime_kind::output) == "output", "runtime output kind string");
-    require(to_string(runtime_protocol::whep) == "whep", "runtime event protocol string");
-    require(to_string(runtime_state::streaming) == "streaming", "runtime event state string");
-    require(to_string(runtime_end_reason::server_shutdown) == "server_shutdown", "runtime event end reason string");
+    require(to_string(event_kind::source) == "source", "runtime source kind string");
+    require(to_string(event_kind::publisher) == "publisher", "runtime publisher kind string");
+    require(to_string(event_kind::output) == "output", "runtime output kind string");
+    require(to_string(event_protocol::whep) == "whep", "runtime event protocol string");
+    require(to_string(event_state::streaming) == "streaming", "runtime event state string");
+    require(to_string(event_state::stop_requested) == "stop_requested", "runtime requested fact string");
+    require(to_string(event_state::remote_closed) == "remote_closed", "runtime remote fact string");
+    require(to_string(event_state::timeout) == "timeout", "runtime timeout fact string");
+    require(to_string(event_state::protocol_error) == "protocol_error", "runtime protocol error fact string");
+    require(to_string(event_state::runtime_error) == "runtime_error", "runtime error fact string");
 }
 
-void test_protocol_event_factories()
+void test_make_event()
 {
-    const auto require_event =
-        [](const runtime_event& event, runtime_kind kind, runtime_protocol protocol, runtime_state state, std::string_view stage)
-    {
-        require(event.kind == kind && event.protocol == protocol && event.state == state, "protocol event fixed identity");
-        require(event.stream_id == stream_id && event.stream_name == "live/runtime-events", "protocol event stream identity");
-        require(stage.empty() ? !event.stage.has_value() : event.stage && *event.stage == stage, "protocol event stage");
-    };
+    const auto event = make_event(event_kind::source,
+                                  event_protocol::rtsp,
+                                  event_state::runtime_error,
+                                  stream_id,
+                                  "live/runtime-events",
+                                  source_id,
+                                  "transport",
+                                  "connection_failed");
+    require(event.kind == event_kind::source && event.protocol == event_protocol::rtsp && event.state == event_state::runtime_error,
+            "event enum fields");
+    require(event.stream_id == stream_id && event.stream_name == "live/runtime-events" && event.source_id == source_id, "event identity fields");
+    require(event.stage == "transport" && event.error == "connection_failed", "event diagnostic fields");
 
-    require_event(rtmp_event::publisher_starting(stream_id, "live/runtime-events"),
-                  runtime_kind::publisher,
-                  runtime_protocol::rtmp,
-                  runtime_state::starting,
-                  "publish");
-    require_event(rtmp_event::publisher_streaming(stream_id, "live/runtime-events"),
-                  runtime_kind::publisher,
-                  runtime_protocol::rtmp,
-                  runtime_state::streaming,
-                  "streaming");
-    const auto rtmp_stopped =
-        rtmp_event::publisher_stopped(stream_id, "live/runtime-events", runtime_end_reason::runtime_error, "transport", "connection_failed");
-    require_event(rtmp_stopped, runtime_kind::publisher, runtime_protocol::rtmp, runtime_state::stopped, "transport");
-    require(rtmp_stopped.end_reason == runtime_end_reason::runtime_error && rtmp_stopped.error == "connection_failed", "rtmp stopped diagnostics");
-
-    require_event(rtsp_event::publisher_starting(stream_id, "live/runtime-events"),
-                  runtime_kind::publisher,
-                  runtime_protocol::rtsp,
-                  runtime_state::starting,
-                  "announce");
-    require_event(rtsp_event::publisher_streaming(stream_id, "live/runtime-events"),
-                  runtime_kind::publisher,
-                  runtime_protocol::rtsp,
-                  runtime_state::streaming,
-                  "streaming");
-    const auto rtsp_publisher_stopped =
-        rtsp_event::publisher_stopped(stream_id, "live/runtime-events", runtime_end_reason::protocol_error, "record", "invalid_record");
-    require_event(rtsp_publisher_stopped, runtime_kind::publisher, runtime_protocol::rtsp, runtime_state::stopped, "record");
-    require(rtsp_publisher_stopped.end_reason == runtime_end_reason::protocol_error && rtsp_publisher_stopped.error == "invalid_record",
-            "rtsp publisher stopped diagnostics");
-
-    const auto rtsp_starting = rtsp_event::source_starting(stream_id, "live/runtime-events", source_id);
-    require_event(rtsp_starting, runtime_kind::source, runtime_protocol::rtsp, runtime_state::starting, "resolving");
-    require(rtsp_starting.source_id == source_id, "rtsp source starting identity");
-    const auto rtsp_streaming = rtsp_event::source_streaming(stream_id, "live/runtime-events", source_id);
-    require_event(rtsp_streaming, runtime_kind::source, runtime_protocol::rtsp, runtime_state::streaming, "streaming");
-    require(rtsp_streaming.source_id == source_id, "rtsp source streaming identity");
-    const auto rtsp_stopped = rtsp_event::source_stopped(stream_id, "live/runtime-events", source_id, runtime_end_reason::timeout, "connect_timeout");
-    require_event(rtsp_stopped, runtime_kind::source, runtime_protocol::rtsp, runtime_state::stopped, {});
-    require(rtsp_stopped.source_id == source_id && rtsp_stopped.end_reason == runtime_end_reason::timeout && rtsp_stopped.error == "connect_timeout",
-            "rtsp source stopped diagnostics");
-
-    require_event(gb28181_event::source_starting(stream_id, "live/runtime-events", "listening"),
-                  runtime_kind::source,
-                  runtime_protocol::gb28181,
-                  runtime_state::starting,
-                  "listening");
-    require_event(gb28181_event::source_streaming(stream_id, "live/runtime-events"),
-                  runtime_kind::source,
-                  runtime_protocol::gb28181,
-                  runtime_state::streaming,
-                  "streaming");
-    const auto gb_source_stopped = gb28181_event::source_stopped(stream_id, "live/runtime-events", runtime_end_reason::remote, "receiver_closed");
-    require_event(gb_source_stopped, runtime_kind::source, runtime_protocol::gb28181, runtime_state::stopped, {});
-    require(gb_source_stopped.end_reason == runtime_end_reason::remote && gb_source_stopped.error == "receiver_closed",
-            "gb28181 source stopped diagnostics");
-    require_event(gb28181_event::output_starting(stream_id, "live/runtime-events"),
-                  runtime_kind::output,
-                  runtime_protocol::gb28181,
-                  runtime_state::starting,
-                  {});
-    require_event(gb28181_event::output_streaming(stream_id, "live/runtime-events"),
-                  runtime_kind::output,
-                  runtime_protocol::gb28181,
-                  runtime_state::streaming,
-                  "streaming");
-    const auto gb_output_stopped = gb28181_event::output_stopped(stream_id, "live/runtime-events", runtime_end_reason::requested);
-    require_event(gb_output_stopped, runtime_kind::output, runtime_protocol::gb28181, runtime_state::stopped, {});
-    require(gb_output_stopped.end_reason == runtime_end_reason::requested && !gb_output_stopped.error, "gb28181 output stopped diagnostics");
-
-    require_event(
-        whep_event::output_starting(stream_id, "live/runtime-events"), runtime_kind::output, runtime_protocol::whep, runtime_state::starting, "ice");
-    require_event(whep_event::output_streaming(stream_id, "live/runtime-events"),
-                  runtime_kind::output,
-                  runtime_protocol::whep,
-                  runtime_state::streaming,
-                  "streaming");
-    const auto whep_stopped = whep_event::output_stopped(stream_id, "live/runtime-events", runtime_end_reason::server_shutdown);
-    require_event(whep_stopped, runtime_kind::output, runtime_protocol::whep, runtime_state::stopped, {});
-    require(whep_stopped.end_reason == runtime_end_reason::server_shutdown && !whep_stopped.error, "whep stopped diagnostics");
+    const auto stopped = make_event(event_kind::output, event_protocol::whep, event_state::stopped, stream_id, "live/runtime-events");
+    require(!stopped.source_id && !stopped.stage && !stopped.error, "empty optional event fields");
 }
 
 }    // namespace
@@ -296,9 +227,9 @@ int main(int argc, char** argv)
         {
             media_server::test_runtime_event_strings();
         }
-        else if (test == "factories")
+        else if (test == "creation")
         {
-            media_server::test_protocol_event_factories();
+            media_server::test_make_event();
         }
         else if (test == "failure")
         {
@@ -306,7 +237,7 @@ int main(int argc, char** argv)
         }
         else if (test == "ordinary_shutdown")
         {
-            media_server::test_rtsp_pull_ordinary_shutdown_is_silent();
+            media_server::test_rtsp_pull_ordinary_shutdown_reports_stopped();
         }
         else
         {

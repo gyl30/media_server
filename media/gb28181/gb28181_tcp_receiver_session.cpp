@@ -11,7 +11,7 @@
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_event.h"
+#include "media/core/runtime_event.h"
 #include "media/http/signaling_client.h"
 #include "media/gb28181/gb28181_tcp_receiver_session.h"
 
@@ -63,8 +63,13 @@ bool gb28181_tcp_receiver_session::startup()
     started_ = true;
     const auto self = shared_from_this();
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
-    signaling_client::instance().report(gb28181_event::source_starting(
-        stream_id_, receiver_.stream_name(), config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting"));
+    signaling_client::instance().report(make_event(event_kind::source,
+                                                   event_protocol::gb28181,
+                                                   event_state::starting,
+                                                   stream_id_,
+                                                   receiver_.stream_name(),
+                                                   {},
+                                                   config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting"));
     return true;
 }
 
@@ -107,12 +112,15 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         }
         if (started_)
         {
-            started_ = false;
-            signaling_client::instance().report(gb28181_event::source_stopped(
-                stream_id_,
-                receiver_.stream_name(),
-                error == boost::asio::error::timed_out ? runtime_end_reason::timeout : runtime_end_reason::runtime_error,
-                error == boost::asio::error::timed_out ? "establishment_timeout" : error.message()));
+            signaling_client::instance().report(make_event(event_kind::source,
+                                                           event_protocol::gb28181,
+                                                           error == boost::asio::error::timed_out ? event_state::timeout
+                                                                                                : event_state::runtime_error,
+                                                           stream_id_,
+                                                           receiver_.stream_name(),
+                                                           {},
+                                                           {},
+                                                           error == boost::asio::error::timed_out ? "establishment_timeout" : error.message()));
         }
         shutdown();
         return;
@@ -124,9 +132,14 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
         if (started_)
         {
-            started_ = false;
-            signaling_client::instance().report(
-                gb28181_event::source_stopped(stream_id_, receiver_.stream_name(), runtime_end_reason::runtime_error, "receiver_startup_failed"));
+            signaling_client::instance().report(make_event(event_kind::source,
+                                                           event_protocol::gb28181,
+                                                           event_state::runtime_error,
+                                                           stream_id_,
+                                                           receiver_.stream_name(),
+                                                           {},
+                                                           {},
+                                                           "receiver_startup_failed"));
         }
         shutdown();
         return;
@@ -146,12 +159,17 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         }
         if (error)
         {
-            const auto reason = remote_disconnect(error) ? runtime_end_reason::remote : runtime_end_reason::runtime_error;
+            const auto state = remote_disconnect(error) ? event_state::remote_closed : event_state::runtime_error;
             if (started_)
             {
-                started_ = false;
-                signaling_client::instance().report(gb28181_event::source_stopped(
-                    stream_id_, receiver_.stream_name(), reason, reason == runtime_end_reason::remote ? std::string{} : error.message()));
+                signaling_client::instance().report(make_event(event_kind::source,
+                                                               event_protocol::gb28181,
+                                                               state,
+                                                               stream_id_,
+                                                               receiver_.stream_name(),
+                                                               {},
+                                                               {},
+                                                               state == event_state::remote_closed ? std::string{} : error.message()));
             }
             shutdown();
             return;
@@ -174,15 +192,26 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
                 const auto result = receiver_.receive_rtp(packet);
                 if (!was_recording && receiver_.recording())
                 {
-                    signaling_client::instance().report(gb28181_event::source_streaming(stream_id_, receiver_.stream_name()));
+                    signaling_client::instance().report(make_event(event_kind::source,
+                                                                   event_protocol::gb28181,
+                                                                   event_state::streaming,
+                                                                   stream_id_,
+                                                                   receiver_.stream_name(),
+                                                                   {},
+                                                                   "streaming"));
                 }
                 if (result == gb28181_rtp_receive_result::fatal)
                 {
                     if (started_)
                     {
-                        started_ = false;
-                        signaling_client::instance().report(gb28181_event::source_stopped(
-                            stream_id_, receiver_.stream_name(), runtime_end_reason::protocol_error, "media_input_failed"));
+                        signaling_client::instance().report(make_event(event_kind::source,
+                                                                       event_protocol::gb28181,
+                                                                       event_state::protocol_error,
+                                                                       stream_id_,
+                                                                       receiver_.stream_name(),
+                                                                       {},
+                                                                       {},
+                                                                       "media_input_failed"));
                     }
                     shutdown();
                     return;
@@ -209,6 +238,11 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    if (started_)
+    {
+        signaling_client::instance().report(
+            make_event(event_kind::source, event_protocol::gb28181, event_state::stopped, stream_id_, receiver_.stream_name()));
+    }
     started_ = false;
     stream_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)
