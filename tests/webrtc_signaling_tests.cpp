@@ -1088,7 +1088,7 @@ class whep_http_test_peer final
         boost::asio::ip::tcp::socket client(client_io_);
         client.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        auto session = std::make_shared<http_session>(workers_.context(0), std::move(server_socket), workers_, config_);
+        auto session = std::make_shared<http_session>(workers_.context(0), std::move(server_socket), config_);
         session->startup();
 
         const bool head = request.method() == boost::beast::http::verb::head;

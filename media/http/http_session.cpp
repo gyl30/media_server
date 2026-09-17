@@ -11,15 +11,14 @@
 #include "media/http/http_session.h"
 #include "media/net/worker_context.h"
 #include "media/http/rtsp_pull_http.h"
-#include "media/net/io_context_pool.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
 
 namespace media_server
 {
 
-http_session::http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, io_context_pool& workers, const config& config)
-    : worker_(worker), stream_(std::move(socket)), workers_(workers), config_(config)
+http_session::http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& config)
+    : worker_(worker), stream_(std::move(socket)), config_(config)
 {
 }
 
@@ -96,18 +95,16 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/play/hls" || path.starts_with("/play/hls/"))
     {
-        const auto self = shared_from_this();
-        hls_ = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request), config_, [self]() { self->shutdown(); });
-        hls_->startup();
+        const auto session = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request), config_);
+        session->startup();
         return;
     }
 
     const auto decoded_path = parsed->path();
     if (decoded_path.ends_with(".flv"))
     {
-        const auto self = shared_from_this();
-        flv_ = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request), config_, [self]() { self->shutdown(); });
-        flv_->startup();
+        const auto session = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request), config_);
+        session->startup();
         return;
     }
 
@@ -171,16 +168,6 @@ void http_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    if (hls_)
-    {
-        hls_->shutdown();
-        hls_.reset();
-    }
-    if (flv_)
-    {
-        flv_->shutdown();
-        flv_.reset();
-    }
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);

@@ -40,7 +40,7 @@ void http_server::run(boost::asio::yield_context yield)
             return;
         }
 
-        auto session = std::make_shared<http_session>(*worker, std::move(socket), workers_, config_);
+        auto session = std::make_shared<http_session>(*worker, std::move(socket), config_);
         session->startup();
     }
 }

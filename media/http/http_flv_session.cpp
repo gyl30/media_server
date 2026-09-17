@@ -15,9 +15,8 @@
 namespace media_server
 {
 
-http_flv_session::http_flv_session(
-    worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config, std::function<void()> on_shutdown)
-    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config), on_shutdown_(std::move(on_shutdown))
+http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
+    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config)
 {
 }
 
@@ -224,10 +223,6 @@ void http_flv_session::safe_shutdown()
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);
-    if (auto on_shutdown = std::move(on_shutdown_))
-    {
-        on_shutdown();
-    }
 }
 
 }    // namespace media_server
