@@ -1,5 +1,6 @@
 #include <span>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,7 @@
 
 #include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/rtsp/rtsp_publish_session.h"
 
 extern "C"
@@ -71,7 +73,10 @@ std::string input_request(rtsp_server_t* server, server_fixture& fixture, const 
 {
     fixture.response.clear();
     auto bytes = request.size();
-    require(rtsp_server_input(server, request.data(), &bytes) == 0 && bytes == 0, "rtsp publish udp request input");
+    if (rtsp_server_input(server, request.data(), &bytes) != 0 || bytes != 0)
+    {
+        throw std::runtime_error("rtsp publish udp request input: " + request.substr(0, request.find(' ')));
+    }
     return fixture.response;
 }
 
@@ -97,10 +102,11 @@ void test_rtcp_scheduler_releases_after_shutdown()
     worker.release_work();
     auto& io = worker.io();
 
-    rtsp_publish_session publish(worker, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}, 0ms);
-    publish.set_shutdown_handler([]() {});
+    auto publish = std::make_shared<rtsp_publish_session>(
+        worker, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}, 0ms);
+    publish->set_shutdown_handler([]() {});
 
-    server_fixture fixture{.publish = &publish, .response = {}};
+    server_fixture fixture{.publish = publish.get(), .response = {}};
     rtsp_handler_t handler{};
     handler.close = &close_callback;
     handler.send = &send_callback;
@@ -149,11 +155,13 @@ void test_rtcp_scheduler_releases_after_shutdown()
                         session + "\r\n\r\n";
     require(input_request(server, fixture, record).starts_with("RTSP/1.0 200"), "rtsp publish udp RECORD");
 
-    publish.shutdown();
+    publish->shutdown();
     require(rtsp_server_destroy(server) == 0, "rtsp publish udp server destroy");
 
-    io.run_for(100ms);
+    io.restart();
+    worker.run();
     require(io.stopped(), "rtsp publish udp RTCP scheduler released after shutdown");
+    require(!stream_registry::instance().find("live/rtcp-scheduler"), "rtsp publish UDP stream released after shutdown");
 }
 
 }    // namespace
@@ -162,9 +170,10 @@ void test_rtcp_scheduler_releases_after_shutdown()
 int main()
 {
     media_server::port_manager::init(33'000, 33'099);
+    int iteration{};
     try
     {
-        for (int iteration = 0; iteration < 10; ++iteration)
+        for (; iteration < 10; ++iteration)
         {
             media_server::test_rtcp_scheduler_releases_after_shutdown();
         }
@@ -173,7 +182,7 @@ int main()
     }
     catch (const std::exception& error)
     {
-        std::cerr << "[fail] rtsp_publish_udp_rtcp_scheduler_shutdown: " << error.what() << '\n';
+        std::cerr << "[fail] rtsp_publish_udp_rtcp_scheduler_shutdown iteration " << iteration << ": " << error.what() << '\n';
         return 1;
     }
 }
