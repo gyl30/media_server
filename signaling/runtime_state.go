@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"maps"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -53,6 +55,11 @@ func (r *observedRuntimeRegistry) apply(event observedRuntime) (bool, error) {
 func (r *observedRuntimeRegistry) applyBatch(events []observedRuntime) ([]observedRuntime, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	candidate := observedRuntimeRegistry{
+		byStreamID:      maps.Clone(r.byStreamID),
+		currentBySource: maps.Clone(r.currentBySource),
+		recentStopped:   slices.Clone(r.recentStopped),
+	}
 	counts := make(map[string]int)
 	for _, event := range events {
 		counts[event.StreamID]++
@@ -67,15 +74,27 @@ func (r *observedRuntimeRegistry) applyBatch(events []observedRuntime) ([]observ
 		}
 	}
 	applied := make([]observedRuntime, 0, len(events))
+	changedEvents := make([]observedRuntime, 0, len(events))
 	for index, event := range events {
 		if resume, exists := resumeAfter[event.StreamID]; exists && index <= resume {
 			continue
 		}
-		_, err := r.applyLocked(event, false)
+		changed, err := candidate.applyLocked(event, false)
 		if err != nil {
-			return applied, err
+			return nil, err
 		}
 		applied = append(applied, event)
+		if changed {
+			changedEvents = append(changedEvents, event)
+		}
+	}
+	r.byStreamID = candidate.byStreamID
+	r.currentBySource = candidate.currentBySource
+	r.recentStopped = candidate.recentStopped
+	if r.onChange != nil {
+		for _, event := range changedEvents {
+			r.onChange(event)
+		}
 	}
 	return applied, nil
 }
