@@ -3376,7 +3376,6 @@ void require_http_session_released(const std::weak_ptr<http_session>& session, s
 
 void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
                          worker_context& worker,
-                         io_context_pool& workers,
                          boost::beast::http::verb method,
                          std::string_view target,
                          std::string_view body,
@@ -3391,7 +3390,7 @@ void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
     boost::asio::ip::tcp::socket client(client_io);
     client.connect(acceptor.local_endpoint());
 
-    auto session = std::make_shared<http_session>(worker, acceptor.accept(), workers, application_config);
+    auto session = std::make_shared<http_session>(worker, acceptor.accept(), application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3439,8 +3438,7 @@ void test_hls_http_session_shutdown_lifecycle()
 
     config application_config;
     http_request request(boost::beast::http::verb::get, "/play/hls/live/test/index.m3u8", 11);
-    int shutdowns = 0;
-    auto session = std::make_shared<hls_http_session>(worker, std::move(stream), std::move(request), application_config, [&]() { ++shutdowns; });
+    auto session = std::make_shared<hls_http_session>(worker, std::move(stream), std::move(request), application_config);
     const std::weak_ptr<hls_http_session> weak_session = session;
 
     session->shutdown();
@@ -3450,7 +3448,6 @@ void test_hls_http_session_shutdown_lifecycle()
     worker.release_work();
     worker.run();
     require(weak_session.expired(), "hls http repeated shutdown releases session");
-    require(shutdowns == 1, "hls http notifies owner exactly once");
 
     boost::system::error_code error;
     client.close(error);
@@ -3501,7 +3498,6 @@ void test_gb28181_receiver_http_parameters()
     {
         require_http_status(acceptor,
                             workers.context(0),
-                            workers,
                             method,
                             target,
                             body,
@@ -3713,7 +3709,6 @@ void test_gb28181_sender_http_parameters()
     {
         require_http_status(acceptor,
                             workers.context(0),
-                            workers,
                             method,
                             target,
                             body,
@@ -3853,7 +3848,7 @@ void test_http_flv_client_disconnect()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), workers, application_config);
+    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3887,7 +3882,7 @@ void test_http_flv_stream_end_during_write()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), workers, application_config);
+    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();
@@ -3920,7 +3915,7 @@ void test_http_flv_pending_bootstrap_end()
     boost::asio::ip::tcp::socket client(io);
     client.connect(acceptor.local_endpoint());
     const config application_config;
-    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), workers, application_config);
+    auto session = std::make_shared<http_session>(workers.context(0), acceptor.accept(), application_config);
     const std::weak_ptr<http_session> weak_session = session;
     session->startup();
     session.reset();

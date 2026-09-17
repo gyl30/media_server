@@ -13,14 +13,8 @@
 namespace media_server
 {
 
-hls_http_session::hls_http_session(
-    worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config, std::function<void()> on_shutdown)
-    : worker_(worker),
-      stream_(std::move(stream)),
-      request_(std::move(request)),
-      config_(config),
-      on_shutdown_(std::move(on_shutdown)),
-      wait_timer_(worker_.io())
+hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
+    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config), wait_timer_(worker_.io())
 {
 }
 
@@ -223,10 +217,6 @@ void hls_http_session::safe_shutdown()
     wait_timer_.cancel();
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);
-    if (auto on_shutdown = std::move(on_shutdown_))
-    {
-        on_shutdown();
-    }
 }
 
 }    // namespace media_server

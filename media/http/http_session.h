@@ -14,14 +14,11 @@
 namespace media_server
 {
 class worker_context;
-class io_context_pool;
-class hls_http_session;
-class http_flv_session;
 
 class http_session final : public std::enable_shared_from_this<http_session>
 {
    public:
-    http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, io_context_pool& workers, const config& config);
+    http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& config);
 
     void startup();
     void shutdown();
@@ -43,10 +40,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
    private:
     worker_context& worker_;
     boost::beast::tcp_stream stream_;
-    io_context_pool& workers_;
     const config& config_;
-    std::shared_ptr<hls_http_session> hls_;
-    std::shared_ptr<http_flv_session> flv_;
     bool closed_{};
 };
 }    // namespace media_server
