@@ -37,17 +37,12 @@ void require(bool condition, std::string_view message)
 
 void configure_reporting(worker_context& worker, std::string url)
 {
-    signaling_client::instance().configure({
-        .signaling_url = std::move(url),
-        .server_id = "media-1",
-        .instance_id = "instance-1",
-        .control_url = "http://127.0.0.1:8080",
-        .media_ip = "127.0.0.1",
-        .rtmp_port = 1935,
-        .rtsp_port = 8554,
-        .http_port = 8080,
-        .heartbeat_interval = std::chrono::milliseconds(500),
-    });
+    config cfg{};
+    cfg.signaling_url = std::move(url);
+    cfg.server_id = "media-1";
+    cfg.control_url = "http://127.0.0.1:8080";
+    cfg.media_ip = "127.0.0.1";
+    signaling_client::instance().configure(cfg, "instance-1", std::chrono::milliseconds(500));
     boost::asio::spawn(
         worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
 }

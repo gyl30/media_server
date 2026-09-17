@@ -8,6 +8,7 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
@@ -59,6 +60,9 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     {
         return;
     }
+
+    yield_ = &yield;
+    boost::scope::scope_exit clear_yield([this]() { yield_ = nullptr; });
     boost::system::error_code endpoint_error;
     const auto peer = transport_.remote_endpoint(endpoint_error);
     if (endpoint_error)
@@ -220,11 +224,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
             }
             remaining = remaining.subspan(consumed);
 
-            if (publish_claim_pending_ && !run_publish_claim(rtsp_context, yield))
-            {
-                stop = true;
-                break;
-            }
             if (closed_ || closing_after_write_)
             {
                 stop = true;
@@ -242,37 +241,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     {
         shutdown();
     }
-}
-
-bool rtsp_server_connection::run_publish_claim(rtsp_server_t* server, boost::asio::yield_context& yield)
-{
-    const auto publish = publish_session_;
-    const auto stream_id = publish->stream_id();
-    const auto stream_name = publish->stream_name();
-    const auto result = signaling_client::instance().claim_publish(stream_id, "rtsp", stream_name, yield);
-    if (closed_ || !publish_claim_pending_ || publish_session_ != publish)
-    {
-        return false;
-    }
-
-    publish_claim_pending_ = false;
-    if (result.kind == signaling_result_kind::accepted)
-    {
-        record_control_activity();
-        if (publish->accept_announce(server) != 0)
-        {
-            shutdown();
-            return false;
-        }
-        return !closed_;
-    }
-
-    spdlog::warn("rtsp publish claim failed stream {} stream_id {} status {} error {}", stream_name, stream_id, result.status, result.error);
-    publish->shutdown();
-    publish_session_.reset();
-    const auto status = result.kind == signaling_result_kind::rejected ? 403 : 503;
-    static_cast<void>(reply_announce_and_close(server, status));
-    return false;
 }
 
 void rtsp_server_connection::shutdown()
@@ -419,8 +387,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     const auto owner = self->shared_from_this();
     auto next_session = std::make_shared<rtsp_publish_session>(
         self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-    next_session->set_shutdown_handler(
-        [owner]() { owner->shutdown(); });
+    next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
     const auto status = next_session->prepare_announce(server, uri != nullptr ? uri : "", sdp, length);
     if (status != 200)
     {
@@ -429,8 +396,31 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     }
 
     self->publish_session_ = std::move(next_session);
-    self->publish_claim_pending_ = true;
-    return 0;
+    const auto publish = self->publish_session_;
+    const auto stream_id = publish->stream_id();
+    const auto stream_name = publish->stream_name();
+    const auto result = signaling_client::instance().claim_publish(stream_id, "rtsp", stream_name, *self->yield_);
+    if (self->closed_ || self->publish_session_ != publish)
+    {
+        return -1;
+    }
+
+    if (result.kind == signaling_result_kind::accepted)
+    {
+        self->record_control_activity();
+        const auto reply_result = publish->accept_announce(server);
+        if (reply_result != 0)
+        {
+            self->shutdown();
+        }
+        return reply_result;
+    }
+
+    spdlog::warn("rtsp publish claim failed stream {} stream_id {} status {} error {}", stream_name, stream_id, result.status, result.error);
+    publish->shutdown();
+    self->publish_session_.reset();
+    const auto reply_status = result.kind == signaling_result_kind::rejected ? 403 : 503;
+    return self->reply_announce_and_close(server, reply_status);
 }
 
 int rtsp_server_connection::record_callback(
