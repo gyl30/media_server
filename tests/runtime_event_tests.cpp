@@ -49,7 +49,7 @@ void configure_reporting(worker_context& worker, std::string url)
         .heartbeat_interval = std::chrono::milliseconds(500),
     });
     boost::asio::spawn(
-        worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield, []() {}); }, boost::asio::detached);
+        worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
 }
 
 void require_identity(const boost::json::object& event)

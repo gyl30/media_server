@@ -7,7 +7,6 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <string_view>
 
 #include <boost/asio/spawn.hpp>
@@ -60,7 +59,7 @@ class signaling_client
                                            std::string_view stream_name,
                                            boost::asio::yield_context& yield) const;
     void report(runtime_event event);
-    void run(boost::asio::yield_context& yield, std::function<void()> fenced_handler);
+    void run(boost::asio::yield_context& yield);
 
    private:
     signaling_request_result request(std::string_view target,

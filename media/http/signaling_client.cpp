@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <utility>
 #include <iterator>
 #include <stdexcept>
@@ -226,14 +227,15 @@ signaling_request_result signaling_client::request(std::string_view target,
     return {.kind = signaling_result_kind::accepted, .status = status, .error = {}};
 }
 
-void signaling_client::run(boost::asio::yield_context& yield, std::function<void()> fenced_handler)
+void signaling_client::run(boost::asio::yield_context& yield)
 {
     if (host_.empty())
     {
         return;
     }
     boost::asio::steady_timer timer(yield.get_executor());
-    while (yield.cancelled() == boost::asio::cancellation_type::none)
+    std::vector<runtime_event> events;
+    for (;;)
     {
         timer.expires_after(options_.heartbeat_interval);
         boost::system::error_code error;
@@ -256,56 +258,44 @@ void signaling_client::run(boost::asio::yield_context& yield, std::function<void
         }
         if (result.kind == signaling_result_kind::rejected)
         {
-            spdlog::critical("signaling heartbeat rejected status {}", result.status);
-            fenced_handler();
+            spdlog::critical("signaling heartbeat rejected status {}; aborting in 5 seconds", result.status);
+            boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
+            boost::system::error_code abort_error;
+            abort_timer.async_wait(yield[abort_error]);
+            if (!abort_error)
+            {
+                std::abort();
+            }
             return;
         }
 
-        std::vector<runtime_event> batch;
         {
             std::scoped_lock lock(event_mutex_);
-            if (pending_events_.empty())
+            if (events.size() + pending_events_.size() > max_pending_events)
             {
-                continue;
+                events.clear();
             }
-            batch.swap(pending_events_);
+            events.insert(events.end(), std::make_move_iterator(pending_events_.begin()), std::make_move_iterator(pending_events_.end()));
+            pending_events_.clear();
+        }
+        if (events.empty())
+        {
+            continue;
         }
         const auto event_result =
-            request("/internal/runtime-events", runtime_event_batch_body(options_, batch), host_, port_, options_.request_timeout, yield);
+            request("/internal/runtime-events", runtime_event_batch_body(options_, events), host_, port_, options_.request_timeout, yield);
         if (event_result.kind == signaling_result_kind::accepted)
         {
+            events.clear();
             continue;
         }
         if (event_result.kind == signaling_result_kind::network_error)
         {
-            spdlog::warn("runtime event batch network error {}; retaining {} events", event_result.error, batch.size());
+            spdlog::warn("runtime event batch network error {}; retaining {} events", event_result.error, events.size());
         }
         else
         {
-            spdlog::warn("runtime event batch delivery failed status {}; retaining {} events", event_result.status, batch.size());
-        }
-
-        bool overflow{};
-        std::size_t pending{};
-        {
-            std::scoped_lock lock(event_mutex_);
-            pending = pending_events_.size();
-            if (batch.size() + pending_events_.size() > max_pending_events)
-            {
-                overflow = true;
-            }
-            else
-            {
-                batch.insert(batch.end(), std::make_move_iterator(pending_events_.begin()), std::make_move_iterator(pending_events_.end()));
-                pending_events_.swap(batch);
-            }
-        }
-        if (overflow)
-        {
-            spdlog::warn("runtime event retry backlog {} with {} newer events exceeds limit {}; dropping old backlog",
-                         batch.size(),
-                         pending,
-                         max_pending_events);
+            spdlog::warn("runtime event batch delivery failed status {}; retaining {} events", event_result.status, events.size());
         }
     }
 }

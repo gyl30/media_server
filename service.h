@@ -5,7 +5,6 @@
 
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/signal_set.hpp>
-#include <boost/asio/steady_timer.hpp>
 
 #include "config.h"
 
@@ -26,9 +25,9 @@ class service
     int run();
 
    private:
+    bool register_signaling(boost::asio::yield_context& yield);
     void run_control(boost::asio::yield_context yield);
     void stop();
-    void schedule_signaling_abort();
 
    private:
     config config_;
@@ -36,7 +35,6 @@ class service
     std::shared_ptr<rtmp_server> rtmp_;
     std::shared_ptr<rtsp_server> rtsp_;
     std::shared_ptr<http_server> http_;
-    std::unique_ptr<boost::asio::steady_timer> signaling_abort_timer_;
     std::unique_ptr<boost::asio::signal_set> signals_;
     int exit_code_{};
 };

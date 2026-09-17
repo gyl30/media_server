@@ -26,47 +26,27 @@ service::~service() = default;
 
 void service::stop() { workers_->stop(); }
 
-void service::schedule_signaling_abort()
+bool service::register_signaling(boost::asio::yield_context& yield)
 {
-    if (signaling_abort_timer_)
-    {
-        return;
-    }
-    spdlog::critical("signaling fenced this media server instance; aborting in 5 seconds");
-    signaling_abort_timer_ = std::make_unique<boost::asio::steady_timer>(workers_->context(0).io());
-    signaling_abort_timer_->expires_after(std::chrono::seconds{5});
-    signaling_abort_timer_->async_wait(
-        [](const boost::system::error_code& error)
-        {
-            if (!error)
-            {
-                std::abort();
-            }
-        });
-}
-
-void service::run_control(boost::asio::yield_context yield)
-{
-    auto& control_io = workers_->context(0).io();
-    boost::asio::steady_timer retry_timer(control_io);
+    boost::asio::steady_timer retry_timer(yield.get_executor());
     for (;;)
     {
         const auto registration = signaling_client::instance().register_once(yield);
         if (registration.kind == signaling_result_kind::accepted)
         {
-            break;
+            return true;
         }
         if (registration.kind == signaling_result_kind::rejected)
         {
             spdlog::critical("signaling registration rejected status {}; aborting in 5 seconds", registration.status);
-            boost::asio::steady_timer abort_timer(control_io, std::chrono::seconds{5});
+            boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
             boost::system::error_code error;
             abort_timer.async_wait(yield[error]);
             if (!error)
             {
                 std::abort();
             }
-            return;
+            return false;
         }
         if (registration.kind == signaling_result_kind::temporary_failure)
         {
@@ -82,8 +62,16 @@ void service::run_control(boost::asio::yield_context yield)
         retry_timer.async_wait(yield[error]);
         if (error)
         {
-            return;
+            return false;
         }
+    }
+}
+
+void service::run_control(boost::asio::yield_context yield)
+{
+    if (!register_signaling(yield))
+    {
+        return;
     }
 
     boost::system::error_code network_error;
@@ -119,7 +107,7 @@ void service::run_control(boost::asio::yield_context yield)
     spdlog::info("rtsp play path app/stream");
     spdlog::info("http flv path app/stream.flv");
 
-    signaling_client::instance().run(yield, [this]() { schedule_signaling_abort(); });
+    signaling_client::instance().run(yield);
 }
 
 int service::run()

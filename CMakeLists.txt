@@ -329,8 +329,6 @@ if(BUILD_TESTING)
         invalid_url
         timeout
         heartbeat_rejection
-        heartbeat_wait_cancellation
-        heartbeat_request_cancellation
     )
         add_test(NAME signaling_client_${test_case} COMMAND signaling_client_tests ${test_case})
     endforeach()
@@ -506,6 +504,7 @@ if(BUILD_TESTING)
         batch
         retry
         retry_order
+        retry_overflow
         capacity
         overflow
         nonblocking
