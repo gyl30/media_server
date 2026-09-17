@@ -238,12 +238,7 @@ void signaling_client::run(boost::asio::yield_context& yield)
     for (;;)
     {
         timer.expires_after(options_.heartbeat_interval);
-        boost::system::error_code error;
-        timer.async_wait(yield[error]);
-        if (error)
-        {
-            return;
-        }
+        timer.async_wait(yield);
 
         const auto result = heartbeat_once(yield);
         if (result.kind == signaling_result_kind::network_error)
@@ -260,13 +255,8 @@ void signaling_client::run(boost::asio::yield_context& yield)
         {
             spdlog::critical("signaling heartbeat rejected status {}; aborting in 5 seconds", result.status);
             boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
-            boost::system::error_code abort_error;
-            abort_timer.async_wait(yield[abort_error]);
-            if (!abort_error)
-            {
-                std::abort();
-            }
-            return;
+            abort_timer.async_wait(yield);
+            std::abort();
         }
 
         {
