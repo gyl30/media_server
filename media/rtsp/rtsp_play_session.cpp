@@ -388,7 +388,11 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
         return rtsp_server_reply_play(server, 200, npt, nullptr, nullptr);
     }
 
-    static_cast<void>(rtsp_server_reply_play(server, 200, npt, nullptr, nullptr));
+    const auto result = rtsp_server_reply_play(server, 200, npt, nullptr, nullptr);
+    if (result != 0)
+    {
+        return result;
+    }
     playing_ = true;
     stream_->add_reader(shared_from_this(), worker_);
     return 0;
