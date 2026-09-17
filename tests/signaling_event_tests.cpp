@@ -224,7 +224,7 @@ class client_fixture
     {
         boost::asio::spawn(
             io_,
-            [this](boost::asio::yield_context yield) { media_server::signaling_client::instance().run(yield, [this]() { fenced_ = true; }); },
+            [](boost::asio::yield_context yield) { media_server::signaling_client::instance().run(yield); },
             boost::asio::detached);
         runner_ = std::jthread([this]() { io_.run(); });
     }
@@ -238,13 +238,10 @@ class client_fixture
         }
     }
 
-    [[nodiscard]] bool fenced() const noexcept { return fenced_; }
-
    private:
     boost::asio::io_context io_;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_;
     std::jthread runner_;
-    bool fenced_{};
 };
 
 boost::json::array batch_events(const captured_request& request) { return boost::json::parse(request.body).as_object().at("events").as_array(); }
@@ -340,6 +337,32 @@ void test_new_events_follow_failed_batch()
     for (std::size_t index = 0; index < events.size(); ++index)
     {
         require(events[index].as_object().at("stream_id").as_string() == stream_id(index + 1U), "old events remain before new event");
+    }
+}
+
+void test_retry_overflow_keeps_new_events()
+{
+    scripted_http_server server(
+        {response_action::no_content, response_action::hold_server_error, response_action::no_content, response_action::no_content});
+    client_fixture fixture(server.url());
+    for (std::size_t index = 0; index < 400U; ++index)
+    {
+        media_server::signaling_client::instance().report(event(index));
+    }
+    fixture.start();
+    require(server.wait_requests(2), "old batch request held");
+    for (std::size_t index = 400U; index < 600U; ++index)
+    {
+        media_server::signaling_client::instance().report(event(index));
+    }
+    server.release_hold();
+    require(server.wait_requests(4), "new events retried after old backlog overflow");
+    fixture.stop();
+    const auto events = batch_events(server.requests()[3]);
+    require(events.size() == 200U, "retry overflow drops old backlog and keeps newer events");
+    for (std::size_t index = 0; index < events.size(); ++index)
+    {
+        require(events[index].as_object().at("stream_id").as_string() == stream_id(index + 400U), "new events keep their order");
     }
 }
 
@@ -651,6 +674,10 @@ int main(int argc, char** argv)
     else if (test == "retry_order")
     {
         test_new_events_follow_failed_batch();
+    }
+    else if (test == "retry_overflow")
+    {
+        test_retry_overflow_keeps_new_events();
     }
     else if (test == "capacity")
     {

@@ -1561,7 +1561,7 @@ void configure_control_plane(worker_context& worker,
 {
     signaling_client::instance().configure(make_publish_claim_client_options(server.url(), request_timeout));
     boost::asio::spawn(
-        worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield, []() {}); }, boost::asio::detached);
+        worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
 }
 
 rtmp_status parse_rtmp_status(std::span<const std::uint8_t> payload)
