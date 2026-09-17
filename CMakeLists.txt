@@ -437,7 +437,9 @@ if(BUILD_TESTING)
 
     add_executable(rtsp_server_connection_tests tests/rtsp_server_connection_tests.cpp)
     target_link_libraries(rtsp_server_connection_tests PRIVATE media_core media_server_link_options)
-    add_test(NAME rtsp_server_connection_tests COMMAND rtsp_server_connection_tests)
+    foreach(test_case IN ITEMS idle_timeout control_refreshes_timeout udp_setup_internal_failure record_internal_failure)
+        add_test(NAME rtsp_server_connection_${test_case} COMMAND rtsp_server_connection_tests ${test_case})
+    endforeach()
 
     add_executable(rtsp_publish_udp_scheduler_tests tests/rtsp_publish_udp_scheduler_tests.cpp)
     target_link_libraries(rtsp_publish_udp_scheduler_tests PRIVATE media_core media_server_link_options)
