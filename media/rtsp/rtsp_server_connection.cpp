@@ -1,17 +1,13 @@
-#include <array>
 #include <chrono>
 #include <string>
 #include <vector>
 #include <cstdlib>
 #include <utility>
-#include <algorithm>
-#include <exception>
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
 
 #include "media/rtsp/rtsp_event.h"
 #include "media/net/worker_context.h"
@@ -30,7 +26,6 @@ namespace media_server
 namespace
 {
 constexpr std::size_t rtsp_read_buffer_bytes = 64U * 1024U;
-constexpr std::size_t max_publish_claim_input_bytes = 64U * 1024U;
 
 bool remote_disconnect(const boost::system::error_code& error)
 {
@@ -47,7 +42,6 @@ rtsp_server_connection::rtsp_server_connection(worker_context& worker,
       video_codec_(video_codec),
       transport_(std::move(socket)),
       inactivity_timer_(worker_.io()),
-      publish_claim_reader_barrier_(worker_.io()),
       inactivity_timeout_(inactivity_timeout),
       max_write_queue_bytes_(max_write_queue_bytes)
 {
@@ -56,15 +50,11 @@ rtsp_server_connection::rtsp_server_connection(worker_context& worker,
 void rtsp_server_connection::startup()
 {
     const auto self = shared_from_this();
-    boost::asio::spawn(
-        worker_.io(),
-        [self](boost::asio::yield_context yield) { self->run(yield); },
-        boost::asio::bind_cancellation_slot(run_cancellation_.slot(), boost::asio::detached));
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
 }
 
 void rtsp_server_connection::run(boost::asio::yield_context yield)
 {
-    yield.throw_if_cancelled(false);
     if (closed_)
     {
         return;
@@ -114,54 +104,44 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     bool stop = false;
     while (!stop)
     {
-        std::vector<std::uint8_t> deferred_input;
-        std::span<std::uint8_t> remaining;
-        if (!publish_claim_input_.empty())
+        boost::system::error_code error;
+        const auto bytes = transport_.read(buffer, yield, error);
+        if (closed_)
         {
-            deferred_input.swap(publish_claim_input_);
-            remaining = deferred_input;
+            break;
         }
-        else
+        if (error)
         {
-            boost::system::error_code error;
-            const auto bytes = transport_.read(buffer, yield, error);
-            if (closed_)
+            if (remote_disconnect(error))
             {
-                break;
+                if (!publisher_stream_id_.empty())
+                {
+                    if (publish_session_)
+                    {
+                        publish_session_->set_shutdown_handler({});
+                    }
+                    signaling_client::instance().report(
+                        rtsp_event::publisher_stopped(publisher_stream_id_, publisher_stream_name_, runtime_end_reason::remote, "transport"));
+                    publisher_stream_id_.clear();
+                }
             }
-            if (error)
+            else
             {
-                if (remote_disconnect(error))
+                if (!publisher_stream_id_.empty())
                 {
-                    if (!publisher_stream_id_.empty())
+                    if (publish_session_)
                     {
-                        if (publish_session_)
-                        {
-                            publish_session_->set_shutdown_handler({});
-                        }
-                        signaling_client::instance().report(
-                            rtsp_event::publisher_stopped(publisher_stream_id_, publisher_stream_name_, runtime_end_reason::remote, "transport"));
-                        publisher_stream_id_.clear();
+                        publish_session_->set_shutdown_handler({});
                     }
+                    signaling_client::instance().report(rtsp_event::publisher_stopped(
+                        publisher_stream_id_, publisher_stream_name_, runtime_end_reason::runtime_error, "transport", error.message()));
+                    publisher_stream_id_.clear();
                 }
-                else
-                {
-                    if (!publisher_stream_id_.empty())
-                    {
-                        if (publish_session_)
-                        {
-                            publish_session_->set_shutdown_handler({});
-                        }
-                        signaling_client::instance().report(rtsp_event::publisher_stopped(
-                            publisher_stream_id_, publisher_stream_name_, runtime_end_reason::runtime_error, "transport", error.message()));
-                        publisher_stream_id_.clear();
-                    }
-                }
-                shutdown();
-                break;
             }
-            remaining = std::span{buffer.data(), bytes};
+            shutdown();
+            break;
         }
+        auto remaining = std::span{buffer.data(), bytes};
 
         while (!remaining.empty())
         {
@@ -294,12 +274,7 @@ bool rtsp_server_connection::run_publish_claim(rtsp_server_t* server, boost::asi
     const auto publish = publish_session_;
     const auto stream_id = publish->stream_id();
     const auto stream_name = publish->stream_name();
-    if (!start_publish_claim_reader(yield))
-    {
-        return false;
-    }
     const auto result = signaling_client::instance().claim_publish(stream_id, "rtsp", stream_name, yield);
-    stop_publish_claim_reader(yield);
     if (closed_ || !publish_claim_pending_ || publish_session_ != publish)
     {
         return false;
@@ -333,107 +308,6 @@ bool rtsp_server_connection::run_publish_claim(rtsp_server_t* server, boost::asi
     const auto status = result.kind == signaling_result_kind::rejected ? 403 : 503;
     static_cast<void>(reply_announce_and_close(server, status));
     return false;
-}
-
-bool rtsp_server_connection::start_publish_claim_reader(boost::asio::yield_context& yield)
-{
-    publish_claim_reader_started_ = false;
-    publish_claim_reader_running_ = true;
-    publish_claim_reader_stopping_ = false;
-    publish_claim_reader_barrier_.expires_at(std::chrono::steady_clock::time_point::max());
-    const auto self = shared_from_this();
-    boost::asio::spawn(
-        worker_.io(),
-        [self](boost::asio::yield_context reader_yield) { self->run_publish_claim_reader(reader_yield); },
-        boost::asio::bind_cancellation_slot(publish_claim_reader_cancellation_.slot(),
-                                            [self](std::exception_ptr exception)
-                                            {
-                                                self->publish_claim_reader_running_ = false;
-                                                self->publish_claim_reader_barrier_.cancel();
-                                                if (exception)
-                                                {
-                                                    if (!self->publisher_stream_id_.empty())
-                                                    {
-                                                        if (self->publish_session_)
-                                                        {
-                                                            self->publish_session_->set_shutdown_handler({});
-                                                        }
-                                                        signaling_client::instance().report(
-                                                            rtsp_event::publisher_stopped(self->publisher_stream_id_,
-                                                                                          self->publisher_stream_name_,
-                                                                                          runtime_end_reason::runtime_error,
-                                                                                          "claim",
-                                                                                          "publish_claim_reader_failed"));
-                                                        self->publisher_stream_id_.clear();
-                                                    }
-                                                    self->shutdown();
-                                                }
-                                            }));
-
-    if (!publish_claim_reader_started_)
-    {
-        boost::system::error_code error;
-        publish_claim_reader_barrier_.async_wait(yield[error]);
-    }
-    return publish_claim_reader_running_ && !closed_;
-}
-
-void rtsp_server_connection::stop_publish_claim_reader(boost::asio::yield_context& yield)
-{
-    if (!publish_claim_reader_running_)
-    {
-        return;
-    }
-    publish_claim_reader_stopping_ = true;
-    publish_claim_reader_barrier_.expires_at(std::chrono::steady_clock::time_point::max());
-    publish_claim_reader_cancellation_.emit(boost::asio::cancellation_type::all);
-    if (publish_claim_reader_running_)
-    {
-        boost::system::error_code error;
-        publish_claim_reader_barrier_.async_wait(yield[error]);
-    }
-}
-
-void rtsp_server_connection::run_publish_claim_reader(boost::asio::yield_context yield)
-{
-    yield.throw_if_cancelled(false);
-    publish_claim_reader_started_ = true;
-    publish_claim_reader_barrier_.cancel();
-    std::array<std::uint8_t, 8U * 1024U> buffer{};
-
-    while (publish_claim_pending_ && !publish_claim_reader_stopping_ && !closed_)
-    {
-        const auto capacity = std::min(buffer.size(), max_publish_claim_input_bytes - publish_claim_input_.size() + 1U);
-        boost::system::error_code error;
-        const auto bytes = transport_.read(std::span{buffer}.first(capacity), yield, error);
-        if (publish_claim_input_.size() + bytes > max_publish_claim_input_bytes)
-        {
-            shutdown();
-            return;
-        }
-        publish_claim_input_.insert(publish_claim_input_.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
-        if (error)
-        {
-            if (error == boost::asio::error::operation_aborted && (publish_claim_reader_stopping_ || closed_))
-            {
-                return;
-            }
-            if (remote_disconnect(error))
-            {
-                shutdown();
-            }
-            else
-            {
-                shutdown();
-            }
-            return;
-        }
-        if (bytes == 0)
-        {
-            shutdown();
-            return;
-        }
-    }
 }
 
 void rtsp_server_connection::shutdown()
@@ -806,10 +680,6 @@ void rtsp_server_connection::safe_shutdown()
         return;
     }
     closed_ = true;
-    publish_claim_reader_stopping_ = true;
-    publish_claim_reader_cancellation_.emit(boost::asio::cancellation_type::all);
-    publish_claim_reader_barrier_.cancel();
-    run_cancellation_.emit(boost::asio::cancellation_type::all);
     inactivity_timer_.cancel();
     if (publish_session_)
     {

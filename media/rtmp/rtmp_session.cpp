@@ -6,7 +6,6 @@
 #include <boost/url/parse.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
 
 #include "media/core/stream_id.h"
 #include "media/rtmp/rtmp_event.h"
@@ -423,16 +422,12 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     stream_name_ = target->stream_name;
     publish_claim_pending_ = true;
     const auto self = shared_from_this();
-    boost::asio::spawn(
-        worker_.io(),
-        [self](boost::asio::yield_context yield) { self->run_publish_claim(yield); },
-        boost::asio::bind_cancellation_slot(publish_claim_cancellation_.slot(), boost::asio::detached));
+    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_publish_claim(yield); }, boost::asio::detached);
     return RTMP_SERVER_ASYNC_START;
 }
 
 void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
 {
-    yield.throw_if_cancelled(false);
     const auto result = signaling_client::instance().claim_publish(stream_id_, "rtmp", stream_name_, yield);
     if (closed_ || rtmp_context_ == nullptr || !publish_claim_pending_)
     {
@@ -498,7 +493,6 @@ void rtmp_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    publish_claim_cancellation_.emit(boost::asio::cancellation_type::all);
     rtmp_context_ = nullptr;
     if (publish_)
     {

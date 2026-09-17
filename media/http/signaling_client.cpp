@@ -1,4 +1,3 @@
-#include <memory>
 #include <utility>
 #include <iterator>
 #include <stdexcept>
@@ -17,9 +16,6 @@ namespace media_server
 
 namespace
 {
-
-namespace beast = boost::beast;
-using tcp = boost::asio::ip::tcp;
 
 std::string registration_body(const signaling_client_options& options)
 {
@@ -100,19 +96,6 @@ std::string runtime_event_batch_body(const signaling_client_options& options, co
 }
 
 }    // namespace
-
-struct signaling_client::request_state
-{
-    request_state(boost::asio::any_io_executor executor, std::chrono::milliseconds timeout) : resolver(executor), stream(executor), deadline(executor)
-    {
-        deadline.expires_after(timeout);
-    }
-
-    tcp::resolver resolver;
-    beast::tcp_stream stream;
-    boost::asio::steady_timer deadline;
-    bool timed_out{};
-};
 
 signaling_client& signaling_client::instance()
 {
@@ -198,79 +181,52 @@ signaling_request_result signaling_client::request(std::string_view target,
                                                    std::chrono::milliseconds timeout,
                                                    boost::asio::yield_context& yield) const
 {
-    namespace http = beast::http;
-
-    const auto state = std::make_shared<request_state>(yield.get_executor(), timeout);
-    state->deadline.async_wait(
-        [state](const boost::system::error_code& error)
-        {
-            if (error)
-            {
-                return;
-            }
-            state->timed_out = true;
-            state->resolver.cancel();
-            boost::system::error_code ignored;
-            state->stream.socket().cancel(ignored);
-        });
-
-    const auto finish = [&state, &yield]()
-    {
-        static_cast<void>(state->deadline.cancel());
-        yield.get_cancellation_slot().clear();
-    };
-    const auto fail = [&state, &finish](const boost::system::error_code& error)
-    {
-        signaling_request_result result{
-            .kind = signaling_result_kind::network_error,
-            .error = state->timed_out ? "request timeout" : error.message(),
-        };
-        finish();
-        return result;
-    };
-
+    boost::asio::ip::tcp::resolver resolver(yield.get_executor());
+    boost::beast::tcp_stream stream(yield.get_executor());
     boost::system::error_code error;
-    const auto endpoints = state->resolver.async_resolve(host, port, yield[error]);
+    const auto endpoints = resolver.async_resolve(host, port, yield[error]);
     if (error)
     {
-        return fail(error);
+        return {.kind = signaling_result_kind::network_error, .error = error.message()};
     }
-    static_cast<void>(state->stream.async_connect(endpoints, yield[error]));
+    stream.expires_after(timeout);
+    static_cast<void>(stream.async_connect(endpoints, yield[error]));
     if (error)
     {
-        return fail(error);
+        return {.kind = signaling_result_kind::network_error,
+                .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
     }
 
-    http::request<http::string_body> request{http::verb::post, target, 11};
-    request.set(http::field::host, host);
-    request.set(http::field::user_agent, "media_server");
-    request.set(http::field::content_type, "application/json");
+    boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::post, target, 11};
+    request.set(boost::beast::http::field::host, host);
+    request.set(boost::beast::http::field::user_agent, "media_server");
+    request.set(boost::beast::http::field::content_type, "application/json");
     request.body() = std::move(body);
     request.prepare_payload();
-    static_cast<void>(http::async_write(state->stream, request, yield[error]));
+    static_cast<void>(boost::beast::http::async_write(stream, request, yield[error]));
     if (error)
     {
-        return fail(error);
+        return {.kind = signaling_result_kind::network_error,
+                .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
     }
 
-    beast::flat_buffer buffer;
-    http::response<http::string_body> response;
-    static_cast<void>(http::async_read(state->stream, buffer, response, yield[error]));
+    boost::beast::flat_buffer buffer;
+    boost::beast::http::response<boost::beast::http::string_body> response;
+    static_cast<void>(boost::beast::http::async_read(stream, buffer, response, yield[error]));
     if (error)
     {
-        return fail(error);
+        return {.kind = signaling_result_kind::network_error,
+                .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
     }
 
-    state->stream.socket().shutdown(tcp::socket::shutdown_both, error);
+    stream.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     const auto status = static_cast<unsigned int>(response.result_int());
     if (response.result_int() < 200 || response.result_int() >= 300)
     {
         const auto kind =
             response.result_int() >= 500 && response.result_int() < 600 ? signaling_result_kind::temporary_failure : signaling_result_kind::rejected;
-        finish();
         return {.kind = kind, .status = status, .error = {}};
     }
-    finish();
     return {.kind = signaling_result_kind::accepted, .status = status, .error = {}};
 }
 

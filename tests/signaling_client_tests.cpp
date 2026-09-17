@@ -324,29 +324,6 @@ void test_request_timeout()
     require(std::chrono::steady_clock::now() - started < 500ms, "request timeout cancels in-flight HTTP");
 }
 
-void test_completed_request_releases_cancellation_handler()
-{
-    auto options = client_options("http://127.0.0.1:" + std::to_string(unused_port()));
-    boost::asio::io_context io;
-    configure_client(std::move(options));
-    boost::asio::cancellation_signal cancellation;
-    bool completed = false;
-    bool handler_released = false;
-    boost::asio::spawn(
-        io,
-        [&](boost::asio::yield_context yield)
-        {
-            yield.throw_if_cancelled(false);
-            const auto result = media_server::signaling_client::instance().register_once(yield);
-            completed = result.kind == media_server::signaling_result_kind::network_error;
-            handler_released = !yield.get_cancellation_slot().has_handler();
-        },
-        boost::asio::bind_cancellation_slot(cancellation.slot(), boost::asio::detached));
-    io.run();
-    require(completed, "signaling network failure completed");
-    require(handler_released, "completed signaling request releases cancellation handler");
-}
-
 void test_heartbeat_rejection()
 {
     test_http_server server(boost::beast::http::status::internal_server_error);
@@ -477,10 +454,6 @@ int main(int argc, char** argv)
     else if (test == "timeout")
     {
         test_request_timeout();
-    }
-    else if (test == "cancellation_release")
-    {
-        test_completed_request_releases_cancellation_handler();
     }
     else if (test == "heartbeat_rejection")
     {
