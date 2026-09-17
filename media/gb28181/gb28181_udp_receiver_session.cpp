@@ -88,7 +88,7 @@ bool gb28181_udp_receiver_session::startup()
 
     spdlog::info(
         "gb28181 udp session started stream {} rtp_port {} rtcp_port {}", receiver_.stream_name(), local_ports_->first, local_ports_->second);
-    emit_starting();
+    signaling_client::instance().report(gb28181_event::source_starting(stream_id_, receiver_.stream_name(), "listening"));
     return true;
 }
 
@@ -116,10 +116,9 @@ void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
         }
         if (error)
         {
-            if (runtime_started_)
+            if (started_)
             {
-                runtime_started_ = false;
-                runtime_streaming_ = false;
+                started_ = false;
                 signaling_client::instance().report(
                     gb28181_event::source_stopped(stream_id_, receiver_.stream_name(), runtime_end_reason::runtime_error, error.message()));
             }
@@ -127,17 +126,17 @@ void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
             return;
         }
 
+        const bool was_recording = receiver_.recording();
         const auto result = receiver_.receive_rtp(std::span{buffer.data(), bytes});
-        if (!runtime_streaming_ && receiver_.recording())
+        if (!was_recording && receiver_.recording())
         {
-            emit_streaming();
+            signaling_client::instance().report(gb28181_event::source_streaming(stream_id_, receiver_.stream_name()));
         }
         if (result == gb28181_rtp_receive_result::fatal)
         {
-            if (runtime_started_)
+            if (started_)
             {
-                runtime_started_ = false;
-                runtime_streaming_ = false;
+                started_ = false;
                 signaling_client::instance().report(
                     gb28181_event::source_stopped(stream_id_, receiver_.stream_name(), runtime_end_reason::protocol_error, "media_input_failed"));
             }
@@ -149,10 +148,9 @@ void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
             rtp_transport_.connect(endpoint, error);
             if (error)
             {
-                if (runtime_started_)
+                if (started_)
                 {
-                    runtime_started_ = false;
-                    runtime_streaming_ = false;
+                    started_ = false;
                     signaling_client::instance().report(
                         gb28181_event::source_stopped(stream_id_, receiver_.stream_name(), runtime_end_reason::runtime_error, error.message()));
                 }
@@ -178,10 +176,9 @@ void gb28181_udp_receiver_session::run_rtcp(boost::asio::yield_context yield)
         }
         if (error)
         {
-            if (runtime_started_)
+            if (started_)
             {
-                runtime_started_ = false;
-                runtime_streaming_ = false;
+                started_ = false;
                 signaling_client::instance().report(
                     gb28181_event::source_stopped(stream_id_, receiver_.stream_name(), runtime_end_reason::runtime_error, error.message()));
             }
@@ -197,10 +194,9 @@ void gb28181_udp_receiver_session::run_rtcp(boost::asio::yield_context yield)
         rtcp_transport_.connect(endpoint, error);
         if (error)
         {
-            if (runtime_started_)
+            if (started_)
             {
-                runtime_started_ = false;
-                runtime_streaming_ = false;
+                started_ = false;
                 signaling_client::instance().report(
                     gb28181_event::source_stopped(stream_id_, receiver_.stream_name(), runtime_end_reason::runtime_error, error.message()));
             }
@@ -265,10 +261,9 @@ void gb28181_udp_receiver_session::schedule_rtcp()
                     }
                     if (write_error)
                     {
-                        if (self->runtime_started_)
+                        if (self->started_)
                         {
-                            self->runtime_started_ = false;
-                            self->runtime_streaming_ = false;
+                            self->started_ = false;
                             signaling_client::instance().report(gb28181_event::source_stopped(
                                 self->stream_id_, self->receiver_.stream_name(), runtime_end_reason::runtime_error, write_error.message()));
                         }
@@ -288,6 +283,7 @@ void gb28181_udp_receiver_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    started_ = false;
     stream_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     rtcp_timer_.cancel();
     rtp_transport_.shutdown();
@@ -301,26 +297,6 @@ void gb28181_udp_receiver_session::safe_shutdown()
     remote_rtp_endpoint_.reset();
     remote_rtcp_endpoint_.reset();
     spdlog::debug("gb28181 udp session shutdown {}", receiver_.stream_name());
-}
-
-void gb28181_udp_receiver_session::emit_starting()
-{
-    if (runtime_started_)
-    {
-        return;
-    }
-    runtime_started_ = true;
-    signaling_client::instance().report(gb28181_event::source_starting(stream_id_, receiver_.stream_name(), "listening"));
-}
-
-void gb28181_udp_receiver_session::emit_streaming()
-{
-    if (!runtime_started_ || runtime_streaming_ || closed_)
-    {
-        return;
-    }
-    runtime_streaming_ = true;
-    signaling_client::instance().report(gb28181_event::source_streaming(stream_id_, receiver_.stream_name()));
 }
 
 }    // namespace media_server

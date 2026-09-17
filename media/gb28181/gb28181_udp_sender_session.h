@@ -50,8 +50,6 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     void schedule_rtcp();
     void send_packet(std::vector<std::uint8_t> packet);
     void safe_shutdown();
-    void emit_starting();
-    void emit_streaming();
 
    private:
     worker_context& worker_;
@@ -75,8 +73,7 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     void* rtcp_sender_{};
     bool rtcp_enabled_{};
     bool rtcp_started_{};
-    bool runtime_started_{};
-    bool runtime_streaming_{};
+    bool media_started_{};
     bool closed_{};
 };
 

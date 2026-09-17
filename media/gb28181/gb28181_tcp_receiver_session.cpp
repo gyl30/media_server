@@ -63,7 +63,8 @@ bool gb28181_tcp_receiver_session::startup()
     started_ = true;
     const auto self = shared_from_this();
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
-    emit_starting();
+    signaling_client::instance().report(gb28181_event::source_starting(
+        stream_id_, receiver_.stream_name(), config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting"));
     return true;
 }
 
@@ -104,10 +105,9 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         {
             spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_name(), error.message());
         }
-        if (runtime_started_)
+        if (started_)
         {
-            runtime_started_ = false;
-            runtime_streaming_ = false;
+            started_ = false;
             signaling_client::instance().report(gb28181_event::source_stopped(
                 stream_id_,
                 receiver_.stream_name(),
@@ -122,10 +122,9 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
     if (!receiver_.startup())
     {
         spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
-        if (runtime_started_)
+        if (started_)
         {
-            runtime_started_ = false;
-            runtime_streaming_ = false;
+            started_ = false;
             signaling_client::instance().report(
                 gb28181_event::source_stopped(stream_id_, receiver_.stream_name(), runtime_end_reason::runtime_error, "receiver_startup_failed"));
         }
@@ -148,10 +147,9 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         if (error)
         {
             const auto reason = remote_disconnect(error) ? runtime_end_reason::remote : runtime_end_reason::runtime_error;
-            if (runtime_started_)
+            if (started_)
             {
-                runtime_started_ = false;
-                runtime_streaming_ = false;
+                started_ = false;
                 signaling_client::instance().report(gb28181_event::source_stopped(
                     stream_id_, receiver_.stream_name(), reason, reason == runtime_end_reason::remote ? std::string{} : error.message()));
             }
@@ -172,17 +170,17 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
             if (packet_bytes != 0U)
             {
                 const std::span packet{input_buffer.data() + offset, packet_bytes};
+                const bool was_recording = receiver_.recording();
                 const auto result = receiver_.receive_rtp(packet);
-                if (!runtime_streaming_ && receiver_.recording())
+                if (!was_recording && receiver_.recording())
                 {
-                    emit_streaming();
+                    signaling_client::instance().report(gb28181_event::source_streaming(stream_id_, receiver_.stream_name()));
                 }
                 if (result == gb28181_rtp_receive_result::fatal)
                 {
-                    if (runtime_started_)
+                    if (started_)
                     {
-                        runtime_started_ = false;
-                        runtime_streaming_ = false;
+                        started_ = false;
                         signaling_client::instance().report(gb28181_event::source_stopped(
                             stream_id_, receiver_.stream_name(), runtime_end_reason::protocol_error, "media_input_failed"));
                     }
@@ -211,6 +209,7 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    started_ = false;
     stream_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)
     {
@@ -225,27 +224,6 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         transport_->shutdown();
     }
     spdlog::debug("gb28181 tcp session shutdown {}", receiver_.stream_name());
-}
-
-void gb28181_tcp_receiver_session::emit_starting()
-{
-    if (runtime_started_)
-    {
-        return;
-    }
-    runtime_started_ = true;
-    signaling_client::instance().report(gb28181_event::source_starting(
-        stream_id_, receiver_.stream_name(), config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting"));
-}
-
-void gb28181_tcp_receiver_session::emit_streaming()
-{
-    if (!runtime_started_ || runtime_streaming_ || closed_)
-    {
-        return;
-    }
-    runtime_streaming_ = true;
-    signaling_client::instance().report(gb28181_event::source_streaming(stream_id_, receiver_.stream_name()));
 }
 
 }    // namespace media_server

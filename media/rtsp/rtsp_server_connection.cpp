@@ -133,22 +133,28 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
             {
                 if (remote_disconnect(error))
                 {
-                    if (runtime_started_)
+                    if (!publisher_stream_id_.empty())
                     {
-                        runtime_started_ = false;
-                        runtime_streaming_ = false;
+                        if (publish_session_)
+                        {
+                            publish_session_->set_shutdown_handler({});
+                        }
                         signaling_client::instance().report(
                             rtsp_event::publisher_stopped(publisher_stream_id_, publisher_stream_name_, runtime_end_reason::remote, "transport"));
+                        publisher_stream_id_.clear();
                     }
                 }
                 else
                 {
-                    if (runtime_started_)
+                    if (!publisher_stream_id_.empty())
                     {
-                        runtime_started_ = false;
-                        runtime_streaming_ = false;
+                        if (publish_session_)
+                        {
+                            publish_session_->set_shutdown_handler({});
+                        }
                         signaling_client::instance().report(rtsp_event::publisher_stopped(
                             publisher_stream_id_, publisher_stream_name_, runtime_end_reason::runtime_error, "transport", error.message()));
+                        publisher_stream_id_.clear();
                     }
                 }
                 shutdown();
@@ -164,15 +170,18 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
             {
                 if (!publish_session_ && !play_session_)
                 {
-                    if (runtime_started_)
+                    if (!publisher_stream_id_.empty())
                     {
-                        runtime_started_ = false;
-                        runtime_streaming_ = false;
+                        if (publish_session_)
+                        {
+                            publish_session_->set_shutdown_handler({});
+                        }
                         signaling_client::instance().report(rtsp_event::publisher_stopped(publisher_stream_id_,
                                                                                           publisher_stream_name_,
                                                                                           runtime_end_reason::protocol_error,
                                                                                           "control",
                                                                                           "unexpected_interleaved_packet"));
+                        publisher_stream_id_.clear();
                     }
                     shutdown();
                     stop = true;
@@ -189,12 +198,15 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 rtsp_need_more_data = result > 0;
                 if (result < 0)
                 {
-                    if (runtime_started_)
+                    if (!publisher_stream_id_.empty())
                     {
-                        runtime_started_ = false;
-                        runtime_streaming_ = false;
+                        if (publish_session_)
+                        {
+                            publish_session_->set_shutdown_handler({});
+                        }
                         signaling_client::instance().report(rtsp_event::publisher_stopped(
                             publisher_stream_id_, publisher_stream_name_, runtime_end_reason::protocol_error, "control", "rtsp_input_failed"));
+                        publisher_stream_id_.clear();
                     }
                     shutdown();
                     stop = true;
@@ -203,15 +215,18 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 consumed = remaining.size() - remaining_bytes;
                 if (result == 0 && consumed == 0)
                 {
-                    if (runtime_started_)
+                    if (!publisher_stream_id_.empty())
                     {
-                        runtime_started_ = false;
-                        runtime_streaming_ = false;
+                        if (publish_session_)
+                        {
+                            publish_session_->set_shutdown_handler({});
+                        }
                         signaling_client::instance().report(rtsp_event::publisher_stopped(publisher_stream_id_,
                                                                                           publisher_stream_name_,
                                                                                           runtime_end_reason::protocol_error,
                                                                                           "control",
                                                                                           "rtsp_input_made_no_progress"));
+                        publisher_stream_id_.clear();
                     }
                     shutdown();
                     stop = true;
@@ -221,15 +236,18 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
 
             if (consumed == 0 || consumed > remaining.size())
             {
-                if (runtime_started_)
+                if (!publisher_stream_id_.empty())
                 {
-                    runtime_started_ = false;
-                    runtime_streaming_ = false;
+                    if (publish_session_)
+                    {
+                        publish_session_->set_shutdown_handler({});
+                    }
                     signaling_client::instance().report(rtsp_event::publisher_stopped(publisher_stream_id_,
                                                                                       publisher_stream_name_,
                                                                                       runtime_end_reason::protocol_error,
                                                                                       "control",
                                                                                       "invalid_rtsp_input_consumption"));
+                    publisher_stream_id_.clear();
                 }
                 shutdown();
                 stop = true;
@@ -257,12 +275,15 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     }
     if (!closing_after_write_)
     {
-        if (runtime_started_)
+        if (!publisher_stream_id_.empty())
         {
-            runtime_started_ = false;
-            runtime_streaming_ = false;
+            if (publish_session_)
+            {
+                publish_session_->set_shutdown_handler({});
+            }
             signaling_client::instance().report(rtsp_event::publisher_stopped(
                 publisher_stream_id_, publisher_stream_name_, runtime_end_reason::runtime_error, "control", "rtsp_connection_ended"));
+            publisher_stream_id_.clear();
         }
         shutdown();
     }
@@ -289,16 +310,16 @@ bool rtsp_server_connection::run_publish_claim(rtsp_server_t* server, boost::asi
     {
         publisher_stream_id_ = stream_id;
         publisher_stream_name_ = stream_name;
-        emit_starting();
+        signaling_client::instance().report(rtsp_event::publisher_starting(publisher_stream_id_, publisher_stream_name_));
         record_control_activity();
         if (publish->accept_announce(server) != 0)
         {
-            if (runtime_started_)
+            if (!publisher_stream_id_.empty())
             {
-                runtime_started_ = false;
-                runtime_streaming_ = false;
+                publish->set_shutdown_handler({});
                 signaling_client::instance().report(rtsp_event::publisher_stopped(
                     publisher_stream_id_, publisher_stream_name_, runtime_end_reason::runtime_error, "control", "announce_reply_failed"));
+                publisher_stream_id_.clear();
             }
             shutdown();
             return false;
@@ -331,16 +352,19 @@ bool rtsp_server_connection::start_publish_claim_reader(boost::asio::yield_conte
                                                 self->publish_claim_reader_barrier_.cancel();
                                                 if (exception)
                                                 {
-                                                    if (self->runtime_started_)
+                                                    if (!self->publisher_stream_id_.empty())
                                                     {
-                                                        self->runtime_started_ = false;
-                                                        self->runtime_streaming_ = false;
+                                                        if (self->publish_session_)
+                                                        {
+                                                            self->publish_session_->set_shutdown_handler({});
+                                                        }
                                                         signaling_client::instance().report(
                                                             rtsp_event::publisher_stopped(self->publisher_stream_id_,
                                                                                           self->publisher_stream_name_,
                                                                                           runtime_end_reason::runtime_error,
                                                                                           "claim",
                                                                                           "publish_claim_reader_failed"));
+                                                        self->publisher_stream_id_.clear();
                                                     }
                                                     self->shutdown();
                                                 }
@@ -559,11 +583,9 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     next_session->set_shutdown_handler(
         [owner]()
         {
-            owner->runtime_started_ = false;
-            owner->runtime_streaming_ = false;
+            owner->publisher_stream_id_.clear();
             owner->shutdown();
         });
-    next_session->set_streaming_handler([owner]() { owner->emit_streaming(); });
     const auto status = next_session->prepare_announce(server, uri != nullptr ? uri : "", sdp, length);
     if (status != 200)
     {
@@ -640,12 +662,15 @@ void rtsp_server_connection::write(std::span<const std::uint8_t> data)
 
     if (data.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data.size())
     {
-        if (runtime_started_)
+        if (!publisher_stream_id_.empty())
         {
-            runtime_started_ = false;
-            runtime_streaming_ = false;
+            if (publish_session_)
+            {
+                publish_session_->set_shutdown_handler({});
+            }
             signaling_client::instance().report(rtsp_event::publisher_stopped(
                 publisher_stream_id_, publisher_stream_name_, runtime_end_reason::runtime_error, "transport", "write_queue_overflow"));
+            publisher_stream_id_.clear();
         }
         shutdown();
         return;
@@ -704,22 +729,28 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         {
             if (remote_disconnect(error))
             {
-                if (runtime_started_)
+                if (!publisher_stream_id_.empty())
                 {
-                    runtime_started_ = false;
-                    runtime_streaming_ = false;
+                    if (publish_session_)
+                    {
+                        publish_session_->set_shutdown_handler({});
+                    }
                     signaling_client::instance().report(
                         rtsp_event::publisher_stopped(publisher_stream_id_, publisher_stream_name_, runtime_end_reason::remote, "transport"));
+                    publisher_stream_id_.clear();
                 }
             }
             else
             {
-                if (runtime_started_)
+                if (!publisher_stream_id_.empty())
                 {
-                    runtime_started_ = false;
-                    runtime_streaming_ = false;
+                    if (publish_session_)
+                    {
+                        publish_session_->set_shutdown_handler({});
+                    }
                     signaling_client::instance().report(rtsp_event::publisher_stopped(
                         publisher_stream_id_, publisher_stream_name_, runtime_end_reason::runtime_error, "transport", error.message()));
+                    publisher_stream_id_.clear();
                 }
             }
             shutdown();
@@ -754,12 +785,15 @@ void rtsp_server_connection::schedule_inactivity_timeout()
                 self->schedule_inactivity_timeout();
                 return;
             }
-            if (self->runtime_started_)
+            if (!self->publisher_stream_id_.empty())
             {
-                self->runtime_started_ = false;
-                self->runtime_streaming_ = false;
+                if (self->publish_session_)
+                {
+                    self->publish_session_->set_shutdown_handler({});
+                }
                 signaling_client::instance().report(rtsp_event::publisher_stopped(
                     self->publisher_stream_id_, self->publisher_stream_name_, runtime_end_reason::timeout, "control", "inactivity_timeout"));
+                self->publisher_stream_id_.clear();
             }
             self->shutdown();
         });
@@ -787,27 +821,8 @@ void rtsp_server_connection::safe_shutdown()
         play_session_->shutdown();
         play_session_.reset();
     }
+    publisher_stream_id_.clear();
     transport_.shutdown();
-}
-
-void rtsp_server_connection::emit_starting()
-{
-    if (runtime_started_ || closed_)
-    {
-        return;
-    }
-    runtime_started_ = true;
-    signaling_client::instance().report(rtsp_event::publisher_starting(publisher_stream_id_, publisher_stream_name_));
-}
-
-void rtsp_server_connection::emit_streaming()
-{
-    if (!runtime_started_ || runtime_streaming_ || closed_)
-    {
-        return;
-    }
-    runtime_streaming_ = true;
-    signaling_client::instance().report(rtsp_event::publisher_streaming(publisher_stream_id_, publisher_stream_name_));
 }
 
 }    // namespace media_server

@@ -514,6 +514,7 @@ if(BUILD_TESTING)
         capacity
         overflow
         nonblocking
+        gb_sender_streaming
     )
         add_test(NAME signaling_event_${test_case} COMMAND signaling_event_tests ${test_case})
     endforeach()

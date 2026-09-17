@@ -44,8 +44,6 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     void run_rtcp(boost::asio::yield_context yield);
     void schedule_rtcp();
     void safe_shutdown();
-    void emit_starting();
-    void emit_streaming();
 
    private:
     worker_context& worker_;
@@ -61,8 +59,6 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
     bool started_{};
-    bool runtime_started_{};
-    bool runtime_streaming_{};
     bool closed_{};
 };
 
