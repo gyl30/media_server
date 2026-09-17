@@ -272,7 +272,7 @@ func TestLiveControlRetainsAmbiguousCreateUntilCleanupSucceeds(t *testing.T) {
 		t.Fatalf("cleaned live/ssrc = %d/%d", live.len(), allocator.activeCount())
 	}
 	observed = infrastructure.runtimes.snapshot()
-	if len(observed) != 1 || observed[0].State != "stopped" || observed[0].EndReason != "requested" {
+	if len(observed) != 1 || observed[0].State != "stopped" {
 		t.Fatalf("observed after cleanup retry = %+v", observed)
 	}
 }
@@ -341,8 +341,7 @@ func TestLiveControlClosesObservedRuntimeAfterCreateCompensation(t *testing.T) {
 		t.Fatalf("cleanup live/ssrc = %d/%d", live.len(), allocator.activeCount())
 	}
 	observed := infrastructure.runtimes.snapshot()
-	if len(observed) != 1 || observed[0].StreamID != streamID || observed[0].State != "stopped" ||
-		observed[0].EndReason != "requested" {
+	if len(observed) != 1 || observed[0].StreamID != streamID || observed[0].State != "stopped" {
 		t.Fatalf("observed after create compensation = %+v", observed)
 	}
 }
@@ -418,7 +417,7 @@ func TestLiveControlRuntimeStopWinsCreateCompensationFailure(t *testing.T) {
 	stopResult := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		body := `{"kind":"source","stream_id":"` + command.streamID + `","stream_name":"` + command.streamName + `",` +
-			`"protocol":"gb28181","state":"stopped","end_reason":"remote"}`
+			`"protocol":"gb28181","state":"stopped"}`
 		stopResult <- sourceRequest(t, infrastructure.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(body), "application/json")
 	}()
 	deadline := time.Now().Add(time.Second)
@@ -446,8 +445,7 @@ func TestLiveControlRuntimeStopWinsCreateCompensationFailure(t *testing.T) {
 		t.Fatalf("runtime stop retained live/ssrc = %d/%d", live.len(), allocator.activeCount())
 	}
 	observed := infrastructure.runtimes.snapshot()
-	if len(observed) != 1 || observed[0].StreamID != command.streamID || observed[0].State != "stopped" ||
-		observed[0].EndReason != "remote" {
+	if len(observed) != 1 || observed[0].StreamID != command.streamID || observed[0].State != "stopped" {
 		t.Fatalf("observed after runtime stop = %+v", observed)
 	}
 }
@@ -541,8 +539,7 @@ func TestLiveControlRetainsInviteFailureUntilCleanupSucceeds(t *testing.T) {
 		t.Fatalf("retry cleanup live/ssrc = %d/%d", live.len(), allocator.activeCount())
 	}
 	observed = infrastructure.runtimes.snapshot()
-	if len(observed) != 1 || observed[0].StreamID != streamID || observed[0].State != "stopped" ||
-		observed[0].EndReason != "requested" {
+	if len(observed) != 1 || observed[0].StreamID != streamID || observed[0].State != "stopped" {
 		t.Fatalf("observed after cleanup retry = %+v", observed)
 	}
 }

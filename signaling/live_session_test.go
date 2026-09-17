@@ -571,8 +571,7 @@ func TestLiveSessionByeTimeoutStillDeletesMedia(t *testing.T) {
 		t.Fatalf("cleanup delete=%d live=%d ssrc=%d", deletes.Load(), live.len(), allocator.activeCount())
 	}
 	observed := infrastructure.runtimes.snapshot()
-	if len(observed) != 1 || observed[0].StreamID != view.streamID || observed[0].State != "stopped" ||
-		observed[0].EndReason != "requested" {
+	if len(observed) != 1 || observed[0].StreamID != view.streamID || observed[0].State != "stopped" {
 		t.Fatalf("observed after BYE failure = %+v", observed)
 	}
 }

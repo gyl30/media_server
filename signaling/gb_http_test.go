@@ -186,7 +186,7 @@ func TestGBHTTPStartAndGenerationFencedStop(t *testing.T) {
 	}
 	observed := server.runtimes.snapshot()
 	if len(observed) != 1 || observed[0].StreamID != started.StreamID || observed[0].Kind != "source" ||
-		observed[0].State != "stopped" || observed[0].EndReason != "requested" {
+		observed[0].State != "stopped" {
 		t.Fatalf("observed after GB stop = %+v", observed)
 	}
 }

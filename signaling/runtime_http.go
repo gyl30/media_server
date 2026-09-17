@@ -15,7 +15,6 @@ type runtimeEventRequest struct {
 	Protocol   string          `json:"protocol"`
 	State      string          `json:"state"`
 	Stage      json.RawMessage `json:"stage"`
-	EndReason  json.RawMessage `json:"end_reason"`
 	Error      json.RawMessage `json:"error"`
 }
 
@@ -55,8 +54,7 @@ func (s *infrastructureServer) handleRuntimeEvent(writer http.ResponseWriter, re
 			return
 		}
 		if previous, exists := latest[event.StreamID]; exists {
-			if !sameRuntimeIdentity(previous, event) || (previous.State == "stopped" && previous != event) ||
-				(previous.State == "streaming" && event.State == "starting") {
+			if !sameRuntimeIdentity(previous, event) {
 				writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 				return
 			}
@@ -75,7 +73,8 @@ func (s *infrastructureServer) handleRuntimeEvent(writer http.ResponseWriter, re
 		return
 	}
 	for _, event := range applied {
-		if event.Kind == "source" && event.Protocol == "rtsp" && event.State != "stopped" && event.SourceID != "" {
+		if event.Kind == "source" && event.Protocol == "rtsp" &&
+			(event.State == "starting" || event.State == "streaming") && event.SourceID != "" {
 			s.confirmRTSPPull(rtspPullRuntime{
 				sourceID: event.SourceID, streamName: event.StreamName,
 				server: mediaServerInstance{serverID: event.ServerID, instanceID: event.InstanceID}, streamID: event.StreamID,
@@ -125,11 +124,10 @@ func (s *infrastructureServer) handleMediaServerList(writer http.ResponseWriter,
 func makeObservedRuntime(payload runtimeEventRequest, serverID, instanceID string) (observedRuntime, bool) {
 	sourceID, sourceIDValid := decodeOptionalString(payload.SourceID)
 	stage, stageValid := decodeOptionalString(payload.Stage)
-	endReason, endReasonValid := decodeOptionalString(payload.EndReason)
 	errorText, errorValid := decodeOptionalString(payload.Error)
-	if !sourceIDValid || !stageValid || !endReasonValid || !errorValid ||
+	if !sourceIDValid || !stageValid || !errorValid ||
 		(sourceID != nil && !validUUIDv4(*sourceID)) || (stage != nil && *stage == "") ||
-		(endReason != nil && !validRuntimeEndReason(*endReason)) || (errorText != nil && *errorText == "") {
+		(errorText != nil && *errorText == "") {
 		return observedRuntime{}, false
 	}
 	event := observedRuntime{
@@ -143,9 +141,6 @@ func makeObservedRuntime(payload runtimeEventRequest, serverID, instanceID strin
 	if stage != nil {
 		event.Stage = *stage
 	}
-	if endReason != nil {
-		event.EndReason = *endReason
-	}
 	if errorText != nil {
 		event.Error = *errorText
 	}
@@ -155,15 +150,12 @@ func makeObservedRuntime(payload runtimeEventRequest, serverID, instanceID strin
 func validRuntimeEvent(event observedRuntime) bool {
 	if event.ServerID == "" || event.InstanceID == "" || !validUUIDv4(event.StreamID) || event.StreamName == "" ||
 		(event.Kind != "source" && event.Kind != "publisher" && event.Kind != "output") || !validRuntimeProtocol(event.Protocol) ||
-		(event.State != "starting" && event.State != "streaming" && event.State != "stopped") ||
+		(event.State != "starting" && event.State != "streaming" && event.State != "stopped" && event.State != "stop_requested" &&
+			event.State != "remote_closed" && event.State != "timeout" && event.State != "protocol_error" && event.State != "runtime_error") ||
 		(event.Kind == "source" && event.Protocol == "rtsp" && event.SourceID == "") {
 		return false
 	}
-	if event.State == "stopped" {
-		if event.EndReason == "" {
-			return false
-		}
-	} else if event.EndReason != "" || event.Error != "" {
+	if isLifecycleState(event.State) && event.Error != "" {
 		return false
 	}
 	return true
@@ -171,9 +163,4 @@ func validRuntimeEvent(event observedRuntime) bool {
 
 func validRuntimeProtocol(value string) bool {
 	return value == "rtmp" || value == "rtsp" || value == "gb28181" || value == "whep"
-}
-
-func validRuntimeEndReason(value string) bool {
-	return value == "requested" || value == "remote" || value == "timeout" || value == "protocol_error" ||
-		value == "runtime_error" || value == "server_shutdown"
 }

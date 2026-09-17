@@ -27,7 +27,6 @@ func TestObservedRuntimeTransitionsAndIdentity(t *testing.T) {
 	stopped := streaming
 	stopped.State = "stopped"
 	stopped.Stage = ""
-	stopped.EndReason = "remote"
 	changed, err = runtimes.apply(stopped)
 	if err != nil || !changed {
 		t.Fatalf("apply(stopped) = %v, %v", changed, err)
@@ -35,16 +34,51 @@ func TestObservedRuntimeTransitionsAndIdentity(t *testing.T) {
 	if changed, err := runtimes.apply(stopped); err != nil || changed {
 		t.Fatalf("apply(duplicate stopped) = %v, %v", changed, err)
 	}
-	if _, err := runtimes.apply(streaming); !errors.Is(err, errRuntimeConflict) {
-		t.Fatalf("late streaming error = %v", err)
+	if changed, err := runtimes.apply(streaming); err != nil || !changed {
+		t.Fatalf("apply(late streaming) = %v, %v", changed, err)
 	}
 	mutated := stopped
 	mutated.StreamName = "live/replacement"
 	if _, err := runtimes.apply(mutated); !errors.Is(err, errRuntimeConflict) {
 		t.Fatalf("identity mutation error = %v", err)
 	}
-	if snapshot := runtimes.snapshot(); len(snapshot) != 1 || snapshot[0] != stopped {
+	if snapshot := runtimes.snapshot(); len(snapshot) != 1 || snapshot[0] != streaming {
 		t.Fatalf("snapshot = %+v", snapshot)
+	}
+}
+
+func TestObservedRuntimeFactsDoNotChangeLifecycleState(t *testing.T) {
+	runtimes := newObservedRuntimeRegistry()
+	starting := testObservedRuntime("00000000-0000-4000-8000-000000000010", "starting")
+	if _, err := runtimes.apply(starting); err != nil {
+		t.Fatalf("apply(starting) error = %v", err)
+	}
+	stopped := starting
+	stopped.State = "stopped"
+	stopped.Stage = ""
+	if _, err := runtimes.apply(stopped); err != nil {
+		t.Fatalf("apply(stopped) error = %v", err)
+	}
+
+	var changes []observedRuntime
+	runtimes.setOnChange(func(event observedRuntime) { changes = append(changes, event) })
+	fact := starting
+	fact.State = "runtime_error"
+	fact.Stage = "transport"
+	fact.Error = "connection_failed"
+	if changed, err := runtimes.apply(fact); err != nil || !changed {
+		t.Fatalf("apply(fact) = %v, %v", changed, err)
+	}
+	if changed, err := runtimes.apply(fact); err != nil || !changed {
+		t.Fatalf("apply(repeated fact) = %v, %v", changed, err)
+	}
+
+	snapshot := runtimes.snapshot()
+	if len(snapshot) != 1 || snapshot[0] != stopped {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	if len(changes) != 2 || changes[0] != fact || changes[1] != fact {
+		t.Fatalf("changes = %+v", changes)
 	}
 }
 
@@ -63,7 +97,6 @@ func TestObservedRuntimeRejectsKindChanges(t *testing.T) {
 	wrongTerminal.Kind = "publisher"
 	wrongTerminal.State = "stopped"
 	wrongTerminal.Stage = ""
-	wrongTerminal.EndReason = "remote"
 	if _, err := runtimes.apply(wrongTerminal); !errors.Is(err, errRuntimeConflict) {
 		t.Fatalf("terminal kind mutation error = %v", err)
 	}
@@ -87,13 +120,12 @@ func TestObservedRuntimeSourceGenerationFencing(t *testing.T) {
 	lateFirstStreaming := first
 	lateFirstStreaming.State = "streaming"
 	lateFirstStreaming.Stage = "streaming"
-	if _, err := runtimes.apply(lateFirstStreaming); !errors.Is(err, errRuntimeConflict) {
-		t.Fatalf("late first streaming error = %v", err)
+	if changed, err := runtimes.apply(lateFirstStreaming); err != nil || !changed {
+		t.Fatalf("apply(late first streaming) = %v, %v", changed, err)
 	}
 
 	first.State = "stopped"
 	first.Stage = ""
-	first.EndReason = "requested"
 	if _, err := runtimes.apply(first); err != nil {
 		t.Fatalf("apply(late first stop) error = %v", err)
 	}
@@ -104,13 +136,17 @@ func TestObservedRuntimeSourceGenerationFencing(t *testing.T) {
 
 	lateFirst := first
 	lateFirst.State = "streaming"
-	lateFirst.EndReason = ""
-	if _, err := runtimes.apply(lateFirst); !errors.Is(err, errRuntimeConflict) {
-		t.Fatalf("late first revival error = %v", err)
+	if changed, err := runtimes.apply(lateFirst); err != nil || !changed {
+		t.Fatalf("apply(late first revival) = %v, %v", changed, err)
 	}
 	current, ok = runtimes.currentForSource(sourceID)
 	if !ok || current.StreamID != second.StreamID {
 		t.Fatalf("current after late revival = %+v, %v", current, ok)
+	}
+	lateFirst.State = "stopped"
+	lateFirst.Stage = ""
+	if changed, err := runtimes.apply(lateFirst); err != nil || !changed {
+		t.Fatalf("apply(late first stop) = %v, %v", changed, err)
 	}
 
 	for index := range 501 {
@@ -204,7 +240,7 @@ func TestObservedRuntimeMarksExactMediaServerOffline(t *testing.T) {
 	}
 	changed := runtimes.mediaServerOffline("media-1", "instance-a")
 	if len(changed) != 1 || changed[0].StreamID != oldInstance.StreamID || changed[0].Kind != oldInstance.Kind ||
-		changed[0].State != "stopped" || changed[0].EndReason != "runtime_error" || changed[0].Error != "media_server_offline" {
+		changed[0].State != "stopped" || changed[0].Error != "" {
 		t.Fatalf("offline changes = %+v", changed)
 	}
 	snapshot := runtimes.snapshot()
@@ -244,8 +280,6 @@ func TestObservedRuntimeAcknowledgesRequestedStopByGeneration(t *testing.T) {
 	terminal := second
 	terminal.State = "stopped"
 	terminal.Stage = ""
-	terminal.EndReason = "runtime_error"
-	terminal.Error = "transport_failed"
 	if _, err := runtimes.apply(terminal); err != nil {
 		t.Fatalf("apply(terminal) error = %v", err)
 	}
@@ -266,8 +300,8 @@ func TestObservedRuntimeAcknowledgesRequestedStopByGeneration(t *testing.T) {
 	}
 	lateStarting := first
 	lateStarting.StreamID = thirdID
-	if _, err := runtimes.apply(lateStarting); !errors.Is(err, errRuntimeConflict) {
-		t.Fatalf("late starting error = %v", err)
+	if changed, err := runtimes.apply(lateStarting); err != nil || !changed {
+		t.Fatalf("apply(late starting) = %v, %v", changed, err)
 	}
 }
 
@@ -296,7 +330,6 @@ func TestObservedRuntimeRetentionPreservesActiveAndCurrentSource(t *testing.T) {
 	active := testHistoricalStoppedRuntime(2000)
 	active.State = "streaming"
 	active.Stage = "streaming"
-	active.EndReason = ""
 	if _, err := runtimes.apply(active); err != nil {
 		t.Fatalf("apply(active) error = %v", err)
 	}
@@ -362,9 +395,11 @@ func TestObservedRuntimeUnbindsOnlyExpectedSourceGeneration(t *testing.T) {
 	lateStreaming := second
 	lateStreaming.State = "streaming"
 	lateStreaming.Stage = "streaming"
-	lateStreaming.EndReason = ""
-	if _, err := runtimes.apply(lateStreaming); !errors.Is(err, errRuntimeConflict) {
-		t.Fatalf("late unbound streaming error = %v", err)
+	if changed, err := runtimes.apply(lateStreaming); err != nil || !changed {
+		t.Fatalf("apply(late unbound streaming) = %v, %v", changed, err)
+	}
+	if _, bound := runtimes.currentBySource[sourceID]; bound {
+		t.Fatal("late unbound streaming rebound source")
 	}
 }
 
@@ -427,6 +462,6 @@ func testHistoricalStoppedRuntime(index int) observedRuntime {
 	return observedRuntime{
 		Kind: "publisher", ServerID: "media-1", InstanceID: "instance-a",
 		StreamID: fmt.Sprintf("00000000-0000-4000-8000-%012d", index), StreamName: "live/camera",
-		Protocol: "rtmp", State: "stopped", EndReason: "remote",
+		Protocol: "rtmp", State: "stopped",
 	}
 }

@@ -64,10 +64,14 @@ func TestObservedRuntimeNotifierIncludesMediaServerOffline(t *testing.T) {
 	}
 	<-changes
 	runtimes.mediaServerOffline(active.ServerID, active.InstanceID)
-	terminal := <-changes
-	if terminal.StreamID != active.StreamID || terminal.Kind != active.Kind || terminal.State != "stopped" ||
-		terminal.EndReason != "runtime_error" || terminal.Error != "media_server_offline" {
-		t.Fatalf("offline notification = %+v", terminal)
+	fact := <-changes
+	if fact.StreamID != active.StreamID || fact.Kind != active.Kind || fact.State != "runtime_error" ||
+		fact.Error != "media_server_offline" {
+		t.Fatalf("offline fact notification = %+v", fact)
+	}
+	stopped := <-changes
+	if stopped.StreamID != active.StreamID || stopped.Kind != active.Kind || stopped.State != "stopped" || stopped.Error != "" {
+		t.Fatalf("offline stopped notification = %+v", stopped)
 	}
 	runtimes.mediaServerOffline(active.ServerID, active.InstanceID)
 	select {

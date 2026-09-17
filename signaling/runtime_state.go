@@ -22,7 +22,6 @@ type observedRuntime struct {
 	Protocol   string `json:"protocol"`
 	State      string `json:"state"`
 	Stage      string `json:"stage,omitempty"`
-	EndReason  string `json:"end_reason,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
 
@@ -106,7 +105,7 @@ func (r *observedRuntimeRegistry) acknowledgeSourceStopped(
 	event := observedRuntime{
 		Kind: "source", ServerID: server.serverID, InstanceID: server.instanceID,
 		StreamID: streamID, StreamName: streamName, SourceID: sourceID,
-		Protocol: protocol, State: "stopped", EndReason: "requested",
+		Protocol: protocol, State: "stopped",
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -115,12 +114,13 @@ func (r *observedRuntimeRegistry) acknowledgeSourceStopped(
 
 func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExistingStopped bool) (bool, error) {
 	current, exists := r.byStreamID[event.StreamID]
-	if exists && current == event {
+	fact := !isLifecycleState(event.State)
+	if !fact && exists && current == event {
 		return false, nil
 	}
 	if event.SourceID != "" {
 		currentStreamID, bound := r.currentBySource[event.SourceID]
-		if !bound || (currentStreamID != event.StreamID && (!exists || event.State != "stopped")) {
+		if !exists && (!bound || currentStreamID != event.StreamID) {
 			return false, errRuntimeConflict
 		}
 	}
@@ -128,23 +128,25 @@ func (r *observedRuntimeRegistry) applyLocked(event observedRuntime, acceptExist
 		if !sameRuntimeIdentity(current, event) {
 			return false, errRuntimeConflict
 		}
-		if current.State == "stopped" {
-			if acceptExistingStopped {
-				return false, nil
-			}
-			return false, errRuntimeConflict
-		}
-		if current.State == "streaming" && event.State == "starting" {
-			return false, errRuntimeConflict
+		if acceptExistingStopped && current.State == "stopped" && event.State == "stopped" {
+			return false, nil
 		}
 	} else if event.SourceID != "" {
 		if currentStreamID, bound := r.currentBySource[event.SourceID]; bound && currentStreamID != event.StreamID {
 			return false, errRuntimeConflict
 		}
 	}
+	if fact {
+		if r.onChange != nil {
+			r.onChange(event)
+		}
+		return true, nil
+	}
 	r.byStreamID[event.StreamID] = event
 	if event.State == "stopped" {
 		r.retainStoppedLocked(event.StreamID)
+	} else {
+		r.removeRecentStoppedLocked(event.StreamID)
 	}
 	if r.onChange != nil {
 		r.onChange(event)
@@ -235,9 +237,16 @@ func (r *observedRuntimeRegistry) mediaServerOffline(serverID, instanceID string
 		if runtime.ServerID != serverID || runtime.InstanceID != instanceID || runtime.State == "stopped" {
 			continue
 		}
+		fact := runtime
+		fact.State = "runtime_error"
+		fact.Stage = ""
+		fact.Error = "media_server_offline"
+		if r.onChange != nil {
+			r.onChange(fact)
+		}
 		runtime.State = "stopped"
-		runtime.EndReason = "runtime_error"
-		runtime.Error = "media_server_offline"
+		runtime.Stage = ""
+		runtime.Error = ""
 		r.byStreamID[streamID] = runtime
 		r.retainStoppedLocked(streamID)
 		changed = append(changed, runtime)
@@ -246,6 +255,10 @@ func (r *observedRuntimeRegistry) mediaServerOffline(serverID, instanceID string
 		}
 	}
 	return changed
+}
+
+func isLifecycleState(state string) bool {
+	return state == "starting" || state == "streaming" || state == "stopped"
 }
 
 func (r *observedRuntimeRegistry) replaceSourceBindingLocked(sourceID, streamID string) {

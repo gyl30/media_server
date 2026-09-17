@@ -362,7 +362,7 @@ function renderChannels() {
 
 function runtimeDetail(runtime) {
   if (runtime.state === "stopped") {
-    return runtime.error || runtime.end_reason || "stopped";
+    return "stopped";
   }
   return "-";
 }
@@ -391,7 +391,7 @@ function renderRuntimes() {
       textCell(runtime.protocol.toUpperCase()),
       badgeCell(runtime.state, toneForState(runtime.state), runtime.stage || ""),
       textCell(runtime.server_id, shortID(runtime.instance_id), { secondaryCode: true }),
-      textCell(runtimeDetail(runtime), runtime.end_reason && runtime.error ? runtime.end_reason : ""),
+      textCell(runtimeDetail(runtime)),
     );
     elements.runtimeRows.append(row);
   }
