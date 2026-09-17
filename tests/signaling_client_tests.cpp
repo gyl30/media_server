@@ -138,23 +138,23 @@ class test_http_server
     std::thread thread_;
 };
 
-media_server::signaling_client_options client_options(std::string url)
+media_server::config client_config(std::string url)
 {
-    return {
-        .signaling_url = std::move(url),
-        .server_id = "media-1",
-        .instance_id = "instance-a",
-        .control_url = "http://127.0.0.1:8080",
-        .media_ip = "127.0.0.1",
-        .rtmp_port = 1935,
-        .rtsp_port = 8554,
-        .http_port = 8080,
-        .heartbeat_interval = 20ms,
-        .request_timeout = 500ms,
-    };
+    media_server::config cfg;
+    cfg.signaling_url = std::move(url);
+    cfg.server_id = "media-1";
+    cfg.control_url = "http://127.0.0.1:8080";
+    cfg.media_ip = "127.0.0.1";
+    cfg.rtmp_port = 1935;
+    cfg.rtsp_port = 8554;
+    cfg.http_port = 8080;
+    return cfg;
 }
 
-void configure_client(media_server::signaling_client_options options) { media_server::signaling_client::instance().configure(std::move(options)); }
+void configure_client(const media_server::config& cfg, std::chrono::milliseconds request_timeout = 500ms)
+{
+    media_server::signaling_client::instance().configure(cfg, "instance-a", 20ms, request_timeout);
+}
 
 std::uint16_t unused_port()
 {
@@ -176,6 +176,9 @@ media_server::signaling_request_result run_request(boost::asio::io_context& io, 
 
 void test_unconfigured_accepts_without_network()
 {
+    media_server::config cfg;
+    media_server::signaling_client::instance().configure(cfg, "instance-a", 20ms, 500ms);
+
     boost::asio::io_context io;
 
     const auto registration =
@@ -207,7 +210,9 @@ void test_registration_and_heartbeat_body()
 {
     test_http_server server;
     boost::asio::io_context io;
-    configure_client(client_options(server.url()));
+    auto cfg = client_config(server.url());
+    configure_client(cfg);
+    cfg.server_id = "changed-after-configure";
     const auto registration_result =
         run_request(io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(registration_result.kind == media_server::signaling_result_kind::accepted, "registration accepted");
@@ -233,7 +238,7 @@ void test_publish_claim_uses_caller_executor_and_body()
 {
     test_http_server server;
     boost::asio::io_context worker_io;
-    configure_client(client_options(server.url()));
+    configure_client(client_config(server.url()));
     const auto result = run_request(
         worker_io,
         [&](boost::asio::yield_context& yield)
@@ -253,7 +258,7 @@ void test_rejected_result()
 {
     test_http_server server(boost::beast::http::status::conflict);
     boost::asio::io_context rejected_io;
-    configure_client(client_options(server.url()));
+    configure_client(client_config(server.url()));
     const auto rejected_result =
         run_request(rejected_io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(rejected_result.kind == media_server::signaling_result_kind::rejected && rejected_result.status == 409, "registration rejected");
@@ -263,7 +268,7 @@ void test_temporary_failure_result()
 {
     test_http_server temporary(boost::beast::http::status::internal_server_error);
     boost::asio::io_context temporary_io;
-    configure_client(client_options(temporary.url()));
+    configure_client(client_config(temporary.url()));
     const auto temporary_result =
         run_request(temporary_io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(temporary_result.kind == media_server::signaling_result_kind::temporary_failure && temporary_result.status == 500,
@@ -272,9 +277,9 @@ void test_temporary_failure_result()
 
 void test_network_error_result()
 {
-    auto options = client_options("http://127.0.0.1:" + std::to_string(unused_port()));
+    const auto cfg = client_config("http://127.0.0.1:" + std::to_string(unused_port()));
     boost::asio::io_context unavailable_io;
-    configure_client(std::move(options));
+    configure_client(cfg);
     const auto registration = run_request(
         unavailable_io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(registration.kind == media_server::signaling_result_kind::network_error, "registration network error");
@@ -287,7 +292,7 @@ void test_success_uses_status_only()
 {
     test_http_server server(boost::beast::http::status::ok, "{invalid");
     boost::asio::io_context io;
-    configure_client(client_options(server.url()));
+    configure_client(client_config(server.url()));
     const auto result =
         run_request(io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
     require(result.kind == media_server::signaling_result_kind::accepted && result.status == 200, "success body ignored");
@@ -305,7 +310,7 @@ void test_constructor_rejects_non_base_urls()
         bool rejected = false;
         try
         {
-            media_server::signaling_client::instance().configure(client_options(url));
+            media_server::signaling_client::instance().configure(client_config(url), "instance-a", 20ms, 500ms);
         }
         catch (const std::invalid_argument&)
         {
@@ -318,10 +323,9 @@ void test_constructor_rejects_non_base_urls()
 void test_request_timeout()
 {
     test_http_server server(boost::beast::http::status::no_content, "", 2s);
-    auto options = client_options(server.url());
-    options.request_timeout = 20ms;
+    const auto cfg = client_config(server.url());
     boost::asio::io_context io;
-    configure_client(std::move(options));
+    configure_client(cfg, 20ms);
     const auto started = std::chrono::steady_clock::now();
     const auto result =
         run_request(io, [&](boost::asio::yield_context& yield) { return media_server::signaling_client::instance().register_once(yield); });
@@ -334,7 +338,7 @@ void test_heartbeat_rejection_stops_loop()
 {
     test_http_server server(boost::beast::http::status::gone);
     boost::asio::io_context io;
-    configure_client(client_options(server.url()));
+    configure_client(client_config(server.url()));
     boost::asio::spawn(
         io,
         [](boost::asio::yield_context yield) { media_server::signaling_client::instance().run(yield); },
