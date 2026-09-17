@@ -359,6 +359,7 @@ if(BUILD_TESTING)
         rtmp_claim_events
         rtmp_claim_disconnect
         rtsp_pull_topology
+        rtsp_pull_demux_error
         rtsp_publish_opus_fmtp
         rtsp_claim_network_error
         rtsp_claim_disconnect
