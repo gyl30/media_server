@@ -205,7 +205,7 @@ bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
     }
     boost::scope::scope_exit cleanup([&]()
                                      {
-                                         static_cast<void>(rtsp_muxer_destroy(muxer));
+                                         rtsp_muxer_destroy(muxer);
                                          track_states_.clear();
                                      });
 

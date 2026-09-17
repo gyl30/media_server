@@ -113,7 +113,6 @@ void shutdown()
     std::scoped_lock lock(current.mutex);
     for (auto& [stream_name, value] : current.segmenters)
     {
-        static_cast<void>(stream_name);
         value.segmenter->on_end();
     }
     current.segmenters.clear();

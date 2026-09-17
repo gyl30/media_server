@@ -30,7 +30,7 @@ std::string make_fingerprint(X509* certificate)
         {
             result.push_back(':');
         }
-        static_cast<void>(std::snprintf(byte.data(), byte.size(), "%02X", digest[index]));
+        std::snprintf(byte.data(), byte.size(), "%02X", digest[index]);
         result.append(byte.data(), 2);
     }
     return result;

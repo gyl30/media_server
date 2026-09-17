@@ -140,7 +140,6 @@ bool media_stream::set_tracks(std::vector<media_track> tracks)
     {
         for (const auto& [id, track] : tracks_)
         {
-            static_cast<void>(id);
             sink_->on_track(track);
         }
     }
@@ -251,7 +250,6 @@ void media_stream::add_sink_on_owner(std::shared_ptr<media_sink> sink)
     sink_ = std::move(sink);
     for (const auto& [id, track] : tracks_)
     {
-        static_cast<void>(id);
         sink_->on_track(track);
     }
     for (const auto& frame : frames)
@@ -267,7 +265,6 @@ void media_stream::publish_track_snapshot()
     snapshot->tracks.reserve(tracks_.size());
     for (const auto& [id, track] : tracks_)
     {
-        static_cast<void>(id);
         snapshot->tracks.push_back(track);
     }
     track_snapshot_.store(std::move(snapshot), std::memory_order_release);

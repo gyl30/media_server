@@ -423,8 +423,7 @@ void whep_session::run_udp_write(boost::asio::yield_context yield)
 
         const auto datagram = udp_write_queue_.front();
         boost::system::error_code error;
-        static_cast<void>(
-            udp_transport_.write(std::span<const std::uint8_t>{datagram.packet->data(), datagram.packet->size()}, datagram.endpoint, yield, error));
+        udp_transport_.write(std::span<const std::uint8_t>{datagram.packet->data(), datagram.packet->size()}, datagram.endpoint, yield, error);
         if (!started_)
         {
             return;
@@ -690,7 +689,6 @@ bool whep_session::start_media_read()
 
     for (const auto& [id, track] : negotiated_tracks_)
     {
-        static_cast<void>(id);
         if (!packetizer_->on_track(track))
         {
             return false;

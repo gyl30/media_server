@@ -54,7 +54,7 @@ bool whip_media_receiver::startup()
     }
 
     media_stream_ = std::make_shared<media_stream>(stream_name_, worker_);
-    static_cast<void>(avpkt2bs_create(&bitstream_));
+    avpkt2bs_create(&bitstream_);
 
     video_demuxer_ = rtsp_demuxer_create(0, 500, &whip_media_receiver::packet_callback, this);
     const auto* video_encoding = config_.video_codec == codec_id::h264 ? "H264" : "H265";
@@ -322,7 +322,7 @@ bool whip_media_receiver::update_video_track(const avpacket_t& packet)
     }
     video_track_ = std::move(*track);
     avpkt2bs_destroy(&bitstream_);
-    static_cast<void>(avpkt2bs_create(&bitstream_));
+    avpkt2bs_create(&bitstream_);
     return true;
 }
 

@@ -38,7 +38,7 @@ bool rtsp_pull_media::startup()
     }
 
     media_stream_ = std::make_shared<media_stream>(media_stream_name_, worker_);
-    static_cast<void>(avpkt2bs_create(&bitstream_));
+    avpkt2bs_create(&bitstream_);
     demuxers_.resize(descriptions_.size());
     for (std::size_t index = 0; index < descriptions_.size(); ++index)
     {
@@ -156,7 +156,7 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
     if (update_track_from_packet(*packet))
     {
         avpkt2bs_destroy(&bitstream_);
-        static_cast<void>(avpkt2bs_create(&bitstream_));
+        avpkt2bs_create(&bitstream_);
     }
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
     if (bytes <= 0 || bitstream_.ptr == nullptr)

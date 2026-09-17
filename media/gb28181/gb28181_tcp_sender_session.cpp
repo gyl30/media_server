@@ -171,7 +171,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     std::vector<std::uint8_t> buffer(64 * 1024);
     for (;;)
     {
-        static_cast<void>(transport_->read(buffer, yield, error));
+        transport_->read(buffer, yield, error);
         if (error)
         {
             break;
@@ -219,7 +219,7 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 
         const auto data = write_queue_.front();
         boost::system::error_code error;
-        static_cast<void>(transport_->write(*data, yield, error));
+        transport_->write(*data, yield, error);
         if (closed_ || !started_ || error == boost::asio::error::operation_aborted)
         {
             return;

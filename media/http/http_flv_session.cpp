@@ -84,7 +84,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
 
         boost::beast::http::serializer<false, boost::beast::http::empty_body> serializer(response);
         boost::system::error_code error;
-        static_cast<void>(boost::beast::http::async_write_header(stream_, serializer, yield[error]));
+        boost::beast::http::async_write_header(stream_, serializer, yield[error]);
         if (error || closed_)
         {
             return;
@@ -103,7 +103,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     for (;;)
     {
         boost::system::error_code error;
-        static_cast<void>(stream_.async_read_some(boost::asio::buffer(read_buffer), yield[error]));
+        stream_.async_read_some(boost::asio::buffer(read_buffer), yield[error]);
         if (error || closed_)
         {
             return;
@@ -129,10 +129,10 @@ void http_flv_session::send_text_response(
     if (request_.method() == boost::beast::http::verb::head)
     {
         boost::beast::http::response_serializer<boost::beast::http::string_body> serializer(response);
-        static_cast<void>(boost::beast::http::async_write_header(stream_, serializer, yield[error]));
+        boost::beast::http::async_write_header(stream_, serializer, yield[error]);
         return;
     }
-    static_cast<void>(boost::beast::http::async_write(stream_, response, yield[error]));
+    boost::beast::http::async_write(stream_, response, yield[error]);
 }
 
 void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
@@ -170,7 +170,7 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
     {
         const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(data));
         boost::system::error_code error;
-        static_cast<void>(boost::asio::async_write(stream_, chunk, yield[error]));
+        boost::asio::async_write(stream_, chunk, yield[error]);
         if (error || closed_)
         {
             write_in_progress_ = false;

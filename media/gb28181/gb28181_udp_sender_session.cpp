@@ -193,7 +193,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 
         const auto data = write_queue_.front();
         boost::system::error_code error;
-        static_cast<void>(rtp_transport_.write(std::span<const std::uint8_t>{data->data(), data->size()}, remote_rtp_endpoint_, yield, error));
+        rtp_transport_.write(std::span<const std::uint8_t>{data->data(), data->size()}, remote_rtp_endpoint_, yield, error);
         if (closed_ || !sender_ || error == boost::asio::error::operation_aborted)
         {
             return;
@@ -247,8 +247,8 @@ void gb28181_udp_sender_session::schedule_rtcp()
                         return;
                     }
                     boost::system::error_code write_error;
-                    static_cast<void>(self->rtcp_transport_.write(
-                        std::span<const std::uint8_t>{packet->data(), packet->size()}, self->remote_rtcp_endpoint_, yield, write_error));
+                    self->rtcp_transport_.write(
+                        std::span<const std::uint8_t>{packet->data(), packet->size()}, self->remote_rtcp_endpoint_, yield, write_error);
                     if (self->closed_ || !self->sender_ || write_error == boost::asio::error::operation_aborted)
                     {
                         return;
