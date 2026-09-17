@@ -178,10 +178,10 @@ void hls_http_session::send_text_response(
     if (request_.method() == boost::beast::http::verb::head)
     {
         boost::beast::http::response_serializer<boost::beast::http::string_body> serializer(response);
-        static_cast<void>(boost::beast::http::async_write_header(stream_, serializer, yield[error]));
+        boost::beast::http::async_write_header(stream_, serializer, yield[error]);
         return;
     }
-    static_cast<void>(boost::beast::http::async_write(stream_, response, yield[error]));
+    boost::beast::http::async_write(stream_, response, yield[error]);
 }
 
 void hls_http_session::send_binary_response(boost::beast::http::status status,
@@ -197,7 +197,7 @@ void hls_http_session::send_binary_response(boost::beast::http::status status,
     response.prepare_payload();
 
     boost::system::error_code error;
-    static_cast<void>(boost::beast::http::async_write(stream_, response, yield[error]));
+    boost::beast::http::async_write(stream_, response, yield[error]);
 }
 
 void hls_http_session::shutdown()

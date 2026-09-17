@@ -79,7 +79,7 @@ bool gb28181_rtp_receiver::startup()
     }
 
     stream_ = std::make_shared<media_stream>(stream_name_, worker_);
-    static_cast<void>(avpkt2bs_create(&bitstream_));
+    avpkt2bs_create(&bitstream_);
     demuxer_ = rtsp_demuxer_create(0, 500, &gb28181_rtp_receiver::packet_callback, this);
     if (demuxer_ == nullptr || rtsp_demuxer_add_payload(demuxer_, 90'000, payload_type_, "PS", nullptr) != 0 ||
         rtsp_demuxer_set_ps_notify(demuxer_, &gb28181_rtp_receiver::stream_callback, this) != 0 ||
@@ -159,11 +159,8 @@ int gb28181_rtp_receiver::packet_callback(void* param, avpacket_t* packet)
     return static_cast<gb28181_rtp_receiver*>(param)->on_demuxed_packet(packet);
 }
 
-void gb28181_rtp_receiver::stream_callback(void* param, int stream, int codecid, const void* extra, int bytes, int finish)
+void gb28181_rtp_receiver::stream_callback(void* param, int, int codecid, const void*, int, int finish)
 {
-    static_cast<void>(stream);
-    static_cast<void>(extra);
-    static_cast<void>(bytes);
     static_cast<gb28181_rtp_receiver*>(param)->on_stream(codecid, finish != 0);
 }
 
@@ -283,7 +280,7 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     if (update_track_from_packet(*packet))
     {
         avpkt2bs_destroy(&bitstream_);
-        static_cast<void>(avpkt2bs_create(&bitstream_));
+        avpkt2bs_create(&bitstream_);
     }
     if (!recording_ && !try_start_recording())
     {

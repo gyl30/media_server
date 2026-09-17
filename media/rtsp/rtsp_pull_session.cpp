@@ -555,7 +555,7 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
 
         const auto data = write_queue_.front();
         boost::system::error_code error;
-        static_cast<void>(transport_->write(*data, yield, error));
+        transport_->write(*data, yield, error);
         if (closed_)
         {
             return;

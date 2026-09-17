@@ -35,7 +35,7 @@ void http_session::run(boost::asio::yield_context yield)
     boost::system::error_code error;
 
     stream_.expires_after(std::chrono::seconds(30));
-    static_cast<void>(boost::beast::http::async_read(stream_, buffer, request, yield[error]));
+    boost::beast::http::async_read(stream_, buffer, request, yield[error]);
     if (error || closed_)
     {
         shutdown();
@@ -125,11 +125,11 @@ void http_session::write_string_response(boost::beast::http::request<boost::beas
     if (request.method() == boost::beast::http::verb::head)
     {
         boost::beast::http::response_serializer<boost::beast::http::string_body> serializer(response);
-        static_cast<void>(boost::beast::http::async_write_header(stream_, serializer, yield[error]));
+        boost::beast::http::async_write_header(stream_, serializer, yield[error]);
     }
     else
     {
-        static_cast<void>(boost::beast::http::async_write(stream_, response, yield[error]));
+        boost::beast::http::async_write(stream_, response, yield[error]);
     }
     shutdown();
 }

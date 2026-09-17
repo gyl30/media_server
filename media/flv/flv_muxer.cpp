@@ -71,7 +71,7 @@ void flv_muxer::on_track(const media_track& track)
             return;
         }
         // flv_muxer 会缓存视频 sequence-header 状态，视频配置代际变化时统一重置。
-        static_cast<void>(flv_muxer_reset(muxer_));
+        flv_muxer_reset(muxer_);
         video_config_pending_ = true;
         return;
     }
@@ -146,7 +146,6 @@ void flv_muxer::on_frame(const media_frame& frame)
     {
         for (const auto& [id, current] : tracks_)
         {
-            static_cast<void>(id);
             prime_video_config(current, dts);
         }
         video_config_pending_ = false;

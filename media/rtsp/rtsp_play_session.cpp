@@ -201,7 +201,6 @@ bool rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std
 
     for (const auto& [id, state] : track_states_)
     {
-        static_cast<void>(id);
         if (state.rtcp_channel < 0 || state.rtcp_channel != channel)
         {
             continue;

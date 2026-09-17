@@ -543,7 +543,7 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
 
         const auto entry = write_queue_.front();
         boost::system::error_code error;
-        static_cast<void>(transport_.write(*entry.data, yield, error));
+        transport_.write(*entry.data, yield, error);
         if (closed_)
         {
             return;

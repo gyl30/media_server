@@ -204,7 +204,7 @@ signaling_request_result signaling_client::request(std::string_view target,
         return {.kind = signaling_result_kind::network_error, .error = error.message()};
     }
     stream.expires_after(timeout);
-    static_cast<void>(stream.async_connect(endpoints, yield[error]));
+    stream.async_connect(endpoints, yield[error]);
     if (error)
     {
         return {.kind = signaling_result_kind::network_error,
@@ -217,7 +217,7 @@ signaling_request_result signaling_client::request(std::string_view target,
     request.set(boost::beast::http::field::content_type, "application/json");
     request.body() = std::move(body);
     request.prepare_payload();
-    static_cast<void>(boost::beast::http::async_write(stream, request, yield[error]));
+    boost::beast::http::async_write(stream, request, yield[error]);
     if (error)
     {
         return {.kind = signaling_result_kind::network_error,
@@ -226,7 +226,7 @@ signaling_request_result signaling_client::request(std::string_view target,
 
     boost::beast::flat_buffer buffer;
     boost::beast::http::response<boost::beast::http::string_body> response;
-    static_cast<void>(boost::beast::http::async_read(stream, buffer, response, yield[error]));
+    boost::beast::http::async_read(stream, buffer, response, yield[error]);
     if (error)
     {
         return {.kind = signaling_result_kind::network_error,

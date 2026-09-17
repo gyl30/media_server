@@ -263,8 +263,7 @@ void gb28181_udp_receiver_session::schedule_rtcp()
                         return;
                     }
                     boost::system::error_code write_error;
-                    static_cast<void>(
-                        self->rtcp_transport_.write(std::span<const std::uint8_t>{packet->data(), packet->size()}, target, yield, write_error));
+                    self->rtcp_transport_.write(std::span<const std::uint8_t>{packet->data(), packet->size()}, target, yield, write_error);
                     if (self->closed_)
                     {
                         return;

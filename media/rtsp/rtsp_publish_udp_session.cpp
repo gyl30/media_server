@@ -237,7 +237,7 @@ void rtsp_publish_udp_session::run_rtcp_write(boost::asio::yield_context yield)
             continue;
         }
 
-        static_cast<void>(state.rtcp_transport->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint, yield, error));
+        state.rtcp_transport->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint, yield, error);
         if (error)
         {
             if (error != boost::asio::error::operation_aborted && shutdown_handler_)

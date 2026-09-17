@@ -32,7 +32,6 @@ bool has_only_fields(const json_object& object, std::initializer_list<std::strin
 {
     for (const auto& [key, value] : object)
     {
-        static_cast<void>(value);
         if (std::find(fields.begin(), fields.end(), std::string_view{key}) == fields.end())
         {
             return false;
