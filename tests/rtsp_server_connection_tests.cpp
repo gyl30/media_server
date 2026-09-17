@@ -315,18 +315,32 @@ void test_record_internal_failure_closes_connection()
 
 }    // namespace
 
-int main()
+int main(int argc, char** argv)
 {
     try
     {
-        test_idle_connection_timeout();
-        std::cout << "[pass] rtsp_server_connection_idle_timeout\n";
-        test_control_activity_refreshes_timeout();
-        std::cout << "[pass] rtsp_server_connection_control_refreshes_timeout\n";
-        test_udp_setup_internal_failure_closes_connection();
-        std::cout << "[pass] rtsp_server_connection_udp_setup_internal_failure\n";
-        test_record_internal_failure_closes_connection();
-        std::cout << "[pass] rtsp_server_connection_record_internal_failure\n";
+        require(argc == 2, "RTSP server connection test case required");
+        const std::string_view test{argv[1]};
+        if (test == "idle_timeout")
+        {
+            test_idle_connection_timeout();
+        }
+        else if (test == "control_refreshes_timeout")
+        {
+            test_control_activity_refreshes_timeout();
+        }
+        else if (test == "udp_setup_internal_failure")
+        {
+            test_udp_setup_internal_failure_closes_connection();
+        }
+        else if (test == "record_internal_failure")
+        {
+            test_record_internal_failure_closes_connection();
+        }
+        else
+        {
+            throw std::runtime_error("unknown RTSP server connection test case");
+        }
     }
     catch (const std::exception& error)
     {
