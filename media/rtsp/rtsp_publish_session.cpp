@@ -265,9 +265,8 @@ int rtsp_publish_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        auto child = std::make_shared<rtsp_publish_tcp_session>(worker_, stream_name_, descriptions_, write_handler_);
-        const auto result = child->startup(server, track_index, *selected, session_id_);
-        tcp_session_ = std::move(child);
+        tcp_session_ = std::make_shared<rtsp_publish_tcp_session>(worker_, stream_name_, descriptions_, write_handler_);
+        const auto result = tcp_session_->startup(server, track_index, *selected, session_id_);
         write_handler_ = {};
         if (result < 0)
         {
@@ -283,8 +282,8 @@ int rtsp_publish_session::on_setup(
         return result;
     }
 
-    auto child = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_, rtcp_interval_);
-    child->set_shutdown_handler(
+    udp_session_ = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_, rtcp_interval_);
+    udp_session_->set_shutdown_handler(
         [this]()
         {
             auto handler = std::move(shutdown_handler_);
@@ -316,8 +315,7 @@ int rtsp_publish_session::on_setup(
             }
             handler();
         });
-    const auto result = child->startup(server, track_index, *selected, session_id_);
-    udp_session_ = std::move(child);
+    const auto result = udp_session_->startup(server, track_index, *selected, session_id_);
     write_handler_ = {};
     if (result < 0)
     {

@@ -297,10 +297,9 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     if (!self->play_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_play_session>(
+        self->play_session_ = std::make_shared<rtsp_play_session>(
             self->worker_, self->video_codec_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
-        self->play_session_ = std::move(next_session);
+        self->play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
     }
     return self->play_session_->on_describe(server, uri != nullptr ? uri : "");
 }
@@ -321,10 +320,9 @@ int rtsp_server_connection::setup_callback(
     if (!self->play_session_)
     {
         const auto owner = self->shared_from_this();
-        auto next_session = std::make_shared<rtsp_play_session>(
+        self->play_session_ = std::make_shared<rtsp_play_session>(
             self->worker_, self->video_codec_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
-        self->play_session_ = std::move(next_session);
+        self->play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
     }
     return self->play_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
 }
@@ -385,18 +383,17 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
         return rtsp_server_reply_announce(server, 455);
     }
     const auto owner = self->shared_from_this();
-    auto next_session = std::make_shared<rtsp_publish_session>(
+    auto publish = std::make_shared<rtsp_publish_session>(
         self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-    next_session->set_shutdown_handler([owner]() { owner->shutdown(); });
-    const auto status = next_session->prepare_announce(server, uri != nullptr ? uri : "", sdp, length);
+    publish->set_shutdown_handler([owner]() { owner->shutdown(); });
+    const auto status = publish->prepare_announce(server, uri != nullptr ? uri : "", sdp, length);
     if (status != 200)
     {
-        next_session->shutdown();
+        publish->shutdown();
         return rtsp_server_reply_announce(server, status);
     }
 
-    self->publish_session_ = std::move(next_session);
-    const auto publish = self->publish_session_;
+    self->publish_session_ = publish;
     const auto stream_id = publish->stream_id();
     const auto stream_name = publish->stream_name();
     const auto result = signaling_client::instance().claim_publish(stream_id, "rtsp", stream_name, *self->yield_);
