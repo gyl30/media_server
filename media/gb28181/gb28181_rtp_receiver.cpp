@@ -245,7 +245,7 @@ void gb28181_rtp_receiver::apply_topology()
             .config_version = 0,
         };
     }
-    static_cast<void>(try_start_recording());
+    try_start_recording();
 }
 
 int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
@@ -332,7 +332,7 @@ bool gb28181_rtp_receiver::update_track_from_packet(const avpacket_t& packet)
     current = *track;
     if (recording_)
     {
-        static_cast<void>(stream_->update_track(std::move(*track)));
+        stream_->update_track(std::move(*track));
     }
     return true;
 }

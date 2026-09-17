@@ -126,7 +126,7 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
                     const auto delta = std::bit_cast<std::int64_t>(ntp - rtcp_sync_ntp_);
                     pts = rtcp_sync_pts_ + (delta / ntp_fraction) * 1'000 + (delta % ntp_fraction) * 1'000 / ntp_fraction;
                 }
-                static_cast<void>(rtsp_demuxer_set_timestamp(demuxer, rtp_timestamp, pts));
+                rtsp_demuxer_set_timestamp(demuxer, rtp_timestamp, pts);
             }
         }
         else if (result < 0)

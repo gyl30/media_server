@@ -416,7 +416,7 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
     if (result.kind != signaling_result_kind::accepted)
     {
         spdlog::warn("rtmp publish claim failed stream {} stream_id {} status {} error {}", stream_name_, stream_id_, result.status, result.error);
-        static_cast<void>(rtmp_server_start(rtmp_context_, -1, "publish claim rejected"));
+        rtmp_server_start(rtmp_context_, -1, "publish claim rejected");
         shutdown();
         return;
     }
@@ -432,7 +432,7 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
                                                           });
     if (!publish->startup())
     {
-        static_cast<void>(rtmp_server_start(rtmp_context_, -1, "publish startup failed"));
+        rtmp_server_start(rtmp_context_, -1, "publish startup failed");
         publish->shutdown();
         stream_id_.clear();
         shutdown();
