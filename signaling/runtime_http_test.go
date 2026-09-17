@@ -100,8 +100,7 @@ func TestRuntimeEventHTTPRejectsInvalidStaleAndConflictingEvents(t *testing.T) {
 		{name: "invalid kind", body: runtimeEventBatch(`{"kind":"receiver","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"streaming"}`), want: http.StatusBadRequest},
 		{name: "invalid protocol", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"hls","state":"starting"}`), want: http.StatusBadRequest},
 		{name: "invalid state", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"failed"}`), want: http.StatusBadRequest},
-		{name: "missing end reason", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"stopped"}`), want: http.StatusBadRequest},
-		{name: "active end reason", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"starting","end_reason":"remote"}`), want: http.StatusBadRequest},
+		{name: "removed end reason", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"starting","end_reason":"remote"}`), want: http.StatusBadRequest},
 		{name: "active error", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"starting","error":"failed"}`), want: http.StatusBadRequest},
 		{name: "legacy type", body: runtimeEventBatch(`{"type":"source_started","kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"starting"}`), want: http.StatusBadRequest},
 		{name: "legacy direction", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","direction":"input","protocol":"rtsp","state":"starting"}`), want: http.StatusBadRequest},
@@ -135,8 +134,9 @@ func TestRuntimeEventBatchValidatesBeforeApplyingAndPreservesOrder(t *testing.T)
 	streamingRegression := `{"kind":"publisher","stream_id":"` + regressionStreamID + `","stream_name":"live/regression","protocol":"rtmp","state":"streaming","stage":"streaming"}`
 	startingRegression := `{"kind":"publisher","stream_id":"` + regressionStreamID + `","stream_name":"live/regression","protocol":"rtmp","state":"starting","stage":"publish"}`
 	response = sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(streamingRegression, startingRegression), "application/json")
-	if response.Code != http.StatusBadRequest || len(server.runtimes.snapshot()) != 0 {
-		t.Fatalf("regressing batch status/runtimes = %d/%+v", response.Code, server.runtimes.snapshot())
+	snapshot := server.runtimes.snapshot()
+	if response.Code != http.StatusNoContent || len(snapshot) != 1 || snapshot[0].State != "starting" {
+		t.Fatalf("out-of-order batch status/runtimes = %d/%+v", response.Code, snapshot)
 	}
 
 	existingStreamID := "40000000-0000-4000-8000-000000000003"
@@ -150,15 +150,15 @@ func TestRuntimeEventBatchValidatesBeforeApplyingAndPreservesOrder(t *testing.T)
 	newStarting := `{"kind":"publisher","stream_id":"40000000-0000-4000-8000-000000000004","stream_name":"live/new","protocol":"rtmp","state":"starting","stage":"publish"}`
 	conflicting := `{"kind":"publisher","stream_id":"` + existingStreamID + `","stream_name":"live/other","protocol":"rtmp","state":"streaming","stage":"streaming"}`
 	response = sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(newStarting, conflicting), "application/json")
-	snapshot := server.runtimes.snapshot()
-	if response.Code != http.StatusConflict || len(snapshot) != 1 || snapshot[0].StreamID != existingStreamID || changes != 0 {
+	snapshot = server.runtimes.snapshot()
+	if response.Code != http.StatusConflict || len(snapshot) != 2 || snapshot[1].StreamID != existingStreamID || changes != 0 {
 		t.Fatalf("conflicting batch status/runtimes/changes = %d/%+v/%d", response.Code, snapshot, changes)
 	}
 
 	var states []string
 	server.runtimes.setOnChange(func(event observedRuntime) { states = append(states, event.State) })
 	streaming := `{"kind":"publisher","stream_id":"` + streamID + `","stream_name":"live/camera","protocol":"rtmp","state":"streaming","stage":"streaming"}`
-	stopped := `{"kind":"publisher","stream_id":"` + streamID + `","stream_name":"live/camera","protocol":"rtmp","state":"stopped","end_reason":"remote"}`
+	stopped := `{"kind":"publisher","stream_id":"` + streamID + `","stream_name":"live/camera","protocol":"rtmp","state":"stopped"}`
 	body := runtimeEventBatch(starting, streaming, stopped)
 	response = sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", body, "application/json")
 	if response.Code != http.StatusNoContent || strings.Join(states, ",") != "starting,streaming,stopped" {
@@ -206,7 +206,7 @@ func TestRuntimeEventHTTPDoesNotRemoveReplacementPull(t *testing.T) {
 	server.rtspPulls[sourceID] = replacement
 	server.runtimes.bindSource(sourceID, replacement.streamID)
 	oldStop := `{"kind":"source","stream_id":"` + oldStreamID + `","stream_name":"live/camera",` +
-		`"source_id":"` + sourceID + `","protocol":"rtsp","state":"stopped","end_reason":"remote"}`
+		`"source_id":"` + sourceID + `","protocol":"rtsp","state":"stopped"}`
 	response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(oldStop), "application/json")
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("stop response = %d %s", response.Code, response.Body.String())
@@ -241,13 +241,13 @@ func TestRuntimeEventHTTPRemovesOnlyMatchingGBLiveGeneration(t *testing.T) {
 	}
 	live.sessions[session.key] = session
 	outputStop := `{"kind":"output","stream_id":"10000000-0000-4000-8000-000000000002","stream_name":"` + session.streamName + `",` +
-		`"protocol":"gb28181","state":"stopped","end_reason":"remote"}`
+		`"protocol":"gb28181","state":"stopped"}`
 	if response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(outputStop), "application/json"); response.Code != http.StatusNoContent || live.len() != 1 {
 		t.Fatalf("output terminal status/live = %d/%d", response.Code, live.len())
 	}
 	postStop := func(streamID string) *httptest.ResponseRecorder {
 		body := `{"kind":"source","stream_id":"` + streamID + `","stream_name":"` + session.streamName + `",` +
-			`"protocol":"gb28181","state":"stopped","end_reason":"remote"}`
+			`"protocol":"gb28181","state":"stopped"}`
 		return sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(body), "application/json")
 	}
 	if response := postStop("20000000-0000-4000-8000-000000000001"); response.Code != http.StatusNoContent || live.len() != 1 {
