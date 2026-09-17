@@ -8,9 +8,11 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "media/webrtc/whep.h"
+#include "media/webrtc/whep_event.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
+#include "media/http/signaling_client.h"
 #include "media/webrtc/dtls_certificate.h"
 
 namespace media_server::whep
@@ -164,7 +166,9 @@ create_result create(
     if (!inserted)
     {
         spdlog::error("whep session id collision {}", session_id);
-        session->shutdown(runtime_end_reason::runtime_error, "session_id_collision");
+        signaling_client::instance().report(
+            whep_event::output_stopped(session->stream_id(), session->stream_name(), runtime_end_reason::runtime_error, "session_id_collision"));
+        session->shutdown();
         return failed(create_error::internal_error);
     }
 
@@ -210,12 +214,13 @@ bool remove(std::string_view session_id)
         spdlog::debug("whep session remove expired {}", session_id);
         return false;
     }
+    signaling_client::instance().report(whep_event::output_stopped(session->stream_id(), session->stream_name(), runtime_end_reason::requested));
     session->shutdown();
     spdlog::info("whep session removed {}", session_id);
     return true;
 }
 
-void shutdown(runtime_end_reason reason)
+void shutdown()
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
@@ -223,7 +228,7 @@ void shutdown(runtime_end_reason reason)
     {
         if (const auto session = entry.lock())
         {
-            session->shutdown(reason);
+            session->shutdown();
         }
     }
     current.sessions.clear();

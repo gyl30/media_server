@@ -499,7 +499,7 @@ if(BUILD_TESTING)
 
     add_executable(runtime_event_tests tests/runtime_event_tests.cpp)
     target_link_libraries(runtime_event_tests PRIVATE media_core media_server_link_options)
-    foreach(test_case IN ITEMS strings factories failure shutdown_reason)
+    foreach(test_case IN ITEMS strings factories failure ordinary_shutdown)
         add_test(NAME runtime_event_${test_case} COMMAND runtime_event_tests ${test_case})
     endforeach()
 

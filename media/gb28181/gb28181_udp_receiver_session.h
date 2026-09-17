@@ -13,7 +13,6 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/net/port_manager.h"
-#include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/net/udp_yield_transport.h"
@@ -34,7 +33,7 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
                                  std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     [[nodiscard]] bool startup();
-    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
+    void shutdown() override;
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
     [[nodiscard]] std::optional<port_manager::port_pair> local_ports() const noexcept;
@@ -44,7 +43,6 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     void run_rtp(boost::asio::yield_context yield);
     void run_rtcp(boost::asio::yield_context yield);
     void schedule_rtcp();
-    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
@@ -65,7 +63,6 @@ class gb28181_udp_receiver_session final : public stream_session, public std::en
     bool started_{};
     bool runtime_started_{};
     bool runtime_streaming_{};
-    bool ending_{};
     bool closed_{};
 };
 

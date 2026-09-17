@@ -130,12 +130,12 @@ void test_rtsp_pull_runtime_failure_events()
 
     session->shutdown();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    require(runtime_events(server).size() == 2U, "runtime event repeated shutdown ignored");
+    require(runtime_events(server).size() == 2U, "ordinary shutdown emits no runtime event");
     worker.stop();
     runner.join();
 }
 
-void test_rtsp_pull_first_shutdown_reason()
+void test_rtsp_pull_ordinary_shutdown_is_silent()
 {
     worker_context worker;
     test::publish_claim_test_server server;
@@ -164,15 +164,12 @@ void test_rtsp_pull_first_shutdown_reason()
                           started.set_value();
                       });
     ready.get();
-    session->shutdown(runtime_end_reason::server_shutdown, "first_error");
-    session->shutdown(runtime_end_reason::requested, "late_error");
-    wait_runtime_events(server, 2U);
+    wait_runtime_events(server, 1U);
+    session->shutdown();
+    session->shutdown();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     const auto events = runtime_events(server);
-    require(events.size() == 2U, "runtime shutdown transitions once");
-    const auto& stopped = events[1];
-    require(stopped.at("state") == "stopped", "runtime shutdown terminal event");
-    require(stopped.at("end_reason") == "server_shutdown" && stopped.at("error") == "first_error" && !stopped.contains("stage"),
-            "runtime shutdown first reason wins");
+    require(events.size() == 1U && events[0].at("state") == "starting", "ordinary shutdown emits no terminal event");
     require(!stream_registry::instance().take_receiver_session("live/runtime-events"), "runtime shutdown releases identity");
     worker.stop();
     runner.join();
@@ -301,9 +298,9 @@ int main(int argc, char** argv)
         {
             media_server::test_rtsp_pull_runtime_failure_events();
         }
-        else if (test == "shutdown_reason")
+        else if (test == "ordinary_shutdown")
         {
-            media_server::test_rtsp_pull_first_shutdown_reason();
+            media_server::test_rtsp_pull_ordinary_shutdown_is_silent();
         }
         else
         {

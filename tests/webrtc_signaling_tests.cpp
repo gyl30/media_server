@@ -3830,7 +3830,7 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
 
     if (server_shutdown)
     {
-        session->shutdown(runtime_end_reason::server_shutdown);
+        session->shutdown();
         drain_io(io);
     }
     else

@@ -13,7 +13,6 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/core/media_stream.h"
-#include "media/core/runtime_event.h"
 #include "media/rtmp/rtmp_timestamp.h"
 
 struct flv_demuxer_t;
@@ -27,14 +26,13 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
 {
    public:
     using shutdown_handler = std::function<void()>;
-    using runtime_shutdown_handler = std::function<void(runtime_end_reason, std::string, std::string)>;
     using streaming_handler = std::function<void()>;
 
     rtmp_publish_session(worker_context& worker,
+                         std::string stream_id,
                          std::string stream_name,
                          std::chrono::milliseconds initial_tracks_timeout,
                          shutdown_handler on_shutdown,
-                         runtime_shutdown_handler on_runtime_shutdown = {},
                          streaming_handler on_streaming = {});
     bool startup();
     void shutdown();
@@ -52,15 +50,15 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     int initialize_g711_track(int codec);
     int publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     void try_initialize_tracks();
-    void notify_shutdown(runtime_end_reason reason, std::string stage, std::string error);
+    bool notify_shutdown();
 
    private:
     worker_context& worker_;
+    std::string stream_id_;
     boost::asio::steady_timer initial_tracks_timer_;
     std::chrono::milliseconds initial_tracks_timeout_;
     std::shared_ptr<media_stream> stream_;
     shutdown_handler shutdown_handler_;
-    runtime_shutdown_handler runtime_shutdown_handler_;
     streaming_handler streaming_handler_;
     flv_demuxer_t* demuxer_{};
     rtmp_timestamp_state timestamp_;

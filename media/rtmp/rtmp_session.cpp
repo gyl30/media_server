@@ -6,7 +6,6 @@
 #include <boost/url/parse.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
 
 #include "media/core/stream_id.h"
@@ -124,7 +123,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     auto* context = rtmp_server_create(this, &handler);
     if (context == nullptr)
     {
-        shutdown_on_owner(runtime_end_reason::runtime_error, "setup", "rtmp_server_create_failed");
+        shutdown();
         return;
     }
     rtmp_context_ = context;
@@ -134,7 +133,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     {
         boost::system::error_code error;
         const auto bytes = transport_.read(buffer, yield, error);
-        if (ending_ || closed_)
+        if (closed_)
         {
             break;
         }
@@ -142,17 +141,36 @@ void rtmp_session::run(boost::asio::yield_context yield)
         {
             if (remote_disconnect(error))
             {
-                shutdown_on_owner(runtime_end_reason::remote, "transport");
+                if (runtime_started_)
+                {
+                    runtime_started_ = false;
+                    runtime_streaming_ = false;
+                    signaling_client::instance().report(
+                        rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::remote, "transport"));
+                }
             }
             else
             {
-                shutdown_on_owner(runtime_end_reason::runtime_error, "transport", error.message());
+                if (runtime_started_)
+                {
+                    runtime_started_ = false;
+                    runtime_streaming_ = false;
+                    signaling_client::instance().report(
+                        rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "transport", error.message()));
+                }
             }
             break;
         }
         if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
         {
-            shutdown_on_owner(runtime_end_reason::protocol_error, publish_ ? "media" : "control", "rtmp_input_failed");
+            if (runtime_started_)
+            {
+                runtime_started_ = false;
+                runtime_streaming_ = false;
+                signaling_client::instance().report(rtmp_event::publisher_stopped(
+                    stream_id_, stream_name_, runtime_end_reason::protocol_error, publish_ ? "media" : "control", "rtmp_input_failed"));
+            }
+            shutdown();
             break;
         }
     }
@@ -199,19 +217,19 @@ int rtmp_session::publish_callback(void* param, const char* app, const char* str
 int rtmp_session::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    return !self->ending_ && self->publish_ ? self->publish_->on_video(data, bytes, timestamp) : -1;
+    return !self->closed_ && self->publish_ ? self->publish_->on_video(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    return !self->ending_ && self->publish_ ? self->publish_->on_audio(data, bytes, timestamp) : -1;
+    return !self->closed_ && self->publish_ ? self->publish_->on_audio(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    if (self->ending_ || !self->publish_)
+    if (self->closed_ || !self->publish_)
     {
         return 0;
     }
@@ -229,14 +247,21 @@ int rtmp_session::duration_callback(void*, const char*, const char*, double* dur
 
 void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
 {
-    if (ending_ || closed_ || data->empty())
+    if (closed_ || data->empty())
     {
         return;
     }
 
     if (data->size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data->size())
     {
-        shutdown_on_owner(runtime_end_reason::runtime_error, "transport", "write_queue_overflow");
+        if (runtime_started_)
+        {
+            runtime_started_ = false;
+            runtime_streaming_ = false;
+            signaling_client::instance().report(
+                rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "transport", "write_queue_overflow"));
+        }
+        shutdown();
         return;
     }
 
@@ -254,7 +279,7 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (ending_ || closed_)
+        if (closed_)
         {
             return;
         }
@@ -266,7 +291,7 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         const auto data = write_queue_.front();
         boost::system::error_code error;
         static_cast<void>(transport_.write(*data, yield, error));
-        if (ending_ || closed_)
+        if (closed_)
         {
             return;
         }
@@ -274,12 +299,25 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         {
             if (remote_disconnect(error))
             {
-                shutdown_on_owner(runtime_end_reason::remote, "transport");
+                if (runtime_started_)
+                {
+                    runtime_started_ = false;
+                    runtime_streaming_ = false;
+                    signaling_client::instance().report(
+                        rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::remote, "transport"));
+                }
             }
             else
             {
-                shutdown_on_owner(runtime_end_reason::runtime_error, "transport", error.message());
+                if (runtime_started_)
+                {
+                    runtime_started_ = false;
+                    runtime_streaming_ = false;
+                    signaling_client::instance().report(
+                        rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "transport", error.message()));
+                }
             }
+            shutdown();
             return;
         }
 
@@ -290,13 +328,13 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
 
 int rtmp_session::on_play(std::string app, std::string stream)
 {
-    if (ending_ || closed_)
+    if (closed_)
     {
         return -1;
     }
     if (publish_claim_pending_)
     {
-        shutdown_on_owner(runtime_end_reason::protocol_error, "control", "request_during_publish_claim");
+        shutdown();
         return -1;
     }
     if (publish_ || play_)
@@ -337,7 +375,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
             }
         },
         video_config_,
-        [self]() { self->shutdown_on_owner(runtime_end_reason::runtime_error, "media", "playback_ended"); });
+        [self]() { self->shutdown(); });
 
     boost::asio::post(worker_.io(),
                       [self]()
@@ -348,7 +386,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
                           }
                           if (rtmp_server_start(self->rtmp_context_, 0, nullptr) != 0)
                           {
-                              self->shutdown_on_owner(runtime_end_reason::runtime_error, "control", "rtmp_play_start_failed");
+                              self->shutdown();
                               return;
                           }
                           self->play_->startup();
@@ -360,13 +398,13 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
 int rtmp_session::on_publish(std::string app, std::string stream)
 {
-    if (ending_ || closed_)
+    if (closed_)
     {
         return -1;
     }
     if (publish_claim_pending_)
     {
-        shutdown_on_owner(runtime_end_reason::protocol_error, "control", "duplicate_publish_request");
+        shutdown();
         return -1;
     }
     if (publish_ || play_)
@@ -377,7 +415,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     const auto target = parse_rtmp_publish_target(app, stream);
     if (!target)
     {
-        shutdown_on_owner(runtime_end_reason::protocol_error, "control", "invalid_publish_target");
+        shutdown();
         return -1;
     }
 
@@ -396,7 +434,7 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
 {
     yield.throw_if_cancelled(false);
     const auto result = signaling_client::instance().claim_publish(stream_id_, "rtmp", stream_name_, yield);
-    if (ending_ || closed_ || rtmp_context_ == nullptr || !publish_claim_pending_)
+    if (closed_ || rtmp_context_ == nullptr || !publish_claim_pending_)
     {
         return;
     }
@@ -406,7 +444,7 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
     {
         spdlog::warn("rtmp publish claim failed stream {} stream_id {} status {} error {}", stream_name_, stream_id_, result.status, result.error);
         static_cast<void>(rtmp_server_start(rtmp_context_, -1, "publish claim rejected"));
-        shutdown_on_owner(runtime_end_reason::requested, "claim", "publish_claim_rejected");
+        shutdown();
         return;
     }
 
@@ -414,48 +452,48 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
     const auto self = shared_from_this();
     auto publish = std::make_shared<rtmp_publish_session>(
         worker_,
+        stream_id_,
         stream_name_,
         initial_tracks_timeout_,
-        [self]() { self->shutdown_on_owner(runtime_end_reason::runtime_error, "media", "publish_session_failed"); },
-        [self](runtime_end_reason reason, std::string stage, std::string error)
-        { self->shutdown_on_owner(reason, std::move(stage), std::move(error)); },
+        [self]()
+        {
+            self->runtime_started_ = false;
+            self->runtime_streaming_ = false;
+            self->shutdown();
+        },
         [self]() { self->emit_streaming(); });
     if (!publish->startup())
     {
         static_cast<void>(rtmp_server_start(rtmp_context_, -1, "publish startup failed"));
-        shutdown_on_owner(runtime_end_reason::runtime_error, "setup", "publish_startup_failed");
+        if (runtime_started_)
+        {
+            runtime_started_ = false;
+            runtime_streaming_ = false;
+            signaling_client::instance().report(
+                rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "setup", "publish_startup_failed"));
+        }
+        shutdown();
         return;
     }
 
     publish_ = std::move(publish);
     if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0)
     {
-        shutdown_on_owner(runtime_end_reason::runtime_error, "control", "rtmp_publish_start_failed");
+        if (runtime_started_)
+        {
+            runtime_started_ = false;
+            runtime_streaming_ = false;
+            signaling_client::instance().report(
+                rtmp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "control", "rtmp_publish_start_failed"));
+        }
+        shutdown();
         return;
     }
     spdlog::info("rtmp publish {}", stream_name_);
 }
 
-void rtmp_session::shutdown(runtime_end_reason reason, std::string error)
+void rtmp_session::shutdown()
 {
-    const auto self = shared_from_this();
-    boost::asio::dispatch(worker_.io(),
-                          [self, reason, error = std::move(error)]() mutable { self->shutdown_on_owner(reason, {}, std::move(error)); });
-}
-
-void rtmp_session::shutdown_on_owner(runtime_end_reason reason, std::string stage, std::string error)
-{
-    if (ending_ || closed_)
-    {
-        return;
-    }
-    ending_ = true;
-    if (runtime_started_)
-    {
-        runtime_started_ = false;
-        runtime_streaming_ = false;
-        signaling_client::instance().report(rtmp_event::publisher_stopped(stream_id_, stream_name_, reason, stage, error));
-    }
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
@@ -484,7 +522,7 @@ void rtmp_session::safe_shutdown()
 
 void rtmp_session::emit_starting()
 {
-    if (runtime_started_ || ending_ || closed_)
+    if (runtime_started_ || closed_)
     {
         return;
     }
@@ -494,7 +532,7 @@ void rtmp_session::emit_starting()
 
 void rtmp_session::emit_streaming()
 {
-    if (!runtime_started_ || runtime_streaming_ || ending_ || closed_)
+    if (!runtime_started_ || runtime_streaming_ || closed_)
     {
         return;
     }

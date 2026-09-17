@@ -5,9 +5,11 @@
 
 #include <spdlog/spdlog.h>
 
+#include "media/rtmp/rtmp_event.h"
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/http/signaling_client.h"
 #include "media/rtmp/rtmp_publish_session.h"
 
 extern "C"
@@ -28,17 +30,17 @@ constexpr track_id audio_track_id = 2;
 }    // namespace
 
 rtmp_publish_session::rtmp_publish_session(worker_context& worker,
+                                           std::string stream_id,
                                            std::string stream_name,
                                            std::chrono::milliseconds initial_tracks_timeout,
                                            shutdown_handler on_shutdown,
-                                           runtime_shutdown_handler on_runtime_shutdown,
                                            streaming_handler on_streaming)
     : worker_(worker),
+      stream_id_(std::move(stream_id)),
       initial_tracks_timer_(worker_.io()),
       initial_tracks_timeout_(initial_tracks_timeout),
       stream_(std::make_shared<media_stream>(std::move(stream_name), worker_)),
       shutdown_handler_(std::move(on_shutdown)),
-      runtime_shutdown_handler_(std::move(on_runtime_shutdown)),
       streaming_handler_(std::move(on_streaming))
 {
 }
@@ -60,8 +62,12 @@ bool rtmp_publish_session::startup()
             {
                 return;
             }
-            spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_->name());
-            self->notify_shutdown(runtime_end_reason::timeout, "media", "initial_tracks_timeout");
+            if (self->notify_shutdown())
+            {
+                spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_->name());
+                signaling_client::instance().report(rtmp_event::publisher_stopped(
+                    self->stream_id_, self->stream_->name(), runtime_end_reason::timeout, "media", "initial_tracks_timeout"));
+            }
         });
     return true;
 }
@@ -89,25 +95,43 @@ void rtmp_publish_session::shutdown()
 
 int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
-    if (closed_ || demuxer_ == nullptr)
+    if (closed_ || shutdown_notified_ || demuxer_ == nullptr)
     {
         return -1;
     }
-    return flv_demuxer_input(demuxer_, FLV_TYPE_VIDEO, data, bytes, timestamp);
+    if (flv_demuxer_input(demuxer_, FLV_TYPE_VIDEO, data, bytes, timestamp) == 0)
+    {
+        return 0;
+    }
+    if (notify_shutdown())
+    {
+        signaling_client::instance().report(
+            rtmp_event::publisher_stopped(stream_id_, stream_->name(), runtime_end_reason::protocol_error, "media", "media_input_failed"));
+    }
+    return 0;
 }
 
 int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
-    if (closed_ || demuxer_ == nullptr)
+    if (closed_ || shutdown_notified_ || demuxer_ == nullptr)
     {
         return -1;
     }
-    return flv_demuxer_input(demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp);
+    if (flv_demuxer_input(demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp) == 0)
+    {
+        return 0;
+    }
+    if (notify_shutdown())
+    {
+        signaling_client::instance().report(
+            rtmp_event::publisher_stopped(stream_id_, stream_->name(), runtime_end_reason::protocol_error, "media", "media_input_failed"));
+    }
+    return 0;
 }
 
 int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
 {
-    if (closed_ || data.empty())
+    if (closed_ || shutdown_notified_ || data.empty())
     {
         return 0;
     }
@@ -121,7 +145,12 @@ int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
     const auto* values = AMFReadString(data.data() + 1, end, 0, name.data(), name.size());
     if (values == nullptr)
     {
-        return -1;
+        if (notify_shutdown())
+        {
+            signaling_client::instance().report(
+                rtmp_event::publisher_stopped(stream_id_, stream_->name(), runtime_end_reason::protocol_error, "media", "media_input_failed"));
+        }
+        return 0;
     }
     if (std::string_view(name.data()) != "onMetaData")
     {
@@ -137,13 +166,23 @@ int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
     };
     if (amf_read_items(values, end, metadata.data(), metadata.size()) == nullptr)
     {
-        return -1;
+        if (notify_shutdown())
+        {
+            signaling_client::instance().report(
+                rtmp_event::publisher_stopped(stream_id_, stream_->name(), runtime_end_reason::protocol_error, "media", "media_input_failed"));
+        }
+        return 0;
     }
 
     const bool audio = audio_codec != 0.0;
     if ((expected_audio_.has_value() && *expected_audio_ != audio) || (initial_audio_track_ && !audio))
     {
-        return -1;
+        if (notify_shutdown())
+        {
+            signaling_client::instance().report(
+                rtmp_event::publisher_stopped(stream_id_, stream_->name(), runtime_end_reason::protocol_error, "media", "media_input_failed"));
+        }
+        return 0;
     }
 
     expected_audio_ = audio;
@@ -370,14 +409,19 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
 
 void rtmp_publish_session::try_initialize_tracks()
 {
-    if (tracks_initialized_ || !expected_audio_.has_value() || !initial_video_track_ || (*expected_audio_ && !initial_audio_track_))
+    if (shutdown_notified_ || tracks_initialized_ || !expected_audio_.has_value() || !initial_video_track_ ||
+        (*expected_audio_ && !initial_audio_track_))
     {
         return;
     }
 
     if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
     {
-        notify_shutdown(runtime_end_reason::timeout, "media", "initial_tracks_timeout");
+        if (notify_shutdown())
+        {
+            signaling_client::instance().report(
+                rtmp_event::publisher_stopped(stream_id_, stream_->name(), runtime_end_reason::timeout, "media", "initial_tracks_timeout"));
+        }
         return;
     }
 
@@ -394,8 +438,12 @@ void rtmp_publish_session::try_initialize_tracks()
     }
     if (!stream_registry::instance().add(stream_))
     {
-        spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
-        notify_shutdown(runtime_end_reason::runtime_error, "media", "stream_registry_add_failed");
+        if (notify_shutdown())
+        {
+            spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
+            signaling_client::instance().report(
+                rtmp_event::publisher_stopped(stream_id_, stream_->name(), runtime_end_reason::runtime_error, "media", "stream_registry_add_failed"));
+        }
         return;
     }
     initial_tracks_timer_.cancel();
@@ -406,21 +454,18 @@ void rtmp_publish_session::try_initialize_tracks()
     spdlog::info("rtmp publish tracks ready audio {}", *expected_audio_);
 }
 
-void rtmp_publish_session::notify_shutdown(runtime_end_reason reason, std::string stage, std::string error)
+bool rtmp_publish_session::notify_shutdown()
 {
     if (shutdown_notified_)
     {
-        return;
+        return false;
     }
     shutdown_notified_ = true;
-    if (runtime_shutdown_handler_)
+    if (shutdown_handler_)
     {
-        runtime_shutdown_handler_(reason, std::move(stage), std::move(error));
+        std::move(shutdown_handler_)();
     }
-    else if (shutdown_handler_)
-    {
-        shutdown_handler_();
-    }
+    return true;
 }
 
 }    // namespace media_server

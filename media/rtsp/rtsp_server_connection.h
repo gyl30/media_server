@@ -15,7 +15,6 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/cancellation_signal.hpp>
 
-#include "media/core/runtime_event.h"
 #include "media/net/tcp_yield_transport.h"
 #include "media/codec/video_transcode_config.h"
 
@@ -40,7 +39,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
                            std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
                            std::size_t max_write_queue_bytes = 1024U * 1024U);
     void startup();
-    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
+    void shutdown();
 
    private:
     static int send_callback(void* param, const void* data, std::size_t bytes);
@@ -64,7 +63,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     int reply_announce_and_close(rtsp_server_t* server, int status);
-    void shutdown_on_owner(runtime_end_reason reason, std::string stage = {}, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
@@ -103,7 +101,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     bool closing_after_write_{};
     bool runtime_started_{};
     bool runtime_streaming_{};
-    bool ending_{};
     bool closed_{};
 };
 

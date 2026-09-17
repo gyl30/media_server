@@ -13,7 +13,6 @@
 
 #include <boost/asio.hpp>
 
-#include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_yield_transport.h"
 
@@ -47,8 +46,10 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
 
     [[nodiscard]] static bool valid_url(std::string_view url);
     bool startup();
-    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
+    void shutdown() override;
     [[nodiscard]] std::string_view stream_id() const noexcept override;
+    [[nodiscard]] std::string_view source_id() const noexcept;
+    [[nodiscard]] std::string_view stream_name() const noexcept;
 
    private:
     struct parsed_url
@@ -72,7 +73,6 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
-    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
@@ -112,7 +112,6 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     bool media_started_{};
     bool runtime_started_{};
     bool runtime_streaming_{};
-    bool ending_{};
     bool closed_{};
 };
 

@@ -26,7 +26,7 @@ constexpr std::string_view stream_id_b = "550e8400-e29b-41d4-b716-446655440001";
 class foreign_receiver_session final : public stream_session
 {
    public:
-    void shutdown(runtime_end_reason = runtime_end_reason::requested, std::string = {}) override {}
+    void shutdown() override {}
 };
 
 void require(bool condition, std::string_view message)

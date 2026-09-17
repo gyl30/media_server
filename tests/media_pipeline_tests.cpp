@@ -236,8 +236,12 @@ static_assert(std::is_constructible_v<gb28181_rtp_sender,
                                       gb28181_rtp_sender::packet_handler,
                                       gb28181_rtp_sender::end_handler>);
 
-static_assert(
-    std::is_constructible_v<rtmp_publish_session, worker_context&, std::string, std::chrono::milliseconds, rtmp_publish_session::shutdown_handler>);
+static_assert(std::is_constructible_v<rtmp_publish_session,
+                                      worker_context&,
+                                      std::string,
+                                      std::string,
+                                      std::chrono::milliseconds,
+                                      rtmp_publish_session::shutdown_handler>);
 static_assert(std::is_constructible_v<rtmp_play_session,
                                       worker_context&,
                                       std::shared_ptr<media_stream>,
@@ -5277,18 +5281,13 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     auto shutdown_barrier_future = shutdown_barrier.get_future();
     boost::asio::post(client_worker.io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
     shutdown_barrier_future.wait();
-    wait_runtime_event_count(event_server, 3U);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     boost::system::error_code error;
     socket.close(error);
     client_worker.stop();
     runner.join();
     events = runtime_events(event_server);
-    require(events.size() == 3U, "rtsp pull requested shutdown emits stopped once");
-    require(events[2].at("kind").as_string() == "source" && events[2].at("stream_id").as_string() == stream_id &&
-                events[2].at("stream_name").as_string() == "relay/topology" && events[2].at("source_id").as_string() == source_id &&
-                events[2].at("protocol").as_string() == "rtsp" && events[2].at("state").as_string() == "stopped" && !events[2].contains("stage") &&
-                events[2].at("end_reason").as_string() == "requested" && !events[2].contains("error"),
-            "rtsp pull requested terminal event");
+    require(events.size() == 2U, "ordinary rtsp pull shutdown emits no runtime event");
 }
 
 void test_rtsp_pull_initial_tracks_timeout()
@@ -5794,7 +5793,7 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         }
         require(!stream_registry::instance().find("live/claim-pending"), "RTSP remote disconnect removes runtime");
         wait_runtime_event_count(claim_server, 3U);
-        connection->shutdown(runtime_end_reason::server_shutdown);
+        connection->shutdown();
         std::promise<void> shutdown_barrier;
         auto shutdown_barrier_future = shutdown_barrier.get_future();
         boost::asio::post(worker.io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
@@ -10029,7 +10028,7 @@ void test_stream_registry_session_identity_lifecycle()
 {
     struct session final : stream_session
     {
-        void shutdown(runtime_end_reason = runtime_end_reason::requested, std::string = {}) override {}
+        void shutdown() override {}
     };
     worker_context worker;
     const std::string name = "live/session-generation";
@@ -11062,8 +11061,10 @@ void test_rtmp_duplicate_publisher_preserves_source()
     io.restart();
     int original_shutdowns = 0;
     int duplicate_shutdowns = 0;
-    auto original = std::make_shared<rtmp_publish_session>(worker, "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++original_shutdowns; });
-    auto duplicate = std::make_shared<rtmp_publish_session>(worker, "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++duplicate_shutdowns; });
+    auto original = std::make_shared<rtmp_publish_session>(
+        worker, "550e8400-e29b-41d4-a716-446655440000", "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++original_shutdowns; });
+    auto duplicate = std::make_shared<rtmp_publish_session>(
+        worker, "550e8400-e29b-41d4-b716-446655440001", "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++duplicate_shutdowns; });
     const auto sink = std::make_shared<whip_media_capture_sink>();
     std::shared_ptr<media_stream> published;
     boost::asio::post(io,
@@ -11119,8 +11120,11 @@ void test_rtmp_input_output_boundaries()
         worker.release_work();
         auto& io = worker.io();
         io.restart();
-        auto input = std::make_shared<rtmp_publish_session>(
-            worker, "live/rtmp-outputs", std::chrono::seconds(1), []() { require(false, "rtmp input unexpected shutdown"); });
+        auto input = std::make_shared<rtmp_publish_session>(worker,
+                                                            "550e8400-e29b-41d4-a716-446655440000",
+                                                            "live/rtmp-outputs",
+                                                            std::chrono::seconds(1),
+                                                            []() { require(false, "rtmp input unexpected shutdown"); });
         flv_muxer muxer(
             [&](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
             {
