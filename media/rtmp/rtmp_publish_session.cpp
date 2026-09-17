@@ -358,7 +358,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
         try_initialize_tracks();
         return 0;
     }
-    static_cast<void>(stream_->update_track(std::move(track)));
+    stream_->update_track(std::move(track));
     return 0;
 }
 

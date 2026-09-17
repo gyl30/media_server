@@ -168,7 +168,7 @@ std::optional<media_track> rtsp_sdp_track_from_format(
                 std::all_of(encoded.begin(), encoded.end(), [](char value) { return std::isxdigit(static_cast<unsigned char>(value)) != 0; }))
             {
                 std::vector<std::uint8_t> config(encoded.size() / 2U);
-                static_cast<void>(base16_decode(config.data(), encoded.data(), encoded.size()));
+                base16_decode(config.data(), encoded.data(), encoded.size());
                 if (const auto aac = parse_aac_asc(config))
                 {
                     return media_track{.id = id,

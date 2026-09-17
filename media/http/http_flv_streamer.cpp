@@ -13,7 +13,7 @@ http_flv_streamer::http_flv_streamer(write_handler on_write, end_handler on_end,
           {
               if (writer_ != nullptr)
               {
-                  static_cast<void>(flv_writer_input(writer_, type, data.data(), data.size(), timestamp));
+                  flv_writer_input(writer_, type, data.data(), data.size(), timestamp);
               }
           },
           video)
@@ -26,7 +26,7 @@ void http_flv_streamer::on_tracks(media_track_snapshot_ptr tracks)
     {
         return;
     }
-    static_cast<void>(apply_tracks(tracks));
+    apply_tracks(tracks);
 }
 
 void http_flv_streamer::on_read(media_read_batch batch)

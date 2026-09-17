@@ -644,7 +644,7 @@ void hls_segmenter::discard_segment()
         // 保存到丢弃出口以释放 sample，保留 writer 的时间线和已发布 init。
         mov_target_ = nullptr;
         mov_position_ = 0;
-        static_cast<void>(fmp4_writer_save_segment(fmp4_));
+        fmp4_writer_save_segment(fmp4_);
         fmp4_pending_bytes_ = 0;
         fmp4_pending_samples_ = 0;
         mov_target_ = &current_segment_;

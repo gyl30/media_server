@@ -695,11 +695,11 @@ std::optional<webrtc_media_offer> parse_media_offer(sdp_t* sdp, int index, const
         media.formats.emplace_back(value);
     }
     media.payload_types.resize(static_cast<std::size_t>(format_count));
-    static_cast<void>(sdp_media_formats(sdp, index, media.payload_types.data(), format_count));
+    sdp_media_formats(sdp, index, media.payload_types.data(), format_count);
 
-    static_cast<void>(sdp_media_attribute_list(sdp, index, "rtpmap", &on_rtpmap, &media));
-    static_cast<void>(sdp_media_attribute_list(sdp, index, "fmtp", &on_fmtp, &media));
-    static_cast<void>(sdp_media_attribute_list(sdp, index, "extmap", &on_extmap, &media));
+    sdp_media_attribute_list(sdp, index, "rtpmap", &on_rtpmap, &media);
+    sdp_media_attribute_list(sdp, index, "fmtp", &on_fmtp, &media);
+    sdp_media_attribute_list(sdp, index, "extmap", &on_extmap, &media);
     for (const auto payload_type : media.payload_types)
     {
         if ((payload_type == RTP_PAYLOAD_PCMU || payload_type == RTP_PAYLOAD_PCMA) &&
