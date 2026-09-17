@@ -106,6 +106,7 @@ extern "C"
 #include "rtmp-client.h"
 #include "rtp-payload.h"
 #include "rtsp-client.h"
+#include "rtsp-server.h"
 #include "sdp-payload.h"
 #include "rtsp-demuxer.h"
 #include <libavutil/opt.h>
@@ -6712,6 +6713,90 @@ class rtsp_play_test_peer final
     std::jthread runner_;
 };
 
+struct rtsp_play_reply_fixture
+{
+    std::shared_ptr<rtsp_play_session> session;
+    std::string response;
+    bool fail_send{};
+};
+
+int capture_rtsp_play_reply(void* param, const void* data, std::size_t bytes)
+{
+    auto& fixture = *static_cast<rtsp_play_reply_fixture*>(param);
+    if (fixture.fail_send)
+    {
+        return -1;
+    }
+    fixture.response.append(static_cast<const char*>(data), bytes);
+    return 0;
+}
+
+int describe_rtsp_play(void* param, rtsp_server_t* server, const char* uri)
+{
+    return static_cast<rtsp_play_reply_fixture*>(param)->session->on_describe(server, uri != nullptr ? uri : "");
+}
+
+int setup_rtsp_play(
+    void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
+{
+    return static_cast<rtsp_play_reply_fixture*>(param)->session->on_setup(
+        server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
+}
+
+int play_rtsp_play(void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
+{
+    return static_cast<rtsp_play_reply_fixture*>(param)->session->on_play(
+        server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
+}
+
+void test_rtsp_play_reply_error()
+{
+    worker_context worker;
+    auto stream = std::make_shared<media_stream>("live/play-reply-error", worker);
+    require(stream->set_tracks({make_video_track()}), "rtsp play reply error tracks");
+    require(stream_registry::instance().add(stream), "rtsp play reply error registry");
+
+    rtsp_play_reply_fixture fixture{
+        .session = std::make_shared<rtsp_play_session>(
+            worker, video_transcode_codec::passthrough, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}),
+        .response = {},
+        .fail_send = false,
+    };
+    rtsp_handler_t handler{};
+    handler.send = &capture_rtsp_play_reply;
+    handler.ondescribe = &describe_rtsp_play;
+    handler.onsetup = &setup_rtsp_play;
+    handler.onplay = &play_rtsp_play;
+    auto* server = rtsp_server_create("127.0.0.1", 8554, &handler, &fixture, &fixture);
+    require(server != nullptr, "rtsp play reply error server");
+
+    const auto input = [&](std::string request)
+    {
+        fixture.response.clear();
+        auto bytes = request.size();
+        return rtsp_server_input(server, request.data(), &bytes);
+    };
+    const std::string base = "rtsp://127.0.0.1/live/play-reply-error";
+    require(input("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n") == 0,
+            "rtsp play reply error describe");
+    require(fixture.response.starts_with("RTSP/1.0 200"), "rtsp play reply error describe response");
+    require(input("SETUP " + base +
+                  "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n") == 0,
+            "rtsp play reply error setup");
+    const auto session = rtsp_header_value(fixture.response, "Session:");
+    require(!session.empty(), "rtsp play reply error session");
+
+    fixture.fail_send = true;
+    require(input("PLAY " + base + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n") != 0,
+            "rtsp play propagates reply error");
+
+    rtsp_server_destroy(server);
+    fixture.session->shutdown();
+    worker.release_work();
+    worker.io().run();
+    stream_registry::instance().remove(*stream);
+}
+
 void test_rtsp_play_session_contract()
 {
     rtsp_play_test_peer peer;
@@ -12396,6 +12481,10 @@ int main(int argc, char* argv[])
         else if (scenario == "rtsp_play_session_contract")
         {
             media_server::test_rtsp_play_session_contract();
+        }
+        else if (scenario == "rtsp_play_reply_error")
+        {
+            media_server::test_rtsp_play_reply_error();
         }
         else if (scenario == "rtsp_play_recreate_lifecycle")
         {
