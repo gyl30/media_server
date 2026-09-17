@@ -64,8 +64,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void write(std::span<const std::uint8_t> data);
     int reply_announce_and_close(rtsp_server_t* server, int status);
     void safe_shutdown();
-    void emit_starting();
-    void emit_streaming();
     void record_control_activity();
     void schedule_inactivity_timeout();
 
@@ -99,8 +97,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     bool publish_claim_reader_stopping_{};
     bool close_next_write_{};
     bool closing_after_write_{};
-    bool runtime_started_{};
-    bool runtime_streaming_{};
     bool closed_{};
 };
 

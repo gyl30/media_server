@@ -8,7 +8,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-#include <functional>
 
 #include "media/core/media_stream.h"
 
@@ -43,7 +42,6 @@ class rtsp_publish_media final
     [[nodiscard]] bool start_recording();
     [[nodiscard]] bool input_packet(std::size_t track_index, std::span<const std::uint8_t> data);
     [[nodiscard]] int generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer);
-    void set_streaming_handler(std::function<void()> handler) { streaming_handler_ = std::move(handler); }
     void shutdown();
 
     [[nodiscard]] const std::vector<rtsp_publish_track_description>& descriptions() const noexcept;
@@ -62,7 +60,6 @@ class rtsp_publish_media final
     std::vector<rtsp_publish_track_description> descriptions_;
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> media_stream_;
-    std::function<void()> streaming_handler_;
     avpkt2bs_t bitstream_{};
     std::uint64_t rtcp_sync_ntp_{};
     std::int64_t rtcp_sync_pts_{};

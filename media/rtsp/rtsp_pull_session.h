@@ -74,8 +74,6 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     void safe_shutdown();
-    void emit_starting();
-    void emit_streaming();
     void record_establishment_progress();
     void schedule_establishment_timeout();
     void schedule_keepalive();
@@ -110,8 +108,6 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     std::size_t media_count_{};
     bool started_{};
     bool media_started_{};
-    bool runtime_started_{};
-    bool runtime_streaming_{};
     bool closed_{};
 };
 

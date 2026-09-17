@@ -1,6 +1,7 @@
 #include <mutex>
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -10,6 +11,7 @@
 #include <iomanip>
 #include <sstream>
 #include <utility>
+#include <algorithm>
 #include <stdexcept>
 #include <string_view>
 #include <condition_variable>
@@ -18,8 +20,19 @@
 #include <boost/json.hpp>
 #include <boost/beast.hpp>
 
+#include "media/net/port_manager.h"
+#include "media/core/media_stream.h"
 #include "media/core/runtime_event.h"
+#include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/http/signaling_client.h"
+#include "media/gb28181/gb28181_types.h"
+#include "media/gb28181/gb28181_udp_sender_session.h"
+
+extern "C"
+{
+#include "rtp-packet.h"
+}
 
 namespace
 {
@@ -371,6 +384,249 @@ void test_report_does_not_run_network()
     require(!server.wait_requests(1, 100ms), "report does not initiate HTTP");
 }
 
+void test_gb_sender_streaming_is_not_repeated_after_config_update()
+{
+    scripted_http_server server;
+    client_fixture fixture(server.url());
+    fixture.start();
+
+    media_server::port_manager::init(33'500, 33'599);
+    media_server::worker_context worker;
+    auto source = std::make_shared<media_server::media_stream>("live/gb-event-source", worker);
+    boost::asio::io_context receiver_io;
+    boost::asio::ip::udp::socket rtp_receiver(receiver_io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket rtcp_receiver(receiver_io, {boost::asio::ip::address_v4::loopback(), 0});
+
+    constexpr media_server::track_id video_track_id = 1;
+    constexpr std::string_view event_stream_id = "550e8400-e29b-41d4-a716-446655440000";
+    const std::vector<std::uint8_t> initial_config{
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
+        0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80,
+    };
+    const std::vector<std::uint8_t> updated_config{
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x64, 0x00, 0x1f, 0xac, 0xd9, 0x40, 0x50, 0x05, 0xba, 0x6a, 0x02, 0x1a, 0x02, 0x80, 0x00,
+        0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x1e, 0x47, 0x8c, 0x18, 0xcb, 0x00, 0x00, 0x00, 0x01, 0x68, 0xef, 0xbc, 0xb0,
+    };
+    const auto frame = [](std::int64_t timestamp, bool key_frame, const std::vector<std::uint8_t>& config)
+    {
+        std::vector<std::uint8_t> payload;
+        if (key_frame)
+        {
+            payload = config;
+            payload.insert(payload.end(), {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x21, 0xa0});
+        }
+        else
+        {
+            payload = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x22, 0x11};
+        }
+        return media_server::media_frame{
+            .track = video_track_id,
+            .dts_ns = timestamp,
+            .pts_ns = timestamp,
+            .key_frame = key_frame,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(payload)),
+        };
+    };
+
+    const media_server::gb28181_transport_config config{
+        .mode = media_server::gb28181_transport::udp,
+        .remote_address = boost::asio::ip::address_v4::loopback(),
+        .remote_rtp_port = rtp_receiver.local_endpoint().port(),
+        .remote_rtcp_port = rtcp_receiver.local_endpoint().port(),
+        .payload_type = 96,
+        .ssrc = 0x12345678U,
+    };
+    auto session = std::make_shared<media_server::gb28181_udp_sender_session>(
+        worker, std::string{event_stream_id}, source, config, boost::asio::ip::address_v4::loopback(), "event-sender", false);
+    std::promise<bool> started;
+    auto started_result = started.get_future();
+    boost::asio::post(worker.io(),
+                      [source, session, &started, &initial_config, frame]()
+                      {
+                          const bool tracks = source->set_tracks({media_server::media_track{
+                              .id = video_track_id,
+                              .kind = media_server::media_kind::video,
+                              .codec = media_server::codec_id::h264,
+                              .clock_rate = 90'000,
+                              .channel_count = 0,
+                              .codec_config = initial_config,
+                          }});
+                          const bool registered =
+                              media_server::stream_registry::instance().add(source) &&
+                              media_server::stream_registry::instance().add_sender_session(source->name(), "event-sender", session);
+                          const bool running = tracks && registered && session->startup();
+                          started.set_value(running);
+                          if (running)
+                          {
+                              source->publish(frame(0, true, initial_config));
+                          }
+                      });
+    std::jthread runner([&worker]() { worker.run(); });
+    const auto stop = [&worker, &runner, &fixture]()
+    {
+        worker.stop();
+        if (runner.joinable())
+        {
+            runner.join();
+        }
+        fixture.stop();
+    };
+    if (!started_result.get())
+    {
+        stop();
+        require(false, "gb sender event session starts");
+    }
+
+    const auto count_streaming = [&server, event_stream_id]()
+    {
+        std::size_t count{};
+        for (const auto& request : server.requests())
+        {
+            if (request.target != "/internal/runtime-events")
+            {
+                continue;
+            }
+            for (const auto& value : batch_events(request))
+            {
+                const auto& object = value.as_object();
+                if (object.at("stream_id").as_string() == event_stream_id && object.at("state") == "streaming")
+                {
+                    ++count;
+                }
+            }
+        }
+        return count;
+    };
+
+    auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (count_streaming() == 0U && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(1ms);
+    }
+    if (count_streaming() != 1U)
+    {
+        stop();
+        require(false, "gb sender first media reports streaming once");
+    }
+    std::vector<std::uint8_t> packet(65'536U);
+    boost::asio::ip::udp::endpoint sender_endpoint;
+    while (rtp_receiver.available() != 0U)
+    {
+        boost::system::error_code error;
+        static_cast<void>(rtp_receiver.receive_from(boost::asio::buffer(packet), sender_endpoint, 0, error));
+        if (error)
+        {
+            stop();
+            require(false, "gb sender initial RTP drain");
+        }
+    }
+
+    std::promise<bool> updated;
+    auto updated_result = updated.get_future();
+    boost::asio::post(worker.io(),
+                      [source, &updated, &updated_config, frame]()
+                      {
+                          const bool changed = source->update_track(media_server::media_track{
+                              .id = video_track_id,
+                              .kind = media_server::media_kind::video,
+                              .codec = media_server::codec_id::h264,
+                              .clock_rate = 90'000,
+                              .channel_count = 0,
+                              .codec_config = updated_config,
+                          });
+                          source->publish(frame(40'000'000, false, updated_config));
+                          source->publish(frame(80'000'000, true, updated_config));
+                          updated.set_value(changed);
+                      });
+    if (!updated_result.get())
+    {
+        stop();
+        require(false, "gb sender source config changes");
+    }
+
+    std::vector<std::uint8_t> updated_payload;
+    const auto contains_updated_config = [&updated_payload, &updated_config]()
+    { return std::search(updated_payload.begin(), updated_payload.end(), updated_config.begin(), updated_config.end()) != updated_payload.end(); };
+    deadline = std::chrono::steady_clock::now() + 2s;
+    while (!contains_updated_config() && std::chrono::steady_clock::now() < deadline)
+    {
+        if (rtp_receiver.available() == 0U)
+        {
+            std::this_thread::sleep_for(1ms);
+            continue;
+        }
+        boost::system::error_code error;
+        const auto bytes = rtp_receiver.receive_from(boost::asio::buffer(packet), sender_endpoint, 0, error);
+        if (error)
+        {
+            stop();
+            require(false, "gb sender updated RTP receive");
+        }
+        rtp_packet_t decoded{};
+        if (rtp_packet_deserialize(&decoded, packet.data(), static_cast<int>(bytes)) != 0 || decoded.payloadlen == 0)
+        {
+            stop();
+            require(false, "gb sender updated RTP parse");
+        }
+        const auto* begin = static_cast<const std::uint8_t*>(decoded.payload);
+        updated_payload.insert(updated_payload.end(), begin, begin + decoded.payloadlen);
+    }
+    if (!contains_updated_config())
+    {
+        stop();
+        require(false, "gb sender resumes media with updated config");
+    }
+
+    const auto marker_stream_id = stream_id(999);
+    media_server::signaling_client::instance().report(event(999));
+    const auto marker_delivered = [&server, &marker_stream_id]()
+    {
+        for (const auto& request : server.requests())
+        {
+            if (request.target != "/internal/runtime-events")
+            {
+                continue;
+            }
+            for (const auto& value : batch_events(request))
+            {
+                if (value.as_object().at("stream_id").as_string() == marker_stream_id)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    deadline = std::chrono::steady_clock::now() + 2s;
+    while (!marker_delivered() && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(1ms);
+    }
+    if (!marker_delivered())
+    {
+        stop();
+        require(false, "gb sender event marker delivered");
+    }
+    if (count_streaming() != 1U)
+    {
+        stop();
+        require(false, "gb sender config update does not repeat streaming");
+    }
+
+    std::promise<void> stopped;
+    auto stopped_result = stopped.get_future();
+    boost::asio::post(worker.io(),
+                      [source, session, &stopped, &worker]()
+                      {
+                          session->shutdown();
+                          media_server::stream_registry::instance().remove(*source);
+                          source->end();
+                          boost::asio::post(worker.io(), [&stopped]() { stopped.set_value(); });
+                      });
+    stopped_result.get();
+    stop();
+}
+
 }    // namespace
 
 int main(int argc, char** argv)
@@ -408,6 +664,10 @@ int main(int argc, char** argv)
     else if (test == "nonblocking")
     {
         test_report_does_not_run_network();
+    }
+    else if (test == "gb_sender_streaming")
+    {
+        test_gb_sender_streaming_is_not_repeated_after_config_update();
     }
     else
     {

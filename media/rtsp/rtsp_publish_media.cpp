@@ -86,10 +86,6 @@ bool rtsp_publish_media::start_recording()
         return false;
     }
     recording_ = true;
-    if (streaming_handler_)
-    {
-        streaming_handler_();
-    }
     return true;
 }
 
@@ -167,7 +163,6 @@ void rtsp_publish_media::shutdown()
         }
     }
     demuxers_.clear();
-    streaming_handler_ = {};
     rtcp_synchronized_ = false;
     avpkt2bs_destroy(&bitstream_);
 }

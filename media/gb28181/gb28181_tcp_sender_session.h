@@ -46,8 +46,6 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     void run_write(boost::asio::yield_context yield);
     void send_packet(std::vector<std::uint8_t> packet);
     void safe_shutdown();
-    void emit_starting();
-    void emit_streaming();
 
    private:
     worker_context& worker_;
@@ -65,8 +63,8 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
-    bool runtime_started_{};
-    bool runtime_streaming_{};
+    bool started_{};
+    bool media_started_{};
     bool closed_{};
 };
 

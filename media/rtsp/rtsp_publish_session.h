@@ -28,15 +28,12 @@ class rtsp_publish_udp_session;
 class rtsp_publish_session final
 {
    public:
-    using streaming_handler = std::function<void()>;
-
     rtsp_publish_session(worker_context& worker,
                          boost::asio::ip::address bind_address,
                          std::function<void(std::span<const std::uint8_t>)> write,
                          std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
-    void set_streaming_handler(streaming_handler handler) { streaming_handler_ = std::move(handler); }
 
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
@@ -50,16 +47,11 @@ class rtsp_publish_session final
     void shutdown();
 
    private:
-    bool notify_shutdown();
-    void notify_streaming_if_ready();
-
-   private:
     worker_context& worker_;
     boost::asio::ip::address bind_address_;
     std::chrono::milliseconds rtcp_interval_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void()> shutdown_handler_;
-    streaming_handler streaming_handler_;
     std::shared_ptr<rtsp_publish_tcp_session> tcp_session_;
     std::shared_ptr<rtsp_publish_udp_session> udp_session_;
     std::vector<rtsp_publish_track_description> descriptions_;
@@ -67,8 +59,6 @@ class rtsp_publish_session final
     std::string stream_name_;
     std::string session_id_;
     bool announce_prepared_{};
-    bool streaming_notified_{};
-    bool shutdown_notified_{};
 };
 
 }    // namespace media_server

@@ -26,15 +26,14 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
 {
    public:
     using shutdown_handler = std::function<void()>;
-    using streaming_handler = std::function<void()>;
 
     rtmp_publish_session(worker_context& worker,
                          std::string stream_id,
                          std::string stream_name,
                          std::chrono::milliseconds initial_tracks_timeout,
-                         shutdown_handler on_shutdown,
-                         streaming_handler on_streaming = {});
+                         shutdown_handler on_shutdown);
     bool startup();
+    void set_shutdown_handler(shutdown_handler handler);
     void shutdown();
 
     int on_video(const void* data, std::size_t bytes, std::uint32_t timestamp);
@@ -50,7 +49,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     int initialize_g711_track(int codec);
     int publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     void try_initialize_tracks();
-    bool notify_shutdown();
 
    private:
     worker_context& worker_;
@@ -59,14 +57,12 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     std::chrono::milliseconds initial_tracks_timeout_;
     std::shared_ptr<media_stream> stream_;
     shutdown_handler shutdown_handler_;
-    streaming_handler streaming_handler_;
     flv_demuxer_t* demuxer_{};
     rtmp_timestamp_state timestamp_;
     std::optional<media_track> initial_video_track_;
     std::optional<media_track> initial_audio_track_;
     std::optional<bool> expected_audio_;
     bool tracks_initialized_{};
-    bool shutdown_notified_{};
     bool closed_{};
 };
 

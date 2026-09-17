@@ -63,8 +63,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     int on_publish(std::string app, std::string stream);
     void run_publish_claim(boost::asio::yield_context yield);
     void safe_shutdown();
-    void emit_starting();
-    void emit_streaming();
     [[nodiscard]] static std::string make_stream_name(std::string_view app, std::string_view stream);
 
    private:
@@ -82,8 +80,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     std::string stream_id_;
     std::string stream_name_;
     bool publish_claim_pending_{};
-    bool runtime_started_{};
-    bool runtime_streaming_{};
     bool closed_{};
 };
 

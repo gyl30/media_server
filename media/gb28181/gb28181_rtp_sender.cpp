@@ -110,13 +110,13 @@ void gb28181_rtp_sender::on_read(media_read_batch batch)
             continue;
         }
 
-        if (waiting_for_key_frame_)
+        const bool starts_media = waiting_for_key_frame_;
+        if (starts_media)
         {
             if (state->second.kind != media_kind::video || !entry.frame.key_frame)
             {
                 continue;
             }
-            waiting_for_key_frame_ = false;
         }
 
         const auto result = rtsp_muxer_input(muxer_,
@@ -142,6 +142,10 @@ void gb28181_rtp_sender::on_read(media_read_batch batch)
                 shutdown();
             }
             return;
+        }
+        if (starts_media)
+        {
+            waiting_for_key_frame_ = false;
         }
     }
 

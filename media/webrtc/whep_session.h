@@ -97,8 +97,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void handle_dtls_timeout();
     void startup_establishment_timeout();
     void refresh_ice_activity_timeout();
-    void emit_starting();
-    void emit_streaming();
 
    private:
     std::shared_ptr<media_stream> stream_;
@@ -131,8 +129,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     bool started_{};
-    bool runtime_started_{};
-    bool runtime_streaming_{};
 };
 
 }    // namespace media_server
