@@ -55,7 +55,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
 
     void run(boost::asio::yield_context yield);
-    bool run_publish_claim(rtsp_server_t* server, boost::asio::yield_context& yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     int reply_announce_and_close(rtsp_server_t* server, int status);
@@ -81,7 +80,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;
-    bool publish_claim_pending_{};
+    boost::asio::yield_context* yield_{};
     bool close_next_write_{};
     bool closing_after_write_{};
     bool closed_{};

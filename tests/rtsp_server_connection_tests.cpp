@@ -147,16 +147,12 @@ std::string publish_announce(std::string_view uri)
 
 void configure_signaling(const media_server::test::publish_claim_test_server& server)
 {
-    media_server::signaling_client::instance().configure({
-        .signaling_url = server.url(),
-        .server_id = "media-1",
-        .instance_id = "instance-a",
-        .control_url = "http://127.0.0.1:8080",
-        .media_ip = "127.0.0.1",
-        .rtmp_port = 1935,
-        .rtsp_port = 8554,
-        .http_port = 8080,
-    });
+    media_server::config cfg{};
+    cfg.signaling_url = server.url();
+    cfg.server_id = "media-1";
+    cfg.control_url = "http://127.0.0.1:8080";
+    cfg.media_ip = "127.0.0.1";
+    media_server::signaling_client::instance().configure(cfg, "instance-a");
 }
 
 void test_idle_connection_timeout()
