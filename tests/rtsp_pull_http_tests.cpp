@@ -26,7 +26,7 @@ constexpr char source_id[] = "10000000-0000-4000-8000-000000000001";
 class foreign_receiver_session final : public stream_session
 {
    public:
-    void shutdown(runtime_end_reason = runtime_end_reason::requested, std::string = {}) override {}
+    void shutdown() override {}
 };
 
 void require(bool condition, std::string_view message)

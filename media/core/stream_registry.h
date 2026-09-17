@@ -8,7 +8,6 @@
 #include <string_view>
 
 #include "media/core/media_stream.h"
-#include "media/core/runtime_event.h"
 
 namespace media_server
 {
@@ -18,7 +17,7 @@ class stream_session
    public:
     virtual ~stream_session() = default;
 
-    virtual void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) = 0;
+    virtual void shutdown() = 0;
     [[nodiscard]] virtual std::string_view stream_id() const noexcept { return {}; }
 };
 

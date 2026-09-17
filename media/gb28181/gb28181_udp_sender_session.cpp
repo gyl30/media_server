@@ -7,7 +7,6 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/dispatch.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -91,7 +90,7 @@ void gb28181_udp_sender_session::shutdown_udp_transports()
 
 bool gb28181_udp_sender_session::startup()
 {
-    if (ending_ || closed_ || runtime_started_ || local_ports_ || sender_ || !stream_ || config_.mode != gb28181_transport::udp ||
+    if (closed_ || runtime_started_ || local_ports_ || sender_ || !stream_ || config_.mode != gb28181_transport::udp ||
         config_.remote_address.is_unspecified() || bind_address_.is_unspecified())
     {
         return false;
@@ -122,8 +121,27 @@ bool gb28181_udp_sender_session::startup()
         config_.payload_type,
         config_.ssrc,
         [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
-        [self]() { self->shutdown_on_owner(runtime_end_reason::remote); },
-        [self]() { self->shutdown_on_owner(runtime_end_reason::runtime_error, "sender_mux_failed"); });
+        [self]()
+        {
+            if (self->runtime_started_)
+            {
+                self->runtime_started_ = false;
+                self->runtime_streaming_ = false;
+                signaling_client::instance().report(gb28181_event::output_stopped(self->stream_id_, self->stream_name_, runtime_end_reason::remote));
+            }
+            self->shutdown();
+        },
+        [self]()
+        {
+            if (self->runtime_started_)
+            {
+                self->runtime_started_ = false;
+                self->runtime_streaming_ = false;
+                signaling_client::instance().report(
+                    gb28181_event::output_stopped(self->stream_id_, self->stream_name_, runtime_end_reason::runtime_error, "sender_mux_failed"));
+            }
+            self->shutdown();
+        });
     if (!sender_->startup())
     {
         sender_->shutdown();
@@ -150,25 +168,8 @@ bool gb28181_udp_sender_session::startup()
     return true;
 }
 
-void gb28181_udp_sender_session::shutdown(runtime_end_reason reason, std::string error)
+void gb28181_udp_sender_session::shutdown()
 {
-    const auto self = shared_from_this();
-    boost::asio::dispatch(worker_.io(), [self, reason, error = std::move(error)]() mutable { self->shutdown_on_owner(reason, std::move(error)); });
-}
-
-void gb28181_udp_sender_session::shutdown_on_owner(runtime_end_reason reason, std::string error)
-{
-    if (ending_ || closed_)
-    {
-        return;
-    }
-    ending_ = true;
-    if (runtime_started_)
-    {
-        runtime_started_ = false;
-        runtime_streaming_ = false;
-        signaling_client::instance().report(gb28181_event::output_stopped(stream_id_, stream_name_, reason, error));
-    }
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
@@ -179,7 +180,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (ending_ || closed_ || !local_ports_ || write_queue_.empty())
+        if (closed_ || !local_ports_ || write_queue_.empty())
         {
             return;
         }
@@ -189,7 +190,14 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
         static_cast<void>(rtp_transport_.write(std::span<const std::uint8_t>{data->data(), data->size()}, remote_rtp_endpoint_, yield, error));
         if (error)
         {
-            shutdown_on_owner(runtime_end_reason::runtime_error, error.message());
+            if (runtime_started_)
+            {
+                runtime_started_ = false;
+                runtime_streaming_ = false;
+                signaling_client::instance().report(
+                    gb28181_event::output_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, error.message()));
+            }
+            shutdown();
             return;
         }
         if (!local_ports_)
@@ -204,7 +212,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 
 void gb28181_udp_sender_session::schedule_rtcp()
 {
-    if (ending_ || closed_ || rtcp_sender_ == nullptr)
+    if (closed_ || rtcp_sender_ == nullptr)
     {
         return;
     }
@@ -214,7 +222,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->ending_ || self->closed_ || self->rtcp_sender_ == nullptr)
+            if (error || self->closed_ || self->rtcp_sender_ == nullptr)
             {
                 return;
             }
@@ -232,7 +240,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
                 self->worker_.io(),
                 [self, packet](boost::asio::yield_context yield)
                 {
-                    if (self->ending_ || self->closed_)
+                    if (self->closed_)
                     {
                         return;
                     }
@@ -241,7 +249,14 @@ void gb28181_udp_sender_session::schedule_rtcp()
                         std::span<const std::uint8_t>{packet->data(), packet->size()}, self->remote_rtcp_endpoint_, yield, write_error));
                     if (write_error)
                     {
-                        self->shutdown_on_owner(runtime_end_reason::runtime_error, write_error.message());
+                        if (self->runtime_started_)
+                        {
+                            self->runtime_started_ = false;
+                            self->runtime_streaming_ = false;
+                            signaling_client::instance().report(gb28181_event::output_stopped(
+                                self->stream_id_, self->stream_name_, runtime_end_reason::runtime_error, write_error.message()));
+                        }
+                        self->shutdown();
                         return;
                     }
                     self->schedule_rtcp();
@@ -252,7 +267,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
 
 void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (ending_ || closed_ || !local_ports_)
+    if (closed_ || !local_ports_)
     {
         return;
     }
@@ -268,7 +283,14 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     }
     if (rtcp_sender_ != nullptr && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
     {
-        shutdown_on_owner(runtime_end_reason::runtime_error, "rtcp_sender_input_failed");
+        if (runtime_started_)
+        {
+            runtime_started_ = false;
+            runtime_streaming_ = false;
+            signaling_client::instance().report(
+                gb28181_event::output_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "rtcp_sender_input_failed"));
+        }
+        shutdown();
         return;
     }
 
@@ -279,7 +301,7 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     {
         emit_streaming();
     }
-    if (ending_ || closed_)
+    if (closed_)
     {
         return;
     }
@@ -333,7 +355,7 @@ void gb28181_udp_sender_session::emit_starting()
 
 void gb28181_udp_sender_session::emit_streaming()
 {
-    if (!runtime_started_ || runtime_streaming_ || ending_ || closed_)
+    if (!runtime_started_ || runtime_streaming_ || closed_)
     {
         return;
     }

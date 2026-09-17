@@ -8,7 +8,6 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/cancel_after.hpp>
 
 #include "media/net/worker_context.h"
@@ -43,7 +42,7 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
 
 bool gb28181_tcp_sender_session::startup()
 {
-    if (ending_ || closed_ || runtime_started_ || !stream_)
+    if (closed_ || runtime_started_ || !stream_)
     {
         return false;
     }
@@ -85,7 +84,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         }
     }
 
-    if (ending_ || closed_)
+    if (closed_)
     {
         return;
     }
@@ -95,8 +94,17 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         {
             spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_->name(), sender_id_, error.message());
         }
-        shutdown_on_owner(error == boost::asio::error::timed_out ? runtime_end_reason::timeout : runtime_end_reason::runtime_error,
-                          error == boost::asio::error::timed_out ? "establishment_timeout" : error.message());
+        if (runtime_started_)
+        {
+            runtime_started_ = false;
+            runtime_streaming_ = false;
+            signaling_client::instance().report(gb28181_event::output_stopped(
+                stream_id_,
+                stream_name_,
+                error == boost::asio::error::timed_out ? runtime_end_reason::timeout : runtime_end_reason::runtime_error,
+                error == boost::asio::error::timed_out ? "establishment_timeout" : error.message()));
+        }
+        shutdown();
         return;
     }
 
@@ -108,11 +116,37 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         config_.payload_type,
         config_.ssrc,
         [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
-        [self]() { self->shutdown_on_owner(runtime_end_reason::remote); },
-        [self]() { self->shutdown_on_owner(runtime_end_reason::runtime_error, "sender_mux_failed"); });
+        [self]()
+        {
+            if (self->runtime_started_)
+            {
+                self->runtime_started_ = false;
+                self->runtime_streaming_ = false;
+                signaling_client::instance().report(gb28181_event::output_stopped(self->stream_id_, self->stream_name_, runtime_end_reason::remote));
+            }
+            self->shutdown();
+        },
+        [self]()
+        {
+            if (self->runtime_started_)
+            {
+                self->runtime_started_ = false;
+                self->runtime_streaming_ = false;
+                signaling_client::instance().report(
+                    gb28181_event::output_stopped(self->stream_id_, self->stream_name_, runtime_end_reason::runtime_error, "sender_mux_failed"));
+            }
+            self->shutdown();
+        });
     if (!sender_->startup())
     {
-        shutdown_on_owner(runtime_end_reason::runtime_error, "sender_startup_failed");
+        if (runtime_started_)
+        {
+            runtime_started_ = false;
+            runtime_streaming_ = false;
+            signaling_client::instance().report(
+                gb28181_event::output_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "sender_startup_failed"));
+        }
+        shutdown();
         return;
     }
 
@@ -128,7 +162,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         }
     }
 
-    if (ending_ || closed_)
+    if (closed_)
     {
         return;
     }
@@ -136,28 +170,18 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted
             ? runtime_end_reason::remote
             : runtime_end_reason::runtime_error;
-    shutdown_on_owner(reason, reason == runtime_end_reason::remote ? std::string{} : error.message());
-}
-
-void gb28181_tcp_sender_session::shutdown(runtime_end_reason reason, std::string error)
-{
-    const auto self = shared_from_this();
-    boost::asio::dispatch(worker_.io(), [self, reason, error = std::move(error)]() mutable { self->shutdown_on_owner(reason, std::move(error)); });
-}
-
-void gb28181_tcp_sender_session::shutdown_on_owner(runtime_end_reason reason, std::string error)
-{
-    if (ending_ || closed_)
-    {
-        return;
-    }
-    ending_ = true;
     if (runtime_started_)
     {
         runtime_started_ = false;
         runtime_streaming_ = false;
-        signaling_client::instance().report(gb28181_event::output_stopped(stream_id_, stream_name_, reason, error));
+        signaling_client::instance().report(
+            gb28181_event::output_stopped(stream_id_, stream_name_, reason, reason == runtime_end_reason::remote ? std::string{} : error.message()));
     }
+    shutdown();
+}
+
+void gb28181_tcp_sender_session::shutdown()
+{
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
@@ -168,7 +192,7 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (ending_ || closed_ || write_queue_.empty())
+        if (closed_ || write_queue_.empty())
         {
             return;
         }
@@ -178,7 +202,14 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
         static_cast<void>(transport_->write(*data, yield, error));
         if (error)
         {
-            shutdown_on_owner(runtime_end_reason::runtime_error, error.message());
+            if (runtime_started_)
+            {
+                runtime_started_ = false;
+                runtime_streaming_ = false;
+                signaling_client::instance().report(
+                    gb28181_event::output_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, error.message()));
+            }
+            shutdown();
             return;
         }
         if (closed_)
@@ -193,20 +224,34 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 
 void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (ending_ || closed_ || !transport_)
+    if (closed_ || !transport_)
     {
         return;
     }
     if (packet.size() > std::numeric_limits<std::uint16_t>::max())
     {
-        shutdown_on_owner(runtime_end_reason::runtime_error, "packet_too_large");
+        if (runtime_started_)
+        {
+            runtime_started_ = false;
+            runtime_streaming_ = false;
+            signaling_client::instance().report(
+                gb28181_event::output_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "packet_too_large"));
+        }
+        shutdown();
         return;
     }
 
     const auto frame_bytes = packet.size() + 2U;
     if (frame_bytes > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - frame_bytes)
     {
-        shutdown_on_owner(runtime_end_reason::runtime_error, "write_queue_overflow");
+        if (runtime_started_)
+        {
+            runtime_started_ = false;
+            runtime_streaming_ = false;
+            signaling_client::instance().report(
+                gb28181_event::output_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "write_queue_overflow"));
+        }
+        shutdown();
         return;
     }
 
@@ -223,7 +268,7 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     {
         emit_streaming();
     }
-    if (ending_ || closed_)
+    if (closed_)
     {
         return;
     }
@@ -275,7 +320,7 @@ void gb28181_tcp_sender_session::emit_starting()
 
 void gb28181_tcp_sender_session::emit_streaming()
 {
-    if (!runtime_started_ || runtime_streaming_ || ending_ || closed_)
+    if (!runtime_started_ || runtime_streaming_ || closed_)
     {
         return;
     }

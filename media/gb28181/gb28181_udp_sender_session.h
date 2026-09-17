@@ -16,7 +16,6 @@
 
 #include "media/net/port_manager.h"
 #include "media/core/media_stream.h"
-#include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/net/udp_yield_transport.h"
@@ -41,7 +40,7 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
                                std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] bool startup();
-    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
+    void shutdown() override;
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
@@ -50,7 +49,6 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     void run_rtp_write(boost::asio::yield_context yield);
     void schedule_rtcp();
     void send_packet(std::vector<std::uint8_t> packet);
-    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
@@ -79,7 +77,6 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     bool rtcp_started_{};
     bool runtime_started_{};
     bool runtime_streaming_{};
-    bool ending_{};
     bool closed_{};
 };
 

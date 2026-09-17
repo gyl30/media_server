@@ -11,6 +11,8 @@
 #include "media/http/gb28181_json.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/gb28181/gb28181_event.h"
+#include "media/http/signaling_client.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
@@ -230,6 +232,7 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
+    signaling_client::instance().report(gb28181_event::source_stopped(identity->stream_id, identity->stream_name, runtime_end_reason::requested));
     session->shutdown();
 
     return make_empty_response(request, boost::beast::http::status::no_content);
@@ -270,6 +273,7 @@ gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& 
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
+    signaling_client::instance().report(gb28181_event::output_stopped(identity->stream_id, identity->stream_name, runtime_end_reason::requested));
     session->shutdown();
 
     return make_empty_response(request, boost::beast::http::status::no_content);

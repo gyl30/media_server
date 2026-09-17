@@ -14,7 +14,6 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/cancellation_signal.hpp>
 
-#include "media/core/runtime_event.h"
 #include "media/net/tcp_yield_transport.h"
 #include "media/codec/video_transcode_config.h"
 
@@ -44,7 +43,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
     void startup();
-    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
+    void shutdown();
 
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);
@@ -63,7 +62,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
     void run_publish_claim(boost::asio::yield_context yield);
-    void shutdown_on_owner(runtime_end_reason reason, std::string stage = {}, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
@@ -86,7 +84,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     bool publish_claim_pending_{};
     bool runtime_started_{};
     bool runtime_streaming_{};
-    bool ending_{};
     bool closed_{};
 };
 

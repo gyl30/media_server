@@ -15,7 +15,6 @@
 
 #include "media/net/tcp_listener.h"
 #include "media/core/media_stream.h"
-#include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/net/tcp_yield_transport.h"
@@ -39,14 +38,13 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
                                std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] bool startup();
-    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
+    void shutdown() override;
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
     void run(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void send_packet(std::vector<std::uint8_t> packet);
-    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
@@ -69,7 +67,6 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     std::shared_ptr<gb28181_rtp_sender> sender_;
     bool runtime_started_{};
     bool runtime_streaming_{};
-    bool ending_{};
     bool closed_{};
 };
 

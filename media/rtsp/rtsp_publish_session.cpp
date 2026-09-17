@@ -5,6 +5,8 @@
 
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
+#include "media/rtsp/rtsp_event.h"
+#include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_publish_tcp_session.h"
 #include "media/rtsp/rtsp_publish_udp_session.h"
@@ -48,9 +50,10 @@ bool rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const 
         return false;
     }
     const auto result = tcp_session_->on_interleaved(channel, data);
-    if (!result)
+    if (!result && notify_shutdown())
     {
-        notify_shutdown(runtime_end_reason::protocol_error, "media", "media_input_failed");
+        signaling_client::instance().report(
+            rtsp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::protocol_error, "media", "media_input_failed"));
     }
     return result;
 }
@@ -207,18 +210,20 @@ int rtsp_publish_session::on_setup(
     if (tcp_session_)
     {
         const auto result = tcp_session_->on_setup(server, track_index, *selected, session_id_);
-        if (result < 0)
+        if (result < 0 && notify_shutdown())
         {
-            notify_shutdown(runtime_end_reason::runtime_error, "setup", "setup_failed");
+            signaling_client::instance().report(
+                rtsp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "setup", "setup_failed"));
         }
         return result;
     }
     if (udp_session_)
     {
         const auto result = udp_session_->on_setup(server, track_index, *selected, session_id_);
-        if (result < 0)
+        if (result < 0 && notify_shutdown())
         {
-            notify_shutdown(runtime_end_reason::runtime_error, "setup", "setup_failed");
+            signaling_client::instance().report(
+                rtsp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "setup", "setup_failed"));
         }
         return result;
     }
@@ -230,10 +235,10 @@ int rtsp_publish_session::on_setup(
         const auto result = child->startup(server, track_index, *selected, session_id_);
         tcp_session_ = std::move(child);
         write_handler_ = {};
-        stream_name_.clear();
-        if (result < 0)
+        if (result < 0 && notify_shutdown())
         {
-            notify_shutdown(runtime_end_reason::runtime_error, "setup", "publish_transport_startup_failed");
+            signaling_client::instance().report(rtsp_event::publisher_stopped(
+                stream_id_, stream_name_, runtime_end_reason::runtime_error, "setup", "publish_transport_startup_failed"));
         }
         return result;
     }
@@ -243,20 +248,26 @@ int rtsp_publish_session::on_setup(
     child->set_shutdown_handler(
         [this]()
         {
-            if (udp_session_ && udp_session_->media_.protocol_error())
+            if (!notify_shutdown())
             {
-                notify_shutdown(runtime_end_reason::protocol_error, "media", "media_input_failed");
                 return;
             }
-            notify_shutdown(runtime_end_reason::runtime_error, "transport", "udp_media_transport_failed");
+            if (udp_session_ && udp_session_->media_.protocol_error())
+            {
+                signaling_client::instance().report(
+                    rtsp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::protocol_error, "media", "media_input_failed"));
+                return;
+            }
+            signaling_client::instance().report(rtsp_event::publisher_stopped(
+                stream_id_, stream_name_, runtime_end_reason::runtime_error, "transport", "udp_media_transport_failed"));
         });
     const auto result = child->startup(server, track_index, *selected, session_id_);
     udp_session_ = std::move(child);
     write_handler_ = {};
-    stream_name_.clear();
-    if (result < 0)
+    if (result < 0 && notify_shutdown())
     {
-        notify_shutdown(runtime_end_reason::runtime_error, "setup", "publish_transport_startup_failed");
+        signaling_client::instance().report(
+            rtsp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "setup", "publish_transport_startup_failed"));
     }
     return result;
 }
@@ -271,11 +282,14 @@ int rtsp_publish_session::on_record(rtsp_server_t* server, std::string_view, std
     {
         const auto result = tcp_session_->on_record(server);
         notify_streaming_if_ready();
-        if (result < 0)
+        if (result < 0 && notify_shutdown())
         {
-            notify_shutdown(runtime_end_reason::runtime_error,
-                            tcp_session_->media_.recording() ? "control" : "media",
-                            tcp_session_->media_.recording() ? "record_reply_failed" : "stream_registry_add_failed");
+            signaling_client::instance().report(
+                rtsp_event::publisher_stopped(stream_id_,
+                                              stream_name_,
+                                              runtime_end_reason::runtime_error,
+                                              tcp_session_->media_.recording() ? "control" : "media",
+                                              tcp_session_->media_.recording() ? "record_reply_failed" : "stream_registry_add_failed"));
         }
         return result;
     }
@@ -283,11 +297,14 @@ int rtsp_publish_session::on_record(rtsp_server_t* server, std::string_view, std
     {
         const auto result = udp_session_->on_record(server);
         notify_streaming_if_ready();
-        if (result < 0)
+        if (result < 0 && notify_shutdown())
         {
-            notify_shutdown(runtime_end_reason::runtime_error,
-                            udp_session_->media_.recording() ? "control" : "media",
-                            udp_session_->media_.recording() ? "record_reply_failed" : "stream_registry_add_failed");
+            signaling_client::instance().report(
+                rtsp_event::publisher_stopped(stream_id_,
+                                              stream_name_,
+                                              runtime_end_reason::runtime_error,
+                                              udp_session_->media_.recording() ? "control" : "media",
+                                              udp_session_->media_.recording() ? "record_reply_failed" : "stream_registry_add_failed"));
         }
         return result;
     }
@@ -303,10 +320,17 @@ int rtsp_publish_session::on_teardown(rtsp_server_t* server, std::string_view, s
     const auto result = rtsp_server_reply_teardown(server, 200);
     if (result == 0)
     {
-        notify_shutdown(runtime_end_reason::remote, "control", {});
+        if (notify_shutdown())
+        {
+            signaling_client::instance().report(rtsp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::remote, "control"));
+        }
         return -1;
     }
-    notify_shutdown(runtime_end_reason::runtime_error, "control", "teardown_reply_failed");
+    if (notify_shutdown())
+    {
+        signaling_client::instance().report(
+            rtsp_event::publisher_stopped(stream_id_, stream_name_, runtime_end_reason::runtime_error, "control", "teardown_reply_failed"));
+    }
     return result;
 }
 
@@ -324,25 +348,21 @@ void rtsp_publish_session::shutdown()
     }
     write_handler_ = {};
     shutdown_handler_ = {};
-    runtime_shutdown_handler_ = {};
     streaming_handler_ = {};
 }
 
-void rtsp_publish_session::notify_shutdown(runtime_end_reason reason, std::string stage, std::string error)
+bool rtsp_publish_session::notify_shutdown()
 {
     if (shutdown_notified_)
     {
-        return;
+        return false;
     }
     shutdown_notified_ = true;
-    if (runtime_shutdown_handler_)
+    if (shutdown_handler_)
     {
-        runtime_shutdown_handler_(reason, std::move(stage), std::move(error));
+        std::move(shutdown_handler_)();
     }
-    else if (shutdown_handler_)
-    {
-        shutdown_handler_();
-    }
+    return true;
 }
 
 void rtsp_publish_session::notify_streaming_if_ready()

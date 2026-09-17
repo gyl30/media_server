@@ -13,7 +13,6 @@
 
 #include <boost/asio/ip/address.hpp>
 
-#include "media/core/runtime_event.h"
 #include "media/rtsp/rtsp_publish_media.h"
 
 struct rtsp_server_t;
@@ -29,7 +28,6 @@ class rtsp_publish_udp_session;
 class rtsp_publish_session final
 {
    public:
-    using runtime_shutdown_handler = std::function<void(runtime_end_reason, std::string, std::string)>;
     using streaming_handler = std::function<void()>;
 
     rtsp_publish_session(worker_context& worker,
@@ -38,7 +36,6 @@ class rtsp_publish_session final
                          std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
-    void set_runtime_shutdown_handler(runtime_shutdown_handler handler) { runtime_shutdown_handler_ = std::move(handler); }
     void set_streaming_handler(streaming_handler handler) { streaming_handler_ = std::move(handler); }
 
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
@@ -53,7 +50,7 @@ class rtsp_publish_session final
     void shutdown();
 
    private:
-    void notify_shutdown(runtime_end_reason reason, std::string stage, std::string error);
+    bool notify_shutdown();
     void notify_streaming_if_ready();
 
    private:
@@ -62,7 +59,6 @@ class rtsp_publish_session final
     std::chrono::milliseconds rtcp_interval_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void()> shutdown_handler_;
-    runtime_shutdown_handler runtime_shutdown_handler_;
     streaming_handler streaming_handler_;
     std::shared_ptr<rtsp_publish_tcp_session> tcp_session_;
     std::shared_ptr<rtsp_publish_udp_session> udp_session_;

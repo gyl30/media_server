@@ -228,8 +228,8 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
     run_on_owner(worker,
                  [&]()
                  {
-                     session->shutdown(runtime_end_reason::server_shutdown);
-                     session->shutdown(runtime_end_reason::runtime_error, "late_error");
+                     session->shutdown();
+                     session->shutdown();
                      session->shutdown();
                  });
     io.run();
@@ -263,8 +263,8 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
     run_on_owner(worker,
                  [&]()
                  {
-                     session->shutdown(runtime_end_reason::server_shutdown);
-                     session->shutdown(runtime_end_reason::runtime_error, "late_error");
+                     session->shutdown();
+                     session->shutdown();
                      session->shutdown();
                  });
     io.run();

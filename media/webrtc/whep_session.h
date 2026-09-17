@@ -20,7 +20,6 @@
 #include "media/core/media_reader.h"
 #include "media/core/media_stream.h"
 #include "media/webrtc/webrtc_sdp.h"
-#include "media/core/runtime_event.h"
 #include "media/webrtc/dtls_transport.h"
 #include "media/webrtc/srtp_transport.h"
 #include "media/net/udp_yield_transport.h"
@@ -58,10 +57,11 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
 
     [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
-    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {});
+    void shutdown();
 
     [[nodiscard]] const std::string& id() const noexcept;
     [[nodiscard]] const std::string& stream_id() const noexcept;
+    [[nodiscard]] const std::string& stream_name() const noexcept;
     [[nodiscard]] const std::string& answer_sdp() const noexcept;
     [[nodiscard]] std::uint16_t local_port() const noexcept;
     [[nodiscard]] bool ice_connected() const noexcept;
@@ -79,7 +79,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
         boost::asio::ip::udp::endpoint endpoint;
     };
 
-    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void shutdown_udp_transport();
     void run_udp(boost::asio::yield_context yield);
@@ -134,7 +133,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     bool started_{};
     bool runtime_started_{};
     bool runtime_streaming_{};
-    bool ending_{};
 };
 
 }    // namespace media_server

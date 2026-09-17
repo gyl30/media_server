@@ -11,7 +11,6 @@
 #include <boost/asio/ip/tcp.hpp>
 
 #include "media/net/tcp_listener.h"
-#include "media/core/runtime_event.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/net/tcp_yield_transport.h"
@@ -32,12 +31,11 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
                                  std::chrono::milliseconds establishment_timeout);
 
     [[nodiscard]] bool startup();
-    void shutdown(runtime_end_reason reason = runtime_end_reason::requested, std::string error = {}) override;
+    void shutdown() override;
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
     void run(boost::asio::yield_context yield);
-    void shutdown_on_owner(runtime_end_reason reason, std::string error = {});
     void safe_shutdown();
     void emit_starting();
     void emit_streaming();
@@ -55,7 +53,6 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
     bool started_{};
     bool runtime_started_{};
     bool runtime_streaming_{};
-    bool ending_{};
     bool closed_{};
 };
 
