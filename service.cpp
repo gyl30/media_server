@@ -26,7 +26,7 @@ service::~service() = default;
 
 void service::stop() { workers_->stop(); }
 
-bool service::register_signaling(boost::asio::yield_context& yield)
+void service::register_signaling(boost::asio::yield_context& yield)
 {
     boost::asio::steady_timer retry_timer(yield.get_executor());
     for (;;)
@@ -34,19 +34,14 @@ bool service::register_signaling(boost::asio::yield_context& yield)
         const auto registration = signaling_client::instance().register_once(yield);
         if (registration.kind == signaling_result_kind::accepted)
         {
-            return true;
+            return;
         }
         if (registration.kind == signaling_result_kind::rejected)
         {
             spdlog::critical("signaling registration rejected status {}; aborting in 5 seconds", registration.status);
             boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
-            boost::system::error_code error;
-            abort_timer.async_wait(yield[error]);
-            if (!error)
-            {
-                std::abort();
-            }
-            return false;
+            abort_timer.async_wait(yield);
+            std::abort();
         }
         if (registration.kind == signaling_result_kind::temporary_failure)
         {
@@ -58,44 +53,36 @@ bool service::register_signaling(boost::asio::yield_context& yield)
         }
 
         retry_timer.expires_after(std::chrono::seconds{1});
-        boost::system::error_code error;
-        retry_timer.async_wait(yield[error]);
-        if (error)
-        {
-            return false;
-        }
+        retry_timer.async_wait(yield);
     }
 }
 
-void service::run_control(boost::asio::yield_context yield)
+void service::run_server(boost::asio::yield_context yield)
 {
-    if (!register_signaling(yield))
-    {
-        return;
-    }
+    register_signaling(yield);
 
     boost::system::error_code network_error;
-    rtmp_->startup(network_error);
+    auto rtmp = std::make_shared<rtmp_server>(*workers_, config_);
+    rtmp->startup(network_error);
     if (network_error)
     {
         spdlog::error("rtmp listen failed port {} error {}", config_.rtmp_port, network_error.message());
-        exit_code_ = 2;
         stop();
         return;
     }
-    rtsp_->startup(network_error);
+    auto rtsp = std::make_shared<rtsp_server>(*workers_, config_);
+    rtsp->startup(network_error);
     if (network_error)
     {
         spdlog::error("rtsp listen failed port {} error {}", config_.rtsp_port, network_error.message());
-        exit_code_ = 2;
         stop();
         return;
     }
-    http_->startup(network_error);
+    auto http = std::make_shared<http_server>(*workers_, config_);
+    http->startup(network_error);
     if (network_error)
     {
         spdlog::error("http listen failed port {} error {}", config_.http_port, network_error.message());
-        exit_code_ = 2;
         stop();
         return;
     }
@@ -146,17 +133,13 @@ int service::run()
         signaling_client::instance().configure(std::move(options));
     }
 
-    rtmp_ = std::make_shared<rtmp_server>(*workers_, config_);
-    rtsp_ = std::make_shared<rtsp_server>(*workers_, config_);
-    http_ = std::make_shared<http_server>(*workers_, config_);
+    boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
+    signals.async_wait([this](const boost::system::error_code&, int) { stop(); });
 
-    signals_ = std::make_unique<boost::asio::signal_set>(control_io, SIGINT, SIGTERM);
-    signals_->async_wait([this](const boost::system::error_code&, int) { stop(); });
-
-    boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_control(yield); }, boost::asio::detached);
+    boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_server(yield); }, boost::asio::detached);
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
-    return exit_code_;
+    return 0;
 }
 
 }    // namespace media_server
