@@ -57,6 +57,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 
     void run(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
+    void report_transport_error(const boost::system::error_code& error);
     void write(std::shared_ptr<std::vector<std::uint8_t>> data);
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
