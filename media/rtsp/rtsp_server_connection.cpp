@@ -6,7 +6,6 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/scope/scope_exit.hpp>
 
@@ -27,11 +26,6 @@ namespace media_server
 namespace
 {
 constexpr std::size_t rtsp_read_buffer_bytes = 64U * 1024U;
-
-bool remote_disconnect(const boost::system::error_code& error)
-{
-    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
-}
 }    // namespace
 
 rtsp_server_connection::rtsp_server_connection(worker_context& worker,
@@ -116,33 +110,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
         }
         if (error)
         {
-            if (remote_disconnect(error))
-            {
-                if (publish_session_)
-                {
-                    signaling_client::instance().report(make_event(event_kind::publisher,
-                                                                   event_protocol::rtsp,
-                                                                   event_state::remote_closed,
-                                                                   publish_session_->stream_id(),
-                                                                   publish_session_->stream_name(),
-                                                                   {},
-                                                                   "transport"));
-                }
-            }
-            else
-            {
-                if (publish_session_)
-                {
-                    signaling_client::instance().report(make_event(event_kind::publisher,
-                                                                   event_protocol::rtsp,
-                                                                   event_state::runtime_error,
-                                                                   publish_session_->stream_id(),
-                                                                   publish_session_->stream_name(),
-                                                                   {},
-                                                                   "transport",
-                                                                   error.message()));
-                }
-            }
+            report_transport_error(error);
             shutdown();
             break;
         }
@@ -550,33 +518,7 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         }
         if (error)
         {
-            if (remote_disconnect(error))
-            {
-                if (publish_session_)
-                {
-                    signaling_client::instance().report(make_event(event_kind::publisher,
-                                                                   event_protocol::rtsp,
-                                                                   event_state::remote_closed,
-                                                                   publish_session_->stream_id(),
-                                                                   publish_session_->stream_name(),
-                                                                   {},
-                                                                   "transport"));
-                }
-            }
-            else
-            {
-                if (publish_session_)
-                {
-                    signaling_client::instance().report(make_event(event_kind::publisher,
-                                                                   event_protocol::rtsp,
-                                                                   event_state::runtime_error,
-                                                                   publish_session_->stream_id(),
-                                                                   publish_session_->stream_name(),
-                                                                   {},
-                                                                   "transport",
-                                                                   error.message()));
-                }
-            }
+            report_transport_error(error);
             shutdown();
             return;
         }
@@ -589,6 +531,23 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
             return;
         }
     }
+}
+
+void rtsp_server_connection::report_transport_error(const boost::system::error_code& error)
+{
+    if (!publish_session_)
+    {
+        return;
+    }
+    const auto remote_closed = is_tcp_remote_disconnect(error);
+    signaling_client::instance().report(make_event(event_kind::publisher,
+                                                   event_protocol::rtsp,
+                                                   remote_closed ? event_state::remote_closed : event_state::runtime_error,
+                                                   publish_session_->stream_id(),
+                                                   publish_session_->stream_name(),
+                                                   {},
+                                                   "transport",
+                                                   remote_closed ? std::string{} : error.message()));
 }
 
 void rtsp_server_connection::record_control_activity() { last_control_activity_ = std::chrono::steady_clock::now(); }

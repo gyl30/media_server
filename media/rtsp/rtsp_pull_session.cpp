@@ -82,10 +82,6 @@ bool should_setup_media(rtsp_client_t* client, int media)
     return true;
 }
 
-bool remote_disconnect(const boost::system::error_code& error)
-{
-    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
-}
 }    // namespace
 
 rtsp_pull_session::rtsp_pull_session(worker_context& worker,
@@ -473,7 +469,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
         }
         if (error)
         {
-            const auto state = remote_disconnect(error) ? event_state::remote_closed : event_state::runtime_error;
+            const auto state = is_tcp_remote_disconnect(error) ? event_state::remote_closed : event_state::runtime_error;
             if (started_)
             {
                 signaling_client::instance().report(make_event(event_kind::source,

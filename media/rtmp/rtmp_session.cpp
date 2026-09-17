@@ -4,7 +4,6 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
-#include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
 
 #include "media/core/stream_id.h"
@@ -24,14 +23,6 @@ extern "C"
 
 namespace media_server
 {
-
-namespace
-{
-bool remote_disconnect(const boost::system::error_code& error)
-{
-    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
-}
-}    // namespace
 
 std::optional<rtmp_publish_target> parse_rtmp_publish_target(std::string_view app, std::string_view stream)
 {
@@ -138,33 +129,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
         }
         if (error)
         {
-            if (remote_disconnect(error))
-            {
-                if (publish_)
-                {
-                    signaling_client::instance().report(make_event(event_kind::publisher,
-                                                                   event_protocol::rtmp,
-                                                                   event_state::remote_closed,
-                                                                   publish_->stream_id(),
-                                                                   publish_->stream_name(),
-                                                                   {},
-                                                                   "transport"));
-                }
-            }
-            else
-            {
-                if (publish_)
-                {
-                    signaling_client::instance().report(make_event(event_kind::publisher,
-                                                                   event_protocol::rtmp,
-                                                                   event_state::runtime_error,
-                                                                   publish_->stream_id(),
-                                                                   publish_->stream_name(),
-                                                                   {},
-                                                                   "transport",
-                                                                   error.message()));
-                }
-            }
+            report_transport_error(error);
             break;
         }
         if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
@@ -311,33 +276,7 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         }
         if (error)
         {
-            if (remote_disconnect(error))
-            {
-                if (publish_)
-                {
-                    signaling_client::instance().report(make_event(event_kind::publisher,
-                                                                   event_protocol::rtmp,
-                                                                   event_state::remote_closed,
-                                                                   publish_->stream_id(),
-                                                                   publish_->stream_name(),
-                                                                   {},
-                                                                   "transport"));
-                }
-            }
-            else
-            {
-                if (publish_)
-                {
-                    signaling_client::instance().report(make_event(event_kind::publisher,
-                                                                   event_protocol::rtmp,
-                                                                   event_state::runtime_error,
-                                                                   publish_->stream_id(),
-                                                                   publish_->stream_name(),
-                                                                   {},
-                                                                   "transport",
-                                                                   error.message()));
-                }
-            }
+            report_transport_error(error);
             shutdown();
             return;
         }
@@ -345,6 +284,23 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         queued_write_bytes_ -= data->size();
         write_queue_.pop_front();
     }
+}
+
+void rtmp_session::report_transport_error(const boost::system::error_code& error)
+{
+    if (!publish_)
+    {
+        return;
+    }
+    const auto remote_closed = is_tcp_remote_disconnect(error);
+    signaling_client::instance().report(make_event(event_kind::publisher,
+                                                   event_protocol::rtmp,
+                                                   remote_closed ? event_state::remote_closed : event_state::runtime_error,
+                                                   publish_->stream_id(),
+                                                   publish_->stream_name(),
+                                                   {},
+                                                   "transport",
+                                                   remote_closed ? std::string{} : error.message()));
 }
 
 int rtmp_session::on_play(std::string app, std::string stream)

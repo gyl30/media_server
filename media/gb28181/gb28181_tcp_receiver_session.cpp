@@ -17,14 +17,6 @@
 
 namespace media_server
 {
-namespace
-{
-bool remote_disconnect(const boost::system::error_code& error)
-{
-    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
-}
-}    // namespace
-
 gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worker,
                                                            std::string stream_id,
                                                            std::string stream_name,
@@ -159,7 +151,7 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         }
         if (error)
         {
-            const auto state = remote_disconnect(error) ? event_state::remote_closed : event_state::runtime_error;
+            const auto state = is_tcp_remote_disconnect(error) ? event_state::remote_closed : event_state::runtime_error;
             if (started_)
             {
                 signaling_client::instance().report(make_event(event_kind::source,

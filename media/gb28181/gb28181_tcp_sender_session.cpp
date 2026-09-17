@@ -182,10 +182,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     {
         return;
     }
-    const auto state =
-        error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted
-            ? event_state::remote_closed
-            : event_state::runtime_error;
+    const auto state = is_tcp_remote_disconnect(error) ? event_state::remote_closed : event_state::runtime_error;
     if (started_)
     {
         signaling_client::instance().report(make_event(event_kind::output,

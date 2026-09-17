@@ -2,11 +2,17 @@
 
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/error.hpp>
 
 #include "media/net/tcp_yield_transport.h"
 
 namespace media_server
 {
+
+bool is_tcp_remote_disconnect(const boost::system::error_code& error)
+{
+    return error == boost::asio::error::eof || error == boost::asio::error::connection_reset || error == boost::asio::error::connection_aborted;
+}
 
 tcp_yield_transport::tcp_yield_transport(boost::asio::ip::tcp::socket socket) : socket_(std::move(socket)) {}
 

@@ -12,6 +12,8 @@
 namespace media_server
 {
 
+[[nodiscard]] bool is_tcp_remote_disconnect(const boost::system::error_code& error);
+
 class tcp_yield_transport final
 {
    public:
