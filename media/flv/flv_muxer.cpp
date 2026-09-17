@@ -25,11 +25,7 @@ flv_muxer::flv_muxer(packet_handler handler, video_transcode_config video)
 void flv_muxer::shutdown()
 {
     packet_handler_ = {};
-    if (video_transcoder_)
-    {
-        video_transcoder_->shutdown();
-        video_transcoder_.reset();
-    }
+    video_transcoder_.reset();
     video_track_id_ = 0;
     tracks_.clear();
     if (muxer_ != nullptr)
@@ -198,11 +194,7 @@ void flv_muxer::on_frame(const media_frame& frame)
 
 void flv_muxer::startup_video_transcoder(const media_track& track)
 {
-    if (video_transcoder_)
-    {
-        video_transcoder_->shutdown();
-        video_transcoder_.reset();
-    }
+    video_transcoder_.reset();
     video_track_id_ = 0;
     if (track.codec != codec_id::h264 && track.codec != codec_id::h265)
     {

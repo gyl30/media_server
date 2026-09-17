@@ -3,6 +3,7 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
@@ -202,14 +203,17 @@ bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
     {
         return false;
     }
+    boost::scope::scope_exit cleanup([&]()
+                                     {
+                                         static_cast<void>(rtsp_muxer_destroy(muxer));
+                                         track_states_.clear();
+                                     });
 
     std::random_device device;
     const auto payload =
         rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, payload_type_, "PS", static_cast<std::uint16_t>(device()), ssrc_, 0, nullptr, 0);
     if (payload < 0)
     {
-        static_cast<void>(rtsp_muxer_destroy(muxer));
-        track_states_.clear();
         return false;
     }
 
@@ -235,16 +239,12 @@ bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
                 break;
             case codec_id::av1:
             case codec_id::opus:
-                static_cast<void>(rtsp_muxer_destroy(muxer));
-                track_states_.clear();
                 return false;
         }
 
         const auto media = rtsp_muxer_add_media(muxer, payload, codec, track.codec_config.data(), static_cast<int>(track.codec_config.size()));
         if (media < 0)
         {
-            static_cast<void>(rtsp_muxer_destroy(muxer));
-            track_states_.clear();
             return false;
         }
         track_states_.emplace(track.id,
@@ -255,6 +255,7 @@ bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
                               });
     }
     muxer_ = muxer;
+    cleanup.set_active(false);
     return true;
 }
 

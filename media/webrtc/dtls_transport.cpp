@@ -9,6 +9,7 @@
 #include <openssl/err.h>
 #include <openssl/srtp.h>
 #include <spdlog/spdlog.h>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/webrtc/dtls_transport.h"
 
@@ -155,7 +156,7 @@ bool dtls_transport::startup()
 
     auto* read_bio = BIO_new(BIO_s_mem());
     auto* write_bio = BIO_new(BIO_s_mem());
-    if (read_bio == nullptr || write_bio == nullptr)
+    boost::scope::scope_exit cleanup_bio([&]()
     {
         if (read_bio != nullptr)
         {
@@ -165,6 +166,9 @@ bool dtls_transport::startup()
         {
             BIO_free(write_bio);
         }
+    });
+    if (read_bio == nullptr || write_bio == nullptr)
+    {
         reset();
         return false;
     }
@@ -173,6 +177,7 @@ bool dtls_transport::startup()
     BIO_set_mem_eof_return(write_bio, -1);
     SSL_set0_rbio(ssl_.get(), read_bio);
     SSL_set0_wbio(ssl_.get(), write_bio);
+    cleanup_bio.set_active(false);
     SSL_set_accept_state(ssl_.get());
 
     spdlog::debug("webrtc dtls transport started");

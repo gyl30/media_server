@@ -84,10 +84,7 @@ bool webrtc_packetizer::on_track(const media_track& track)
 
 void webrtc_packetizer::shutdown()
 {
-    while (!track_states_.empty())
-    {
-        remove_track(track_states_.begin()->first);
-    }
+    track_states_.clear();
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
@@ -316,7 +313,6 @@ bool webrtc_packetizer::add_av1_track(const media_track& track)
     if (aom_av1_codec_configuration_record_save(&av1, configuration_record.data(), configuration_record.size()) !=
         static_cast<int>(configuration_record.size()))
     {
-        transcoder->shutdown();
         return false;
     }
 
@@ -333,12 +329,10 @@ bool webrtc_packetizer::add_av1_track(const media_track& track)
     if (payload_index < 0)
     {
         spdlog::error("webrtc add av1 payload failed");
-        transcoder->shutdown();
         return false;
     }
     if (!configure_rtcp(payload_index))
     {
-        transcoder->shutdown();
         return false;
     }
 
@@ -347,7 +341,6 @@ bool webrtc_packetizer::add_av1_track(const media_track& track)
     if (media_id < 0)
     {
         spdlog::error("webrtc add av1 media failed");
-        transcoder->shutdown();
         return false;
     }
 
@@ -448,18 +441,10 @@ bool webrtc_packetizer::add_audio_track(const media_track& track)
     if (payload_index < 0)
     {
         spdlog::error("webrtc add audio payload failed");
-        if (transcoder)
-        {
-            transcoder->shutdown();
-        }
         return false;
     }
     if (!configure_rtcp(payload_index))
     {
-        if (transcoder)
-        {
-            transcoder->shutdown();
-        }
         return false;
     }
 
@@ -467,10 +452,6 @@ bool webrtc_packetizer::add_audio_track(const media_track& track)
     if (media_id < 0)
     {
         spdlog::error("webrtc add audio media failed");
-        if (transcoder)
-        {
-            transcoder->shutdown();
-        }
         return false;
     }
 
@@ -500,14 +481,6 @@ void webrtc_packetizer::remove_track(track_id id)
     if (iterator == track_states_.end())
     {
         return;
-    }
-    if (iterator->second.transcoder)
-    {
-        iterator->second.transcoder->shutdown();
-    }
-    if (iterator->second.video_transcoder_)
-    {
-        iterator->second.video_transcoder_->shutdown();
     }
     track_states_.erase(iterator);
 }

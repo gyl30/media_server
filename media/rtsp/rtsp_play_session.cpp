@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
+#include <boost/scope/scope_exit.hpp>
 #include <boost/asio/post.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
@@ -224,11 +225,7 @@ void rtsp_play_session::shutdown()
 void rtsp_play_session::safe_shutdown()
 {
     reader_handle().remove();
-    if (video_transcoder_)
-    {
-        video_transcoder_->shutdown();
-        video_transcoder_.reset();
-    }
+    video_transcoder_.reset();
     if (stream_)
     {
         spdlog::debug("rtsp play shutdown {}", stream_->name());
@@ -521,11 +518,7 @@ bool rtsp_play_session::channels_available(track_id id, int rtp_channel, int rtc
 int rtsp_play_session::prepare_presentation(std::string_view uri)
 {
     track_states_.clear();
-    if (video_transcoder_)
-    {
-        video_transcoder_->shutdown();
-        video_transcoder_.reset();
-    }
+    video_transcoder_.reset();
     video_track_id_ = 0;
     stream_.reset();
     if (muxer_ != nullptr)
@@ -541,22 +534,15 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
     }
     const auto snapshot = stream->tracks();
 
-    auto prepared_muxer = std::unique_ptr<rtsp_muxer_t, void (*)(rtsp_muxer_t*)>(rtsp_muxer_create(&rtsp_play_session::muxer_packet_callback, this),
-                                                                                 [](rtsp_muxer_t* value) { rtsp_muxer_destroy(value); });
-    if (!prepared_muxer)
+    auto* prepared_muxer = rtsp_muxer_create(&rtsp_play_session::muxer_packet_callback, this);
+    if (prepared_muxer == nullptr)
     {
         return 500;
     }
+    boost::scope::scope_exit cleanup_muxer([&]() { rtsp_muxer_destroy(prepared_muxer); });
 
     std::map<track_id, track_state> prepared_tracks;
     std::unique_ptr<video_transcoder> prepared_transcoder;
-    const auto shutdown_prepared_transcoder = [&prepared_transcoder]()
-    {
-        if (prepared_transcoder)
-        {
-            prepared_transcoder->shutdown();
-        }
-    };
     track_id video_track_id{};
     int next_payload_type = 96;
     for (const auto& track : snapshot)
@@ -584,7 +570,6 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
             std::array<std::uint8_t, 4> config{};
             if (aom_av1_codec_configuration_record_save(&av1, config.data(), config.size()) != static_cast<int>(config.size()))
             {
-                shutdown_prepared_transcoder();
                 return 415;
             }
             extra.assign(config.begin(), config.end());
@@ -601,10 +586,8 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
                     .av1 = rtsp_av1_parameters,
                 }))
             {
-                shutdown_prepared_transcoder();
                 return 415;
             }
-            shutdown_prepared_transcoder();
             video_track_id = track.id;
             prepared_transcoder = std::move(transcoder);
         }
@@ -613,7 +596,6 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
             extra = h264_annex_b_to_avcc(track.codec_config);
             if (extra.empty())
             {
-                shutdown_prepared_transcoder();
                 return 415;
             }
             encoding = "H264";
@@ -626,7 +608,6 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
             extra = h265_annex_b_to_hvcc(track.codec_config);
             if (extra.empty())
             {
-                shutdown_prepared_transcoder();
                 return 415;
             }
             encoding = "H265";
@@ -639,7 +620,6 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
             extra = track.codec_config;
             if (extra.empty() || track.clock_rate == 0)
             {
-                shutdown_prepared_transcoder();
                 return 415;
             }
             encoding = "MPEG4-GENERIC";
@@ -673,16 +653,14 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
         state.codec = track.codec;
         state.config_version = track.config_version;
         state.payload_index = rtsp_muxer_add_payload(
-            prepared_muxer.get(), "RTP/AVP", frequency, payload_type, encoding, 0, random_u32(), 0, extra.data(), static_cast<int>(extra.size()));
+            prepared_muxer, "RTP/AVP", frequency, payload_type, encoding, 0, random_u32(), 0, extra.data(), static_cast<int>(extra.size()));
         if (state.payload_index < 0)
         {
-            shutdown_prepared_transcoder();
             return 415;
         }
-        state.media_id = rtsp_muxer_add_media(prepared_muxer.get(), state.payload_index, rtp_codec, extra.data(), static_cast<int>(extra.size()));
+        state.media_id = rtsp_muxer_add_media(prepared_muxer, state.payload_index, rtp_codec, extra.data(), static_cast<int>(extra.size()));
         if (state.media_id < 0)
         {
-            shutdown_prepared_transcoder();
             return 415;
         }
         prepared_tracks.emplace(track.id, std::move(state));
@@ -690,7 +668,6 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
 
     if (prepared_tracks.empty())
     {
-        shutdown_prepared_transcoder();
         return 415;
     }
 
@@ -698,7 +675,8 @@ int rtsp_play_session::prepare_presentation(std::string_view uri)
     track_states_ = std::move(prepared_tracks);
     video_transcoder_ = std::move(prepared_transcoder);
     video_track_id_ = video_track_id;
-    muxer_ = prepared_muxer.release();
+    muxer_ = prepared_muxer;
+    cleanup_muxer.set_active(false);
     return 0;
 }
 

@@ -221,11 +221,7 @@ void whep_session::safe_shutdown()
     track_revision_ = 0;
     stream_.reset();
     certificate_.reset();
-    if (srtp_)
-    {
-        srtp_->shutdown();
-        srtp_.reset();
-    }
+    srtp_.reset();
     dtls_timer_.cancel();
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
@@ -667,7 +663,6 @@ bool whep_session::startup_media()
 
     if (!packetizer->valid())
     {
-        srtp->shutdown();
         return false;
     }
 

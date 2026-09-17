@@ -77,6 +77,18 @@ bool create_session(std::string_view profile, std::vector<std::uint8_t>& master_
 
 struct srtp_transport::context
 {
+    ~context()
+    {
+        if (outbound != nullptr)
+        {
+            srtp_dealloc(outbound);
+        }
+        if (inbound != nullptr)
+        {
+            srtp_dealloc(inbound);
+        }
+    }
+
     srtp_t outbound{};
     srtp_t inbound{};
 };
@@ -107,31 +119,12 @@ bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
     if (!create_session(keying_material.profile, inbound_master_key, ssrc_any_inbound, state->inbound))
     {
         spdlog::debug("webrtc srtp inbound context create failed profile {}", keying_material.profile);
-        srtp_dealloc(state->outbound);
         return false;
     }
 
     context_ = std::move(state);
     spdlog::debug("webrtc srtp transport started profile {}", keying_material.profile);
     return true;
-}
-
-void srtp_transport::shutdown()
-{
-    if (!context_)
-    {
-        return;
-    }
-
-    if (context_->outbound != nullptr)
-    {
-        srtp_dealloc(context_->outbound);
-    }
-    if (context_->inbound != nullptr)
-    {
-        srtp_dealloc(context_->inbound);
-    }
-    context_.reset();
 }
 
 std::optional<std::vector<std::uint8_t>> srtp_transport::protect_rtp(std::span<const std::uint8_t> packet)

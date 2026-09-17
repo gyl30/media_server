@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/codec/video_transcoder.h"
 
@@ -104,6 +105,7 @@ AVCodecContext* create_encoder_context(const AVCodec* encoder,
         spdlog::error("video transcoder encoder context allocate failed");
         return nullptr;
     }
+    boost::scope::scope_exit cleanup_encoder([&]() { avcodec_free_context(&encoder_context); });
 
     encoder_context->width = decoded_frame.width;
     encoder_context->height = decoded_frame.height;
@@ -122,14 +124,13 @@ AVCodecContext* create_encoder_context(const AVCodec* encoder,
     encoder_context->chroma_sample_location = decoded_frame.chroma_location;
 
     AVDictionary* aom_parameters{};
+    boost::scope::scope_exit cleanup_parameters([&]() { av_dict_free(&aom_parameters); });
     if (av1)
     {
         const auto level_idx = std::to_string(av1->level_idx);
         if (av_dict_set(&aom_parameters, "target-seq-level-idx", level_idx.c_str(), 0) < 0 ||
             av_dict_set(&aom_parameters, "set-tier-mask", "0", 0) < 0 || av_dict_set(&aom_parameters, "strict-level-conformance", "1", 0) < 0)
         {
-            av_dict_free(&aom_parameters);
-            avcodec_free_context(&encoder_context);
             spdlog::error("video transcoder av1 parameters allocate failed");
             return nullptr;
         }
@@ -138,10 +139,8 @@ AVCodecContext* create_encoder_context(const AVCodec* encoder,
         av_opt_set(encoder_context->priv_data, "usage", "realtime", 0) < 0 || av_opt_set_int(encoder_context->priv_data, "cpu-used", 8, 0) < 0 ||
         av_opt_set_int(encoder_context->priv_data, "lag-in-frames", 0, 0) < 0 || av_opt_set_int(encoder_context->priv_data, "crf", 32, 0) < 0 ||
         (aom_parameters != nullptr && av_opt_set_dict_val(encoder_context->priv_data, "aom-params", aom_parameters, 0) < 0);
-    av_dict_free(&aom_parameters);
     if (options_failed)
     {
-        avcodec_free_context(&encoder_context);
         spdlog::error("video transcoder encoder options failed");
         return nullptr;
     }
@@ -149,10 +148,10 @@ AVCodecContext* create_encoder_context(const AVCodec* encoder,
     const int result = avcodec_open2(encoder_context, encoder, nullptr);
     if (result < 0)
     {
-        avcodec_free_context(&encoder_context);
         spdlog::error("video transcoder encoder open failed encoder {} error {}", encoder->name, ffmpeg_error(result));
         return nullptr;
     }
+    cleanup_encoder.set_active(false);
     return encoder_context;
 }
 
@@ -189,18 +188,17 @@ bool create_pixel_converter(const AVFrame& decoded_frame, AVPixelFormat encoder_
         scaler = nullptr;
     }
     converted_frame = av_frame_alloc();
-    const auto cleanup = [&]()
-    {
-        av_frame_free(&converted_frame);
-        if (scaler != nullptr)
-        {
-            sws_freeContext(scaler);
-            scaler = nullptr;
-        }
-    };
+    boost::scope::scope_exit cleanup([&]()
+                                     {
+                                         av_frame_free(&converted_frame);
+                                         if (scaler != nullptr)
+                                         {
+                                             sws_freeContext(scaler);
+                                             scaler = nullptr;
+                                         }
+                                     });
     if (scaler == nullptr || converted_frame == nullptr)
     {
-        cleanup();
         spdlog::error("video transcoder pixel converter allocate failed");
         return false;
     }
@@ -231,7 +229,6 @@ bool create_pixel_converter(const AVFrame& decoded_frame, AVPixelFormat encoder_
         scaler, sws_getCoefficients(sws_colorspace), full_range, sws_getCoefficients(sws_colorspace), full_range, 0, 1 << 16, 1 << 16);
     if (colorspace_result < 0)
     {
-        cleanup();
         spdlog::error("video transcoder pixel converter colorspace failed {}", ffmpeg_error(colorspace_result));
         return false;
     }
@@ -241,10 +238,10 @@ bool create_pixel_converter(const AVFrame& decoded_frame, AVPixelFormat encoder_
     const int result = av_frame_get_buffer(converted_frame, 32);
     if (result < 0)
     {
-        cleanup();
         spdlog::error("video transcoder converted frame allocate failed {}", ffmpeg_error(result));
         return false;
     }
+    cleanup.set_active(false);
     return true;
 }
 
@@ -252,6 +249,20 @@ bool create_pixel_converter(const AVFrame& decoded_frame, AVPixelFormat encoder_
 
 struct video_transcoder::state
 {
+    ~state()
+    {
+        av_packet_free(&input_packet);
+        av_packet_free(&output_packet);
+        av_frame_free(&decoded_frame);
+        av_frame_free(&converted_frame);
+        if (scaler != nullptr)
+        {
+            sws_freeContext(scaler);
+        }
+        avcodec_free_context(&decoder);
+        avcodec_free_context(&encoder);
+    }
+
     AVCodecContext* decoder{};
     AVCodecContext* encoder{};
     SwsContext* scaler{};
@@ -274,7 +285,7 @@ video_transcoder::~video_transcoder() = default;
 
 bool video_transcoder::startup(const video_transcoder_config& config)
 {
-    shutdown();
+    state_.reset();
 
     const bool annex_b_config = config.input_codec_config.size() >= 4 && config.input_codec_config[0] == 0 && config.input_codec_config[1] == 0 &&
                                 ((config.input_codec_config[2] == 1) || (config.input_codec_config[2] == 0 && config.input_codec_config[3] == 1));
@@ -303,7 +314,7 @@ bool video_transcoder::startup(const video_transcoder_config& config)
     if (state_->decoder == nullptr)
     {
         spdlog::error("video transcoder decoder context allocate failed");
-        shutdown();
+        state_.reset();
         return false;
     }
 
@@ -312,7 +323,7 @@ bool video_transcoder::startup(const video_transcoder_config& config)
     if (state_->decoder->extradata == nullptr)
     {
         spdlog::error("video transcoder decoder extradata allocate failed");
-        shutdown();
+        state_.reset();
         return false;
     }
     state_->decoder->extradata_size = static_cast<int>(config.input_codec_config.size());
@@ -322,7 +333,7 @@ bool video_transcoder::startup(const video_transcoder_config& config)
     if (open_result < 0)
     {
         spdlog::error("video transcoder decoder open failed codec {} error {}", to_string(config.input_codec), ffmpeg_error(open_result));
-        shutdown();
+        state_.reset();
         return false;
     }
 
@@ -332,7 +343,7 @@ bool video_transcoder::startup(const video_transcoder_config& config)
     if (state_->decoded_frame == nullptr || state_->input_packet == nullptr || state_->output_packet == nullptr)
     {
         spdlog::error("video transcoder buffer allocate failed");
-        shutdown();
+        state_.reset();
         return false;
     }
 
@@ -340,43 +351,6 @@ bool video_transcoder::startup(const video_transcoder_config& config)
     return true;
 }
 
-void video_transcoder::shutdown()
-{
-    if (!state_)
-    {
-        return;
-    }
-    if (state_->input_packet != nullptr)
-    {
-        av_packet_free(&state_->input_packet);
-    }
-    if (state_->output_packet != nullptr)
-    {
-        av_packet_free(&state_->output_packet);
-    }
-    if (state_->decoded_frame != nullptr)
-    {
-        av_frame_free(&state_->decoded_frame);
-    }
-    if (state_->converted_frame != nullptr)
-    {
-        av_frame_free(&state_->converted_frame);
-    }
-    if (state_->scaler != nullptr)
-    {
-        sws_freeContext(state_->scaler);
-        state_->scaler = nullptr;
-    }
-    if (state_->decoder != nullptr)
-    {
-        avcodec_free_context(&state_->decoder);
-    }
-    if (state_->encoder != nullptr)
-    {
-        avcodec_free_context(&state_->encoder);
-    }
-    state_.reset();
-}
 
 bool video_transcoder::transcode(const media_frame& input, std::vector<media_frame>& output)
 {

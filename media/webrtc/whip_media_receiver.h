@@ -55,7 +55,7 @@ class whip_media_receiver final
     std::shared_ptr<media_stream> media_stream_;
     rtsp_demuxer_t* video_demuxer_{};
     rtsp_demuxer_t* audio_demuxer_{};
-    audio_transcoder audio_transcoder_;
+    std::unique_ptr<audio_transcoder> audio_transcoder_;
     avpkt2bs_t bitstream_{};
     std::optional<media_track> video_track_;
     std::optional<media_track> audio_track_;

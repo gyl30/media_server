@@ -177,11 +177,7 @@ void whip_session::safe_shutdown()
         media_receiver_->shutdown();
         media_receiver_.reset();
     }
-    if (srtp_)
-    {
-        srtp_->shutdown();
-        srtp_.reset();
-    }
+    srtp_.reset();
     dtls_timer_.cancel();
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
@@ -439,7 +435,6 @@ bool whip_session::startup_media()
                                               });
     if (!receiver->startup())
     {
-        srtp->shutdown();
         return false;
     }
 
