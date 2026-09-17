@@ -104,7 +104,8 @@ void test_rtcp_scheduler_releases_after_shutdown()
 
     auto publish = std::make_shared<rtsp_publish_session>(
         worker, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}, 0ms);
-    publish->set_shutdown_handler([]() {});
+    int shutdowns{};
+    publish->set_shutdown_handler([&shutdowns]() { ++shutdowns; });
 
     server_fixture fixture{.publish = publish.get(), .response = {}};
     rtsp_handler_t handler{};
@@ -154,6 +155,11 @@ void test_rtcp_scheduler_releases_after_shutdown()
                         "Session: " +
                         session + "\r\n\r\n";
     require(input_request(server, fixture, record).starts_with("RTSP/1.0 200"), "rtsp publish udp RECORD");
+
+    fixture.response.clear();
+    require(publish->on_teardown(server, uri, session) == -1, "rtsp publish udp TEARDOWN requests connection close");
+    require(fixture.response.starts_with("RTSP/1.0 200"), "rtsp publish udp TEARDOWN response");
+    require(shutdowns == 0, "synchronous RTSP TEARDOWN does not invoke shutdown handler");
 
     publish->shutdown();
     require(rtsp_server_destroy(server) == 0, "rtsp publish udp server destroy");
