@@ -26,7 +26,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     [[nodiscard]] std::vector<media_track> tracks() const;
 
     void add_sink(const std::shared_ptr<media_sink>& sink);
-    [[nodiscard]] media_reader_handle add_reader(const std::shared_ptr<media_reader>& reader, worker_context& worker);
+    media_reader_handle add_reader(const std::shared_ptr<media_reader>& reader, worker_context& worker);
     // 仅用于发布完整初始轨道集合；成功后 track id/kind/codec 固定。只由 stream owner worker 调用。
     bool set_tracks(std::vector<media_track> tracks);
     // 仅允许已有 track 在固定 codec 内更新配置；实际配置变化时返回 true。只由 stream owner worker 调用。

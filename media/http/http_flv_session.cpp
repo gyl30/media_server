@@ -97,7 +97,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
                                                     [self]() { self->shutdown(); },
                                                     config_.http_video);
 
-    reader_ = media_stream->add_reader(streamer_, worker_);
+    media_stream->add_reader(streamer_, worker_);
 
     std::array<std::uint8_t, 1> read_buffer{};
     for (;;)
@@ -210,8 +210,6 @@ void http_flv_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    reader_.remove();
-    reader_ = {};
     if (streamer_)
     {
         streamer_->shutdown();

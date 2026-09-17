@@ -12,7 +12,6 @@
 #include <boost/beast/http.hpp>
 
 #include "config.h"
-#include "media/core/media_reader.h"
 
 namespace media_server
 {
@@ -49,7 +48,6 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     const config& config_;
     bool closed_{};
     std::shared_ptr<http_flv_streamer> streamer_;
-    media_reader_handle reader_;
     std::vector<std::uint8_t> pending_bootstrap_;
     std::uint64_t pending_generation_{};
     bool pending_bootstrap_ready_{};

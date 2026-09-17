@@ -51,6 +51,7 @@ void http_flv_streamer::on_end() { finish(); }
 void http_flv_streamer::shutdown()
 {
     ended_ = true;
+    reader_handle().remove();
     write_handler_ = {};
     end_handler_ = {};
     muxer_.shutdown();
