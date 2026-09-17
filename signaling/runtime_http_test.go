@@ -139,6 +139,22 @@ func TestRuntimeEventBatchValidatesBeforeApplyingAndPreservesOrder(t *testing.T)
 		t.Fatalf("regressing batch status/runtimes = %d/%+v", response.Code, server.runtimes.snapshot())
 	}
 
+	existingStreamID := "40000000-0000-4000-8000-000000000003"
+	existing := `{"kind":"publisher","stream_id":"` + existingStreamID + `","stream_name":"live/existing","protocol":"rtmp","state":"starting","stage":"publish"}`
+	response = sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(existing), "application/json")
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("existing event response = %d %s", response.Code, response.Body.String())
+	}
+	changes := 0
+	server.runtimes.setOnChange(func(observedRuntime) { changes++ })
+	newStarting := `{"kind":"publisher","stream_id":"40000000-0000-4000-8000-000000000004","stream_name":"live/new","protocol":"rtmp","state":"starting","stage":"publish"}`
+	conflicting := `{"kind":"publisher","stream_id":"` + existingStreamID + `","stream_name":"live/other","protocol":"rtmp","state":"streaming","stage":"streaming"}`
+	response = sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(newStarting, conflicting), "application/json")
+	snapshot := server.runtimes.snapshot()
+	if response.Code != http.StatusConflict || len(snapshot) != 1 || snapshot[0].StreamID != existingStreamID || changes != 0 {
+		t.Fatalf("conflicting batch status/runtimes/changes = %d/%+v/%d", response.Code, snapshot, changes)
+	}
+
 	var states []string
 	server.runtimes.setOnChange(func(event observedRuntime) { states = append(states, event.State) })
 	streaming := `{"kind":"publisher","stream_id":"` + streamID + `","stream_name":"live/camera","protocol":"rtmp","state":"streaming","stage":"streaming"}`
