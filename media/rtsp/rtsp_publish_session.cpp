@@ -265,9 +265,8 @@ int rtsp_publish_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        tcp_session_ = std::make_shared<rtsp_publish_tcp_session>(worker_, stream_name_, descriptions_, write_handler_);
+        tcp_session_ = std::make_shared<rtsp_publish_tcp_session>(worker_, stream_name_, descriptions_, std::move(write_handler_));
         const auto result = tcp_session_->startup(server, track_index, *selected, session_id_);
-        write_handler_ = {};
         if (result < 0)
         {
             signaling_client::instance().report(make_event(event_kind::publisher,
