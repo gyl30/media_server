@@ -168,7 +168,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
             negotiated_tracks_.emplace(track.id, track);
         }
     }
-    static_cast<void>(stream_->add_reader(shared_from_this(), worker_));
+    stream_->add_reader(shared_from_this(), worker_);
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
     spdlog::debug(
