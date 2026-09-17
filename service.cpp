@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <boost/asio.hpp>
+#include <boost/scope/scope_exit.hpp>
 #include <spdlog/spdlog.h>
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/uuid/random_generator.hpp>
@@ -61,13 +62,14 @@ void service::run_server(boost::asio::yield_context yield)
 {
     register_signaling(yield);
 
+    boost::scope::scope_exit stop_on_startup_failure([this]() { stop(); });
+
     boost::system::error_code network_error;
     auto rtmp = std::make_shared<rtmp_server>(*workers_, config_);
     rtmp->startup(network_error);
     if (network_error)
     {
         spdlog::error("rtmp listen failed port {} error {}", config_.rtmp_port, network_error.message());
-        stop();
         return;
     }
     auto rtsp = std::make_shared<rtsp_server>(*workers_, config_);
@@ -75,7 +77,6 @@ void service::run_server(boost::asio::yield_context yield)
     if (network_error)
     {
         spdlog::error("rtsp listen failed port {} error {}", config_.rtsp_port, network_error.message());
-        stop();
         return;
     }
     auto http = std::make_shared<http_server>(*workers_, config_);
@@ -83,9 +84,9 @@ void service::run_server(boost::asio::yield_context yield)
     if (network_error)
     {
         spdlog::error("http listen failed port {} error {}", config_.http_port, network_error.message());
-        stop();
         return;
     }
+    stop_on_startup_failure.set_active(false);
 
     spdlog::info("rtmp listen {}:{}", config_.bind_address, config_.rtmp_port);
     spdlog::info("rtsp listen {}:{}", config_.bind_address, config_.rtsp_port);

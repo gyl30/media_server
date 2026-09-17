@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/codec/codec_utils.h"
 #include "media/codec/audio_transcoder.h"
@@ -72,6 +73,21 @@ std::optional<std::span<const std::uint8_t>> adts_payload(std::span<const std::u
 
 struct audio_transcoder::state
 {
+    ~state()
+    {
+        av_packet_free(&input_packet);
+        av_packet_free(&output_packet);
+        av_frame_free(&decoded_frame);
+        av_frame_free(&encoded_frame);
+        if (fifo != nullptr)
+        {
+            av_audio_fifo_free(fifo);
+        }
+        swr_free(&resampler);
+        avcodec_free_context(&decoder);
+        avcodec_free_context(&encoder);
+    }
+
     AVCodecContext* decoder{};
     AVCodecContext* encoder{};
     SwrContext* resampler{};
@@ -235,7 +251,7 @@ bool audio_transcoder::allocate_buffers()
 
 bool audio_transcoder::startup(const audio_transcoder_config& config)
 {
-    shutdown();
+    state_.reset();
 
     const bool aac_to_opus = config.input.codec == codec_id::aac && config.output.codec == codec_id::opus;
     const bool opus_to_aac = config.input.codec == codec_id::opus && config.output.codec == codec_id::aac;
@@ -266,7 +282,7 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
     state_->output_codec = config.output.codec;
     if (!initialize_decoder(config) || !initialize_encoder(config) || !allocate_buffers())
     {
-        shutdown();
+        state_.reset();
         return false;
     }
 
@@ -284,47 +300,6 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
     return true;
 }
 
-void audio_transcoder::shutdown()
-{
-    if (!state_)
-    {
-        return;
-    }
-    if (state_->input_packet != nullptr)
-    {
-        av_packet_free(&state_->input_packet);
-    }
-    if (state_->output_packet != nullptr)
-    {
-        av_packet_free(&state_->output_packet);
-    }
-    if (state_->decoded_frame != nullptr)
-    {
-        av_frame_free(&state_->decoded_frame);
-    }
-    if (state_->encoded_frame != nullptr)
-    {
-        av_frame_free(&state_->encoded_frame);
-    }
-    if (state_->fifo != nullptr)
-    {
-        av_audio_fifo_free(state_->fifo);
-        state_->fifo = nullptr;
-    }
-    if (state_->resampler != nullptr)
-    {
-        swr_free(&state_->resampler);
-    }
-    if (state_->decoder != nullptr)
-    {
-        avcodec_free_context(&state_->decoder);
-    }
-    if (state_->encoder != nullptr)
-    {
-        avcodec_free_context(&state_->encoder);
-    }
-    state_.reset();
-}
 
 std::span<const std::uint8_t> audio_transcoder::output_codec_config() const noexcept
 {
@@ -508,13 +483,13 @@ int audio_transcoder::convert_samples(const std::uint8_t* const* input, int inpu
     {
         return AVERROR(ENOMEM);
     }
+    boost::scope::scope_exit cleanup([&]() { av_frame_free(&converted); });
     converted->format = state_->encoder->sample_fmt;
     converted->sample_rate = state_->encoder->sample_rate;
     converted->nb_samples = output_capacity;
     const int layout_result = av_channel_layout_copy(&converted->ch_layout, &state_->encoder->ch_layout);
     if (layout_result < 0)
     {
-        av_frame_free(&converted);
         return layout_result;
     }
 
@@ -522,7 +497,6 @@ int audio_transcoder::convert_samples(const std::uint8_t* const* input, int inpu
     if (result < 0)
     {
         spdlog::error("audio transcoder resample frame allocate failed {}", ffmpeg_error(result));
-        av_frame_free(&converted);
         return result;
     }
 
@@ -530,7 +504,6 @@ int audio_transcoder::convert_samples(const std::uint8_t* const* input, int inpu
     if (result < 0)
     {
         spdlog::debug("audio transcoder resample failed {}", ffmpeg_error(result));
-        av_frame_free(&converted);
         return result;
     }
     if (result > 0)
@@ -539,12 +512,10 @@ int audio_transcoder::convert_samples(const std::uint8_t* const* input, int inpu
         if (written != result)
         {
             spdlog::error("audio transcoder fifo write failed expected {} actual {}", result, written);
-            av_frame_free(&converted);
             return AVERROR_UNKNOWN;
         }
     }
 
-    av_frame_free(&converted);
     return result;
 }
 

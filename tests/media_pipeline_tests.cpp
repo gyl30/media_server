@@ -8637,20 +8637,6 @@ void test_audio_transcoder_aac_opus()
     av_packet_free(&packet);
     avcodec_free_context(&decoder_context);
 
-    std::vector<media_frame> after_shutdown;
-    transcoder.shutdown();
-    transcoder.shutdown();
-    require(!transcoder.transcode(
-                media_frame{
-                    .track = audio_track_id,
-                    .dts_ns = 0,
-                    .pts_ns = 0,
-                    .key_frame = false,
-                    .payload = std::make_shared<const std::vector<std::uint8_t>>(valid_aac_adts_frames.front()),
-                },
-                after_shutdown),
-            "audio transcoder rejects input after shutdown");
-
     require(transcoder.startup(config), "audio transcoder restart");
     std::vector<media_frame> restarted_output;
     require(!transcoder.transcode(
@@ -8681,8 +8667,6 @@ void test_audio_transcoder_aac_opus()
     }
     require(!restarted_output.empty(), "audio transcoder output after restart");
     require(restarted_output.front().pts_ns == 5'000'000'000, "audio transcoder invalid first frame does not start timeline");
-    transcoder.shutdown();
-    transcoder.shutdown();
 }
 
 void test_audio_transcoder_opus_aac()
@@ -8773,8 +8757,6 @@ void test_audio_transcoder_opus_aac()
         require(aac.profile == MPEG4_AAC_LC && aac.sampling_frequency == 48'000 && mpeg4_aac_channel_count(aac.channel_configuration) == 2,
                 "opus aac output format");
     }
-    aac_encoder.shutdown();
-    opus_encoder.shutdown();
 }
 
 void test_audio_transcoder_timestamp_compensation()
@@ -8864,7 +8846,6 @@ void test_audio_transcoder_timestamp_compensation()
         require(!output.empty(), "audio timestamp streaming output");
         require(output.front().pts_ns == timestamps.front(), "audio timestamp keeps origin");
         const auto samples = decoded_sample_count(output);
-        transcoder.shutdown();
         return samples;
     };
 
@@ -9128,8 +9109,6 @@ void test_video_transcoder_h26x_av1()
             require(restarted.transcode(frame, restarted_output), "video transcoder new generation input");
         }
         require(!restarted_output.empty(), "video transcoder new generation output");
-        restarted.shutdown();
-        restarted.shutdown();
 
         video_transcoder long_running;
         require(long_running.startup(config), "video transcoder long timeline startup");
@@ -9149,10 +9128,6 @@ void test_video_transcoder_h26x_av1()
         require(!long_running_output.empty(), "video transcoder long timeline output");
         require(long_running_output.back().pts_ns - long_running_output.front().pts_ns > 4'294'967'295LL,
                 "video transcoder long timeline exceeds libaom nanosecond boundary");
-        long_running.shutdown();
-        malformed.shutdown();
-        invalid_timeline.shutdown();
-        transcoder.shutdown();
     }
 
     const auto source = make_video_transcoder_fixture(codec_id::h264);
@@ -9180,7 +9155,6 @@ void test_video_transcoder_h26x_av1()
         aom_av1_codec_configuration_record_init(&av1, constrained_output.front().payload->data(), constrained_output.front().payload->size()) == 0,
         "video transcoder av1 parameters sequence header");
     require(av1.seq_profile == 0 && av1.seq_level_idx_0 <= 13 && av1.seq_tier_0 == 0, "video transcoder av1 parameters stream properties");
-    constrained.shutdown();
 
     video_transcoder unsupported_profile;
     require(!unsupported_profile.startup(video_transcoder_config{

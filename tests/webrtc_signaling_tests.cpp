@@ -493,8 +493,6 @@ void test_srtp_bidirectional_transport()
         const auto server_rtcp_clear = server.unprotect_rtcp(*peer_rtcp_protected);
         require(server_rtcp_clear == std::vector<std::uint8_t>(rtcp_packet.begin(), rtcp_packet.end()), "srtp bidirectional server unprotect rtcp");
 
-        server.shutdown();
-        peer.shutdown();
     }
 }
 
@@ -3594,7 +3592,6 @@ void test_whip_session_ingest(codec_id video_codec)
 
     session->shutdown();
     packetizer.shutdown();
-    peer_srtp.shutdown();
     boost::system::error_code error;
     client_socket.close(error);
 }
@@ -3842,7 +3839,6 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     require(session->local_port() == 0U, "dtls close notify shutdown");
     session->shutdown();
     drain_io(io);
-    peer_srtp.shutdown();
 
     boost::system::error_code error;
     client_socket.close(error);

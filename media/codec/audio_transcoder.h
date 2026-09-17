@@ -34,7 +34,6 @@ class audio_transcoder final
     ~audio_transcoder();
 
     bool startup(const audio_transcoder_config& config);
-    void shutdown();
     bool transcode(const media_frame& input, std::vector<media_frame>& output);
     [[nodiscard]] std::span<const std::uint8_t> output_codec_config() const noexcept;
 

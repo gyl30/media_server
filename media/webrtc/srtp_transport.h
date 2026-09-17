@@ -19,7 +19,6 @@ class srtp_transport final
     ~srtp_transport();
 
     bool startup(const dtls_srtp_keying_material& keying_material);
-    void shutdown();
 
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> protect_rtp(std::span<const std::uint8_t> packet);
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> protect_rtcp(std::span<const std::uint8_t> packet);

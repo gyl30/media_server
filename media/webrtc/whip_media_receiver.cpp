@@ -75,7 +75,8 @@ bool whip_media_receiver::startup()
         }
 
         const auto bitrate = 64'000 * static_cast<int>(config_.audio_channel_count);
-        if (!audio_transcoder_.startup(audio_transcoder_config{
+        audio_transcoder_ = std::make_unique<audio_transcoder>();
+        if (!audio_transcoder_->startup(audio_transcoder_config{
                 .input =
                     audio_transcoder_format{
                         .codec = codec_id::opus,
@@ -96,7 +97,7 @@ bool whip_media_receiver::startup()
             shutdown();
             return false;
         }
-        const auto codec_config = audio_transcoder_.output_codec_config();
+        const auto codec_config = audio_transcoder_->output_codec_config();
         if (codec_config.empty())
         {
             shutdown();
@@ -214,7 +215,7 @@ void whip_media_receiver::shutdown()
         rtsp_demuxer_destroy(audio_demuxer_);
         audio_demuxer_ = nullptr;
     }
-    audio_transcoder_.shutdown();
+    audio_transcoder_.reset();
     avpkt2bs_destroy(&bitstream_);
     video_track_.reset();
     audio_track_.reset();
@@ -283,7 +284,7 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
     }
 
     std::vector<media_frame> output;
-    if (!audio_transcoder_.transcode(frame, output))
+    if (!audio_transcoder_->transcode(frame, output))
     {
         return -1;
     }

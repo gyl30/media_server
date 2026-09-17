@@ -8,6 +8,7 @@
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -59,11 +60,11 @@ std::optional<port_manager::port_pair> gb28181_udp_sender_session::prepare_udp_t
     }
 
     const auto local_ports = *reserved;
+    boost::scope::scope_exit release_ports([&]() { port_manager::instance().release(local_ports); });
     boost::system::error_code network_error;
     rtp_transport_.startup(bind_address, local_ports.first, network_error);
     if (network_error)
     {
-        port_manager::instance().release(local_ports);
         return std::nullopt;
     }
 
@@ -71,10 +72,10 @@ std::optional<port_manager::port_pair> gb28181_udp_sender_session::prepare_udp_t
     if (network_error)
     {
         rtp_transport_.shutdown();
-        port_manager::instance().release(local_ports);
         return std::nullopt;
     }
 
+    release_ports.set_active(false);
     return local_ports;
 }
 

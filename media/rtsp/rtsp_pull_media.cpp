@@ -1,6 +1,7 @@
 #include <utility>
 
 #include <spdlog/spdlog.h>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
@@ -50,6 +51,13 @@ bool rtsp_pull_media::startup()
         }
 
         auto* demuxer = rtsp_demuxer_create(static_cast<int>(index), 500, &rtsp_pull_media::packet_callback, this);
+        boost::scope::scope_exit cleanup_demuxer([&]()
+        {
+            if (demuxer != nullptr)
+            {
+                rtsp_demuxer_destroy(demuxer);
+            }
+        });
         if (demuxer == nullptr ||
             rtsp_demuxer_add_payload(demuxer,
                                      description.clock_rate,
@@ -58,14 +66,11 @@ bool rtsp_pull_media::startup()
                                      description.fmtp.empty() ? nullptr : description.fmtp.c_str()) != 0 ||
             rtsp_demuxer_set_info(demuxer, media_stream_name_.c_str(), rtcp_name) != 0)
         {
-            if (demuxer != nullptr)
-            {
-                rtsp_demuxer_destroy(demuxer);
-            }
             shutdown();
             return false;
         }
         demuxers_[index] = demuxer;
+        cleanup_demuxer.set_active(false);
     }
     return true;
 }
