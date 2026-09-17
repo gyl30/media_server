@@ -491,9 +491,9 @@ void wait_runtime_event_count(test::publish_claim_test_server& server, std::size
 }
 
 void require_publisher_event(const boost::json::object& event,
-                             runtime_kind kind,
-                             runtime_protocol protocol,
-                             runtime_state state,
+                             event_kind kind,
+                             event_protocol protocol,
+                             event_state state,
                              std::string_view stream_id,
                              std::string_view stream_name,
                              std::string_view stage,
@@ -502,9 +502,11 @@ void require_publisher_event(const boost::json::object& event,
 {
     const auto* event_source_id = event.if_contains("source_id");
     const bool source_matches = source_id ? event_source_id != nullptr && event_source_id->as_string() == *source_id : event_source_id == nullptr;
+    const auto* event_stage = event.if_contains("stage");
+    const bool stage_matches = stage.empty() ? event_stage == nullptr : event_stage != nullptr && event_stage->as_string() == stage;
     require(event.at("kind").as_string() == to_string(kind) && event.at("stream_id").as_string() == stream_id &&
                 event.at("stream_name").as_string() == stream_name && source_matches && event.at("protocol").as_string() == to_string(protocol) &&
-                event.at("state").as_string() == to_string(state) && event.at("stage").as_string() == stage,
+                event.at("state").as_string() == to_string(state) && stage_matches,
             message);
 }
 
@@ -2335,14 +2337,14 @@ void test_rtmp_publish_claim_lifecycle(std::string_view scenario)
         auto events = peer.runtime_events();
         require(events.size() == 1U, "accepted RTMP claim emits starting once");
         require_publisher_event(events[0],
-                                runtime_kind::publisher,
-                                runtime_protocol::rtmp,
-                                runtime_state::starting,
+                                event_kind::publisher,
+                                event_protocol::rtmp,
+                                event_state::starting,
                                 test_rtmp_stream_id,
                                 "live/runtime-events",
                                 "publish",
                                 "accepted RTMP claim starting event");
-        require(!events[0].contains("end_reason") && !events[0].contains("error"), "RTMP starting event has no terminal fields");
+        require(!events[0].contains("error"), "RTMP starting event has no error");
 
         const auto video = make_video_track();
         peer.push_metadata(false);
@@ -2352,29 +2354,37 @@ void test_rtmp_publish_claim_lifecycle(std::string_view scenario)
         events = peer.runtime_events();
         require(events.size() == 2U, "RTMP registry readiness emits streaming once");
         require_publisher_event(events[1],
-                                runtime_kind::publisher,
-                                runtime_protocol::rtmp,
-                                runtime_state::streaming,
+                                event_kind::publisher,
+                                event_protocol::rtmp,
+                                event_state::streaming,
                                 test_rtmp_stream_id,
                                 "live/runtime-events",
                                 "streaming",
                                 "RTMP streaming event");
-        require(!events[1].contains("end_reason") && !events[1].contains("error"), "RTMP streaming event has no terminal fields");
+        require(!events[1].contains("error"), "RTMP streaming event has no error");
 
         peer.disconnect_and_wait();
-        peer.wait_runtime_event_count(3U);
+        peer.wait_runtime_event_count(4U);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         events = peer.runtime_events();
-        require(events.size() == 3U, "RTMP remote disconnect emits terminal once");
+        require(events.size() == 4U, "RTMP remote disconnect emits fact and stopped once");
         require_publisher_event(events[2],
-                                runtime_kind::publisher,
-                                runtime_protocol::rtmp,
-                                runtime_state::stopped,
+                                event_kind::publisher,
+                                event_protocol::rtmp,
+                                event_state::remote_closed,
                                 test_rtmp_stream_id,
                                 "live/runtime-events",
                                 "transport",
-                                "RTMP remote terminal event");
-        require(events[2].at("end_reason").as_string() == "remote" && !events[2].contains("error"), "RTMP remote terminal reason");
+                                "RTMP remote close fact");
+        require(!events[2].contains("error"), "RTMP remote close fact has no error");
+        require_publisher_event(events[3],
+                                event_kind::publisher,
+                                event_protocol::rtmp,
+                                event_state::stopped,
+                                test_rtmp_stream_id,
+                                "live/runtime-events",
+                                "",
+                                "RTMP stopped lifecycle");
         return;
     }
 
@@ -5181,15 +5191,15 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     auto events = runtime_events(event_server);
     require(events.size() == 1U, "rtsp pull emits starting once");
     require_publisher_event(events[0],
-                            runtime_kind::source,
-                            runtime_protocol::rtsp,
-                            runtime_state::starting,
+                            event_kind::source,
+                            event_protocol::rtsp,
+                            event_state::starting,
                             stream_id,
                             "relay/topology",
                             "resolving",
                             "rtsp pull starting event",
                             source_id);
-    require(!events[0].contains("end_reason") && !events[0].contains("error"), "rtsp pull starting event has no terminal fields");
+    require(!events[0].contains("error"), "rtsp pull starting event has no error");
     boost::asio::ip::tcp::socket socket(server_io);
     acceptor.accept(socket);
 
@@ -5270,15 +5280,15 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     events = runtime_events(event_server);
     require(events.size() == 2U, "rtsp pull tracks ready emits streaming once");
     require_publisher_event(events[1],
-                            runtime_kind::source,
-                            runtime_protocol::rtsp,
-                            runtime_state::streaming,
+                            event_kind::source,
+                            event_protocol::rtsp,
+                            event_state::streaming,
                             stream_id,
                             "relay/topology",
                             "streaming",
                             "rtsp pull streaming event",
                             source_id);
-    require(!events[1].contains("end_reason") && !events[1].contains("error"), "rtsp pull streaming event has no terminal fields");
+    require(!events[1].contains("error"), "rtsp pull streaming event has no error");
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     require(stream_registry::instance().find("relay/topology") != nullptr, "rtsp complete sdp topology does not wait on initial tracks timer");
@@ -5288,13 +5298,22 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     auto shutdown_barrier_future = shutdown_barrier.get_future();
     boost::asio::post(client_worker.io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
     shutdown_barrier_future.wait();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    wait_runtime_event_count(event_server, 3U);
     boost::system::error_code error;
     socket.close(error);
     client_worker.stop();
     runner.join();
     events = runtime_events(event_server);
-    require(events.size() == 2U, "ordinary rtsp pull shutdown emits no runtime event");
+    require(events.size() == 3U, "ordinary rtsp pull shutdown emits stopped once");
+    require_publisher_event(events[2],
+                            event_kind::source,
+                            event_protocol::rtsp,
+                            event_state::stopped,
+                            stream_id,
+                            "relay/topology",
+                            "",
+                            "rtsp pull stopped lifecycle",
+                            source_id);
 }
 
 void test_rtsp_pull_initial_tracks_timeout()
@@ -5702,15 +5721,18 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        wait_runtime_event_count(claim_server, 2U);
+        wait_runtime_event_count(claim_server, 4U);
         const auto completed_events = runtime_events(claim_server);
         worker.stop();
         runner.join();
         require(retained_while_claim_pending && weak.expired() && !stream_registry::instance().find("live/claim-disconnect"),
                 "publisher disconnect waits for pending rtsp claim without creating runtime");
         require(pending_events.empty(), "RTSP disconnect during pending claim emits no runtime event");
-        require(completed_events.size() == 2U && completed_events[0].at("state") == "starting" && completed_events[1].at("state") == "stopped",
-                "RTSP disconnect is observed after pending claim completes");
+        require(completed_events.size() == 4U, "RTSP disconnect emits observed transport facts and stopped");
+        require(completed_events[0].at("state") == "starting", "RTSP disconnected claim starts after claim completion");
+        require(completed_events[1].at("state") == "runtime_error", "RTSP disconnect reports the failed response write");
+        require(completed_events[2].at("state") == "remote_closed", "RTSP disconnect reports the remote close");
+        require(completed_events[3].at("state") == "stopped", "RTSP disconnected claim reports stopped");
         return;
     }
 
@@ -5760,14 +5782,14 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         auto events = runtime_events(claim_server);
         require(events.size() == 1U, "accepted RTSP claim emits starting once");
         require_publisher_event(events[0],
-                                runtime_kind::publisher,
-                                runtime_protocol::rtsp,
-                                runtime_state::starting,
+                                event_kind::publisher,
+                                event_protocol::rtsp,
+                                event_state::starting,
                                 stream_id,
                                 "live/claim-pending",
                                 "announce",
                                 "accepted RTSP claim starting event");
-        require(!events[0].contains("end_reason") && !events[0].contains("error"), "RTSP starting event has no terminal fields");
+        require(!events[0].contains("error"), "RTSP starting event has no error");
 
         const auto setup = "SETUP " + base + "/trackID=0 RTSP/1.0\r\nCSeq: 3\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n";
         boost::asio::write(client, boost::asio::buffer(setup));
@@ -5786,14 +5808,14 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         events = runtime_events(claim_server);
         require(events.size() == 2U && stream_registry::instance().find("live/claim-pending"), "RTSP registry readiness emits streaming once");
         require_publisher_event(events[1],
-                                runtime_kind::publisher,
-                                runtime_protocol::rtsp,
-                                runtime_state::streaming,
+                                event_kind::publisher,
+                                event_protocol::rtsp,
+                                event_state::streaming,
                                 stream_id,
                                 "live/claim-pending",
                                 "streaming",
                                 "RTSP streaming event");
-        require(!events[1].contains("end_reason") && !events[1].contains("error"), "RTSP streaming event has no terminal fields");
+        require(!events[1].contains("error"), "RTSP streaming event has no error");
 
         boost::system::error_code close_error;
         client.close(close_error);
@@ -5803,23 +5825,31 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         require(!stream_registry::instance().find("live/claim-pending"), "RTSP remote disconnect removes runtime");
-        wait_runtime_event_count(claim_server, 3U);
+        wait_runtime_event_count(claim_server, 4U);
         connection->shutdown();
         std::promise<void> shutdown_barrier;
         auto shutdown_barrier_future = shutdown_barrier.get_future();
         boost::asio::post(worker.io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
         shutdown_barrier_future.wait();
         events = runtime_events(claim_server);
-        require(events.size() == 3U, "RTSP late shutdown does not duplicate terminal event");
+        require(events.size() == 4U, "RTSP late shutdown does not duplicate remote close or stopped");
         require_publisher_event(events[2],
-                                runtime_kind::publisher,
-                                runtime_protocol::rtsp,
-                                runtime_state::stopped,
+                                event_kind::publisher,
+                                event_protocol::rtsp,
+                                event_state::remote_closed,
                                 stream_id,
                                 "live/claim-pending",
                                 "transport",
-                                "RTSP remote terminal event");
-        require(events[2].at("end_reason").as_string() == "remote" && !events[2].contains("error"), "RTSP remote terminal reason");
+                                "RTSP remote close fact");
+        require(!events[2].contains("error"), "RTSP remote close fact has no error");
+        require_publisher_event(events[3],
+                                event_kind::publisher,
+                                event_protocol::rtsp,
+                                event_state::stopped,
+                                stream_id,
+                                "live/claim-pending",
+                                "",
+                                "RTSP stopped lifecycle");
 
         worker.stop();
         runner.join();

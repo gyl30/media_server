@@ -8,14 +8,14 @@
 namespace media_server
 {
 
-enum class runtime_kind
+enum class event_kind
 {
     source,
     publisher,
     output,
 };
 
-enum class runtime_protocol
+enum class event_protocol
 {
     rtmp,
     rtsp,
@@ -23,96 +23,111 @@ enum class runtime_protocol
     whep,
 };
 
-enum class runtime_state
+enum class event_state
 {
     starting,
     streaming,
-    stopped,
-};
-
-enum class runtime_end_reason
-{
-    requested,
-    remote,
+    stop_requested,
+    remote_closed,
     timeout,
     protocol_error,
     runtime_error,
-    server_shutdown,
+    stopped,
 };
 
 struct runtime_event
 {
-    runtime_kind kind{};
+    event_kind kind{};
     std::string stream_id{};
     std::string stream_name{};
     std::optional<std::string> source_id{};
-    runtime_protocol protocol{};
-    runtime_state state{};
+    event_protocol protocol{};
+    event_state state{};
     std::optional<std::string> stage{};
-    std::optional<runtime_end_reason> end_reason{};
     std::optional<std::string> error{};
 };
 
-[[nodiscard]] constexpr std::string_view to_string(runtime_kind value) noexcept
+[[nodiscard]] inline runtime_event make_event(event_kind kind,
+                                              event_protocol protocol,
+                                              event_state state,
+                                              std::string_view stream_id,
+                                              std::string_view stream_name,
+                                              std::string_view source_id = {},
+                                              std::string_view stage = {},
+                                              std::string_view error = {})
+{
+    runtime_event event{
+        .kind = kind,
+        .stream_id = std::string{stream_id},
+        .stream_name = std::string{stream_name},
+        .protocol = protocol,
+        .state = state,
+    };
+    if (!source_id.empty())
+    {
+        event.source_id = std::string{source_id};
+    }
+    if (!stage.empty())
+    {
+        event.stage = std::string{stage};
+    }
+    if (!error.empty())
+    {
+        event.error = std::string{error};
+    }
+    return event;
+}
+
+[[nodiscard]] constexpr std::string_view to_string(event_kind value) noexcept
 {
     switch (value)
     {
-        case runtime_kind::source:
+        case event_kind::source:
             return "source";
-        case runtime_kind::publisher:
+        case event_kind::publisher:
             return "publisher";
-        case runtime_kind::output:
+        case event_kind::output:
             return "output";
     }
     return {};
 }
 
-[[nodiscard]] constexpr std::string_view to_string(runtime_protocol value) noexcept
+[[nodiscard]] constexpr std::string_view to_string(event_protocol value) noexcept
 {
     switch (value)
     {
-        case runtime_protocol::rtmp:
+        case event_protocol::rtmp:
             return "rtmp";
-        case runtime_protocol::rtsp:
+        case event_protocol::rtsp:
             return "rtsp";
-        case runtime_protocol::gb28181:
+        case event_protocol::gb28181:
             return "gb28181";
-        case runtime_protocol::whep:
+        case event_protocol::whep:
             return "whep";
     }
     return {};
 }
 
-[[nodiscard]] constexpr std::string_view to_string(runtime_state value) noexcept
+[[nodiscard]] constexpr std::string_view to_string(event_state value) noexcept
 {
     switch (value)
     {
-        case runtime_state::starting:
+        case event_state::starting:
             return "starting";
-        case runtime_state::streaming:
+        case event_state::streaming:
             return "streaming";
-        case runtime_state::stopped:
-            return "stopped";
-    }
-    return {};
-}
-
-[[nodiscard]] constexpr std::string_view to_string(runtime_end_reason value) noexcept
-{
-    switch (value)
-    {
-        case runtime_end_reason::requested:
-            return "requested";
-        case runtime_end_reason::remote:
-            return "remote";
-        case runtime_end_reason::timeout:
+        case event_state::stop_requested:
+            return "stop_requested";
+        case event_state::remote_closed:
+            return "remote_closed";
+        case event_state::timeout:
             return "timeout";
-        case runtime_end_reason::protocol_error:
+        case event_state::protocol_error:
             return "protocol_error";
-        case runtime_end_reason::runtime_error:
+        case event_state::runtime_error:
             return "runtime_error";
-        case runtime_end_reason::server_shutdown:
-            return "server_shutdown";
+        case event_state::stopped:
+            return "stopped";
     }
     return {};
 }

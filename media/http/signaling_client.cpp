@@ -69,10 +69,6 @@ boost::json::object runtime_event_json(const runtime_event& event)
     {
         body.emplace("stage", *event.stage);
     }
-    if (event.end_reason)
-    {
-        body.emplace("end_reason", to_string(*event.end_reason));
-    }
     if (event.error)
     {
         body.emplace("error", *event.error);

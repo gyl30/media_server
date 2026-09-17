@@ -67,7 +67,6 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     };
 
     void safe_shutdown();
-    void shutdown_udp_transport();
     void run_udp(boost::asio::yield_context yield);
     void run_udp_write(boost::asio::yield_context yield);
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);

@@ -8,7 +8,7 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "media/webrtc/whep.h"
-#include "media/webrtc/whep_event.h"
+#include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
@@ -166,8 +166,14 @@ create_result create(
     if (!inserted)
     {
         spdlog::error("whep session id collision {}", session_id);
-        signaling_client::instance().report(
-            whep_event::output_stopped(session->stream_id(), session->stream_name(), runtime_end_reason::runtime_error, "session_id_collision"));
+        signaling_client::instance().report(make_event(event_kind::output,
+                                                       event_protocol::whep,
+                                                       event_state::runtime_error,
+                                                       session->stream_id(),
+                                                       session->stream_name(),
+                                                       {},
+                                                       {},
+                                                       "session_id_collision"));
         session->shutdown();
         return failed(create_error::internal_error);
     }
@@ -214,7 +220,8 @@ bool remove(std::string_view session_id)
         spdlog::debug("whep session remove expired {}", session_id);
         return false;
     }
-    signaling_client::instance().report(whep_event::output_stopped(session->stream_id(), session->stream_name(), runtime_end_reason::requested));
+    signaling_client::instance().report(
+        make_event(event_kind::output, event_protocol::whep, event_state::stop_requested, session->stream_id(), session->stream_name()));
     session->shutdown();
     spdlog::info("whep session removed {}", session_id);
     return true;

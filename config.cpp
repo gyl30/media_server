@@ -61,8 +61,6 @@ void print_usage(const boost::program_options::options_description& options) { s
 
 int parse_config(int argc, char** argv, config* cfg)
 {
-    namespace po = boost::program_options;
-
     config result;
     std::string rtmp_port{std::to_string(result.rtmp_port)};
     std::string rtsp_port{std::to_string(result.rtsp_port)};
@@ -73,37 +71,41 @@ int parse_config(int argc, char** argv, config* cfg)
     std::string http_video_codec;
     std::string whep_video_codec;
 
-    po::options_description options("options");
-    options.add_options()("help", "show help")("rtmp-port", po::value<std::string>(&rtmp_port), "rtmp listen port")(
-        "rtsp-port", po::value<std::string>(&rtsp_port), "rtsp listen port")("http-port", po::value<std::string>(&http_port), "http listen port")(
-        "bind-address", po::value<std::string>(&result.bind_address), "server listen address")(
-        "webrtc-address", po::value<std::string>(&result.webrtc_address), "webrtc address")(
-        "threads", po::value<std::string>(&threads), "worker thread count")(
-        "rtmp-video-codec", po::value<std::string>(&rtmp_video_codec), "passthrough|av1")(
-        "rtsp-video-codec", po::value<std::string>(&rtsp_video_codec), "passthrough|av1")(
-        "http-video-codec", po::value<std::string>(&http_video_codec), "passthrough|av1")(
-        "whep-video-codec", po::value<std::string>(&whep_video_codec), "passthrough|av1");
-    options.add_options()("signaling-url", po::value<std::string>(&result.signaling_url), "GB28181 signaling base URL")(
-        "server-id", po::value<std::string>(&result.server_id), "stable media server identity")(
-        "control-url", po::value<std::string>(&result.control_url), "media server control URL")(
-        "media-ip", po::value<std::string>(&result.media_ip), "media address advertised to GB28181 devices");
+    boost::program_options::options_description options("options");
+    options.add_options()("help", "show help")(
+        "rtmp-port", boost::program_options::value<std::string>(&rtmp_port), "rtmp listen port")(
+        "rtsp-port", boost::program_options::value<std::string>(&rtsp_port), "rtsp listen port")(
+        "http-port", boost::program_options::value<std::string>(&http_port), "http listen port")(
+        "bind-address", boost::program_options::value<std::string>(&result.bind_address), "server listen address")(
+        "webrtc-address", boost::program_options::value<std::string>(&result.webrtc_address), "webrtc address")(
+        "threads", boost::program_options::value<std::string>(&threads), "worker thread count")(
+        "rtmp-video-codec", boost::program_options::value<std::string>(&rtmp_video_codec), "passthrough|av1")(
+        "rtsp-video-codec", boost::program_options::value<std::string>(&rtsp_video_codec), "passthrough|av1")(
+        "http-video-codec", boost::program_options::value<std::string>(&http_video_codec), "passthrough|av1")(
+        "whep-video-codec", boost::program_options::value<std::string>(&whep_video_codec), "passthrough|av1");
+    options.add_options()(
+        "signaling-url", boost::program_options::value<std::string>(&result.signaling_url), "GB28181 signaling base URL")(
+        "server-id", boost::program_options::value<std::string>(&result.server_id), "stable media server identity")(
+        "control-url", boost::program_options::value<std::string>(&result.control_url), "media server control URL")(
+        "media-ip", boost::program_options::value<std::string>(&result.media_ip), "media address advertised to GB28181 devices");
 
-    po::variables_map values;
+    boost::program_options::variables_map values;
     try
     {
-        const auto parsed = po::command_line_parser(argc, argv)
+        const auto parsed = boost::program_options::command_line_parser(argc, argv)
                                 .options(options)
-                                .style(po::command_line_style::default_style & ~po::command_line_style::allow_guessing)
+                                .style(boost::program_options::command_line_style::default_style &
+                                       ~boost::program_options::command_line_style::allow_guessing)
                                 .run();
-        if (!po::collect_unrecognized(parsed.options, po::include_positional).empty())
+        if (!boost::program_options::collect_unrecognized(parsed.options, boost::program_options::include_positional).empty())
         {
             print_usage(options);
             return 1;
         }
-        po::store(parsed, values);
-        po::notify(values);
+        boost::program_options::store(parsed, values);
+        boost::program_options::notify(values);
     }
-    catch (const po::error&)
+    catch (const boost::program_options::error&)
     {
         print_usage(options);
         return 1;

@@ -10,7 +10,7 @@
 #include <boost/json.hpp>
 
 #include "media/core/stream_id.h"
-#include "media/rtsp/rtsp_event.h"
+#include "media/core/runtime_event.h"
 #include "media/http/rtsp_pull_http.h"
 #include "media/core/stream_registry.h"
 #include "media/http/signaling_client.h"
@@ -249,8 +249,12 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
-    signaling_client::instance().report(
-        rtsp_event::source_stopped(session->stream_id(), session->stream_name(), session->source_id(), runtime_end_reason::requested));
+    signaling_client::instance().report(make_event(event_kind::source,
+                                                   event_protocol::rtsp,
+                                                   event_state::stop_requested,
+                                                   session->stream_id(),
+                                                   session->stream_name(),
+                                                   session->source_id()));
     session->shutdown();
     return make_empty_response(request, boost::beast::http::status::no_content);
 }
