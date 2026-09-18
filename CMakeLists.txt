@@ -584,6 +584,7 @@ if(BUILD_TESTING)
         webrtc_module_shutdown
         whip_http_self_shutdown_releases_reservation
         whep_session_lifecycle
+        whep_session_churn
         whep_opus_source_session_lifecycle
         whip_session_ingest
         whip_h265_session_ingest

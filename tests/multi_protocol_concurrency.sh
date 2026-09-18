@@ -10,7 +10,8 @@ signaling_port="${MEDIA_SERVER_CONCURRENCY_SIGNALING_PORT:-19110}"
 rtmp_port="${MEDIA_SERVER_CONCURRENCY_RTMP_PORT:-19410}"
 rtsp_port="${MEDIA_SERVER_CONCURRENCY_RTSP_PORT:-18610}"
 http_port="${MEDIA_SERVER_CONCURRENCY_HTTP_PORT:-18110}"
-stream_name=live/concurrency
+scenario="${3:-concurrency}"
+stream_name=""
 
 mkdir -p "$work_dir"
 work_dir="$(cd "$work_dir" && pwd)"
@@ -99,8 +100,9 @@ wait_runtime_state() {
     local kind="$2"
     local protocol="$3"
     local state="$4"
+    local attempts="${5:-150}"
     local response="$work_dir/runtime_${stream_id}_${state}.json"
-    for _ in $(seq 1 150); do
+    for _ in $(seq 1 "$attempts"); do
         if curl --noproxy '*' -fsS --connect-timeout 1 --max-time 2 \
             "http://127.0.0.1:$signaling_port/api/runtimes" >"$response" 2>/dev/null && \
             python3 - "$response" "$stream_id" "$kind" "$protocol" "$stream_name" "$state" <<'PY'
@@ -165,6 +167,65 @@ start_player() {
     player_pids+=("$!")
 }
 
+start_publisher() {
+    local label="$1"
+    local publish_url
+    publish_url="$(allocate publish "$label" rtmp)"
+    publisher_stream_id="$(allocation_stream_id "$label")"
+    "$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
+        -f lavfi -i 'testsrc=size=320x180:rate=25' \
+        -f lavfi -i 'sine=frequency=1000:sample_rate=44100' \
+        -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
+        -pix_fmt yuv420p -g 25 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 96k -ac 2 \
+        -f flv "$publish_url" >"$work_dir/${label}.log" 2>&1 &
+    publisher_pid=$!
+    wait_runtime_state "$publisher_stream_id" publisher rtmp streaming
+}
+
+stop_publisher() {
+    kill -INT "$publisher_pid"
+    wait "$publisher_pid" 2>/dev/null || true
+    publisher_pid=""
+    wait_runtime_state "$publisher_stream_id" publisher rtmp stopped
+}
+
+probe_once() {
+    local label="$1"
+    local protocol="$2"
+    local url="$3"
+    local -a input_options=()
+    if [[ "$protocol" == "rtsp" ]]; then
+        input_options=(-rtsp_transport tcp)
+    fi
+    if ! timeout 15s "$ffmpeg_bin" -nostdin -hide_banner -loglevel error \
+        "${input_options[@]}" -i "$url" -t 1 -map 0:v:0 -f null - \
+        >"$work_dir/${label}.log" 2>&1; then
+        echo "$protocol churn player failed for $stream_name" >&2
+        cat "$work_dir/${label}.log" >&2 2>/dev/null || true
+        return 1
+    fi
+}
+
+probe_hls_session() {
+    local label="$1"
+    local index_url="$2"
+    local playlist="$work_dir/${label}.m3u8"
+    local segment_uri
+    local segment_url
+    curl --noproxy '*' -fsS --connect-timeout 1 --max-time 12 "$index_url" >"$playlist"
+    segment_uri="$(grep -E '^[^#].*\.(ts|m4s)(\?.*)?$' "$playlist" | head -1)"
+    [[ -n "$segment_uri" && "$segment_uri" == *session=* ]]
+    segment_url="$(python3 - "$index_url" "$segment_uri" <<'PY'
+import sys
+import urllib.parse
+
+print(urllib.parse.urljoin(sys.argv[1], sys.argv[2]))
+PY
+)"
+    curl --noproxy '*' -fsS --connect-timeout 1 --max-time 5 "$segment_url" >"$work_dir/${label}.segment"
+    [[ -s "$work_dir/${label}.segment" ]]
+}
+
 if [[ -z "$signaling_bin" ]]; then
     (
         cd "$script_dir/../signaling"
@@ -188,38 +249,36 @@ wait_http "http://127.0.0.1:$signaling_port/" "$signaling_pid" "$work_dir/signal
 server_pid=$!
 wait_http "http://127.0.0.1:$http_port/" "$server_pid" "$work_dir/server.log"
 
-publish_url="$(allocate publish publisher rtmp)"
-publisher_stream_id="$(allocation_stream_id publisher)"
-"$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
-    -f lavfi -i 'testsrc=size=320x180:rate=25' \
-    -f lavfi -i 'sine=frequency=1000:sample_rate=44100' \
-    -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
-    -pix_fmt yuv420p -g 25 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 96k -ac 2 \
-    -f flv "$publish_url" >"$work_dir/publisher.log" 2>&1 &
-publisher_pid=$!
-wait_runtime_state "$publisher_stream_id" publisher rtmp streaming
+run_concurrency() {
+    stream_name=live/concurrency
+    start_publisher publisher
 
-declare -a viewer_labels=()
-declare -a viewer_protocols=()
-declare -a viewer_ids=()
-declare -a hls_urls=()
-for protocol in rtsp rtmp http-flv hls; do
-    for index in 1 2; do
-        label="${protocol//-/_}_${index}"
-        play_url="$(allocate play "$label" "$protocol")"
-        stream_id="$(allocation_stream_id "$label")"
-        viewer_labels+=("$label")
-        viewer_protocols+=("$protocol")
-        viewer_ids+=("$stream_id")
-        if [[ "$protocol" == "hls" ]]; then
-            play_url="$(establish_hls_session "$label" "$play_url")"
-            hls_urls+=("$play_url")
-        fi
-        start_player "$label" "$protocol" "$play_url"
+    local protocol
+    local index
+    local label
+    local play_url
+    local stream_id
+    local -a viewer_labels=()
+    local -a viewer_protocols=()
+    local -a viewer_ids=()
+    local -a hls_urls=()
+    for protocol in rtsp rtmp http-flv hls; do
+        for index in 1 2; do
+            label="${protocol//-/_}_${index}"
+            play_url="$(allocate play "$label" "$protocol")"
+            stream_id="$(allocation_stream_id "$label")"
+            viewer_labels+=("$label")
+            viewer_protocols+=("$protocol")
+            viewer_ids+=("$stream_id")
+            if [[ "$protocol" == "hls" ]]; then
+                play_url="$(establish_hls_session "$label" "$play_url")"
+                hls_urls+=("$play_url")
+            fi
+            start_player "$label" "$protocol" "$play_url"
+        done
     done
-done
 
-python3 - "$stream_name" "$work_dir" "${viewer_labels[@]}" <<'PY'
+    python3 - "$stream_name" "$work_dir" "${viewer_labels[@]}" <<'PY'
 import json
 import pathlib
 import sys
@@ -250,7 +309,7 @@ for label in sys.argv[3:]:
 assert len(identities) == len(set(identities))
 PY
 
-python3 - "${hls_urls[@]}" <<'PY'
+    python3 - "${hls_urls[@]}" <<'PY'
 import sys
 import urllib.parse
 
@@ -258,22 +317,116 @@ secrets = [urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["session"][0]
 assert len(secrets) == 2 and len(set(secrets)) == 2
 PY
 
-for index in "${!viewer_ids[@]}"; do
-    wait_runtime_state "${viewer_ids[$index]}" output "${viewer_protocols[$index]}" streaming
-done
+    for index in "${!viewer_ids[@]}"; do
+        wait_runtime_state "${viewer_ids[$index]}" output "${viewer_protocols[$index]}" streaming
+    done
 
-for index in "${!player_pids[@]}"; do
-    if ! wait "${player_pids[$index]}"; then
-        echo "${viewer_protocols[$index]} player ${viewer_ids[$index]} failed for $stream_name" >&2
-        cat "$work_dir/${viewer_labels[$index]}.log" >&2 2>/dev/null || true
-        exit 1
-    fi
-done
-player_pids=()
+    for index in "${!player_pids[@]}"; do
+        if ! wait "${player_pids[$index]}"; then
+            echo "${viewer_protocols[$index]} player ${viewer_ids[$index]} failed for $stream_name" >&2
+            cat "$work_dir/${viewer_labels[$index]}.log" >&2 2>/dev/null || true
+            return 1
+        fi
+    done
+    player_pids=()
+    stop_publisher
+    echo "multi-protocol concurrency passed"
+}
 
-kill -INT "$publisher_pid"
-wait "$publisher_pid" 2>/dev/null || true
-publisher_pid=""
-wait_runtime_state "$publisher_stream_id" publisher rtmp stopped
+run_churn() {
+    stream_name=live/churn
+    start_publisher churn_publisher
 
-echo "multi-protocol concurrency passed"
+    local rounds="${MEDIA_SERVER_STRESS_ROUNDS:-10}"
+    local protocol
+    local round
+    local label
+    local play_url
+    local stream_id
+    local status
+    local -a viewer_labels=()
+    local -a viewer_ids=()
+    local -a viewer_protocols=()
+    local -a hls_urls=()
+    for protocol in rtsp rtmp http-flv; do
+        for round in $(seq 1 "$rounds"); do
+            label="churn_${protocol//-/_}_$round"
+            play_url="$(allocate play "$label" "$protocol")"
+            stream_id="$(allocation_stream_id "$label")"
+            viewer_labels+=("$label")
+            viewer_ids+=("$stream_id")
+            viewer_protocols+=("$protocol")
+            probe_once "$label" "$protocol" "$play_url"
+            wait_runtime_state "$stream_id" output "$protocol" stopped
+        done
+    done
+
+    for round in $(seq 1 "$rounds"); do
+        label="churn_hls_$round"
+        play_url="$(allocate play "$label" hls)"
+        stream_id="$(allocation_stream_id "$label")"
+        play_url="$(establish_hls_session "$label" "$play_url")"
+        viewer_labels+=("$label")
+        viewer_ids+=("$stream_id")
+        viewer_protocols+=(hls)
+        hls_urls+=("$play_url")
+        probe_hls_session "$label" "$play_url"
+        wait_runtime_state "$stream_id" output hls streaming
+    done
+
+    python3 - "$work_dir" "$rounds" "${viewer_labels[@]}" <<'PY'
+import json
+import pathlib
+import sys
+import uuid
+
+work_dir = pathlib.Path(sys.argv[1])
+rounds = int(sys.argv[2])
+identities = []
+for label in sys.argv[3:]:
+    with (work_dir / f"{label}_allocation.json").open(encoding="utf-8") as source:
+        stream_id = json.load(source)["stream_id"]
+    parsed = uuid.UUID(stream_id)
+    assert parsed.version == 4 and str(parsed) == stream_id
+    identities.append(stream_id)
+assert len(identities) == rounds * 4
+assert len(identities) == len(set(identities))
+PY
+
+    python3 - "${hls_urls[@]}" <<'PY'
+import sys
+import urllib.parse
+
+secrets = [urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["session"][0] for url in sys.argv[1:]]
+assert len(secrets) == len(set(secrets))
+PY
+
+    for index in "${!viewer_ids[@]}"; do
+        if [[ "${viewer_protocols[$index]}" == "hls" ]]; then
+            wait_runtime_state "${viewer_ids[$index]}" output hls stopped 350
+        fi
+    done
+    for index in "${!hls_urls[@]}"; do
+        status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o /dev/null -w '%{http_code}' "${hls_urls[$index]}")"
+        if [[ "$status" != "403" ]]; then
+            echo "expired HLS viewer ${viewer_ids[$((rounds * 3 + index))]} returned $status" >&2
+            return 1
+        fi
+    done
+
+    stop_publisher
+    echo "multi-protocol churn passed: $rounds rounds per protocol"
+}
+
+case "$scenario" in
+    concurrency)
+        run_concurrency
+        ;;
+    churn)
+        run_churn
+        ;;
+    *)
+        echo "unknown scenario: $scenario" >&2
+        exit 2
+        ;;
+esac
