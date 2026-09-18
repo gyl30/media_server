@@ -19,6 +19,7 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
    public:
     [[nodiscard]] static std::shared_ptr<hls_play_session> create(worker_context& worker, std::string stream_id, std::string stream_name);
     [[nodiscard]] static std::shared_ptr<hls_play_session> find(std::string_view secret, std::string_view stream_name);
+    static void shutdown_all();
 
     [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
     [[nodiscard]] const std::string& stream_name() const noexcept { return stream_name_; }
