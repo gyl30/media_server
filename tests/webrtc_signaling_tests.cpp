@@ -1174,8 +1174,8 @@ void test_http_method_contract()
     require(hls_post.result() == boost::beast::http::status::method_not_allowed, "http hls post status");
     require(hls_post[boost::beast::http::field::allow] == "GET", "http hls post allow");
     const auto hls_missing = peer.request(boost::beast::http::verb::get, "/play/hls/live/missing/index.m3u8");
-    require(hls_missing.result() == boost::beast::http::status::not_found && hls_missing.body() == "stream not found\n",
-            "http hls handoff missing stream");
+    require(hls_missing.result() == boost::beast::http::status::forbidden && hls_missing.body() == "hls session required\n",
+            "http hls session required");
     const auto old_hls = peer.request(boost::beast::http::verb::get, "/hls/live/camera/index.m3u8");
     require(old_hls.result() == boost::beast::http::status::not_found, "http old hls route status");
 

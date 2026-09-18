@@ -196,7 +196,7 @@ void hls_segmenter::on_end()
     ended_at_ = std::chrono::steady_clock::now();
 }
 
-std::string hls_segmenter::playlist(std::string_view base_path) const
+std::string hls_segmenter::playlist(std::string_view base_path, std::string_view query) const
 {
     std::scoped_lock lock(mutex_);
     std::ostringstream output;
@@ -204,7 +204,12 @@ std::string hls_segmenter::playlist(std::string_view base_path) const
     output << (video_config_.codec == video_transcode_codec::av1 ? "#EXT-X-VERSION:7\n" : "#EXT-X-VERSION:3\n");
     if (video_config_.codec == video_transcode_codec::av1)
     {
-        output << "#EXT-X-MAP:URI=\"" << base_path << "/init.mp4?v=" << fmp4_init_revision_ << "\"\n";
+        output << "#EXT-X-MAP:URI=\"" << base_path << "/init.mp4?v=" << fmp4_init_revision_;
+        if (!query.empty())
+        {
+            output << '&' << query;
+        }
+        output << "\"\n";
     }
     double maximum_duration = target_duration_seconds_;
     for (const auto& item : segments_)
@@ -219,7 +224,12 @@ std::string hls_segmenter::playlist(std::string_view base_path) const
 
     {
         output << "#EXTINF:" << std::fixed << std::setprecision(3) << item.duration << ",\n";
-        output << base_path << '/' << item.sequence << (video_config_.codec == video_transcode_codec::av1 ? ".m4s\n" : ".ts\n");
+        output << base_path << '/' << item.sequence << (video_config_.codec == video_transcode_codec::av1 ? ".m4s" : ".ts");
+        if (!query.empty())
+        {
+            output << '?' << query;
+        }
+        output << '\n';
     }
 
     if (ended_at_.has_value())

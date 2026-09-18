@@ -217,6 +217,7 @@ add_library(media_core STATIC
     media/net/udp_yield_transport.cpp
     media/net/tcp_listener.cpp
     media/flv/flv_muxer.cpp
+    media/hls/hls_play_session.cpp
     media/hls/hls_segmenter.cpp
     media/hls/hls.cpp
     media/http/http_event.cpp
@@ -440,6 +441,8 @@ if(BUILD_TESTING)
         stream_registry_generation_lifecycle
         stream_registry_session_identity_lifecycle
         hls_module_lifecycle
+        hls_play_admission
+        hls_play_inactivity
         rtsp_input_output_boundaries
         rtmp_duplicate_publisher_preserves_source
         rtmp_input_output_boundaries
