@@ -3,8 +3,10 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <cstdint>
 #include <functional>
+#include <string_view>
 
 #include "media/flv/flv_muxer.h"
 #include "media/core/media_reader.h"
@@ -21,6 +23,8 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
     using end_handler = std::function<void()>;
 
     rtmp_play_session(worker_context& worker,
+                      std::string stream_id,
+                      std::string stream_name,
                       std::shared_ptr<media_stream> stream,
                       flv_muxer::packet_handler packet_handler,
                       video_transcode_config video,
@@ -33,11 +37,16 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
     void on_read(media_read_batch batch) override;
     void on_end() override;
 
+    [[nodiscard]] std::string_view stream_id() const noexcept { return stream_id_; }
+    [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
+
    private:
     void apply_tracks(const media_track_snapshot_ptr& tracks);
 
    private:
     worker_context& worker_;
+    std::string stream_id_;
+    std::string stream_name_;
     std::shared_ptr<media_stream> stream_;
     flv_muxer muxer_;
     end_handler end_handler_;
