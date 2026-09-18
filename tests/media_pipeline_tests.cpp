@@ -1901,6 +1901,8 @@ class rtmp_publish_test_peer final
         client_socket_.close(error);
     }
 
+    void delete_stream() { require(rtmp_client_stop(client_) == 0, "rtmp publish deleteStream"); }
+
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
     {
@@ -2170,6 +2172,18 @@ class rtmp_play_test_peer final
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         require(weak.expired(), with_media_write ? "rtmp write error releases session" : "rtmp read error releases session");
+    }
+
+    void delete_stream() { require(rtmp_client_stop(client_) == 0, "rtmp play deleteStream"); }
+
+    void wait_session_closed()
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        while (!session_.expired() && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(session_.expired(), "rtmp play deleteStream releases session");
     }
 
    private:
@@ -2508,6 +2522,67 @@ void test_rtmp_publish_claim_lifecycle(std::string_view scenario)
         return;
     }
 
+    if (scenario == "delete_pending")
+    {
+        rtmp_publish_test_peer peer("live/deleted-pending-claim",
+                                    std::chrono::milliseconds{15'000},
+                                    boost::beast::http::status::no_content,
+                                    true,
+                                    std::string(test_rtmp_stream_id),
+                                    false,
+                                    std::chrono::seconds(2),
+                                    true);
+        peer.wait_claim_request();
+        peer.delete_stream();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        require(!peer.stream_exists() && peer.runtime_events().empty(), "pending RTMP publish delete remains invisible");
+        peer.release_claim_response();
+        peer.wait_session_closed();
+        require(!peer.stream_exists(), "deleted pending RTMP publish claim cannot create stream");
+        require(peer.runtime_events().empty(), "deleted pending RTMP publish claim emits no runtime event");
+        return;
+    }
+
+    if (scenario == "delete_active")
+    {
+        rtmp_publish_test_peer peer("live/deleted-active",
+                                    std::chrono::milliseconds{15'000},
+                                    boost::beast::http::status::no_content,
+                                    false,
+                                    std::string(test_rtmp_stream_id),
+                                    true,
+                                    std::chrono::seconds(2),
+                                    true);
+        const auto video = make_video_track();
+        peer.push_metadata(false);
+        peer.push_video_config(video);
+        peer.wait_track(video, 1U);
+        peer.wait_runtime_event_count(2U);
+        peer.delete_stream();
+        peer.wait_session_closed();
+        peer.wait_stream_removed();
+        peer.wait_runtime_event_count(4U);
+        const auto events = peer.runtime_events();
+        require(events.size() == 4U, "active RTMP publish delete emits one terminal pair");
+        require_publisher_event(events[2],
+                                event_kind::publisher,
+                                event_protocol::rtmp,
+                                event_state::stop_requested,
+                                test_rtmp_stream_id,
+                                "live/deleted-active",
+                                "control",
+                                "RTMP publish deleteStream event");
+        require_publisher_event(events[3],
+                                event_kind::publisher,
+                                event_protocol::rtmp,
+                                event_state::stopped,
+                                test_rtmp_stream_id,
+                                "live/deleted-active",
+                                "",
+                                "RTMP publish deleteStream stopped event");
+        return;
+    }
+
     fail("unknown RTMP publish claim scenario");
 }
 
@@ -2590,6 +2665,50 @@ void test_rtmp_play_claim_lifecycle(std::string_view scenario)
                                 "live/camera",
                                 "",
                                 "RTMP output stopped event");
+        return;
+    }
+
+    if (scenario == "delete_pending")
+    {
+        rtmp_play_test_peer peer(
+            make_video_track(), false, boost::beast::http::status::no_content, true, std::string(test_rtmp_stream_id), false, true);
+        peer.wait_claim_request();
+        peer.delete_stream();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        require(peer.runtime_events().empty(), "pending RTMP play delete remains invisible");
+        peer.release_claim_response();
+        peer.wait_session_closed();
+        require(peer.video_config_count() == 0U, "deleted pending RTMP play claim creates no reader");
+        require(peer.runtime_events().empty(), "deleted pending RTMP play claim emits no runtime event");
+        return;
+    }
+
+    if (scenario == "delete_active")
+    {
+        rtmp_play_test_peer peer(
+            make_video_track(), false, boost::beast::http::status::no_content, false, std::string(test_rtmp_stream_id), true, true);
+        peer.wait_runtime_event_count(2U);
+        peer.delete_stream();
+        peer.wait_session_closed();
+        peer.wait_runtime_event_count(4U);
+        const auto events = peer.runtime_events();
+        require(events.size() == 4U, "active RTMP play delete emits one terminal pair");
+        require_publisher_event(events[2],
+                                event_kind::output,
+                                event_protocol::rtmp,
+                                event_state::stop_requested,
+                                test_rtmp_stream_id,
+                                "live/camera",
+                                "control",
+                                "RTMP play deleteStream event");
+        require_publisher_event(events[3],
+                                event_kind::output,
+                                event_protocol::rtmp,
+                                event_state::stopped,
+                                test_rtmp_stream_id,
+                                "live/camera",
+                                "",
+                                "RTMP play deleteStream stopped event");
         return;
     }
 

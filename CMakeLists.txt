@@ -363,9 +363,13 @@ if(BUILD_TESTING)
         rtmp_claim_timeout
         rtmp_claim_events
         rtmp_claim_disconnect
+        rtmp_claim_delete_pending
+        rtmp_claim_delete_active
         rtmp_play_claim_invalid
         rtmp_play_claim_accepted
         rtmp_play_claim_rejected
+        rtmp_play_claim_delete_pending
+        rtmp_play_claim_delete_active
         rtmp_play_transport_event
         rtsp_pull_topology
         rtsp_pull_demux_error

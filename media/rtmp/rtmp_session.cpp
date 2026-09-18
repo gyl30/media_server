@@ -101,6 +101,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     }
     rtmp_server_handler_t handler{};
     handler.send = &rtmp_session::send_callback;
+    handler.ondelete_stream = &rtmp_session::delete_stream_callback;
     handler.onplay = &rtmp_session::play_callback;
     handler.onpause = &rtmp_session::pause_callback;
     handler.onseek = &rtmp_session::seek_callback;
@@ -128,18 +129,22 @@ void rtmp_session::run(boost::asio::yield_context yield)
             report_transport_error(error);
             break;
         }
-        if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
+        const auto input_result = bytes == 0 ? 0 : rtmp_server_input(context, buffer.data(), bytes);
+        if (input_result != 0)
         {
-            if (publish_)
+            if (input_result != RTMP_SERVER_INPUT_STOP && publish_)
             {
                 rtmp_event::report_publisher(
                     event_state::protocol_error, publish_->stream_id(), publish_->stream_name(), "media", "rtmp_input_failed");
             }
-            else if (play_)
+            else if (input_result != RTMP_SERVER_INPUT_STOP && play_)
             {
                 rtmp_event::report_output(event_state::protocol_error, play_->stream_id(), play_->stream_name(), "control", "rtmp_input_failed");
             }
-            shutdown();
+            if (input_result != RTMP_SERVER_INPUT_STOP)
+            {
+                shutdown();
+            }
             break;
         }
     }
@@ -167,6 +172,11 @@ int rtmp_session::send_callback(void* param, const void* header, std::size_t hea
     }
     self->write(std::move(data));
     return static_cast<int>(header_bytes + payload_bytes);
+}
+
+int rtmp_session::delete_stream_callback(void* param, std::uint32_t stream_id)
+{
+    return static_cast<rtmp_session*>(param)->on_delete_stream(stream_id);
 }
 
 int rtmp_session::play_callback(void* param, const char* app, const char* stream, double, double, std::uint8_t)
@@ -284,6 +294,26 @@ void rtmp_session::report_transport_error(const boost::system::error_code& error
     {
         rtmp_event::report_output(event_state::runtime_error, play_->stream_id(), play_->stream_name(), "transport", error.message());
     }
+}
+
+int rtmp_session::on_delete_stream(std::uint32_t stream_id)
+{
+    if (stream_id == 0)
+    {
+        return 0;
+    }
+
+    claim_pending_ = false;
+    if (publish_)
+    {
+        rtmp_event::report_publisher(event_state::stop_requested, publish_->stream_id(), publish_->stream_name(), "control");
+    }
+    else if (play_)
+    {
+        rtmp_event::report_output(event_state::stop_requested, play_->stream_id(), play_->stream_name(), "control");
+    }
+    shutdown();
+    return RTMP_SERVER_INPUT_STOP;
 }
 
 int rtmp_session::on_play(std::string app, std::string stream)

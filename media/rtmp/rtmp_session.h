@@ -46,6 +46,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);
+    static int delete_stream_callback(void* param, std::uint32_t stream_id);
     static int play_callback(void* param, const char* app, const char* stream, double start, double duration, std::uint8_t reset);
     static int pause_callback(void* param, int pause, std::uint32_t milliseconds);
     static int seek_callback(void* param, std::uint32_t milliseconds);
@@ -59,6 +60,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     void run_write(boost::asio::yield_context yield);
     void report_transport_error(const boost::system::error_code& error);
     void write(std::shared_ptr<std::vector<std::uint8_t>> data);
+    int on_delete_stream(std::uint32_t stream_id);
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
     void run_play_claim(boost::asio::yield_context yield);

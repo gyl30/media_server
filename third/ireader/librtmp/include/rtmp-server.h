@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #define RTMP_SERVER_ASYNC_START 0x12345678 // magic number, user call rtmp_server_start
+#define RTMP_SERVER_INPUT_STOP 0x12345679 // application accepted terminal command
 
 #define RTMP_SERVER_START_RECONNECT 1 // use with RTMP_SERVER_ASYNC_START
 
@@ -24,7 +25,7 @@ struct rtmp_server_handler_t
 
 	///@return 0-ok, other-error
 	//int (*oncreate_stream)(void* param, uint32_t* stream_id);
-	//int (*ondelete_stream)(void* param, uint32_t stream_id);
+	int (*ondelete_stream)(void* param, uint32_t stream_id);
 
 	///pull(server -> client)
 	///@return 0-ok, RTMP_SERVER_ASYNC_START-async mode(must call rtmp_server_start next), other-error
