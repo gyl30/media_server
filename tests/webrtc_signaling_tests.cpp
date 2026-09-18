@@ -14,6 +14,7 @@
 
 #include <srtp2/srtp.h>
 #include <boost/crc.hpp>
+#include <boost/json.hpp>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
 #include <openssl/hmac.h>
@@ -37,6 +38,7 @@
 #include "media/net/port_manager.h"
 #include "media/core/media_stream.h"
 #include "media/http/http_session.h"
+#include "media/http/signaling_client.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/net/worker_context.h"
 #include "media/net/io_context_pool.h"
@@ -47,6 +49,7 @@
 #include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/webrtc_packetizer.h"
+#include "tests/clients/publish_claim_test_server.h"
 
 extern "C"
 {
@@ -1194,23 +1197,37 @@ void test_http_method_contract()
 
 void test_whep_http_namespace_dispatch()
 {
-    worker_context worker;
-    worker.release_work();
-    worker.io().restart();
-    config application_config;
-
-    whep_http_request request{boost::beast::http::verb::get, "/play/whep/live/camera", 11};
-    const auto target = boost::urls::parse_origin_form(request.target());
-    require(target.has_value(), "whep request target");
-
-    const auto response = handle_whep_request(request, worker, *target, application_config);
+    whep_http_test_peer peer;
+    const auto response = peer.request(boost::beast::http::verb::get, "/play/whep/live/camera");
     require(response.result() == boost::beast::http::status::ok, "whep namespace dispatch status");
-
-    whep_http_request reserved_name_request{boost::beast::http::verb::get, "/play/whep/session", 11};
-    const auto reserved_name_target = boost::urls::parse_origin_form(reserved_name_request.target());
-    require(reserved_name_target.has_value(), "whep reserved stream request target");
-    const auto reserved_name_response = handle_whep_request(reserved_name_request, worker, *reserved_name_target, application_config);
+    const auto reserved_name_response = peer.request(boost::beast::http::verb::get, "/play/whep/session");
     require(reserved_name_response.result() == boost::beast::http::status::ok, "whep reserved stream endpoint status");
+}
+
+void configure_test_signaling(std::string url)
+{
+    config application_config;
+    application_config.signaling_url = std::move(url);
+    application_config.server_id = "media-1";
+    signaling_client::instance().configure(application_config, "instance-a");
+}
+
+void test_whep_play_claim(bool accepted)
+{
+    test::publish_claim_test_server claim_server(accepted ? boost::beast::http::status::no_content : boost::beast::http::status::forbidden);
+    configure_test_signaling(claim_server.url());
+    whep_http_test_peer peer;
+    const auto response = peer.post("/play/whep/live/camera", webrtc_offer_sdp, control_stream_id);
+    require(response.result() == (accepted ? boost::beast::http::status::created : boost::beast::http::status::forbidden), "whep play claim result");
+    const auto claim = claim_server.wait_request("/internal/play/claim");
+    const auto body = boost::json::parse(claim.body).as_object();
+    require(body.at("stream_id").as_string() == control_stream_id && body.at("protocol") == "whep" && body.at("stream_name") == "live/camera",
+            "whep play claim identity");
+    if (accepted)
+    {
+        require(peer.remove(std::string(response[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
+                "whep accepted session cleanup");
+    }
 }
 
 void test_whep_http_cors()
@@ -3867,6 +3884,14 @@ int main(int argc, char* argv[])
         else if (scenario == "whep_http_cors")
         {
             media_server::test_whep_http_cors();
+        }
+        else if (scenario == "whep_play_claim_accepted")
+        {
+            media_server::test_whep_play_claim(true);
+        }
+        else if (scenario == "whep_play_claim_rejected")
+        {
+            media_server::test_whep_play_claim(false);
         }
         else if (scenario == "whip_http_lifecycle")
         {

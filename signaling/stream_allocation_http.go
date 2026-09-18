@@ -42,3 +42,7 @@ func validStreamAllocationProtocol(operation streamOperation, protocol string) b
 	return protocol == "rtmp" || protocol == "rtsp" ||
 		(operation == streamOperationPlay && (protocol == "http-flv" || protocol == "hls"))
 }
+
+func validStreamClaimProtocol(operation streamOperation, protocol string) bool {
+	return validStreamAllocationProtocol(operation, protocol) || (operation == streamOperationPlay && protocol == "whep")
+}
