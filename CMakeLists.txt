@@ -229,6 +229,7 @@ add_library(media_core STATIC
     media/http/whip_http.cpp
     media/http/http_session.cpp
     media/http/http_server.cpp
+    media/gb28181/gb28181_event.cpp
     media/gb28181/gb28181_rtp_receiver.cpp
     media/gb28181/gb28181_rtp_sender.cpp
     media/gb28181/gb28181_udp_receiver_session.cpp
@@ -240,17 +241,20 @@ add_library(media_core STATIC
     media/webrtc/stun_message.cpp
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
+    media/webrtc/whep_event.cpp
     media/webrtc/whip_session.cpp
     media/webrtc/whip.cpp
     media/webrtc/whip_media_receiver.cpp
     media/webrtc/whep_session.cpp
     media/webrtc/whep.cpp
     media/webrtc/webrtc_packetizer.cpp
+    media/rtmp/rtmp_event.cpp
     media/rtmp/rtmp_publish_session.cpp
     media/rtmp/rtmp_play_session.cpp
     media/rtmp/rtmp_session.cpp
     media/rtmp/rtmp_server.cpp
     media/rtsp/rtsp_sdp.cpp
+    media/rtsp/rtsp_event.cpp
     media/rtsp/rtsp_uri.cpp
     media/rtsp/rtsp_pull_session.cpp
     media/rtsp/rtsp_pull_media.cpp
