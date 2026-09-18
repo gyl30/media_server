@@ -185,6 +185,40 @@ if [[ "$sample_resources" == "1" ]]; then
 fi
 
 stream_url="rtsp://$media_server_address:$rtsp_port/gb/34020000001320000001/34020000001320000002"
+for _ in $(seq 1 "$probe_attempts"); do
+    if grep -Fq 'simulator live started' "$work_dir/simulator.log"; then
+        break
+    fi
+    sleep 0.1
+done
+sleep 1
+play_allocation="$work_dir/play_allocation.json"
+play_url=""
+for _ in $(seq 1 "$probe_attempts"); do
+    allocation_status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        --data-binary '{"protocol":"rtsp","stream_name":"gb/34020000001320000001/34020000001320000002"}' \
+        -o "$play_allocation" \
+        "http://$signaling_address:$signaling_http_port/api/play/allocations")"
+    if [[ "$allocation_status" == "201" ]]; then
+        play_url="$(python3 - "$play_allocation" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    print(json.load(source)["play_url"])
+PY
+)"
+        break
+    fi
+    sleep 0.1
+done
+if [[ -z "$play_url" ]]; then
+    echo "play allocation did not become available for $stream_url" >&2
+    print_logs
+    exit 1
+fi
+stream_url="$play_url"
 probe_output="$work_dir/ffprobe.txt"
 probe_error="$work_dir/ffprobe.err"
 probe_ok=false
