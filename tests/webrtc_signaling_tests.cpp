@@ -1059,7 +1059,14 @@ class whep_http_test_peer final
         request.set(boost::beast::http::field::content_type, "application/sdp");
         if (!stream_id.empty())
         {
-            request.set("X-Stream-ID", stream_id);
+            if (request.target().starts_with("/publish/whip/"))
+            {
+                request.target(std::string(request.target()) + "?stream_id=" + std::string(stream_id));
+            }
+            else
+            {
+                request.set("X-Stream-ID", stream_id);
+            }
         }
         request.body() = std::move(body);
         request.prepare_payload();
@@ -1230,6 +1237,25 @@ void test_whep_play_claim(bool accepted)
     }
 }
 
+void test_whip_publish_claim(bool accepted)
+{
+    test::publish_claim_test_server claim_server(accepted ? boost::beast::http::status::no_content : boost::beast::http::status::forbidden);
+    configure_test_signaling(claim_server.url());
+    whep_http_test_peer peer;
+    const auto response = peer.post("/publish/whip/live/whip-claim", make_whip_offer(webrtc_offer_sdp), control_stream_id);
+    require(response.result() == (accepted ? boost::beast::http::status::created : boost::beast::http::status::forbidden),
+            "whip publish claim result");
+    const auto claim = claim_server.wait_request("/internal/publish/claim");
+    const auto body = boost::json::parse(claim.body).as_object();
+    require(body.at("stream_id").as_string() == control_stream_id && body.at("protocol") == "whip" && body.at("stream_name") == "live/whip-claim",
+            "whip publish claim identity");
+    if (accepted)
+    {
+        require(peer.remove(std::string(response[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
+                "whip accepted session cleanup");
+    }
+}
+
 void test_whep_http_cors()
 {
     whep_http_test_peer peer;
@@ -1364,23 +1390,28 @@ void test_whip_http_lifecycle()
 
     require_whip_options(peer.options("/publish/whip/live/whip-camera", "POST"), "POST, OPTIONS", true);
 
+    const auto missing_stream_id = peer.post("/publish/whip/live/whip-missing", offer);
+    require(missing_stream_id.result() == boost::beast::http::status::bad_request, "whip missing stream id rejected");
+    const auto invalid_stream_id = peer.post("/publish/whip/live/whip-invalid-id", offer, "invalid");
+    require(invalid_stream_id.result() == boost::beast::http::status::bad_request, "whip invalid stream id rejected");
+
     const auto endpoint_get = peer.request(boost::beast::http::verb::get, "/publish/whip/live/whip-camera");
     require(endpoint_get.result() == boost::beast::http::status::method_not_allowed, "whip endpoint get status");
     require(endpoint_get[boost::beast::http::field::allow] == "POST, OPTIONS", "whip endpoint get allow");
 
     const auto original = stream_registry::instance().find("live/camera");
-    const auto existing = peer.post("/publish/whip/live/camera", offer);
+    const auto existing = peer.post("/publish/whip/live/camera", offer, control_stream_id);
     require(existing.result() == boost::beast::http::status::conflict, "whip existing stream conflict");
     require(original && stream_registry::instance().find("live/camera") == original, "whip collision preserves original publisher");
 
-    const auto invalid = peer.post("/publish/whip/live/whip-invalid", webrtc_offer_sdp);
+    const auto invalid = peer.post("/publish/whip/live/whip-invalid", webrtc_offer_sdp, control_stream_id);
     require(invalid.result() == boost::beast::http::status::bad_request, "whip invalid offer status");
-    const auto after_invalid = peer.post("/publish/whip/live/whip-invalid", offer);
+    const auto after_invalid = peer.post("/publish/whip/live/whip-invalid", offer, alternate_control_stream_id);
     require(after_invalid.result() == boost::beast::http::status::created, "whip invalid offer releases reservation");
     require(peer.remove(std::string(after_invalid[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
             "whip invalid offer replacement delete");
 
-    const auto created = peer.post("/publish/whip/live/whip-camera", offer);
+    const auto created = peer.post("/publish/whip/live/whip-camera", offer, control_stream_id);
     require(created.result() == boost::beast::http::status::created, "whip create status");
     require(created[boost::beast::http::field::content_type] == "application/sdp", "whip create content type");
     require(created[boost::beast::http::field::cache_control] == "no-store", "whip create cache control");
@@ -1390,7 +1421,7 @@ void test_whip_http_lifecycle()
     const auto location = std::string(created[boost::beast::http::field::location]);
     require(location.starts_with("/publish/whip/session/"), "whip create location");
 
-    const auto duplicate = peer.post("/publish/whip/live/whip-camera", offer);
+    const auto duplicate = peer.post("/publish/whip/live/whip-camera", offer, alternate_control_stream_id);
     require(duplicate.result() == boost::beast::http::status::conflict, "whip pending publisher conflict");
 
     require_whip_options(peer.options(location, "DELETE"), "DELETE, OPTIONS", false);
@@ -1406,7 +1437,7 @@ void test_whip_http_lifecycle()
     const auto missing = peer.remove(location);
     require(missing.result() == boost::beast::http::status::not_found, "whip deleted session missing");
 
-    const auto recreated = peer.post("/publish/whip/live/whip-camera", offer);
+    const auto recreated = peer.post("/publish/whip/live/whip-camera", offer, replacement_control_stream_id);
     require(recreated.result() == boost::beast::http::status::created, "whip reservation released after delete");
     require(peer.remove(std::string(recreated[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
             "whip recreated delete");
@@ -1420,7 +1451,8 @@ void test_webrtc_module_shutdown()
         const auto whip_offer = make_whip_offer(webrtc_offer_sdp);
         for (int index = 0; index < 2; ++index)
         {
-            const auto published = peer.post("/publish/whip/live/stop-" + std::to_string(index), whip_offer);
+            const auto published = peer.post(
+                "/publish/whip/live/stop-" + std::to_string(index), whip_offer, index == 0 ? control_stream_id : alternate_control_stream_id);
             const auto played = peer.post("/play/whep/live/camera", webrtc_offer_sdp, index == 0 ? control_stream_id : alternate_control_stream_id);
             for (const auto& response : {published, played})
             {
@@ -1434,7 +1466,7 @@ void test_webrtc_module_shutdown()
         whep::shutdown();
         whip::shutdown();
         whep::shutdown();
-        const auto recreated = peer.post("/publish/whip/live/stop-0", whip_offer);
+        const auto recreated = peer.post("/publish/whip/live/stop-0", whip_offer, replacement_control_stream_id);
         require(recreated.result() == boost::beast::http::status::created, "module shutdown releases whip stream reservation");
         const auto replayed = peer.post("/play/whep/live/camera", webrtc_offer_sdp, replacement_control_stream_id);
         require(replayed.result() == boost::beast::http::status::created, "module shutdown accepts new whep runtime");
@@ -1454,7 +1486,7 @@ void test_whip_http_self_shutdown_releases_reservation()
     const auto offer = make_whip_offer(webrtc_offer_sdp);
     const std::string stream_path = "/publish/whip/live/whip-self-shutdown";
 
-    const auto created = peer.post(stream_path, offer);
+    const auto created = peer.post(stream_path, offer, control_stream_id);
     require(created.result() == boost::beast::http::status::created, "whip self shutdown create");
     const auto location = std::string(created[boost::beast::http::field::location]);
     require(location.starts_with("/publish/whip/session/"), "whip self shutdown location");
@@ -1506,7 +1538,7 @@ void test_whip_http_self_shutdown_releases_reservation()
     do
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        replacement = peer.post(stream_path, offer);
+        replacement = peer.post(stream_path, offer, alternate_control_stream_id);
         if (replacement.result() == boost::beast::http::status::created)
         {
             break;
@@ -1533,6 +1565,7 @@ void test_whip_establishment_timeout()
     require(certificate != nullptr, "whip establishment timeout certificate");
 
     auto session = std::make_shared<whip_session>(worker,
+                                                  std::string{control_stream_id},
                                                   "live/whip-establishment-timeout",
                                                   boost::asio::ip::make_address("127.0.0.1"),
                                                   certificate,
@@ -1567,8 +1600,13 @@ void test_whip_udp_queue_overflow()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "whip udp overflow certificate");
 
-    auto session = std::make_shared<whip_session>(
-        worker, "live/whip-udp-overflow", boost::asio::ip::make_address("127.0.0.1"), certificate, whip_session_timeouts{}, 0U);
+    auto session = std::make_shared<whip_session>(worker,
+                                                  std::string{control_stream_id},
+                                                  "live/whip-udp-overflow",
+                                                  boost::asio::ip::make_address("127.0.0.1"),
+                                                  certificate,
+                                                  whip_session_timeouts{},
+                                                  0U);
     require(session->startup(*offer) == whip_session_startup_error::none, "whip udp overflow session startup");
     const auto local_port = session->local_port();
     require(local_port != 0, "whip udp overflow socket open");
@@ -3441,7 +3479,8 @@ void test_whip_session_ingest(codec_id video_codec)
     require(offer.has_value(), "whip session parse offer");
 
     const std::string stream_name = h265 ? "live/whip-dtls-h265" : "live/whip-dtls";
-    auto session = std::make_shared<whip_session>(worker, stream_name, boost::asio::ip::make_address("127.0.0.1"), server_certificate);
+    auto session = std::make_shared<whip_session>(
+        worker, std::string{control_stream_id}, stream_name, boost::asio::ip::make_address("127.0.0.1"), server_certificate);
     require(session->startup(*offer) == whip_session_startup_error::none, "whip session startup");
     require(session->answer_sdp().find("a=recvonly\r\n") != std::string::npos, "whip session recvonly answer");
     if (h265)
@@ -3892,6 +3931,14 @@ int main(int argc, char* argv[])
         else if (scenario == "whep_play_claim_rejected")
         {
             media_server::test_whep_play_claim(false);
+        }
+        else if (scenario == "whip_publish_claim_accepted")
+        {
+            media_server::test_whip_publish_claim(true);
+        }
+        else if (scenario == "whip_publish_claim_rejected")
+        {
+            media_server::test_whip_publish_claim(false);
         }
         else if (scenario == "whip_http_lifecycle")
         {

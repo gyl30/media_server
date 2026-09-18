@@ -90,7 +90,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/publish/whip" || path.starts_with("/publish/whip/"))
     {
-        write_string_response(request, media_server::handle_whip_request(request, worker_, *parsed, config_), yield);
+        write_string_response(request, media_server::handle_whip_request(request, worker_, *parsed, config_, yield), yield);
         return;
     }
     if (path == "/play/hls" || path.starts_with("/play/hls/"))

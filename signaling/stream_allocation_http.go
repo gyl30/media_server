@@ -26,6 +26,10 @@ func makeStreamURL(protocol, streamName, streamID string, server mediaServerInst
 		scheme = "http"
 		path = "/play/hls/" + streamName + "/index.m3u8"
 		port = server.httpPort
+	case "whip":
+		scheme = "http"
+		path = "/publish/whip/" + streamName
+		port = server.httpPort
 	}
 	streamURL := url.URL{
 		Scheme: scheme,
@@ -39,7 +43,7 @@ func makeStreamURL(protocol, streamName, streamID string, server mediaServerInst
 }
 
 func validStreamAllocationProtocol(operation streamOperation, protocol string) bool {
-	return protocol == "rtmp" || protocol == "rtsp" ||
+	return protocol == "rtmp" || protocol == "rtsp" || (operation == streamOperationPublish && protocol == "whip") ||
 		(operation == streamOperationPlay && (protocol == "http-flv" || protocol == "hls"))
 }
 

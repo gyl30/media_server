@@ -81,16 +81,19 @@ func TestRuntimeEventHTTPAndSnapshot(t *testing.T) {
 	}
 }
 
-func TestRuntimeEventHTTPAcceptsHTTPOutputProtocols(t *testing.T) {
+func TestRuntimeEventHTTPAcceptsAdditionalProtocols(t *testing.T) {
 	server, _ := newRuntimeHTTPTestServer(t)
-	for index, protocol := range []string{"http-flv", "hls"} {
+	for index, eventType := range []struct {
+		kind     string
+		protocol string
+	}{{kind: "output", protocol: "http-flv"}, {kind: "output", protocol: "hls"}, {kind: "publisher", protocol: "whip"}} {
 		event := fmt.Sprintf(
-			`{"kind":"output","stream_id":"00000000-0000-4000-8000-%012d","stream_name":"live/camera","protocol":%q,"state":"starting","stage":"play"}`,
-			index+1, protocol,
+			`{"kind":%q,"stream_id":"00000000-0000-4000-8000-%012d","stream_name":"live/camera","protocol":%q,"state":"starting","stage":"play"}`,
+			eventType.kind, index+1, eventType.protocol,
 		)
 		response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(event), "application/json")
 		if response.Code != http.StatusNoContent {
-			t.Fatalf("%s event response = %d %s", protocol, response.Code, response.Body.String())
+			t.Fatalf("%s event response = %d %s", eventType.protocol, response.Code, response.Body.String())
 		}
 	}
 }

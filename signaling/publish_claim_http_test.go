@@ -11,29 +11,33 @@ import (
 )
 
 func TestPublishClaimHTTP(t *testing.T) {
-	registry := newMediaServerRegistry()
-	registration := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
-	if err := registry.register(registration, time.Now()); err != nil {
-		t.Fatalf("register() error = %v", err)
-	}
-	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	streamID := server.allocations.create(streamOperationPublish, "rtmp", "live/camera", mediaServerInstance{
-		serverID: "media-1", instanceID: "instance-a",
-	}, time.Now())
-	httpServer := httptest.NewServer(server.handler())
-	defer httpServer.Close()
-	command := map[string]string{
-		"stream_id": streamID, "server_id": "media-1", "instance_id": "instance-a",
-		"protocol": "rtmp", "stream_name": "live/camera",
-	}
+	for _, protocol := range []string{"rtmp", "whip"} {
+		t.Run(protocol, func(t *testing.T) {
+			registry := newMediaServerRegistry()
+			registration := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
+			if err := registry.register(registration, time.Now()); err != nil {
+				t.Fatalf("register() error = %v", err)
+			}
+			server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			streamID := server.allocations.create(streamOperationPublish, protocol, "live/camera", mediaServerInstance{
+				serverID: "media-1", instanceID: "instance-a",
+			}, time.Now())
+			httpServer := httptest.NewServer(server.handler())
+			defer httpServer.Close()
+			command := map[string]string{
+				"stream_id": streamID, "server_id": "media-1", "instance_id": "instance-a",
+				"protocol": protocol, "stream_name": "live/camera",
+			}
 
-	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", command)
-	if response.StatusCode != http.StatusNoContent || response.ContentLength != 0 {
-		t.Fatalf("status = %d body = %s", response.StatusCode, readBody(t, response))
+			response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", command)
+			if response.StatusCode != http.StatusNoContent || response.ContentLength != 0 {
+				t.Fatalf("status = %d body = %s", response.StatusCode, readBody(t, response))
+			}
+			response.Body.Close()
+			response = postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", command)
+			assertHTTPError(t, response, http.StatusNotFound, "allocation_not_found")
+		})
 	}
-	response.Body.Close()
-	response = postJSON(t, httpServer.Client(), httpServer.URL+"/internal/publish/claim", command)
-	assertHTTPError(t, response, http.StatusNotFound, "allocation_not_found")
 }
 
 func TestPublishClaimHTTPFencesOfflineAllocatedInstance(t *testing.T) {
