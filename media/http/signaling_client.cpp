@@ -39,11 +39,8 @@ std::string heartbeat_body(const config& cfg, std::string_view instance_id)
     });
 }
 
-std::string publish_claim_body(const config& cfg,
-                               std::string_view instance_id,
-                               std::string_view stream_id,
-                               std::string_view protocol,
-                               std::string_view stream_name)
+std::string stream_claim_body(
+    const config& cfg, std::string_view instance_id, std::string_view stream_id, std::string_view protocol, std::string_view stream_name)
 {
     return boost::json::serialize(boost::json::object{
         {"stream_id", stream_id},
@@ -160,7 +157,20 @@ signaling_request_result signaling_client::claim_publish(std::string_view stream
         return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
     }
     return request(
-        "/internal/publish/claim", publish_claim_body(config_, instance_id_, stream_id, protocol, stream_name), host_, port_, request_timeout_, yield);
+        "/internal/publish/claim", stream_claim_body(config_, instance_id_, stream_id, protocol, stream_name), host_, port_, request_timeout_, yield);
+}
+
+signaling_request_result signaling_client::claim_play(std::string_view stream_id,
+                                                      std::string_view protocol,
+                                                      std::string_view stream_name,
+                                                      boost::asio::yield_context& yield) const
+{
+    if (host_.empty())
+    {
+        return {.kind = signaling_result_kind::accepted, .status = 0, .error = {}};
+    }
+    return request(
+        "/internal/play/claim", stream_claim_body(config_, instance_id_, stream_id, protocol, stream_name), host_, port_, request_timeout_, yield);
 }
 
 void signaling_client::report(runtime_event event)
@@ -207,8 +217,7 @@ signaling_request_result signaling_client::request(std::string_view target,
     stream.async_connect(endpoints, yield[error]);
     if (error)
     {
-        return {.kind = signaling_result_kind::network_error,
-                .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
+        return {.kind = signaling_result_kind::network_error, .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
     }
 
     boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::post, target, 11};
@@ -220,8 +229,7 @@ signaling_request_result signaling_client::request(std::string_view target,
     boost::beast::http::async_write(stream, request, yield[error]);
     if (error)
     {
-        return {.kind = signaling_result_kind::network_error,
-                .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
+        return {.kind = signaling_result_kind::network_error, .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
     }
 
     boost::beast::flat_buffer buffer;
@@ -229,8 +237,7 @@ signaling_request_result signaling_client::request(std::string_view target,
     boost::beast::http::async_read(stream, buffer, response, yield[error]);
     if (error)
     {
-        return {.kind = signaling_result_kind::network_error,
-                .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
+        return {.kind = signaling_result_kind::network_error, .error = error == boost::beast::error::timeout ? "request timeout" : error.message()};
     }
 
     stream.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
