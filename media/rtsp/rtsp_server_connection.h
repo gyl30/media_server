@@ -6,6 +6,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstdint>
 
@@ -28,6 +29,7 @@ namespace media_server
 class worker_context;
 class rtsp_publish_session;
 class rtsp_play_session;
+enum class event_state;
 
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
@@ -56,6 +58,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
 
     void run(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
+    void report_publisher_event(event_state state, std::string_view stage = {}, std::string_view error = {});
     void report_transport_error(const boost::system::error_code& error);
     void write(std::span<const std::uint8_t> data);
     int reply_announce_and_close(rtsp_server_t* server, int status);

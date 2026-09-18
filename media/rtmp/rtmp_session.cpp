@@ -132,8 +132,8 @@ void rtmp_session::run(boost::asio::yield_context yield)
         {
             if (publish_)
             {
-                signaling_client::instance().report(rtmp_event::make_publisher(
-                    event_state::protocol_error, publish_->stream_id(), publish_->stream_name(), "media", "rtmp_input_failed"));
+                rtmp_event::report_publisher(
+                    event_state::protocol_error, publish_->stream_id(), publish_->stream_name(), "media", "rtmp_input_failed");
             }
             shutdown();
             break;
@@ -221,8 +221,8 @@ void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
     {
         if (publish_)
         {
-            signaling_client::instance().report(rtmp_event::make_publisher(
-                event_state::runtime_error, publish_->stream_id(), publish_->stream_name(), "transport", "write_queue_overflow"));
+            rtmp_event::report_publisher(
+                event_state::runtime_error, publish_->stream_id(), publish_->stream_name(), "transport", "write_queue_overflow");
         }
         shutdown();
         return;
@@ -272,8 +272,7 @@ void rtmp_session::report_transport_error(const boost::system::error_code& error
     {
         return;
     }
-    signaling_client::instance().report(
-        rtmp_event::make_publisher(event_state::runtime_error, publish_->stream_id(), publish_->stream_name(), "transport", error.message()));
+    rtmp_event::report_publisher(event_state::runtime_error, publish_->stream_id(), publish_->stream_name(), "transport", error.message());
 }
 
 int rtmp_session::on_play(std::string app, std::string stream)
@@ -408,8 +407,8 @@ void rtmp_session::run_publish_claim(boost::asio::yield_context yield)
     publish_ = std::move(publish);
     if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0)
     {
-        signaling_client::instance().report(rtmp_event::make_publisher(
-            event_state::runtime_error, publish_->stream_id(), publish_->stream_name(), "control", "rtmp_publish_start_failed"));
+        rtmp_event::report_publisher(
+            event_state::runtime_error, publish_->stream_id(), publish_->stream_name(), "control", "rtmp_publish_start_failed");
         shutdown();
         return;
     }

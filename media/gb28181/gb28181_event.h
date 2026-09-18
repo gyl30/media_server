@@ -8,10 +8,10 @@
 namespace media_server::gb28181_event
 {
 
-[[nodiscard]] runtime_event make_source(
+void report_source(
     event_state state, std::string_view stream_id, std::string_view stream_name, std::string_view stage = {}, std::string_view error = {});
 
-[[nodiscard]] runtime_event make_output(
+void report_output(
     event_state state, std::string_view stream_id, std::string_view stream_name, std::string_view stage = {}, std::string_view error = {});
 
 }    // namespace media_server::gb28181_event
