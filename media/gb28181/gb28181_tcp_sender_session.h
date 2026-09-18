@@ -1,7 +1,6 @@
 #ifndef MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 #define MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 
-#include <deque>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -15,6 +14,7 @@
 
 #include "media/net/tcp_listener.h"
 #include "media/core/media_stream.h"
+#include "media/net/tcp_write_queue.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/net/tcp_yield_transport.h"
@@ -56,12 +56,10 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
     std::chrono::milliseconds establishment_timeout_{};
-    std::size_t max_write_queue_bytes_;
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::unique_ptr<tcp_yield_transport> transport_;
-    std::size_t queued_write_bytes_{};
-    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
+    tcp_write_queue write_queue_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
     bool started_{};
     bool media_started_{};

@@ -2,19 +2,18 @@
 #define MEDIA_RTSP_RTSP_SERVER_CONNECTION_H
 
 #include <span>
-#include <deque>
 #include <chrono>
 #include <memory>
 #include <string>
-#include <string_view>
-#include <vector>
 #include <cstdint>
+#include <string_view>
 
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include "media/net/tcp_write_queue.h"
 #include "media/net/tcp_yield_transport.h"
 #include "media/codec/video_transcode_config.h"
 
@@ -72,17 +71,10 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     worker_context& worker_;
     video_transcode_codec video_codec_;
     tcp_yield_transport transport_;
+    tcp_write_queue write_queue_;
     boost::asio::steady_timer inactivity_timer_;
     std::chrono::milliseconds inactivity_timeout_;
     std::chrono::steady_clock::time_point last_control_activity_{};
-    std::size_t max_write_queue_bytes_;
-    std::size_t queued_write_bytes_{};
-    struct write_entry
-    {
-        std::shared_ptr<std::vector<std::uint8_t>> data;
-        bool close_after_write{};
-    };
-    std::deque<write_entry> write_queue_;
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;

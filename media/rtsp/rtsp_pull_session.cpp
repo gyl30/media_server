@@ -105,7 +105,7 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
       startup_timer_(worker_.io()),
       keepalive_timer_(worker_.io()),
       rtcp_timer_(worker_.io()),
-      max_write_queue_bytes_(max_write_queue_bytes),
+      write_queue_(max_write_queue_bytes),
       establishment_timeout_(establishment_timeout),
       initial_tracks_timeout_(initial_tracks_timeout)
 {
@@ -469,7 +469,8 @@ void rtsp_pull_session::write(std::span<const std::uint8_t> data)
         return;
     }
 
-    if (data.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data.size())
+    const auto result = write_queue_.enqueue(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
+    if (result == tcp_write_enqueue_result::overflow)
     {
         if (started_)
         {
@@ -479,10 +480,7 @@ void rtsp_pull_session::write(std::span<const std::uint8_t> data)
         return;
     }
 
-    const bool start_write = write_queue_.empty();
-    write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
-    queued_write_bytes_ += data.size();
-    if (start_write)
+    if (result == tcp_write_enqueue_result::start_writer)
     {
         const auto self = shared_from_this();
         boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context write_yield) { self->run_write(write_yield); }, boost::asio::detached);
@@ -498,18 +496,13 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
             return;
         }
 
-        const auto data = write_queue_.front();
-        boost::system::error_code error;
-        transport_->write(*data, yield, error);
-        if (error)
+        const auto result = write_queue_.write_one(*transport_, yield);
+        if (result.error)
         {
-            rtsp_event::report_source(event_state::runtime_error, stream_id_, stream_name_, source_id_, {}, error.message());
+            rtsp_event::report_source(event_state::runtime_error, stream_id_, stream_name_, source_id_, {}, result.error.message());
             shutdown();
             return;
         }
-
-        queued_write_bytes_ -= data->size();
-        write_queue_.pop_front();
     }
 }
 

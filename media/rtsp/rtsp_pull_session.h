@@ -2,7 +2,6 @@
 #define MEDIA_RTSP_RTSP_PULL_SESSION_H
 
 #include <span>
-#include <deque>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -13,6 +12,7 @@
 
 #include <boost/asio.hpp>
 
+#include "media/net/tcp_write_queue.h"
 #include "media/core/stream_registry.h"
 #include "media/net/tcp_yield_transport.h"
 
@@ -96,9 +96,7 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     boost::asio::steady_timer keepalive_timer_;
     boost::asio::steady_timer rtcp_timer_;
     std::unique_ptr<tcp_yield_transport> transport_;
-    std::size_t max_write_queue_bytes_;
-    std::size_t queued_write_bytes_{};
-    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
+    tcp_write_queue write_queue_;
     std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};
     std::chrono::milliseconds establishment_timeout_;
