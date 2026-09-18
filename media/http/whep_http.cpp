@@ -5,6 +5,7 @@
 #include "media/webrtc/whep.h"
 #include "media/core/stream_id.h"
 #include "media/http/whep_http.h"
+#include "media/http/signaling_client.h"
 #include "media/net/worker_context.h"
 
 namespace media_server
@@ -124,7 +125,8 @@ whep_http_string_response handle_whep_delete(const whep_http_request& request, s
 whep_http_string_response handle_whep_request(const whep_http_request& request,
                                               worker_context& worker,
                                               const boost::urls::url_view& target,
-                                              const config& application_config)
+                                              const config& application_config,
+                                              boost::asio::yield_context& yield)
 {
     std::vector<std::string> path;
     for (const auto segment : target.segments())
@@ -175,6 +177,13 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
                 stream_name.push_back('/');
             }
             stream_name.append(segment);
+        }
+        const auto claim = signaling_client::instance().claim_play(stream_id, "whep", stream_name, yield);
+        if (claim.kind != signaling_result_kind::accepted)
+        {
+            const auto status = claim.kind == signaling_result_kind::rejected ? boost::beast::http::status::forbidden
+                                                                              : boost::beast::http::status::service_unavailable;
+            return make_whep_error_response(request, status, "play claim failed\n");
         }
         return handle_whep_post(request, worker, std::string{stream_id}, std::move(stream_name), application_config);
     }

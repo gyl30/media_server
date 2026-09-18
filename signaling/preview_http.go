@@ -6,8 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-
-	"github.com/google/uuid"
+	"time"
 )
 
 type previewStartRequest struct {
@@ -69,9 +68,8 @@ func (s *infrastructureServer) handlePreviewStart(writer http.ResponseWriter, re
 		return
 	}
 
-	writeJSON(writer, http.StatusCreated, previewStartResponse{
-		StreamID: uuid.NewString(), WHEPURL: makeWHEPURL(streamName, server),
-	})
+	streamID := s.allocations.create(streamOperationPlay, "whep", streamName, server, time.Now())
+	writeJSON(writer, http.StatusCreated, previewStartResponse{StreamID: streamID, WHEPURL: makeWHEPURL(streamName, server)})
 }
 
 func makePreviewTarget(command previewStartRequest) (previewTarget, bool) {

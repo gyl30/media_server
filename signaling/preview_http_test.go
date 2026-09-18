@@ -43,6 +43,11 @@ func TestPreviewHTTPAllocatesRTSPSourceRuntime(t *testing.T) {
 	if first.WHEPURL != expectedURL {
 		t.Fatalf("WHEP URL = %q, want %q", first.WHEPURL, expectedURL)
 	}
+	allocation, ok := storedStreamAllocation(server.allocations, first.StreamID)
+	if !ok || allocation.operation != streamOperationPlay || allocation.protocol != "whep" || allocation.streamName != source.streamName ||
+		allocation.serverID != registration.ServerID || allocation.instanceID != registration.InstanceID {
+		t.Fatalf("preview allocation = %+v, ok = %v", allocation, ok)
+	}
 	second := requestPreview(t, server, `{"source_id":"`+source.sourceID+`"}`)
 	if second.StreamID == first.StreamID {
 		t.Fatalf("successive previews reused stream ID %q", first.StreamID)

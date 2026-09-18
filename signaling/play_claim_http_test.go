@@ -11,7 +11,7 @@ import (
 )
 
 func TestPlayClaimHTTPClaimsOnce(t *testing.T) {
-	for _, protocol := range []string{"rtsp", "http-flv", "hls"} {
+	for _, protocol := range []string{"rtsp", "http-flv", "hls", "whep"} {
 		t.Run(protocol, func(t *testing.T) {
 			registry := newMediaServerRegistry()
 			serverInstance := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")

@@ -575,6 +575,8 @@ if(BUILD_TESTING)
         http_head_response_contract
         http_method_contract
         whep_http_cors
+        whep_play_claim_accepted
+        whep_play_claim_rejected
         whip_http_lifecycle
         webrtc_module_shutdown
         whip_http_self_shutdown_releases_reservation
