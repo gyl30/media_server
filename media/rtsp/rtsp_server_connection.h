@@ -38,6 +38,8 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
                            video_transcode_codec video_codec,
                            std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
                            std::size_t max_write_queue_bytes = 1024U * 1024U);
+
+   public:
     void startup();
     void shutdown();
 
@@ -55,17 +57,26 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     static int options_callback(void* param, rtsp_server_t* server, const char* uri);
     static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
 
+   private:
     void run(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
+
+   private:
     [[nodiscard]] int admit_play(std::string_view uri, bool track_uri);
+    void write(std::span<const std::uint8_t> data);
+
+   private:
     void report_publisher_event(event_state state, std::string_view stage = {}, std::string_view error = {});
     void report_output_event(event_state state, std::string_view stage = {}, std::string_view error = {});
     void report_transport_error(const boost::system::error_code& error);
-    void write(std::span<const std::uint8_t> data);
+
+   private:
     int reply_announce_and_close(rtsp_server_t* server, int status);
-    void safe_shutdown();
     void record_control_activity();
     void schedule_inactivity_timeout();
+
+   private:
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

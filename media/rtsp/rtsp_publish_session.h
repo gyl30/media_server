@@ -33,18 +33,24 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
                          std::function<void(std::span<const std::uint8_t>)> write,
                          std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
 
+   public:
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
+   public:
+    void shutdown();
+
+   public:
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
-    [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
-    [[nodiscard]] const std::string& stream_name() const noexcept { return stream_name_; }
     int on_setup(
         rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
     int prepare_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length);
     int accept_announce(rtsp_server_t* server);
     int on_record(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
-    void shutdown();
+
+   public:
+    [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
+    [[nodiscard]] const std::string& stream_name() const noexcept { return stream_name_; }
 
    private:
     void safe_shutdown();

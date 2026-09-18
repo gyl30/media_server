@@ -17,6 +17,7 @@ class stream_session
    public:
     virtual ~stream_session() = default;
 
+   public:
     virtual void shutdown() = 0;
     [[nodiscard]] virtual std::string_view stream_id() const noexcept { return {}; }
 };
@@ -26,6 +27,7 @@ class stream_registry final
    public:
     [[nodiscard]] static stream_registry& instance();
 
+   public:
     bool add(const std::shared_ptr<media_stream>& stream);
     void remove(const media_stream& expected);
     [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view name) const;
@@ -69,8 +71,10 @@ class stream_registry final
         std::map<std::string, std::shared_ptr<stream_session>, std::less<>> sender_sessions;
     };
 
+   private:
     stream_registry() = default;
 
+   private:
     static bool empty(const stream_entry& entry);
 
    private:

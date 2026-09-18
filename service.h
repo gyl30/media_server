@@ -18,6 +18,7 @@ class service
     explicit service(config cfg);
     ~service();
 
+   public:
     int run();
 
    private:

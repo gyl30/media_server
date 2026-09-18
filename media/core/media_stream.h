@@ -22,6 +22,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
    public:
     media_stream(std::string name, worker_context& worker);
 
+   public:
     [[nodiscard]] const std::string& name() const noexcept;
     [[nodiscard]] std::vector<media_track> tracks() const;
 
@@ -44,6 +45,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
         media_frame frame;
     };
 
+   private:
     friend class media_reader_handle;
 
     void add_sink_on_owner(std::shared_ptr<media_sink> sink);

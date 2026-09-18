@@ -5,9 +5,9 @@
 #include <utility>
 
 #include <boost/asio.hpp>
-#include <boost/scope/scope_exit.hpp>
 #include <spdlog/spdlog.h>
 #include <boost/uuid/uuid_io.hpp>
+#include <boost/scope/scope_exit.hpp>
 #include <boost/uuid/random_generator.hpp>
 
 #include "service.h"

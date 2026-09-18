@@ -18,8 +18,10 @@ class worker_context;
 class hls_play_session final : public std::enable_shared_from_this<hls_play_session>
 {
    public:
-    [[nodiscard]] static std::shared_ptr<hls_play_session> create(
-        worker_context& worker, std::string stream_id, std::string stream_name, std::shared_ptr<hls_segmenter> segmenter);
+    [[nodiscard]] static std::shared_ptr<hls_play_session> create(worker_context& worker,
+                                                                  std::string stream_id,
+                                                                  std::string stream_name,
+                                                                  std::shared_ptr<hls_segmenter> segmenter);
     [[nodiscard]] static std::shared_ptr<hls_play_session> find(std::string_view secret, std::string_view stream_name);
     static void shutdown_all();
 
@@ -41,6 +43,8 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
 
    private:
     static constexpr auto inactivity_timeout = std::chrono::seconds{30};
+
+   private:
     mutable std::mutex mutex_;
     std::string stream_id_;
     std::string stream_name_;

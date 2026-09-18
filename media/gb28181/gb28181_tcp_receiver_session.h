@@ -30,12 +30,17 @@ class gb28181_tcp_receiver_session final : public stream_session, public std::en
                                  boost::asio::ip::address bind_address,
                                  std::chrono::milliseconds establishment_timeout);
 
+   public:
     [[nodiscard]] bool startup();
     void shutdown() override;
+
+   public:
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
     void run(boost::asio::yield_context yield);
+
+   private:
     void safe_shutdown();
 
    private:

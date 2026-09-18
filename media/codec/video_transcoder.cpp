@@ -188,15 +188,16 @@ bool create_pixel_converter(const AVFrame& decoded_frame, AVPixelFormat encoder_
         scaler = nullptr;
     }
     converted_frame = av_frame_alloc();
-    boost::scope::scope_exit cleanup([&]()
-                                     {
-                                         av_frame_free(&converted_frame);
-                                         if (scaler != nullptr)
-                                         {
-                                             sws_freeContext(scaler);
-                                             scaler = nullptr;
-                                         }
-                                     });
+    boost::scope::scope_exit cleanup(
+        [&]()
+        {
+            av_frame_free(&converted_frame);
+            if (scaler != nullptr)
+            {
+                sws_freeContext(scaler);
+                scaler = nullptr;
+            }
+        });
     if (scaler == nullptr || converted_frame == nullptr)
     {
         spdlog::error("video transcoder pixel converter allocate failed");
@@ -350,7 +351,6 @@ bool video_transcoder::startup(const video_transcoder_config& config)
     spdlog::debug("video transcoder started input {} output av1 decoder {}", to_string(config.input_codec), decoder->name);
     return true;
 }
-
 
 bool video_transcoder::transcode(const media_frame& input, std::vector<media_frame>& output)
 {

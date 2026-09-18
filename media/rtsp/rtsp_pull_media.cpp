@@ -51,13 +51,14 @@ bool rtsp_pull_media::startup()
         }
 
         auto* demuxer = rtsp_demuxer_create(static_cast<int>(index), 500, &rtsp_pull_media::packet_callback, this);
-        boost::scope::scope_exit cleanup_demuxer([&]()
-        {
-            if (demuxer != nullptr)
+        boost::scope::scope_exit cleanup_demuxer(
+            [&]()
             {
-                rtsp_demuxer_destroy(demuxer);
-            }
-        });
+                if (demuxer != nullptr)
+                {
+                    rtsp_demuxer_destroy(demuxer);
+                }
+            });
         if (demuxer == nullptr ||
             rtsp_demuxer_add_payload(demuxer,
                                      description.clock_rate,

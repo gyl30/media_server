@@ -33,6 +33,7 @@ class tcp_write_queue final
 
     explicit tcp_write_queue(std::size_t max_bytes);
 
+   public:
     [[nodiscard]] tcp_write_enqueue_result enqueue(buffer data, bool stop_after_write = false);
     [[nodiscard]] tcp_write_result write_one(tcp_yield_transport& transport, boost::asio::yield_context& yield);
     [[nodiscard]] bool empty() const noexcept;
@@ -46,6 +47,7 @@ class tcp_write_queue final
         bool stop_after_write{};
     };
 
+   private:
     std::size_t max_bytes_;
     std::size_t queued_bytes_{};
     std::deque<entry> entries_;

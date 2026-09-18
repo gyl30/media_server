@@ -19,6 +19,7 @@ class tcp_listener final
    public:
     tcp_listener(boost::asio::io_context& io, std::uint16_t port, boost::asio::ip::address bind_address);
 
+   public:
     void startup(boost::system::error_code& error);
     void accept(boost::asio::ip::tcp::socket& socket,
                 std::chrono::milliseconds timeout,

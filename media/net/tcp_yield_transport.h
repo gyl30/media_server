@@ -17,6 +17,7 @@ class tcp_yield_transport final
    public:
     explicit tcp_yield_transport(boost::asio::ip::tcp::socket socket);
 
+   public:
     std::size_t read(std::span<std::uint8_t> buffer, boost::asio::yield_context& yield, boost::system::error_code& error);
     std::size_t write(std::span<const std::uint8_t> data, boost::asio::yield_context& yield, boost::system::error_code& error);
 

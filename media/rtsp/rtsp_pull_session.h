@@ -44,9 +44,14 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
                       std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtsp_pull_session();
 
+   public:
     [[nodiscard]] static bool valid_url(std::string_view url);
+
+   public:
     bool startup();
     void shutdown() override;
+
+   public:
     [[nodiscard]] std::string_view stream_id() const noexcept override;
     [[nodiscard]] std::string_view source_id() const noexcept;
     [[nodiscard]] std::string_view stream_name() const noexcept;
@@ -59,6 +64,7 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
         std::uint16_t port{554};
     };
 
+   private:
     static int send_callback(void* param, const char* uri, const void* request, std::size_t bytes);
     static int rtp_port_callback(void* param, int media, const char* source, unsigned short port[2], char* ip, int length);
     static int describe_callback(void* param, const char* sdp, int length);
@@ -69,18 +75,23 @@ class rtsp_pull_session final : public stream_session, public std::enable_shared
     static int teardown_callback(void* param);
     static void rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);
 
+   private:
     [[nodiscard]] static std::optional<parsed_url> parse_url(std::string_view url);
     void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
-    void safe_shutdown();
     void record_establishment_progress();
     void schedule_establishment_timeout();
     void schedule_keepalive();
     void schedule_rtcp();
+
+   private:
     int on_describe(const char* sdp, int length);
     int on_setup(int timeout, std::int64_t duration);
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
+
+   private:
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

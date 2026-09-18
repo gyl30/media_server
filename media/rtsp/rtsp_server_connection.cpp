@@ -9,8 +9,8 @@
 #include <boost/asio/detached.hpp>
 #include <boost/scope/scope_exit.hpp>
 
-#include "media/rtsp/rtsp_event.h"
 #include "media/rtsp/rtsp_uri.h"
+#include "media/rtsp/rtsp_event.h"
 #include "media/net/worker_context.h"
 #include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_play_session.h"

@@ -300,7 +300,6 @@ bool audio_transcoder::startup(const audio_transcoder_config& config)
     return true;
 }
 
-
 std::span<const std::uint8_t> audio_transcoder::output_codec_config() const noexcept
 {
     if (!state_)

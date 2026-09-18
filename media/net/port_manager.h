@@ -19,6 +19,7 @@ class port_manager final
         std::uint16_t second{};
     };
 
+   public:
     static void init(int start_port, int end_port);
     [[nodiscard]] static port_manager& instance();
 
@@ -34,6 +35,7 @@ class port_manager final
    private:
     static std::unique_ptr<port_manager> instance_;
 
+   private:
     std::uint16_t start_port_{};
     std::uint16_t end_port_{};
     std::mutex mutex_;

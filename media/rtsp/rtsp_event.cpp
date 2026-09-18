@@ -1,5 +1,4 @@
 #include "media/rtsp/rtsp_event.h"
-
 #include "media/http/signaling_client.h"
 
 namespace media_server::rtsp_event

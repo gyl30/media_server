@@ -25,6 +25,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
 
     hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config);
 
+   public:
     void startup();
     void shutdown();
 
@@ -40,6 +41,8 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
                               std::string_view content_type,
                               std::vector<std::uint8_t> body,
                               boost::asio::yield_context& yield);
+
+   private:
     void safe_shutdown();
 
    private:

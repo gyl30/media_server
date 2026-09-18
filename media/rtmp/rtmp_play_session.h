@@ -30,15 +30,18 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
                       video_transcode_config video,
                       end_handler on_end);
 
+   public:
     void startup();
     void shutdown();
 
+   public:
+    [[nodiscard]] std::string_view stream_id() const noexcept { return stream_id_; }
+    [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
+
+   public:
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;
     void on_end() override;
-
-    [[nodiscard]] std::string_view stream_id() const noexcept { return stream_id_; }
-    [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
 
    private:
     void apply_tracks(const media_track_snapshot_ptr& tracks);

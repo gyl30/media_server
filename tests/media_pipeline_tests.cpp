@@ -57,6 +57,7 @@
 #include "media/webrtc/whep_session.h"
 #include "media/hls/hls_play_session.h"
 #include "media/core/stream_registry.h"
+#include "media/rtsp/rtsp_pull_media.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
 #include "media/http/signaling_client.h"
@@ -65,7 +66,6 @@
 #include "media/http/http_flv_streamer.h"
 #include "media/rtmp/rtmp_play_session.h"
 #include "media/rtsp/rtsp_play_session.h"
-#include "media/rtsp/rtsp_pull_media.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_publish_media.h"
 #include "media/webrtc/webrtc_packetizer.h"
@@ -858,6 +858,7 @@ class counting_sink final : public media_sink
     }
     void on_end() override { ++ends; }
 
+   public:
     std::size_t tracks{};
     std::size_t frames{};
     std::size_t ends{};
@@ -1664,6 +1665,7 @@ class rtmp_publish_test_peer final
         runner_.join();
     }
 
+   public:
     void push_metadata(bool audio, codec_id video_codec = codec_id::h264)
     {
         std::array<std::uint8_t, 256> data{};
@@ -2078,6 +2080,7 @@ class rtmp_play_test_peer final
         stream_registry::instance().remove(*stream_);
     }
 
+   public:
     rtmp_status pause()
     {
         require(rtmp_client_pause(client_, 1) == 0, "rtmp pause request");
@@ -3973,13 +3976,10 @@ void test_hls_source_replacement()
     const auto first_playlist = request_hls(acceptor, worker, application_config, first_location);
     require(first_playlist.result() == boost::beast::http::status::ok && first_playlist.body().find("#EXT-X-ENDLIST") == std::string::npos,
             "hls replacement first playlist active");
-    const auto first_segment =
-        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret);
+    const auto first_segment = request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret);
     require(first_segment.result() == boost::beast::http::status::ok && !first_segment.body().empty(), "hls replacement first segment");
-    const auto first_segment_2 =
-        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret_2);
-    const auto first_segment_3 =
-        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret_3);
+    const auto first_segment_2 = request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret_2);
+    const auto first_segment_3 = request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret_3);
     require(first_segment_2.result() == boost::beast::http::status::ok && first_segment_2.body() == first_segment.body() &&
                 first_segment_3.result() == boost::beast::http::status::ok && first_segment_3.body() == first_segment.body(),
             "hls replacement viewers share first generation segmenter");
@@ -3987,17 +3987,21 @@ void test_hls_source_replacement()
     stream_registry::instance().remove(*first);
     std::promise<void> ended;
     auto ended_future = ended.get_future();
-    boost::asio::post(worker.io(), [first, &ended]() { first->end(); ended.set_value(); });
+    boost::asio::post(worker.io(),
+                      [first, &ended]()
+                      {
+                          first->end();
+                          ended.set_value();
+                      });
     ended_future.get();
     const auto ended_playlist = request_hls(acceptor, worker, application_config, first_location);
-    require(ended_playlist.result() == boost::beast::http::status::ok &&
-                ended_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
+    require(ended_playlist.result() == boost::beast::http::status::ok && ended_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
             "hls replacement first viewer sees endlist");
     const auto ended_fresh_location = create_viewer("00000000-0000-4000-8000-000000000125");
     const auto ended_fresh_playlist = request_hls(acceptor, worker, application_config, ended_fresh_location);
-    require(ended_fresh_playlist.result() == boost::beast::http::status::ok &&
-                ended_fresh_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
-            "hls replacement fresh viewer uses retained ended source");
+    require(
+        ended_fresh_playlist.result() == boost::beast::http::status::ok && ended_fresh_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
+        "hls replacement fresh viewer uses retained ended source");
     const auto ended_fresh_secret = ended_fresh_location.substr(ended_fresh_location.find("?session=") + 9U);
     const auto ended_fresh_segment =
         request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + ended_fresh_secret);
@@ -4017,34 +4021,35 @@ void test_hls_source_replacement()
     const auto second_playlist = request_hls(acceptor, worker, application_config, second_location);
     require(second_playlist.result() == boost::beast::http::status::ok && second_playlist.body().find("#EXT-X-ENDLIST") == std::string::npos,
             "hls replacement second playlist active");
-    const auto second_segment =
-        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + second_secret);
+    const auto second_segment = request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + second_secret);
     require(second_segment.result() == boost::beast::http::status::ok && second_segment.body() != first_segment.body(),
             "hls replacement second segment belongs to new source");
-    const auto second_segment_2 =
-        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + second_secret_2);
+    const auto second_segment_2 = request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + second_secret_2);
     require(second_segment_2.result() == boost::beast::http::status::ok && second_segment_2.body() == second_segment.body(),
             "hls replacement viewers share second generation segmenter");
 
     const auto retained_playlist = request_hls(acceptor, worker, application_config, first_location);
-    require(retained_playlist.result() == boost::beast::http::status::ok &&
-                retained_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
+    require(retained_playlist.result() == boost::beast::http::status::ok && retained_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
             "hls replacement old viewer remains on ended source");
-    const auto retained_segment =
-        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret);
+    const auto retained_segment = request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret);
     require(retained_segment.result() == boost::beast::http::status::ok && retained_segment.body() == first_segment.body(),
             "hls replacement old viewer retains old segment");
 
     stream_registry::instance().remove(*second);
     std::promise<void> second_ended;
     auto second_ended_future = second_ended.get_future();
-    boost::asio::post(worker.io(), [second, &second_ended]() { second->end(); second_ended.set_value(); });
+    boost::asio::post(worker.io(),
+                      [second, &second_ended]()
+                      {
+                          second->end();
+                          second_ended.set_value();
+                      });
     second_ended_future.get();
 
     const auto second_ended_playlist = request_hls(acceptor, worker, application_config, second_location_2);
-    require(second_ended_playlist.result() == boost::beast::http::status::ok &&
-                second_ended_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
-            "hls replacement second viewer sees endlist");
+    require(
+        second_ended_playlist.result() == boost::beast::http::status::ok && second_ended_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
+        "hls replacement second viewer sees endlist");
 
     auto third = std::make_shared<media_stream>(std::string(stream_name), worker);
     require(third->set_tracks({make_video_track()}), "hls replacement third tracks");
@@ -4057,8 +4062,7 @@ void test_hls_source_replacement()
     const auto third_playlist = request_hls(acceptor, worker, application_config, third_location);
     require(third_playlist.result() == boost::beast::http::status::ok && third_playlist.body().find("#EXT-X-ENDLIST") == std::string::npos,
             "hls replacement third playlist active");
-    const auto third_segment =
-        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + third_secret);
+    const auto third_segment = request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + third_secret);
     require(third_segment.result() == boost::beast::http::status::ok && third_segment.body() != second_segment.body() &&
                 third_segment.body() != first_segment.body(),
             "hls replacement third segment belongs to third source");
@@ -7590,6 +7594,7 @@ class rtsp_play_test_peer final
         stream_registry::instance().remove(*stream_);
     }
 
+   public:
     std::string request(std::string_view request)
     {
         boost::asio::write(client_, boost::asio::buffer(request));

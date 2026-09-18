@@ -48,13 +48,14 @@ bool rtsp_publish_media::startup(const std::string& rtcp_cname)
     {
         const auto& description = descriptions_[index];
         auto* demuxer = rtsp_demuxer_create(static_cast<int>(index), 500, &rtsp_publish_media::packet_callback, this);
-        boost::scope::scope_exit cleanup_demuxer([&]()
-        {
-            if (demuxer != nullptr)
+        boost::scope::scope_exit cleanup_demuxer(
+            [&]()
             {
-                rtsp_demuxer_destroy(demuxer);
-            }
-        });
+                if (demuxer != nullptr)
+                {
+                    rtsp_demuxer_destroy(demuxer);
+                }
+            });
         if (demuxer == nullptr ||
             rtsp_demuxer_add_payload(demuxer,
                                      description.clock_rate,

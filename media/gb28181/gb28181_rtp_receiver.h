@@ -33,12 +33,15 @@ class gb28181_rtp_receiver final
 {
    public:
     gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
+
+   public:
     [[nodiscard]] bool startup();
     [[nodiscard]] gb28181_rtp_receive_result receive_rtp(std::span<const std::uint8_t> data);
     [[nodiscard]] int receive_rtcp(std::span<const std::uint8_t> data);
     [[nodiscard]] int generate_rtcp(std::span<std::uint8_t> buffer);
     void shutdown();
 
+   public:
     [[nodiscard]] const std::string& stream_name() const noexcept;
     [[nodiscard]] bool recording() const noexcept { return recording_; }
 
@@ -50,6 +53,7 @@ class gb28181_rtp_receiver final
         bool invalid{};
     };
 
+   private:
     static int packet_callback(void* param, avpacket_t* packet);
     static void stream_callback(void* param, int stream, int codecid, const void* extra, int bytes, int finish);
 

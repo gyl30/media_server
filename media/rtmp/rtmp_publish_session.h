@@ -32,11 +32,16 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
                          std::string stream_name,
                          std::chrono::milliseconds initial_tracks_timeout,
                          shutdown_handler on_shutdown);
+
+   public:
     bool startup();
     void shutdown();
+
+   public:
     [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
     [[nodiscard]] const std::string& stream_name() const noexcept { return stream_->name(); }
 
+   public:
     int on_video(const void* data, std::size_t bytes, std::uint32_t timestamp);
     int on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp);
     int on_script(std::span<const std::uint8_t> data);
@@ -44,12 +49,17 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
    private:
     static int demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags);
 
+   private:
     int on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
     int handle_video_config(int codec, std::span<const std::uint8_t> data);
     int handle_audio_config(int codec, std::span<const std::uint8_t> data);
     int initialize_g711_track(int codec);
     int publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
+
+   private:
     void try_initialize_tracks();
+
+   private:
     void safe_shutdown();
 
    private:

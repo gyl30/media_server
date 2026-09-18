@@ -35,20 +35,26 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
                       boost::asio::ip::address local_address,
                       std::function<void(std::span<const std::uint8_t>)> write);
 
+   public:
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
+   public:
     void startup();
+    void shutdown();
+
+   public:
     [[nodiscard]] std::string_view stream_id() const noexcept { return stream_id_; }
     [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
 
+   public:
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_describe(rtsp_server_t* server, std::string_view uri);
     int on_setup(
         rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
-    void shutdown();
 
+   public:
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;
     void on_end() override;
@@ -64,13 +70,18 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
         int rtcp_channel{-1};
     };
 
+   private:
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
-    void safe_shutdown();
+
+   private:
     [[nodiscard]] int prepare_presentation();
     [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
     [[nodiscard]] int presentation_status() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
+
+   private:
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

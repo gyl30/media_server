@@ -15,6 +15,7 @@ class dtls_certificate final
    public:
     static std::shared_ptr<dtls_certificate> create();
 
+   public:
     [[nodiscard]] EVP_PKEY* private_key() const noexcept;
     [[nodiscard]] X509* certificate() const noexcept;
     [[nodiscard]] const std::string& sha256_fingerprint() const noexcept;
@@ -33,6 +34,7 @@ class dtls_certificate final
     using pkey_ptr = std::unique_ptr<EVP_PKEY, pkey_deleter>;
     using x509_ptr = std::unique_ptr<X509, x509_deleter>;
 
+   private:
     dtls_certificate(pkey_ptr private_key, x509_ptr certificate, std::string fingerprint);
 
    private:

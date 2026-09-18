@@ -26,6 +26,7 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
 
     http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config);
 
+   public:
     void startup();
     void shutdown();
 
@@ -39,6 +40,8 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
                             std::string_view allow = {});
     void enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
     void run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield);
+
+   private:
     void safe_shutdown();
 
    private:

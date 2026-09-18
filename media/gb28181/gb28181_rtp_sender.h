@@ -30,8 +30,11 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
                        packet_handler on_packet,
                        end_handler on_end,
                        failure_handler on_failure = {});
+
+   public:
     [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
 
+   public:
     [[nodiscard]] bool startup();
     void shutdown();
 
@@ -47,12 +50,15 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
         int media_id{-1};
     };
 
+   private:
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
-    void safe_shutdown();
     [[nodiscard]] bool create_muxer(const std::vector<media_track>& tracks);
     void apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(const void* data, int bytes);
+
+   private:
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

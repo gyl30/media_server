@@ -12,6 +12,7 @@ class worker_context final
    public:
     worker_context();
 
+   public:
     [[nodiscard]] boost::asio::io_context& io() noexcept;
 
     void stop();

@@ -85,6 +85,7 @@ class scripted_http_server
         }
     }
 
+   public:
     [[nodiscard]] std::string url() const { return "http://127.0.0.1:" + std::to_string(port_); }
 
     [[nodiscard]] bool wait_requests(std::size_t count, std::chrono::milliseconds timeout = 2s)
@@ -217,12 +218,11 @@ class client_fixture
 
     ~client_fixture() { stop(); }
 
+   public:
     void start()
     {
         boost::asio::spawn(
-            io_,
-            [](boost::asio::yield_context yield) { media_server::signaling_client::instance().run(yield); },
-            boost::asio::detached);
+            io_, [](boost::asio::yield_context yield) { media_server::signaling_client::instance().run(yield); }, boost::asio::detached);
         runner_ = std::jthread([this]() { io_.run(); });
     }
 

@@ -18,6 +18,7 @@ class io_context_pool final
    public:
     explicit io_context_pool(std::size_t size);
 
+   public:
     [[nodiscard]] std::size_t size() const noexcept;
     [[nodiscard]] worker_context& context(std::size_t index) noexcept;
     [[nodiscard]] worker_context& next() noexcept;

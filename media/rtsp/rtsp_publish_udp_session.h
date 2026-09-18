@@ -43,6 +43,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
    private:
     friend class rtsp_publish_session;
 
+   private:
     struct track_state
     {
         std::optional<udp_yield_transport> rtp_transport;
@@ -52,6 +53,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
         std::optional<port_manager::port_pair> local_ports;
     };
 
+   private:
     int startup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     void run_rtp(std::size_t track_index, boost::asio::yield_context yield);
     void run_rtcp(std::size_t track_index, boost::asio::yield_context yield);
@@ -59,6 +61,8 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     void run_rtcp_write(boost::asio::yield_context yield);
     int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     int on_record(rtsp_server_t* server);
+
+   private:
     void safe_shutdown();
 
    private:

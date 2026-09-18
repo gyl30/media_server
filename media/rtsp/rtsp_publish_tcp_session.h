@@ -29,20 +29,25 @@ class rtsp_publish_tcp_session final : public std::enable_shared_from_this<rtsp_
                              std::string stream_name,
                              std::vector<rtsp_publish_track_description> descriptions,
                              std::function<void(std::span<const std::uint8_t>)> write);
+
    private:
     friend class rtsp_publish_session;
 
+   private:
     struct track_state
     {
         int rtp_channel{-1};
         int rtcp_channel{-1};
     };
 
+   private:
     int startup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     int on_record(rtsp_server_t* server);
     void schedule_rtcp();
+
+   private:
     void safe_shutdown();
 
    private:

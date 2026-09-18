@@ -56,9 +56,11 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
                  video_transcode_config video = {},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
 
+   public:
     [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
     void shutdown();
 
+   public:
     [[nodiscard]] const std::string& id() const noexcept;
     [[nodiscard]] const std::string& stream_id() const noexcept;
     [[nodiscard]] const std::string& stream_name() const noexcept;
@@ -68,6 +70,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     [[nodiscard]] bool dtls_connected() const noexcept;
     [[nodiscard]] bool srtp_started() const noexcept;
 
+   public:
     void on_tracks(media_track_snapshot_ptr tracks) override;
     void on_read(media_read_batch batch) override;
     void on_end() override;
@@ -79,7 +82,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
         boost::asio::ip::udp::endpoint endpoint;
     };
 
-    void safe_shutdown();
+   private:
     void run_udp(boost::asio::yield_context yield);
     void run_udp_write(boost::asio::yield_context yield);
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
@@ -98,7 +101,13 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void refresh_ice_activity_timeout();
 
    private:
+    void safe_shutdown();
+
+   private:
+    worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
+    std::string stream_id_;
+    std::string stream_name_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
     video_transcode_config video_config_;
@@ -107,7 +116,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<webrtc_packetizer> packetizer_;
-    worker_context& worker_;
     udp_yield_transport udp_transport_;
     std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
@@ -117,8 +125,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     boost::asio::steady_timer ice_activity_timer_;
     std::optional<boost::asio::ip::udp::endpoint> remote_endpoint_;
     std::uint16_t local_port_reservation_{};
-    std::string stream_id_;
-    std::string stream_name_;
     std::string id_;
     std::string ice_ufrag_;
     std::string ice_pwd_;

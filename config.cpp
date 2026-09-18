@@ -72,8 +72,7 @@ int parse_config(int argc, char** argv, config* cfg)
     std::string whep_video_codec;
 
     boost::program_options::options_description options("options");
-    options.add_options()("help", "show help")(
-        "rtmp-port", boost::program_options::value<std::string>(&rtmp_port), "rtmp listen port")(
+    options.add_options()("help", "show help")("rtmp-port", boost::program_options::value<std::string>(&rtmp_port), "rtmp listen port")(
         "rtsp-port", boost::program_options::value<std::string>(&rtsp_port), "rtsp listen port")(
         "http-port", boost::program_options::value<std::string>(&http_port), "http listen port")(
         "bind-address", boost::program_options::value<std::string>(&result.bind_address), "server listen address")(
@@ -83,8 +82,7 @@ int parse_config(int argc, char** argv, config* cfg)
         "rtsp-video-codec", boost::program_options::value<std::string>(&rtsp_video_codec), "passthrough|av1")(
         "http-video-codec", boost::program_options::value<std::string>(&http_video_codec), "passthrough|av1")(
         "whep-video-codec", boost::program_options::value<std::string>(&whep_video_codec), "passthrough|av1");
-    options.add_options()(
-        "signaling-url", boost::program_options::value<std::string>(&result.signaling_url), "GB28181 signaling base URL")(
+    options.add_options()("signaling-url", boost::program_options::value<std::string>(&result.signaling_url), "GB28181 signaling base URL")(
         "server-id", boost::program_options::value<std::string>(&result.server_id), "stable media server identity")(
         "control-url", boost::program_options::value<std::string>(&result.control_url), "media server control URL")(
         "media-ip", boost::program_options::value<std::string>(&result.media_ip), "media address advertised to GB28181 devices");
@@ -92,11 +90,11 @@ int parse_config(int argc, char** argv, config* cfg)
     boost::program_options::variables_map values;
     try
     {
-        const auto parsed = boost::program_options::command_line_parser(argc, argv)
-                                .options(options)
-                                .style(boost::program_options::command_line_style::default_style &
-                                       ~boost::program_options::command_line_style::allow_guessing)
-                                .run();
+        const auto parsed =
+            boost::program_options::command_line_parser(argc, argv)
+                .options(options)
+                .style(boost::program_options::command_line_style::default_style & ~boost::program_options::command_line_style::allow_guessing)
+                .run();
         if (!boost::program_options::collect_unrecognized(parsed.options, boost::program_options::include_positional).empty())
         {
             print_usage(options);

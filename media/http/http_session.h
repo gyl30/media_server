@@ -20,6 +20,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
    public:
     http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& config);
 
+   public:
     void startup();
     void shutdown();
 
@@ -35,6 +36,8 @@ class http_session final : public std::enable_shared_from_this<http_session>
                             std::string body,
                             boost::asio::yield_context yield,
                             std::string_view allow = {});
+
+   private:
     void safe_shutdown();
 
    private:
