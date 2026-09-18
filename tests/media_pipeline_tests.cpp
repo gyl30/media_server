@@ -55,6 +55,7 @@
 #include "media/net/io_context_pool.h"
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/webrtc/whep_session.h"
+#include "media/hls/hls_play_session.h"
 #include "media/core/stream_registry.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
@@ -3745,6 +3746,30 @@ void require_http_status(boost::asio::ip::tcp::acceptor& acceptor,
     require_http_session_released(weak_session, message);
 }
 
+boost::beast::http::response<boost::beast::http::string_body> request_hls(boost::asio::ip::tcp::acceptor& acceptor,
+                                                                          worker_context& worker,
+                                                                          const config& application_config,
+                                                                          std::string_view target)
+{
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+
+    auto session = std::make_shared<http_session>(worker, acceptor.accept(), application_config);
+    session->startup();
+    session.reset();
+
+    boost::beast::http::request<boost::beast::http::string_body> request(boost::beast::http::verb::get, target, 11);
+    request.set(boost::beast::http::field::host, "127.0.0.1");
+    request.keep_alive(false);
+    boost::beast::http::write(client, request);
+
+    boost::beast::flat_buffer buffer;
+    boost::beast::http::response<boost::beast::http::string_body> response;
+    boost::beast::http::read(client, buffer, response);
+    return response;
+}
+
 void test_hls_http_session_shutdown_lifecycle()
 {
     worker_context worker;
@@ -3772,6 +3797,175 @@ void test_hls_http_session_shutdown_lifecycle()
 
     boost::system::error_code error;
     client.close(error);
+}
+
+void test_hls_play_admission()
+{
+    test::publish_claim_test_server claim_server;
+    io_context_pool workers(1);
+    auto& worker = workers.context(0);
+    configure_control_plane(worker, claim_server);
+    const config application_config;
+
+    constexpr std::string_view stream_name = "live/hls-viewers";
+    auto stream = std::make_shared<media_stream>(std::string(stream_name), worker);
+    require(stream->set_tracks({make_video_track()}), "hls viewer track");
+    require(stream_registry::instance().add(stream), "hls viewer stream");
+    boost::asio::ip::tcp::acceptor acceptor(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    std::jthread runner([&worker]() { worker.run(); });
+
+    std::promise<void> ready;
+    auto ready_future = ready.get_future();
+    boost::asio::post(worker.io(),
+                      [stream, &application_config, &ready]()
+                      {
+                          require(hls::segment_count(stream->name(), application_config) == 0U, "hls viewer segmenter create");
+                          stream->publish(make_video_frame(0, true));
+                          stream->publish(make_video_frame(500'000'000, false));
+                          stream->publish(make_video_frame(2'500'000'000, true));
+                          ready.set_value();
+                      });
+    ready_future.get();
+
+    const auto create_viewer = [&](std::string_view stream_id)
+    {
+        const auto response = request_hls(
+            acceptor, worker, application_config, std::string{"/play/hls/live/hls-viewers/index.m3u8?stream_id="} + std::string{stream_id});
+        require(response.result() == boost::beast::http::status::temporary_redirect, "hls initial request redirects");
+        const auto location = std::string(response[boost::beast::http::field::location]);
+        require(location.find("stream_id=") == std::string::npos && location.find("?session=") != std::string::npos,
+                "hls redirect replaces stream id with session secret");
+        return location;
+    };
+
+    constexpr std::string_view first_stream_id = "00000000-0000-4000-8000-000000000021";
+    constexpr std::string_view second_stream_id = "00000000-0000-4000-8000-000000000022";
+    const auto first_location = create_viewer(first_stream_id);
+    const auto second_location = create_viewer(second_stream_id);
+    require(first_location != second_location, "hls viewers receive distinct session secrets");
+    require(claim_server.request_count("/internal/play/claim") == 2U, "hls viewers claim exactly once");
+    const auto claims = claim_server.requests("/internal/play/claim");
+    for (std::size_t index = 0; index < claims.size(); ++index)
+    {
+        const auto claim = boost::json::parse(claims[index].body).as_object();
+        const auto expected_stream_id = index == 0U ? first_stream_id : second_stream_id;
+        require(claim.at("stream_id").as_string() == expected_stream_id && claim.at("protocol") == "hls" &&
+                    claim.at("stream_name").as_string() == stream_name,
+                "hls play claim identity");
+    }
+
+    const auto first_playlist = request_hls(acceptor, worker, application_config, first_location);
+    const auto second_playlist = request_hls(acceptor, worker, application_config, second_location);
+    require(first_playlist.result() == boost::beast::http::status::ok && second_playlist.result() == boost::beast::http::status::ok,
+            "hls viewer playlists available");
+    const auto first_secret = first_location.substr(first_location.find("?session=") + 9U);
+    const auto second_secret = second_location.substr(second_location.find("?session=") + 9U);
+    require(first_playlist.body().find("./0.ts?session=" + first_secret) != std::string::npos &&
+                second_playlist.body().find("./0.ts?session=" + second_secret) != std::string::npos,
+            "hls playlist propagates viewer secrets");
+    require(hls::segment_count(stream_name, application_config) == 1U, "hls viewers share segmenter");
+
+    const auto first_refresh = request_hls(acceptor, worker, application_config, first_location);
+    require(first_refresh.result() == boost::beast::http::status::ok && claim_server.request_count("/internal/play/claim") == 2U,
+            "hls playlist refresh does not reclaim");
+    const auto segment = request_hls(acceptor, worker, application_config, "/play/hls/live/hls-viewers/0.ts?session=" + first_secret);
+    require(segment.result() == boost::beast::http::status::ok && !segment.body().empty(), "hls segment session lookup");
+    const auto unknown =
+        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-viewers/index.m3u8?session=00000000-0000-4000-8000-000000000099");
+    require(unknown.result() == boost::beast::http::status::forbidden, "hls unknown session rejected");
+    const auto cross_stream = request_hls(acceptor, worker, application_config, "/play/hls/live/other/index.m3u8?session=" + first_secret);
+    require(cross_stream.result() == boost::beast::http::status::forbidden, "hls session cannot cross stream");
+
+    wait_runtime_event_count(claim_server, 4U);
+    const auto events = runtime_events(claim_server);
+    require_publisher_event(events[0],
+                            event_kind::output,
+                            event_protocol::hls,
+                            event_state::starting,
+                            first_stream_id,
+                            stream_name,
+                            "play",
+                            "first hls viewer starting event");
+    require_publisher_event(events[1],
+                            event_kind::output,
+                            event_protocol::hls,
+                            event_state::starting,
+                            second_stream_id,
+                            stream_name,
+                            "play",
+                            "second hls viewer starting event");
+    require_publisher_event(events[2],
+                            event_kind::output,
+                            event_protocol::hls,
+                            event_state::streaming,
+                            first_stream_id,
+                            stream_name,
+                            "streaming",
+                            "first hls viewer streaming event");
+    require_publisher_event(events[3],
+                            event_kind::output,
+                            event_protocol::hls,
+                            event_state::streaming,
+                            second_stream_id,
+                            stream_name,
+                            "streaming",
+                            "second hls viewer streaming event");
+
+    workers.stop();
+    runner.join();
+}
+
+void test_hls_play_inactivity()
+{
+    test::publish_claim_test_server claim_server;
+    io_context_pool workers(1);
+    auto& worker = workers.context(0);
+    configure_signaling_client(claim_server.url());
+    const config application_config;
+    boost::asio::ip::tcp::acceptor acceptor(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    std::jthread runner([&worker]() { worker.run(); });
+
+    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000023";
+    const auto initial =
+        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-timeout/index.m3u8?stream_id=00000000-0000-4000-8000-000000000023");
+    require(initial.result() == boost::beast::http::status::temporary_redirect, "hls timeout viewer redirect");
+    const auto location = std::string(initial[boost::beast::http::field::location]);
+    const auto secret = location.substr(location.find("?session=") + 9U);
+    require(hls_play_session::find(secret, "live/hls-timeout") != nullptr, "hls timeout viewer registered");
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(32);
+    while (hls_play_session::find(secret, "live/hls-timeout") && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    require(hls_play_session::find(secret, "live/hls-timeout") == nullptr, "hls inactive viewer expires");
+    const auto expired = request_hls(acceptor, worker, application_config, location);
+    require(expired.result() == boost::beast::http::status::forbidden, "expired hls session rejected");
+
+    boost::asio::spawn(worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
+    wait_runtime_event_count(claim_server, 3U);
+    const auto events = runtime_events(claim_server);
+    require_publisher_event(events[0],
+                            event_kind::output,
+                            event_protocol::hls,
+                            event_state::starting,
+                            stream_id,
+                            "live/hls-timeout",
+                            "play",
+                            "hls timeout starting event");
+    require_publisher_event(events[1],
+                            event_kind::output,
+                            event_protocol::hls,
+                            event_state::timeout,
+                            stream_id,
+                            "live/hls-timeout",
+                            "inactivity",
+                            "hls inactivity event");
+    require_publisher_event(
+        events[2], event_kind::output, event_protocol::hls, event_state::stopped, stream_id, "live/hls-timeout", {}, "hls timeout stopped event");
+
+    workers.stop();
+    runner.join();
 }
 
 void test_gb28181_receiver_http_parameters()
@@ -10974,6 +11168,8 @@ void test_hls_segmenter()
     const auto playlist = segmenter.playlist(".");
     require(playlist.find("#EXTM3U") != std::string::npos, "hls playlist header");
     require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls endlist");
+    const auto viewer_playlist = segmenter.playlist(".", "session=viewer-a");
+    require(viewer_playlist.find("./0.ts?session=viewer-a") != std::string::npos, "hls ts viewer query");
 
     worker_context reconfigured_worker;
     reconfigured_worker.release_work();
@@ -11095,6 +11291,10 @@ void test_hls_av1_fmp4_segmenter()
         require(playlist.find("#EXT-X-MAP:URI=\"/play/hls/av1/init.mp4?v=0\"") != std::string::npos, "hls av1 init map");
         require(playlist.find("/play/hls/av1/0.m4s") != std::string::npos, "hls av1 media uri");
         require(playlist.find("#EXT-X-ENDLIST") != std::string::npos, "hls av1 endlist");
+        const auto viewer_playlist = segmenter.playlist("/play/hls/av1", "session=viewer-a");
+        require(viewer_playlist.find("#EXT-X-MAP:URI=\"/play/hls/av1/init.mp4?v=0&session=viewer-a\"") != std::string::npos,
+                "hls av1 viewer init query");
+        require(viewer_playlist.find("/play/hls/av1/0.m4s?session=viewer-a") != std::string::npos, "hls av1 viewer media query");
 
         struct memory_reader
         {
@@ -13347,6 +13547,14 @@ int main(int argc, char* argv[])
         else if (scenario == "hls_module_lifecycle")
         {
             media_server::test_hls_module_lifecycle();
+        }
+        else if (scenario == "hls_play_admission")
+        {
+            media_server::test_hls_play_admission();
+        }
+        else if (scenario == "hls_play_inactivity")
+        {
+            media_server::test_hls_play_inactivity();
         }
         else if (scenario == "rtsp_input_output_boundaries")
         {

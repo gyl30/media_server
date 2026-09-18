@@ -23,6 +23,7 @@ func TestPlayAllocationHTTP(t *testing.T) {
 		{name: "RTMP", protocol: "rtmp", expectedURL: "rtmp://192.0.2.10:1935/live/camera"},
 		{name: "RTSP", protocol: "rtsp", expectedURL: "rtsp://192.0.2.10:8554/live/camera"},
 		{name: "HTTP-FLV", protocol: "http-flv", expectedURL: "http://192.0.2.10:8080/live/camera.flv"},
+		{name: "HLS", protocol: "hls", expectedURL: "http://192.0.2.10:8080/play/hls/live/camera/index.m3u8"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry := newMediaServerRegistry()
@@ -90,7 +91,7 @@ func TestPlayAllocationHTTPRejectsInvalidRequests(t *testing.T) {
 
 	for name, body := range map[string]string{
 		"invalid JSON": `{`,
-		"bad protocol": `{"protocol":"hls","stream_name":"live/camera"}`,
+		"bad protocol": `{"protocol":"dash","stream_name":"live/camera"}`,
 		"empty stream": `{"protocol":"rtsp","stream_name":""}`,
 	} {
 		t.Run(name, func(t *testing.T) {

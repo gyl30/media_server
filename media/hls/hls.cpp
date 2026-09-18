@@ -83,10 +83,10 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const
 
 }    // namespace
 
-std::optional<std::string> playlist(std::string_view stream_name, const config& application_config)
+std::optional<std::string> playlist(std::string_view stream_name, const config& application_config, std::string_view query)
 {
     const auto segmenter = get_or_create(stream_name, application_config);
-    return segmenter ? std::optional<std::string>(segmenter->playlist(".")) : std::nullopt;
+    return segmenter ? std::optional<std::string>(segmenter->playlist(".", query)) : std::nullopt;
 }
 
 std::optional<std::vector<std::uint8_t>> init_segment(std::string_view stream_name, const config& application_config)

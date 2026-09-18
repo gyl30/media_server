@@ -1,14 +1,19 @@
 #include <chrono>
 #include <utility>
 #include <charconv>
+#include <optional>
 
 #include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/detached.hpp>
 
 #include "media/hls/hls.h"
+#include "media/core/stream_id.h"
+#include "media/http/http_event.h"
 #include "media/net/worker_context.h"
+#include "media/hls/hls_play_session.h"
 #include "media/http/hls_http_session.h"
+#include "media/http/signaling_client.h"
 
 namespace media_server
 {
@@ -71,6 +76,70 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
         return;
     }
 
+    std::optional<std::string> stream_id;
+    std::optional<std::string> secret;
+    for (const auto parameter : target.params())
+    {
+        if (parameter.key == "stream_id")
+        {
+            if (stream_id || !parameter.has_value)
+            {
+                send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream id\n", yield);
+                return;
+            }
+            stream_id = parameter.value;
+        }
+        else if (parameter.key == "session")
+        {
+            if (secret || !parameter.has_value)
+            {
+                send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", yield);
+                return;
+            }
+            secret = parameter.value;
+        }
+    }
+
+    if (stream_id)
+    {
+        if (file != "index.m3u8" || secret || !valid_stream_id(*stream_id))
+        {
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream id\n", yield);
+            return;
+        }
+        const auto claim = signaling_client::instance().claim_play(*stream_id, "hls", stream_name, yield);
+        if (claim.kind != signaling_result_kind::accepted)
+        {
+            const auto status = claim.kind == signaling_result_kind::rejected ? boost::beast::http::status::forbidden
+                                                                              : boost::beast::http::status::service_unavailable;
+            send_text_response(status, "text/plain", "play claim failed\n", yield);
+            return;
+        }
+
+        const auto viewer = hls_play_session::create(worker_, std::move(*stream_id), stream_name);
+        http_event::report_hls_output(event_state::starting, viewer->stream_id(), viewer->stream_name(), "play");
+
+        boost::beast::http::response<boost::beast::http::empty_body> response(boost::beast::http::status::temporary_redirect, request_.version());
+        response.set(boost::beast::http::field::server, "media_server");
+        response.set(boost::beast::http::field::location, std::string(target.encoded_path()) + "?session=" + viewer->secret());
+        response.keep_alive(false);
+        boost::system::error_code error;
+        boost::beast::http::async_write(stream_, response, yield[error]);
+        return;
+    }
+
+    if (!secret)
+    {
+        send_text_response(boost::beast::http::status::forbidden, "text/plain", "hls session required\n", yield);
+        return;
+    }
+    const auto viewer = hls_play_session::find(*secret, stream_name);
+    if (!viewer)
+    {
+        send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", yield);
+        return;
+    }
+
     if (file == "index.m3u8")
     {
         auto count = hls::segment_count(stream_name, config_);
@@ -110,13 +179,17 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
             }
         }
 
-        const auto playlist = hls::playlist(stream_name, config_);
+        const auto playlist = hls::playlist(stream_name, config_, "session=" + viewer->secret());
         if (!playlist)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
             return;
         }
-        send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", *playlist, yield);
+        if (send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", *playlist, yield) && viewer->refresh() &&
+            viewer->mark_streaming())
+        {
+            http_event::report_hls_output(event_state::streaming, viewer->stream_id(), viewer->stream_name(), "streaming");
+        }
         return;
     }
 
@@ -128,7 +201,10 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
             send_text_response(boost::beast::http::status::not_found, "text/plain", "init segment not found\n", yield);
             return;
         }
-        send_binary_response(boost::beast::http::status::ok, "video/mp4", *init, yield);
+        if (send_binary_response(boost::beast::http::status::ok, "video/mp4", *init, yield))
+        {
+            static_cast<void>(viewer->refresh());
+        }
         return;
     }
 
@@ -157,10 +233,13 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
         send_text_response(boost::beast::http::status::not_found, "text/plain", "segment not found\n", yield);
         return;
     }
-    send_binary_response(boost::beast::http::status::ok, fragmented_mp4 ? "video/mp4" : "video/mp2t", *segment, yield);
+    if (send_binary_response(boost::beast::http::status::ok, fragmented_mp4 ? "video/mp4" : "video/mp2t", *segment, yield))
+    {
+        static_cast<void>(viewer->refresh());
+    }
 }
 
-void hls_http_session::send_text_response(
+bool hls_http_session::send_text_response(
     boost::beast::http::status status, std::string_view content_type, std::string body, boost::asio::yield_context& yield, std::string_view allow)
 {
     boost::beast::http::response<boost::beast::http::string_body> response(status, request_.version());
@@ -179,12 +258,13 @@ void hls_http_session::send_text_response(
     {
         boost::beast::http::response_serializer<boost::beast::http::string_body> serializer(response);
         boost::beast::http::async_write_header(stream_, serializer, yield[error]);
-        return;
+        return !error;
     }
     boost::beast::http::async_write(stream_, response, yield[error]);
+    return !error;
 }
 
-void hls_http_session::send_binary_response(boost::beast::http::status status,
+bool hls_http_session::send_binary_response(boost::beast::http::status status,
                                             std::string_view content_type,
                                             std::vector<std::uint8_t> body,
                                             boost::asio::yield_context& yield)
@@ -198,6 +278,7 @@ void hls_http_session::send_binary_response(boost::beast::http::status status,
 
     boost::system::error_code error;
     boost::beast::http::async_write(stream_, response, yield[error]);
+    return !error;
 }
 
 void hls_http_session::shutdown()

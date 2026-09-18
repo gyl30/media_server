@@ -407,16 +407,53 @@ wait_probe_allocated_rtsp() {
     return 1
 }
 
+establish_hls_session() {
+    local label="$1"
+    local signaling_port="$2"
+    local stream_name="$3"
+    local initial_url
+    local headers="$work_dir/${label}_hls_redirect_headers.txt"
+    local status
+    local location
+    initial_url="$(allocate_play "$label" "$signaling_port" hls "$stream_name")"
+    status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 --max-redirs 0 \
+        -D "$headers" -o /dev/null -w '%{http_code}' "$initial_url")"
+    if [[ "$status" != "307" ]]; then
+        echo "HLS admission returned $status: $initial_url" >&2
+        cat "$headers" >&2 2>/dev/null || true
+        return 1
+    fi
+    location="$(sed -n 's/^[Ll]ocation:[[:space:]]*//p' "$headers" | tr -d '\r' | tail -1)"
+    [[ -n "$location" && "$location" != *stream_id=* && "$location" == *session=* ]]
+    python3 - "$initial_url" "$location" <<'PY'
+import sys
+import urllib.parse
+
+print(urllib.parse.urljoin(sys.argv[1], sys.argv[2]))
+PY
+}
+
+resolve_hls_uri() {
+    python3 - "$1" "$2" <<'PY'
+import sys
+import urllib.parse
+
+print(urllib.parse.urljoin(sys.argv[1], sys.argv[2]))
+PY
+}
+
 probe_hls_ts() {
     local prefix="$1"
-    local url="$2"
-    curl -fsS "$url/index.m3u8" >"$work_dir/${prefix}_initial.m3u8"
+    local index_url="$2"
+    curl -fsS "$index_url" >"$work_dir/${prefix}_initial.m3u8"
     sleep 4
-    curl -fsS "$url/index.m3u8" >"$work_dir/${prefix}_ready.m3u8"
-    local segment_name
-    segment_name="$(grep -E '^[^#].*\.ts$' "$work_dir/${prefix}_ready.m3u8" | head -1 | sed 's#^\./##')"
-    [[ -n "$segment_name" ]]
-    curl -fsS "$url/$segment_name" >"$work_dir/${prefix}_segment.ts"
+    curl -fsS "$index_url" >"$work_dir/${prefix}_ready.m3u8"
+    local segment_uri
+    local segment_url
+    segment_uri="$(grep -E '^[^#].*\.ts(\?.*)?$' "$work_dir/${prefix}_ready.m3u8" | head -1)"
+    [[ -n "$segment_uri" && "$segment_uri" == *session=* ]]
+    segment_url="$(resolve_hls_uri "$index_url" "$segment_uri")"
+    curl -fsS "$segment_url" >"$work_dir/${prefix}_segment.ts"
     [[ $(( $(stat -c%s "$work_dir/${prefix}_segment.ts") % 188 )) -eq 0 ]]
     probe_streams "$work_dir/${prefix}_streams.txt" "$work_dir/${prefix}_segment.ts"
 }
@@ -477,8 +514,9 @@ probe_streams "$work_dir/rtmp_from_rtmp.txt" "$main_rtmp_play_url"
 main_http_flv_play_url="$(allocate_play main_http_flv_play "$main_signaling_http_port" http-flv live/test)"
 probe_streams "$work_dir/http_flv_from_rtmp.txt" "$main_http_flv_play_url"
 
-# 首次请求建立共享 HLS 输出；等待自然关键帧完成切片。
-probe_hls_ts hls_from_rtmp 'http://127.0.0.1:18080/play/hls/live/test'
+# 首次请求建立独立 HLS viewer；等待自然关键帧完成共享切片。
+main_hls_play_url="$(establish_hls_session main_hls_play "$main_signaling_http_port" live/test)"
+probe_hls_ts hls_from_rtmp "$main_hls_play_url"
 
 "$signaling_bin" \
     --sip-listen "127.0.0.1:$pull_signaling_sip_port" \
@@ -549,7 +587,8 @@ probe_streams "$work_dir/rtmp_from_rtsp.txt" "$pull_rtmp_play_url"
 pull_http_flv_play_url="$(allocate_play pull_http_flv_play "$pull_signaling_http_port" http-flv relay/test)"
 probe_streams "$work_dir/http_flv_from_rtsp.txt" "$pull_http_flv_play_url"
 
-probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/play/hls/relay/test'
+pull_hls_play_url="$(establish_hls_session pull_hls_play "$pull_signaling_http_port" relay/test)"
+probe_hls_ts hls_from_rtsp "$pull_hls_play_url"
 
 stop_rtsp_source rtsp_pull_recreate "$pull_signaling_http_port" "$pull_source_id"
 wait_event_state "$pull_signaling_http_port" "$replacement_stream_id" source rtsp relay/test stopped "$pull_source_id"
@@ -586,7 +625,9 @@ for publish_case in tcp udp udp-restart; do
     rtsp_publish_http_flv_play_url="$(allocate_play "rtsp_publish_${publish_case}_http_flv_play" \
         "$main_signaling_http_port" http-flv "live/$stream_name")"
     probe_streams "$work_dir/rtsp_publish_${publish_case}_http_flv.txt" "$rtsp_publish_http_flv_play_url"
-    probe_hls_ts "rtsp_publish_${publish_case}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
+    rtsp_publish_hls_play_url="$(establish_hls_session "rtsp_publish_${publish_case}_hls_play" \
+        "$main_signaling_http_port" "live/$stream_name")"
+    probe_hls_ts "rtsp_publish_${publish_case}_hls" "$rtsp_publish_hls_play_url"
 
     kill "$rtsp_publish_pid" 2>/dev/null || true
     wait "$rtsp_publish_pid" 2>/dev/null || true
@@ -702,15 +743,19 @@ if grep -q 'codec_name=' "$work_dir/rtmp_av1_without_capability.txt"; then
 fi
 av1_http_flv_play_url="$(allocate_play av1_http_flv_play "$av1_signaling_http_port" http-flv live/av1)"
 wait_probe_streams "$work_dir/http_flv_av1.txt" av1 aac "$av1_http_flv_play_url"
-wait_probe_streams "$work_dir/hls_av1.txt" av1 aac 'http://127.0.0.1:18082/play/hls/live/av1/index.m3u8'
+av1_hls_play_url="$(establish_hls_session av1_hls_play "$av1_signaling_http_port" live/av1)"
+wait_probe_streams "$work_dir/hls_av1.txt" av1 aac "$av1_hls_play_url"
 
-curl -fsS 'http://127.0.0.1:18082/play/hls/live/av1/index.m3u8' >"$work_dir/hls_av1.m3u8"
-av1_init_uri="$(sed -n 's/^#EXT-X-MAP:URI="\(\.\/init\.mp4?v=[0-9][0-9]*\)"$/\1/p' "$work_dir/hls_av1.m3u8" | head -1)"
+curl -fsS "$av1_hls_play_url" >"$work_dir/hls_av1.m3u8"
+av1_init_uri="$(sed -n 's/^#EXT-X-MAP:URI="\([^"]*\)"$/\1/p' "$work_dir/hls_av1.m3u8" | head -1)"
 [[ -n "$av1_init_uri" ]]
-av1_segment="$(grep -E '^[^#].*\.m4s$' "$work_dir/hls_av1.m3u8" | head -1 | sed 's#^\./##')"
+av1_segment="$(grep -E '^[^#].*\.m4s(\?.*)?$' "$work_dir/hls_av1.m3u8" | head -1)"
 [[ -n "$av1_segment" ]]
-curl -fsS "http://127.0.0.1:18082/play/hls/live/av1/${av1_init_uri#./}" >"$work_dir/hls_av1_init.mp4"
-curl -fsS "http://127.0.0.1:18082/play/hls/live/av1/$av1_segment" >"$work_dir/hls_av1_segment.m4s"
+[[ "$av1_init_uri" == *session=* && "$av1_segment" == *session=* ]]
+av1_init_url="$(resolve_hls_uri "$av1_hls_play_url" "$av1_init_uri")"
+av1_segment_url="$(resolve_hls_uri "$av1_hls_play_url" "$av1_segment")"
+curl -fsS "$av1_init_url" >"$work_dir/hls_av1_init.mp4"
+curl -fsS "$av1_segment_url" >"$work_dir/hls_av1_segment.m4s"
 [[ -s "$work_dir/hls_av1_init.mp4" ]]
 [[ -s "$work_dir/hls_av1_segment.m4s" ]]
 

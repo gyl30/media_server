@@ -11,7 +11,7 @@ import (
 )
 
 func TestPlayClaimHTTPClaimsOnce(t *testing.T) {
-	for _, protocol := range []string{"rtsp", "http-flv"} {
+	for _, protocol := range []string{"rtsp", "http-flv", "hls"} {
 		t.Run(protocol, func(t *testing.T) {
 			registry := newMediaServerRegistry()
 			serverInstance := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
@@ -139,7 +139,7 @@ func TestPlayClaimHTTPRejectsInvalidRequests(t *testing.T) {
 
 	for name, body := range map[string]string{
 		"invalid UUID": `{"stream_id":"bad","server_id":"media-1","instance_id":"instance-a","protocol":"rtmp","stream_name":"live/camera"}`,
-		"bad protocol": `{"stream_id":"00000000-0000-4000-8000-000000000001","server_id":"media-1","instance_id":"instance-a","protocol":"hls","stream_name":"live/camera"}`,
+		"bad protocol": `{"stream_id":"00000000-0000-4000-8000-000000000001","server_id":"media-1","instance_id":"instance-a","protocol":"dash","stream_name":"live/camera"}`,
 		"empty stream": `{"stream_id":"00000000-0000-4000-8000-000000000001","server_id":"media-1","instance_id":"instance-a","protocol":"rtmp","stream_name":""}`,
 	} {
 		t.Run(name, func(t *testing.T) {

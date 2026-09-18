@@ -44,7 +44,7 @@ class hls_segmenter final : public media_sink
     void on_frame(const media_frame& frame) override;
     void on_end() override;
 
-    [[nodiscard]] std::string playlist(std::string_view base_path) const;
+    [[nodiscard]] std::string playlist(std::string_view base_path, std::string_view query = {}) const;
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> init_segment() const;
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> segment(std::uint64_t sequence) const;
     [[nodiscard]] std::size_t segment_count() const;
