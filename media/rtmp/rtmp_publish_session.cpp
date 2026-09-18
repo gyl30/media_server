@@ -124,23 +124,7 @@ int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uin
     {
         return -1;
     }
-    if (flv_demuxer_input(demuxer_, FLV_TYPE_VIDEO, data, bytes, timestamp) == 0)
-    {
-        return 0;
-    }
-    if (auto handler = std::move(shutdown_handler_))
-    {
-        signaling_client::instance().report(make_event(event_kind::publisher,
-                                                       event_protocol::rtmp,
-                                                       event_state::protocol_error,
-                                                       stream_id_,
-                                                       stream_->name(),
-                                                       {},
-                                                       "media",
-                                                       "media_input_failed"));
-        handler();
-    }
-    return 0;
+    return flv_demuxer_input(demuxer_, FLV_TYPE_VIDEO, data, bytes, timestamp);
 }
 
 int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp)
@@ -149,23 +133,7 @@ int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uin
     {
         return -1;
     }
-    if (flv_demuxer_input(demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp) == 0)
-    {
-        return 0;
-    }
-    if (auto handler = std::move(shutdown_handler_))
-    {
-        signaling_client::instance().report(make_event(event_kind::publisher,
-                                                       event_protocol::rtmp,
-                                                       event_state::protocol_error,
-                                                       stream_id_,
-                                                       stream_->name(),
-                                                       {},
-                                                       "media",
-                                                       "media_input_failed"));
-        handler();
-    }
-    return 0;
+    return flv_demuxer_input(demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp);
 }
 
 int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
@@ -184,19 +152,7 @@ int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
     const auto* values = AMFReadString(data.data() + 1, end, 0, name.data(), name.size());
     if (values == nullptr)
     {
-        if (auto handler = std::move(shutdown_handler_))
-        {
-            signaling_client::instance().report(make_event(event_kind::publisher,
-                                                           event_protocol::rtmp,
-                                                           event_state::protocol_error,
-                                                           stream_id_,
-                                                           stream_->name(),
-                                                           {},
-                                                           "media",
-                                                           "media_input_failed"));
-            handler();
-        }
-        return 0;
+        return -1;
     }
     if (std::string_view(name.data()) != "onMetaData")
     {
@@ -212,37 +168,13 @@ int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
     };
     if (amf_read_items(values, end, metadata.data(), metadata.size()) == nullptr)
     {
-        if (auto handler = std::move(shutdown_handler_))
-        {
-            signaling_client::instance().report(make_event(event_kind::publisher,
-                                                           event_protocol::rtmp,
-                                                           event_state::protocol_error,
-                                                           stream_id_,
-                                                           stream_->name(),
-                                                           {},
-                                                           "media",
-                                                           "media_input_failed"));
-            handler();
-        }
-        return 0;
+        return -1;
     }
 
     const bool audio = audio_codec != 0.0;
     if ((expected_audio_.has_value() && *expected_audio_ != audio) || (initial_audio_track_ && !audio))
     {
-        if (auto handler = std::move(shutdown_handler_))
-        {
-            signaling_client::instance().report(make_event(event_kind::publisher,
-                                                           event_protocol::rtmp,
-                                                           event_state::protocol_error,
-                                                           stream_id_,
-                                                           stream_->name(),
-                                                           {},
-                                                           "media",
-                                                           "media_input_failed"));
-            handler();
-        }
-        return 0;
+        return -1;
     }
 
     expected_audio_ = audio;
