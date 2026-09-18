@@ -1,7 +1,6 @@
 #ifndef MEDIA_RTMP_RTMP_SESSION_H
 #define MEDIA_RTMP_RTMP_SESSION_H
 
-#include <deque>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -13,6 +12,7 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
+#include "media/net/tcp_write_queue.h"
 #include "media/net/tcp_yield_transport.h"
 #include "media/codec/video_transcode_config.h"
 
@@ -70,9 +70,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
    private:
     worker_context& worker_;
     tcp_yield_transport transport_;
-    std::size_t max_write_queue_bytes_;
-    std::size_t queued_write_bytes_{};
-    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
+    tcp_write_queue write_queue_;
     std::chrono::milliseconds initial_tracks_timeout_;
     video_transcode_config video_config_;
     rtmp_server_t* rtmp_context_{};

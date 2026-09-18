@@ -34,8 +34,8 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
       establishment_timeout_(establishment_timeout),
-      max_write_queue_bytes_(max_write_queue_bytes),
-      socket_(worker_.io())
+      socket_(worker_.io()),
+      write_queue_(max_write_queue_bytes)
 {
 }
 
@@ -174,18 +174,13 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
             return;
         }
 
-        const auto data = write_queue_.front();
-        boost::system::error_code error;
-        transport_->write(*data, yield, error);
-        if (error)
+        const auto result = write_queue_.write_one(*transport_, yield);
+        if (result.error)
         {
-            gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message());
+            gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, result.error.message());
             shutdown();
             return;
         }
-
-        queued_write_bytes_ -= data->size();
-        write_queue_.pop_front();
     }
 }
 
@@ -203,28 +198,25 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     }
 
     const auto frame_bytes = packet.size() + 2U;
-    if (frame_bytes > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - frame_bytes)
-    {
-        gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "write_queue_overflow");
-        shutdown();
-        return;
-    }
-
     auto frame = std::make_shared<std::vector<std::uint8_t>>(frame_bytes);
     const auto length = static_cast<std::uint16_t>(packet.size());
     (*frame)[0] = static_cast<std::uint8_t>(length >> 8U);
     (*frame)[1] = static_cast<std::uint8_t>(length & 0xffU);
     std::copy(packet.begin(), packet.end(), frame->begin() + 2);
 
-    const bool start_write = write_queue_.empty();
-    queued_write_bytes_ += frame_bytes;
-    write_queue_.push_back(std::move(frame));
+    const auto result = write_queue_.enqueue(std::move(frame));
+    if (result == tcp_write_enqueue_result::overflow)
+    {
+        gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "write_queue_overflow");
+        shutdown();
+        return;
+    }
     if (!media_started_)
     {
         media_started_ = true;
         gb28181_event::report_output(event_state::streaming, stream_id_, stream_name_, "streaming");
     }
-    if (start_write)
+    if (result == tcp_write_enqueue_result::start_writer)
     {
         const auto self = shared_from_this();
         boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context write_yield) { self->run_write(write_yield); }, boost::asio::detached);
