@@ -28,7 +28,7 @@ func (s *infrastructureServer) handleStreamClaim(writer http.ResponseWriter, req
 	var command streamClaimRequest
 	if !decodeJSON(writer, request, &command) || !validUUIDv4(command.StreamID) || command.ServerID == "" ||
 		command.InstanceID == "" ||
-		(command.Protocol != "rtmp" && command.Protocol != "rtsp") || command.StreamName == "" {
+		!validStreamAllocationProtocol(operation, command.Protocol) || command.StreamName == "" {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}

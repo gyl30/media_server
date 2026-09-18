@@ -12,17 +12,28 @@ type streamAllocationRequest struct {
 }
 
 func makeStreamURL(protocol, streamName, streamID string, server mediaServerInstance) string {
+	scheme := protocol
+	path := "/" + streamName
 	port := server.rtmpPort
-	if protocol == "rtsp" {
+	switch protocol {
+	case "rtsp":
 		port = server.rtspPort
+	case "http-flv":
+		scheme = "http"
+		path += ".flv"
+		port = server.httpPort
 	}
 	streamURL := url.URL{
-		Scheme: protocol,
+		Scheme: scheme,
 		Host:   net.JoinHostPort(server.mediaIP, strconv.FormatUint(uint64(port), 10)),
-		Path:   "/" + streamName,
+		Path:   path,
 	}
 	query := streamURL.Query()
 	query.Set("stream_id", streamID)
 	streamURL.RawQuery = query.Encode()
 	return streamURL.String()
+}
+
+func validStreamAllocationProtocol(operation streamOperation, protocol string) bool {
+	return protocol == "rtmp" || protocol == "rtsp" || (operation == streamOperationPlay && protocol == "http-flv")
 }

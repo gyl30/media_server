@@ -47,6 +47,8 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     request_type request_;
     const config& config_;
     bool closed_{};
+    std::string stream_id_;
+    std::string stream_name_;
     std::shared_ptr<http_flv_streamer> streamer_;
     std::vector<std::uint8_t> pending_bootstrap_;
     std::uint64_t pending_generation_{};

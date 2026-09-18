@@ -13,7 +13,7 @@ type publishAllocationResponse struct {
 func (s *infrastructureServer) handlePublishAllocation(writer http.ResponseWriter, request *http.Request) {
 	var command streamAllocationRequest
 	if !decodeJSON(writer, request, &command) ||
-		(command.Protocol != "rtmp" && command.Protocol != "rtsp") || command.StreamName == "" {
+		!validStreamAllocationProtocol(streamOperationPublish, command.Protocol) || command.StreamName == "" {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}

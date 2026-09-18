@@ -11,29 +11,33 @@ import (
 )
 
 func TestPlayClaimHTTPClaimsOnce(t *testing.T) {
-	registry := newMediaServerRegistry()
-	serverInstance := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
-	if err := registry.register(serverInstance, time.Now()); err != nil {
-		t.Fatalf("register() error = %v", err)
-	}
-	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	streamID := server.allocations.create(streamOperationPlay, "rtsp", "live/camera", mediaServerInstance{
-		serverID: serverInstance.ServerID, instanceID: serverInstance.InstanceID,
-	}, time.Now())
-	httpServer := httptest.NewServer(server.handler())
-	defer httpServer.Close()
-	command := map[string]string{
-		"stream_id": streamID, "server_id": "media-1", "instance_id": "instance-a",
-		"protocol": "rtsp", "stream_name": "live/camera",
-	}
+	for _, protocol := range []string{"rtsp", "http-flv"} {
+		t.Run(protocol, func(t *testing.T) {
+			registry := newMediaServerRegistry()
+			serverInstance := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
+			if err := registry.register(serverInstance, time.Now()); err != nil {
+				t.Fatalf("register() error = %v", err)
+			}
+			server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			streamID := server.allocations.create(streamOperationPlay, protocol, "live/camera", mediaServerInstance{
+				serverID: serverInstance.ServerID, instanceID: serverInstance.InstanceID,
+			}, time.Now())
+			httpServer := httptest.NewServer(server.handler())
+			defer httpServer.Close()
+			command := map[string]string{
+				"stream_id": streamID, "server_id": "media-1", "instance_id": "instance-a",
+				"protocol": protocol, "stream_name": "live/camera",
+			}
 
-	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/play/claim", command)
-	if response.StatusCode != http.StatusNoContent || response.ContentLength != 0 {
-		t.Fatalf("status = %d body = %s", response.StatusCode, readBody(t, response))
+			response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/play/claim", command)
+			if response.StatusCode != http.StatusNoContent || response.ContentLength != 0 {
+				t.Fatalf("status = %d body = %s", response.StatusCode, readBody(t, response))
+			}
+			response.Body.Close()
+			response = postJSON(t, httpServer.Client(), httpServer.URL+"/internal/play/claim", command)
+			assertHTTPError(t, response, http.StatusNotFound, "allocation_not_found")
+		})
 	}
-	response.Body.Close()
-	response = postJSON(t, httpServer.Client(), httpServer.URL+"/internal/play/claim", command)
-	assertHTTPError(t, response, http.StatusNotFound, "allocation_not_found")
 }
 
 func TestPlayClaimHTTPOperationConflictsDoNotConsumeAllocation(t *testing.T) {
@@ -69,6 +73,32 @@ func TestPlayClaimHTTPOperationConflictsDoNotConsumeAllocation(t *testing.T) {
 			response.Body.Close()
 		})
 	}
+}
+
+func TestPlayClaimHTTPProtocolConflictDoesNotConsumeHTTPFLVAllocation(t *testing.T) {
+	registry := newMediaServerRegistry()
+	registration := testMediaServerRegistration("media-1", "instance-a", "127.0.0.1")
+	if err := registry.register(registration, time.Now()); err != nil {
+		t.Fatalf("register() error = %v", err)
+	}
+	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	streamID := server.allocations.create(streamOperationPlay, "http-flv", "live/camera", mediaServerInstance{
+		serverID: registration.ServerID, instanceID: registration.InstanceID,
+	}, time.Now())
+	httpServer := httptest.NewServer(server.handler())
+	defer httpServer.Close()
+	command := map[string]string{
+		"stream_id": streamID, "server_id": "media-1", "instance_id": "instance-a",
+		"protocol": "rtsp", "stream_name": "live/camera",
+	}
+	response := postJSON(t, httpServer.Client(), httpServer.URL+"/internal/play/claim", command)
+	assertHTTPError(t, response, http.StatusConflict, "allocation_conflict")
+	command["protocol"] = "http-flv"
+	response = postJSON(t, httpServer.Client(), httpServer.URL+"/internal/play/claim", command)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d body = %s", response.StatusCode, readBody(t, response))
+	}
+	response.Body.Close()
 }
 
 func TestPlayClaimHTTPFencesStaleInstance(t *testing.T) {

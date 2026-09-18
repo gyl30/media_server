@@ -19,6 +19,8 @@ enum class event_protocol
 {
     rtmp,
     rtsp,
+    http_flv,
+    hls,
     gb28181,
     whep,
 };
@@ -100,6 +102,10 @@ struct runtime_event
             return "rtmp";
         case event_protocol::rtsp:
             return "rtsp";
+        case event_protocol::http_flv:
+            return "http-flv";
+        case event_protocol::hls:
+            return "hls";
         case event_protocol::gb28181:
             return "gb28181";
         case event_protocol::whep:

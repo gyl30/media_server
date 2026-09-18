@@ -3649,7 +3649,7 @@ void test_rtsp_server_lifecycle()
     require(weak_server.expired(), "rtsp server event loop teardown releases accept coroutine ownership");
 }
 
-void start_http_flv_client(boost::asio::ip::tcp::socket& client, std::string_view path)
+std::string start_http_flv_client(boost::asio::ip::tcp::socket& client, std::string_view path)
 {
     const auto request = "GET " + std::string(path) +
                          " HTTP/1.1\r\n"
@@ -3662,7 +3662,7 @@ void start_http_flv_client(boost::asio::ip::tcp::socket& client, std::string_vie
     std::istream input(&response);
     std::string status;
     std::getline(input, status);
-    require(status.starts_with("HTTP/1.1 200"), "http flv response status");
+    return status;
 }
 
 void drain_http_flv_client(boost::asio::ip::tcp::socket& client)
@@ -4159,7 +4159,8 @@ void test_http_flv_client_disconnect()
     session.reset();
 
     std::jthread runner([&io]() { io.run(); });
-    start_http_flv_client(client, "/live/http-flv-disconnect.flv");
+    require(start_http_flv_client(client, "/live/http-flv-disconnect.flv?stream_id=00000000-0000-4000-8000-000000000011").starts_with("HTTP/1.1 200"),
+            "http flv response status");
     drain_http_flv_client(client);
 
     boost::asio::post(io, [stream, frame = make_large_video_frame(0)]() mutable { stream->publish(std::move(frame)); });
@@ -4193,7 +4194,8 @@ void test_http_flv_stream_end_during_write()
     session.reset();
 
     std::jthread runner([&io]() { io.run(); });
-    start_http_flv_client(client, "/live/http-flv-end-write.flv");
+    require(start_http_flv_client(client, "/live/http-flv-end-write.flv?stream_id=00000000-0000-4000-8000-000000000012").starts_with("HTTP/1.1 200"),
+            "http flv response status");
     drain_http_flv_client(client);
 
     boost::asio::post(io, [stream, frame = make_large_video_frame(0)]() mutable { stream->publish(std::move(frame)); });
@@ -4226,7 +4228,9 @@ void test_http_flv_pending_bootstrap_end()
     session.reset();
 
     std::jthread runner([&io]() { io.run(); });
-    start_http_flv_client(client, "/live/http-flv-pending-end.flv");
+    require(
+        start_http_flv_client(client, "/live/http-flv-pending-end.flv?stream_id=00000000-0000-4000-8000-000000000013").starts_with("HTTP/1.1 200"),
+        "http flv response status");
     drain_http_flv_client(client);
 
     boost::asio::post(io, [stream, frame = make_large_video_frame(0)]() mutable { stream->publish(std::move(frame)); });
@@ -4245,6 +4249,126 @@ void test_http_flv_pending_bootstrap_end()
     boost::system::error_code error;
     client.close(error);
     workers.release_work();
+    runner.join();
+}
+
+void test_http_flv_play_admission()
+{
+    test::publish_claim_test_server claim_server(boost::beast::http::status::forbidden);
+    io_context_pool workers(1);
+    auto& worker = workers.context(0);
+    configure_signaling_client(claim_server.url());
+
+    auto stream = std::make_shared<media_stream>("live/http-flv-admission", worker);
+    require(stream->set_tracks({make_video_track()}), "http flv admission track");
+    require(stream_registry::instance().add(stream), "http flv admission stream");
+
+    boost::asio::ip::tcp::acceptor acceptor(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    std::jthread runner([&worker]() { worker.run(); });
+    const config application_config;
+    const auto request = [&](std::string_view target)
+    {
+        boost::asio::io_context client_io;
+        boost::asio::ip::tcp::socket client(client_io);
+        client.connect(acceptor.local_endpoint());
+        auto session = std::make_shared<http_session>(worker, acceptor.accept(), application_config);
+        session->startup();
+        session.reset();
+        return start_http_flv_client(client, target);
+    };
+
+    require(request("/live/http-flv-admission.flv").starts_with("HTTP/1.1 400"), "HTTP-FLV missing stream ID rejected");
+    require(request("/live/http-flv-admission.flv?stream_id=bad").starts_with("HTTP/1.1 400"), "HTTP-FLV invalid stream ID rejected");
+    require(request("/live/http-flv-admission.flv?stream_id=00000000-0000-4000-8000-000000000014&stream_id="
+                    "00000000-0000-4000-8000-000000000015")
+                .starts_with("HTTP/1.1 400"),
+            "HTTP-FLV duplicate stream ID rejected");
+    require(claim_server.request_count("/internal/play/claim") == 0U, "invalid HTTP-FLV request does not claim");
+
+    require(request("/live/http-flv-admission.flv?stream_id=00000000-0000-4000-8000-000000000014").starts_with("HTTP/1.1 403"),
+            "HTTP-FLV rejected claim response");
+    const auto claim = boost::json::parse(claim_server.wait_request("/internal/play/claim").body).as_object();
+    require(claim.at("stream_id") == "00000000-0000-4000-8000-000000000014" && claim.at("server_id") == "media-1" &&
+                claim.at("instance_id") == "instance-a" && claim.at("protocol") == "http-flv" && claim.at("stream_name") == "live/http-flv-admission",
+            "HTTP-FLV claim identity");
+    require(runtime_events(claim_server).empty(), "rejected HTTP-FLV claim emits no runtime event");
+
+    workers.release_work();
+    runner.join();
+}
+
+void test_http_flv_runtime_events()
+{
+    test::publish_claim_test_server claim_server;
+    io_context_pool workers(1);
+    auto& worker = workers.context(0);
+    configure_control_plane(worker, claim_server);
+
+    auto stream = std::make_shared<media_stream>("live/http-flv-events", worker);
+    require(stream->set_tracks({make_video_track()}), "http flv event track");
+    require(stream_registry::instance().add(stream), "http flv event stream");
+
+    boost::asio::ip::tcp::acceptor acceptor(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+    const config application_config;
+    auto session = std::make_shared<http_session>(worker, acceptor.accept(), application_config);
+    const std::weak_ptr<http_session> weak_session = session;
+    session->startup();
+    session.reset();
+
+    std::jthread runner([&worker]() { worker.run(); });
+    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000016";
+    require(start_http_flv_client(client, "/live/http-flv-events.flv?stream_id=00000000-0000-4000-8000-000000000016").starts_with("HTTP/1.1 200"),
+            "HTTP-FLV admitted response");
+    const auto claim = boost::json::parse(claim_server.wait_request("/internal/play/claim").body).as_object();
+    require(claim.at("stream_id").as_string() == stream_id && claim.at("protocol") == "http-flv" && claim.at("stream_name") == "live/http-flv-events",
+            "HTTP-FLV accepted claim identity");
+
+    wait_runtime_event_count(claim_server, 2U);
+    auto events = runtime_events(claim_server);
+    require_publisher_event(events[0],
+                            event_kind::output,
+                            event_protocol::http_flv,
+                            event_state::starting,
+                            stream_id,
+                            "live/http-flv-events",
+                            "play",
+                            "HTTP-FLV output starting event");
+    require_publisher_event(events[1],
+                            event_kind::output,
+                            event_protocol::http_flv,
+                            event_state::streaming,
+                            stream_id,
+                            "live/http-flv-events",
+                            "streaming",
+                            "HTTP-FLV output streaming event");
+
+    boost::asio::post(worker.io(), [stream]() { stream->end(); });
+    wait_runtime_event_count(claim_server, 4U);
+    events = runtime_events(claim_server);
+    require_publisher_event(events[2],
+                            event_kind::output,
+                            event_protocol::http_flv,
+                            event_state::remote_closed,
+                            stream_id,
+                            "live/http-flv-events",
+                            "media",
+                            "HTTP-FLV output source end event");
+    require_publisher_event(events[3],
+                            event_kind::output,
+                            event_protocol::http_flv,
+                            event_state::stopped,
+                            stream_id,
+                            "live/http-flv-events",
+                            {},
+                            "HTTP-FLV output stopped event");
+
+    require_http_session_released(weak_session, "HTTP-FLV source end releases HTTP session");
+    boost::system::error_code error;
+    client.close(error);
+    workers.stop();
     runner.join();
 }
 
@@ -13087,6 +13211,14 @@ int main(int argc, char* argv[])
         else if (scenario == "http_flv_pending_bootstrap_end")
         {
             media_server::test_http_flv_pending_bootstrap_end();
+        }
+        else if (scenario == "http_flv_play_admission")
+        {
+            media_server::test_http_flv_play_admission();
+        }
+        else if (scenario == "http_flv_runtime_events")
+        {
+            media_server::test_http_flv_runtime_events();
         }
         else if (scenario == "rtsp_pull_url_contract")
         {

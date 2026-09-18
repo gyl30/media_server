@@ -88,6 +88,7 @@ func TestPublishAllocationHTTPRejectsInvalidRequests(t *testing.T) {
 		"empty protocol": `{"protocol":"","stream_name":"live/camera"}`,
 		"empty name":     `{"protocol":"rtmp","stream_name":""}`,
 		"unsupported":    `{"protocol":"hls","stream_name":"live/camera"}`,
+		"play only":      `{"protocol":"http-flv","stream_name":"live/camera"}`,
 		"extra JSON":     `{"protocol":"rtmp","stream_name":"live/camera"}{}`,
 	} {
 		t.Run(name, func(t *testing.T) {

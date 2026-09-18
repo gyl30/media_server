@@ -43,8 +43,7 @@ void configure_reporting(worker_context& worker, std::string url)
     cfg.control_url = "http://127.0.0.1:8080";
     cfg.media_ip = "127.0.0.1";
     signaling_client::instance().configure(cfg, "instance-1", std::chrono::milliseconds(500));
-    boost::asio::spawn(
-        worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
+    boost::asio::spawn(worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
 }
 
 void require_identity(const boost::json::object& event)
@@ -124,8 +123,7 @@ void test_rtsp_pull_runtime_failure_events()
     require(starting.at("state") == "starting", "runtime event source starting");
     require(starting.at("stage") == "resolving" && !starting.contains("error"), "runtime event starting fields");
     require_identity(failure);
-    require(failure.at("state") == "runtime_error" && failure.contains("error") && !failure.contains("stage"),
-            "runtime event failure fact");
+    require(failure.at("state") == "runtime_error" && failure.contains("error") && !failure.contains("stage"), "runtime event failure fact");
     require_identity(stopped);
     require(stopped.at("state") == "stopped" && !stopped.contains("error") && !stopped.contains("stage"), "runtime event stopped lifecycle");
     require(released, "runtime event pull releases identity");
@@ -182,6 +180,8 @@ void test_runtime_event_strings()
     require(to_string(event_kind::source) == "source", "runtime source kind string");
     require(to_string(event_kind::publisher) == "publisher", "runtime publisher kind string");
     require(to_string(event_kind::output) == "output", "runtime output kind string");
+    require(to_string(event_protocol::http_flv) == "http-flv", "HTTP-FLV runtime event protocol string");
+    require(to_string(event_protocol::hls) == "hls", "HLS runtime event protocol string");
     require(to_string(event_protocol::whep) == "whep", "runtime event protocol string");
     require(to_string(event_state::streaming) == "streaming", "runtime event state string");
     require(to_string(event_state::stop_requested) == "stop_requested", "runtime requested fact string");

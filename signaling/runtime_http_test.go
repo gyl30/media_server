@@ -81,6 +81,20 @@ func TestRuntimeEventHTTPAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestRuntimeEventHTTPAcceptsHTTPOutputProtocols(t *testing.T) {
+	server, _ := newRuntimeHTTPTestServer(t)
+	for index, protocol := range []string{"http-flv", "hls"} {
+		event := fmt.Sprintf(
+			`{"kind":"output","stream_id":"00000000-0000-4000-8000-%012d","stream_name":"live/camera","protocol":%q,"state":"starting","stage":"play"}`,
+			index+1, protocol,
+		)
+		response := sourceRequest(t, server.handler(), http.MethodPost, "/internal/runtime-events", runtimeEventBatch(event), "application/json")
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("%s event response = %d %s", protocol, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestRuntimeEventHTTPRejectsInvalidStaleAndConflictingEvents(t *testing.T) {
 	server, _ := newRuntimeHTTPTestServer(t)
 	valid := `{"kind":"publisher","stream_id":"00000000-0000-4000-8000-000000000001","stream_name":"live/camera",` +
@@ -98,7 +112,7 @@ func TestRuntimeEventHTTPRejectsInvalidStaleAndConflictingEvents(t *testing.T) {
 		{name: "invalid stream id", body: runtimeEventBatch(`{"kind":"source","stream_id":"invalid","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"starting"}`), want: http.StatusBadRequest},
 		{name: "missing rtsp source id", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"starting"}`), want: http.StatusBadRequest},
 		{name: "invalid kind", body: runtimeEventBatch(`{"kind":"receiver","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"rtsp","state":"streaming"}`), want: http.StatusBadRequest},
-		{name: "invalid protocol", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"hls","state":"starting"}`), want: http.StatusBadRequest},
+		{name: "invalid protocol", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","protocol":"dash","state":"starting"}`), want: http.StatusBadRequest},
 		{name: "invalid state", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"failed"}`), want: http.StatusBadRequest},
 		{name: "removed end reason", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"starting","end_reason":"remote"}`), want: http.StatusBadRequest},
 		{name: "active error", body: runtimeEventBatch(`{"kind":"source","stream_id":"20000000-0000-4000-8000-000000000001","stream_name":"live/camera","source_id":"10000000-0000-4000-8000-000000000001","protocol":"rtsp","state":"starting","error":"failed"}`), want: http.StatusBadRequest},
