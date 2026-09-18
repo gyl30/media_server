@@ -171,6 +171,15 @@ probe_player() {
         -i "$url" -t 0.8 -map 0:v:0 -f null - >"$work_dir/${label}.log" 2>&1
 }
 
+start_probe_player() {
+    local label="$1" protocol="$2" url="$3"
+    local -a options=()
+    [[ "$protocol" == rtsp ]] && options=(-rtsp_transport tcp)
+    timeout 12s "$ffmpeg_bin" -nostdin -hide_banner -loglevel error "${options[@]}" \
+        -i "$url" -t 0.8 -map 0:v:0 -f null - >"$work_dir/${label}.log" 2>&1 &
+    probe_pid=$!
+}
+
 establish_hls() {
     local label="$1" initial_url="$2" headers status location
     headers="$work_dir/${label}_redirect_headers.txt"
@@ -275,15 +284,20 @@ start_services() {
 
 run_viewer_churn() {
     local stream_name=live/soak round protocol label
-    local -a hls_churn_ids=() hls_churn_urls=()
+    local -a hls_churn_ids=() hls_churn_urls=() round_pids=() round_ids=() round_protocols=()
     start_publisher soak_publisher "$stream_name" 'testsrc=size=320x180:rate=25'
     sample_resources warmup
     for round in $(seq 1 "$soak_rounds"); do
+        round_pids=() round_ids=() round_protocols=()
         for protocol in rtsp rtmp http-flv; do
             label="soak_${protocol//-/_}_$round"
             allocate_values play "$label" "$protocol" "$stream_name"
-            probe_player "$label" "$protocol" "$allocation_url"
-            wait_runtime "$allocation_id" output "$protocol" "$stream_name" stopped
+            start_probe_player "$label" "$protocol" "$allocation_url"
+            round_pids+=("$probe_pid") round_ids+=("$allocation_id") round_protocols+=("$protocol")
+        done
+        for index in "${!round_pids[@]}"; do
+            wait "${round_pids[$index]}"
+            wait_runtime "${round_ids[$index]}" output "${round_protocols[$index]}" "$stream_name" stopped
         done
         label="soak_hls_$round"
         allocate_values play "$label" hls "$stream_name"
@@ -340,14 +354,19 @@ run_mixed_batches() {
 run_source_replacement() {
     local stream_name=live/generation-soak generation protocol label
     local previous_hls_url="" previous_segment="" previous_generation=0
-    local -a replacement_hls_ids=() replacement_hls_urls=()
+    local -a replacement_hls_ids=() replacement_hls_urls=() generation_pids=() generation_ids=() generation_protocols=()
     for generation in $(seq 1 "$replacement_rounds"); do
         start_publisher "generation_publisher_$generation" "$stream_name" "testsrc=size=320x180:rate=25,hue=h=$((generation * 23))"
+        generation_pids=() generation_ids=() generation_protocols=()
         for protocol in rtsp rtmp http-flv; do
             label="generation_${generation}_${protocol//-/_}"
             allocate_values play "$label" "$protocol" "$stream_name"
-            probe_player "$label" "$protocol" "$allocation_url"
-            wait_runtime "$allocation_id" output "$protocol" "$stream_name" stopped
+            start_probe_player "$label" "$protocol" "$allocation_url"
+            generation_pids+=("$probe_pid") generation_ids+=("$allocation_id") generation_protocols+=("$protocol")
+        done
+        for index in "${!generation_pids[@]}"; do
+            wait "${generation_pids[$index]}"
+            wait_runtime "${generation_ids[$index]}" output "${generation_protocols[$index]}" "$stream_name" stopped
         done
         label="generation_${generation}_hls"
         allocate_values play "$label" hls "$stream_name"
