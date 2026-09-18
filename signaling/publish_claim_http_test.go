@@ -17,7 +17,7 @@ func TestPublishClaimHTTP(t *testing.T) {
 		t.Fatalf("register() error = %v", err)
 	}
 	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	streamID := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
+	streamID := server.allocations.create(streamOperationPublish, "rtmp", "live/camera", mediaServerInstance{
 		serverID: "media-1", instanceID: "instance-a",
 	}, time.Now())
 	httpServer := httptest.NewServer(server.handler())
@@ -44,7 +44,7 @@ func TestPublishClaimHTTPFencesOfflineAllocatedInstance(t *testing.T) {
 		t.Fatalf("register old instance error = %v", err)
 	}
 	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	streamID := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
+	streamID := server.allocations.create(streamOperationPublish, "rtmp", "live/camera", mediaServerInstance{
 		serverID: old.ServerID, instanceID: old.InstanceID,
 	}, now)
 	if offline := registry.expire(now.Add(16*time.Second), 15*time.Second); len(offline) != 1 {
@@ -62,7 +62,7 @@ func TestPublishClaimHTTPFencesOfflineAllocatedInstance(t *testing.T) {
 		"protocol": "rtmp", "stream_name": "live/camera",
 	})
 	assertHTTPError(t, response, http.StatusGone, "stale_instance")
-	stored, ok := storedPublishAllocation(server.allocations, streamID)
+	stored, ok := storedStreamAllocation(server.allocations, streamID)
 	if !ok {
 		t.Fatalf("allocation after stale claim = %+v, exists = %v", stored, ok)
 	}
@@ -72,7 +72,7 @@ func TestPublishClaimHTTPFencesOfflineAllocatedInstance(t *testing.T) {
 		"protocol": "rtmp", "stream_name": "live/camera",
 	})
 	assertHTTPError(t, response, http.StatusConflict, "allocation_conflict")
-	stored, ok = storedPublishAllocation(server.allocations, streamID)
+	stored, ok = storedStreamAllocation(server.allocations, streamID)
 	if !ok {
 		t.Fatalf("allocation after replacement claim = %+v, exists = %v", stored, ok)
 	}
@@ -128,9 +128,9 @@ func TestPublishClaimHTTPReportsExpiredAllocation(t *testing.T) {
 		t.Fatalf("register() error = %v", err)
 	}
 	server := newTestInfrastructureServer(t, testConfig(), registry, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	streamID := server.allocations.create("rtmp", "live/camera", mediaServerInstance{
+	streamID := server.allocations.create(streamOperationPublish, "rtmp", "live/camera", mediaServerInstance{
 		serverID: "media-1", instanceID: "instance-a",
-	}, time.Now().Add(-publishAllocationTTL))
+	}, time.Now().Add(-streamAllocationTTL))
 	httpServer := httptest.NewServer(server.handler())
 	defer httpServer.Close()
 

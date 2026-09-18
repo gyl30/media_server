@@ -63,7 +63,7 @@ func TestPublishAllocationHTTP(t *testing.T) {
 				t.Fatalf("publish URL query = %q", publishURL.RawQuery)
 			}
 
-			allocation, ok := storedPublishAllocation(server.allocations, result["stream_id"])
+			allocation, ok := storedStreamAllocation(server.allocations, result["stream_id"])
 			if !ok || allocation.protocol != test.protocol ||
 				allocation.streamName != "live/camera" || allocation.serverID != "media-1" || allocation.instanceID != "instance-a" {
 				t.Fatalf("stored allocation = %+v, ok = %v", allocation, ok)

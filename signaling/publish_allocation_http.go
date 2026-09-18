@@ -1,17 +1,9 @@
 package main
 
 import (
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
 	"time"
 )
-
-type publishAllocationRequest struct {
-	Protocol   string `json:"protocol"`
-	StreamName string `json:"stream_name"`
-}
 
 type publishAllocationResponse struct {
 	StreamID   string `json:"stream_id"`
@@ -19,7 +11,7 @@ type publishAllocationResponse struct {
 }
 
 func (s *infrastructureServer) handlePublishAllocation(writer http.ResponseWriter, request *http.Request) {
-	var command publishAllocationRequest
+	var command streamAllocationRequest
 	if !decodeJSON(writer, request, &command) ||
 		(command.Protocol != "rtmp" && command.Protocol != "rtsp") || command.StreamName == "" {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
@@ -31,24 +23,8 @@ func (s *infrastructureServer) handlePublishAllocation(writer http.ResponseWrite
 		return
 	}
 
-	streamID := s.allocations.create(command.Protocol, command.StreamName, server, time.Now())
+	streamID := s.allocations.create(streamOperationPublish, command.Protocol, command.StreamName, server, time.Now())
 	writeJSON(writer, http.StatusCreated, publishAllocationResponse{
-		StreamID: streamID, PublishURL: makePublishURL(command.Protocol, command.StreamName, streamID, server),
+		StreamID: streamID, PublishURL: makeStreamURL(command.Protocol, command.StreamName, streamID, server),
 	})
-}
-
-func makePublishURL(protocol, streamName, streamID string, server mediaServerInstance) string {
-	port := server.rtmpPort
-	if protocol == "rtsp" {
-		port = server.rtspPort
-	}
-	publishURL := url.URL{
-		Scheme: protocol,
-		Host:   net.JoinHostPort(server.mediaIP, strconv.FormatUint(uint64(port), 10)),
-		Path:   "/" + streamName,
-	}
-	query := publishURL.Query()
-	query.Set("stream_id", streamID)
-	publishURL.RawQuery = query.Encode()
-	return publishURL.String()
 }
