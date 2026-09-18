@@ -11306,6 +11306,41 @@ void test_rtmp_input_output_boundaries()
     }
 }
 
+void test_rtmp_publish_propagates_media_input_error()
+{
+    worker_context worker;
+    int video_shutdowns = 0;
+    auto video = std::make_shared<rtmp_publish_session>(worker,
+                                                        "550e8400-e29b-41d4-a716-446655440000",
+                                                        "live/rtmp-video-input-error",
+                                                        std::chrono::seconds(1),
+                                                        [&]() { ++video_shutdowns; });
+    require(video->startup(), "rtmp video input error startup");
+    const auto h264 = make_rtmp_video_sequence_header(make_video_track());
+    const auto h265 = make_rtmp_video_sequence_header(make_h265_track());
+    require(video->on_video(h264.data(), h264.size(), 0) == 0, "rtmp accepts initial video config");
+    const auto video_result = video->on_video(h265.data(), h265.size(), 0);
+    require(video_shutdowns == 0, "rtmp video input error does not call shutdown handler");
+    require(video_result != 0, "rtmp video input error propagates");
+
+    int script_shutdowns = 0;
+    auto script = std::make_shared<rtmp_publish_session>(worker,
+                                                         "550e8400-e29b-41d4-a716-446655440001",
+                                                         "live/rtmp-script-input-error",
+                                                         std::chrono::seconds(1),
+                                                         [&]() { ++script_shutdowns; });
+    require(script->startup(), "rtmp script input error startup");
+    const std::array<std::uint8_t, 1> malformed_script{AMF_STRING};
+    const auto script_result = script->on_script(malformed_script);
+    require(script_shutdowns == 0, "rtmp script input error does not call shutdown handler");
+    require(script_result != 0, "rtmp script input error propagates");
+
+    video->shutdown();
+    script->shutdown();
+    worker.release_work();
+    worker.run();
+}
+
 void test_whip_media_receiver_rejects_invalid_packets()
 {
     const std::vector<std::vector<std::uint8_t>> invalid_rtp{
@@ -12576,6 +12611,10 @@ int main(int argc, char* argv[])
         else if (scenario == "rtmp_input_output_boundaries")
         {
             media_server::test_rtmp_input_output_boundaries();
+        }
+        else if (scenario == "rtmp_publish_media_input_error")
+        {
+            media_server::test_rtmp_publish_propagates_media_input_error();
         }
         else if (scenario == "whip_media_receiver")
         {

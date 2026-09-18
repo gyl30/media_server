@@ -422,6 +422,7 @@ if(BUILD_TESTING)
         rtsp_input_output_boundaries
         rtmp_duplicate_publisher_preserves_source
         rtmp_input_output_boundaries
+        rtmp_publish_media_input_error
         whip_media_receiver
         whip_hls_output
         whip_rtmp_output
