@@ -108,6 +108,43 @@ print(publish_url)
 PY
 }
 
+allocate_play() {
+    local label="$1"
+    local protocol="$2"
+    local stream_name="$3"
+    local response="$work_dir/${label}_allocation.json"
+    local body
+    local status
+    printf -v body '{"protocol":"%s","stream_name":"%s"}' "$protocol" "$stream_name"
+    status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o "$response" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "http://${signaling_address}:${signaling_http_port}/api/play/allocations")"
+    if [[ "$status" != "201" ]]; then
+        echo "POST /api/play/allocations returned $status" >&2
+        cat "$response" >&2 2>/dev/null || true
+        return 1
+    fi
+    python3 - "$response" "$protocol" <<'PY'
+import json
+import sys
+import urllib.parse
+import uuid
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    response = json.load(source)
+stream_id = response["stream_id"]
+play_url = response["play_url"]
+parsed_id = uuid.UUID(stream_id)
+parsed_url = urllib.parse.urlsplit(play_url)
+query = urllib.parse.parse_qs(parsed_url.query, strict_parsing=True)
+assert parsed_id.version == 4 and str(parsed_id) == stream_id
+assert parsed_url.scheme == ("rtsp" if sys.argv[2] == "rtsp" else "http")
+assert query.get("stream_id") == [stream_id]
+print(play_url)
+PY
+}
+
 wait_probe_streams() {
     local output="$1"
     local video_codec="$2"
@@ -279,8 +316,9 @@ run_udp_case() {
 
     post_gb28181_sender "${name}_sender_post" "$sender_body"
 
+    sleep 1
     wait_probe_streams "$work_dir/${name}_probe.txt" "$video_codec" "$audio_codec" \
-        "rtsp://${server_address}:${rtsp_port}/${target}"
+        "$(allocate_play "${name}_play" rtsp "$target")"
     assert_specific_sockets
 
     delete_gb28181_sender "${name}_sender_delete" \
@@ -319,8 +357,9 @@ run_tcp_case() {
         post_gb28181_receiver "${name}_receiver_post" "$receiver_body"
     fi
 
+    sleep 1
     wait_probe_streams "$work_dir/${name}_probe.txt" h264 aac \
-        "rtsp://${server_address}:${rtsp_port}/${target}"
+        "$(allocate_play "${name}_play" rtsp "$target")"
     assert_specific_sockets
 
     local shutdown_log_line
@@ -376,8 +415,9 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -f flv "$publish_url" \
     >"$work_dir/publisher_h264_aac.log" 2>&1 &
 publish_pid=$!
+sleep 1
 wait_probe_streams "$work_dir/source_h264_aac.txt" h264 aac \
-    "rtsp://${server_address}:${rtsp_port}/live/gb-h264-aac"
+    "$(allocate_play source_h264_aac_play rtsp live/gb-h264-aac)"
 
 run_udp_case udp_h264_aac live/gb-h264-aac relay/gb-udp-h264-aac h264 aac 100002001 udp-h264-aac \
     00000000-0000-4000-8000-000000000101 00000000-0000-4000-8000-000000000102
@@ -459,8 +499,9 @@ kill -0 "$rtcp_relay_pid"
 
 post_gb28181_sender rtcp_sender_post "$(printf '{"stream_id":"00000000-0000-4000-8000-000000000108","stream_name":"live/gb-h264-aac","sender_id":"udp-rtcp","transport":"udp","remote_address":"%s","remote_rtp_port":%s,"remote_rtcp_port":%s,"payload_type":96,"ssrc":100002006,"rtcp_enabled":true}' \
     "$server_address" "$rtcp_relay_rtp_port" "$rtcp_relay_rtcp_port")"
+sleep 1
 wait_probe_streams "$work_dir/rtcp_probe.txt" h264 aac \
-    "rtsp://${server_address}:${rtsp_port}/relay/gb-udp-rtcp"
+    "$(allocate_play rtcp_play rtsp relay/gb-udp-rtcp)"
 
 if ! wait "$rtcp_relay_pid"; then
     rtcp_relay_pid=""
@@ -494,8 +535,9 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -rtsp_transport tcp -f rtsp "$publish_url" \
     >"$work_dir/publisher_h265_g711a.log" 2>&1 &
 publish_pid=$!
+sleep 1
 wait_probe_streams "$work_dir/source_h265_g711a.txt" hevc pcm_alaw \
-    "rtsp://${server_address}:${rtsp_port}/live/gb-h265-g711a"
+    "$(allocate_play source_h265_g711a_play rtsp live/gb-h265-g711a)"
 run_udp_case udp_h265_g711a live/gb-h265-g711a relay/gb-udp-h265-g711a hevc pcm_alaw 100002002 udp-h265-g711a \
     00000000-0000-4000-8000-000000000109 00000000-0000-4000-8000-000000000110
 stop_publisher
@@ -511,8 +553,9 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     -rtsp_transport tcp -f rtsp "$publish_url" \
     >"$work_dir/publisher_h264_g711u.log" 2>&1 &
 publish_pid=$!
+sleep 1
 wait_probe_streams "$work_dir/source_h264_g711u.txt" h264 pcm_mulaw \
-    "rtsp://${server_address}:${rtsp_port}/live/gb-h264-g711u"
+    "$(allocate_play source_h264_g711u_play rtsp live/gb-h264-g711u)"
 run_udp_case udp_h264_g711u live/gb-h264-g711u relay/gb-udp-h264-g711u h264 pcm_mulaw 100002003 udp-h264-g711u \
     00000000-0000-4000-8000-000000000111 00000000-0000-4000-8000-000000000112
 stop_publisher
