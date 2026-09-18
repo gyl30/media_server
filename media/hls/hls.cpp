@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "media/hls/hls.h"
+#include "media/hls/hls_play_session.h"
 #include "media/hls/hls_segmenter.h"
 #include "media/core/stream_registry.h"
 
@@ -109,6 +110,7 @@ std::optional<std::size_t> segment_count(std::string_view stream_name, const con
 
 void shutdown()
 {
+    hls_play_session::shutdown_all();
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
     for (auto& [stream_name, value] : current.segmenters)

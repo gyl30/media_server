@@ -3911,6 +3911,7 @@ void test_hls_play_admission()
                             "streaming",
                             "second hls viewer streaming event");
 
+    hls::shutdown();
     workers.stop();
     runner.join();
 }

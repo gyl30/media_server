@@ -77,6 +77,16 @@ std::shared_ptr<hls_play_session> hls_play_session::find(std::string_view secret
     return session->matches(stream_name) ? session : std::shared_ptr<hls_play_session>{};
 }
 
+void hls_play_session::shutdown_all()
+{
+    auto& current = sessions();
+    std::map<std::string, std::shared_ptr<hls_play_session>, std::less<>> detached;
+    {
+        std::scoped_lock lock(current.mutex);
+        detached.swap(current.by_secret);
+    }
+}
+
 hls_play_session::hls_play_session(worker_context& worker, std::string stream_id, std::string stream_name, std::string secret)
     : stream_id_(std::move(stream_id)),
       stream_name_(std::move(stream_name)),
