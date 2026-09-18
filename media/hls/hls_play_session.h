@@ -12,24 +12,28 @@
 
 namespace media_server
 {
+class hls_segmenter;
 class worker_context;
 
 class hls_play_session final : public std::enable_shared_from_this<hls_play_session>
 {
    public:
-    [[nodiscard]] static std::shared_ptr<hls_play_session> create(worker_context& worker, std::string stream_id, std::string stream_name);
+    [[nodiscard]] static std::shared_ptr<hls_play_session> create(
+        worker_context& worker, std::string stream_id, std::string stream_name, std::shared_ptr<hls_segmenter> segmenter);
     [[nodiscard]] static std::shared_ptr<hls_play_session> find(std::string_view secret, std::string_view stream_name);
     static void shutdown_all();
 
     [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
     [[nodiscard]] const std::string& stream_name() const noexcept { return stream_name_; }
     [[nodiscard]] const std::string& secret() const noexcept { return secret_; }
+    [[nodiscard]] const std::shared_ptr<hls_segmenter>& segmenter() const noexcept { return segmenter_; }
 
     [[nodiscard]] bool refresh();
     [[nodiscard]] bool mark_streaming();
 
    private:
-    hls_play_session(worker_context& worker, std::string stream_id, std::string stream_name, std::string secret);
+    hls_play_session(
+        worker_context& worker, std::string stream_id, std::string stream_name, std::string secret, std::shared_ptr<hls_segmenter> segmenter);
 
     void wait_for_inactivity();
     void handle_inactivity(const boost::system::error_code& error);
@@ -41,6 +45,7 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
     std::string stream_id_;
     std::string stream_name_;
     std::string secret_;
+    std::shared_ptr<hls_segmenter> segmenter_;
     std::chrono::steady_clock::time_point last_activity_;
     bool streaming_{};
     bool expired_{};
