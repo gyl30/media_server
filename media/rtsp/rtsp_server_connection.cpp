@@ -445,6 +445,10 @@ void rtsp_server_connection::write(std::span<const std::uint8_t> data)
         shutdown();
         return;
     }
+    if (result == tcp_write_enqueue_result::stopped)
+    {
+        return;
+    }
 
     if (close_after_write)
     {
@@ -473,7 +477,7 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_)
+        if (closed_ || write_queue_.stopped())
         {
             return;
         }
@@ -593,6 +597,7 @@ void rtsp_server_connection::safe_shutdown()
         return;
     }
     closed_ = true;
+    write_queue_.stop();
     inactivity_timer_.cancel();
     if (publish_session_)
     {

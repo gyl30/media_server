@@ -9,8 +9,13 @@ tcp_write_queue::tcp_write_queue(std::size_t max_bytes) : max_bytes_(max_bytes) 
 
 tcp_write_enqueue_result tcp_write_queue::enqueue(buffer data, bool stop_after_write)
 {
+    if (stopped_)
+    {
+        return tcp_write_enqueue_result::stopped;
+    }
     if (data->size() > max_bytes_ || queued_bytes_ > max_bytes_ - data->size())
     {
+        stopped_ = true;
         return tcp_write_enqueue_result::overflow;
     }
 
@@ -25,7 +30,11 @@ tcp_write_result tcp_write_queue::write_one(tcp_yield_transport& transport, boos
     const auto queued_entry = entries_.front();
     boost::system::error_code error;
     transport.write(*queued_entry.data, yield, error);
-    if (!error)
+    if (error)
+    {
+        stopped_ = true;
+    }
+    else
     {
         queued_bytes_ -= queued_entry.data->size();
         entries_.pop_front();
@@ -34,5 +43,9 @@ tcp_write_result tcp_write_queue::write_one(tcp_yield_transport& transport, boos
 }
 
 bool tcp_write_queue::empty() const noexcept { return entries_.empty(); }
+
+bool tcp_write_queue::stopped() const noexcept { return stopped_; }
+
+void tcp_write_queue::stop() noexcept { stopped_ = true; }
 
 }    // namespace media_server

@@ -249,6 +249,7 @@ void rtsp_pull_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    write_queue_.stop();
     if (started_)
     {
         rtsp_event::report_source(event_state::stopped, stream_id_, stream_name_, source_id_);
@@ -479,6 +480,10 @@ void rtsp_pull_session::write(std::span<const std::uint8_t> data)
         shutdown();
         return;
     }
+    if (result == tcp_write_enqueue_result::stopped)
+    {
+        return;
+    }
 
     if (result == tcp_write_enqueue_result::start_writer)
     {
@@ -491,7 +496,7 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_ || write_queue_.empty())
+        if (closed_ || write_queue_.stopped() || write_queue_.empty())
         {
             return;
         }

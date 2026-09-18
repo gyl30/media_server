@@ -246,6 +246,10 @@ void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
         shutdown();
         return;
     }
+    if (result == tcp_write_enqueue_result::stopped)
+    {
+        return;
+    }
 
     if (result == tcp_write_enqueue_result::start_writer)
     {
@@ -258,7 +262,7 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_)
+        if (closed_ || write_queue_.stopped())
         {
             return;
         }
@@ -491,6 +495,7 @@ void rtmp_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    write_queue_.stop();
     claim_pending_ = false;
     rtmp_context_ = nullptr;
     if (publish_)

@@ -169,7 +169,7 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_ || write_queue_.empty())
+        if (closed_ || write_queue_.stopped() || write_queue_.empty())
         {
             return;
         }
@@ -211,6 +211,10 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
         shutdown();
         return;
     }
+    if (result == tcp_write_enqueue_result::stopped)
+    {
+        return;
+    }
     if (!media_started_)
     {
         media_started_ = true;
@@ -230,6 +234,7 @@ void gb28181_tcp_sender_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    write_queue_.stop();
     if (started_)
     {
         gb28181_event::report_output(event_state::stopped, stream_id_, stream_name_);
