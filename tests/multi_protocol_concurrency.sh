@@ -169,12 +169,14 @@ start_player() {
 
 start_publisher() {
     local label="$1"
+    local video_source="${2:-testsrc=size=320x180:rate=25}"
+    local audio_frequency="${3:-1000}"
     local publish_url
     publish_url="$(allocate publish "$label" rtmp)"
     publisher_stream_id="$(allocation_stream_id "$label")"
     "$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
-        -f lavfi -i 'testsrc=size=320x180:rate=25' \
-        -f lavfi -i 'sine=frequency=1000:sample_rate=44100' \
+        -f lavfi -i "$video_source" \
+        -f lavfi -i "sine=frequency=$audio_frequency:sample_rate=44100" \
         -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
         -pix_fmt yuv420p -g 25 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 96k -ac 2 \
         -f flv "$publish_url" >"$work_dir/${label}.log" 2>&1 &
@@ -224,6 +226,37 @@ PY
 )"
     curl --noproxy '*' -fsS --connect-timeout 1 --max-time 5 "$segment_url" >"$work_dir/${label}.segment"
     [[ -s "$work_dir/${label}.segment" ]]
+}
+
+wait_player_exit() {
+    local pid="$1"
+    local label="$2"
+    for _ in $(seq 1 100); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid" 2>/dev/null || true
+            return
+        fi
+        sleep 0.1
+    done
+    echo "$label did not terminate after source end" >&2
+    cat "$work_dir/${label}.log" >&2 2>/dev/null || true
+    return 1
+}
+
+wait_hls_endlist() {
+    local label="$1"
+    local index_url="$2"
+    local playlist="$work_dir/${label}.m3u8"
+    for _ in $(seq 1 100); do
+        if curl --noproxy '*' -fsS --connect-timeout 1 --max-time 2 "$index_url" >"$playlist" 2>/dev/null && \
+            grep -Fq '#EXT-X-ENDLIST' "$playlist"; then
+            return
+        fi
+        sleep 0.1
+    done
+    echo "HLS viewer did not observe source end: $label" >&2
+    cat "$playlist" >&2 2>/dev/null || true
+    return 1
 }
 
 if [[ -z "$signaling_bin" ]]; then
@@ -418,12 +451,117 @@ PY
     echo "multi-protocol churn passed: $rounds rounds per protocol"
 }
 
+run_replacement() {
+    stream_name=live/replacement
+    start_publisher replacement_publisher_a
+    local first_publisher_id="$publisher_stream_id"
+    local protocol
+    local label
+    local play_url
+    local stream_id
+    local index
+    local -a first_labels=()
+    local -a first_protocols=()
+    local -a first_ids=()
+
+    for protocol in rtsp rtmp http-flv; do
+        label="replacement_a_${protocol//-/_}"
+        play_url="$(allocate play "$label" "$protocol")"
+        stream_id="$(allocation_stream_id "$label")"
+        first_labels+=("$label")
+        first_protocols+=("$protocol")
+        first_ids+=("$stream_id")
+        start_player "$label" "$protocol" "$play_url"
+    done
+    label=replacement_a_hls
+    play_url="$(allocate play "$label" hls)"
+    stream_id="$(allocation_stream_id "$label")"
+    play_url="$(establish_hls_session "$label" "$play_url")"
+    first_labels+=("$label")
+    first_protocols+=(hls)
+    first_ids+=("$stream_id")
+    local first_hls_url="$play_url"
+    probe_hls_session "$label" "$first_hls_url"
+
+    for index in "${!first_ids[@]}"; do
+        wait_runtime_state "${first_ids[$index]}" output "${first_protocols[$index]}" streaming
+    done
+
+    stop_publisher
+    for index in "${!player_pids[@]}"; do
+        wait_player_exit "${player_pids[$index]}" "${first_labels[$index]}"
+        wait_runtime_state "${first_ids[$index]}" output "${first_protocols[$index]}" stopped
+    done
+    player_pids=()
+    wait_hls_endlist replacement_a_ended "$first_hls_url"
+
+    start_publisher replacement_publisher_b 'testsrc2=size=320x180:rate=25' 1200
+    local second_publisher_id="$publisher_stream_id"
+    [[ "$second_publisher_id" != "$first_publisher_id" ]]
+
+    local -a second_labels=()
+    local -a second_protocols=()
+    local -a second_ids=()
+    for protocol in rtsp rtmp http-flv; do
+        label="replacement_b_${protocol//-/_}"
+        play_url="$(allocate play "$label" "$protocol")"
+        stream_id="$(allocation_stream_id "$label")"
+        second_labels+=("$label")
+        second_protocols+=("$protocol")
+        second_ids+=("$stream_id")
+        probe_once "$label" "$protocol" "$play_url"
+        wait_runtime_state "$stream_id" output "$protocol" stopped
+    done
+    label=replacement_b_hls
+    play_url="$(allocate play "$label" hls)"
+    stream_id="$(allocation_stream_id "$label")"
+    play_url="$(establish_hls_session "$label" "$play_url")"
+    second_labels+=("$label")
+    second_protocols+=(hls)
+    second_ids+=("$stream_id")
+    local second_hls_url="$play_url"
+    [[ "$second_hls_url" != "$first_hls_url" ]]
+    probe_hls_session "$label" "$second_hls_url"
+    wait_runtime_state "$stream_id" output hls streaming
+    if grep -Fq '#EXT-X-ENDLIST' "$work_dir/${label}.m3u8"; then
+        echo "replacement HLS viewer received ended playlist" >&2
+        return 1
+    fi
+
+    wait_hls_endlist replacement_a_retained "$first_hls_url"
+    probe_hls_session replacement_a_retained "$first_hls_url"
+    cmp "$work_dir/replacement_a_hls.segment" "$work_dir/replacement_a_retained.segment"
+    if cmp -s "$work_dir/replacement_a_hls.segment" "$work_dir/replacement_b_hls.segment"; then
+        echo "replacement HLS segment reused old source data" >&2
+        return 1
+    fi
+
+    python3 - "$work_dir" "$first_publisher_id" "$second_publisher_id" "${first_labels[@]}" "${second_labels[@]}" <<'PY'
+import json
+import pathlib
+import sys
+
+work_dir = pathlib.Path(sys.argv[1])
+identities = [sys.argv[2], sys.argv[3]]
+for label in sys.argv[4:]:
+    with (work_dir / f"{label}_allocation.json").open(encoding="utf-8") as source:
+        identities.append(json.load(source)["stream_id"])
+assert len(identities) == len(set(identities))
+PY
+
+    stop_publisher
+    echo "multi-protocol source replacement passed"
+}
+
 case "$scenario" in
     concurrency)
         run_concurrency
         ;;
     churn)
         run_churn
+        ;;
+    replacement)
+        run_replacement
         ;;
     *)
         echo "unknown scenario: $scenario" >&2
