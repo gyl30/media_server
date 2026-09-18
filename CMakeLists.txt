@@ -326,6 +326,7 @@ if(BUILD_TESTING)
         unconfigured
         registration
         claim
+        play_claim
         rejected
         temporary_failure
         network_error

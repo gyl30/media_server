@@ -47,6 +47,10 @@ class signaling_client
                                            std::string_view protocol,
                                            std::string_view stream_name,
                                            boost::asio::yield_context& yield) const;
+    signaling_request_result claim_play(std::string_view stream_id,
+                                        std::string_view protocol,
+                                        std::string_view stream_name,
+                                        boost::asio::yield_context& yield) const;
     void report(runtime_event event);
     void run(boost::asio::yield_context& yield);
 

@@ -23,9 +23,7 @@ namespace
 
 using namespace std::chrono_literals;
 
-static_assert(std::is_same_v<decltype(std::declval<media_server::signaling_client&>().run(
-                                 std::declval<boost::asio::yield_context&>())),
-                             void>);
+static_assert(std::is_same_v<decltype(std::declval<media_server::signaling_client&>().run(std::declval<boost::asio::yield_context&>())), void>);
 
 void require(bool condition, const char* message)
 {
@@ -189,9 +187,14 @@ void test_unconfigured_accepts_without_network()
         io,
         [&](boost::asio::yield_context& yield)
         { return media_server::signaling_client::instance().claim_publish("00000000-0000-4000-8000-000000000001", "rtmp", "live/camera", yield); });
+    const auto play_claim = run_request(
+        io,
+        [&](boost::asio::yield_context& yield)
+        { return media_server::signaling_client::instance().claim_play("00000000-0000-4000-8000-000000000002", "rtsp", "live/camera", yield); });
     require(registration.kind == media_server::signaling_result_kind::accepted, "unconfigured registration accepted");
     require(heartbeat.kind == media_server::signaling_result_kind::accepted, "unconfigured heartbeat accepted");
     require(claim.kind == media_server::signaling_result_kind::accepted, "unconfigured publish claim accepted");
+    require(play_claim.kind == media_server::signaling_result_kind::accepted, "unconfigured play claim accepted");
 
     bool completed{};
     boost::asio::spawn(
@@ -252,6 +255,34 @@ void test_publish_claim_uses_caller_executor_and_body()
     require(body.at("server_id") == "media-1" && body.at("instance_id") == "instance-a", "publish claim server identity");
     require(body.at("protocol") == "rtmp", "publish claim protocol");
     require(body.at("stream_name") == "live/camera", "publish claim stream name");
+}
+
+void test_play_claim_uses_target_body_and_status_mapping()
+{
+    test_http_server server;
+    boost::asio::io_context io;
+    configure_client(client_config(server.url()));
+    const auto accepted = run_request(
+        io,
+        [&](boost::asio::yield_context& yield)
+        { return media_server::signaling_client::instance().claim_play("00000000-0000-4000-8000-000000000002", "rtsp", "live/camera", yield); });
+    require(accepted.kind == media_server::signaling_result_kind::accepted, "play claim accepted");
+
+    server.set_status(boost::beast::http::status::conflict);
+    const auto rejected = run_request(
+        io,
+        [&](boost::asio::yield_context& yield)
+        { return media_server::signaling_client::instance().claim_play("00000000-0000-4000-8000-000000000003", "rtmp", "live/other", yield); });
+    require(rejected.kind == media_server::signaling_result_kind::rejected && rejected.status == 409, "play claim rejected");
+
+    const auto requests = server.wait_requests(2);
+    require(requests[0].target == "/internal/play/claim" && requests[1].target == "/internal/play/claim", "play claim target");
+    const auto body = boost::json::parse(requests[0].body).as_object();
+    require(body.size() == 5U, "play claim field count");
+    require(body.at("stream_id") == "00000000-0000-4000-8000-000000000002", "play claim stream id");
+    require(body.at("server_id") == "media-1" && body.at("instance_id") == "instance-a", "play claim server identity");
+    require(body.at("protocol") == "rtsp", "play claim protocol");
+    require(body.at("stream_name") == "live/camera", "play claim stream name");
 }
 
 void test_rejected_result()
@@ -333,16 +364,12 @@ void test_request_timeout()
     require(std::chrono::steady_clock::now() - started < 500ms, "request timeout cancels in-flight HTTP");
 }
 
-
 void test_heartbeat_rejection_stops_loop()
 {
     test_http_server server(boost::beast::http::status::gone);
     boost::asio::io_context io;
     configure_client(client_config(server.url()));
-    boost::asio::spawn(
-        io,
-        [](boost::asio::yield_context yield) { media_server::signaling_client::instance().run(yield); },
-        boost::asio::detached);
+    boost::asio::spawn(io, [](boost::asio::yield_context yield) { media_server::signaling_client::instance().run(yield); }, boost::asio::detached);
     std::jthread runner([&]() { io.run(); });
     server.wait_requests(1);
     std::this_thread::sleep_for(100ms);
@@ -351,7 +378,6 @@ void test_heartbeat_rejection_stops_loop()
     io.stop();
     runner.join();
 }
-
 
 }    // namespace
 
@@ -370,6 +396,10 @@ int main(int argc, char** argv)
     else if (test == "claim")
     {
         test_publish_claim_uses_caller_executor_and_body();
+    }
+    else if (test == "play_claim")
+    {
+        test_play_claim_uses_target_body_and_status_mapping();
     }
     else if (test == "rejected")
     {
