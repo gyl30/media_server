@@ -234,14 +234,20 @@ static int rtmp_server_oncreate_stream(void* param, int r, double transaction)
 // The server does not send any response
 static int rtmp_server_ondelete_stream(void* param, int r, double transaction, double stream_id)
 {
+	uint32_t deleted_stream_id;
 	struct rtmp_server_t* ctx;
 	ctx = (struct rtmp_server_t*)param;
+	(void)transaction;
 
 	if (0 == r)
 	{
-		stream_id = ctx->stream_id = 0; // clear stream id
-		//r = ctx->handler.ondelete_stream(ctx->param, (uint32_t)stream_id);
-		r = rtmp_server_send_onstatus(ctx, transaction, r, "NetStream.DeleteStream.Suceess", "NetStream.DeleteStream.Failed", "");
+		deleted_stream_id = (uint32_t)stream_id;
+		if (deleted_stream_id != ctx->stream_id)
+			return -1;
+		ctx->stream_id = 0;
+		ctx->start.play = 0;
+		if (ctx->handler.ondelete_stream)
+			r = ctx->handler.ondelete_stream(ctx->param, deleted_stream_id);
 	}
 
 	return r;
