@@ -222,6 +222,39 @@ wait_hls_stopped() {
     wait_runtime "$id" output hls "$stream_name" stopped 350
 }
 
+wait_hls_stopped_set() {
+    local stream_name="$1" response="$work_dir/hls_stopped.json"
+    shift
+    local -a ids=("$@")
+    for _ in $(seq 1 350); do
+        if curl --noproxy '*' -fsS --connect-timeout 1 --max-time 2 \
+            "http://127.0.0.1:$signaling_port/api/runtimes" >"$response" 2>/dev/null && \
+            python3 - "$response" "$stream_name" "${ids[@]}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    runtimes = json.load(source)["runtimes"]
+wanted = set(sys.argv[3:])
+stopped = {
+    runtime.get("stream_id")
+    for runtime in runtimes
+    if runtime.get("kind") == "output"
+    and runtime.get("protocol") == "hls"
+    and runtime.get("stream_name") == sys.argv[2]
+    and runtime.get("state") == "stopped"
+}
+raise SystemExit(0 if wanted <= stopped else 1)
+PY
+        then
+            return
+        fi
+        sleep 0.1
+    done
+    echo "HLS sessions did not stop: $stream_name" >&2
+    return 1
+}
+
 start_services() {
     if [[ -z "$signaling_bin" ]]; then
         (cd "$script_dir/../signaling" && go build -o "$work_dir/signaling" .)
@@ -260,7 +293,7 @@ run_viewer_churn() {
         fetch_hls "$label" "$allocation_url"
         if (( round % 20 == 0 || round == soak_rounds )); then sample_resources "churn-$round"; fi
     done
-    for allocation_id in "${hls_churn_ids[@]}"; do wait_hls_stopped "$allocation_id" "$stream_name"; done
+    wait_hls_stopped_set "$stream_name" "${hls_churn_ids[@]}"
     for allocation_url in "${hls_churn_urls[@]}"; do
         [[ "$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o /dev/null -w '%{http_code}' "$allocation_url")" == 403 ]]
     done
@@ -299,7 +332,7 @@ run_mixed_batches() {
         done
         sample_resources "mixed-$batch"
     done
-    for allocation_id in "${mixed_hls_ids[@]}"; do wait_hls_stopped "$allocation_id" "$stream_name"; done
+    wait_hls_stopped_set "$stream_name" "${mixed_hls_ids[@]}"
     stop_publisher "$stream_name"
     sample_resources mixed-final
 }
@@ -338,7 +371,7 @@ run_source_replacement() {
         wait_hls_endlist "generation_${generation}_ended" "$allocation_url"
         sample_resources "generation-$generation"
     done
-    for allocation_id in "${replacement_hls_ids[@]}"; do wait_hls_stopped "$allocation_id" "$stream_name"; done
+    wait_hls_stopped_set "$stream_name" "${replacement_hls_ids[@]}"
     sample_resources replacement-final
 }
 
