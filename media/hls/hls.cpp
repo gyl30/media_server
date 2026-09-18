@@ -52,6 +52,8 @@ void remove_expired_segmenters(std::chrono::steady_clock::time_point now)
                   });
 }
 
+}    // namespace
+
 std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const config& application_config)
 {
     auto& current = runtime();
@@ -81,8 +83,6 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const
     current.segmenters.emplace(std::string(stream_name), entry{.stream = stream, .segmenter = segmenter});
     return segmenter;
 }
-
-}    // namespace
 
 std::optional<std::string> playlist(std::string_view stream_name, const config& application_config, std::string_view query)
 {

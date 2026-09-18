@@ -41,14 +41,15 @@ void remove_session(std::string_view secret, const hls_play_session* expected)
 
 }    // namespace
 
-std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worker, std::string stream_id, std::string stream_name)
+std::shared_ptr<hls_play_session> hls_play_session::create(
+    worker_context& worker, std::string stream_id, std::string stream_name, std::shared_ptr<hls_segmenter> segmenter)
 {
     boost::uuids::random_generator generator;
     auto& current = sessions();
     for (;;)
     {
         auto secret = boost::uuids::to_string(generator());
-        auto session = std::shared_ptr<hls_play_session>(new hls_play_session(worker, stream_id, stream_name, std::move(secret)));
+        auto session = std::shared_ptr<hls_play_session>(new hls_play_session(worker, stream_id, stream_name, std::move(secret), segmenter));
         {
             std::scoped_lock lock(current.mutex);
             if (!current.by_secret.emplace(session->secret(), session).second)
@@ -87,10 +88,12 @@ void hls_play_session::shutdown_all()
     }
 }
 
-hls_play_session::hls_play_session(worker_context& worker, std::string stream_id, std::string stream_name, std::string secret)
+hls_play_session::hls_play_session(
+    worker_context& worker, std::string stream_id, std::string stream_name, std::string secret, std::shared_ptr<hls_segmenter> segmenter)
     : stream_id_(std::move(stream_id)),
       stream_name_(std::move(stream_name)),
       secret_(std::move(secret)),
+      segmenter_(std::move(segmenter)),
       last_activity_(std::chrono::steady_clock::now()),
       timer_(worker.io())
 {

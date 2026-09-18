@@ -8,6 +8,7 @@
 #include <boost/asio/detached.hpp>
 
 #include "media/hls/hls.h"
+#include "media/hls/hls_segmenter.h"
 #include "media/core/stream_id.h"
 #include "media/http/http_event.h"
 #include "media/net/worker_context.h"
@@ -116,7 +117,7 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
             return;
         }
 
-        const auto viewer = hls_play_session::create(worker_, std::move(*stream_id), stream_name);
+        const auto viewer = hls_play_session::create(worker_, std::move(*stream_id), stream_name, hls::get_or_create(stream_name, config_));
         http_event::report_hls_output(event_state::starting, viewer->stream_id(), viewer->stream_name(), "play");
 
         boost::beast::http::response<boost::beast::http::empty_body> response(boost::beast::http::status::temporary_redirect, request_.version());
@@ -139,30 +140,20 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
         send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", yield);
         return;
     }
+    const auto& segmenter = viewer->segmenter();
 
     if (file == "index.m3u8")
     {
-        auto count = hls::segment_count(stream_name, config_);
-        if (!count)
+        if (!segmenter)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
             return;
         }
-        if (*count == 0)
+        if (segmenter->segment_count() == 0U)
         {
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-            for (;;)
+            while (segmenter->segment_count() == 0U)
             {
-                count = hls::segment_count(stream_name, config_);
-                if (!count)
-                {
-                    send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
-                    return;
-                }
-                if (*count > 0)
-                {
-                    break;
-                }
                 if (std::chrono::steady_clock::now() >= deadline)
                 {
                     send_text_response(boost::beast::http::status::service_unavailable, "text/plain", "hls playlist not ready\n", yield);
@@ -179,13 +170,11 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
             }
         }
 
-        const auto playlist = hls::playlist(stream_name, config_, "session=" + viewer->secret());
-        if (!playlist)
-        {
-            send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
-            return;
-        }
-        if (send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", *playlist, yield) && viewer->refresh() &&
+        if (send_text_response(boost::beast::http::status::ok,
+                               "application/vnd.apple.mpegurl",
+                               segmenter->playlist(".", "session=" + viewer->secret()),
+                               yield) &&
+            viewer->refresh() &&
             viewer->mark_streaming())
         {
             http_event::report_hls_output(event_state::streaming, viewer->stream_id(), viewer->stream_name(), "streaming");
@@ -195,7 +184,7 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
 
     if (file == "init.mp4")
     {
-        const auto init = hls::init_segment(stream_name, config_);
+        const auto init = segmenter ? segmenter->init_segment() : std::nullopt;
         if (!init)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "init segment not found\n", yield);
@@ -227,7 +216,7 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
         return;
     }
 
-    const auto segment = hls::segment(stream_name, sequence, config_);
+    const auto segment = segmenter ? segmenter->segment(sequence) : std::nullopt;
     if (!segment)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "segment not found\n", yield);

@@ -443,6 +443,7 @@ if(BUILD_TESTING)
         stream_registry_session_identity_lifecycle
         hls_module_lifecycle
         hls_play_admission
+        hls_source_replacement
         hls_play_inactivity
         rtsp_input_output_boundaries
         rtmp_duplicate_publisher_preserves_source

@@ -3916,6 +3916,101 @@ void test_hls_play_admission()
     runner.join();
 }
 
+void test_hls_source_replacement()
+{
+    test::publish_claim_test_server claim_server;
+    io_context_pool workers(1);
+    auto& worker = workers.context(0);
+    configure_control_plane(worker, claim_server);
+    const config application_config;
+    constexpr std::string_view stream_name = "live/hls-replacement";
+    boost::asio::ip::tcp::acceptor acceptor(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    std::jthread runner([&worker]() { worker.run(); });
+
+    const auto publish_generation = [&](const std::shared_ptr<media_stream>& stream, std::uint8_t marker)
+    {
+        std::promise<void> ready;
+        auto ready_future = ready.get_future();
+        boost::asio::post(worker.io(),
+                          [stream, marker, &application_config, &ready]()
+                          {
+                              require(hls::segment_count(stream->name(), application_config) == 0U, "hls replacement segmenter create");
+                              auto first = make_video_frame(0, true);
+                              auto first_payload = std::make_shared<std::vector<std::uint8_t>>(*first.payload);
+                              first_payload->push_back(marker);
+                              first.payload = std::move(first_payload);
+                              auto second = make_video_frame(2'500'000'000, true);
+                              auto second_payload = std::make_shared<std::vector<std::uint8_t>>(*second.payload);
+                              second_payload->push_back(marker);
+                              second.payload = std::move(second_payload);
+                              stream->publish(std::move(first));
+                              stream->publish(std::move(second));
+                              ready.set_value();
+                          });
+        ready_future.get();
+    };
+    const auto create_viewer = [&](std::string_view stream_id)
+    {
+        const auto response = request_hls(
+            acceptor, worker, application_config, std::string{"/play/hls/live/hls-replacement/index.m3u8?stream_id="} + std::string{stream_id});
+        require(response.result() == boost::beast::http::status::temporary_redirect, "hls replacement viewer redirect");
+        return std::string(response[boost::beast::http::field::location]);
+    };
+
+    auto first = std::make_shared<media_stream>(std::string(stream_name), worker);
+    require(first->set_tracks({make_video_track()}), "hls replacement first tracks");
+    require(stream_registry::instance().add(first), "hls replacement first stream");
+    publish_generation(first, 0x11);
+
+    const auto first_location = create_viewer("00000000-0000-4000-8000-000000000121");
+    const auto first_secret = first_location.substr(first_location.find("?session=") + 9U);
+    const auto first_playlist = request_hls(acceptor, worker, application_config, first_location);
+    require(first_playlist.result() == boost::beast::http::status::ok && first_playlist.body().find("#EXT-X-ENDLIST") == std::string::npos,
+            "hls replacement first playlist active");
+    const auto first_segment =
+        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret);
+    require(first_segment.result() == boost::beast::http::status::ok && !first_segment.body().empty(), "hls replacement first segment");
+
+    stream_registry::instance().remove(*first);
+    std::promise<void> ended;
+    auto ended_future = ended.get_future();
+    boost::asio::post(worker.io(), [first, &ended]() { first->end(); ended.set_value(); });
+    ended_future.get();
+    const auto ended_playlist = request_hls(acceptor, worker, application_config, first_location);
+    require(ended_playlist.result() == boost::beast::http::status::ok &&
+                ended_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
+            "hls replacement first viewer sees endlist");
+
+    auto second = std::make_shared<media_stream>(std::string(stream_name), worker);
+    require(second->set_tracks({make_video_track()}), "hls replacement second tracks");
+    require(stream_registry::instance().add(second), "hls replacement second stream");
+    publish_generation(second, 0x22);
+
+    const auto second_location = create_viewer("00000000-0000-4000-8000-000000000122");
+    require(second_location != first_location, "hls replacement viewer secret changes");
+    const auto second_secret = second_location.substr(second_location.find("?session=") + 9U);
+    const auto second_playlist = request_hls(acceptor, worker, application_config, second_location);
+    require(second_playlist.result() == boost::beast::http::status::ok && second_playlist.body().find("#EXT-X-ENDLIST") == std::string::npos,
+            "hls replacement second playlist active");
+    const auto second_segment =
+        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + second_secret);
+    require(second_segment.result() == boost::beast::http::status::ok && second_segment.body() != first_segment.body(),
+            "hls replacement second segment belongs to new source");
+
+    const auto retained_playlist = request_hls(acceptor, worker, application_config, first_location);
+    require(retained_playlist.result() == boost::beast::http::status::ok &&
+                retained_playlist.body().find("#EXT-X-ENDLIST") != std::string::npos,
+            "hls replacement old viewer remains on ended source");
+    const auto retained_segment =
+        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-replacement/0.ts?session=" + first_secret);
+    require(retained_segment.result() == boost::beast::http::status::ok && retained_segment.body() == first_segment.body(),
+            "hls replacement old viewer retains old segment");
+
+    hls::shutdown();
+    workers.stop();
+    runner.join();
+}
+
 void test_hls_play_inactivity()
 {
     test::publish_claim_test_server claim_server;
@@ -13552,6 +13647,10 @@ int main(int argc, char* argv[])
         else if (scenario == "hls_play_admission")
         {
             media_server::test_hls_play_admission();
+        }
+        else if (scenario == "hls_source_replacement")
+        {
+            media_server::test_hls_source_replacement();
         }
         else if (scenario == "hls_play_inactivity")
         {
