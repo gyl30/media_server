@@ -53,13 +53,12 @@ wait_http() {
             return
         fi
         if ! kill -0 "$pid" 2>/dev/null; then
-            cat "$log" >&2 2>/dev/null || true
+            echo "service endpoint did not become ready" >&2
             return 1
         fi
         sleep 0.05
     done
-    echo "endpoint did not become ready: $url" >&2
-    cat "$log" >&2 2>/dev/null || true
+    echo "service endpoint did not become ready" >&2
     return 1
 }
 
@@ -85,8 +84,7 @@ allocate() {
         -H 'Content-Type: application/json' --data-binary "$body" \
         "http://127.0.0.1:$signaling_port/api/$operation/allocations")"
     if [[ "$status" != 201 ]]; then
-        echo "$operation allocation $label returned $status" >&2
-        cat "$response" >&2 2>/dev/null || true
+        echo "$operation allocation failed (status=$status)" >&2
         return 1
     fi
     python3 - "$response" "${operation}_url" <<'PY'
@@ -137,8 +135,7 @@ PY
         fi
         sleep 0.1
     done
-    echo "runtime did not reach $state: $protocol $stream_id $stream_name" >&2
-    cat "$response" >&2 2>/dev/null || true
+    echo "runtime did not reach state (protocol=$protocol state=$state)" >&2
     return 1
 }
 
@@ -222,7 +219,7 @@ wait_hls_endlist() {
         fi
         sleep 0.1
     done
-    echo "HLS viewer did not reach ENDLIST: $label" >&2
+    echo "HLS viewer did not reach ENDLIST" >&2
     return 1
 }
 
@@ -260,7 +257,7 @@ PY
         fi
         sleep 0.1
     done
-    echo "HLS sessions did not stop: $stream_name" >&2
+    echo "HLS sessions did not stop" >&2
     return 1
 }
 
