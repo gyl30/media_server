@@ -6820,6 +6820,77 @@ void test_rtsp_play_reply_error()
     stream_registry::instance().remove(*stream);
 }
 
+void test_rtsp_play_terminal_failure_quiesces_reader()
+{
+    worker_context worker;
+    worker.release_work();
+    auto& io = worker.io();
+    auto stream = std::make_shared<media_stream>("live/play-terminal-failure", worker);
+    require(stream->set_tracks({make_video_track()}), "rtsp play terminal failure tracks");
+    require(stream_registry::instance().add(stream), "rtsp play terminal failure registry");
+
+    std::size_t shutdowns = 0;
+    rtsp_play_reply_fixture fixture{
+        .session = std::make_shared<rtsp_play_session>(
+            worker, video_transcode_codec::passthrough, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}),
+        .response = {},
+        .fail_send = false,
+    };
+    fixture.session->set_shutdown_handler([&shutdowns]() { ++shutdowns; });
+
+    rtsp_handler_t handler{};
+    handler.send = &capture_rtsp_play_reply;
+    handler.ondescribe = &describe_rtsp_play;
+    handler.onsetup = &setup_rtsp_play;
+    handler.onplay = &play_rtsp_play;
+    auto* server = rtsp_server_create("127.0.0.1", 8554, &handler, &fixture, &fixture);
+    require(server != nullptr, "rtsp play terminal failure server");
+
+    const auto input = [&](std::string request)
+    {
+        fixture.response.clear();
+        auto bytes = request.size();
+        return rtsp_server_input(server, request.data(), &bytes);
+    };
+    const std::string base = "rtsp://127.0.0.1/live/play-terminal-failure";
+    require(input("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n") == 0,
+            "rtsp play terminal failure describe");
+    require(input("SETUP " + base +
+                  "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n") == 0,
+            "rtsp play terminal failure setup");
+    const auto session = rtsp_header_value(fixture.response, "Session:");
+    require(!session.empty(), "rtsp play terminal failure session");
+    require(input("PLAY " + base + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n") == 0,
+            "rtsp play terminal failure play");
+
+    io.restart();
+    while (io.poll() != 0)
+    {
+    }
+
+    require(stream->update_track(make_video_track(1)), "rtsp play terminal failure track update");
+    io.restart();
+    while (io.poll() != 0)
+    {
+    }
+    require(shutdowns == 1U, "rtsp play terminal failure requests shutdown once");
+
+    stream->end();
+    io.restart();
+    while (io.poll() != 0)
+    {
+    }
+    require(shutdowns == 1U, "rtsp play terminal failure suppresses queued stream end");
+
+    rtsp_server_destroy(server);
+    fixture.session->shutdown();
+    io.restart();
+    while (io.poll() != 0)
+    {
+    }
+    stream_registry::instance().remove(*stream);
+}
+
 void test_rtsp_play_session_contract()
 {
     rtsp_play_test_peer peer;
@@ -12543,6 +12614,10 @@ int main(int argc, char* argv[])
         else if (scenario == "rtsp_play_session_contract")
         {
             media_server::test_rtsp_play_session_contract();
+        }
+        else if (scenario == "rtsp_play_terminal_failure_quiesces_reader")
+        {
+            media_server::test_rtsp_play_terminal_failure_quiesces_reader();
         }
         else if (scenario == "rtsp_play_reply_error")
         {

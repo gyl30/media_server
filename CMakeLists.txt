@@ -405,6 +405,7 @@ if(BUILD_TESTING)
         rtsp_pull_initial_tracks_timeout
         rtsp_pull_independent_keepalive
         rtsp_play_session_contract
+        rtsp_play_terminal_failure_quiesces_reader
         rtsp_play_reply_error
         rtsp_play_recreate_lifecycle
         rtsp_play_media_delivery
