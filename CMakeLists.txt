@@ -219,6 +219,7 @@ add_library(media_core STATIC
     media/flv/flv_muxer.cpp
     media/hls/hls_segmenter.cpp
     media/hls/hls.cpp
+    media/http/http_event.cpp
     media/http/http_flv_streamer.cpp
     media/http/http_flv_session.cpp
     media/http/hls_http_session.cpp
@@ -405,6 +406,8 @@ if(BUILD_TESTING)
         http_flv_client_disconnect
         http_flv_stream_end_during_write
         http_flv_pending_bootstrap_end
+        http_flv_play_admission
+        http_flv_runtime_events
         rtsp_pull_url_contract
         rtsp_pull_establishment_timeout
         rtsp_pull_establishment_progress_timeout

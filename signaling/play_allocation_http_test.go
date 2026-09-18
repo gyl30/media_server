@@ -22,6 +22,7 @@ func TestPlayAllocationHTTP(t *testing.T) {
 	}{
 		{name: "RTMP", protocol: "rtmp", expectedURL: "rtmp://192.0.2.10:1935/live/camera"},
 		{name: "RTSP", protocol: "rtsp", expectedURL: "rtsp://192.0.2.10:8554/live/camera"},
+		{name: "HTTP-FLV", protocol: "http-flv", expectedURL: "http://192.0.2.10:8080/live/camera.flv"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry := newMediaServerRegistry()

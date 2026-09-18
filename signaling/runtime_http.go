@@ -162,5 +162,6 @@ func validRuntimeEvent(event observedRuntime) bool {
 }
 
 func validRuntimeProtocol(value string) bool {
-	return value == "rtmp" || value == "rtsp" || value == "gb28181" || value == "whep"
+	return value == "rtmp" || value == "rtsp" || value == "gb28181" || value == "whep" ||
+		value == "http-flv" || value == "hls"
 }

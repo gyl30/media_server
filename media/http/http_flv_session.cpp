@@ -1,15 +1,19 @@
 #include <array>
 #include <utility>
+#include <optional>
 
-#include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
 
+#include "media/core/stream_id.h"
+#include "media/http/http_event.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/http/http_flv_session.h"
+#include "media/http/signaling_client.h"
 #include "media/http/http_flv_streamer.h"
 
 namespace media_server
@@ -56,22 +60,64 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     }
 
     path.back().resize(path.back().size() - 4);
-    std::string stream_name;
+    stream_name_.clear();
     for (const auto& segment : path)
     {
-        if (!stream_name.empty())
+        if (!stream_name_.empty())
         {
-            stream_name.push_back('/');
+            stream_name_.push_back('/');
         }
-        stream_name.append(segment);
+        stream_name_.append(segment);
     }
 
-    auto media_stream = stream_registry::instance().find(stream_name);
+    std::optional<std::string> stream_id;
+    for (const auto parameter : target.params())
+    {
+        if (parameter.key != "stream_id")
+        {
+            continue;
+        }
+        if (stream_id || !parameter.has_value)
+        {
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream id\n", yield);
+            return;
+        }
+        stream_id = parameter.value;
+    }
+    if (!stream_id || !valid_stream_id(*stream_id) || stream_name_.empty())
+    {
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream id\n", yield);
+        return;
+    }
+
+    const auto claim = signaling_client::instance().claim_play(*stream_id, "http-flv", stream_name_, yield);
+    if (claim.kind != signaling_result_kind::accepted)
+    {
+        const auto status =
+            claim.kind == signaling_result_kind::rejected ? boost::beast::http::status::forbidden : boost::beast::http::status::service_unavailable;
+        send_text_response(status, "text/plain", "play claim failed\n", yield);
+        return;
+    }
+
+    auto media_stream = stream_registry::instance().find(stream_name_);
     if (!media_stream)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
         return;
     }
+
+    stream_id_ = std::move(*stream_id);
+    http_event::report_flv_output(event_state::starting, stream_id_, stream_name_, "play");
+
+    const auto self = shared_from_this();
+    streamer_ = std::make_shared<http_flv_streamer>(
+        [self](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap) { self->enqueue(generation, std::move(data), bootstrap); },
+        [self]()
+        {
+            http_event::report_flv_output(event_state::remote_closed, self->stream_id_, self->stream_name_, "media");
+            self->shutdown();
+        },
+        config_.http_video);
 
     stream_.expires_never();
     {
@@ -85,26 +131,31 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         boost::beast::http::serializer<false, boost::beast::http::empty_body> serializer(response);
         boost::system::error_code error;
         boost::beast::http::async_write_header(stream_, serializer, yield[error]);
-        if (error || closed_)
+        if (error)
+        {
+            http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            return;
+        }
+        if (closed_)
         {
             return;
         }
     }
 
-    const auto self = shared_from_this();
-    streamer_ = std::make_shared<http_flv_streamer>([self](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-                                                    { self->enqueue(generation, std::move(data), bootstrap); },
-                                                    [self]() { self->shutdown(); },
-                                                    config_.http_video);
-
     media_stream->add_reader(streamer_, worker_);
+    http_event::report_flv_output(event_state::streaming, stream_id_, stream_name_, "streaming");
 
     std::array<std::uint8_t, 1> read_buffer{};
     for (;;)
     {
         boost::system::error_code error;
         stream_.async_read_some(boost::asio::buffer(read_buffer), yield[error]);
-        if (error || closed_)
+        if (error)
+        {
+            http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            return;
+        }
+        if (closed_)
         {
             return;
         }
@@ -141,6 +192,7 @@ void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_
     {
         if (!bootstrap)
         {
+            http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", "write_queue_overflow");
             shutdown();
             return;
         }
@@ -171,7 +223,14 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
         const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(data));
         boost::system::error_code error;
         boost::asio::async_write(stream_, chunk, yield[error]);
-        if (error || closed_)
+        if (error)
+        {
+            write_in_progress_ = false;
+            http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            shutdown();
+            return;
+        }
+        if (closed_)
         {
             write_in_progress_ = false;
             shutdown();
@@ -212,6 +271,7 @@ void http_flv_session::safe_shutdown()
     closed_ = true;
     if (streamer_)
     {
+        http_event::report_flv_output(event_state::stopped, stream_id_, stream_name_);
         streamer_->shutdown();
         streamer_.reset();
     }

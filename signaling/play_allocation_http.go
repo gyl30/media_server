@@ -13,7 +13,7 @@ type playAllocationResponse struct {
 func (s *infrastructureServer) handlePlayAllocation(writer http.ResponseWriter, request *http.Request) {
 	var command streamAllocationRequest
 	if !decodeJSON(writer, request, &command) ||
-		(command.Protocol != "rtmp" && command.Protocol != "rtsp") || command.StreamName == "" {
+		!validStreamAllocationProtocol(streamOperationPlay, command.Protocol) || command.StreamName == "" {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}

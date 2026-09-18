@@ -492,7 +492,6 @@ void test_srtp_bidirectional_transport()
         require(peer_rtcp_protected.has_value(), "srtp bidirectional peer protect rtcp");
         const auto server_rtcp_clear = server.unprotect_rtcp(*peer_rtcp_protected);
         require(server_rtcp_clear == std::vector<std::uint8_t>(rtcp_packet.begin(), rtcp_packet.end()), "srtp bidirectional server unprotect rtcp");
-
     }
 }
 
@@ -1183,7 +1182,7 @@ void test_http_method_contract()
     const auto flv_post = peer.request(boost::beast::http::verb::post, "/live/camera.flv");
     require(flv_post.result() == boost::beast::http::status::method_not_allowed, "http flv post status");
     require(flv_post[boost::beast::http::field::allow] == "GET", "http flv post allow");
-    const auto flv_missing = peer.request(boost::beast::http::verb::get, "/live/missing.flv");
+    const auto flv_missing = peer.request(boost::beast::http::verb::get, "/live/missing.flv?stream_id=00000000-0000-4000-8000-000000000017");
     require(flv_missing.result() == boost::beast::http::status::not_found && flv_missing.body() == "stream not found\n",
             "http flv handoff missing stream");
 

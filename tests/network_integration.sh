@@ -149,8 +149,9 @@ play_url = response["play_url"]
 parsed_id = uuid.UUID(stream_id)
 parsed_url = urllib.parse.urlsplit(play_url)
 query = urllib.parse.parse_qs(parsed_url.query, strict_parsing=True)
+expected_scheme = "http" if sys.argv[2] in ("http-flv", "hls") else sys.argv[2]
 assert parsed_id.version == 4 and str(parsed_id) == stream_id
-assert parsed_url.scheme == sys.argv[2] and query.get("stream_id") == [stream_id]
+assert parsed_url.scheme == expected_scheme and query.get("stream_id") == [stream_id]
 print(play_url)
 PY
 }
@@ -333,10 +334,14 @@ PY
 wait_http_stream_absent() {
     local port="$1"
     local stream_name="$2"
+    local signaling_port="$3"
+    local label="$4"
+    local play_url
     local status
+    play_url="$(allocate_play "$label" "$signaling_port" http-flv "$stream_name")"
     for _ in $(seq 1 80); do
         status="$(curl -sS --max-time 1 -o /dev/null -w '%{http_code}' \
-            "http://127.0.0.1:$port/$stream_name.flv" 2>/dev/null || true)"
+            "$play_url" 2>/dev/null || true)"
         if [[ "$status" == "404" ]]; then
             return 0
         fi
@@ -469,7 +474,8 @@ main_rtsp_play_url="$(allocate_play main_rtsp_play "$main_signaling_http_port" r
 probe_streams "$work_dir/rtsp_from_rtmp.txt" -rtsp_transport tcp "$main_rtsp_play_url"
 main_rtmp_play_url="$(allocate_play main_rtmp_play "$main_signaling_http_port" rtmp live/test)"
 probe_streams "$work_dir/rtmp_from_rtmp.txt" "$main_rtmp_play_url"
-probe_streams "$work_dir/http_flv_from_rtmp.txt" 'http://127.0.0.1:18080/live/test.flv'
+main_http_flv_play_url="$(allocate_play main_http_flv_play "$main_signaling_http_port" http-flv live/test)"
+probe_streams "$work_dir/http_flv_from_rtmp.txt" "$main_http_flv_play_url"
 
 # 首次请求建立共享 HLS 输出；等待自然关键帧完成切片。
 probe_hls_ts hls_from_rtmp 'http://127.0.0.1:18080/play/hls/live/test'
@@ -506,7 +512,7 @@ wait_probe_allocated_rtsp "$work_dir/rtsp_pull_initial.txt" h264 aac rtsp_pull_i
 
 stop_rtsp_source rtsp_pull_initial "$pull_signaling_http_port" "$pull_source_id"
 wait_event_state "$pull_signaling_http_port" "$pull_stream_id" source rtsp relay/test stopped "$pull_source_id"
-wait_http_stream_absent 18081 relay/test
+wait_http_stream_absent 18081 relay/test "$pull_signaling_http_port" rtsp_pull_initial_http_absent
 pull_replacement_upstream_url="$(allocate_play pull_replacement_upstream "$main_signaling_http_port" rtsp live/test)"
 pull_replacement_request="$work_dir/rtsp_pull_recreate_source_patch_request.json"
 pull_replacement_response="$work_dir/rtsp_pull_recreate_source_patch.json"
@@ -540,13 +546,14 @@ pull_rtsp_play_url="$(allocate_play pull_rtsp_play "$pull_signaling_http_port" r
 probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp "$pull_rtsp_play_url"
 pull_rtmp_play_url="$(allocate_play pull_rtmp_play "$pull_signaling_http_port" rtmp relay/test)"
 probe_streams "$work_dir/rtmp_from_rtsp.txt" "$pull_rtmp_play_url"
-probe_streams "$work_dir/http_flv_from_rtsp.txt" 'http://127.0.0.1:18081/relay/test.flv'
+pull_http_flv_play_url="$(allocate_play pull_http_flv_play "$pull_signaling_http_port" http-flv relay/test)"
+probe_streams "$work_dir/http_flv_from_rtsp.txt" "$pull_http_flv_play_url"
 
 probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/play/hls/relay/test'
 
 stop_rtsp_source rtsp_pull_recreate "$pull_signaling_http_port" "$pull_source_id"
 wait_event_state "$pull_signaling_http_port" "$replacement_stream_id" source rtsp relay/test stopped "$pull_source_id"
-wait_http_stream_absent 18081 relay/test
+wait_http_stream_absent 18081 relay/test "$pull_signaling_http_port" rtsp_pull_recreate_http_absent
 delete_rtsp_source rtsp_pull_recreate "$pull_signaling_http_port" "$pull_source_id"
 
 kill -INT "$publish_pid" 2>/dev/null || true
@@ -576,7 +583,9 @@ for publish_case in tcp udp udp-restart; do
     wait_event_state "$main_signaling_http_port" "$rtsp_publish_stream_id" publisher rtsp "live/$stream_name" streaming
     rtsp_publish_rtmp_play_url="$(allocate_play "rtsp_publish_${publish_case}_rtmp_play" "$main_signaling_http_port" rtmp "live/$stream_name")"
     probe_streams "$work_dir/rtsp_publish_${publish_case}_rtmp.txt" "$rtsp_publish_rtmp_play_url"
-    probe_streams "$work_dir/rtsp_publish_${publish_case}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
+    rtsp_publish_http_flv_play_url="$(allocate_play "rtsp_publish_${publish_case}_http_flv_play" \
+        "$main_signaling_http_port" http-flv "live/$stream_name")"
+    probe_streams "$work_dir/rtsp_publish_${publish_case}_http_flv.txt" "$rtsp_publish_http_flv_play_url"
     probe_hls_ts "rtsp_publish_${publish_case}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
 
     kill "$rtsp_publish_pid" 2>/dev/null || true
@@ -658,7 +667,7 @@ wait_probe_allocated_rtsp "$work_dir/rtsp_av1_from_pull.txt" av1 aac rtsp_av1_fr
 
 stop_rtsp_source rtsp_pull_av1 "$av1_signaling_http_port" "$av1_pull_source_id"
 wait_event_state "$av1_signaling_http_port" "$av1_pull_stream_id" source rtsp relay/av1 stopped "$av1_pull_source_id"
-wait_http_stream_absent 18082 relay/av1
+wait_http_stream_absent 18082 relay/av1 "$av1_signaling_http_port" rtsp_pull_av1_http_absent
 delete_rtsp_source rtsp_pull_av1 "$av1_signaling_http_port" "$av1_pull_source_id"
 
 # 快速连接/断开多个 AV1 RTSP client，随后确认会话和转码器仍可正常重新建立。
@@ -691,7 +700,8 @@ if grep -q 'codec_name=' "$work_dir/rtmp_av1_without_capability.txt"; then
     cat "$work_dir/rtmp_av1_without_capability.txt" >&2
     exit 1
 fi
-wait_probe_streams "$work_dir/http_flv_av1.txt" av1 aac 'http://127.0.0.1:18082/live/av1.flv'
+av1_http_flv_play_url="$(allocate_play av1_http_flv_play "$av1_signaling_http_port" http-flv live/av1)"
+wait_probe_streams "$work_dir/http_flv_av1.txt" av1 aac "$av1_http_flv_play_url"
 wait_probe_streams "$work_dir/hls_av1.txt" av1 aac 'http://127.0.0.1:18082/play/hls/live/av1/index.m3u8'
 
 curl -fsS 'http://127.0.0.1:18082/play/hls/live/av1/index.m3u8' >"$work_dir/hls_av1.m3u8"
