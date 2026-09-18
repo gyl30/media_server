@@ -21,7 +21,7 @@ type infrastructureServer struct {
 	logger               *slog.Logger
 	live                 *liveService
 	media                *mediaServerHTTPClient
-	allocations          *publishAllocationRegistry
+	allocations          *streamAllocationRegistry
 	sources              *sourceStore
 	runtimes             *observedRuntimeRegistry
 	runtimeEvents        *runtimeEventHub
@@ -40,7 +40,7 @@ func newInfrastructureServer(cfg config, registry *mediaServerRegistry, sources 
 	runtimes.setOnChange(runtimeEvents.publish)
 	return &infrastructureServer{
 		cfg: cfg, registry: registry, logger: logger,
-		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), allocations: newPublishAllocationRegistry(),
+		media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), allocations: newStreamAllocationRegistry(),
 		sources: sources, runtimes: runtimes, runtimeEvents: runtimeEvents, rtspPulls: make(map[string]rtspPullRuntime),
 	}
 }
@@ -50,6 +50,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /internal/media-servers/register", s.handleMediaServerRegister)
 	routes.HandleFunc("POST /internal/media-servers/heartbeat", s.handleMediaServerHeartbeat)
 	routes.HandleFunc("POST /api/publish/allocations", s.handlePublishAllocation)
+	routes.HandleFunc("POST /api/play/allocations", s.handlePlayAllocation)
 	routes.HandleFunc("GET /api/sources", s.handleSourceList)
 	routes.HandleFunc("POST /api/sources", s.handleSourceCreate)
 	routes.HandleFunc("PATCH /api/sources/{source_id}", s.handleSourcePatch)
@@ -61,6 +62,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("GET /api/events", s.handleRuntimeEvents)
 	routes.HandleFunc("POST /api/preview/start", s.handlePreviewStart)
 	routes.HandleFunc("POST /internal/publish/claim", s.handlePublishClaim)
+	routes.HandleFunc("POST /internal/play/claim", s.handlePlayClaim)
 	routes.HandleFunc("POST /internal/runtime-events", s.handleRuntimeEvent)
 	if s.live != nil {
 		routes.HandleFunc("POST /internal/live/start", s.handleLiveStart)

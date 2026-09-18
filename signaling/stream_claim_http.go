@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type publishClaimRequest struct {
+type streamClaimRequest struct {
 	StreamID   string `json:"stream_id"`
 	ServerID   string `json:"server_id"`
 	InstanceID string `json:"instance_id"`
@@ -17,7 +17,15 @@ type publishClaimRequest struct {
 }
 
 func (s *infrastructureServer) handlePublishClaim(writer http.ResponseWriter, request *http.Request) {
-	var command publishClaimRequest
+	s.handleStreamClaim(writer, request, streamOperationPublish)
+}
+
+func (s *infrastructureServer) handlePlayClaim(writer http.ResponseWriter, request *http.Request) {
+	s.handleStreamClaim(writer, request, streamOperationPlay)
+}
+
+func (s *infrastructureServer) handleStreamClaim(writer http.ResponseWriter, request *http.Request, operation streamOperation) {
+	var command streamClaimRequest
 	if !decodeJSON(writer, request, &command) || !validUUIDv4(command.StreamID) || command.ServerID == "" ||
 		command.InstanceID == "" ||
 		(command.Protocol != "rtmp" && command.Protocol != "rtsp") || command.StreamName == "" {
@@ -26,7 +34,7 @@ func (s *infrastructureServer) handlePublishClaim(writer http.ResponseWriter, re
 	}
 	var err error
 	if !s.registry.withOnlineInstance(command.ServerID, command.InstanceID, func() {
-		err = s.allocations.claim(command.StreamID, command.Protocol, command.StreamName,
+		err = s.allocations.claim(command.StreamID, operation, command.Protocol, command.StreamName,
 			command.ServerID, command.InstanceID, time.Now())
 	}) {
 		writeHTTPError(writer, http.StatusGone, "stale_instance")
@@ -35,7 +43,7 @@ func (s *infrastructureServer) handlePublishClaim(writer http.ResponseWriter, re
 	switch {
 	case err == nil:
 		writer.WriteHeader(http.StatusNoContent)
-	case errors.Is(err, errPublishAllocationNotFound):
+	case errors.Is(err, errStreamAllocationNotFound):
 		writeHTTPError(writer, http.StatusNotFound, "allocation_not_found")
 	default:
 		writeHTTPError(writer, http.StatusConflict, "allocation_conflict")
