@@ -1,5 +1,6 @@
 #include <span>
 #include <array>
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -2804,6 +2805,47 @@ void test_whep_session_lifecycle()
     drain_io(io);
 }
 
+void test_whep_session_churn()
+{
+    worker_context worker;
+    worker.release_work();
+    worker.io().restart();
+    auto& io = worker.io();
+    auto stream = std::make_shared<media_stream>("live/whep-churn", worker);
+    require(stream->set_tracks({make_video_track(), make_audio_track()}), "whep churn tracks");
+    require(stream_registry::instance().add(stream), "whep churn stream add");
+
+    constexpr std::array<std::string_view, 10> stream_ids{
+        "00000000-0000-4000-8000-000000000101",
+        "00000000-0000-4000-8000-000000000102",
+        "00000000-0000-4000-8000-000000000103",
+        "00000000-0000-4000-8000-000000000104",
+        "00000000-0000-4000-8000-000000000105",
+        "00000000-0000-4000-8000-000000000106",
+        "00000000-0000-4000-8000-000000000107",
+        "00000000-0000-4000-8000-000000000108",
+        "00000000-0000-4000-8000-000000000109",
+        "00000000-0000-4000-8000-000000000110",
+    };
+    const config application_config;
+    std::vector<std::string> session_ids;
+    for (const auto stream_id : stream_ids)
+    {
+        const auto created = whep::create(worker, std::string{stream_id}, stream->name(), webrtc_offer_sdp, application_config);
+        require(created.error == whep::create_error::none, "whep churn create viewer");
+        require(std::ranges::find(session_ids, created.session_id) == session_ids.end(), "whep churn unique session id");
+        session_ids.push_back(created.session_id);
+        require(whep::contains(created.session_id), "whep churn session registered");
+        require(whep::remove(created.session_id), "whep churn remove viewer");
+        drain_io(io);
+        require(!whep::contains(created.session_id) && !whep::remove(created.session_id), "whep churn viewer removed once");
+    }
+
+    stream_registry::instance().remove(*stream);
+    stream->end();
+    drain_io(io);
+}
+
 void test_whep_opus_source_session_lifecycle()
 {
     worker_context worker;
@@ -3959,6 +4001,10 @@ int main(int argc, char* argv[])
         else if (scenario == "whep_opus_source_session_lifecycle")
         {
             media_server::test_whep_opus_source_session_lifecycle();
+        }
+        else if (scenario == "whep_session_churn")
+        {
+            media_server::test_whep_session_churn();
         }
         else if (scenario == "whip_session_ingest")
         {
