@@ -255,6 +255,8 @@ static_assert(std::is_constructible_v<rtmp_publish_session,
                                       rtmp_publish_session::shutdown_handler>);
 static_assert(std::is_constructible_v<rtmp_play_session,
                                       worker_context&,
+                                      std::string,
+                                      std::string,
                                       std::shared_ptr<media_stream>,
                                       flv_muxer::packet_handler,
                                       video_transcode_config,
@@ -1518,7 +1520,7 @@ struct rtmp_status
     std::string code;
 };
 
-void test_rtmp_publish_target_parsing()
+void test_rtmp_target_parsing()
 {
     constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000001";
     for (const auto& [stream, expected_name] : std::array<std::pair<std::string_view, std::string_view>, 4>{
@@ -1528,8 +1530,8 @@ void test_rtmp_publish_target_parsing()
              std::pair{"folder/camera%20one?stream%5Fid=00000000-0000-4000-8000-000000000001", "live/folder/camera one"},
          })
     {
-        const auto target = parse_rtmp_publish_target("live", stream);
-        require(target && target->stream_name == expected_name && target->stream_id == stream_id, "rtmp publish target parsed");
+        const auto target = parse_rtmp_target("live", stream);
+        require(target && target->stream_name == expected_name && target->stream_id == stream_id, "rtmp target parsed");
     }
 
     for (const auto stream : {
@@ -1544,7 +1546,7 @@ void test_rtmp_publish_target_parsing()
              "camera?stream_id=00000000-0000-4000-8000-000000000001#fragment",
          })
     {
-        require(!parse_rtmp_publish_target("live", stream), "invalid rtmp publish target rejected");
+        require(!parse_rtmp_target("live", stream), "invalid rtmp target rejected");
     }
 }
 
@@ -2005,11 +2007,23 @@ class rtmp_publish_test_peer final
 class rtmp_play_test_peer final
 {
    public:
-    explicit rtmp_play_test_peer(media_track video_track = make_video_track(), bool with_audio = false)
-        : acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}),
+    explicit rtmp_play_test_peer(media_track video_track = make_video_track(),
+                                 bool with_audio = false,
+                                 boost::beast::http::status claim_status = boost::beast::http::status::no_content,
+                                 bool hold_claim_response = false,
+                                 std::string stream_id = std::string(test_rtmp_stream_id),
+                                 bool wait_for_start = true,
+                                 bool control_plane = false)
+        : claim_server_(claim_status, hold_claim_response),
+          acceptor_(worker_.io(), {boost::asio::ip::address_v4::loopback(), 0}),
           client_socket_(worker_.io()),
-          expected_video_codec_(video_track.codec)
+          expected_video_codec_(video_track.codec),
+          control_plane_(control_plane)
     {
+        if (control_plane_)
+        {
+            configure_control_plane(worker_, claim_server_);
+        }
         stream_ = std::make_shared<media_stream>("live/camera", worker_);
         std::vector<media_track> tracks;
         tracks.push_back(std::move(video_track));
@@ -2022,8 +2036,9 @@ class rtmp_play_test_peer final
 
         client_socket_.connect(acceptor_.local_endpoint());
         auto server_socket = acceptor_.accept();
-        session_ = std::make_shared<rtmp_session>(worker_, std::move(server_socket));
-        session_->startup();
+        auto session = std::make_shared<rtmp_session>(worker_, std::move(server_socket));
+        session_ = session;
+        session->startup();
         runner_ = std::jthread([this]() { worker_.run(); });
 
         rtmp_client_handler_t handler{};
@@ -2032,10 +2047,14 @@ class rtmp_play_test_peer final
         handler.onaudio = &rtmp_play_test_peer::audio_callback;
         handler.onscript = &rtmp_play_test_peer::media_callback;
         const auto tc_url = "rtmp://127.0.0.1:" + std::to_string(acceptor_.local_endpoint().port()) + "/live";
-        client_ = rtmp_client_create("live", "camera", tc_url.c_str(), this, &handler);
+        const auto stream = stream_id.empty() ? std::string{"camera"} : "camera?stream_id=" + stream_id;
+        client_ = rtmp_client_create("live", stream.c_str(), tc_url.c_str(), this, &handler);
         require(client_ != nullptr, "rtmp play client");
         require(rtmp_client_start(client_, 2) == 0, "rtmp play client start");
-        receive_until_video_config();
+        if (wait_for_start)
+        {
+            receive_until_video_config();
+        }
     }
 
     ~rtmp_play_test_peer()
@@ -2044,7 +2063,14 @@ class rtmp_play_test_peer final
         client_ = nullptr;
         boost::system::error_code error;
         client_socket_.close(error);
-        worker_.release_work();
+        if (control_plane_)
+        {
+            worker_.stop();
+        }
+        else
+        {
+            worker_.release_work();
+        }
         runner_.join();
         stream_registry::instance().remove(*stream_);
     }
@@ -2080,6 +2106,28 @@ class rtmp_play_test_peer final
     [[nodiscard]] std::size_t video_config_count() const noexcept { return video_config_count_; }
     [[nodiscard]] std::size_t audio_config_count() const noexcept { return audio_config_count_; }
 
+    void wait_started() { receive_until_video_config(); }
+
+    test::publish_claim_request wait_claim_request()
+    {
+        pump_until([this]() { return claim_server_.request_count("/internal/play/claim") != 0U; });
+        return claim_server_.wait_request("/internal/play/claim");
+    }
+
+    [[nodiscard]] std::size_t claim_request_count() const { return claim_server_.request_count("/internal/play/claim"); }
+
+    void release_claim_response() { claim_server_.release_response(); }
+
+    void wait_runtime_event_count(std::size_t count) { media_server::wait_runtime_event_count(claim_server_, count); }
+
+    [[nodiscard]] std::vector<boost::json::object> runtime_events() const { return media_server::runtime_events(claim_server_); }
+
+    void wait_rejected_and_closed()
+    {
+        pump_until([this]() { return session_.expired(); }, false);
+        require(session_.expired(), "rejected RTMP play session closed");
+    }
+
     void update_video_track(media_track track)
     {
         std::promise<bool> promise;
@@ -2094,7 +2142,6 @@ class rtmp_play_test_peer final
     {
         const std::weak_ptr<rtmp_session> weak = session_;
         boost::asio::post(worker_.io(), [stream = stream_]() { stream->end(); });
-        session_.reset();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
         {
@@ -2103,18 +2150,20 @@ class rtmp_play_test_peer final
         require(weak.expired(), "rtmp stream end releases session");
     }
 
-    void disconnect_and_wait(bool with_media_write)
+    void disconnect_and_wait(bool with_media_write, bool abortive = true)
     {
         if (with_media_write)
         {
             publish(make_large_video_frame(0));
         }
-        client_socket_.set_option(boost::asio::socket_base::linger(true, 0));
+        if (abortive)
+        {
+            client_socket_.set_option(boost::asio::socket_base::linger(true, 0));
+        }
         boost::system::error_code error;
         client_socket_.close(error);
 
         const std::weak_ptr<rtmp_session> weak = session_;
-        session_.reset();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         while (!weak.expired() && std::chrono::steady_clock::now() < deadline)
         {
@@ -2188,6 +2237,37 @@ class rtmp_play_test_peer final
         }
     }
 
+    template <typename Predicate>
+    void pump_until(Predicate&& done, bool require_input_success = true)
+    {
+        boost::system::error_code error;
+        client_socket_.non_blocking(true, error);
+        require(!error, "RTMP play claim client nonblocking mode");
+        std::array<std::uint8_t, 8 * 1024> data{};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!done() && std::chrono::steady_clock::now() < deadline)
+        {
+            const auto bytes = client_socket_.read_some(boost::asio::buffer(data), error);
+            if (!error)
+            {
+                const auto result = rtmp_client_input(client_, data.data(), bytes);
+                if (require_input_success)
+                {
+                    require(result == 0, "RTMP play claim client input");
+                }
+            }
+            else if (error != boost::asio::error::would_block && error != boost::asio::error::try_again && error != boost::asio::error::eof &&
+                     error != boost::asio::error::connection_reset)
+            {
+                fail("RTMP play claim client read");
+            }
+            error.clear();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        client_socket_.non_blocking(false, error);
+        require(done(), "RTMP play claim lifecycle timeout");
+    }
+
     rtmp_status read_status()
     {
         std::array<std::uint8_t, 3> basic_header{};
@@ -2216,16 +2296,18 @@ class rtmp_play_test_peer final
     }
 
    private:
+    test::publish_claim_test_server claim_server_;
     worker_context worker_;
     std::shared_ptr<media_stream> stream_;
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::ip::tcp::socket client_socket_;
-    std::shared_ptr<rtmp_session> session_;
+    std::weak_ptr<rtmp_session> session_;
     rtmp_client_t* client_{};
     codec_id expected_video_codec_{};
     std::size_t video_config_count_{};
     std::size_t audio_config_count_{};
     std::vector<char> media_order_;
+    bool control_plane_{};
     std::jthread runner_;
 };
 
@@ -2429,6 +2511,119 @@ void test_rtmp_publish_claim_lifecycle(std::string_view scenario)
     fail("unknown RTMP publish claim scenario");
 }
 
+void test_rtmp_play_claim_lifecycle(std::string_view scenario)
+{
+    if (scenario == "invalid")
+    {
+        for (const auto& stream_id : {std::string{}, std::string{"not-a-uuid"}})
+        {
+            rtmp_play_test_peer peer(make_video_track(), false, boost::beast::http::status::no_content, false, stream_id, false, false);
+            peer.wait_rejected_and_closed();
+            require(peer.claim_request_count() == 0U, "invalid RTMP play stream id rejected before claim");
+            require(peer.runtime_events().empty(), "invalid RTMP play stream id emits no runtime event");
+        }
+        return;
+    }
+
+    if (scenario == "rejected")
+    {
+        rtmp_play_test_peer peer(
+            make_video_track(), false, boost::beast::http::status::conflict, false, std::string(test_rtmp_stream_id), false, true);
+        peer.wait_rejected_and_closed();
+        require(peer.claim_request_count() == 1U, "rejected RTMP play claim attempted once");
+        require(peer.runtime_events().empty(), "rejected RTMP play claim emits no output runtime");
+        return;
+    }
+
+    if (scenario == "accepted")
+    {
+        rtmp_play_test_peer peer(
+            make_video_track(), false, boost::beast::http::status::no_content, true, std::string(test_rtmp_stream_id), false, true);
+        const auto request = peer.wait_claim_request();
+        const auto body = boost::json::parse(request.body).as_object();
+        require(request.target == "/internal/play/claim" && body.size() == 5U, "RTMP play claim request");
+        require(std::string_view(body.at("stream_id").as_string()) == test_rtmp_stream_id && body.at("server_id") == "media-1" &&
+                    body.at("instance_id") == "instance-a" && body.at("protocol") == "rtmp" && body.at("stream_name") == "live/camera",
+                "RTMP play claim identity");
+        require(peer.video_config_count() == 0U, "RTMP play waits for claim before reader startup");
+
+        peer.release_claim_response();
+        peer.wait_started();
+        require(peer.claim_request_count() == 1U, "RTMP play claims once");
+        peer.wait_runtime_event_count(2U);
+        auto events = peer.runtime_events();
+        require(events.size() == 2U, "accepted RTMP play emits starting and streaming once");
+        require_publisher_event(events[0],
+                                event_kind::output,
+                                event_protocol::rtmp,
+                                event_state::starting,
+                                test_rtmp_stream_id,
+                                "live/camera",
+                                "play",
+                                "RTMP output starting event");
+        require_publisher_event(events[1],
+                                event_kind::output,
+                                event_protocol::rtmp,
+                                event_state::streaming,
+                                test_rtmp_stream_id,
+                                "live/camera",
+                                "streaming",
+                                "RTMP output streaming event");
+
+        peer.end_stream();
+        peer.wait_runtime_event_count(4U);
+        events = peer.runtime_events();
+        require(events.size() == 4U, "RTMP source end emits facts and cleanup events");
+        require_publisher_event(events[2],
+                                event_kind::output,
+                                event_protocol::rtmp,
+                                event_state::remote_closed,
+                                test_rtmp_stream_id,
+                                "live/camera",
+                                "media",
+                                "RTMP output source end event");
+        require_publisher_event(events[3],
+                                event_kind::output,
+                                event_protocol::rtmp,
+                                event_state::stopped,
+                                test_rtmp_stream_id,
+                                "live/camera",
+                                "",
+                                "RTMP output stopped event");
+        return;
+    }
+
+    fail("unknown RTMP play claim scenario");
+}
+
+void test_rtmp_play_transport_event()
+{
+    rtmp_play_test_peer peer(make_video_track(), false, boost::beast::http::status::no_content, false, std::string(test_rtmp_stream_id), true, true);
+    peer.wait_runtime_event_count(2U);
+    peer.disconnect_and_wait(false, false);
+    peer.wait_runtime_event_count(4U);
+    const auto events = peer.runtime_events();
+    require(events.size() == 4U, "RTMP transport failure emits starting streaming error and stopped");
+    require_publisher_event(events[2],
+                            event_kind::output,
+                            event_protocol::rtmp,
+                            event_state::runtime_error,
+                            test_rtmp_stream_id,
+                            "live/camera",
+                            "transport",
+                            "RTMP output transport error event");
+    const auto expected_error = boost::system::error_code{boost::asio::error::eof}.message();
+    require(std::string_view(events[2].at("error").as_string()) == expected_error, "RTMP output transport event preserves raw error message");
+    require_publisher_event(events[3],
+                            event_kind::output,
+                            event_protocol::rtmp,
+                            event_state::stopped,
+                            test_rtmp_stream_id,
+                            "live/camera",
+                            "",
+                            "RTMP output transport stopped event");
+}
+
 void test_rtmp_coroutine_publish_client()
 {
     worker_context server_worker;
@@ -2479,7 +2674,7 @@ void test_rtmp_coroutine_play_client()
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
 
     boost::asio::io_context client_io;
-    test::rtmp_test_client client(client_io, "live", "coroutine-play");
+    test::rtmp_test_client client(client_io, "live", "coroutine-play?stream_id=" + std::string(test_rtmp_stream_id));
     auto future = boost::asio::co_spawn(client_io, client.play("127.0.0.1", acceptor.local_endpoint().port()), boost::asio::use_future);
     std::jthread client_runner([&client_io]() { client_io.run(); });
 
@@ -11263,6 +11458,8 @@ void require_input_output_boundaries(const std::shared_ptr<media_stream>& stream
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &flv), &flv_demuxer_destroy);
     auto play = std::make_shared<rtmp_play_session>(
         worker,
+        "00000000-0000-4000-8000-000000000021",
+        stream->name(),
         stream,
         [&](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "input output flv demux"); },
@@ -12142,6 +12339,8 @@ void test_whip_rtmp_output()
     bool ended = false;
     auto play = std::make_shared<rtmp_play_session>(
         worker,
+        "00000000-0000-4000-8000-000000000022",
+        stream->name(),
         stream,
         [&packets](int type, std::span<const std::uint8_t> data, std::uint32_t)
         { packets.emplace_back(type, std::vector<std::uint8_t>(data.begin(), data.end())); },
@@ -12650,7 +12849,15 @@ int main(int argc, char* argv[])
     if (argc == 2)
     {
         const std::string_view scenario{argv[1]};
-        if (scenario.starts_with("rtmp_claim_"))
+        if (scenario.starts_with("rtmp_play_claim_"))
+        {
+            media_server::test_rtmp_play_claim_lifecycle(scenario.substr(std::string_view{"rtmp_play_claim_"}.size()));
+        }
+        else if (scenario == "rtmp_play_transport_event")
+        {
+            media_server::test_rtmp_play_transport_event();
+        }
+        else if (scenario.starts_with("rtmp_claim_"))
         {
             media_server::test_rtmp_publish_claim_lifecycle(scenario.substr(std::string_view{"rtmp_claim_"}.size()));
         }
@@ -12938,8 +13145,8 @@ int main(int argc, char* argv[])
     std::cout << "[pass] internal_format_contract\n";
     media_server::test_rtmp_aac_asc_adts_contract();
     std::cout << "[pass] rtmp_aac_asc_adts_contract\n";
-    media_server::test_rtmp_publish_target_parsing();
-    std::cout << "[pass] rtmp_publish_target_parsing\n";
+    media_server::test_rtmp_target_parsing();
+    std::cout << "[pass] rtmp_target_parsing\n";
     media_server::test_rtmp_session_shutdown_lifecycle();
     std::cout << "[pass] rtmp_session_shutdown_lifecycle\n";
     media_server::test_ireader_h266_avpacket_codec_identity();

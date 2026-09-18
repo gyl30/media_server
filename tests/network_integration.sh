@@ -467,7 +467,8 @@ sleep 1
 
 main_rtsp_play_url="$(allocate_play main_rtsp_play "$main_signaling_http_port" rtsp live/test)"
 probe_streams "$work_dir/rtsp_from_rtmp.txt" -rtsp_transport tcp "$main_rtsp_play_url"
-probe_streams "$work_dir/rtmp_from_rtmp.txt" 'rtmp://127.0.0.1:19350/live/test'
+main_rtmp_play_url="$(allocate_play main_rtmp_play "$main_signaling_http_port" rtmp live/test)"
+probe_streams "$work_dir/rtmp_from_rtmp.txt" "$main_rtmp_play_url"
 probe_streams "$work_dir/http_flv_from_rtmp.txt" 'http://127.0.0.1:18080/live/test.flv'
 
 # 首次请求建立共享 HLS 输出；等待自然关键帧完成切片。
@@ -493,8 +494,8 @@ pull_pid=$!
 wait_http 'http://127.0.0.1:18081/' "$pull_pid" "$work_dir/pull_server.log"
 kill -0 "$pull_pid"
 
-pull_source_id="$(create_rtsp_source rtsp_pull_initial "$pull_signaling_http_port" relay/test \
-    'rtsp://127.0.0.1:18554/live/test')"
+pull_upstream_url="$(allocate_play pull_upstream "$main_signaling_http_port" rtsp live/test)"
+pull_source_id="$(create_rtsp_source rtsp_pull_initial "$pull_signaling_http_port" relay/test "$pull_upstream_url")"
 pull_stream_id="$(start_rtsp_source rtsp_pull_initial "$pull_signaling_http_port" "$pull_source_id")"
 
 wait_log "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test'
@@ -506,6 +507,29 @@ wait_probe_allocated_rtsp "$work_dir/rtsp_pull_initial.txt" h264 aac rtsp_pull_i
 stop_rtsp_source rtsp_pull_initial "$pull_signaling_http_port" "$pull_source_id"
 wait_event_state "$pull_signaling_http_port" "$pull_stream_id" source rtsp relay/test stopped "$pull_source_id"
 wait_http_stream_absent 18081 relay/test
+pull_replacement_upstream_url="$(allocate_play pull_replacement_upstream "$main_signaling_http_port" rtsp live/test)"
+pull_replacement_request="$work_dir/rtsp_pull_recreate_source_patch_request.json"
+pull_replacement_response="$work_dir/rtsp_pull_recreate_source_patch.json"
+python3 - "$pull_replacement_request" "$pull_replacement_upstream_url" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "w", encoding="utf-8") as output:
+    json.dump({"url": sys.argv[2]}, output)
+PY
+pull_replacement_status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 \
+    -o "$pull_replacement_response" -w '%{http_code}' -X PATCH \
+    -H 'Content-Type: application/json' --data-binary "@$pull_replacement_request" \
+    "http://127.0.0.1:$pull_signaling_http_port/api/sources/$pull_source_id")"
+[[ "$pull_replacement_status" == "200" ]]
+python3 - "$pull_replacement_response" "$pull_replacement_upstream_url" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    response = json.load(source)
+assert response["url"] == sys.argv[2]
+PY
 replacement_stream_id="$(start_rtsp_source rtsp_pull_recreate "$pull_signaling_http_port" "$pull_source_id")"
 [[ "$replacement_stream_id" != "$pull_stream_id" ]]
 wait_log_count "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test' 2
@@ -514,7 +538,8 @@ wait_event_state "$pull_signaling_http_port" "$replacement_stream_id" source rts
 
 pull_rtsp_play_url="$(allocate_play pull_rtsp_play "$pull_signaling_http_port" rtsp relay/test)"
 probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp "$pull_rtsp_play_url"
-probe_streams "$work_dir/rtmp_from_rtsp.txt" 'rtmp://127.0.0.1:19351/relay/test'
+pull_rtmp_play_url="$(allocate_play pull_rtmp_play "$pull_signaling_http_port" rtmp relay/test)"
+probe_streams "$work_dir/rtmp_from_rtsp.txt" "$pull_rtmp_play_url"
 probe_streams "$work_dir/http_flv_from_rtsp.txt" 'http://127.0.0.1:18081/relay/test.flv'
 
 probe_hls_ts hls_from_rtsp 'http://127.0.0.1:18081/play/hls/relay/test'
@@ -549,7 +574,8 @@ for publish_case in tcp udp udp-restart; do
     wait_probe_allocated_rtsp "$work_dir/rtsp_publish_${publish_case}_rtsp.txt" h264 aac "rtsp_publish_${publish_case}_play" \
         "$main_signaling_http_port" "live/$stream_name"
     wait_event_state "$main_signaling_http_port" "$rtsp_publish_stream_id" publisher rtsp "live/$stream_name" streaming
-    probe_streams "$work_dir/rtsp_publish_${publish_case}_rtmp.txt" "rtmp://127.0.0.1:19350/live/$stream_name"
+    rtsp_publish_rtmp_play_url="$(allocate_play "rtsp_publish_${publish_case}_rtmp_play" "$main_signaling_http_port" rtmp "live/$stream_name")"
+    probe_streams "$work_dir/rtsp_publish_${publish_case}_rtmp.txt" "$rtsp_publish_rtmp_play_url"
     probe_streams "$work_dir/rtsp_publish_${publish_case}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
     probe_hls_ts "rtsp_publish_${publish_case}_hls" "http://127.0.0.1:18080/play/hls/live/$stream_name"
 
@@ -601,8 +627,9 @@ av1_server_pid=$!
 wait_http 'http://127.0.0.1:18082/' "$av1_server_pid" "$work_dir/av1_server.log"
 kill -0 "$av1_server_pid"
 
+av1_pull_upstream_url="$(allocate_play av1_pull_upstream "$main_signaling_http_port" rtsp live/av1-pull-source)"
 av1_pull_source_id="$(create_rtsp_source rtsp_pull_av1 "$av1_signaling_http_port" relay/av1 \
-    'rtsp://127.0.0.1:18554/live/av1-pull-source')"
+    "$av1_pull_upstream_url")"
 av1_pull_stream_id="$(start_rtsp_source rtsp_pull_av1 "$av1_signaling_http_port" "$av1_pull_source_id")"
 
 av1_publish_url="$(allocate_publish av1 "$av1_signaling_http_port" rtmp live/av1)"
@@ -652,11 +679,13 @@ rtsp_publish_pid=""
 wait_event_state "$main_signaling_http_port" "$av1_source_publish_stream_id" publisher rtsp live/av1-pull-source stopped
 
 # RTMP AV1 必须由 peer 通过 legacy fourCcList 显式声明 av01；未声明时不能回退到其他视频编码。
-wait_probe_streams "$work_dir/rtmp_av1.txt" av1 aac -rtmp_enhanced_codecs av01 'rtmp://127.0.0.1:19352/live/av1'
+av1_rtmp_play_url="$(allocate_play av1_rtmp_play "$av1_signaling_http_port" rtmp live/av1)"
+wait_probe_streams "$work_dir/rtmp_av1.txt" av1 aac -rtmp_enhanced_codecs av01 "$av1_rtmp_play_url"
+av1_rtmp_no_capability_url="$(allocate_play av1_rtmp_no_capability "$av1_signaling_http_port" rtmp live/av1)"
 timeout 3s ffprobe -v error \
     -show_entries stream=codec_name \
     -of compact=p=0:nk=0 \
-    'rtmp://127.0.0.1:19352/live/av1' >"$work_dir/rtmp_av1_without_capability.txt" 2>&1 || true
+    "$av1_rtmp_no_capability_url" >"$work_dir/rtmp_av1_without_capability.txt" 2>&1 || true
 if grep -q 'codec_name=' "$work_dir/rtmp_av1_without_capability.txt"; then
     echo 'rtmp av1 unexpectedly served peer without av01 capability' >&2
     cat "$work_dir/rtmp_av1_without_capability.txt" >&2
