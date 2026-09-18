@@ -471,6 +471,10 @@ if(BUILD_TESTING)
     target_link_libraries(tcp_yield_transport_tests PRIVATE media_core media_server_link_options)
     add_test(NAME tcp_yield_transport_tests COMMAND tcp_yield_transport_tests)
 
+    add_executable(tcp_write_queue_tests tests/tcp_write_queue_tests.cpp)
+    target_link_libraries(tcp_write_queue_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME tcp_write_queue_tests COMMAND tcp_write_queue_tests)
+
     add_executable(udp_yield_transport_tests tests/udp_yield_transport_tests.cpp)
     target_link_libraries(udp_yield_transport_tests PRIVATE media_core media_server_link_options)
     add_test(NAME udp_yield_transport_tests COMMAND udp_yield_transport_tests)

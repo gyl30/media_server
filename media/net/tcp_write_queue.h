@@ -15,6 +15,7 @@ namespace media_server
 enum class tcp_write_enqueue_result
 {
     overflow,
+    stopped,
     queued,
     start_writer,
 };
@@ -35,6 +36,8 @@ class tcp_write_queue final
     [[nodiscard]] tcp_write_enqueue_result enqueue(buffer data, bool stop_after_write = false);
     [[nodiscard]] tcp_write_result write_one(tcp_yield_transport& transport, boost::asio::yield_context& yield);
     [[nodiscard]] bool empty() const noexcept;
+    [[nodiscard]] bool stopped() const noexcept;
+    void stop() noexcept;
 
    private:
     struct entry
@@ -46,6 +49,7 @@ class tcp_write_queue final
     std::size_t max_bytes_;
     std::size_t queued_bytes_{};
     std::deque<entry> entries_;
+    bool stopped_{};
 };
 
 }    // namespace media_server
