@@ -118,6 +118,43 @@ print(publish_url)
 PY
 }
 
+allocate_play() {
+    local label="$1"
+    local signaling_port="$2"
+    local protocol="$3"
+    local stream_name="$4"
+    local response="$work_dir/${label}_play_allocation.json"
+    local body
+    local status
+    printf -v body '{"protocol":"%s","stream_name":"%s"}' "$protocol" "$stream_name"
+    status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o "$response" -w '%{http_code}' \
+        -H 'Content-Type: application/json' \
+        --data-binary "$body" \
+        "http://127.0.0.1:$signaling_port/api/play/allocations")"
+    if [[ "$status" != "201" ]]; then
+        echo "POST /api/play/allocations returned $status" >&2
+        cat "$response" >&2 2>/dev/null || true
+        return 1
+    fi
+    python3 - "$response" "$protocol" <<'PY'
+import json
+import sys
+import urllib.parse
+import uuid
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    response = json.load(source)
+stream_id = response["stream_id"]
+play_url = response["play_url"]
+parsed_id = uuid.UUID(stream_id)
+parsed_url = urllib.parse.urlsplit(play_url)
+query = urllib.parse.parse_qs(parsed_url.query, strict_parsing=True)
+assert parsed_id.version == 4 and str(parsed_id) == stream_id
+assert parsed_url.scheme == sys.argv[2] and query.get("stream_id") == [stream_id]
+print(play_url)
+PY
+}
+
 wait_log() {
     local file="$1"
     local text="$2"
@@ -345,6 +382,26 @@ wait_probe_streams() {
     return 1
 }
 
+wait_probe_allocated_rtsp() {
+    local output="$1"
+    local video_codec="$2"
+    local audio_codec="$3"
+    local label="$4"
+    local signaling_port="$5"
+    local stream_name="$6"
+    local play_url
+    for attempt in $(seq 1 50); do
+        play_url="$(allocate_play "${label}_$attempt" "$signaling_port" rtsp "$stream_name")"
+        if probe_streams_expected "$output" "$video_codec" "$audio_codec" -rtsp_transport tcp "$play_url" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo "RTSP stream probe failed: $stream_name" >&2
+    cat "$output" >&2 2>/dev/null || true
+    return 1
+}
+
 probe_hls_ts() {
     local prefix="$1"
     local url="$2"
@@ -408,7 +465,8 @@ wait_log "$work_dir/server.log" 'rtmp publish tracks ready audio true'
 wait_event_state "$main_signaling_http_port" "$main_publish_stream_id" publisher rtmp live/test streaming
 sleep 1
 
-probe_streams "$work_dir/rtsp_from_rtmp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18554/live/test'
+main_rtsp_play_url="$(allocate_play main_rtsp_play "$main_signaling_http_port" rtsp live/test)"
+probe_streams "$work_dir/rtsp_from_rtmp.txt" -rtsp_transport tcp "$main_rtsp_play_url"
 probe_streams "$work_dir/rtmp_from_rtmp.txt" 'rtmp://127.0.0.1:19350/live/test'
 probe_streams "$work_dir/http_flv_from_rtmp.txt" 'http://127.0.0.1:18080/live/test.flv'
 
@@ -442,8 +500,8 @@ pull_stream_id="$(start_rtsp_source rtsp_pull_initial "$pull_signaling_http_port
 wait_log "$work_dir/pull_server.log" 'rtsp pull connected stream relay/test'
 wait_log "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true'
 wait_event_state "$pull_signaling_http_port" "$pull_stream_id" source rtsp relay/test streaming "$pull_source_id"
-wait_probe_streams "$work_dir/rtsp_pull_initial.txt" h264 aac -rtsp_transport tcp \
-    'rtsp://127.0.0.1:18555/relay/test'
+wait_probe_allocated_rtsp "$work_dir/rtsp_pull_initial.txt" h264 aac rtsp_pull_initial_play \
+    "$pull_signaling_http_port" relay/test
 
 stop_rtsp_source rtsp_pull_initial "$pull_signaling_http_port" "$pull_source_id"
 wait_event_state "$pull_signaling_http_port" "$pull_stream_id" source rtsp relay/test stopped "$pull_source_id"
@@ -454,7 +512,8 @@ wait_log_count "$work_dir/pull_server.log" 'rtsp pull connected stream relay/tes
 wait_log_count "$work_dir/pull_server.log" 'rtsp pull tracks ready audio true' 2
 wait_event_state "$pull_signaling_http_port" "$replacement_stream_id" source rtsp relay/test streaming "$pull_source_id"
 
-probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp 'rtsp://127.0.0.1:18555/relay/test'
+pull_rtsp_play_url="$(allocate_play pull_rtsp_play "$pull_signaling_http_port" rtsp relay/test)"
+probe_streams "$work_dir/rtsp_from_rtsp.txt" -rtsp_transport tcp "$pull_rtsp_play_url"
 probe_streams "$work_dir/rtmp_from_rtsp.txt" 'rtmp://127.0.0.1:19351/relay/test'
 probe_streams "$work_dir/http_flv_from_rtsp.txt" 'http://127.0.0.1:18081/relay/test.flv'
 
@@ -487,8 +546,8 @@ for publish_case in tcp udp udp-restart; do
         >"$work_dir/rtsp_publish_${publish_case}.log" 2>&1 &
     rtsp_publish_pid=$!
 
-    wait_probe_streams "$work_dir/rtsp_publish_${publish_case}_rtsp.txt" h264 aac -rtsp_transport tcp \
-        "rtsp://127.0.0.1:18554/live/$stream_name"
+    wait_probe_allocated_rtsp "$work_dir/rtsp_publish_${publish_case}_rtsp.txt" h264 aac "rtsp_publish_${publish_case}_play" \
+        "$main_signaling_http_port" "live/$stream_name"
     wait_event_state "$main_signaling_http_port" "$rtsp_publish_stream_id" publisher rtsp "live/$stream_name" streaming
     probe_streams "$work_dir/rtsp_publish_${publish_case}_rtmp.txt" "rtmp://127.0.0.1:19350/live/$stream_name"
     probe_streams "$work_dir/rtsp_publish_${publish_case}_http_flv.txt" "http://127.0.0.1:18080/live/$stream_name.flv"
@@ -516,8 +575,8 @@ ffmpeg -nostdin -hide_banner -loglevel error -re \
     >"$work_dir/av1_rtsp_pull_source.log" 2>&1 &
 rtsp_publish_pid=$!
 
-wait_probe_streams "$work_dir/av1_rtsp_pull_source.txt" h264 aac -rtsp_transport tcp \
-    'rtsp://127.0.0.1:18554/live/av1-pull-source'
+wait_probe_allocated_rtsp "$work_dir/av1_rtsp_pull_source.txt" h264 aac av1_pull_source_play \
+    "$main_signaling_http_port" live/av1-pull-source
 wait_event_state "$main_signaling_http_port" "$av1_source_publish_stream_id" publisher rtsp live/av1-pull-source streaming
 
 # AV1 作为显式输出能力启用：RTMP/HTTP-FLV 使用 Enhanced FLV，HLS 使用 fMP4，RTSP 使用 AV1/RTP。
@@ -565,10 +624,10 @@ wait_log "$work_dir/av1_server.log" 'rtsp pull tracks ready audio true'
 wait_event_state "$av1_signaling_http_port" "$av1_publish_stream_id" publisher rtmp live/av1 streaming
 wait_event_state "$av1_signaling_http_port" "$av1_pull_stream_id" source rtsp relay/av1 streaming "$av1_pull_source_id"
 
-wait_probe_streams "$work_dir/rtsp_av1_from_rtmp.txt" av1 aac -rtsp_transport tcp \
-    'rtsp://127.0.0.1:18556/live/av1'
-wait_probe_streams "$work_dir/rtsp_av1_from_pull.txt" av1 aac -rtsp_transport tcp \
-    'rtsp://127.0.0.1:18556/relay/av1'
+wait_probe_allocated_rtsp "$work_dir/rtsp_av1_from_rtmp.txt" av1 aac rtsp_av1_from_rtmp_play \
+    "$av1_signaling_http_port" live/av1
+wait_probe_allocated_rtsp "$work_dir/rtsp_av1_from_pull.txt" av1 aac rtsp_av1_from_pull_play \
+    "$av1_signaling_http_port" relay/av1
 
 stop_rtsp_source rtsp_pull_av1 "$av1_signaling_http_port" "$av1_pull_source_id"
 wait_event_state "$av1_signaling_http_port" "$av1_pull_stream_id" source rtsp relay/av1 stopped "$av1_pull_source_id"
@@ -576,14 +635,15 @@ wait_http_stream_absent 18082 relay/av1
 delete_rtsp_source rtsp_pull_av1 "$av1_signaling_http_port" "$av1_pull_source_id"
 
 # 快速连接/断开多个 AV1 RTSP client，随后确认会话和转码器仍可正常重新建立。
-for _ in $(seq 1 3); do
+for attempt in $(seq 1 3); do
+    av1_churn_play_url="$(allocate_play "av1_churn_$attempt" "$av1_signaling_http_port" rtsp live/av1)"
     timeout 2s ffprobe -v error -rtsp_transport tcp \
         -show_entries stream=codec_name \
         -of compact=p=0:nk=0 \
-        'rtsp://127.0.0.1:18556/live/av1' >/dev/null 2>&1 || true
+        "$av1_churn_play_url" >/dev/null 2>&1 || true
 done
-wait_probe_streams "$work_dir/rtsp_av1_after_churn.txt" av1 aac -rtsp_transport tcp \
-    'rtsp://127.0.0.1:18556/live/av1'
+wait_probe_allocated_rtsp "$work_dir/rtsp_av1_after_churn.txt" av1 aac rtsp_av1_after_churn_play \
+    "$av1_signaling_http_port" live/av1
 kill -0 "$av1_server_pid"
 
 kill "$rtsp_publish_pid" 2>/dev/null || true
@@ -631,8 +691,8 @@ for transport in tcp udp; do
         >"$work_dir/rtsp_av1_publish_${transport}.log" 2>&1 &
     rtsp_publish_pid=$!
 
-    wait_probe_streams "$work_dir/rtsp_av1_push_${transport}.txt" av1 aac -rtsp_transport tcp \
-        "rtsp://127.0.0.1:18556/live/$stream_name"
+    wait_probe_allocated_rtsp "$work_dir/rtsp_av1_push_${transport}.txt" av1 aac "rtsp_av1_push_${transport}_play" \
+        "$av1_signaling_http_port" "live/$stream_name"
     wait_event_state "$av1_signaling_http_port" "$rtsp_publish_stream_id" publisher rtsp "live/$stream_name" streaming
 
     kill "$rtsp_publish_pid" 2>/dev/null || true

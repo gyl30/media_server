@@ -10,6 +10,7 @@
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/rtsp/rtsp_event.h"
+#include "media/rtsp/rtsp_uri.h"
 #include "media/net/worker_context.h"
 #include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_play_session.h"
@@ -142,6 +143,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 if (result < 0)
                 {
                     report_publisher_event(event_state::protocol_error, "control", "rtsp_input_failed");
+                    report_output_event(event_state::protocol_error, "control", "rtsp_input_failed");
                     shutdown();
                     return;
                 }
@@ -149,6 +151,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 if (result == 0 && consumed == 0)
                 {
                     report_publisher_event(event_state::protocol_error, "control", "rtsp_input_made_no_progress");
+                    report_output_event(event_state::protocol_error, "control", "rtsp_input_made_no_progress");
                     shutdown();
                     return;
                 }
@@ -157,6 +160,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
             if (consumed == 0 || consumed > remaining.size())
             {
                 report_publisher_event(event_state::protocol_error, "control", "invalid_rtsp_input_consumption");
+                report_output_event(event_state::protocol_error, "control", "invalid_rtsp_input_consumption");
                 shutdown();
                 return;
             }
@@ -223,10 +227,22 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     }
     if (!self->play_session_)
     {
-        const auto owner = self->shared_from_this();
-        self->play_session_ = std::make_shared<rtsp_play_session>(
-            self->worker_, self->video_codec_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        self->play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
+        const auto status = self->admit_play(uri != nullptr ? uri : "", false);
+        if (status < 0)
+        {
+            return -1;
+        }
+        if (status != 200)
+        {
+            self->close_next_write_ = true;
+            const auto result = rtsp_server_reply_describe(server, status, "");
+            self->close_next_write_ = false;
+            if (!self->closing_after_write_)
+            {
+                self->shutdown();
+            }
+            return result;
+        }
     }
     return self->play_session_->on_describe(server, uri != nullptr ? uri : "");
 }
@@ -246,10 +262,22 @@ int rtsp_server_connection::setup_callback(
     }
     if (!self->play_session_)
     {
-        const auto owner = self->shared_from_this();
-        self->play_session_ = std::make_shared<rtsp_play_session>(
-            self->worker_, self->video_codec_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
-        self->play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
+        const auto status = self->admit_play(uri != nullptr ? uri : "", true);
+        if (status < 0)
+        {
+            return -1;
+        }
+        if (status != 200)
+        {
+            self->close_next_write_ = true;
+            const auto result = rtsp_server_reply_setup(server, status, nullptr, nullptr);
+            self->close_next_write_ = false;
+            if (!self->closing_after_write_)
+            {
+                self->shutdown();
+            }
+            return result;
+        }
     }
     return self->play_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
 }
@@ -412,6 +440,7 @@ void rtsp_server_connection::write(std::span<const std::uint8_t> data)
     if (data.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - data.size())
     {
         report_publisher_event(event_state::runtime_error, "transport", "write_queue_overflow");
+        report_output_event(event_state::runtime_error, "transport", "write_queue_overflow");
         shutdown();
         return;
     }
@@ -478,6 +507,47 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
     }
 }
 
+int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
+{
+    auto target = parse_rtsp_target(uri);
+    if (!target)
+    {
+        return 400;
+    }
+    if (track_uri)
+    {
+        const auto separator = target->stream_name.rfind('/');
+        if (separator == std::string::npos || separator == 0)
+        {
+            return 400;
+        }
+        target->stream_name.resize(separator);
+    }
+
+    const auto result = signaling_client::instance().claim_play(target->stream_id, "rtsp", target->stream_name, *yield_);
+    if (closed_ || play_session_ || publish_session_)
+    {
+        return -1;
+    }
+    if (result.kind != signaling_result_kind::accepted)
+    {
+        spdlog::warn(
+            "rtsp play claim failed stream {} stream_id {} status {} error {}", target->stream_name, target->stream_id, result.status, result.error);
+        return result.kind == signaling_result_kind::rejected ? 403 : 503;
+    }
+
+    const auto owner = shared_from_this();
+    play_session_ = std::make_shared<rtsp_play_session>(worker_,
+                                                        std::move(target->stream_id),
+                                                        std::move(target->stream_name),
+                                                        video_codec_,
+                                                        local_address_,
+                                                        [owner](std::span<const std::uint8_t> data) { owner->write(data); });
+    play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
+    play_session_->startup();
+    return 200;
+}
+
 void rtsp_server_connection::report_publisher_event(event_state state, std::string_view stage, std::string_view error)
 {
     if (!publish_session_)
@@ -487,9 +557,19 @@ void rtsp_server_connection::report_publisher_event(event_state state, std::stri
     rtsp_event::report_publisher(state, publish_session_->stream_id(), publish_session_->stream_name(), stage, error);
 }
 
+void rtsp_server_connection::report_output_event(event_state state, std::string_view stage, std::string_view error)
+{
+    if (!play_session_)
+    {
+        return;
+    }
+    rtsp_event::report_output(state, play_session_->stream_id(), play_session_->stream_name(), stage, error);
+}
+
 void rtsp_server_connection::report_transport_error(const boost::system::error_code& error)
 {
     report_publisher_event(event_state::runtime_error, "transport", error.message());
+    report_output_event(event_state::runtime_error, "transport", error.message());
 }
 
 void rtsp_server_connection::record_control_activity() { last_control_activity_ = std::chrono::steady_clock::now(); }
@@ -511,6 +591,7 @@ void rtsp_server_connection::schedule_inactivity_timeout()
                 return;
             }
             self->report_publisher_event(event_state::timeout, "control", "inactivity_timeout");
+            self->report_output_event(event_state::timeout, "control", "inactivity_timeout");
             self->shutdown();
         });
 }

@@ -169,7 +169,7 @@ class publish_claim_test_server final
             }
             condition_.notify_all();
 
-            if (hold_response_ && request.target() == "/internal/publish/claim")
+            if (hold_response_ && (request.target() == "/internal/publish/claim" || request.target() == "/internal/play/claim"))
             {
                 std::unique_lock lock(mutex_);
                 condition_.wait(lock, [this]() { return response_released_ || stopping_; });

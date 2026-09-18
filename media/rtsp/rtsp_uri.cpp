@@ -29,7 +29,7 @@ std::string rtsp_path_from_uri(std::string_view uri)
     return result;
 }
 
-std::optional<rtsp_publish_target> parse_rtsp_publish_target(std::string_view uri)
+std::optional<rtsp_target> parse_rtsp_target(std::string_view uri)
 {
     const auto parsed = boost::urls::parse_uri_reference(uri);
     if (!parsed || parsed->has_fragment())
@@ -69,7 +69,7 @@ std::optional<rtsp_publish_target> parse_rtsp_publish_target(std::string_view ur
         return std::nullopt;
     }
 
-    return rtsp_publish_target{.stream_id = std::move(*stream_id), .stream_name = std::move(stream_name)};
+    return rtsp_target{.stream_id = std::move(*stream_id), .stream_name = std::move(stream_name)};
 }
 
 }    // namespace media_server

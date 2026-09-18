@@ -29,11 +29,17 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 {
    public:
     rtsp_play_session(worker_context& worker,
+                      std::string stream_id,
+                      std::string stream_name,
                       video_transcode_codec video_codec,
                       boost::asio::ip::address local_address,
                       std::function<void(std::span<const std::uint8_t>)> write);
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
+
+    void startup();
+    [[nodiscard]] std::string_view stream_id() const noexcept { return stream_id_; }
+    [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
 
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_describe(rtsp_server_t* server, std::string_view uri);
@@ -60,7 +66,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 
     static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
     void safe_shutdown();
-    [[nodiscard]] int prepare_presentation(std::string_view uri);
+    [[nodiscard]] int prepare_presentation();
     [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
     [[nodiscard]] int presentation_status() const;
@@ -68,6 +74,8 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 
    private:
     worker_context& worker_;
+    std::string stream_id_;
+    std::string stream_name_;
     video_transcode_codec video_codec_;
     boost::asio::ip::address local_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;

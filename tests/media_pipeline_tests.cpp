@@ -130,6 +130,7 @@ namespace
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 constexpr std::string_view rtsp_pull_source_id = "10000000-0000-4000-8000-000000000001";
+constexpr std::string_view rtsp_play_query = "?stream_id=00000000-0000-4000-8000-000000000010";
 
 using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
 static_assert(std::is_constructible_v<rtsp_publish_session, worker_context&, boost::asio::ip::address, rtsp_write_handler>);
@@ -154,9 +155,17 @@ static_assert(!std::is_constructible_v<rtsp_publish_udp_session,
 static_assert(std::is_constructible_v<rtsp_publish_media, worker_context&, std::string, std::vector<rtsp_publish_track_description>>);
 static_assert(
     !std::is_constructible_v<rtsp_publish_media, boost::asio::io_context::executor_type, std::string, std::vector<rtsp_publish_track_description>>);
-static_assert(std::is_constructible_v<rtsp_play_session, worker_context&, video_transcode_codec, boost::asio::ip::address, rtsp_write_handler>);
+static_assert(std::is_constructible_v<rtsp_play_session,
+                                      worker_context&,
+                                      std::string,
+                                      std::string,
+                                      video_transcode_codec,
+                                      boost::asio::ip::address,
+                                      rtsp_write_handler>);
 static_assert(!std::is_constructible_v<rtsp_play_session,
                                        boost::asio::io_context::executor_type,
+                                       std::string,
+                                       std::string,
                                        video_transcode_codec,
                                        boost::asio::ip::address,
                                        rtsp_write_handler>);
@@ -1556,10 +1565,7 @@ config make_publish_claim_config(std::string url)
 
 void configure_signaling_client(std::string url, std::chrono::milliseconds request_timeout = std::chrono::seconds(2))
 {
-    signaling_client::instance().configure(make_publish_claim_config(std::move(url)),
-                                           "instance-a",
-                                           std::chrono::milliseconds(20),
-                                           request_timeout);
+    signaling_client::instance().configure(make_publish_claim_config(std::move(url)), "instance-a", std::chrono::milliseconds(20), request_timeout);
 }
 
 void configure_control_plane(worker_context& worker,
@@ -1567,8 +1573,7 @@ void configure_control_plane(worker_context& worker,
                              std::chrono::milliseconds request_timeout = std::chrono::seconds(2))
 {
     configure_signaling_client(server.url(), request_timeout);
-    boost::asio::spawn(
-        worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
+    boost::asio::spawn(worker.io(), [](boost::asio::yield_context yield) { signaling_client::instance().run(yield); }, boost::asio::detached);
 }
 
 rtmp_status parse_rtmp_status(std::span<const std::uint8_t> payload)
@@ -2545,7 +2550,7 @@ void test_rtsp_coroutine_play_client()
     boost::asio::ip::tcp::acceptor acceptor(server_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
 
     boost::asio::io_context client_io;
-    test::rtsp_test_client client(client_io, "/live/coroutine-play");
+    test::rtsp_test_client client(client_io, "/live/coroutine-play" + std::string(rtsp_play_query));
     auto future = boost::asio::co_spawn(client_io, client.play("127.0.0.1", acceptor.local_endpoint().port()), boost::asio::use_future);
     std::jthread client_runner([&client_io]() { client_io.run(); });
 
@@ -3498,16 +3503,8 @@ void test_gb28181_receiver_http_parameters()
                            std::string_view request_content_type = "application/json",
                            std::string_view response_content_type = "application/json")
     {
-        require_http_status(acceptor,
-                            workers.context(0),
-                            method,
-                            target,
-                            body,
-                            expected,
-                            message,
-                            request_content_type,
-                            response_content_type,
-                            expected_body);
+        require_http_status(
+            acceptor, workers.context(0), method, target, body, expected, message, request_content_type, response_content_type, expected_body);
     };
     check(post,
           "/gb28181/receiver/create",
@@ -3709,16 +3706,8 @@ void test_gb28181_sender_http_parameters()
                            std::string_view request_content_type = "application/json",
                            std::string_view response_content_type = "application/json")
     {
-        require_http_status(acceptor,
-                            workers.context(0),
-                            method,
-                            target,
-                            body,
-                            expected,
-                            message,
-                            request_content_type,
-                            response_content_type,
-                            expected_body);
+        require_http_status(
+            acceptor, workers.context(0), method, target, body, expected, message, request_content_type, response_content_type, expected_body);
     };
     check(post,
           "/gb28181/sender/create",
@@ -5652,7 +5641,7 @@ void test_rtsp_uri_contract()
              std::pair{"rtsp://127.0.0.1:8554/live/camera%20one?stream%5Fid=00000000-0000-4000-8000-000000000001", "live/camera one"},
          })
     {
-        const auto target = parse_rtsp_publish_target(uri);
+        const auto target = parse_rtsp_target(uri);
         require(target && target->stream_name == expected_name && target->stream_id == stream_id, "rtsp publish target parsed");
     }
 
@@ -5668,7 +5657,7 @@ void test_rtsp_uri_contract()
              "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-000000000001#fragment",
          })
     {
-        require(!parse_rtsp_publish_target(uri), "invalid rtsp publish target rejected");
+        require(!parse_rtsp_target(uri), "invalid rtsp target rejected");
     }
 }
 
@@ -6005,6 +5994,197 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
     fail("unknown RTSP publish claim scenario");
 }
 
+void test_rtsp_play_claim()
+{
+    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000011";
+    test::publish_claim_test_server claim_server(boost::beast::http::status::no_content, true);
+    worker_context worker;
+    auto stream = std::make_shared<media_stream>("live/play-claim", worker);
+    require(stream->set_tracks({make_video_track()}), "rtsp play claim tracks");
+    require(stream_registry::instance().add(stream), "rtsp play claim registry");
+
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+    boost::asio::ip::tcp::socket server_socket(worker.io());
+    acceptor.accept(server_socket);
+    configure_control_plane(worker, claim_server);
+    auto connection =
+        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
+    connection->startup();
+    std::jthread runner([&worker]() { worker.run(); });
+
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-claim";
+    const auto describe = "DESCRIBE " + base + "?stream_id=" + std::string(stream_id) + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n";
+    boost::asio::write(client, boost::asio::buffer(describe));
+    const auto claim = claim_server.wait_request("/internal/play/claim");
+    const auto body = boost::json::parse(claim.body).as_object();
+    require(claim.target == "/internal/play/claim" && body.size() == 5U, "rtsp play claim request");
+    require(std::string_view(body.at("stream_id").as_string()) == stream_id && body.at("protocol") == "rtsp" &&
+                body.at("stream_name") == "live/play-claim",
+            "rtsp play claim identity");
+    require(read_rtsp_headers_until(client, std::chrono::milliseconds(50)).empty(), "rtsp DESCRIBE waits for play claim");
+
+    claim_server.release_response();
+    require(read_rtsp_headers_until(client, std::chrono::seconds(1)).starts_with("RTSP/1.0 200"), "rtsp play claim accepted");
+    boost::asio::write(client, boost::asio::buffer("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 2\r\nAccept: application/sdp\r\n\r\n"));
+    require(read_rtsp_headers_until(client, std::chrono::seconds(1)).starts_with("RTSP/1.0 200"), "rtsp admitted DESCRIBE continues");
+    require(claim_server.requests("/internal/play/claim").size() == 1U, "rtsp play claims once");
+
+    wait_runtime_event_count(claim_server, 1U);
+    auto events = runtime_events(claim_server);
+    require(events.size() == 1U, "accepted RTSP play claim emits starting once");
+    require_publisher_event(events[0],
+                            event_kind::output,
+                            event_protocol::rtsp,
+                            event_state::starting,
+                            stream_id,
+                            "live/play-claim",
+                            "play",
+                            "RTSP output starting event");
+
+    boost::asio::write(
+        client, boost::asio::buffer("SETUP " + base + "/trackID=1 RTSP/1.0\r\nCSeq: 3\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"));
+    const auto setup = read_rtsp_headers_until(client, std::chrono::seconds(1));
+    require(setup.starts_with("RTSP/1.0 200"), "rtsp claimed play setup");
+    const auto session = rtsp_header_value(setup, "Session:");
+    require(!session.empty(), "rtsp claimed play session");
+    boost::asio::write(client, boost::asio::buffer("PLAY " + base + " RTSP/1.0\r\nCSeq: 4\r\nSession: " + session + "\r\n\r\n"));
+    require(read_rtsp_headers_until(client, std::chrono::seconds(1)).starts_with("RTSP/1.0 200"), "rtsp claimed play starts");
+    wait_runtime_event_count(claim_server, 2U);
+    events = runtime_events(claim_server);
+    require(events.size() == 2U, "RTSP play emits streaming once");
+    require_publisher_event(events[1],
+                            event_kind::output,
+                            event_protocol::rtsp,
+                            event_state::streaming,
+                            stream_id,
+                            "live/play-claim",
+                            "streaming",
+                            "RTSP output streaming event");
+
+    std::promise<void> ended;
+    auto ended_future = ended.get_future();
+    boost::asio::post(worker.io(),
+                      [stream, &ended]()
+                      {
+                          stream->end();
+                          ended.set_value();
+                      });
+    ended_future.wait();
+    wait_runtime_event_count(claim_server, 4U);
+    events = runtime_events(claim_server);
+    require(events.size() == 4U, "RTSP source end emits facts and cleanup events");
+    require_publisher_event(events[2],
+                            event_kind::output,
+                            event_protocol::rtsp,
+                            event_state::remote_closed,
+                            stream_id,
+                            "live/play-claim",
+                            "media",
+                            "RTSP output source end event");
+    require_publisher_event(
+        events[3], event_kind::output, event_protocol::rtsp, event_state::stopped, stream_id, "live/play-claim", "", "RTSP output stopped event");
+    worker.stop();
+    runner.join();
+    stream_registry::instance().remove(*stream);
+}
+
+void test_rtsp_play_transport_event()
+{
+    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000015";
+    test::publish_claim_test_server claim_server;
+    worker_context worker;
+    auto stream = std::make_shared<media_stream>("live/play-transport", worker);
+    require(stream->set_tracks({make_video_track()}), "rtsp transport play tracks");
+    require(stream_registry::instance().add(stream), "rtsp transport play registry");
+
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+    boost::asio::ip::tcp::socket server_socket(worker.io());
+    acceptor.accept(server_socket);
+    configure_control_plane(worker, claim_server);
+    auto connection =
+        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
+    connection->startup();
+    std::jthread runner([&worker]() { worker.run(); });
+
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-transport";
+    boost::asio::write(
+        client,
+        boost::asio::buffer("DESCRIBE " + base + "?stream_id=" + std::string(stream_id) + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n"));
+    require(read_rtsp_headers_until(client, std::chrono::seconds(1)).starts_with("RTSP/1.0 200"), "rtsp transport play admitted");
+    boost::system::error_code error;
+    client.close(error);
+
+    wait_runtime_event_count(claim_server, 3U);
+    const auto events = runtime_events(claim_server);
+    require(events.size() == 3U, "RTSP transport failure emits starting error and stopped");
+    require_publisher_event(events[1],
+                            event_kind::output,
+                            event_protocol::rtsp,
+                            event_state::runtime_error,
+                            stream_id,
+                            "live/play-transport",
+                            "transport",
+                            "RTSP output transport error event");
+    const auto expected_error = boost::system::error_code{boost::asio::error::eof}.message();
+    require(std::string_view(events[1].at("error").as_string()) == expected_error, "RTSP output transport event preserves raw error message");
+    require_publisher_event(events[2],
+                            event_kind::output,
+                            event_protocol::rtsp,
+                            event_state::stopped,
+                            stream_id,
+                            "live/play-transport",
+                            "",
+                            "RTSP output transport stopped event");
+
+    connection->shutdown();
+    worker.stop();
+    runner.join();
+    stream_registry::instance().remove(*stream);
+}
+
+void test_rtsp_play_claim_rejected()
+{
+    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000014";
+    test::publish_claim_test_server claim_server(boost::beast::http::status::conflict);
+    worker_context worker;
+    auto stream = std::make_shared<media_stream>("live/play-rejected", worker);
+    require(stream->set_tracks({make_video_track()}), "rtsp rejected play tracks");
+    require(stream_registry::instance().add(stream), "rtsp rejected play registry");
+
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+    boost::asio::ip::tcp::socket server_socket(worker.io());
+    acceptor.accept(server_socket);
+    configure_control_plane(worker, claim_server);
+    auto connection =
+        std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, std::chrono::seconds(5));
+    connection->startup();
+    worker.release_work();
+    std::jthread runner([&worker]() { worker.run(); });
+
+    const auto base = "rtsp://127.0.0.1:" + std::to_string(acceptor.local_endpoint().port()) + "/live/play-rejected";
+    boost::asio::write(
+        client,
+        boost::asio::buffer("DESCRIBE " + base + "?stream_id=" + std::string(stream_id) + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n"));
+    require(read_rtsp_headers_until(client, std::chrono::seconds(1)).starts_with("RTSP/1.0 403"), "rtsp rejected play claim status");
+    require(wait_for_rtsp_close(client, std::chrono::seconds(1)), "rtsp rejected play claim closes after response");
+    require(claim_server.request_count("/internal/play/claim") == 1U, "rtsp rejected play claim attempted once");
+    require(runtime_events(claim_server).empty(), "rtsp rejected play claim emits no output runtime");
+
+    connection->shutdown();
+    worker.stop();
+    runner.join();
+    stream_registry::instance().remove(*stream);
+}
+
 void test_rtsp_publish_server_contract()
 {
     test::publish_claim_test_server claim_server;
@@ -6242,8 +6422,9 @@ void test_rtsp_publish_server_contract()
         return read_rtsp_headers(setup_first);
     };
     const auto setup_first_video = base + "/trackID=" + std::to_string(tracks.front().id);
-    const auto setup_first_response = setup_first_request(
-        "SETUP " + setup_first_video + " RTSP/1.0\r\nCSeq: 10\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=play\r\n\r\n");
+    const auto setup_first_response = setup_first_request("SETUP " + setup_first_video + std::string(rtsp_play_query) +
+                                                          " RTSP/1.0\r\nCSeq: 10\r\nTransport: "
+                                                          "RTP/AVP/TCP;unicast;interleaved=0-1;mode=play\r\n\r\n");
     require(setup_first_response.starts_with("RTSP/1.0 200"), "rtsp playback setup first");
     auto setup_first_session = rtsp_header_value(setup_first_response, "Session:");
     if (const auto separator = setup_first_session.find(';'); separator != std::string::npos)
@@ -6791,8 +6972,12 @@ void test_rtsp_play_reply_error()
     require(stream_registry::instance().add(stream), "rtsp play reply error registry");
 
     rtsp_play_reply_fixture fixture{
-        .session = std::make_shared<rtsp_play_session>(
-            worker, video_transcode_codec::passthrough, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}),
+        .session = std::make_shared<rtsp_play_session>(worker,
+                                                       "00000000-0000-4000-8000-000000000012",
+                                                       "live/play-reply-error",
+                                                       video_transcode_codec::passthrough,
+                                                       boost::asio::ip::address_v4::loopback(),
+                                                       [](std::span<const std::uint8_t>) {}),
         .response = {},
         .fail_send = false,
     };
@@ -6811,18 +6996,15 @@ void test_rtsp_play_reply_error()
         return rtsp_server_input(server, request.data(), &bytes);
     };
     const std::string base = "rtsp://127.0.0.1/live/play-reply-error";
-    require(input("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n") == 0,
-            "rtsp play reply error describe");
+    require(input("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n") == 0, "rtsp play reply error describe");
     require(fixture.response.starts_with("RTSP/1.0 200"), "rtsp play reply error describe response");
-    require(input("SETUP " + base +
-                  "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n") == 0,
+    require(input("SETUP " + base + "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n") == 0,
             "rtsp play reply error setup");
     const auto session = rtsp_header_value(fixture.response, "Session:");
     require(!session.empty(), "rtsp play reply error session");
 
     fixture.fail_send = true;
-    require(input("PLAY " + base + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n") != 0,
-            "rtsp play propagates reply error");
+    require(input("PLAY " + base + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n") != 0, "rtsp play propagates reply error");
 
     rtsp_server_destroy(server);
     fixture.session->shutdown();
@@ -6842,8 +7024,12 @@ void test_rtsp_play_terminal_failure_quiesces_reader()
 
     std::size_t shutdowns = 0;
     rtsp_play_reply_fixture fixture{
-        .session = std::make_shared<rtsp_play_session>(
-            worker, video_transcode_codec::passthrough, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}),
+        .session = std::make_shared<rtsp_play_session>(worker,
+                                                       "00000000-0000-4000-8000-000000000013",
+                                                       "live/play-terminal-failure",
+                                                       video_transcode_codec::passthrough,
+                                                       boost::asio::ip::address_v4::loopback(),
+                                                       [](std::span<const std::uint8_t>) {}),
         .response = {},
         .fail_send = false,
     };
@@ -6864,15 +7050,12 @@ void test_rtsp_play_terminal_failure_quiesces_reader()
         return rtsp_server_input(server, request.data(), &bytes);
     };
     const std::string base = "rtsp://127.0.0.1/live/play-terminal-failure";
-    require(input("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n") == 0,
-            "rtsp play terminal failure describe");
-    require(input("SETUP " + base +
-                  "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n") == 0,
+    require(input("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n") == 0, "rtsp play terminal failure describe");
+    require(input("SETUP " + base + "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n") == 0,
             "rtsp play terminal failure setup");
     const auto session = rtsp_header_value(fixture.response, "Session:");
     require(!session.empty(), "rtsp play terminal failure session");
-    require(input("PLAY " + base + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n") == 0,
-            "rtsp play terminal failure play");
+    require(input("PLAY " + base + " RTSP/1.0\r\nCSeq: 3\r\nSession: " + session + "\r\n\r\n") == 0, "rtsp play terminal failure play");
 
     io.restart();
     while (io.poll() != 0)
@@ -6904,6 +7087,20 @@ void test_rtsp_play_terminal_failure_quiesces_reader()
 
 void test_rtsp_play_session_contract()
 {
+    {
+        rtsp_play_test_peer peer;
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+        require(peer.request("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n").starts_with("RTSP/1.0 400"),
+                "rtsp play requires stream id");
+    }
+    {
+        rtsp_play_test_peer peer;
+        const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
+        require(peer.request("DESCRIBE " + base + "?stream_id=invalid RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n")
+                    .starts_with("RTSP/1.0 400"),
+                "rtsp play rejects invalid stream id");
+    }
+
     rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
 
@@ -6914,15 +7111,15 @@ void test_rtsp_play_session_contract()
     require(rtsp_header_value(options, "Public:") == "OPTIONS,DESCRIBE,SETUP,TEARDOWN,PLAY,ANNOUNCE,RECORD,GET_PARAMETER",
             "rtsp pre role advertised methods");
 
-    const auto describe = peer.request("DESCRIBE " + base +
+    const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                        " RTSP/1.0\r\n"
                                        "CSeq: 2\r\n"
                                        "Accept: application/sdp\r\n\r\n");
     require(describe.starts_with("RTSP/1.0 200"), "rtsp play describe");
     require(describe.find("o=- 1 1 IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp play describe local address");
     require(describe.find("c=IN IP4 127.0.0.1\r\n") != std::string::npos, "rtsp play describe connection address");
-    require(describe.find("a=control:trackID=1\r\n") != std::string::npos, "rtsp play video control");
-    require(describe.find("a=control:trackID=2\r\n") != std::string::npos, "rtsp play audio control");
+    require(describe.find("a=control:" + base + "/trackID=1\r\n") != std::string::npos, "rtsp play video control");
+    require(describe.find("a=control:" + base + "/trackID=2\r\n") != std::string::npos, "rtsp play audio control");
 
     const auto play_before_setup = peer.request("PLAY " + base +
                                                 " RTSP/1.0\r\n"
@@ -7117,7 +7314,8 @@ void test_rtsp_play_recreate_lifecycle()
     {
         rtsp_play_test_peer peer;
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-        require(peer.request("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n").starts_with("RTSP/1.0 200"),
+        require(peer.request("DESCRIBE " + base + std::string(rtsp_play_query) + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n")
+                    .starts_with("RTSP/1.0 200"),
                 "rtsp play recreate describe");
         const auto setup = peer.request("SETUP " + base + "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n");
         require(setup.starts_with("RTSP/1.0 200"), "rtsp play recreate setup");
@@ -7139,7 +7337,7 @@ void test_rtsp_play_media_delivery()
 {
     rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-    const auto describe = peer.request("DESCRIBE " + base +
+    const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                        " RTSP/1.0\r\n"
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
@@ -7205,7 +7403,7 @@ void test_rtsp_play_audio_video_order()
 {
     rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-    require(peer.request("DESCRIBE " + base +
+    require(peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                          " RTSP/1.0\r\n"
                          "CSeq: 1\r\n"
                          "Accept: application/sdp\r\n\r\n")
@@ -7263,7 +7461,7 @@ void test_rtsp_play_h265()
 {
     rtsp_play_test_peer peer({make_h265_track(), make_audio_track()});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-    const auto describe = peer.request("DESCRIBE " + base +
+    const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                        " RTSP/1.0\r\n"
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
@@ -7331,7 +7529,7 @@ void test_rtsp_play_av1()
         video.codec_config = source.codec_config;
         rtsp_play_test_peer peer({std::move(video)}, video_transcode_config{.codec = video_transcode_codec::av1});
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-        const auto describe = peer.request("DESCRIBE " + base +
+        const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                            " RTSP/1.0\r\n"
                                            "CSeq: 1\r\n"
                                            "Accept: application/sdp\r\n\r\n");
@@ -7421,7 +7619,7 @@ void test_rtsp_play_opus_passthrough_boundaries()
 {
     rtsp_play_test_peer peer({make_video_track(), make_opus_track(1)});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-    const auto describe = peer.request("DESCRIBE " + base +
+    const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                        " RTSP/1.0\r\n"
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
@@ -7480,7 +7678,7 @@ void test_rtsp_play_g711_passthrough_case(codec_id codec)
     const auto payload_type = codec == codec_id::g711a ? RTP_PAYLOAD_PCMA : RTP_PAYLOAD_PCMU;
     rtsp_play_test_peer peer({make_video_track(), make_g711_track(codec)});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-    const auto describe = peer.request("DESCRIBE " + base +
+    const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                        " RTSP/1.0\r\n"
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
@@ -7569,7 +7767,7 @@ void test_rtsp_play_setup_track_lifecycle()
     {
         rtsp_play_test_peer peer({make_h265_track(), make_audio_track()});
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-        const auto describe = peer.request("DESCRIBE " + base +
+        const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                            " RTSP/1.0\r\n"
                                            "CSeq: 1\r\n"
                                            "Accept: application/sdp\r\n\r\n");
@@ -7609,7 +7807,7 @@ void test_rtsp_play_setup_track_lifecycle()
     {
         rtsp_play_test_peer peer;
         const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-        const auto describe = peer.request("DESCRIBE " + base +
+        const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                            " RTSP/1.0\r\n"
                                            "CSeq: 1\r\n"
                                            "Accept: application/sdp\r\n\r\n");
@@ -7651,7 +7849,7 @@ void test_rtsp_play_unsetup_audio_update_keeps_video_continuity()
 {
     rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-    require(peer.request("DESCRIBE " + base +
+    require(peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                          " RTSP/1.0\r\n"
                          "CSeq: 1\r\n"
                          "Accept: application/sdp\r\n\r\n")
@@ -7716,7 +7914,7 @@ void test_rtsp_play_rejects_stale_description()
 {
     rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-    const auto describe = peer.request("DESCRIBE " + base +
+    const auto describe = peer.request("DESCRIBE " + base + std::string(rtsp_play_query) +
                                        " RTSP/1.0\r\n"
                                        "CSeq: 1\r\n"
                                        "Accept: application/sdp\r\n\r\n");
@@ -11392,11 +11590,8 @@ void test_rtmp_publish_propagates_media_input_error()
 {
     worker_context worker;
     int video_shutdowns = 0;
-    auto video = std::make_shared<rtmp_publish_session>(worker,
-                                                        "550e8400-e29b-41d4-a716-446655440000",
-                                                        "live/rtmp-video-input-error",
-                                                        std::chrono::seconds(1),
-                                                        [&]() { ++video_shutdowns; });
+    auto video = std::make_shared<rtmp_publish_session>(
+        worker, "550e8400-e29b-41d4-a716-446655440000", "live/rtmp-video-input-error", std::chrono::seconds(1), [&]() { ++video_shutdowns; });
     require(video->startup(), "rtmp video input error startup");
     const auto h264 = make_rtmp_video_sequence_header(make_video_track());
     const auto h265 = make_rtmp_video_sequence_header(make_h265_track());
@@ -11406,11 +11601,8 @@ void test_rtmp_publish_propagates_media_input_error()
     require(video_result != 0, "rtmp video input error propagates");
 
     int script_shutdowns = 0;
-    auto script = std::make_shared<rtmp_publish_session>(worker,
-                                                         "550e8400-e29b-41d4-a716-446655440001",
-                                                         "live/rtmp-script-input-error",
-                                                         std::chrono::seconds(1),
-                                                         [&]() { ++script_shutdowns; });
+    auto script = std::make_shared<rtmp_publish_session>(
+        worker, "550e8400-e29b-41d4-a716-446655440001", "live/rtmp-script-input-error", std::chrono::seconds(1), [&]() { ++script_shutdowns; });
     require(script->startup(), "rtmp script input error startup");
     const std::array<std::uint8_t, 1> malformed_script{AMF_STRING};
     const auto script_result = script->on_script(malformed_script);
@@ -11598,7 +11790,7 @@ void test_whip_media_receiver()
             worker_context rtsp_worker;
             boost::asio::ip::tcp::acceptor acceptor(rtsp_worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
             boost::asio::io_context client_io;
-            test::rtsp_test_client client(client_io, "/" + stream_name);
+            test::rtsp_test_client client(client_io, "/" + stream_name + std::string(rtsp_play_query));
             auto future = boost::asio::co_spawn(client_io, client.play("127.0.0.1", acceptor.local_endpoint().port(), 2), boost::asio::use_future);
             std::jthread client_runner([&client_io]() { client_io.run(); });
 
@@ -12625,6 +12817,18 @@ int main(int argc, char* argv[])
         else if (scenario == "rtsp_play_session_contract")
         {
             media_server::test_rtsp_play_session_contract();
+        }
+        else if (scenario == "rtsp_play_claim")
+        {
+            media_server::test_rtsp_play_claim();
+        }
+        else if (scenario == "rtsp_play_claim_rejected")
+        {
+            media_server::test_rtsp_play_claim_rejected();
+        }
+        else if (scenario == "rtsp_play_transport_event")
+        {
+            media_server::test_rtsp_play_transport_event();
         }
         else if (scenario == "rtsp_play_terminal_failure_quiesces_reader")
         {
