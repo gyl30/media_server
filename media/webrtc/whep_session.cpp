@@ -10,7 +10,7 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
 
-#include "media/core/runtime_event.h"
+#include "media/webrtc/whep_event.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
@@ -181,8 +181,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         answer_.audio_channel_count.value_or(0),
         answer_.audio_bitrate.value_or(0),
         answer_.audio_max_playback_rate.value_or(0));
-    signaling_client::instance().report(
-        make_event(event_kind::output, event_protocol::whep, event_state::starting, stream_id_, stream_name_, {}, "ice"));
+    signaling_client::instance().report(whep_event::make_output(event_state::starting, stream_id_, stream_name_, "ice"));
     startup_establishment_timeout();
     return whep_session_startup_error::none;
 }
@@ -206,7 +205,7 @@ void whep_session::safe_shutdown()
     }
     if (started_)
     {
-        signaling_client::instance().report(make_event(event_kind::output, event_protocol::whep, event_state::stopped, stream_id_, stream_name_));
+        signaling_client::instance().report(whep_event::make_output(event_state::stopped, stream_id_, stream_name_));
     }
     started_ = false;
     remote_endpoint_.reset();
@@ -266,14 +265,8 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
         spdlog::info("webrtc negotiated track changed session {}", id_);
         if (started_)
         {
-            signaling_client::instance().report(make_event(event_kind::output,
-                                                           event_protocol::whep,
-                                                           event_state::runtime_error,
-                                                           stream_id_,
-                                                           stream_name_,
-                                                           {},
-                                                           {},
-                                                           "negotiated_tracks_changed"));
+            signaling_client::instance().report(
+                whep_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "negotiated_tracks_changed"));
         }
         shutdown();
         return;
@@ -282,14 +275,8 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
     {
         if (started_)
         {
-            signaling_client::instance().report(make_event(event_kind::output,
-                                                           event_protocol::whep,
-                                                           event_state::runtime_error,
-                                                           stream_id_,
-                                                           stream_name_,
-                                                           {},
-                                                           {},
-                                                           "media_read_start_failed"));
+            signaling_client::instance().report(
+                whep_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "media_read_start_failed"));
         }
         shutdown();
     }
@@ -308,14 +295,8 @@ void whep_session::on_read(media_read_batch batch)
         spdlog::info("webrtc negotiated track changed session {}", id_);
         if (started_)
         {
-            signaling_client::instance().report(make_event(event_kind::output,
-                                                           event_protocol::whep,
-                                                           event_state::runtime_error,
-                                                           stream_id_,
-                                                           stream_name_,
-                                                           {},
-                                                           {},
-                                                           "negotiated_tracks_changed"));
+            signaling_client::instance().report(
+                whep_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "negotiated_tracks_changed"));
         }
         shutdown();
         return;
@@ -332,14 +313,8 @@ void whep_session::on_read(media_read_batch batch)
         {
             if (started_)
             {
-                signaling_client::instance().report(make_event(event_kind::output,
-                                                               event_protocol::whep,
-                                                               event_state::runtime_error,
-                                                               stream_id_,
-                                                               stream_name_,
-                                                               {},
-                                                               {},
-                                                               "media_packetization_failed"));
+                signaling_client::instance().report(
+                    whep_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "media_packetization_failed"));
             }
             shutdown();
             return;
@@ -357,8 +332,7 @@ void whep_session::on_end()
     spdlog::info("webrtc source stream ended session {}", id_);
     if (started_)
     {
-        signaling_client::instance().report(
-            make_event(event_kind::output, event_protocol::whep, event_state::remote_closed, stream_id_, stream_name_));
+        signaling_client::instance().report(whep_event::make_output(event_state::remote_closed, stream_id_, stream_name_));
     }
     shutdown();
 }
@@ -406,8 +380,7 @@ void whep_session::run_udp(boost::asio::yield_context yield)
     }
     if (started_)
     {
-        signaling_client::instance().report(
-            make_event(event_kind::output, event_protocol::whep, event_state::runtime_error, stream_id_, stream_name_, {}, {}, read_error.message()));
+        signaling_client::instance().report(whep_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, read_error.message()));
     }
     shutdown();
 }
@@ -438,7 +411,7 @@ void whep_session::run_udp_write(boost::asio::yield_context yield)
             if (started_)
             {
                 signaling_client::instance().report(
-                    make_event(event_kind::output, event_protocol::whep, event_state::runtime_error, stream_id_, stream_name_, {}, {}, error.message()));
+                    whep_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message()));
             }
             shutdown();
             return;
@@ -591,8 +564,7 @@ void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
         {
             if (started_)
             {
-                signaling_client::instance().report(
-                    make_event(event_kind::output, event_protocol::whep, event_state::remote_closed, stream_id_, stream_name_));
+                signaling_client::instance().report(whep_event::make_output(event_state::remote_closed, stream_id_, stream_name_));
             }
             shutdown();
         }
@@ -600,8 +572,8 @@ void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
         {
             if (started_)
             {
-                signaling_client::instance().report(make_event(
-                    event_kind::output, event_protocol::whep, event_state::protocol_error, stream_id_, stream_name_, {}, {}, "dtls_failed"));
+                signaling_client::instance().report(
+                    whep_event::make_output(event_state::protocol_error, stream_id_, stream_name_, {}, "dtls_failed"));
             }
             shutdown();
         }
@@ -617,8 +589,8 @@ void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
             spdlog::error("webrtc srtp startup failed session {}", id_);
             if (started_)
             {
-                signaling_client::instance().report(make_event(
-                    event_kind::output, event_protocol::whep, event_state::runtime_error, stream_id_, stream_name_, {}, {}, "media_startup_failed"));
+                signaling_client::instance().report(
+                    whep_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "media_startup_failed"));
             }
             shutdown();
         }
@@ -675,8 +647,7 @@ bool whep_session::startup_media()
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
     spdlog::debug("webrtc srtp profile session {} {}", id_, dtls_->srtp_keying_material()->profile);
-    signaling_client::instance().report(
-        make_event(event_kind::output, event_protocol::whep, event_state::streaming, stream_id_, stream_name_, {}, "streaming"));
+    signaling_client::instance().report(whep_event::make_output(event_state::streaming, stream_id_, stream_name_, "streaming"));
     return true;
 }
 
@@ -808,14 +779,8 @@ void whep_session::handle_dtls_timeout()
         spdlog::error("webrtc dtls timeout failed session {}", id_);
         if (started_)
         {
-            signaling_client::instance().report(make_event(event_kind::output,
-                                                           event_protocol::whep,
-                                                           event_state::runtime_error,
-                                                           stream_id_,
-                                                           stream_name_,
-                                                           {},
-                                                           {},
-                                                           "dtls_timeout_processing_failed"));
+            signaling_client::instance().report(
+                whep_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "dtls_timeout_processing_failed"));
         }
         shutdown();
         return;
@@ -843,14 +808,8 @@ void whep_session::startup_establishment_timeout()
             spdlog::info("webrtc establishment timeout session {}", self->id_);
             if (self->started_)
             {
-                signaling_client::instance().report(make_event(event_kind::output,
-                                                               event_protocol::whep,
-                                                               event_state::timeout,
-                                                               self->stream_id_,
-                                                               self->stream_name_,
-                                                               {},
-                                                               {},
-                                                               "establishment_timeout"));
+                signaling_client::instance().report(
+                    whep_event::make_output(event_state::timeout, self->stream_id_, self->stream_name_, {}, "establishment_timeout"));
             }
             self->shutdown();
         });
@@ -876,14 +835,8 @@ void whep_session::refresh_ice_activity_timeout()
             spdlog::info("webrtc ice activity timeout session {}", self->id_);
             if (self->started_)
             {
-                signaling_client::instance().report(make_event(event_kind::output,
-                                                               event_protocol::whep,
-                                                               event_state::timeout,
-                                                               self->stream_id_,
-                                                               self->stream_name_,
-                                                               {},
-                                                               {},
-                                                               "ice_activity_timeout"));
+                signaling_client::instance().report(
+                    whep_event::make_output(event_state::timeout, self->stream_id_, self->stream_name_, {}, "ice_activity_timeout"));
             }
             self->shutdown();
         });

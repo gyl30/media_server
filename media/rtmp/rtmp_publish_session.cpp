@@ -6,7 +6,7 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 
-#include "media/core/runtime_event.h"
+#include "media/rtmp/rtmp_event.h"
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -46,19 +46,12 @@ rtmp_publish_session::rtmp_publish_session(worker_context& worker,
 
 bool rtmp_publish_session::startup()
 {
-    signaling_client::instance().report(
-        make_event(event_kind::publisher, event_protocol::rtmp, event_state::starting, stream_id_, stream_->name(), {}, "publish"));
+    signaling_client::instance().report(rtmp_event::make_publisher(event_state::starting, stream_id_, stream_->name(), "publish"));
     demuxer_ = flv_demuxer_create(&rtmp_publish_session::demux_callback, this);
     if (demuxer_ == nullptr)
     {
-        signaling_client::instance().report(make_event(event_kind::publisher,
-                                                       event_protocol::rtmp,
-                                                       event_state::runtime_error,
-                                                       stream_id_,
-                                                       stream_->name(),
-                                                       {},
-                                                       "setup",
-                                                       "publish_startup_failed"));
+        signaling_client::instance().report(
+            rtmp_event::make_publisher(event_state::runtime_error, stream_id_, stream_->name(), "setup", "publish_startup_failed"));
         return false;
     }
 
@@ -74,14 +67,8 @@ bool rtmp_publish_session::startup()
             if (auto handler = std::move(self->shutdown_handler_))
             {
                 spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_->name());
-                signaling_client::instance().report(make_event(event_kind::publisher,
-                                                               event_protocol::rtmp,
-                                                               event_state::timeout,
-                                                               self->stream_id_,
-                                                               self->stream_->name(),
-                                                               {},
-                                                               "media",
-                                                               "initial_tracks_timeout"));
+                signaling_client::instance().report(
+                    rtmp_event::make_publisher(event_state::timeout, self->stream_id_, self->stream_->name(), "media", "initial_tracks_timeout"));
                 handler();
             }
         });
@@ -101,8 +88,7 @@ void rtmp_publish_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    signaling_client::instance().report(
-        make_event(event_kind::publisher, event_protocol::rtmp, event_state::stopped, stream_id_, stream_->name()));
+    signaling_client::instance().report(rtmp_event::make_publisher(event_state::stopped, stream_id_, stream_->name()));
     shutdown_handler_ = {};
     initial_tracks_timer_.cancel();
     if (stream_)
@@ -411,14 +397,8 @@ void rtmp_publish_session::try_initialize_tracks()
     {
         if (auto handler = std::move(shutdown_handler_))
         {
-            signaling_client::instance().report(make_event(event_kind::publisher,
-                                                           event_protocol::rtmp,
-                                                           event_state::timeout,
-                                                           stream_id_,
-                                                           stream_->name(),
-                                                           {},
-                                                           "media",
-                                                           "initial_tracks_timeout"));
+            signaling_client::instance().report(
+                rtmp_event::make_publisher(event_state::timeout, stream_id_, stream_->name(), "media", "initial_tracks_timeout"));
             handler();
         }
         return;
@@ -440,14 +420,8 @@ void rtmp_publish_session::try_initialize_tracks()
         if (auto handler = std::move(shutdown_handler_))
         {
             spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
-            signaling_client::instance().report(make_event(event_kind::publisher,
-                                                           event_protocol::rtmp,
-                                                           event_state::runtime_error,
-                                                           stream_id_,
-                                                           stream_->name(),
-                                                           {},
-                                                           "media",
-                                                           "stream_registry_add_failed"));
+            signaling_client::instance().report(
+                rtmp_event::make_publisher(event_state::runtime_error, stream_id_, stream_->name(), "media", "stream_registry_add_failed"));
             handler();
         }
         return;
@@ -455,8 +429,7 @@ void rtmp_publish_session::try_initialize_tracks()
     initial_tracks_timer_.cancel();
     if (shutdown_handler_)
     {
-        signaling_client::instance().report(
-            make_event(event_kind::publisher, event_protocol::rtmp, event_state::streaming, stream_id_, stream_->name(), {}, "streaming"));
+        signaling_client::instance().report(rtmp_event::make_publisher(event_state::streaming, stream_id_, stream_->name(), "streaming"));
     }
     spdlog::info("rtmp publish tracks ready audio {}", *expected_audio_);
 }

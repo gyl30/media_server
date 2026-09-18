@@ -2378,12 +2378,12 @@ void test_rtmp_publish_claim_lifecycle(std::string_view scenario)
         require_publisher_event(events[2],
                                 event_kind::publisher,
                                 event_protocol::rtmp,
-                                event_state::remote_closed,
+                                event_state::runtime_error,
                                 test_rtmp_stream_id,
                                 "live/runtime-events",
                                 "transport",
-                                "RTMP remote close fact");
-        require(!events[2].contains("error"), "RTMP remote close fact has no error");
+                                "RTMP transport error fact");
+        require(events[2].contains("error"), "RTMP transport error fact includes error");
         require_publisher_event(events[3],
                                 event_kind::publisher,
                                 event_protocol::rtmp,
@@ -5300,13 +5300,13 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
     auto shutdown_barrier_future = shutdown_barrier.get_future();
     boost::asio::post(client_worker.io(), [&shutdown_barrier]() { shutdown_barrier.set_value(); });
     shutdown_barrier_future.wait();
-    wait_runtime_event_count(event_server, 3U);
+    wait_runtime_event_count(event_server, 4U);
     boost::system::error_code error;
     socket.close(error);
     client_worker.stop();
     runner.join();
     events = runtime_events(event_server);
-    require(events.size() == 3U, "ordinary rtsp pull shutdown emits stopped once");
+    require(events.size() == 4U, "ordinary rtsp pull shutdown emits stopped and the canceled transport fact");
     require_publisher_event(events[2],
                             event_kind::source,
                             event_protocol::rtsp,
@@ -5316,6 +5316,16 @@ void test_rtsp_pull_uses_complete_sdp_topology_without_track_wait()
                             "",
                             "rtsp pull stopped lifecycle",
                             source_id);
+    require_publisher_event(events[3],
+                            event_kind::source,
+                            event_protocol::rtsp,
+                            event_state::runtime_error,
+                            stream_id,
+                            "relay/topology",
+                            "",
+                            "rtsp pull canceled transport fact",
+                            source_id);
+    require(events[3].contains("error"), "rtsp pull canceled transport fact includes error");
 }
 
 void test_rtsp_pull_propagates_demux_error()
@@ -5755,7 +5765,8 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         require(completed_events.size() == 4U, "RTSP disconnect emits observed transport facts and stopped");
         require(completed_events[0].at("state") == "starting", "RTSP disconnected claim starts after claim completion");
         require(completed_events[1].at("state") == "runtime_error", "RTSP disconnect reports the failed response write");
-        require(completed_events[2].at("state") == "remote_closed", "RTSP disconnect reports the remote close");
+        require(completed_events[2].at("state") == "runtime_error" && completed_events[2].contains("error"),
+                "RTSP disconnect reports the transport error");
         require(completed_events[3].at("state") == "stopped", "RTSP disconnected claim reports stopped");
         return;
     }
@@ -5860,12 +5871,12 @@ void test_rtsp_publish_claim_lifecycle(std::string_view scenario)
         require_publisher_event(events[2],
                                 event_kind::publisher,
                                 event_protocol::rtsp,
-                                event_state::remote_closed,
+                                event_state::runtime_error,
                                 stream_id,
                                 "live/claim-pending",
                                 "transport",
-                                "RTSP remote close fact");
-        require(!events[2].contains("error"), "RTSP remote close fact has no error");
+                                "RTSP transport error fact");
+        require(events[2].contains("error"), "RTSP transport error fact includes error");
         require_publisher_event(events[3],
                                 event_kind::publisher,
                                 event_protocol::rtsp,

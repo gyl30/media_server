@@ -164,15 +164,16 @@ void test_rtsp_pull_ordinary_shutdown_reports_stopped()
     const bool received = wait_runtime_events(server, 1U);
     session->shutdown();
     session->shutdown();
-    const bool stopped = wait_runtime_events(server, 2U);
+    const bool stopped = wait_runtime_events(server, 3U);
     const auto events = runtime_events(server);
     const bool released = !stream_registry::instance().take_receiver_session("live/runtime-events");
     worker.stop();
     runner.join();
 
     require(received, "runtime event count");
-    require(stopped && events.size() == 2U && events[0].at("state") == "starting" && events[1].at("state") == "stopped",
-            "ordinary shutdown emits stopped once");
+    require(stopped && events.size() == 3U && events[0].at("state") == "starting" && events[1].at("state") == "stopped" &&
+                events[2].at("state") == "runtime_error" && events[2].contains("error"),
+            "ordinary shutdown emits stopped followed by the canceled transport fact");
     require(released, "runtime shutdown releases identity");
 }
 
