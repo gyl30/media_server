@@ -189,6 +189,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
 void whep_session::shutdown()
 {
+    reader_handle().remove();
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
@@ -210,7 +211,6 @@ void whep_session::safe_shutdown()
     started_ = false;
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
-    reader_handle().remove();
     if (packetizer_)
     {
         packetizer_->shutdown();

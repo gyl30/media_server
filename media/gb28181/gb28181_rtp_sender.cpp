@@ -130,6 +130,7 @@ void gb28181_rtp_sender::on_read(media_read_batch batch)
         if (result < 0)
         {
             spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
+            reader_handle().remove();
             if (failure_handler_)
             {
                 failure_handler_();

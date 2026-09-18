@@ -74,6 +74,7 @@ void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
 
     if (!apply_tracks(tracks))
     {
+        reader_handle().remove();
         shutdown_handler_();
         return;
     }
@@ -90,6 +91,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
     reader_cursor_ = batch.next_cursor;
     if (!apply_tracks(batch.tracks))
     {
+        reader_handle().remove();
         shutdown_handler_();
         return;
     }
@@ -135,6 +137,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
             if (!video_transcoder_->transcode(entry.frame, output))
             {
                 spdlog::error("rtsp av1 transcode failed track {}", entry.frame.track);
+                reader_handle().remove();
                 shutdown_handler_();
                 return;
             }
