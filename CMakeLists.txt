@@ -245,6 +245,7 @@ add_library(media_core STATIC
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
     media/webrtc/whep_event.cpp
+    media/webrtc/whip_event.cpp
     media/webrtc/whip_session.cpp
     media/webrtc/whip.cpp
     media/webrtc/whip_media_receiver.cpp
@@ -577,6 +578,8 @@ if(BUILD_TESTING)
         whep_http_cors
         whep_play_claim_accepted
         whep_play_claim_rejected
+        whip_publish_claim_accepted
+        whip_publish_claim_rejected
         whip_http_lifecycle
         webrtc_module_shutdown
         whip_http_self_shutdown_releases_reservation

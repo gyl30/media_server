@@ -43,6 +43,7 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
 {
    public:
     whip_session(worker_context& worker,
+                 std::string stream_id,
                  std::string stream_name,
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
@@ -53,6 +54,8 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     void shutdown();
 
     [[nodiscard]] const std::string& id() const noexcept;
+    [[nodiscard]] const std::string& stream_id() const noexcept;
+    [[nodiscard]] const std::string& stream_name() const noexcept;
     [[nodiscard]] const std::string& answer_sdp() const noexcept;
     [[nodiscard]] std::uint16_t local_port() const noexcept;
     [[nodiscard]] bool ice_connected() const noexcept;
@@ -83,6 +86,7 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
 
    private:
     worker_context& worker_;
+    std::string stream_id_;
     std::string stream_name_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;

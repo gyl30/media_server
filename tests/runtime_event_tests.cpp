@@ -183,6 +183,7 @@ void test_runtime_event_strings()
     require(to_string(event_protocol::http_flv) == "http-flv", "HTTP-FLV runtime event protocol string");
     require(to_string(event_protocol::hls) == "hls", "HLS runtime event protocol string");
     require(to_string(event_protocol::whep) == "whep", "runtime event protocol string");
+    require(to_string(event_protocol::whip) == "whip", "WHIP runtime event protocol string");
     require(to_string(event_state::streaming) == "streaming", "runtime event state string");
     require(to_string(event_state::stop_requested) == "stop_requested", "runtime requested fact string");
     require(to_string(event_state::remote_closed) == "remote_closed", "runtime remote fact string");

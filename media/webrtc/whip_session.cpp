@@ -12,6 +12,7 @@
 
 #include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
+#include "media/webrtc/whip_event.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whip_session.h"
 
@@ -43,12 +44,14 @@ bool is_rtcp(std::span<const std::uint8_t> packet) { return packet.size() >= 2U 
 }    // namespace
 
 whip_session::whip_session(worker_context& worker,
+                           std::string stream_id,
                            std::string stream_name,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
                            whip_session_timeouts timeouts,
                            std::size_t max_write_queue_bytes)
     : worker_(worker),
+      stream_id_(std::move(stream_id)),
       stream_name_(std::move(stream_name)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
@@ -149,6 +152,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer)
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_udp(yield); }, boost::asio::detached);
 
     spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_name_, advertised_address_.to_string(), local_port_);
+    whip_event::report_publisher(event_state::starting, stream_id_, stream_name_, "ice");
     startup_establishment_timeout();
     return whip_session_startup_error::none;
 }
@@ -168,6 +172,10 @@ void whip_session::safe_shutdown()
     if (dtls_)
     {
         dtls_->shutdown();
+    }
+    if (started_)
+    {
+        whip_event::report_publisher(event_state::stopped, stream_id_, stream_name_);
     }
     started_ = false;
     remote_endpoint_.reset();
@@ -197,6 +205,10 @@ void whip_session::safe_shutdown()
 
 const std::string& whip_session::id() const noexcept { return id_; }
 
+const std::string& whip_session::stream_id() const noexcept { return stream_id_; }
+
+const std::string& whip_session::stream_name() const noexcept { return stream_name_; }
+
 const std::string& whip_session::answer_sdp() const noexcept { return answer_.sdp; }
 
 std::uint16_t whip_session::local_port() const noexcept { return local_port_; }
@@ -211,19 +223,27 @@ void whip_session::run_udp(boost::asio::yield_context yield)
 {
     std::vector<std::uint8_t> buffer(64 * 1024);
     boost::asio::ip::udp::endpoint endpoint;
+    boost::system::error_code read_error;
     for (;;)
     {
-        boost::system::error_code error;
-        const auto bytes = udp_transport_.read(buffer, endpoint, yield, error);
-        if (error)
+        const auto bytes = udp_transport_.read(buffer, endpoint, yield, read_error);
+        if (read_error)
         {
-            if (error != boost::asio::error::operation_aborted)
+            if (read_error != boost::asio::error::operation_aborted)
             {
-                spdlog::debug("webrtc udp receive failed session {} error {}", id_, error.message());
+                spdlog::debug("webrtc udp receive failed session {} error {}", id_, read_error.message());
             }
             break;
         }
         handle_packet(std::span<const std::uint8_t>{buffer.data(), bytes}, endpoint);
+    }
+    if (read_error == boost::asio::error::operation_aborted)
+    {
+        return;
+    }
+    if (started_)
+    {
+        whip_event::report_publisher(event_state::runtime_error, stream_id_, stream_name_, {}, read_error.message());
     }
     shutdown();
 }
@@ -247,6 +267,10 @@ void whip_session::run_udp_write(boost::asio::yield_context yield)
                           datagram.endpoint.address().to_string(),
                           datagram.endpoint.port(),
                           error.message());
+            if (started_)
+            {
+                whip_event::report_publisher(event_state::runtime_error, stream_id_, stream_name_, {}, error.message());
+            }
             shutdown();
             return;
         }
@@ -368,6 +392,7 @@ void whip_session::handle_dtls(std::span<const std::uint8_t> packet)
     if (!dtls_->handle_datagram(packet))
     {
         spdlog::error("webrtc dtls failed session {}", id_);
+        whip_event::report_publisher(event_state::protocol_error, stream_id_, stream_name_, {}, "dtls_failed");
         shutdown();
         return;
     }
@@ -379,6 +404,7 @@ void whip_session::handle_dtls(std::span<const std::uint8_t> packet)
         if (!startup_media())
         {
             spdlog::error("webrtc whip media startup failed session {}", id_);
+            whip_event::report_publisher(event_state::runtime_error, stream_id_, stream_name_, {}, "media_startup_failed");
             shutdown();
         }
         return;
@@ -406,6 +432,7 @@ void whip_session::handle_srtp(std::span<const std::uint8_t> packet)
     if (!accepted)
     {
         spdlog::error("webrtc whip media input failed session {} rtcp {}", id_, rtcp);
+        whip_event::report_publisher(event_state::runtime_error, stream_id_, stream_name_, {}, "media_input_failed");
         shutdown();
     }
 }
@@ -441,6 +468,7 @@ bool whip_session::startup_media()
     media_receiver_ = std::move(receiver);
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
+    whip_event::report_publisher(event_state::streaming, stream_id_, stream_name_, "streaming");
     return true;
 }
 
@@ -514,6 +542,7 @@ void whip_session::handle_dtls_timeout()
     if (!dtls_->handle_timeout())
     {
         spdlog::error("webrtc dtls timeout failed session {}", id_);
+        whip_event::report_publisher(event_state::runtime_error, stream_id_, stream_name_, {}, "dtls_timeout_processing_failed");
         shutdown();
         return;
     }
@@ -538,6 +567,7 @@ void whip_session::startup_establishment_timeout()
             }
 
             spdlog::info("webrtc establishment timeout session {}", self->id_);
+            whip_event::report_publisher(event_state::timeout, self->stream_id_, self->stream_name_, {}, "establishment_timeout");
             self->shutdown();
         });
 }
@@ -560,6 +590,7 @@ void whip_session::refresh_ice_activity_timeout()
             }
 
             spdlog::info("webrtc ice activity timeout session {}", self->id_);
+            whip_event::report_publisher(event_state::timeout, self->stream_id_, self->stream_name_, {}, "ice_activity_timeout");
             self->shutdown();
         });
 }

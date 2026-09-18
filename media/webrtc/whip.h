@@ -29,10 +29,8 @@ struct create_result
     std::string answer_sdp;
 };
 
-[[nodiscard]] create_result create(worker_context& worker,
-                                   std::string_view stream_name,
-                                   std::string_view offer_sdp,
-                                   const config& application_config);
+[[nodiscard]] create_result create(
+    worker_context& worker, std::string stream_id, std::string_view stream_name, std::string_view offer_sdp, const config& application_config);
 [[nodiscard]] bool remove(std::string_view session_id);
 void shutdown();
 

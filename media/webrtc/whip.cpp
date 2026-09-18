@@ -9,6 +9,7 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "media/webrtc/whip.h"
+#include "media/webrtc/whip_event.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/whip_session.h"
 #include "media/core/stream_registry.h"
@@ -63,7 +64,8 @@ void release_stream(std::string_view stream_name)
 
 }    // namespace
 
-create_result create(worker_context& worker, std::string_view stream_name, std::string_view offer_sdp, const config& application_config)
+create_result create(
+    worker_context& worker, std::string stream_id, std::string_view stream_name, std::string_view offer_sdp, const config& application_config)
 {
     spdlog::debug("whip create stream {} offer_bytes {}", stream_name, offer_sdp.size());
 
@@ -95,7 +97,7 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(create_error::internal_error);
     }
 
-    auto session = std::make_shared<whip_session>(worker, std::string(stream_name), advertised_address, std::move(certificate));
+    auto session = std::make_shared<whip_session>(worker, std::move(stream_id), std::string(stream_name), advertised_address, std::move(certificate));
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
@@ -172,6 +174,7 @@ bool remove(std::string_view session_id)
     {
         return false;
     }
+    whip_event::report_publisher(event_state::stop_requested, session->stream_id(), session->stream_name());
     session->shutdown();
     spdlog::info("whip session removed {} stream {}", session_id, stream_name);
     return true;

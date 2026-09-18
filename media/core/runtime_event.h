@@ -23,6 +23,7 @@ enum class event_protocol
     hls,
     gb28181,
     whep,
+    whip,
 };
 
 enum class event_state
@@ -110,6 +111,8 @@ struct runtime_event
             return "gb28181";
         case event_protocol::whep:
             return "whep";
+        case event_protocol::whip:
+            return "whip";
     }
     return {};
 }

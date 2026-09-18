@@ -1,10 +1,13 @@
 #include <span>
 #include <vector>
 #include <utility>
+#include <optional>
 
 #include "media/webrtc/whip.h"
+#include "media/core/stream_id.h"
 #include "media/http/whip_http.h"
 #include "media/net/worker_context.h"
+#include "media/http/signaling_client.h"
 
 namespace media_server
 {
@@ -60,12 +63,10 @@ whip_http_string_response handle_options(const whip_http_request& request, bool 
     return response;
 }
 
-whip_http_string_response handle_post(const whip_http_request& request,
-                                      worker_context& worker,
-                                      std::string stream_name,
-                                      const config& application_config)
+whip_http_string_response handle_post(
+    const whip_http_request& request, worker_context& worker, std::string stream_id, std::string stream_name, const config& application_config)
 {
-    auto result = whip::create(worker, stream_name, request.body(), application_config);
+    auto result = whip::create(worker, std::move(stream_id), stream_name, request.body(), application_config);
     switch (result.error)
     {
         case whip::create_error::none:
@@ -100,7 +101,8 @@ whip_http_string_response handle_delete(const whip_http_request& request, std::s
 whip_http_string_response handle_whip_request(const whip_http_request& request,
                                               worker_context& worker,
                                               const boost::urls::url_view& target,
-                                              const config& application_config)
+                                              const config& application_config,
+                                              boost::asio::yield_context& yield)
 {
     std::vector<std::string> path;
     for (const auto segment : target.segments())
@@ -141,7 +143,30 @@ whip_http_string_response handle_whip_request(const whip_http_request& request,
             }
             stream_name.append(segment);
         }
-        return handle_post(request, worker, std::move(stream_name), application_config);
+        std::optional<std::string> stream_id;
+        for (const auto parameter : target.params())
+        {
+            if (parameter.key == "stream_id")
+            {
+                if (stream_id || !parameter.has_value)
+                {
+                    return make_error_response(request, boost::beast::http::status::bad_request, "invalid stream id\n");
+                }
+                stream_id = parameter.value;
+            }
+        }
+        if (!stream_id || !valid_stream_id(*stream_id))
+        {
+            return make_error_response(request, boost::beast::http::status::bad_request, "invalid stream id\n");
+        }
+        const auto claim = signaling_client::instance().claim_publish(*stream_id, "whip", stream_name, yield);
+        if (claim.kind != signaling_result_kind::accepted)
+        {
+            const auto status = claim.kind == signaling_result_kind::rejected ? boost::beast::http::status::forbidden
+                                                                              : boost::beast::http::status::service_unavailable;
+            return make_error_response(request, status, "publish claim failed\n");
+        }
+        return handle_post(request, worker, std::move(*stream_id), std::move(stream_name), application_config);
     }
 
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)

@@ -23,6 +23,7 @@ func TestPublishAllocationHTTP(t *testing.T) {
 	}{
 		{name: "RTMP", protocol: "rtmp", mediaIP: "192.0.2.10", expectedURL: "rtmp://192.0.2.10:1935/live/camera"},
 		{name: "RTSP IPv6", protocol: "rtsp", mediaIP: "2001:db8::10", expectedURL: "rtsp://[2001:db8::10]:8554/live/camera"},
+		{name: "WHIP", protocol: "whip", mediaIP: "192.0.2.10", expectedURL: "http://192.0.2.10:8080/publish/whip/live/camera"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry := newMediaServerRegistry()
