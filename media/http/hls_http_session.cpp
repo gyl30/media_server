@@ -8,9 +8,9 @@
 #include <boost/asio/detached.hpp>
 
 #include "media/hls/hls.h"
-#include "media/hls/hls_segmenter.h"
 #include "media/core/stream_id.h"
 #include "media/http/http_event.h"
+#include "media/hls/hls_segmenter.h"
 #include "media/net/worker_context.h"
 #include "media/hls/hls_play_session.h"
 #include "media/http/hls_http_session.h"
@@ -170,12 +170,9 @@ void hls_http_session::handle_request(boost::asio::yield_context& yield)
             }
         }
 
-        if (send_text_response(boost::beast::http::status::ok,
-                               "application/vnd.apple.mpegurl",
-                               segmenter->playlist(".", "session=" + viewer->secret()),
-                               yield) &&
-            viewer->refresh() &&
-            viewer->mark_streaming())
+        if (send_text_response(
+                boost::beast::http::status::ok, "application/vnd.apple.mpegurl", segmenter->playlist(".", "session=" + viewer->secret()), yield) &&
+            viewer->refresh() && viewer->mark_streaming())
         {
             http_event::report_hls_output(event_state::streaming, viewer->stream_id(), viewer->stream_name(), "streaming");
         }

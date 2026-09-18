@@ -41,6 +41,8 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
                  video_transcode_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
+
+   public:
     void startup();
     void shutdown();
 
@@ -56,15 +58,24 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     static int script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
     static int duration_callback(void* param, const char* app, const char* stream, double* duration);
 
+   private:
     void run(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
-    void report_transport_error(const boost::system::error_code& error);
     void write(std::shared_ptr<std::vector<std::uint8_t>> data);
+
+   private:
+    void report_transport_error(const boost::system::error_code& error);
+
+   private:
     int on_delete_stream(std::uint32_t stream_id);
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
+
+   private:
     void run_play_claim(boost::asio::yield_context yield);
     void run_publish_claim(boost::asio::yield_context yield);
+
+   private:
     void safe_shutdown();
 
    private:

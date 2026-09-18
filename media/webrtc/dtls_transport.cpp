@@ -156,17 +156,18 @@ bool dtls_transport::startup()
 
     auto* read_bio = BIO_new(BIO_s_mem());
     auto* write_bio = BIO_new(BIO_s_mem());
-    boost::scope::scope_exit cleanup_bio([&]()
-    {
-        if (read_bio != nullptr)
+    boost::scope::scope_exit cleanup_bio(
+        [&]()
         {
-            BIO_free(read_bio);
-        }
-        if (write_bio != nullptr)
-        {
-            BIO_free(write_bio);
-        }
-    });
+            if (read_bio != nullptr)
+            {
+                BIO_free(read_bio);
+            }
+            if (write_bio != nullptr)
+            {
+                BIO_free(write_bio);
+            }
+        });
     if (read_bio == nullptr || write_bio == nullptr)
     {
         reset();

@@ -36,6 +36,7 @@ class signaling_client
    public:
     [[nodiscard]] static signaling_client& instance();
 
+   public:
     void configure(const config& cfg,
                    std::string instance_id,
                    std::chrono::milliseconds heartbeat_interval = std::chrono::seconds{5},
@@ -64,6 +65,8 @@ class signaling_client
 
    private:
     static constexpr std::size_t max_pending_events = 500U;
+
+   private:
     std::mutex event_mutex_;
     std::vector<runtime_event> pending_events_;
     config config_;

@@ -50,9 +50,11 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
                  whip_session_timeouts timeouts = {},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
 
+   public:
     [[nodiscard]] whip_session_startup_error startup(webrtc_offer offer);
     void shutdown();
 
+   public:
     [[nodiscard]] const std::string& id() const noexcept;
     [[nodiscard]] const std::string& stream_id() const noexcept;
     [[nodiscard]] const std::string& stream_name() const noexcept;
@@ -69,7 +71,7 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
         boost::asio::ip::udp::endpoint endpoint;
     };
 
-    void safe_shutdown();
+   private:
     void run_udp(boost::asio::yield_context yield);
     void run_udp_write(boost::asio::yield_context yield);
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
@@ -83,6 +85,9 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     void handle_dtls_timeout();
     void startup_establishment_timeout();
     void refresh_ice_activity_timeout();
+
+   private:
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

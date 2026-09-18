@@ -1,5 +1,4 @@
 #include "media/rtmp/rtmp_event.h"
-
 #include "media/http/signaling_client.h"
 
 namespace media_server::rtmp_event

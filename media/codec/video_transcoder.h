@@ -32,6 +32,7 @@ class video_transcoder final
     video_transcoder();
     ~video_transcoder();
 
+   public:
     bool startup(const video_transcoder_config& config);
     bool transcode(const media_frame& input, std::vector<media_frame>& output);
 

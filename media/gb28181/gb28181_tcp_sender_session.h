@@ -37,14 +37,19 @@ class gb28181_tcp_sender_session final : public stream_session, public std::enab
                                std::chrono::milliseconds establishment_timeout,
                                std::size_t max_write_queue_bytes = 1024U * 1024U);
 
+   public:
     [[nodiscard]] bool startup();
     void shutdown() override;
+
+   public:
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
     void run(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void send_packet(std::vector<std::uint8_t> packet);
+
+   private:
     void safe_shutdown();
 
    private:

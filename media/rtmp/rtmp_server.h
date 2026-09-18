@@ -17,6 +17,7 @@ class rtmp_server final : public std::enable_shared_from_this<rtmp_server>
    public:
     rtmp_server(io_context_pool& workers, const config& config);
 
+   public:
     void startup(boost::system::error_code& error);
 
    private:

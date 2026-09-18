@@ -35,6 +35,8 @@ class whip_media_receiver final
 {
    public:
     whip_media_receiver(worker_context& worker, std::string stream_name, whip_media_receiver_config config);
+
+   public:
     [[nodiscard]] bool startup();
     [[nodiscard]] bool input_rtp(std::span<const std::uint8_t> packet);
     [[nodiscard]] bool input_rtcp(std::span<const std::uint8_t> packet);
@@ -43,6 +45,7 @@ class whip_media_receiver final
    private:
     static int packet_callback(void* param, avpacket_t* packet);
 
+   private:
     int on_demuxed_packet(avpacket_t* packet);
     bool update_video_track(const avpacket_t& packet);
     bool publish_stream();

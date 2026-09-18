@@ -19,8 +19,10 @@ class rtmp_test_client final
 {
    public:
     rtmp_test_client(boost::asio::io_context& io, std::string app, std::string stream);
+
     ~rtmp_test_client();
 
+   public:
     boost::asio::awaitable<boost::system::error_code> publish(std::string host,
                                                               std::uint16_t port,
                                                               std::vector<std::uint8_t> metadata,
@@ -33,6 +35,8 @@ class rtmp_test_client final
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);
     static int video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
     static int ignore_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp);
+
+   private:
     boost::asio::awaitable<boost::system::error_code> flush();
 
    private:

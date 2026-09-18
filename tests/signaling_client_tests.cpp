@@ -4,12 +4,12 @@
 #include <memory>
 #include <string>
 #include <thread>
-#include <utility>
-#include <type_traits>
 #include <vector>
+#include <utility>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
+#include <type_traits>
 #include <condition_variable>
 
 #include <boost/asio.hpp>
@@ -66,6 +66,7 @@ class test_http_server
         }
     }
 
+   public:
     std::string url() const { return "http://127.0.0.1:" + std::to_string(port_); }
 
     void set_status(boost::beast::http::status status) { status_.store(static_cast<unsigned int>(status)); }

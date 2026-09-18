@@ -1,5 +1,4 @@
 #include "media/gb28181/gb28181_event.h"
-
 #include "media/http/signaling_client.h"
 
 namespace media_server::gb28181_event

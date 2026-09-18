@@ -1,6 +1,5 @@
 #include <span>
 #include <array>
-#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -11,13 +10,14 @@
 #include <utility>
 #include <charconv>
 #include <iostream>
+#include <algorithm>
 #include <string_view>
 
 #include <srtp2/srtp.h>
 #include <boost/crc.hpp>
-#include <boost/json.hpp>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
+#include <boost/json.hpp>
 #include <openssl/hmac.h>
 #include <openssl/srtp.h>
 #include <boost/url/parse.hpp>
@@ -39,7 +39,6 @@
 #include "media/net/port_manager.h"
 #include "media/core/media_stream.h"
 #include "media/http/http_session.h"
-#include "media/http/signaling_client.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/net/worker_context.h"
 #include "media/net/io_context_pool.h"
@@ -47,6 +46,7 @@
 #include "media/webrtc/whep_session.h"
 #include "media/webrtc/whip_session.h"
 #include "media/core/stream_registry.h"
+#include "media/http/signaling_client.h"
 #include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/webrtc_packetizer.h"
@@ -1037,6 +1037,7 @@ class whep_http_test_peer final
         hls::shutdown();
     }
 
+   public:
     boost::beast::http::response<boost::beast::http::string_body> options(std::string target,
                                                                           std::string_view requested_method,
                                                                           std::string_view requested_headers = "Content-Type")

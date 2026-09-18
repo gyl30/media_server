@@ -19,6 +19,7 @@ class udp_yield_transport final
    public:
     explicit udp_yield_transport(boost::asio::io_context& owner);
 
+   public:
     void startup(boost::asio::ip::address bind_address, std::uint16_t port, boost::system::error_code& error);
     void connect(const boost::asio::ip::udp::endpoint& endpoint, boost::system::error_code& error);
     std::size_t read(std::span<std::uint8_t> buffer,

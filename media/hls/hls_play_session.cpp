@@ -41,8 +41,10 @@ void remove_session(std::string_view secret, const hls_play_session* expected)
 
 }    // namespace
 
-std::shared_ptr<hls_play_session> hls_play_session::create(
-    worker_context& worker, std::string stream_id, std::string stream_name, std::shared_ptr<hls_segmenter> segmenter)
+std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worker,
+                                                           std::string stream_id,
+                                                           std::string stream_name,
+                                                           std::shared_ptr<hls_segmenter> segmenter)
 {
     boost::uuids::random_generator generator;
     auto& current = sessions();

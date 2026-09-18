@@ -8,8 +8,8 @@
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
-#include <boost/scope/scope_exit.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
 #include "media/rtsp/rtsp_event.h"

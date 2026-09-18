@@ -1,5 +1,4 @@
 #include "media/webrtc/whep_event.h"
-
 #include "media/http/signaling_client.h"
 
 namespace media_server::whep_event

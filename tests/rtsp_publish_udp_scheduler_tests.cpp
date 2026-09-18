@@ -102,8 +102,7 @@ void test_rtcp_scheduler_releases_after_shutdown()
     worker.release_work();
     auto& io = worker.io();
 
-    auto publish = std::make_shared<rtsp_publish_session>(
-        worker, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}, 0ms);
+    auto publish = std::make_shared<rtsp_publish_session>(worker, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}, 0ms);
     int shutdowns{};
     publish->set_shutdown_handler([&shutdowns]() { ++shutdowns; });
 

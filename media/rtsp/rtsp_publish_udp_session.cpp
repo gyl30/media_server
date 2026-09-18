@@ -139,16 +139,17 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     state.rtp_transport.emplace(worker_.io());
     state.rtcp_transport.emplace(worker_.io());
 
-    boost::scope::scope_exit cleanup([&]()
-                                     {
-                                         state.rtp_transport->shutdown();
-                                         state.rtcp_transport->shutdown();
-                                         state.rtp_transport.reset();
-                                         state.rtcp_transport.reset();
-                                         state.rtp_endpoint = {};
-                                         state.rtcp_endpoint = {};
-                                         port_manager::instance().release(local_ports);
-                                     });
+    boost::scope::scope_exit cleanup(
+        [&]()
+        {
+            state.rtp_transport->shutdown();
+            state.rtcp_transport->shutdown();
+            state.rtp_transport.reset();
+            state.rtcp_transport.reset();
+            state.rtp_endpoint = {};
+            state.rtcp_endpoint = {};
+            port_manager::instance().release(local_ports);
+        });
 
     boost::system::error_code network_error;
     state.rtp_transport->startup(bind_address_, local_ports.first, network_error);

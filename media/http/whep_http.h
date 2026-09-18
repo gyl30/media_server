@@ -5,8 +5,8 @@
 #include <string_view>
 
 #include <boost/beast/http.hpp>
-#include <boost/url/url_view.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/url/url_view.hpp>
 
 #include "config.h"
 

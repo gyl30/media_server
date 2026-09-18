@@ -11,6 +11,7 @@ class media_sink
    public:
     virtual ~media_sink() = default;
 
+   public:
     virtual void on_track(const media_track& track) = 0;
     virtual void on_frame(const media_frame& frame) = 0;
     virtual void on_end() = 0;

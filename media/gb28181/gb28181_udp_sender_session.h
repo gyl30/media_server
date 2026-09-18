@@ -39,8 +39,11 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
                                std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{25'000},
                                std::size_t max_write_queue_bytes = 1024U * 1024U);
 
+   public:
     [[nodiscard]] bool startup();
     void shutdown() override;
+
+   public:
     [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
@@ -49,6 +52,8 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     void run_rtp_write(boost::asio::yield_context yield);
     void schedule_rtcp();
     void send_packet(std::vector<std::uint8_t> packet);
+
+   private:
     void safe_shutdown();
 
    private:

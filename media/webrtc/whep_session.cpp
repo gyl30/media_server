@@ -49,19 +49,19 @@ whep_session::whep_session(worker_context& worker,
                            whep_session_timeouts timeouts,
                            video_transcode_config video,
                            std::size_t max_write_queue_bytes)
-    : stream_(std::move(stream)),
+    : worker_(worker),
+      stream_(std::move(stream)),
+      stream_id_(std::move(stream_id)),
+      stream_name_(stream_ ? stream_->name() : std::string{}),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
       video_config_(video),
       timeouts_(timeouts),
-      worker_(worker),
       udp_transport_(worker_.io()),
       max_write_queue_bytes_(max_write_queue_bytes),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
-      ice_activity_timer_(worker_.io()),
-      stream_id_(std::move(stream_id)),
-      stream_name_(stream_ ? stream_->name() : std::string{})
+      ice_activity_timer_(worker_.io())
 {
 }
 

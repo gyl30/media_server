@@ -42,6 +42,7 @@ class media_reader_handle final
    public:
     media_reader_handle() = default;
 
+   public:
     // cursor 由 reader worker 保存；每次最多只有一个 outstanding read。
     void async_read(media_reader_cursor cursor) const;
     // remove 立即使 active 失效，之后不再产生 tracks、read 或 end 回调。
@@ -62,6 +63,7 @@ class media_reader
    public:
     virtual ~media_reader() = default;
 
+   public:
     // tracks 是当前 stream 轨道快照；reader 只处理自己订阅的轨道。
     // on_read 返回 cursor 之后最多 128 个连续 history entry；未订阅轨道由 reader worker 自行忽略。
     // end 撤销 pending read 和尚未执行的 read/tracks 回调，随后只调用一次 on_end。
@@ -76,6 +78,7 @@ class media_reader
    private:
     friend class media_stream;
 
+   private:
     media_reader_handle handle_;
 };
 

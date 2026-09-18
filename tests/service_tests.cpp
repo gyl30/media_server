@@ -103,6 +103,7 @@ class controlled_registration_server
         }
     }
 
+   public:
     [[nodiscard]] std::string url() const { return "http://127.0.0.1:" + std::to_string(port_); }
 
     bool wait_request()

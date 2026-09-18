@@ -1,5 +1,4 @@
 #include "media/http/http_event.h"
-
 #include "media/http/signaling_client.h"
 
 namespace media_server::http_event
