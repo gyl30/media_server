@@ -18,6 +18,9 @@ void report_source(event_state state,
                    std::string_view stage = {},
                    std::string_view error = {});
 
+void report_output(
+    event_state state, std::string_view stream_id, std::string_view stream_name, std::string_view stage = {}, std::string_view error = {});
+
 }    // namespace media_server::rtsp_event
 
 #endif

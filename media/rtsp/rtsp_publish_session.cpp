@@ -66,7 +66,7 @@ int rtsp_publish_session::prepare_announce(rtsp_server_t* server, std::string_vi
         return 455;
     }
 
-    const auto target = parse_rtsp_publish_target(uri);
+    const auto target = parse_rtsp_target(uri);
     if (!target)
     {
         return 400;

@@ -58,7 +58,9 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
 
     void run(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
+    [[nodiscard]] int admit_play(std::string_view uri, bool track_uri);
     void report_publisher_event(event_state state, std::string_view stage = {}, std::string_view error = {});
+    void report_output_event(event_state state, std::string_view stage = {}, std::string_view error = {});
     void report_transport_error(const boost::system::error_code& error);
     void write(std::span<const std::uint8_t> data);
     int reply_announce_and_close(rtsp_server_t* server, int status);
