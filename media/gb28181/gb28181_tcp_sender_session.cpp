@@ -13,7 +13,6 @@
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_event.h"
-#include "media/http/signaling_client.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 
@@ -62,8 +61,8 @@ bool gb28181_tcp_sender_session::startup()
     started_ = true;
     const auto self = shared_from_this();
     boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
-    signaling_client::instance().report(gb28181_event::make_output(
-        event_state::starting, stream_id_, stream_name_, config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting"));
+    gb28181_event::report_output(
+        event_state::starting, stream_id_, stream_name_, config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting");
     return true;
 }
 
@@ -98,12 +97,11 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         }
         if (started_)
         {
-            signaling_client::instance().report(
-                gb28181_event::make_output(error == boost::asio::error::timed_out ? event_state::timeout : event_state::runtime_error,
-                                           stream_id_,
-                                           stream_name_,
-                                           {},
-                                           error == boost::asio::error::timed_out ? "establishment_timeout" : error.message()));
+            gb28181_event::report_output(error == boost::asio::error::timed_out ? event_state::timeout : event_state::runtime_error,
+                                         stream_id_,
+                                         stream_name_,
+                                         {},
+                                         error == boost::asio::error::timed_out ? "establishment_timeout" : error.message());
         }
         shutdown();
         return;
@@ -121,7 +119,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         {
             if (self->started_)
             {
-                signaling_client::instance().report(gb28181_event::make_output(event_state::remote_closed, self->stream_id_, self->stream_name_));
+                gb28181_event::report_output(event_state::remote_closed, self->stream_id_, self->stream_name_);
             }
             self->shutdown();
         },
@@ -129,8 +127,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         {
             if (self->started_)
             {
-                signaling_client::instance().report(
-                    gb28181_event::make_output(event_state::runtime_error, self->stream_id_, self->stream_name_, {}, "sender_mux_failed"));
+                gb28181_event::report_output(event_state::runtime_error, self->stream_id_, self->stream_name_, {}, "sender_mux_failed");
             }
             self->shutdown();
         });
@@ -138,8 +135,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     {
         if (started_)
         {
-            signaling_client::instance().report(
-                gb28181_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "sender_startup_failed"));
+            gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "sender_startup_failed");
         }
         shutdown();
         return;
@@ -157,7 +153,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         }
     }
 
-    signaling_client::instance().report(gb28181_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message()));
+    gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message());
     shutdown();
 }
 
@@ -183,8 +179,7 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
         transport_->write(*data, yield, error);
         if (error)
         {
-            signaling_client::instance().report(
-                gb28181_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message()));
+            gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message());
             shutdown();
             return;
         }
@@ -202,7 +197,7 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     }
     if (packet.size() > std::numeric_limits<std::uint16_t>::max())
     {
-        signaling_client::instance().report(gb28181_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "packet_too_large"));
+        gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "packet_too_large");
         shutdown();
         return;
     }
@@ -210,8 +205,7 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     const auto frame_bytes = packet.size() + 2U;
     if (frame_bytes > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - frame_bytes)
     {
-        signaling_client::instance().report(
-            gb28181_event::make_output(event_state::runtime_error, stream_id_, stream_name_, {}, "write_queue_overflow"));
+        gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "write_queue_overflow");
         shutdown();
         return;
     }
@@ -228,7 +222,7 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     if (!media_started_)
     {
         media_started_ = true;
-        signaling_client::instance().report(gb28181_event::make_output(event_state::streaming, stream_id_, stream_name_, "streaming"));
+        gb28181_event::report_output(event_state::streaming, stream_id_, stream_name_, "streaming");
     }
     if (start_write)
     {
@@ -246,7 +240,7 @@ void gb28181_tcp_sender_session::safe_shutdown()
     closed_ = true;
     if (started_)
     {
-        signaling_client::instance().report(gb28181_event::make_output(event_state::stopped, stream_id_, stream_name_));
+        gb28181_event::report_output(event_state::stopped, stream_id_, stream_name_);
     }
     started_ = false;
     media_started_ = false;

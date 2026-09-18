@@ -13,7 +13,6 @@
 #include "media/rtsp/rtsp_event.h"
 #include "media/http/rtsp_pull_http.h"
 #include "media/core/stream_registry.h"
-#include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
 namespace media_server
@@ -249,8 +248,7 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
-    signaling_client::instance().report(
-        rtsp_event::make_source(event_state::stop_requested, session->stream_id(), session->stream_name(), session->source_id()));
+    rtsp_event::report_source(event_state::stop_requested, session->stream_id(), session->stream_name(), session->source_id());
     session->shutdown();
     return make_empty_response(request, boost::beast::http::status::no_content);
 }

@@ -12,7 +12,6 @@
 #include "media/net/worker_context.h"
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
-#include "media/http/signaling_client.h"
 #include "media/webrtc/dtls_certificate.h"
 
 namespace media_server::whep
@@ -166,8 +165,7 @@ create_result create(
     if (!inserted)
     {
         spdlog::error("whep session id collision {}", session_id);
-        signaling_client::instance().report(
-            whep_event::make_output(event_state::runtime_error, session->stream_id(), session->stream_name(), {}, "session_id_collision"));
+        whep_event::report_output(event_state::runtime_error, session->stream_id(), session->stream_name(), {}, "session_id_collision");
         session->shutdown();
         return failed(create_error::internal_error);
     }
@@ -214,7 +212,7 @@ bool remove(std::string_view session_id)
         spdlog::debug("whep session remove expired {}", session_id);
         return false;
     }
-    signaling_client::instance().report(whep_event::make_output(event_state::stop_requested, session->stream_id(), session->stream_name()));
+    whep_event::report_output(event_state::stop_requested, session->stream_id(), session->stream_name());
     session->shutdown();
     spdlog::info("whep session removed {}", session_id);
     return true;
