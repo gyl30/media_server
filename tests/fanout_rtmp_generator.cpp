@@ -62,6 +62,7 @@ struct results
     std::size_t runtime_failures{};
     std::size_t non_progressing_viewers{};
     std::map<std::string, std::size_t> failure_phases;
+    std::map<std::string, std::size_t> runtime_errors;
     std::vector<std::uint64_t> first_media_milliseconds;
     std::uint64_t received_video_bytes{};
     std::uint64_t received_video_messages{};
@@ -230,6 +231,12 @@ void record_failure(run_state& state, std::string_view phase)
     ++state.result.failure_phases[std::string(phase)];
 }
 
+void record_runtime_failure(run_state& state, const boost::system::error_code& error)
+{
+    ++state.result.runtime_failures;
+    ++state.result.runtime_errors[std::to_string(error.value()) + ":" + error.message()];
+}
+
 std::uint64_t unix_now_ns()
 {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -320,7 +327,7 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
                 if (consume_error)
                 {
                     record_failure(*state, "runtime");
-                    ++state->result.runtime_failures;
+                    record_runtime_failure(*state, consume_error);
                 }
                 else if (client.received_bytes() == bytes_before || client.received_messages() == messages_before)
                 {
@@ -399,6 +406,10 @@ void print_results(const run_state& state)
     for (const auto& [phase, count] : result.failure_phases)
     {
         std::cout << "failure_phase=" << phase << " count=" << count << '\n';
+    }
+    for (const auto& [error, count] : result.runtime_errors)
+    {
+        std::cout << "runtime_error=" << error << " count=" << count << '\n';
     }
 }
 
