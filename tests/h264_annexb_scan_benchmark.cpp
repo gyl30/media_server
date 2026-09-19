@@ -30,7 +30,7 @@ struct nalu_range
 struct reference_capture
 {
     const std::uint8_t* begin{};
-    std::vector<nalu_range> ranges;
+    std::vector<nalu_range>* ranges{};
 };
 
 struct benchmark_input
@@ -92,14 +92,15 @@ std::vector<nalu_range> parse_annexb(std::span<const std::uint8_t> bytes)
 void capture_reference(void* opaque, const std::uint8_t* nalu, std::size_t bytes)
 {
     auto& capture = *static_cast<reference_capture*>(opaque);
-    capture.ranges.push_back({static_cast<std::size_t>(nalu - capture.begin), bytes, static_cast<std::uint8_t>(nalu[0] & 0x1fU)});
+    capture.ranges->push_back({static_cast<std::size_t>(nalu - capture.begin), bytes, static_cast<std::uint8_t>(nalu[0] & 0x1fU)});
 }
 
 std::vector<nalu_range> reference_ranges(const std::vector<std::uint8_t>& bytes)
 {
-    reference_capture capture{bytes.data(), {}};
+    std::vector<nalu_range> ranges;
+    reference_capture capture{bytes.data(), &ranges};
     require(mpeg4_h264_annexb_nalu(bytes.data(), bytes.size(), &capture_reference, &capture) == 0, "reference parser result");
-    return capture.ranges;
+    return ranges;
 }
 
 void append_start_code(std::vector<std::uint8_t>& bytes, std::size_t size)
@@ -210,39 +211,59 @@ std::uint64_t range_checksum(std::span<const nalu_range> ranges, std::size_t con
     return checksum;
 }
 
-std::uint64_t repeated_scan_checksum(const std::vector<std::uint8_t>& bytes, std::size_t consumers, reference_capture& capture)
+void scan_reference_into(const std::vector<std::uint8_t>& bytes, std::vector<nalu_range>& ranges)
+{
+    ranges.clear();
+    reference_capture capture{bytes.data(), &ranges};
+    require(mpeg4_h264_annexb_nalu(bytes.data(), bytes.size(), &capture_reference, &capture) == 0, "benchmark reference parser result");
+}
+
+std::uint64_t repeated_scan_checksum(const std::vector<std::uint8_t>& bytes, std::size_t consumers, std::vector<nalu_range>& ranges)
 {
     std::uint64_t checksum = 0;
     for (std::size_t consumer = 0; consumer < consumers; ++consumer)
     {
-        capture.ranges.clear();
-        require(mpeg4_h264_annexb_nalu(bytes.data(), bytes.size(), &capture_reference, &capture) == 0, "benchmark reference parser result");
-        mix_range_checksum(checksum, capture.ranges);
+        scan_reference_into(bytes, ranges);
+        mix_range_checksum(checksum, ranges);
     }
     return checksum;
 }
 
-std::uint64_t parse_once_checksum(const std::vector<std::uint8_t>& bytes, std::size_t consumers, std::vector<nalu_range>& ranges)
+std::uint64_t shared_scan_checksum(const std::vector<std::uint8_t>& bytes, std::size_t consumers, std::vector<nalu_range>& ranges)
 {
-    parse_annexb_into(bytes, ranges);
+    scan_reference_into(bytes, ranges);
     return range_checksum(ranges, consumers);
 }
 
 std::uint64_t elapsed_ns(const std::vector<std::uint8_t>& bytes, std::size_t consumers, bool repeated_scan, std::size_t repetitions)
 {
-    reference_capture capture{bytes.data(), {}};
-    capture.ranges.reserve(16U);
     std::vector<nalu_range> ranges;
     ranges.reserve(16U);
     const auto begin = std::chrono::steady_clock::now();
     std::uint64_t checksum = 0;
     for (std::size_t repetition = 0; repetition < repetitions; ++repetition)
     {
-        checksum ^= repeated_scan ? repeated_scan_checksum(bytes, consumers, capture) : parse_once_checksum(bytes, consumers, ranges);
+        checksum ^= repeated_scan ? repeated_scan_checksum(bytes, consumers, ranges) : shared_scan_checksum(bytes, consumers, ranges);
     }
     benchmark_sink = checksum;
     const auto elapsed = std::chrono::steady_clock::now() - begin;
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count()) / repetitions;
+}
+
+std::size_t calibrate_repetitions(const std::vector<std::uint8_t>& bytes, std::size_t consumers)
+{
+    constexpr std::uint64_t minimum_nanoseconds = 30'000'000U;
+    std::size_t repetitions = 1U;
+    while (true)
+    {
+        const auto repeated_elapsed = elapsed_ns(bytes, consumers, true, repetitions) * repetitions;
+        const auto shared_elapsed = elapsed_ns(bytes, consumers, false, repetitions) * repetitions;
+        if (std::max(repeated_elapsed, shared_elapsed) >= minimum_nanoseconds)
+        {
+            return repetitions;
+        }
+        repetitions *= 2U;
+    }
 }
 
 std::uint64_t median(std::vector<std::uint64_t> values)
@@ -254,37 +275,60 @@ std::uint64_t median(std::vector<std::uint64_t> values)
 void run_benchmark(const benchmark_input& input)
 {
     const auto ranges = parse_annexb(input.bytes);
-    const std::size_t repetitions = input.bytes.size() < 4'096U ? 200U : 10U;
     std::cout << "\nAU class=" << input.name << " bytes=" << input.bytes.size() << " nalus=" << ranges.size() << '\n';
-    std::cout << "consumers\trepeated_scan_ns_per_au\tparse_once_ns_per_au\tratio\n";
-    for (const auto consumers : {1U, 4U, 8U, 16U, 32U})
+    std::cout << "consumers\trepeated_scan_ns_per_au\tshared_scan_ns_per_au\tratio\n";
+    for (const auto consumers : {1U, 4U, 8U, 16U, 32U, 64U, 100U})
     {
-        reference_capture capture{input.bytes.data(), {}};
-        capture.ranges.reserve(16U);
-        require(repeated_scan_checksum(input.bytes, consumers, capture) == range_checksum(ranges, consumers),
+        std::vector<nalu_range> captured_ranges;
+        captured_ranges.reserve(16U);
+        require(repeated_scan_checksum(input.bytes, consumers, captured_ranges) == range_checksum(ranges, consumers),
                 std::string(input.name) + " checksum comparison");
+        require(shared_scan_checksum(input.bytes, consumers, captured_ranges) == range_checksum(ranges, consumers),
+                std::string(input.name) + " shared checksum comparison");
+        const auto repetitions = calibrate_repetitions(input.bytes, consumers);
         for (std::size_t warmup = 0; warmup < 3U; ++warmup)
         {
-            elapsed_ns(input.bytes, consumers, true, repetitions);
-            elapsed_ns(input.bytes, consumers, false, repetitions);
+            if ((warmup & 1U) == 0U)
+            {
+                elapsed_ns(input.bytes, consumers, true, repetitions);
+                elapsed_ns(input.bytes, consumers, false, repetitions);
+            }
+            else
+            {
+                elapsed_ns(input.bytes, consumers, false, repetitions);
+                elapsed_ns(input.bytes, consumers, true, repetitions);
+            }
         }
 
         std::vector<std::uint64_t> repeated_samples;
-        std::vector<std::uint64_t> parse_once_samples;
+        std::vector<std::uint64_t> shared_scan_samples;
         repeated_samples.reserve(10U);
-        parse_once_samples.reserve(10U);
+        shared_scan_samples.reserve(10U);
         for (std::size_t sample = 0; sample < 10U; ++sample)
         {
-            repeated_samples.push_back(elapsed_ns(input.bytes, consumers, true, repetitions));
-            parse_once_samples.push_back(elapsed_ns(input.bytes, consumers, false, repetitions));
+            if ((sample & 1U) == 0U)
+            {
+                repeated_samples.push_back(elapsed_ns(input.bytes, consumers, true, repetitions));
+                shared_scan_samples.push_back(elapsed_ns(input.bytes, consumers, false, repetitions));
+            }
+            else
+            {
+                shared_scan_samples.push_back(elapsed_ns(input.bytes, consumers, false, repetitions));
+                repeated_samples.push_back(elapsed_ns(input.bytes, consumers, true, repetitions));
+            }
         }
         const auto repeated_median = median(repeated_samples);
-        const auto parse_once_median = median(parse_once_samples);
+        const auto shared_scan_median = median(shared_scan_samples);
         std::cout << consumers << '\t' << *std::min_element(repeated_samples.begin(), repeated_samples.end()) << '/' << repeated_median << '/'
                   << *std::max_element(repeated_samples.begin(), repeated_samples.end()) << '\t'
-                  << *std::min_element(parse_once_samples.begin(), parse_once_samples.end()) << '/' << parse_once_median << '/'
-                  << *std::max_element(parse_once_samples.begin(), parse_once_samples.end()) << '\t'
-                  << static_cast<double>(repeated_median) / static_cast<double>(parse_once_median) << '\n';
+                  << *std::min_element(shared_scan_samples.begin(), shared_scan_samples.end()) << '/' << shared_scan_median << '/'
+                  << *std::max_element(shared_scan_samples.begin(), shared_scan_samples.end()) << '\t'
+                  << static_cast<double>(repeated_median) / static_cast<double>(shared_scan_median) << '\n';
+        if (consumers == 1U)
+        {
+            require(static_cast<double>(repeated_median) / static_cast<double>(shared_scan_median) < 2.0,
+                    std::string(input.name) + " single-consumer calibration mismatch");
+        }
     }
 }
 
