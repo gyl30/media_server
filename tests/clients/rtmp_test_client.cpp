@@ -3,6 +3,7 @@
 
 #include <boost/asio/write.hpp>
 #include <boost/asio/connect.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
 
@@ -120,6 +121,49 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::play(std::st
     co_return boost::system::error_code{};
 }
 
+boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_for(std::chrono::seconds duration)
+{
+    boost::asio::steady_timer timer(socket_.get_executor());
+    bool expired = false;
+    timer.expires_after(duration);
+    timer.async_wait([this, &expired](const boost::system::error_code& error) {
+        if (!error)
+        {
+            expired = true;
+            socket_.cancel();
+        }
+    });
+
+    std::array<std::uint8_t, 8192> read_buffer{};
+    while (!expired)
+    {
+        boost::system::error_code error = co_await flush();
+        if (error)
+        {
+            timer.cancel();
+            co_return error;
+        }
+        const auto bytes =
+            co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        if (error)
+        {
+            if (expired && error == boost::asio::error::operation_aborted)
+            {
+                break;
+            }
+            timer.cancel();
+            co_return error;
+        }
+        if (rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
+        {
+            timer.cancel();
+            co_return boost::asio::error::operation_aborted;
+        }
+    }
+    timer.cancel();
+    co_return boost::system::error_code{};
+}
+
 int rtmp_test_client::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
 {
     auto* self = static_cast<rtmp_test_client*>(param);
@@ -142,6 +186,8 @@ int rtmp_test_client::video_callback(void* param, const void* data, std::size_t 
 {
     auto* self = static_cast<rtmp_test_client*>(param);
     self->video_.assign(static_cast<const std::uint8_t*>(data), static_cast<const std::uint8_t*>(data) + bytes);
+    self->received_bytes_ += bytes;
+    ++self->received_messages_;
     return 0;
 }
 
