@@ -7,6 +7,7 @@ viewers="${3:-1}"
 profile="${4:-low}"
 duration_seconds="${MEDIA_SERVER_FANOUT_DURATION_SECONDS:-15}"
 ramp_per_second="${MEDIA_SERVER_FANOUT_RAMP_PER_SECOND:-50}"
+shards="${MEDIA_SERVER_FANOUT_SHARDS:-1}"
 profile_tool="${MEDIA_SERVER_FANOUT_PROFILE_TOOL:-none}"
 signaling_bin="${SIGNALING_BIN:-}"
 ffmpeg_bin="${FFMPEG_BIN:-ffmpeg}"
@@ -16,11 +17,16 @@ rtmp_port=$((base_port + 1))
 rtsp_port=$((base_port + 2))
 http_port=$((base_port + 3))
 sip_port=$((base_port + 4))
-estimated_ramp_seconds=$(( (viewers + ramp_per_second - 1) / ramp_per_second ))
 
 [[ "$viewers" =~ ^[1-9][0-9]*$ ]]
 [[ "$duration_seconds" =~ ^[1-9][0-9]*$ ]]
 [[ "$ramp_per_second" =~ ^[1-9][0-9]*$ ]]
+[[ "$shards" =~ ^[1-9][0-9]*$ ]]
+(( viewers % shards == 0 )) || { echo "viewers must be divisible by shards" >&2; exit 2; }
+shard_viewers=$((viewers / shards))
+shard_ramp=$((ramp_per_second / shards))
+(( shard_ramp < 1 )) && shard_ramp=1
+estimated_shard_ramp_seconds=$(( (shard_viewers + shard_ramp - 1) / shard_ramp ))
 case "$profile" in
     low | normal) ;;
     *)
@@ -43,18 +49,18 @@ generator_bin="$(realpath "$(dirname "$server_bin")/fanout_rtmp_generator")"
 signaling_pid=""
 server_pid=""
 publisher_pid=""
-generator_pid=""
+declare -a generator_pids=()
 
 cleanup() {
     set +e
-    for pid in "${generator_pid:-}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
+    for pid in "${generator_pids[@]}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
         [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null
     done
-    for pid in "${generator_pid:-}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
+    for pid in "${generator_pids[@]}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
         [[ -n "$pid" ]] && wait "$pid" 2>/dev/null
     done
     local residual=0
-    for pid in "${generator_pid:-}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
+    for pid in "${generator_pids[@]}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             residual=$((residual + 1))
         fi
@@ -241,39 +247,51 @@ fi
     exec "$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
         -f lavfi -i "$video_input" -f lavfi -i sine=frequency=1000:sample_rate=44100 \
         -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
-        -g 30 -keyint_min 30 -sc_threshold 0 "${video_rate[@]}" -c:a aac -b:a 48k -ac 1 -t "$((estimated_ramp_seconds + duration_seconds + 30))" \
+        -g 30 -keyint_min 30 -sc_threshold 0 "${video_rate[@]}" -c:a aac -b:a 48k -ac 1 -t "$((estimated_shard_ramp_seconds + duration_seconds + 30))" \
         -f flv "$publish_url"
 ) >"$work_dir/publisher.log" 2>&1 &
 publisher_pid=$!
 wait_publisher_streaming
 
-echo "fanout start (profile=$profile viewers=$viewers duration=${duration_seconds}s ramp=${ramp_per_second}/s)"
+echo "fanout start (profile=$profile viewers=$viewers shards=$shards shard_viewers=$shard_viewers duration=${duration_seconds}s requested_ramp=${ramp_per_second}/s effective_ramp=$((shard_ramp * shards))/s shard_ramp=${shard_ramp}/s)"
 if [[ "$profile_tool" == callgrind ]]; then
     callgrind_control -z "$server_pid" >/dev/null
     callgrind_control -i on "$server_pid" >/dev/null
 fi
-(
-    trap - EXIT
-    exec "$generator_bin" --signaling-url "http://127.0.0.1:$signaling_port" --stream-name "$stream_name" \
-        --media-port "$rtmp_port" --viewers "$viewers" --duration "$duration_seconds" --ramp-per-second "$ramp_per_second"
-) >"$work_dir/generator.log" 2>&1 &
-generator_pid=$!
-while kill -0 "$generator_pid" 2>/dev/null; do
-    if ! kill -0 "$generator_pid" 2>/dev/null; then
-        break
-    fi
+for ((shard = 0; shard < shards; ++shard)); do
+    (
+        trap - EXIT
+        exec "$generator_bin" --signaling-url "http://127.0.0.1:$signaling_port" --stream-name "$stream_name" \
+            --media-port "$rtmp_port" --viewers "$shard_viewers" --duration "$duration_seconds" --ramp-per-second "$shard_ramp"
+    ) >"$work_dir/generator_${shard}.log" 2>&1 &
+    generator_pids+=("$!")
+done
+while :; do
+    any_generator_alive=0
+    for pid in "${generator_pids[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            any_generator_alive=1
+            break
+        fi
+    done
+    (( any_generator_alive == 1 )) || break
     sample_process server "$server_pid" "$work_dir/server_samples.tsv"
     sample_server_sockets "$work_dir/server_socket_samples.tsv"
     sample_client_sockets "$work_dir/client_socket_samples.tsv"
     sample_threads server "$server_pid" "$work_dir/server_threads.tsv"
-    if kill -0 "$generator_pid" 2>/dev/null; then
-        sample_process generator "$generator_pid" "$work_dir/generator_samples.tsv"
-        sample_threads generator "$generator_pid" "$work_dir/generator_threads.tsv"
-    fi
+    for ((shard = 0; shard < shards; ++shard)); do
+        pid="${generator_pids[$shard]}"
+        if kill -0 "$pid" 2>/dev/null; then
+            sample_process "generator_${shard}" "$pid" "$work_dir/generator_samples.tsv"
+            sample_threads "generator_${shard}" "$pid" "$work_dir/generator_threads.tsv"
+        fi
+    done
     sleep 1
 done
 generator_status=0
-wait "$generator_pid" || generator_status=$?
+for pid in "${generator_pids[@]}"; do
+    wait "$pid" || generator_status=$?
+done
 if [[ "$profile_tool" == callgrind ]]; then
     callgrind_control -i off "$server_pid" >/dev/null
     callgrind_control --dump="fanout_${profile}_${viewers}" "$server_pid" >/dev/null
@@ -283,16 +301,21 @@ sleep 1
 curl --noproxy '*' -fsS --connect-timeout 1 --max-time 5 "http://127.0.0.1:$signaling_port/api/runtimes" \
     >"$work_dir/runtime_snapshot.json" 2>/dev/null || true
 
-python3 - "$work_dir/server_samples.tsv" "$work_dir/generator_samples.tsv" "$work_dir/server_socket_samples.tsv" "$work_dir/client_socket_samples.tsv" "$work_dir/server_threads.tsv" "$work_dir/generator_threads.tsv" "$work_dir/generator.log" "$work_dir/results.tsv" "$work_dir/thread_summary.tsv" "$work_dir/runtime_snapshot.json" "$work_dir/client_socket_summary.tsv" <<'PY'
+generator_log_paths=()
+for ((shard = 0; shard < shards; ++shard)); do
+    generator_log_paths+=("$work_dir/generator_${shard}.log")
+done
+
+python3 - "$work_dir/server_samples.tsv" "$work_dir/generator_samples.tsv" "$work_dir/server_socket_samples.tsv" "$work_dir/client_socket_samples.tsv" "$work_dir/server_threads.tsv" "$work_dir/generator_threads.tsv" "$work_dir/results.tsv" "$work_dir/thread_summary.tsv" "$work_dir/runtime_snapshot.json" "$work_dir/client_socket_summary.tsv" "${generator_log_paths[@]}" <<'PY'
 import csv
 import json
 import statistics
 import sys
 
-def summarize_process(path, start_ns, end_ns):
+def summarize_process(path, start_ns, end_ns, label=None):
     with open(path, encoding="utf-8") as source:
         rows = list(csv.DictReader(source, delimiter="\t"))
-    rows = [row for row in rows if start_ns <= int(row["time_ns"]) <= end_ns]
+    rows = [row for row in rows if start_ns <= int(row["time_ns"]) <= end_ns and (label is None or row["label"] == label)]
     values = {}
     for key in ("rss_kb", "vmsize_kb", "threads", "fd"):
         values[key] = statistics.median(int(row[key]) for row in rows) if rows else 0
@@ -332,52 +355,69 @@ def thread_summary(path, start_ns, end_ns):
     rows = [row for row in rows if start_ns <= int(row["time_ns"]) <= end_ns]
     by_tid = {}
     for row in rows:
-        by_tid.setdefault(row["tid"], []).append(row)
+        by_tid.setdefault((row["label"], row["tid"]), []).append(row)
     result = []
-    for tid, entries in by_tid.items():
+    for (label, tid), entries in by_tid.items():
         if len(entries) < 2:
             continue
         elapsed = (int(entries[-1]["time_ns"]) - int(entries[0]["time_ns"])) / 1_000_000_000
         cpu = (int(entries[-1]["ticks"]) - int(entries[0]["ticks"])) / sysconf_clk_tck / elapsed * 100
-        result.append((cpu, tid, entries[-1]["comm"]))
+        result.append((cpu, f"{label}:{tid}", entries[-1]["comm"]))
     return sorted(result, reverse=True)
 
-with open(sys.argv[7], encoding="utf-8") as source:
-    log = source.read()
-def value(name):
-    prefix = name + "="
-    for token in log.split():
-        if token.startswith(prefix):
-            return int(token[len(prefix):])
-    raise RuntimeError("missing generator field: " + name)
-start_ns = value("measurement_start_unix_ns")
-end_ns = value("measurement_end_unix_ns")
+def log_values(path):
+    with open(path, encoding="utf-8") as source:
+        text = source.read()
+    values = {}
+    for token in text.split():
+        if "=" in token:
+            name, value = token.split("=", 1)
+            if value.isdigit():
+                values[name] = int(value)
+    return values
+
+generator_log_paths = sys.argv[11:]
+shard_values = [log_values(path) for path in generator_log_paths]
+required = ("measurement_start_unix_ns", "measurement_end_unix_ns", "allocated", "ready", "progressing", "runtime_failures", "non_progressing_viewers")
+if any(any(name not in values for name in required) for values in shard_values):
+    raise RuntimeError("missing generator result field")
+start_ns = max(values["measurement_start_unix_ns"] for values in shard_values)
+end_ns = min(values["measurement_end_unix_ns"] for values in shard_values)
+if end_ns <= start_ns:
+    raise RuntimeError("generator measurement windows do not overlap")
+elapsed = (end_ns - start_ns) / 1_000_000_000
 server_threads = thread_summary(sys.argv[5], start_ns, end_ns)
 generator_threads = thread_summary(sys.argv[6], start_ns, end_ns)
 server_sockets = summarize_sockets(sys.argv[3], start_ns, end_ns)
 client_sockets = summarize_sockets(sys.argv[4], start_ns, end_ns)
 server = summarize_process(sys.argv[1], start_ns, end_ns)
-generator = summarize_process(sys.argv[2], start_ns, end_ns)
-elapsed = (end_ns - start_ns) / 1_000_000_000
-if server["sample_count"] < 5 or generator["sample_count"] < 5 or server_sockets["sample_count"] < 5 or client_sockets["sample_count"] < 5:
-    raise RuntimeError("measurement window has fewer than 5 process samples")
-with open(sys.argv[8], "w", encoding="utf-8") as output:
-    output.write("elapsed_seconds\tserver_cpu_percent\tserver_rss_kb\tserver_vmsize_kb\tserver_threads\tserver_fd\tserver_established_median\tserver_established_p95\tserver_established_max\tserver_recvq_total_median\tserver_recvq_total_p95\tserver_recvq_total_max\tserver_recvq_nonzero_median\tserver_recvq_nonzero_p95\tserver_recvq_nonzero_max\tserver_recvq_max_median\tserver_recvq_max_p95\tserver_recvq_max_max\tserver_sendq_total_median\tserver_sendq_total_p95\tserver_sendq_total_max\tserver_sendq_nonzero_median\tserver_sendq_nonzero_p95\tserver_sendq_nonzero_max\tserver_sendq_max_median\tserver_sendq_max_p95\tserver_sendq_max_max\tgenerator_cpu_percent\tgenerator_rss_kb\tgenerator_vmsize_kb\tgenerator_threads\tgenerator_fd\tserver_max_thread_cpu\tgenerator_max_thread_cpu\n")
-    fields = [elapsed, server["cpu_percent"], server["rss_kb"], server["vmsize_kb"], server["threads"], server["fd"]]
-    fields.extend(server_sockets[key] for key in ("established_median", "established_p95", "established_max", "recvq_total_median", "recvq_total_p95", "recvq_total_max", "recvq_nonzero_median", "recvq_nonzero_p95", "recvq_nonzero_max", "recvq_max_median", "recvq_max_p95", "recvq_max_max", "sendq_total_median", "sendq_total_p95", "sendq_total_max", "sendq_nonzero_median", "sendq_nonzero_p95", "sendq_nonzero_max", "sendq_max_median", "sendq_max_p95", "sendq_max_max"))
-    fields.extend((generator["cpu_percent"], generator["rss_kb"], generator["vmsize_kb"], generator["threads"], generator["fd"], server_threads[0][0] if server_threads else 0.0, generator_threads[0][0] if generator_threads else 0.0))
+generators = [summarize_process(sys.argv[2], start_ns, end_ns, f"generator_{index}") for index in range(len(shard_values))]
+if server["sample_count"] < 5 or server_sockets["sample_count"] < 5 or client_sockets["sample_count"] < 5:
+    raise RuntimeError("global measurement window has insufficient samples")
+generator_total_cpu = sum(item["cpu_percent"] for item in generators)
+generator_max_shard_cpu = max(item["cpu_percent"] for item in generators)
+generator_total_rss = sum(item["rss_kb"] for item in generators)
+generator_total_vmsize = sum(item["vmsize_kb"] for item in generators)
+generator_total_fd = sum(item["fd"] for item in generators)
+generator_max_thread_cpu = generator_threads[0][0] if generator_threads else 0.0
+aggregate = {name: sum(values[name] for values in shard_values) for name in required[2:]}
+for name in ("received_video_bytes", "received_video_messages", "steady_video_bytes", "steady_video_messages"):
+    aggregate[name] = sum(values.get(name, 0) for values in shard_values)
+with open(sys.argv[7], "w", encoding="utf-8") as output:
+    output.write("elapsed_seconds\tglobal_overlap_seconds\tshards\tserver_cpu_percent\tserver_rss_kb\tserver_vmsize_kb\tserver_threads\tserver_fd\tserver_established_median\tserver_established_p95\tserver_established_max\tserver_recvq_total_p95\tserver_recvq_total_max\tserver_sendq_total_p95\tserver_sendq_total_max\tserver_sendq_nonzero_p95\tserver_sendq_nonzero_max\tserver_sendq_max_p95\tserver_sendq_max_max\tgenerator_total_cpu_percent\tgenerator_max_shard_cpu_percent\tgenerator_total_rss_kb\tgenerator_total_vmsize_kb\tgenerator_total_fd\tserver_max_thread_cpu\tgenerator_max_thread_cpu\ttotal_allocated\ttotal_ready\ttotal_progressing\ttotal_runtime_failures\ttotal_non_progressing\n")
+    fields = [elapsed, elapsed, len(shard_values), server["cpu_percent"], server["rss_kb"], server["vmsize_kb"], server["threads"], server["fd"], server_sockets["established_median"], server_sockets["established_p95"], server_sockets["established_max"], server_sockets["recvq_total_p95"], server_sockets["recvq_total_max"], server_sockets["sendq_total_p95"], server_sockets["sendq_total_max"], server_sockets["sendq_nonzero_p95"], server_sockets["sendq_nonzero_max"], server_sockets["sendq_max_p95"], server_sockets["sendq_max_max"], generator_total_cpu, generator_max_shard_cpu, generator_total_rss, generator_total_vmsize, generator_total_fd, server_threads[0][0] if server_threads else 0.0, generator_max_thread_cpu, aggregate["allocated"], aggregate["ready"], aggregate["progressing"], aggregate["runtime_failures"], aggregate["non_progressing_viewers"]]
     output.write("\t".join(f"{value:.3f}" if isinstance(value, float) else str(value) for value in fields) + "\n")
-with open(sys.argv[9], "w", encoding="utf-8") as output:
+with open(sys.argv[8], "w", encoding="utf-8") as output:
     output.write("process\ttid\tcomm\tcpu_percent\n")
     for process, entries in (("server", server_threads), ("generator", generator_threads)):
         for cpu, tid, comm in entries:
             output.write("%s\t%s\t%s\t%.3f\n" % (process, tid, comm, cpu))
-with open(sys.argv[11], "w", encoding="utf-8") as output:
+with open(sys.argv[10], "w", encoding="utf-8") as output:
     output.write("metric\tmedian\tp95\tmax\n")
     for key in ("recvq_total", "recvq_nonzero", "recvq_max", "sendq_total", "sendq_nonzero", "sendq_max"):
         output.write("%s\t%s\t%s\t%s\n" % (key, client_sockets[key + "_median"], client_sockets[key + "_p95"], client_sockets[key + "_max"]))
 try:
-    with open(sys.argv[10], encoding="utf-8") as source:
+    with open(sys.argv[9], encoding="utf-8") as source:
         runtimes = json.load(source).get("runtimes", [])
 except (FileNotFoundError, json.JSONDecodeError):
     runtimes = []
@@ -389,14 +429,20 @@ for runtime in runtimes:
 for error, count in sorted(runtime_errors.items()):
     print("server_runtime_error=" + error + " count=" + str(count))
 print("server_top_threads=" + ",".join(f"{tid}:{comm}:{cpu:.1f}%" for cpu, tid, comm in server_threads[:10]))
-print("generator_top_threads=" + ",".join(f"{tid}:{comm}:{cpu:.1f}%" for cpu, tid, comm in generator_threads[:5]))
+print("generator_top_threads=" + ",".join(f"{tid}:{comm}:{cpu:.1f}%" for cpu, tid, comm in generator_threads[:10]))
 print("server_max_thread_cpu=%.3f" % (server_threads[0][0] if server_threads else 0.0))
-print("generator_max_thread_cpu=%.3f" % (generator_threads[0][0] if generator_threads else 0.0))
+print("global_overlap_seconds=%.3f" % elapsed)
+print("generator_total_cpu=%.3f generator_max_shard_cpu=%.3f generator_max_thread_cpu=%.3f" % (generator_total_cpu, generator_max_shard_cpu, generator_max_thread_cpu))
+for index, item in enumerate(generators):
+    print("generator_%d_cpu=%.3f" % (index, item["cpu_percent"]))
+for index, values in enumerate(shard_values):
+    print("generator_%d_ready=%d generator_%d_progressing=%d generator_%d_runtime_failures=%d" % (index, values["ready"], index, values["progressing"], index, values["runtime_failures"]))
+print("total_allocated=%d total_ready=%d total_progressing=%d total_runtime_failures=%d total_non_progressing=%d" % (aggregate["allocated"], aggregate["ready"], aggregate["progressing"], aggregate["runtime_failures"], aggregate["non_progressing_viewers"]))
 print("client_recvq_total_p95=%s client_recvq_total_max=%s client_recvq_nonzero_p95=%s client_recvq_nonzero_max=%s client_recvq_max_p95=%s client_recvq_max_max=%s" % (client_sockets["recvq_total_p95"], client_sockets["recvq_total_max"], client_sockets["recvq_nonzero_p95"], client_sockets["recvq_nonzero_max"], client_sockets["recvq_max_p95"], client_sockets["recvq_max_max"]))
 PY
-cat "$work_dir/generator.log"
-if [[ -f "$work_dir/results.tsv" ]]; then
-    cat "$work_dir/results.tsv"
-fi
+for generator_log in "${generator_log_paths[@]}"; do
+    cat "$generator_log"
+done
+cat "$work_dir/results.tsv"
 cat "$work_dir/thread_summary.tsv"
 exit "$generator_status"
