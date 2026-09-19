@@ -12,27 +12,51 @@ rtmp_port="${MEDIA_SERVER_SOAK_RTMP_PORT:-19510}"
 rtsp_port="${MEDIA_SERVER_SOAK_RTSP_PORT:-18710}"
 http_port="${MEDIA_SERVER_SOAK_HTTP_PORT:-18210}"
 ffmpeg_bin="${FFMPEG_BIN:-ffmpeg}"
+fail_after_players="${MEDIA_SERVER_SOAK_FAIL_AFTER_PLAYERS:-0}"
 
 [[ "$soak_rounds" =~ ^[1-9][0-9]*$ ]]
 [[ "$replacement_rounds" =~ ^[1-9][0-9]*$ ]]
+[[ "$fail_after_players" =~ ^[0-9]+$ ]]
 mkdir -p "$work_dir"
 work_dir="$(cd "$work_dir" && pwd)"
 server_bin="$(realpath "$server_bin")"
 database="$(mktemp "$work_dir/signaling.XXXXXX.db")"
 ids_file="$work_dir/stream_ids.txt"
 resources_file="$work_dir/resources.tsv"
+owned_pids_file="$work_dir/owned_pids.tsv"
 : >"$ids_file"
+: >"$owned_pids_file"
 printf 'round\tfd\trss_kb\tvmsize_kb\tthreads\n' >"$resources_file"
 
 signaling_pid=""
 server_pid=""
 publisher_pid=""
 publisher_stream_id=""
+phase="startup"
+main_shell_pid="$BASHPID"
 declare -a player_pids=()
-declare -a hls_ids=()
-declare -a hls_urls=()
+
+track_player_pid() {
+    local pid="$1"
+    player_pids+=("$pid")
+    printf 'player\t%s\n' "$pid" >>"$owned_pids_file"
+    if (( fail_after_players > 0 && ${#player_pids[@]} >= fail_after_players )); then
+        echo "forced soak failure (phase=$phase active_players=${#player_pids[@]})" >&2
+        return 1
+    fi
+}
+
+untrack_player_pid() {
+    local target="$1" pid
+    local -a active=()
+    for pid in "${player_pids[@]}"; do
+        [[ "$pid" == "$target" ]] || active+=("$pid")
+    done
+    player_pids=("${active[@]}")
+}
 
 cleanup() {
+    [[ "$BASHPID" == "$main_shell_pid" ]] || return
     set +e
     for pid in "${player_pids[@]}"; do kill -TERM "$pid" 2>/dev/null; done
     [[ -n "$publisher_pid" ]] && kill -TERM "$publisher_pid" 2>/dev/null
@@ -143,12 +167,16 @@ start_publisher() {
     local label="$1" stream_name="$2" video_source="$3"
     allocate_values publish "$label" rtmp "$stream_name"
     publisher_stream_id="$allocation_id"
-    "$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
-        -f lavfi -i "$video_source" -f lavfi -i sine=frequency=1000:sample_rate=44100 \
-        -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
-        -pix_fmt yuv420p -g 25 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 96k -ac 2 \
-        -f flv "$allocation_url" >"$work_dir/${label}.log" 2>&1 &
+    (
+        trap - EXIT
+        exec "$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
+            -f lavfi -i "$video_source" -f lavfi -i sine=frequency=1000:sample_rate=44100 \
+            -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
+            -pix_fmt yuv420p -g 25 -keyint_min 25 -sc_threshold 0 -c:a aac -b:a 96k -ac 2 \
+            -f flv "$allocation_url"
+    ) >"$work_dir/${label}.log" 2>&1 &
     publisher_pid=$!
+    printf 'publisher\t%s\n' "$publisher_pid" >>"$owned_pids_file"
     wait_runtime "$publisher_stream_id" publisher rtmp "$stream_name" streaming
 }
 
@@ -172,9 +200,13 @@ start_probe_player() {
     local label="$1" protocol="$2" url="$3"
     local -a options=()
     [[ "$protocol" == rtsp ]] && options=(-rtsp_transport tcp)
-    timeout 12s "$ffmpeg_bin" -nostdin -hide_banner -loglevel error "${options[@]}" \
-        -i "$url" -t 0.8 -map 0:v:0 -f null - >"$work_dir/${label}.log" 2>&1 &
+    (
+        trap - EXIT
+        exec timeout 12s "$ffmpeg_bin" -nostdin -hide_banner -loglevel error "${options[@]}" \
+            -i "$url" -t 0.8 -map 0:v:0 -f null -
+    ) >"$work_dir/${label}.log" 2>&1 &
     probe_pid=$!
+    track_player_pid "$probe_pid"
 }
 
 establish_hls() {
@@ -257,7 +289,7 @@ PY
         fi
         sleep 0.1
     done
-    echo "HLS sessions did not stop" >&2
+    echo "HLS sessions did not stop (phase=$phase count=${#ids[@]})" >&2
     return 1
 }
 
@@ -268,20 +300,31 @@ start_services() {
     else
         signaling_bin="$(realpath "$signaling_bin")"
     fi
-    "$signaling_bin" --sip-listen 127.0.0.1:15210 --sip-advertise 127.0.0.1:15210 \
-        --http-listen "127.0.0.1:$signaling_port" --database "$database" >"$work_dir/signaling.log" 2>&1 &
+    (
+        trap - EXIT
+        exec "$signaling_bin" --sip-listen 127.0.0.1:15210 --sip-advertise 127.0.0.1:15210 \
+            --http-listen "127.0.0.1:$signaling_port" --database "$database"
+    ) >"$work_dir/signaling.log" 2>&1 &
     signaling_pid=$!
-    wait_http "http://127.0.0.1:$signaling_port/" "$signaling_pid" "$work_dir/signaling.log"
-    "$server_bin" --rtmp-port "$rtmp_port" --rtsp-port "$rtsp_port" --http-port "$http_port" \
-        --signaling-url "http://127.0.0.1:$signaling_port" --server-id lifecycle-soak \
-        --control-url "http://127.0.0.1:$http_port" --media-ip 127.0.0.1 >"$work_dir/server.log" 2>&1 &
+    printf 'signaling\t%s\n' "$signaling_pid" >>"$owned_pids_file"
+    wait_http "http://127.0.0.1:$signaling_port/" "$signaling_pid"
+    (
+        trap - EXIT
+        exec "$server_bin" --rtmp-port "$rtmp_port" --rtsp-port "$rtsp_port" --http-port "$http_port" \
+            --signaling-url "http://127.0.0.1:$signaling_port" --server-id lifecycle-soak \
+            --control-url "http://127.0.0.1:$http_port" --media-ip 127.0.0.1
+    ) >"$work_dir/server.log" 2>&1 &
     server_pid=$!
-    wait_http "http://127.0.0.1:$http_port/" "$server_pid" "$work_dir/server.log"
+    printf 'media_server\t%s\n' "$server_pid" >>"$owned_pids_file"
+    wait_http "http://127.0.0.1:$http_port/" "$server_pid"
 }
 
 run_viewer_churn() {
     local stream_name=live/soak round protocol label
+    local -a warmup_pids=() warmup_ids=() warmup_protocols=()
     local -a hls_churn_ids=() hls_churn_urls=() round_pids=() round_ids=() round_protocols=()
+    local status warmup_hls_id
+    phase="warmup"
     start_publisher soak_publisher "$stream_name" 'testsrc=size=320x180:rate=25'
     sample_resources warmup
     for round in $(seq 1 "$soak_rounds"); do
@@ -293,7 +336,16 @@ run_viewer_churn() {
             round_pids+=("$probe_pid") round_ids+=("$allocation_id") round_protocols+=("$protocol")
         done
         for index in "${!round_pids[@]}"; do
-            wait "${round_pids[$index]}"
+            if wait "${round_pids[$index]}"; then
+                status=0
+            else
+                status=$?
+            fi
+            untrack_player_pid "${round_pids[$index]}"
+            if (( status != 0 )); then
+                echo "player failed (phase=$phase protocol=${round_protocols[$index]} exit=$status)" >&2
+                return "$status"
+            fi
             wait_runtime "${round_ids[$index]}" output "${round_protocols[$index]}" "$stream_name" stopped
         done
         label="soak_hls_$round"
@@ -308,15 +360,19 @@ run_viewer_churn() {
     for allocation_url in "${hls_churn_urls[@]}"; do
         [[ "$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o /dev/null -w '%{http_code}' "$allocation_url")" == 403 ]]
     done
+    phase="churn-final"
     stop_publisher "$stream_name"
     sample_resources churn-final
 }
 
 run_mixed_batches() {
     local stream_name=live/mixed-soak batch index protocol label
+    local player_pid status
     local -a batch_pids=() batch_ids=() batch_protocols=() batch_labels=() mixed_hls_ids=()
+    phase="mixed startup"
     start_publisher mixed_publisher "$stream_name" 'testsrc2=size=320x180:rate=25'
     for batch in $(seq 1 5); do
+        phase="mixed batch=$batch"
         batch_pids=() batch_ids=() batch_protocols=() batch_labels=()
         for protocol in rtsp rtmp http-flv; do
             for index in 1 2; do
@@ -325,9 +381,14 @@ run_mixed_batches() {
                 local id="$allocation_id" url="$allocation_url"
                 local -a options=()
                 [[ "$protocol" == rtsp ]] && options=(-rtsp_transport tcp)
-                timeout 15s "$ffmpeg_bin" -nostdin -hide_banner -loglevel error "${options[@]}" \
-                    -i "$url" -t 1 -map 0:v:0 -f null - >"$work_dir/${label}.log" 2>&1 &
-                batch_pids+=("$!") batch_ids+=("$id") batch_protocols+=("$protocol") batch_labels+=("$label")
+                (
+                    trap - EXIT
+                    exec timeout 15s "$ffmpeg_bin" -nostdin -hide_banner -loglevel error "${options[@]}" \
+                        -i "$url" -t 1 -map 0:v:0 -f null -
+                ) >"$work_dir/${label}.log" 2>&1 &
+                player_pid=$!
+                track_player_pid "$player_pid"
+                batch_pids+=("$player_pid") batch_ids+=("$id") batch_protocols+=("$protocol") batch_labels+=("$label")
             done
         done
         for index in 1 2; do
@@ -338,7 +399,16 @@ run_mixed_batches() {
             fetch_hls "$label" "$allocation_url"
         done
         for index in "${!batch_pids[@]}"; do
-            wait "${batch_pids[$index]}"
+            if wait "${batch_pids[$index]}"; then
+                status=0
+            else
+                status=$?
+            fi
+            untrack_player_pid "${batch_pids[$index]}"
+            if (( status != 0 )); then
+                echo "player failed (phase=$phase protocol=${batch_protocols[$index]} label=${batch_labels[$index]} exit=$status)" >&2
+                return "$status"
+            fi
             wait_runtime "${batch_ids[$index]}" output "${batch_protocols[$index]}" "$stream_name" stopped
         done
         sample_resources "mixed-$batch"
@@ -351,8 +421,10 @@ run_mixed_batches() {
 run_source_replacement() {
     local stream_name=live/generation-soak generation protocol label
     local previous_hls_url="" previous_segment="" previous_generation=0
-    local -a replacement_hls_ids=() replacement_hls_urls=() generation_pids=() generation_ids=() generation_protocols=()
+    local status
+    local -a replacement_hls_ids=() generation_pids=() generation_ids=() generation_protocols=()
     for generation in $(seq 1 "$replacement_rounds"); do
+        phase="replacement generation=$generation"
         start_publisher "generation_publisher_$generation" "$stream_name" "testsrc=size=320x180:rate=25,hue=h=$((generation * 23))"
         generation_pids=() generation_ids=() generation_protocols=()
         for protocol in rtsp rtmp http-flv; do
@@ -362,7 +434,16 @@ run_source_replacement() {
             generation_pids+=("$probe_pid") generation_ids+=("$allocation_id") generation_protocols+=("$protocol")
         done
         for index in "${!generation_pids[@]}"; do
-            wait "${generation_pids[$index]}"
+            if wait "${generation_pids[$index]}"; then
+                status=0
+            else
+                status=$?
+            fi
+            untrack_player_pid "${generation_pids[$index]}"
+            if (( status != 0 )); then
+                echo "player failed (phase=$phase protocol=${generation_protocols[$index]} exit=$status)" >&2
+                return "$status"
+            fi
             wait_runtime "${generation_ids[$index]}" output "${generation_protocols[$index]}" "$stream_name" stopped
         done
         label="generation_${generation}_hls"
