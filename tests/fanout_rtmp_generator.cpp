@@ -54,13 +54,21 @@ struct results
 {
     std::size_t allocated{};
     std::size_t connected{};
-    std::size_t received_media{};
+    std::size_t ready{};
+    std::size_t progressing{};
     std::size_t completed{};
     std::size_t failures{};
+    std::size_t pre_measurement_failures{};
+    std::size_t runtime_failures{};
+    std::size_t non_progressing_viewers{};
     std::map<std::string, std::size_t> failure_phases;
     std::vector<std::uint64_t> first_media_milliseconds;
-    std::uint64_t received_bytes{};
-    std::uint64_t received_messages{};
+    std::uint64_t received_video_bytes{};
+    std::uint64_t received_video_messages{};
+    std::uint64_t steady_video_bytes{};
+    std::uint64_t steady_video_messages{};
+    std::uint64_t measurement_start_unix_ns{};
+    std::uint64_t measurement_end_unix_ns{};
 };
 
 struct run_state
@@ -69,6 +77,11 @@ struct run_state
     configuration config;
     results result;
     std::size_t spawned{};
+    std::size_t ready_count{};
+    bool measurement_started{};
+    bool pre_measurement_abort{};
+    std::chrono::steady_clock::time_point measurement_deadline{};
+    std::vector<std::shared_ptr<boost::asio::steady_timer>> ready_gates;
 };
 
 std::pair<std::string, std::string> split_rtmp_stream_name(std::string_view stream_name)
@@ -217,6 +230,48 @@ void record_failure(run_state& state, std::string_view phase)
     ++state.result.failure_phases[std::string(phase)];
 }
 
+std::uint64_t unix_now_ns()
+{
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count());
+}
+
+void release_ready_gates(run_state& state)
+{
+    for (const auto& gate : state.ready_gates)
+    {
+        gate->cancel();
+    }
+}
+
+void abort_before_measurement(run_state& state)
+{
+    if (state.measurement_started || state.pre_measurement_abort)
+    {
+        return;
+    }
+    state.pre_measurement_abort = true;
+    ++state.result.pre_measurement_failures;
+    release_ready_gates(state);
+}
+
+void mark_ready(run_state& state)
+{
+    ++state.ready_count;
+    ++state.result.ready;
+    if (state.ready_count == state.config.viewers)
+    {
+        state.measurement_started = true;
+        state.measurement_deadline = std::chrono::steady_clock::now() + state.config.duration;
+        state.result.measurement_start_unix_ns = unix_now_ns();
+        state.result.measurement_end_unix_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch() + state.config.duration)
+                .count());
+        release_ready_gates(state);
+    }
+}
+
 boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::size_t index)
 {
     const auto started = std::chrono::steady_clock::now();
@@ -224,6 +279,7 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
     if (allocation.error)
     {
         record_failure(*state, allocation.status == 0U ? "allocation" : "allocation_http");
+        abort_before_measurement(*state);
     }
     else
     {
@@ -236,23 +292,50 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
         if (play_error)
         {
             record_failure(*state, "connect_or_handshake");
+            abort_before_measurement(*state);
         }
         else
         {
             ++state->result.connected;
             state->result.first_media_milliseconds.push_back(static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()));
-            const auto consume_error = co_await client.consume_for(state->config.duration);
-            if (consume_error)
+            const auto gate = std::make_shared<boost::asio::steady_timer>(state->io);
+            gate->expires_at(std::chrono::steady_clock::time_point::max());
+            state->ready_gates.push_back(gate);
+            mark_ready(*state);
+            boost::system::error_code gate_error;
+            if (!state->measurement_started && !state->pre_measurement_abort)
             {
-                record_failure(*state, "runtime");
+                co_await gate->async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, gate_error));
+            }
+            if (state->pre_measurement_abort)
+            {
+                record_failure(*state, "pre_measurement_abort");
             }
             else
             {
-                ++state->result.received_media;
+                const auto bytes_before = client.received_bytes();
+                const auto messages_before = client.received_messages();
+                const auto consume_error = co_await client.consume_until(state->measurement_deadline);
+                if (consume_error)
+                {
+                    record_failure(*state, "runtime");
+                    ++state->result.runtime_failures;
+                }
+                else if (client.received_bytes() == bytes_before || client.received_messages() == messages_before)
+                {
+                    record_failure(*state, "non_progressing_media");
+                    ++state->result.non_progressing_viewers;
+                }
+                else
+                {
+                    ++state->result.progressing;
+                    state->result.steady_video_bytes += client.received_bytes() - bytes_before;
+                    state->result.steady_video_messages += client.received_messages() - messages_before;
+                }
             }
-            state->result.received_bytes += client.received_bytes();
-            state->result.received_messages += client.received_messages();
+            state->result.received_video_bytes += client.received_bytes();
+            state->result.received_video_messages += client.received_messages();
         }
     }
     ++state->result.completed;
@@ -298,11 +381,17 @@ std::uint64_t percentile(std::vector<std::uint64_t> values, double fraction)
 void print_results(const run_state& state)
 {
     const auto& result = state.result;
-    const auto duration = static_cast<double>(state.config.duration.count());
     std::cout << "viewers=" << state.config.viewers << " allocated=" << result.allocated << " connected=" << result.connected
-              << " received_media=" << result.received_media << " failed=" << result.failures << " bytes=" << result.received_bytes
-              << " messages=" << result.received_messages << " throughput_bytes_per_second="
-              << static_cast<std::uint64_t>(static_cast<double>(result.received_bytes) / duration) << '\n';
+              << " ready=" << result.ready << " progressing=" << result.progressing << " failed=" << result.failures
+              << " pre_measurement_failures=" << result.pre_measurement_failures
+              << " runtime_failures=" << result.runtime_failures
+              << " non_progressing_viewers=" << result.non_progressing_viewers
+              << " received_video_bytes=" << result.received_video_bytes
+              << " received_video_messages=" << result.received_video_messages
+              << " steady_video_bytes=" << result.steady_video_bytes
+              << " steady_video_messages=" << result.steady_video_messages
+              << " measurement_start_unix_ns=" << result.measurement_start_unix_ns
+              << " measurement_end_unix_ns=" << result.measurement_end_unix_ns << '\n';
     std::cout << "first_media_ms_p50=" << percentile(result.first_media_milliseconds, 0.50)
               << " p95=" << percentile(result.first_media_milliseconds, 0.95)
               << " p99=" << percentile(result.first_media_milliseconds, 0.99)
@@ -321,11 +410,11 @@ int main(int argc, char** argv)
     {
         const auto config = parse_arguments(argc, argv);
         boost::asio::io_context io;
-        auto state = std::make_shared<run_state>(run_state{io, config, {}, 0U});
+        auto state = std::make_shared<run_state>(run_state{io, config, {}, 0U, 0U, false, false, {}, {}});
         boost::asio::co_spawn(io, spawn_viewers(state), boost::asio::detached);
         io.run();
         print_results(*state);
-        return state->result.received_media == state->config.viewers ? 0 : 1;
+        return state->result.ready == state->config.viewers && state->result.progressing == state->config.viewers ? 0 : 1;
     }
     catch (const std::exception& error)
     {

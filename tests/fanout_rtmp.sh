@@ -16,6 +16,7 @@ rtmp_port=$((base_port + 1))
 rtsp_port=$((base_port + 2))
 http_port=$((base_port + 3))
 sip_port=$((base_port + 4))
+estimated_ramp_seconds=$(( (viewers + ramp_per_second - 1) / ramp_per_second ))
 
 [[ "$viewers" =~ ^[1-9][0-9]*$ ]]
 [[ "$duration_seconds" =~ ^[1-9][0-9]*$ ]]
@@ -178,7 +179,7 @@ fi
     exec "$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
         -f lavfi -i "$video_input" -f lavfi -i sine=frequency=1000:sample_rate=44100 \
         -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
-        -g 30 -keyint_min 30 -sc_threshold 0 "${video_rate[@]}" -c:a aac -b:a 48k -ac 1 -t "$((duration_seconds + 30))" \
+        -g 30 -keyint_min 30 -sc_threshold 0 "${video_rate[@]}" -c:a aac -b:a 48k -ac 1 -t "$((estimated_ramp_seconds + duration_seconds + 30))" \
         -f flv "$publish_url"
 ) >"$work_dir/publisher.log" 2>&1 &
 publisher_pid=$!
@@ -189,7 +190,6 @@ if [[ "$profile_tool" == callgrind ]]; then
     callgrind_control -z "$server_pid" >/dev/null
     callgrind_control -i on "$server_pid" >/dev/null
 fi
-start_ns="$(date +%s%N)"
 (
     trap - EXIT
     exec "$generator_bin" --signaling-url "http://127.0.0.1:$signaling_port" --stream-name "$stream_name" \
@@ -197,43 +197,70 @@ start_ns="$(date +%s%N)"
 ) >"$work_dir/generator.log" 2>&1 &
 generator_pid=$!
 while kill -0 "$generator_pid" 2>/dev/null; do
+    if ! kill -0 "$generator_pid" 2>/dev/null; then
+        break
+    fi
     sample_process server "$server_pid" "$work_dir/server_samples.tsv"
-    sample_process generator "$generator_pid" "$work_dir/generator_samples.tsv"
+    if kill -0 "$generator_pid" 2>/dev/null; then
+        sample_process generator "$generator_pid" "$work_dir/generator_samples.tsv"
+    fi
     sleep 1
 done
-wait "$generator_pid"
+generator_status=0
+wait "$generator_pid" || generator_status=$?
 if [[ "$profile_tool" == callgrind ]]; then
     callgrind_control -i off "$server_pid" >/dev/null
     callgrind_control --dump="fanout_${profile}_${viewers}" "$server_pid" >/dev/null
 fi
 printf '%s\n' "$(cat /proc/loadavg)" >"$work_dir/loadavg_after.txt"
-end_ns="$(date +%s%N)"
 
-python3 - "$work_dir/server_samples.tsv" "$work_dir/generator_samples.tsv" "$start_ns" "$end_ns" "$work_dir/results.tsv" <<'PY'
+python3 - "$work_dir/server_samples.tsv" "$work_dir/generator_samples.tsv" "$work_dir/generator.log" "$work_dir/results.tsv" <<'PY'
 import csv
 import statistics
 import sys
 
-def summarize(path):
+def summarize(path, start_ns, end_ns):
     with open(path, encoding="utf-8") as source:
         rows = list(csv.DictReader(source, delimiter="\t"))
+    rows = [row for row in rows if start_ns <= int(row["time_ns"]) <= end_ns]
     values = {}
-    for key in ("rss_kb", "vmsize_kb", "threads", "fd", "established", "sendq"):
+    for key in ("rss_kb", "vmsize_kb", "threads", "fd", "established"):
         values[key] = statistics.median(int(row[key]) for row in rows) if rows else 0
+    sendq = sorted(int(row["sendq"]) for row in rows)
+    values["sendq_median"] = statistics.median(sendq) if sendq else 0
+    values["sendq_p95"] = sendq[min(len(sendq) - 1, int(0.95 * (len(sendq) - 1)))] if sendq else 0
+    values["sendq_max"] = max(sendq) if sendq else 0
     if len(rows) >= 2:
         elapsed = (int(rows[-1]["time_ns"]) - int(rows[0]["time_ns"])) / 1_000_000_000
         values["cpu_percent"] = (int(rows[-1]["ticks"]) - int(rows[0]["ticks"])) / int(sysconf_clk_tck) / elapsed * 100
+        values["sample_count"] = len(rows)
     else:
         values["cpu_percent"] = 0.0
+        values["sample_count"] = len(rows)
     return values
 
 sysconf_clk_tck = int(__import__("os").sysconf("SC_CLK_TCK"))
-server = summarize(sys.argv[1])
-generator = summarize(sys.argv[2])
-elapsed = (int(sys.argv[4]) - int(sys.argv[3])) / 1_000_000_000
-with open(sys.argv[5], "w", encoding="utf-8") as output:
-    output.write("elapsed_seconds\tserver_cpu_percent\tserver_rss_kb\tserver_vmsize_kb\tserver_threads\tserver_fd\testablished\tsendq\tgenerator_cpu_percent\tgenerator_rss_kb\tgenerator_vmsize_kb\tgenerator_threads\tgenerator_fd\n")
-    output.write("%0.3f\t%0.3f\t%s\t%s\t%s\t%s\t%s\t%s\t%0.3f\t%s\t%s\t%s\t%s\n" % (elapsed, server["cpu_percent"], server["rss_kb"], server["vmsize_kb"], server["threads"], server["fd"], server["established"], server["sendq"], generator["cpu_percent"], generator["rss_kb"], generator["vmsize_kb"], generator["threads"], generator["fd"]))
+with open(sys.argv[3], encoding="utf-8") as source:
+    log = source.read()
+def value(name):
+    prefix = name + "="
+    for token in log.split():
+        if token.startswith(prefix):
+            return int(token[len(prefix):])
+    raise RuntimeError("missing generator field: " + name)
+start_ns = value("measurement_start_unix_ns")
+end_ns = value("measurement_end_unix_ns")
+server = summarize(sys.argv[1], start_ns, end_ns)
+generator = summarize(sys.argv[2], start_ns, end_ns)
+elapsed = (end_ns - start_ns) / 1_000_000_000
+if server["sample_count"] < 5 or generator["sample_count"] < 5:
+    raise RuntimeError("measurement window has fewer than 5 process samples")
+with open(sys.argv[4], "w", encoding="utf-8") as output:
+    output.write("elapsed_seconds\tserver_cpu_percent\tserver_rss_kb\tserver_vmsize_kb\tserver_threads\tserver_fd\testablished\tserver_sendq_median\tserver_sendq_p95\tserver_sendq_max\tgenerator_cpu_percent\tgenerator_rss_kb\tgenerator_vmsize_kb\tgenerator_threads\tgenerator_fd\n")
+    output.write("%0.3f\t%0.3f\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%0.3f\t%s\t%s\t%s\t%s\n" % (elapsed, server["cpu_percent"], server["rss_kb"], server["vmsize_kb"], server["threads"], server["fd"], server["established"], server["sendq_median"], server["sendq_p95"], server["sendq_max"], generator["cpu_percent"], generator["rss_kb"], generator["vmsize_kb"], generator["threads"], generator["fd"]))
 PY
 cat "$work_dir/generator.log"
-cat "$work_dir/results.tsv"
+if [[ -f "$work_dir/results.tsv" ]]; then
+    cat "$work_dir/results.tsv"
+fi
+exit "$generator_status"
