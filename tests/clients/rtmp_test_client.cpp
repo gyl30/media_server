@@ -123,9 +123,14 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::play(std::st
 
 boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_for(std::chrono::seconds duration)
 {
+    co_return co_await consume_until(std::chrono::steady_clock::now() + duration);
+}
+
+boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_until(std::chrono::steady_clock::time_point deadline)
+{
     boost::asio::steady_timer timer(socket_.get_executor());
     bool expired = false;
-    timer.expires_after(duration);
+    timer.expires_at(deadline);
     timer.async_wait([this, &expired](const boost::system::error_code& error) {
         if (!error)
         {
