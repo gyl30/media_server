@@ -126,6 +126,28 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_for(
     co_return co_await consume_until(std::chrono::steady_clock::now() + duration);
 }
 
+boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_one()
+{
+    boost::system::error_code error = co_await flush();
+    if (error)
+    {
+        co_return error;
+    }
+
+    std::array<std::uint8_t, 8192> read_buffer{};
+    const auto bytes =
+        co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+    if (error)
+    {
+        co_return error;
+    }
+    if (rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
+    {
+        co_return boost::asio::error::operation_aborted;
+    }
+    co_return boost::system::error_code{};
+}
+
 boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_until(std::chrono::steady_clock::time_point deadline)
 {
     boost::asio::steady_timer timer(socket_.get_executor());
@@ -139,17 +161,9 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_unti
         }
     });
 
-    std::array<std::uint8_t, 8192> read_buffer{};
     while (!expired)
     {
-        boost::system::error_code error = co_await flush();
-        if (error)
-        {
-            timer.cancel();
-            co_return error;
-        }
-        const auto bytes =
-            co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        const auto error = co_await consume_one();
         if (error)
         {
             if (expired && error == boost::asio::error::operation_aborted)
@@ -159,14 +173,15 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_unti
             timer.cancel();
             co_return error;
         }
-        if (rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
-        {
-            timer.cancel();
-            co_return boost::asio::error::operation_aborted;
-        }
     }
     timer.cancel();
     co_return boost::system::error_code{};
+}
+
+void rtmp_test_client::cancel() noexcept
+{
+    boost::system::error_code error;
+    socket_.cancel(error);
 }
 
 int rtmp_test_client::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
