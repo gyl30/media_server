@@ -29,8 +29,10 @@ class rtmp_test_client final
                                                               std::vector<std::uint8_t> metadata,
                                                               std::vector<std::uint8_t> video_config);
     boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port);
+    boost::asio::awaitable<boost::system::error_code> consume_one();
     boost::asio::awaitable<boost::system::error_code> consume_for(std::chrono::seconds duration);
     boost::asio::awaitable<boost::system::error_code> consume_until(std::chrono::steady_clock::time_point deadline);
+    void cancel() noexcept;
 
     [[nodiscard]] const std::vector<std::uint8_t>& video() const noexcept { return video_; }
     [[nodiscard]] std::uint64_t received_bytes() const noexcept { return received_bytes_; }

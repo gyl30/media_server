@@ -244,11 +244,11 @@ std::uint64_t unix_now_ns()
                                           .count());
 }
 
-void release_ready_gates(run_state& state)
+void abort_ready_viewers(run_state& state)
 {
     for (const auto& gate : state.ready_gates)
     {
-        gate->cancel();
+        gate->expires_at(std::chrono::steady_clock::now());
     }
 }
 
@@ -260,7 +260,7 @@ void abort_before_measurement(run_state& state)
     }
     state.pre_measurement_abort = true;
     ++state.result.pre_measurement_failures;
-    release_ready_gates(state);
+    abort_ready_viewers(state);
 }
 
 void mark_ready(run_state& state)
@@ -275,7 +275,6 @@ void mark_ready(run_state& state)
         state.result.measurement_end_unix_ns = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch() + state.config.duration)
                 .count());
-        release_ready_gates(state);
     }
 }
 
@@ -294,8 +293,8 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
         const auto stream_parts = split_rtmp_stream_name(state->config.stream_name);
         const auto& app = stream_parts.first;
         const auto& stream = stream_parts.second;
-        media_server::test::rtmp_test_client client(state->io, app, stream + "?stream_id=" + allocation.stream_id);
-        const auto play_error = co_await client.play(state->config.media_host, state->config.media_port);
+        auto client = std::make_shared<media_server::test::rtmp_test_client>(state->io, app, stream + "?stream_id=" + allocation.stream_id);
+        const auto play_error = co_await client->play(state->config.media_host, state->config.media_port);
         if (play_error)
         {
             record_failure(*state, "connect_or_handshake");
@@ -308,28 +307,69 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()));
             const auto gate = std::make_shared<boost::asio::steady_timer>(state->io);
             gate->expires_at(std::chrono::steady_clock::time_point::max());
+            gate->async_wait([client](const boost::system::error_code& error) {
+                if (!error)
+                {
+                    client->cancel();
+                }
+            });
             state->ready_gates.push_back(gate);
             mark_ready(*state);
-            boost::system::error_code gate_error;
-            if (!state->measurement_started && !state->pre_measurement_abort)
+
+            std::uint64_t bytes_before{};
+            std::uint64_t messages_before{};
+            bool measurement_snapshot_taken = false;
+            auto measurement_expired = std::make_shared<bool>(false);
+            boost::asio::steady_timer measurement_timer(state->io);
+            boost::system::error_code consume_error;
+            while (!state->pre_measurement_abort)
             {
-                co_await gate->async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, gate_error));
+                if (!measurement_snapshot_taken && state->measurement_started)
+                {
+                    measurement_snapshot_taken = true;
+                    bytes_before = client->received_bytes();
+                    messages_before = client->received_messages();
+                    measurement_timer.expires_at(state->measurement_deadline);
+                    measurement_timer.async_wait([client, measurement_expired](const boost::system::error_code& error) {
+                        if (!error)
+                        {
+                            *measurement_expired = true;
+                            client->cancel();
+                        }
+                    });
+                }
+                if (measurement_snapshot_taken && std::chrono::steady_clock::now() >= state->measurement_deadline)
+                {
+                    break;
+                }
+                consume_error = co_await client->consume_one();
+                if (consume_error)
+                {
+                    if (*measurement_expired && consume_error == boost::asio::error::operation_aborted)
+                    {
+                        consume_error.clear();
+                    }
+                    break;
+                }
             }
+            if (consume_error && !measurement_snapshot_taken)
+            {
+                abort_before_measurement(*state);
+            }
+            measurement_timer.cancel();
+            gate->cancel();
             if (state->pre_measurement_abort)
             {
                 record_failure(*state, "pre_measurement_abort");
             }
             else
             {
-                const auto bytes_before = client.received_bytes();
-                const auto messages_before = client.received_messages();
-                const auto consume_error = co_await client.consume_until(state->measurement_deadline);
                 if (consume_error)
                 {
                     record_failure(*state, "runtime");
                     record_runtime_failure(*state, consume_error);
                 }
-                else if (client.received_bytes() == bytes_before || client.received_messages() == messages_before)
+                else if (client->received_bytes() == bytes_before || client->received_messages() == messages_before)
                 {
                     record_failure(*state, "non_progressing_media");
                     ++state->result.non_progressing_viewers;
@@ -337,12 +377,12 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
                 else
                 {
                     ++state->result.progressing;
-                    state->result.steady_video_bytes += client.received_bytes() - bytes_before;
-                    state->result.steady_video_messages += client.received_messages() - messages_before;
+                    state->result.steady_video_bytes += client->received_bytes() - bytes_before;
+                    state->result.steady_video_messages += client->received_messages() - messages_before;
                 }
             }
-            state->result.received_video_bytes += client.received_bytes();
-            state->result.received_video_messages += client.received_messages();
+            state->result.received_video_bytes += client->received_bytes();
+            state->result.received_video_messages += client->received_messages();
         }
     }
     ++state->result.completed;
