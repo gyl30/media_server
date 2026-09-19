@@ -569,6 +569,14 @@ if(BUILD_TESTING)
     )
     add_test(NAME ireader_rtcp_tests COMMAND ireader_rtcp_tests)
 
+    add_executable(h264_annexb_scan_benchmark tests/h264_annexb_scan_benchmark.cpp)
+    target_link_libraries(h264_annexb_scan_benchmark PRIVATE
+        media_server_build_options
+        media_server_link_options
+        ireader_media
+    )
+    add_test(NAME h264_annexb_scan_correctness COMMAND h264_annexb_scan_benchmark --correctness)
+
     add_executable(webrtc_signaling_tests tests/webrtc_signaling_tests.cpp)
     target_link_libraries(webrtc_signaling_tests PRIVATE media_core media_server_link_options)
     add_test(NAME webrtc_signaling_tests COMMAND webrtc_signaling_tests)
