@@ -11,6 +11,7 @@ measurement_seconds="${MEDIA_SERVER_PERF_MEASUREMENT_SECONDS:-30}"
 runs="${MEDIA_SERVER_PERF_RUNS:-3}"
 workloads="${MEDIA_SERVER_PERF_WORKLOADS:-idle publish-only rtsp-1 rtsp-4 rtsp-8 rtmp-1 rtmp-4 rtmp-8 http-flv-1 http-flv-4 http-flv-8 hls-1 hls-4 hls-8 mixed-8}"
 profile_tool="${MEDIA_SERVER_PERF_PROFILE_TOOL:-none}"
+worker_threads="${MEDIA_SERVER_PERF_THREADS:-}"
 signaling_port="${MEDIA_SERVER_PERF_SIGNALING_PORT:-19310}"
 rtmp_port="${MEDIA_SERVER_PERF_RTMP_PORT:-19610}"
 rtsp_port="${MEDIA_SERVER_PERF_RTSP_PORT:-18810}"
@@ -20,6 +21,7 @@ sip_port="${MEDIA_SERVER_PERF_SIP_PORT:-15310}"
 [[ "$warmup_seconds" =~ ^[1-9][0-9]*$ ]]
 [[ "$measurement_seconds" =~ ^[1-9][0-9]*$ ]]
 [[ "$runs" =~ ^[1-9][0-9]*$ ]]
+[[ -z "$worker_threads" || "$worker_threads" =~ ^[1-9][0-9]*$ ]]
 case "$profile_tool" in
     none | callgrind | massif) ;;
     *)
@@ -191,16 +193,41 @@ start_services() {
                 "--massif-out-file=$run_dir/massif.out.%p" "$server_bin")
             ;;
     esac
+    local -a server_arguments=(
+        --rtmp-port "$rtmp_port"
+        --rtsp-port "$rtsp_port"
+        --http-port "$http_port"
+        --signaling-url "http://127.0.0.1:$signaling_port"
+        --server-id performance-baseline
+        --control-url "http://127.0.0.1:$http_port"
+        --media-ip 127.0.0.1
+    )
+    if [[ -n "$worker_threads" ]]; then
+        server_arguments+=(--threads "$worker_threads")
+    fi
     (
         trap - EXIT
-        exec "${server_command[@]}" --rtmp-port "$rtmp_port" --rtsp-port "$rtsp_port" \
-            --http-port "$http_port" --signaling-url "http://127.0.0.1:$signaling_port" \
-            --server-id performance-baseline --control-url "http://127.0.0.1:$http_port" \
-            --media-ip 127.0.0.1
+        exec "${server_command[@]}" "${server_arguments[@]}"
     ) >"$run_dir/server.log" 2>&1 &
     server_pid=$!
     printf 'media_server\t%s\n' "$server_pid" >>"$owned_pids_file"
     wait_http "http://127.0.0.1:$http_port/" "$server_pid" media_server
+}
+
+snapshot_server() {
+    local label="$1" run_dir="$2" snapshot_dir="$2/snapshots"
+    mkdir -p "$snapshot_dir"
+    ps -T -p "$server_pid" -o pid,tid,comm >"$snapshot_dir/${label}_threads.txt"
+    {
+        for task in /proc/"$server_pid"/task/*; do
+            local tid="${task##*/}"
+            printf '%s\t' "$tid"
+            cat "$task/comm"
+        done
+    } >"$snapshot_dir/${label}_task_comm.txt"
+    cat "/proc/$server_pid/status" >"$snapshot_dir/${label}_status.txt"
+    cat "/proc/$server_pid/smaps_rollup" >"$snapshot_dir/${label}_smaps_rollup.txt"
+    cat "/proc/$server_pid/maps" >"$snapshot_dir/${label}_maps.txt"
 }
 
 start_publisher() {
@@ -364,16 +391,20 @@ run_workload() {
     printf '%s\n' "$(cat /proc/loadavg)" >"$run_dir/loadavg_before.txt"
     echo "performance workload start (name=$workload run=$run viewers=$viewers)"
     start_services "$run_dir"
+    snapshot_server after-server "$run_dir"
     if [[ "$workload" != idle ]]; then
         start_publisher "$stream_name" "$run_dir"
+        snapshot_server after-publisher "$run_dir"
     fi
     start_workload_players "$workload" "$stream_name" "$run_dir"
     for index in "${!player_pids[@]}"; do
         wait_runtime "${player_ids[$index]}" output "${player_protocols[$index]}" "$stream_name" streaming \
             "${player_labels[$index]}" "$run_dir/${player_labels[$index]}_runtime.json"
     done
+    snapshot_server after-players "$run_dir"
     sleep "$warmup_seconds"
     check_players
+    snapshot_server steady "$run_dir"
     if [[ "$profile_tool" == callgrind ]]; then
         callgrind_control -z "$server_pid" >/dev/null
         callgrind_control -i on "$server_pid" >/dev/null
