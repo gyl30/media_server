@@ -70,19 +70,19 @@ cleanup() {
 trap cleanup EXIT
 
 wait_http() {
-    local url="$1" pid="$2" log="$3"
+    local url="$1" pid="$2"
     for _ in $(seq 1 100); do
         if curl --noproxy '*' -sS --max-time 1 -o /dev/null "$url" 2>/dev/null; then
             kill -0 "$pid" 2>/dev/null
             return
         fi
         if ! kill -0 "$pid" 2>/dev/null; then
-            echo "service endpoint did not become ready" >&2
+            echo "service endpoint did not become ready (phase=$phase)" >&2
             return 1
         fi
         sleep 0.05
     done
-    echo "service endpoint did not become ready" >&2
+    echo "service endpoint did not become ready (phase=$phase)" >&2
     return 1
 }
 
@@ -159,7 +159,7 @@ PY
         fi
         sleep 0.1
     done
-    echo "runtime did not reach state (protocol=$protocol state=$state)" >&2
+    echo "runtime did not reach state (phase=$phase kind=$kind protocol=$protocol state=$state)" >&2
     return 1
 }
 
@@ -212,33 +212,58 @@ start_probe_player() {
 establish_hls() {
     local label="$1" initial_url="$2" headers status location
     headers="$work_dir/${label}_redirect_headers.txt"
-    status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 --max-redirs 0 \
-        -D "$headers" -o /dev/null -w '%{http_code}' "$initial_url")"
-    [[ "$status" == 307 ]]
+    if ! status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 --max-redirs 0 \
+        -D "$headers" -o /dev/null -w '%{http_code}' "$initial_url" \
+        2>"$work_dir/${label}_redirect_error.log")"; then
+        echo "HLS redirect request failed (phase=$phase label=$label)" >&2
+        return 1
+    fi
+    if [[ "$status" != 307 ]]; then
+        echo "HLS redirect failed (phase=$phase label=$label status=$status)" >&2
+        return 1
+    fi
     location="$(sed -n 's/^[Ll]ocation:[[:space:]]*//p' "$headers" | tr -d '\r' | tail -1)"
-    python3 - "$initial_url" "$location" <<'PY'
+    if ! python3 - "$initial_url" "$location" <<'PY'
 import sys
 import urllib.parse
 assert "stream_id=" not in sys.argv[2] and "session=" in sys.argv[2]
 print(urllib.parse.urljoin(sys.argv[1], sys.argv[2]))
 PY
+    then
+        echo "HLS redirect location invalid (phase=$phase label=$label)" >&2
+        return 1
+    fi
 }
 
 fetch_hls() {
     local label="$1" url="$2" playlist segment segment_uri segment_url
     playlist="$work_dir/${label}.m3u8"
     segment="$work_dir/${label}.segment"
-    curl --noproxy '*' -fsS --connect-timeout 1 --max-time 8 "$url" >"$playlist"
+    if ! curl --noproxy '*' -fsS --connect-timeout 1 --max-time 8 "$url" \
+        >"$playlist" 2>"$work_dir/${label}_playlist_error.log"; then
+        echo "HLS playlist fetch failed (phase=$phase label=$label)" >&2
+        return 1
+    fi
     segment_uri="$(grep -E '^[^#].*\.(ts|m4s)(\?.*)?$' "$playlist" | head -1)"
-    [[ -n "$segment_uri" && "$segment_uri" == *session=* ]]
+    if [[ -z "$segment_uri" || "$segment_uri" != *session=* ]]; then
+        echo "HLS playlist has no session-bound segment (phase=$phase label=$label)" >&2
+        return 1
+    fi
     segment_url="$(python3 - "$url" "$segment_uri" <<'PY'
 import sys
 import urllib.parse
 print(urllib.parse.urljoin(sys.argv[1], sys.argv[2]))
 PY
 )"
-    curl --noproxy '*' -fsS --connect-timeout 1 --max-time 8 "$segment_url" >"$segment"
-    [[ -s "$segment" ]]
+    if ! curl --noproxy '*' -fsS --connect-timeout 1 --max-time 8 "$segment_url" \
+        >"$segment" 2>"$work_dir/${label}_segment_error.log"; then
+        echo "HLS segment fetch failed (phase=$phase label=$label)" >&2
+        return 1
+    fi
+    if [[ ! -s "$segment" ]]; then
+        echo "HLS segment is empty (phase=$phase label=$label)" >&2
+        return 1
+    fi
 }
 
 wait_hls_endlist() {
@@ -251,7 +276,7 @@ wait_hls_endlist() {
         fi
         sleep 0.1
     done
-    echo "HLS viewer did not reach ENDLIST" >&2
+    echo "HLS viewer did not reach ENDLIST (phase=$phase label=$label)" >&2
     return 1
 }
 
@@ -320,14 +345,41 @@ start_services() {
 }
 
 run_viewer_churn() {
-    local stream_name=live/soak round protocol label
+    local stream_name=live/soak round protocol label index status
     local -a warmup_pids=() warmup_ids=() warmup_protocols=()
     local -a hls_churn_ids=() hls_churn_urls=() round_pids=() round_ids=() round_protocols=()
     local status warmup_hls_id
     phase="warmup"
     start_publisher soak_publisher "$stream_name" 'testsrc=size=320x180:rate=25'
-    sample_resources warmup
+    for protocol in rtsp rtmp http-flv; do
+        label="warmup_${protocol//-/_}"
+        allocate_values play "$label" "$protocol" "$stream_name"
+        start_probe_player "$label" "$protocol" "$allocation_url"
+        warmup_pids+=("$probe_pid") warmup_ids+=("$allocation_id") warmup_protocols+=("$protocol")
+    done
+    for index in "${!warmup_pids[@]}"; do
+        if wait "${warmup_pids[$index]}"; then
+            status=0
+        else
+            status=$?
+        fi
+        untrack_player_pid "${warmup_pids[$index]}"
+        if (( status != 0 )); then
+            echo "player failed (phase=$phase protocol=${warmup_protocols[$index]} exit=$status)" >&2
+            return "$status"
+        fi
+        wait_runtime "${warmup_ids[$index]}" output "${warmup_protocols[$index]}" "$stream_name" stopped
+    done
+    label="warmup_hls"
+    allocate_values play "$label" hls "$stream_name"
+    warmup_hls_id="$allocation_id"
+    allocation_url="$(establish_hls "$label" "$allocation_url")"
+    fetch_hls "$label" "$allocation_url"
+    wait_hls_stopped "$warmup_hls_id" "$stream_name"
+    sample_resources baseline
+
     for round in $(seq 1 "$soak_rounds"); do
+        phase="churn round=$round"
         round_pids=() round_ids=() round_protocols=()
         for protocol in rtsp rtmp http-flv; do
             label="soak_${protocol//-/_}_$round"
@@ -357,8 +409,16 @@ run_viewer_churn() {
         if (( round % 20 == 0 || round == soak_rounds )); then sample_resources "churn-$round"; fi
     done
     wait_hls_stopped_set "$stream_name" "${hls_churn_ids[@]}"
-    for allocation_url in "${hls_churn_urls[@]}"; do
-        [[ "$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o /dev/null -w '%{http_code}' "$allocation_url")" == 403 ]]
+    for index in "${!hls_churn_urls[@]}"; do
+        if ! status="$(curl --noproxy '*' -sS --connect-timeout 1 --max-time 5 -o /dev/null \
+            -w '%{http_code}' "${hls_churn_urls[$index]}" 2>"$work_dir/hls_expiry_${index}_error.log")"; then
+            echo "HLS viewer expiry check failed (phase=$phase index=$index)" >&2
+            return 1
+        fi
+        if [[ "$status" != 403 ]]; then
+            echo "HLS viewer session remained accessible (phase=$phase index=$index status=$status)" >&2
+            return 1
+        fi
     done
     phase="churn-final"
     stop_publisher "$stream_name"
@@ -450,12 +510,14 @@ run_source_replacement() {
         allocate_values play "$label" hls "$stream_name"
         replacement_hls_ids+=("$allocation_id")
         allocation_url="$(establish_hls "$label" "$allocation_url")"
-        replacement_hls_urls+=("$allocation_url")
         fetch_hls "$label" "$allocation_url"
         if [[ -n "$previous_hls_url" ]]; then
             wait_hls_endlist "generation_${previous_generation}_retained" "$previous_hls_url"
             fetch_hls "generation_${previous_generation}_retained" "$previous_hls_url"
-            cmp "$previous_segment" "$work_dir/generation_${previous_generation}_retained.segment"
+            if ! cmp "$previous_segment" "$work_dir/generation_${previous_generation}_retained.segment"; then
+                echo "retained HLS segment mismatch (phase=$phase generation=$previous_generation)" >&2
+                return 1
+            fi
             if cmp -s "$previous_segment" "$work_dir/${label}.segment"; then
                 echo "source generation $generation reused generation $previous_generation HLS payload" >&2
                 return 1
@@ -468,6 +530,7 @@ run_source_replacement() {
         wait_hls_endlist "generation_${generation}_ended" "$allocation_url"
         sample_resources "generation-$generation"
     done
+    phase="replacement-final"
     wait_hls_stopped_set "$stream_name" "${replacement_hls_ids[@]}"
     sample_resources replacement-final
 }
