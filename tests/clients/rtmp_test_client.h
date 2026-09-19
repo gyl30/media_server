@@ -5,6 +5,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -28,8 +29,11 @@ class rtmp_test_client final
                                                               std::vector<std::uint8_t> metadata,
                                                               std::vector<std::uint8_t> video_config);
     boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port);
+    boost::asio::awaitable<boost::system::error_code> consume_for(std::chrono::seconds duration);
 
     [[nodiscard]] const std::vector<std::uint8_t>& video() const noexcept { return video_; }
+    [[nodiscard]] std::uint64_t received_bytes() const noexcept { return received_bytes_; }
+    [[nodiscard]] std::uint64_t received_messages() const noexcept { return received_messages_; }
 
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);
@@ -46,6 +50,8 @@ class rtmp_test_client final
     std::string stream_;
     std::vector<std::vector<std::uint8_t>> writes_;
     std::vector<std::uint8_t> video_;
+    std::uint64_t received_bytes_{};
+    std::uint64_t received_messages_{};
     rtmp_client_t* client_{};
 };
 

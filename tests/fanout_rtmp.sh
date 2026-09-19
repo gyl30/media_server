@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+server_bin="${1:-./build/media_server}"
+work_dir="${2:-$(mktemp -d /tmp/media_server_fanout.XXXXXX)}"
+viewers="${3:-1}"
+profile="${4:-low}"
+duration_seconds="${MEDIA_SERVER_FANOUT_DURATION_SECONDS:-10}"
+ramp_per_second="${MEDIA_SERVER_FANOUT_RAMP_PER_SECOND:-50}"
+profile_tool="${MEDIA_SERVER_FANOUT_PROFILE_TOOL:-none}"
+signaling_bin="${SIGNALING_BIN:-}"
+ffmpeg_bin="${FFMPEG_BIN:-ffmpeg}"
+base_port="${MEDIA_SERVER_FANOUT_BASE_PORT:-20000}"
+signaling_port=$((base_port + 0))
+rtmp_port=$((base_port + 1))
+rtsp_port=$((base_port + 2))
+http_port=$((base_port + 3))
+sip_port=$((base_port + 4))
+
+[[ "$viewers" =~ ^[1-9][0-9]*$ ]]
+[[ "$duration_seconds" =~ ^[1-9][0-9]*$ ]]
+[[ "$ramp_per_second" =~ ^[1-9][0-9]*$ ]]
+case "$profile" in
+    low | normal) ;;
+    *)
+        echo "unsupported profile: $profile" >&2
+        exit 2
+        ;;
+esac
+case "$profile_tool" in
+    none | callgrind) ;;
+    *)
+        echo "unsupported profile tool: $profile_tool" >&2
+        exit 2
+        ;;
+esac
+
+mkdir -p "$work_dir"
+work_dir="$(cd "$work_dir" && pwd)"
+server_bin="$(realpath "$server_bin")"
+generator_bin="$(realpath "$(dirname "$server_bin")/fanout_rtmp_generator")"
+signaling_pid=""
+server_pid=""
+publisher_pid=""
+generator_pid=""
+
+cleanup() {
+    set +e
+    for pid in "${generator_pid:-}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
+        [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null
+    done
+    for pid in "${generator_pid:-}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
+        [[ -n "$pid" ]] && wait "$pid" 2>/dev/null
+    done
+    local residual=0
+    for pid in "${generator_pid:-}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            residual=$((residual + 1))
+        fi
+    done
+    echo "owned_residual_pids=$residual"
+    set -e
+}
+trap cleanup EXIT
+
+wait_http() {
+    local url="$1" pid="$2" phase="$3"
+    for _ in $(seq 1 200); do
+        if curl --noproxy '*' -sS --max-time 1 -o /dev/null "$url" 2>/dev/null; then
+            return
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "service endpoint failed (phase=$phase)" >&2
+            return 1
+        fi
+        sleep 0.1
+    done
+    echo "service endpoint timeout (phase=$phase)" >&2
+    return 1
+}
+
+wait_publisher_streaming() {
+    local response="$work_dir/publisher_runtime.json"
+    for _ in $(seq 1 200); do
+        if curl --noproxy '*' -fsS --max-time 1 "http://127.0.0.1:$signaling_port/api/runtimes" >"$response" 2>/dev/null && \
+            python3 - "$response" "$stream_id" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    runtimes = json.load(source)["runtimes"]
+for runtime in runtimes:
+    if runtime.get("stream_id") == sys.argv[2] and runtime.get("state") == "streaming":
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+        then
+            return
+        fi
+        sleep 0.1
+    done
+    echo "publisher did not reach streaming" >&2
+    return 1
+}
+
+sample_process() {
+    local label="$1" pid="$2" output="$3"
+    local now_ns ticks rss vmsize threads fd established sendq
+    now_ns="$(date +%s%N)"
+    ticks="$(awk '{print $14 + $15}' "/proc/$pid/stat")"
+    read -r rss vmsize threads < <(awk '$1 == "VmRSS:" {rss=$2} $1 == "VmSize:" {vmsize=$2} $1 == "Threads:" {threads=$2} END {print rss, vmsize, threads}' "/proc/$pid/status")
+    fd="$(find "/proc/$pid/fd" -mindepth 1 -maxdepth 1 -type l 2>/dev/null | wc -l)"
+    read -r established sendq < <(ss -tan 2>/dev/null | awk -v port=":$rtmp_port" '$1 == "ESTAB" && ($4 ~ port || $5 ~ port) {established++; sendq += $2} END {print established + 0, sendq + 0}')
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$now_ns" "$ticks" "$rss" "$vmsize" "$threads" "$fd" "$established" "$sendq" >>"$output"
+}
+
+if [[ -z "$signaling_bin" ]]; then
+    (cd "$(dirname "$0")/../signaling" && go build -o "$work_dir/signaling" .)
+    signaling_bin="$work_dir/signaling"
+else
+    signaling_bin="$(realpath "$signaling_bin")"
+fi
+
+printf 'label\ttime_ns\tticks\trss_kb\tvmsize_kb\tthreads\tfd\testablished\tsendq\n' >"$work_dir/server_samples.tsv"
+printf 'label\ttime_ns\tticks\trss_kb\tvmsize_kb\tthreads\tfd\testablished\tsendq\n' >"$work_dir/generator_samples.tsv"
+printf '%s\n' "$(cat /proc/loadavg)" >"$work_dir/loadavg_before.txt"
+printf '%s\n' "$(ulimit -n)" >"$work_dir/ulimit_n.txt"
+cat /proc/sys/net/ipv4/ip_local_port_range >"$work_dir/ip_local_port_range.txt"
+
+(
+    trap - EXIT
+    exec "$signaling_bin" --sip-listen "127.0.0.1:$sip_port" --sip-advertise "127.0.0.1:$sip_port" \
+        --http-listen "127.0.0.1:$signaling_port" --database "$work_dir/signaling.db"
+) >"$work_dir/signaling.log" 2>&1 &
+signaling_pid=$!
+wait_http "http://127.0.0.1:$signaling_port/" "$signaling_pid" signaling
+
+server_command=("$server_bin")
+if [[ "$profile_tool" == callgrind ]]; then
+    server_command=(valgrind --quiet --tool=callgrind --instr-atstart=no "--callgrind-out-file=$work_dir/callgrind.out.%p" "$server_bin")
+fi
+(
+    trap - EXIT
+    exec "${server_command[@]}" --rtmp-port "$rtmp_port" --rtsp-port "$rtsp_port" --http-port "$http_port" \
+        --signaling-url "http://127.0.0.1:$signaling_port" --server-id fanout --control-url "http://127.0.0.1:$http_port" \
+        --media-ip 127.0.0.1
+) >"$work_dir/server.log" 2>&1 &
+server_pid=$!
+wait_http "http://127.0.0.1:$http_port/" "$server_pid" media_server
+
+printf -v stream_name 'live/fanout/%s/%s' "$profile" "$viewers"
+printf -v publish_body '{"protocol":"rtmp","stream_name":"%s"}' "$stream_name"
+publish_response="$work_dir/publish.json"
+curl --noproxy '*' -fsS --connect-timeout 1 --max-time 5 -H 'Content-Type: application/json' --data-binary "$publish_body" \
+    "http://127.0.0.1:$signaling_port/api/publish/allocations" >"$publish_response"
+stream_id="$(python3 - "$publish_response" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["stream_id"])
+PY
+)"
+publish_url="$(python3 - "$publish_response" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["publish_url"])
+PY
+)"
+
+if [[ "$profile" == low ]]; then
+    video_input="testsrc2=size=320x180:rate=10"
+    video_rate=(-b:v 220k)
+else
+    video_input="testsrc2=size=1280x720:rate=30"
+    video_rate=()
+fi
+(
+    trap - EXIT
+    exec "$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
+        -f lavfi -i "$video_input" -f lavfi -i sine=frequency=1000:sample_rate=44100 \
+        -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+        -g 30 -keyint_min 30 -sc_threshold 0 "${video_rate[@]}" -c:a aac -b:a 48k -ac 1 -t "$((duration_seconds + 30))" \
+        -f flv "$publish_url"
+) >"$work_dir/publisher.log" 2>&1 &
+publisher_pid=$!
+wait_publisher_streaming
+
+echo "fanout start (profile=$profile viewers=$viewers duration=${duration_seconds}s ramp=${ramp_per_second}/s)"
+if [[ "$profile_tool" == callgrind ]]; then
+    callgrind_control -z "$server_pid" >/dev/null
+    callgrind_control -i on "$server_pid" >/dev/null
+fi
+start_ns="$(date +%s%N)"
+(
+    trap - EXIT
+    exec "$generator_bin" --signaling-url "http://127.0.0.1:$signaling_port" --stream-name "$stream_name" \
+        --media-port "$rtmp_port" --viewers "$viewers" --duration "$duration_seconds" --ramp-per-second "$ramp_per_second"
+) >"$work_dir/generator.log" 2>&1 &
+generator_pid=$!
+while kill -0 "$generator_pid" 2>/dev/null; do
+    sample_process server "$server_pid" "$work_dir/server_samples.tsv"
+    sample_process generator "$generator_pid" "$work_dir/generator_samples.tsv"
+    sleep 1
+done
+wait "$generator_pid"
+if [[ "$profile_tool" == callgrind ]]; then
+    callgrind_control -i off "$server_pid" >/dev/null
+    callgrind_control --dump="fanout_${profile}_${viewers}" "$server_pid" >/dev/null
+fi
+printf '%s\n' "$(cat /proc/loadavg)" >"$work_dir/loadavg_after.txt"
+end_ns="$(date +%s%N)"
+
+python3 - "$work_dir/server_samples.tsv" "$work_dir/generator_samples.tsv" "$start_ns" "$end_ns" "$work_dir/results.tsv" <<'PY'
+import csv
+import statistics
+import sys
+
+def summarize(path):
+    with open(path, encoding="utf-8") as source:
+        rows = list(csv.DictReader(source, delimiter="\t"))
+    values = {}
+    for key in ("rss_kb", "vmsize_kb", "threads", "fd", "established", "sendq"):
+        values[key] = statistics.median(int(row[key]) for row in rows) if rows else 0
+    if len(rows) >= 2:
+        elapsed = (int(rows[-1]["time_ns"]) - int(rows[0]["time_ns"])) / 1_000_000_000
+        values["cpu_percent"] = (int(rows[-1]["ticks"]) - int(rows[0]["ticks"])) / int(sysconf_clk_tck) / elapsed * 100
+    else:
+        values["cpu_percent"] = 0.0
+    return values
+
+sysconf_clk_tck = int(__import__("os").sysconf("SC_CLK_TCK"))
+server = summarize(sys.argv[1])
+generator = summarize(sys.argv[2])
+elapsed = (int(sys.argv[4]) - int(sys.argv[3])) / 1_000_000_000
+with open(sys.argv[5], "w", encoding="utf-8") as output:
+    output.write("elapsed_seconds\tserver_cpu_percent\tserver_rss_kb\tserver_vmsize_kb\tserver_threads\tserver_fd\testablished\tsendq\tgenerator_cpu_percent\tgenerator_rss_kb\tgenerator_vmsize_kb\tgenerator_threads\tgenerator_fd\n")
+    output.write("%0.3f\t%0.3f\t%s\t%s\t%s\t%s\t%s\t%s\t%0.3f\t%s\t%s\t%s\t%s\n" % (elapsed, server["cpu_percent"], server["rss_kb"], server["vmsize_kb"], server["threads"], server["fd"], server["established"], server["sendq"], generator["cpu_percent"], generator["rss_kb"], generator["vmsize_kb"], generator["threads"], generator["fd"]))
+PY
+cat "$work_dir/generator.log"
+cat "$work_dir/results.tsv"
