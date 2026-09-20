@@ -1,4 +1,5 @@
 #include <array>
+#include <memory>
 #include <utility>
 
 #include <boost/asio/write.hpp>
@@ -103,21 +104,41 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::play(std::st
         co_return boost::asio::error::operation_aborted;
     }
 
+    boost::asio::steady_timer timer(socket_.get_executor());
+    auto timed_out = std::make_shared<bool>(false);
+    timer.expires_after(std::chrono::seconds{60});
+    timer.async_wait(
+        [this, timed_out](const boost::system::error_code& timer_error)
+        {
+            if (!timer_error)
+            {
+                *timed_out = true;
+                socket_.cancel();
+            }
+        });
+
     std::array<std::uint8_t, 8192> read_buffer{};
     while (video_.empty())
     {
         error = co_await flush();
         if (error)
         {
+            timer.cancel();
             co_return error;
         }
         const auto bytes =
             co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
         if (error || rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
         {
+            timer.cancel();
+            if (*timed_out && error == boost::asio::error::operation_aborted)
+            {
+                co_return boost::asio::error::timed_out;
+            }
             co_return error ? error : boost::asio::error::operation_aborted;
         }
     }
+    timer.cancel();
     co_return boost::system::error_code{};
 }
 

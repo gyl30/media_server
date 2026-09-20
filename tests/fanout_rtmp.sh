@@ -56,9 +56,17 @@ cleanup() {
     for pid in "${generator_pids[@]}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
         [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null
     done
+    local server_exit_status=0 status
     for pid in "${generator_pids[@]}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
-        [[ -n "$pid" ]] && wait "$pid" 2>/dev/null
+        if [[ -n "$pid" ]]; then
+            wait "$pid" 2>/dev/null
+            status=$?
+            if [[ "$pid" == "$server_pid" ]]; then
+                server_exit_status=$status
+            fi
+        fi
     done
+    echo "owned_server_exit_status=$server_exit_status"
     local residual=0
     for pid in "${generator_pids[@]}" "${publisher_pid:-}" "${server_pid:-}" "${signaling_pid:-}"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -267,6 +275,10 @@ for ((shard = 0; shard < shards; ++shard)); do
     generator_pids+=("$!")
 done
 while :; do
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+        echo "media_server exited before generator completion" >&2
+        break
+    fi
     any_generator_alive=0
     for pid in "${generator_pids[@]}"; do
         if kill -0 "$pid" 2>/dev/null; then
@@ -376,36 +388,68 @@ def log_values(path):
                 values[name] = int(value)
     return values
 
+def log_text_values(path):
+    values = {}
+    with open(path, encoding="utf-8") as source:
+        for line in source:
+            line = line.rstrip("\n")
+            for name in ("trigger_failure_phase", "trigger_error"):
+                prefix = name + "="
+                if line.startswith(prefix):
+                    values[name] = line[len(prefix):]
+    return values
+
 generator_log_paths = sys.argv[11:]
 shard_values = [log_values(path) for path in generator_log_paths]
-required = ("measurement_start_unix_ns", "measurement_end_unix_ns", "allocated", "ready", "progressing", "runtime_failures", "non_progressing_viewers")
+shard_text = [log_text_values(path) for path in generator_log_paths]
+required = ("measurement_start_unix_ns", "measurement_end_unix_ns", "allocated", "connected", "ready", "progressing", "runtime_failures", "non_progressing_viewers", "trigger_failures", "pre_measurement_abort_viewers", "collateral_aborted_viewers", "measurement_started", "trigger_unix_ns")
 if any(any(name not in values for name in required) for values in shard_values):
     raise RuntimeError("missing generator result field")
-start_ns = max(values["measurement_start_unix_ns"] for values in shard_values)
-end_ns = min(values["measurement_end_unix_ns"] for values in shard_values)
-if end_ns <= start_ns:
+failed_shards = [index for index, values in enumerate(shard_values) if values["measurement_started"] == 0 or values["trigger_failures"] > 0]
+successful_shards = len(shard_values) - len(failed_shards)
+measurement_valid = not failed_shards
+start_ns = max(values["measurement_start_unix_ns"] for values in shard_values) if measurement_valid else 0
+end_ns = min(values["measurement_end_unix_ns"] for values in shard_values) if measurement_valid else 0
+if measurement_valid and end_ns <= start_ns:
     raise RuntimeError("generator measurement windows do not overlap")
-elapsed = (end_ns - start_ns) / 1_000_000_000
-server_threads = thread_summary(sys.argv[5], start_ns, end_ns)
-generator_threads = thread_summary(sys.argv[6], start_ns, end_ns)
-server_sockets = summarize_sockets(sys.argv[3], start_ns, end_ns)
-client_sockets = summarize_sockets(sys.argv[4], start_ns, end_ns)
-server = summarize_process(sys.argv[1], start_ns, end_ns)
-generators = [summarize_process(sys.argv[2], start_ns, end_ns, f"generator_{index}") for index in range(len(shard_values))]
-if server["sample_count"] < 5 or server_sockets["sample_count"] < 5 or client_sockets["sample_count"] < 5:
-    raise RuntimeError("global measurement window has insufficient samples")
+elapsed = (end_ns - start_ns) / 1_000_000_000 if measurement_valid else 0.0
+if measurement_valid:
+    server_threads = thread_summary(sys.argv[5], start_ns, end_ns)
+    generator_threads = thread_summary(sys.argv[6], start_ns, end_ns)
+    server_sockets = summarize_sockets(sys.argv[3], start_ns, end_ns)
+    client_sockets = summarize_sockets(sys.argv[4], start_ns, end_ns)
+    server = summarize_process(sys.argv[1], start_ns, end_ns)
+    generators = [summarize_process(sys.argv[2], start_ns, end_ns, f"generator_{index}") for index in range(len(shard_values))]
+    if server["sample_count"] < 5 or server_sockets["sample_count"] < 5 or client_sockets["sample_count"] < 5:
+        raise RuntimeError("global measurement window has insufficient samples")
+else:
+    trigger_times = [values["trigger_unix_ns"] for values in shard_values if values["trigger_unix_ns"]]
+    failure_time = min(trigger_times) if trigger_times else 0
+    failure_start = max(0, failure_time - 5_000_000_000)
+    server = summarize_process(sys.argv[1], failure_start, failure_time) if failure_time else {"cpu_percent": 0.0, "sample_count": 0, "rss_kb": 0, "vmsize_kb": 0, "threads": 0, "fd": 0}
+    generators = [summarize_process(sys.argv[2], failure_start, failure_time, f"generator_{index}") if failure_time else {"cpu_percent": 0.0, "rss_kb": 0, "vmsize_kb": 0, "threads": 0, "fd": 0} for index in range(len(shard_values))]
+    server_threads = thread_summary(sys.argv[5], failure_start, failure_time) if failure_time else []
+    generator_threads = thread_summary(sys.argv[6], failure_start, failure_time) if failure_time else []
+    server_sockets = summarize_sockets(sys.argv[3], failure_start, failure_time) if failure_time else {key: 0 for key in ("established_median", "established_p95", "established_max", "recvq_total_p95", "recvq_total_max", "sendq_total_p95", "sendq_total_max", "sendq_nonzero_p95", "sendq_nonzero_max", "sendq_max_p95", "sendq_max_max")}
+    client_sockets = summarize_sockets(sys.argv[4], failure_start, failure_time) if failure_time else {key: 0 for key in ("established_median", "established_p95", "established_max", "recvq_total_p95", "recvq_total_max", "sendq_total_p95", "sendq_total_max", "sendq_nonzero_p95", "sendq_nonzero_max", "sendq_max_p95", "sendq_max_max")}
 generator_total_cpu = sum(item["cpu_percent"] for item in generators)
 generator_max_shard_cpu = max(item["cpu_percent"] for item in generators)
 generator_total_rss = sum(item["rss_kb"] for item in generators)
 generator_total_vmsize = sum(item["vmsize_kb"] for item in generators)
 generator_total_fd = sum(item["fd"] for item in generators)
 generator_max_thread_cpu = generator_threads[0][0] if generator_threads else 0.0
-aggregate = {name: sum(values[name] for values in shard_values) for name in required[2:]}
+aggregate = {name: sum(values[name] for values in shard_values) for name in ("allocated", "connected", "ready", "progressing", "runtime_failures", "non_progressing_viewers", "trigger_failures", "pre_measurement_abort_viewers", "collateral_aborted_viewers")}
+if failed_shards and aggregate["trigger_failures"] != len(failed_shards):
+    raise RuntimeError("incomplete primary trigger attribution")
 for name in ("received_video_bytes", "received_video_messages", "steady_video_bytes", "steady_video_messages"):
     aggregate[name] = sum(values.get(name, 0) for values in shard_values)
+bytes_per_second = aggregate["steady_video_bytes"] / elapsed if measurement_valid and elapsed > 0 else 0.0
+messages_per_second = aggregate["steady_video_messages"] / elapsed if measurement_valid and elapsed > 0 else 0.0
+bytes_per_viewer_second = bytes_per_second / sum(values["progressing"] for values in shard_values) if bytes_per_second and aggregate["progressing"] else 0.0
+messages_per_viewer_second = messages_per_second / sum(values["progressing"] for values in shard_values) if messages_per_second and aggregate["progressing"] else 0.0
 with open(sys.argv[7], "w", encoding="utf-8") as output:
-    output.write("elapsed_seconds\tglobal_overlap_seconds\tshards\tserver_cpu_percent\tserver_rss_kb\tserver_vmsize_kb\tserver_threads\tserver_fd\tserver_established_median\tserver_established_p95\tserver_established_max\tserver_recvq_total_p95\tserver_recvq_total_max\tserver_sendq_total_p95\tserver_sendq_total_max\tserver_sendq_nonzero_p95\tserver_sendq_nonzero_max\tserver_sendq_max_p95\tserver_sendq_max_max\tgenerator_total_cpu_percent\tgenerator_max_shard_cpu_percent\tgenerator_total_rss_kb\tgenerator_total_vmsize_kb\tgenerator_total_fd\tserver_max_thread_cpu\tgenerator_max_thread_cpu\ttotal_allocated\ttotal_ready\ttotal_progressing\ttotal_runtime_failures\ttotal_non_progressing\n")
-    fields = [elapsed, elapsed, len(shard_values), server["cpu_percent"], server["rss_kb"], server["vmsize_kb"], server["threads"], server["fd"], server_sockets["established_median"], server_sockets["established_p95"], server_sockets["established_max"], server_sockets["recvq_total_p95"], server_sockets["recvq_total_max"], server_sockets["sendq_total_p95"], server_sockets["sendq_total_max"], server_sockets["sendq_nonzero_p95"], server_sockets["sendq_nonzero_max"], server_sockets["sendq_max_p95"], server_sockets["sendq_max_max"], generator_total_cpu, generator_max_shard_cpu, generator_total_rss, generator_total_vmsize, generator_total_fd, server_threads[0][0] if server_threads else 0.0, generator_max_thread_cpu, aggregate["allocated"], aggregate["ready"], aggregate["progressing"], aggregate["runtime_failures"], aggregate["non_progressing_viewers"]]
+    output.write("workload_status\tmeasurement_valid\telapsed_seconds\tglobal_overlap_seconds\tshards\tsuccessful_shards\tfailed_shards\tserver_cpu_percent\tserver_rss_kb\tserver_vmsize_kb\tserver_threads\tserver_fd\tserver_established_median\tserver_established_p95\tserver_established_max\tserver_recvq_total_p95\tserver_recvq_total_max\tserver_sendq_total_p95\tserver_sendq_total_max\tserver_sendq_nonzero_p95\tserver_sendq_nonzero_max\tserver_sendq_max_p95\tserver_sendq_max_max\tgenerator_total_cpu_percent\tgenerator_max_shard_cpu_percent\tgenerator_total_rss_kb\tgenerator_total_vmsize_kb\tgenerator_total_fd\tserver_max_thread_cpu\tgenerator_max_thread_cpu\ttotal_allocated\ttotal_connected\ttotal_ready\ttotal_progressing\ttotal_runtime_failures\ttotal_non_progressing\tprimary_trigger_count\tpre_measurement_abort_viewers\tcollateral_aborted_viewers\tsteady_video_bytes\tsteady_video_messages\tsteady_video_bytes_per_second\tsteady_video_bytes_per_viewer_second\tsteady_video_messages_per_second\tsteady_video_messages_per_viewer_second\n")
+    fields = ["success" if measurement_valid else "failed", int(measurement_valid), elapsed, elapsed, len(shard_values), successful_shards, len(failed_shards), server["cpu_percent"], server["rss_kb"], server["vmsize_kb"], server["threads"], server["fd"], server_sockets["established_median"], server_sockets["established_p95"], server_sockets["established_max"], server_sockets["recvq_total_p95"], server_sockets["recvq_total_max"], server_sockets["sendq_total_p95"], server_sockets["sendq_total_max"], server_sockets["sendq_nonzero_p95"], server_sockets["sendq_nonzero_max"], server_sockets["sendq_max_p95"], server_sockets["sendq_max_max"], generator_total_cpu, generator_max_shard_cpu, generator_total_rss, generator_total_vmsize, generator_total_fd, server_threads[0][0] if server_threads else 0.0, generator_max_thread_cpu, aggregate["allocated"], aggregate["connected"], aggregate["ready"], aggregate["progressing"], aggregate["runtime_failures"], aggregate["non_progressing_viewers"], aggregate["trigger_failures"], aggregate["pre_measurement_abort_viewers"], aggregate["collateral_aborted_viewers"], aggregate["steady_video_bytes"] if measurement_valid else 0, aggregate["steady_video_messages"] if measurement_valid else 0, bytes_per_second, bytes_per_viewer_second, messages_per_second, messages_per_viewer_second]
     output.write("\t".join(f"{value:.3f}" if isinstance(value, float) else str(value) for value in fields) + "\n")
 with open(sys.argv[8], "w", encoding="utf-8") as output:
     output.write("process\ttid\tcomm\tcpu_percent\n")
@@ -433,16 +477,36 @@ print("generator_top_threads=" + ",".join(f"{tid}:{comm}:{cpu:.1f}%" for cpu, ti
 print("server_max_thread_cpu=%.3f" % (server_threads[0][0] if server_threads else 0.0))
 print("global_overlap_seconds=%.3f" % elapsed)
 print("generator_total_cpu=%.3f generator_max_shard_cpu=%.3f generator_max_thread_cpu=%.3f" % (generator_total_cpu, generator_max_shard_cpu, generator_max_thread_cpu))
+print("workload_status=%s measurement_valid=%d successful_shards=%d failed_shards=%d" % ("success" if measurement_valid else "failed", int(measurement_valid), successful_shards, len(failed_shards)))
+print("primary_trigger_count=%d collateral_aborted_viewers=%d" % (aggregate["trigger_failures"], aggregate["collateral_aborted_viewers"]))
+print("steady_video_bytes=%d steady_video_messages=%d steady_video_bytes_per_second=%.3f steady_video_bytes_per_viewer_second=%.3f steady_video_messages_per_second=%.3f steady_video_messages_per_viewer_second=%.3f" % (aggregate["steady_video_bytes"] if measurement_valid else 0, aggregate["steady_video_messages"] if measurement_valid else 0, bytes_per_second, bytes_per_viewer_second, messages_per_second, messages_per_viewer_second))
+trigger_phases = {}
+trigger_errors = {}
+for values, text in zip(shard_values, shard_text):
+    if values["trigger_failures"]:
+        phase = text.get("trigger_failure_phase", "unknown")
+        error = text.get("trigger_error", "unknown")
+        trigger_phases[phase] = trigger_phases.get(phase, 0) + values["trigger_failures"]
+        trigger_errors[error] = trigger_errors.get(error, 0) + values["trigger_failures"]
+for phase, count in sorted(trigger_phases.items()):
+    print("primary_trigger_phase=%s count=%d" % (phase, count))
+for error, count in sorted(trigger_errors.items()):
+    print("primary_trigger_error=%s count=%d" % (error, count))
+for index in failed_shards:
+    values = shard_values[index]
+    text = shard_text[index]
+    print("failed_shard=%d requested=%d allocated=%d connected=%d ready=%d measurement_started=%d primary_trigger_phase=%s primary_trigger_error=%s trigger_unix_ns=%d collateral_aborted_viewers=%d runtime_failures=%d non_progressing=%d" % (index, values.get("requested", 0), values["allocated"], values["connected"], values["ready"], values["measurement_started"], text.get("trigger_failure_phase", ""), text.get("trigger_error", ""), values["trigger_unix_ns"], values["collateral_aborted_viewers"], values["runtime_failures"], values["non_progressing_viewers"]))
 for index, item in enumerate(generators):
     print("generator_%d_cpu=%.3f" % (index, item["cpu_percent"]))
 for index, values in enumerate(shard_values):
     print("generator_%d_ready=%d generator_%d_progressing=%d generator_%d_runtime_failures=%d" % (index, values["ready"], index, values["progressing"], index, values["runtime_failures"]))
+if not measurement_valid:
+    trigger_times = [values["trigger_unix_ns"] for values in shard_values if values["trigger_unix_ns"]]
+    failure_trigger = min(trigger_times) if trigger_times else 0
+    print("failure_trigger_unix_ns=%d failure_server_cpu_percent=%.3f failure_server_max_thread_cpu=%.3f failure_server_established_p95=%s failure_server_fd=%d failure_server_rss_kb=%d failure_generator_max_shard_cpu=%.3f" % (failure_trigger, server["cpu_percent"], server_threads[0][0] if server_threads else 0.0, server_sockets["established_p95"], server["fd"], server["rss_kb"], generator_max_shard_cpu))
 print("total_allocated=%d total_ready=%d total_progressing=%d total_runtime_failures=%d total_non_progressing=%d" % (aggregate["allocated"], aggregate["ready"], aggregate["progressing"], aggregate["runtime_failures"], aggregate["non_progressing_viewers"]))
 print("client_recvq_total_p95=%s client_recvq_total_max=%s client_recvq_nonzero_p95=%s client_recvq_nonzero_max=%s client_recvq_max_p95=%s client_recvq_max_max=%s" % (client_sockets["recvq_total_p95"], client_sockets["recvq_total_max"], client_sockets["recvq_nonzero_p95"], client_sockets["recvq_nonzero_max"], client_sockets["recvq_max_p95"], client_sockets["recvq_max_max"]))
 PY
-for generator_log in "${generator_log_paths[@]}"; do
-    cat "$generator_log"
-done
 cat "$work_dir/results.tsv"
 cat "$work_dir/thread_summary.tsv"
 exit "$generator_status"
