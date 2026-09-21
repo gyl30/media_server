@@ -13,12 +13,16 @@ rtmp_play_session::rtmp_play_session(worker_context& worker,
                                      std::shared_ptr<media_stream> stream,
                                      flv_muxer::packet_handler packet_handler,
                                      video_transcode_config video,
-                                     end_handler on_end)
+                                     end_handler on_end,
+                                     queue_bytes_handler queued_output_bytes,
+                                     std::size_t max_output_queue_bytes)
     : worker_(worker),
       stream_id_(std::move(stream_id)),
       stream_name_(std::move(stream_name)),
       stream_(std::move(stream)),
       muxer_(std::move(packet_handler), video),
+      queued_output_bytes_(std::move(queued_output_bytes)),
+      max_output_queue_bytes_(max_output_queue_bytes),
       end_handler_(std::move(on_end))
 {
 }
@@ -48,6 +52,9 @@ void rtmp_play_session::shutdown()
     muxer_.shutdown();
     stream_.reset();
     rtmp_event::report_output(event_state::stopped, stream_id_, stream_name_);
+    batch_ = {};
+    batch_index_ = 0;
+    waiting_for_output_ = false;
 }
 
 void rtmp_play_session::on_tracks(media_track_snapshot_ptr tracks)
@@ -58,7 +65,7 @@ void rtmp_play_session::on_tracks(media_track_snapshot_ptr tracks)
     }
 
     apply_tracks(tracks);
-    if (!closed_)
+    if (!closed_ && batch_.entries.empty() && !waiting_for_output_)
     {
         reader_handle().async_read(reader_cursor_);
     }
@@ -78,8 +85,44 @@ void rtmp_play_session::on_read(media_read_batch batch)
         return;
     }
 
-    for (auto& entry : batch.entries)
+    batch_ = std::move(batch);
+    batch_index_ = 0;
+    process_batch();
+}
+
+void rtmp_play_session::on_end()
+{
+    if (!closed_)
     {
+        batch_ = {};
+        batch_index_ = 0;
+        waiting_for_output_ = false;
+        rtmp_event::report_output(event_state::remote_closed, stream_id_, stream_name_, "media");
+        end_handler_();
+    }
+}
+
+void rtmp_play_session::on_output_progress()
+{
+    if (closed_ || !waiting_for_output_ || !output_drained())
+    {
+        return;
+    }
+    waiting_for_output_ = false;
+    process_batch();
+}
+
+void rtmp_play_session::process_batch()
+{
+    while (!closed_ && batch_index_ < batch_.entries.size())
+    {
+        if (!batch_.waited_for_media && output_backpressured())
+        {
+            waiting_for_output_ = true;
+            return;
+        }
+
+        auto& entry = batch_.entries[batch_index_++];
         const auto track = reader_tracks_.find(entry.frame.track);
         if (track == reader_tracks_.end() || track->second.config_version != entry.config_version)
         {
@@ -97,17 +140,30 @@ void rtmp_play_session::on_read(media_read_batch batch)
         muxer_.on_frame(entry.frame);
     }
 
+    if (closed_)
+    {
+        return;
+    }
+    if (!batch_.waited_for_media && output_backpressured())
+    {
+        waiting_for_output_ = true;
+        return;
+    }
+
+    batch_ = {};
+    batch_index_ = 0;
     reader_handle().async_read(reader_cursor_);
 }
 
-void rtmp_play_session::on_end()
+std::size_t rtmp_play_session::queued_output_bytes() const
 {
-    if (!closed_)
-    {
-        rtmp_event::report_output(event_state::remote_closed, stream_id_, stream_name_, "media");
-        end_handler_();
-    }
+    return queued_output_bytes_();
 }
+
+// history replay 只使用半个 queue；恢复水位形成滞回，并为单帧展开及 control output 保留余量。
+bool rtmp_play_session::output_backpressured() const { return queued_output_bytes() >= max_output_queue_bytes_ / 2U; }
+
+bool rtmp_play_session::output_drained() const { return queued_output_bytes() <= max_output_queue_bytes_ / 4U; }
 
 void rtmp_play_session::apply_tracks(const media_track_snapshot_ptr& tracks)
 {

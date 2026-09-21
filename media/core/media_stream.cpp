@@ -328,7 +328,7 @@ void media_stream::request_read_on_owner(const std::shared_ptr<media_reader_stat
 
     state->pending_read = true;
     state->pending_cursor = cursor;
-    complete_reader_from_history(state);
+    complete_reader_from_history(state, false);
 }
 
 void media_stream::remove_reader_on_owner(const std::shared_ptr<media_reader_state>& state)
@@ -425,12 +425,12 @@ void media_stream::dispatch_pending_readers()
     {
         if (state->pending_read && state->active.load(std::memory_order_acquire))
         {
-            complete_reader_from_history(state);
+            complete_reader_from_history(state, true);
         }
     }
 }
 
-void media_stream::complete_reader_from_history(const std::shared_ptr<media_reader_state>& state)
+void media_stream::complete_reader_from_history(const std::shared_ptr<media_reader_state>& state, bool waited_for_media)
 {
     if (!state->pending_read || history_.empty())
     {
@@ -460,6 +460,7 @@ void media_stream::complete_reader_from_history(const std::shared_ptr<media_read
 
     media_read_batch batch;
     batch.tracks = track_snapshot_.load(std::memory_order_acquire);
+    batch.waited_for_media = waited_for_media;
     batch.entries.reserve(max_read_batch_entries);
     for (; iterator != history_.end() && batch.entries.size() < max_read_batch_entries; ++iterator)
     {

@@ -46,6 +46,10 @@ bool tcp_write_queue::empty() const noexcept { return entries_.empty(); }
 
 bool tcp_write_queue::stopped() const noexcept { return stopped_; }
 
+std::size_t tcp_write_queue::queued_bytes() const noexcept { return queued_bytes_; }
+
+std::size_t tcp_write_queue::max_bytes() const noexcept { return max_bytes_; }
+
 void tcp_write_queue::stop() noexcept { stopped_ = true; }
 
 }    // namespace media_server

@@ -38,6 +38,8 @@ class tcp_write_queue final
     [[nodiscard]] tcp_write_result write_one(tcp_yield_transport& transport, boost::asio::yield_context& yield);
     [[nodiscard]] bool empty() const noexcept;
     [[nodiscard]] bool stopped() const noexcept;
+    [[nodiscard]] std::size_t queued_bytes() const noexcept;
+    [[nodiscard]] std::size_t max_bytes() const noexcept;
     void stop() noexcept;
 
    private:

@@ -63,13 +63,17 @@ rtsp_play_session::rtsp_play_session(worker_context& worker,
                                      std::string stream_name,
                                      video_transcode_codec video_codec,
                                      boost::asio::ip::address local_address,
-                                     std::function<void(std::span<const std::uint8_t>)> write)
+                                     std::function<void(std::span<const std::uint8_t>)> write,
+                                     queue_bytes_handler queued_output_bytes,
+                                     std::size_t max_output_queue_bytes)
     : worker_(worker),
       stream_id_(std::move(stream_id)),
       stream_name_(std::move(stream_name)),
       video_codec_(video_codec),
       local_address_(std::move(local_address)),
-      write_handler_(std::move(write))
+      write_handler_(std::move(write)),
+      queued_output_bytes_(std::move(queued_output_bytes)),
+      max_output_queue_bytes_(max_output_queue_bytes)
 {
 }
 
@@ -89,7 +93,10 @@ void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
         shutdown_handler_();
         return;
     }
-    reader_handle().async_read(reader_cursor_);
+    if (batch_.entries.empty() && !waiting_for_output_)
+    {
+        reader_handle().async_read(reader_cursor_);
+    }
 }
 
 void rtsp_play_session::on_read(media_read_batch batch)
@@ -108,8 +115,32 @@ void rtsp_play_session::on_read(media_read_batch batch)
         return;
     }
 
-    for (auto& entry : batch.entries)
+    batch_ = std::move(batch);
+    batch_index_ = 0;
+    process_batch();
+}
+
+void rtsp_play_session::on_output_progress()
+{
+    if (closed_ || !waiting_for_output_ || !output_drained())
     {
+        return;
+    }
+    waiting_for_output_ = false;
+    process_batch();
+}
+
+void rtsp_play_session::process_batch()
+{
+    while (!closed_ && batch_index_ < batch_.entries.size())
+    {
+        if (!batch_.waited_for_media && output_backpressured())
+        {
+            waiting_for_output_ = true;
+            return;
+        }
+
+        auto& entry = batch_.entries[batch_index_++];
         const auto iterator = track_states_.find(entry.frame.track);
         if (iterator == track_states_.end() || !entry.frame.payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0 ||
             iterator->second.config_version != entry.config_version)
@@ -188,13 +219,38 @@ void rtsp_play_session::on_read(media_read_batch batch)
         }
     }
 
+    if (closed_)
+    {
+        return;
+    }
+    if (!batch_.waited_for_media && output_backpressured())
+    {
+        waiting_for_output_ = true;
+        return;
+    }
+
+    batch_ = {};
+    batch_index_ = 0;
     reader_handle().async_read(reader_cursor_);
 }
+
+std::size_t rtsp_play_session::queued_output_bytes() const
+{
+    return queued_output_bytes_();
+}
+
+// history replay 只使用半个 queue；恢复水位形成滞回，并为单帧展开及 control output 保留余量。
+bool rtsp_play_session::output_backpressured() const { return queued_output_bytes() >= max_output_queue_bytes_ / 2U; }
+
+bool rtsp_play_session::output_drained() const { return queued_output_bytes() <= max_output_queue_bytes_ / 4U; }
 
 void rtsp_play_session::on_end()
 {
     if (!closed_)
     {
+        batch_ = {};
+        batch_index_ = 0;
+        waiting_for_output_ = false;
         rtsp_event::report_output(event_state::remote_closed, stream_id_, stream_name_, "media");
         shutdown_handler_();
     }
@@ -247,6 +303,9 @@ void rtsp_play_session::shutdown()
 void rtsp_play_session::safe_shutdown()
 {
     reader_handle().remove();
+    batch_ = {};
+    batch_index_ = 0;
+    waiting_for_output_ = false;
     video_transcoder_.reset();
     if (stream_)
     {

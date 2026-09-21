@@ -61,7 +61,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     void end_readers();
     void append_history(std::uint64_t sequence, const media_frame& frame, const media_track& track);
     void dispatch_pending_readers();
-    void complete_reader_from_history(const std::shared_ptr<media_reader_state>& state);
+    void complete_reader_from_history(const std::shared_ptr<media_reader_state>& state, bool waited_for_media);
     void deliver_reader_batch(const std::shared_ptr<media_reader_state>& state, media_read_batch batch);
     void dispatch_reader_tracks(const std::shared_ptr<media_reader_state>& state, media_track_snapshot_ptr tracks);
     void dispatch_reader_end(const std::shared_ptr<media_reader_state>& state);

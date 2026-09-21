@@ -35,6 +35,8 @@ struct media_read_batch
     std::uint64_t next_cursor{};
     media_track_snapshot_ptr tracks;
     std::vector<media_read_entry> entries;
+    // true 表示本次 read 曾在 live edge 等待新媒体，而不是立即读取已有 history。
+    bool waited_for_media{};
 };
 
 class media_reader_handle final

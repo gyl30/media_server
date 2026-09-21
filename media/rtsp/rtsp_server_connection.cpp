@@ -483,6 +483,10 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         }
         if (write_queue_.empty())
         {
+            if (play_session_ && play_session_->waiting_for_output())
+            {
+                play_session_->on_output_progress();
+            }
             return;
         }
 
@@ -497,6 +501,10 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         {
             shutdown();
             return;
+        }
+        if (!write_queue_.empty() && play_session_ && play_session_->waiting_for_output())
+        {
+            play_session_->on_output_progress();
         }
     }
 }
@@ -536,7 +544,9 @@ int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
                                                         std::move(target->stream_name),
                                                         video_codec_,
                                                         local_address_,
-                                                        [owner](std::span<const std::uint8_t> data) { owner->write(data); });
+                                                        [owner](std::span<const std::uint8_t> data) { owner->write(data); },
+                                                        [owner]() { return owner->write_queue_.queued_bytes(); },
+                                                        write_queue_.max_bytes());
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
     play_session_->startup();
     return 200;

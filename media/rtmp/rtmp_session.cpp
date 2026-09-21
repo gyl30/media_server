@@ -268,6 +268,10 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         }
         if (write_queue_.empty())
         {
+            if (play_ && play_->waiting_for_output())
+            {
+                play_->on_output_progress();
+            }
             return;
         }
 
@@ -277,6 +281,10 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
             report_transport_error(result.error);
             shutdown();
             return;
+        }
+        if (!write_queue_.empty() && play_ && play_->waiting_for_output())
+        {
+            play_->on_output_progress();
         }
     }
 }
@@ -430,7 +438,9 @@ void rtmp_session::run_play_claim(boost::asio::yield_context yield)
             }
         },
         video_config_,
-        [self]() { self->shutdown(); });
+        [self]() { self->shutdown(); },
+        [self]() { return self->write_queue_.queued_bytes(); },
+        write_queue_.max_bytes());
 
     rtmp_event::report_output(event_state::starting, play_->stream_id(), play_->stream_name(), "play");
     if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0)

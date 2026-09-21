@@ -395,6 +395,7 @@ if(BUILD_TESTING)
         rtmp_rejects_live_playback_control
         rtmp_play_pull_codecs_and_order
         rtmp_play_config_reset_and_end
+        rtmp_play_output_backpressure
         rtmp_tcp_error_lifecycle
         rtmp_coroutine_publish_client
         rtmp_coroutine_play_client
@@ -428,6 +429,7 @@ if(BUILD_TESTING)
         rtsp_play_claim_rejected
         rtsp_play_transport_event
         rtsp_play_terminal_failure_quiesces_reader
+        rtsp_play_output_backpressure
         rtsp_play_reply_error
         rtsp_play_recreate_lifecycle
         rtsp_play_media_delivery

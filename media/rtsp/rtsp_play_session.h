@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <cstdint>
+#include <cstddef>
 #include <utility>
 #include <functional>
 #include <string_view>
@@ -28,12 +29,15 @@ class worker_context;
 class rtsp_play_session final : public media_reader, public std::enable_shared_from_this<rtsp_play_session>
 {
    public:
+    using queue_bytes_handler = std::function<std::size_t()>;
     rtsp_play_session(worker_context& worker,
                       std::string stream_id,
                       std::string stream_name,
                       video_transcode_codec video_codec,
                       boost::asio::ip::address local_address,
-                      std::function<void(std::span<const std::uint8_t>)> write);
+                      std::function<void(std::span<const std::uint8_t>)> write,
+                      queue_bytes_handler queued_output_bytes,
+                      std::size_t max_output_queue_bytes);
 
    public:
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
@@ -45,6 +49,8 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
    public:
     [[nodiscard]] std::string_view stream_id() const noexcept { return stream_id_; }
     [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
+    [[nodiscard]] bool waiting_for_output() const noexcept { return waiting_for_output_; }
+    void on_output_progress();
 
    public:
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
@@ -78,6 +84,10 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
     [[nodiscard]] int presentation_status() const;
+    void process_batch();
+    [[nodiscard]] std::size_t queued_output_bytes() const;
+    [[nodiscard]] bool output_backpressured() const;
+    [[nodiscard]] bool output_drained() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
    private:
@@ -92,6 +102,8 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
+    queue_bytes_handler queued_output_bytes_;
+    std::size_t max_output_queue_bytes_{};
     std::map<track_id, track_state> track_states_;
     std::unique_ptr<video_transcoder> video_transcoder_;
     rtsp_muxer_t* muxer_{};
@@ -100,7 +112,10 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     std::uint64_t track_revision_{};
     std::string session_id_;
     bool playing_{};
+    media_read_batch batch_;
+    std::size_t batch_index_{};
     bool closed_{};
+    bool waiting_for_output_{};
 };
 
 }    // namespace media_server
