@@ -63,7 +63,7 @@ rtsp_play_session::rtsp_play_session(worker_context& worker,
                                      std::string stream_name,
                                      video_transcode_codec video_codec,
                                      boost::asio::ip::address local_address,
-                                     std::function<void(std::span<const std::uint8_t>)> write,
+                                     write_handler write,
                                      queue_bytes_handler queued_output_bytes,
                                      std::size_t max_output_queue_bytes)
     : worker_(worker),
@@ -519,25 +519,26 @@ int rtsp_play_session::on_muxer_packet(int pid, const void* data, int bytes)
         return 0;
     }
 
-    std::array<std::uint8_t, 4> header{};
-    header[0] = 0x24;
-    header[1] = static_cast<std::uint8_t>(iterator->second.rtp_channel);
-    const auto network_bytes = htons(static_cast<std::uint16_t>(bytes));
-    std::memcpy(header.data() + 2, &network_bytes, sizeof(network_bytes));
-    write_handler_(header);
-    write_handler_(std::span(static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes)));
+    write_interleaved(static_cast<std::uint8_t>(iterator->second.rtp_channel), data, static_cast<std::size_t>(bytes));
 
     std::array<std::uint8_t, 1500> rtcp{};
     const auto rtcp_bytes = rtsp_muxer_rtcp(muxer_, pid, rtcp.data(), static_cast<int>(rtcp.size()));
     if (rtcp_bytes > 0)
     {
-        header[1] = static_cast<std::uint8_t>(iterator->second.rtcp_channel);
-        const auto network_rtcp_bytes = htons(static_cast<std::uint16_t>(rtcp_bytes));
-        std::memcpy(header.data() + 2, &network_rtcp_bytes, sizeof(network_rtcp_bytes));
-        write_handler_(header);
-        write_handler_(std::span(rtcp.data(), static_cast<std::size_t>(rtcp_bytes)));
+        write_interleaved(static_cast<std::uint8_t>(iterator->second.rtcp_channel), rtcp.data(), static_cast<std::size_t>(rtcp_bytes));
     }
     return 0;
+}
+
+void rtsp_play_session::write_interleaved(std::uint8_t channel, const void* data, std::size_t bytes)
+{
+    std::vector<std::uint8_t> packet(4U + bytes);
+    packet[0] = 0x24;
+    packet[1] = channel;
+    const auto network_bytes = htons(static_cast<std::uint16_t>(bytes));
+    std::memcpy(packet.data() + 2U, &network_bytes, sizeof(network_bytes));
+    std::memcpy(packet.data() + 4U, data, bytes);
+    write_handler_(std::move(packet));
 }
 
 bool rtsp_play_session::apply_tracks(const media_track_snapshot_ptr& tracks)

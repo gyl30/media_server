@@ -134,6 +134,7 @@ constexpr std::string_view rtsp_pull_source_id = "10000000-0000-4000-8000-000000
 constexpr std::string_view rtsp_play_query = "?stream_id=00000000-0000-4000-8000-000000000010";
 
 using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
+using rtsp_play_write_handler = rtsp_play_session::write_handler;
 static_assert(std::is_constructible_v<rtsp_publish_session, worker_context&, boost::asio::ip::address, rtsp_write_handler>);
 static_assert(!std::is_constructible_v<rtsp_publish_session, boost::asio::io_context::executor_type, boost::asio::ip::address, rtsp_write_handler>);
 static_assert(
@@ -162,7 +163,7 @@ static_assert(std::is_constructible_v<rtsp_play_session,
                                       std::string,
                                       video_transcode_codec,
                                       boost::asio::ip::address,
-                                      rtsp_write_handler,
+                                      rtsp_play_write_handler,
                                       rtsp_play_session::queue_bytes_handler,
                                       std::size_t>);
 static_assert(!std::is_constructible_v<rtsp_play_session,
@@ -171,7 +172,7 @@ static_assert(!std::is_constructible_v<rtsp_play_session,
                                        std::string,
                                        video_transcode_codec,
                                        boost::asio::ip::address,
-                                       rtsp_write_handler,
+                                       rtsp_play_write_handler,
                                        rtsp_play_session::queue_bytes_handler,
                                        std::size_t>);
 static_assert(std::is_constructible_v<rtsp_pull_session,
@@ -7858,7 +7859,7 @@ void test_rtsp_play_reply_error()
                                                        "live/play-reply-error",
                                                        video_transcode_codec::passthrough,
                                                        boost::asio::ip::address_v4::loopback(),
-                                                       [](std::span<const std::uint8_t>) {},
+                                                       [](std::vector<std::uint8_t>) {},
                                                        []() { return 0U; },
                                                        1024U * 1024U),
         .response = {},
@@ -7912,7 +7913,7 @@ void test_rtsp_play_terminal_failure_quiesces_reader()
                                                        "live/play-terminal-failure",
                                                        video_transcode_codec::passthrough,
                                                        boost::asio::ip::address_v4::loopback(),
-                                                       [](std::span<const std::uint8_t>) {},
+                                                       [](std::vector<std::uint8_t>) {},
                                                        []() { return 0U; },
                                                        1024U * 1024U),
         .response = {},
@@ -7992,6 +7993,7 @@ void test_rtsp_play_output_backpressure()
     constexpr std::size_t max_queue_bytes = 1024U;
     std::size_t queued_bytes = max_queue_bytes / 2U;
     std::size_t media_writes = 0;
+    std::vector<std::vector<std::uint8_t>> media_packets;
     bool ended = false;
     rtsp_play_reply_fixture fixture{
         .session = std::make_shared<rtsp_play_session>(worker,
@@ -7999,7 +8001,11 @@ void test_rtsp_play_output_backpressure()
                                                        stream->name(),
                                                        video_transcode_codec::passthrough,
                                                        boost::asio::ip::address_v4::loopback(),
-                                                       [&media_writes](std::span<const std::uint8_t>) { ++media_writes; },
+                                                       [&media_writes, &media_packets](std::vector<std::uint8_t> packet)
+                                                       {
+                                                           ++media_writes;
+                                                           media_packets.push_back(std::move(packet));
+                                                       },
                                                        [&queued_bytes]() { return queued_bytes; },
                                                        max_queue_bytes),
         .response = {},
@@ -8045,6 +8051,13 @@ void test_rtsp_play_output_backpressure()
     fixture.session->on_output_progress();
     drain();
     require(!fixture.session->waiting_for_output() && media_writes > 0U, "rtsp resumes history after output drain");
+    for (const auto& packet : media_packets)
+    {
+        require(packet.size() >= 4U && packet[0] == 0x24U, "rtsp media uses one complete interleaved frame");
+        const auto payload_bytes = (static_cast<std::size_t>(packet[2]) << 8U) | packet[3];
+        require(payload_bytes == packet.size() - 4U, "rtsp interleaved length covers the complete payload");
+        require(packet[1] == 0U || packet[1] == 1U, "rtsp interleaved frame uses negotiated RTP or RTCP channel");
+    }
     const auto caught_up_writes = media_writes;
     fixture.session->on_output_progress();
     drain();

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <string_view>
 
@@ -64,6 +65,8 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
    private:
     [[nodiscard]] int admit_play(std::string_view uri, bool track_uri);
     void write(std::span<const std::uint8_t> data);
+    void write(std::vector<std::uint8_t> data);
+    void write(tcp_write_queue::buffer data);
 
    private:
     void report_publisher_event(event_state state, std::string_view stage = {}, std::string_view error = {});

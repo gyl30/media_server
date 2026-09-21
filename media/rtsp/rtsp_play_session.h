@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <utility>
+#include <vector>
 #include <functional>
 #include <string_view>
 
@@ -29,13 +30,14 @@ class worker_context;
 class rtsp_play_session final : public media_reader, public std::enable_shared_from_this<rtsp_play_session>
 {
    public:
+    using write_handler = std::function<void(std::vector<std::uint8_t>)>;
     using queue_bytes_handler = std::function<std::size_t()>;
     rtsp_play_session(worker_context& worker,
                       std::string stream_id,
                       std::string stream_name,
                       video_transcode_codec video_codec,
                       boost::asio::ip::address local_address,
-                      std::function<void(std::span<const std::uint8_t>)> write,
+                      write_handler write,
                       queue_bytes_handler queued_output_bytes,
                       std::size_t max_output_queue_bytes);
 
@@ -83,6 +85,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     [[nodiscard]] int prepare_presentation();
     [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
+    void write_interleaved(std::uint8_t channel, const void* data, std::size_t bytes);
     [[nodiscard]] int presentation_status() const;
     void process_batch();
     [[nodiscard]] std::size_t queued_output_bytes() const;
@@ -99,7 +102,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     std::string stream_name_;
     video_transcode_codec video_codec_;
     boost::asio::ip::address local_address_;
-    std::function<void(std::span<const std::uint8_t>)> write_handler_;
+    write_handler write_handler_;
     std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
     queue_bytes_handler queued_output_bytes_;

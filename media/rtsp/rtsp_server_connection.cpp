@@ -423,12 +423,22 @@ int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* s
 
 void rtsp_server_connection::write(std::span<const std::uint8_t> data)
 {
+    write(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
+}
+
+void rtsp_server_connection::write(std::vector<std::uint8_t> data)
+{
+    write(std::make_shared<std::vector<std::uint8_t>>(std::move(data)));
+}
+
+void rtsp_server_connection::write(tcp_write_queue::buffer data)
+{
     if (closed_)
     {
         return;
     }
     const bool close_after_write = std::exchange(close_next_write_, false);
-    if (data.empty())
+    if (data->empty())
     {
         if (close_after_write)
         {
@@ -437,7 +447,7 @@ void rtsp_server_connection::write(std::span<const std::uint8_t> data)
         return;
     }
 
-    const auto result = write_queue_.enqueue(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()), close_after_write);
+    const auto result = write_queue_.enqueue(std::move(data), close_after_write);
     if (result == tcp_write_enqueue_result::overflow)
     {
         report_publisher_event(event_state::runtime_error, "transport", "write_queue_overflow");
@@ -544,7 +554,7 @@ int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
                                                         std::move(target->stream_name),
                                                         video_codec_,
                                                         local_address_,
-                                                        [owner](std::span<const std::uint8_t> data) { owner->write(data); },
+                                                        [owner](std::vector<std::uint8_t> data) { owner->write(std::move(data)); },
                                                         [owner]() { return owner->write_queue_.queued_bytes(); },
                                                         write_queue_.max_bytes());
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
