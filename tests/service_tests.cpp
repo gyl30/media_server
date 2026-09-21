@@ -6,6 +6,7 @@
 #include <thread>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
 #include <utility>
 #include <iostream>
 #include <stdexcept>
@@ -168,6 +169,11 @@ class controlled_registration_server
     std::thread thread_;
 };
 
+[[noreturn]] void hard_exit_after_signal()
+{
+    std::_Exit(0);
+}
+
 void test_signaling_registration_precedes_media_listeners()
 {
     controlled_registration_server signaling;
@@ -191,6 +197,8 @@ void test_signaling_registration_precedes_media_listeners()
     require(!listening_before_registration, "media listeners wait for signaling registration");
     require(listening_after_registration, "media listeners start after signaling registration");
     require(result.load() == 0, "service stops cleanly after signaling registration");
+    require(service.stopped_by_signal(), "service records the hard-stop signal");
+    hard_exit_after_signal();
 }
 
 void test_signal_stops_registration_wait()
@@ -208,6 +216,8 @@ void test_signal_stops_registration_wait()
 
     require(std::chrono::steady_clock::now() - started < 500ms, "signal stops in-flight registration");
     require(result.load() == 0, "signal stops service during registration");
+    require(service.stopped_by_signal(), "service records the hard-stop signal");
+    hard_exit_after_signal();
 }
 
 }    // namespace

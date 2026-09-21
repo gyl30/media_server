@@ -25,6 +25,8 @@ service::service(config cfg) : config_(std::move(cfg)) {}
 
 service::~service() = default;
 
+bool service::stopped_by_signal() const noexcept { return stopped_by_signal_; }
+
 void service::stop() { workers_->stop(); }
 
 void service::register_signaling(boost::asio::yield_context& yield)
@@ -122,7 +124,16 @@ int service::run()
     signaling_client::instance().configure(config_, instance_id);
 
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
-    signals.async_wait([this](const boost::system::error_code&, int) { stop(); });
+    signals.async_wait(
+        [this](const boost::system::error_code& error, int)
+        {
+            if (error)
+            {
+                return;
+            }
+            stopped_by_signal_ = true;
+            stop();
+        });
 
     boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_server(yield); }, boost::asio::detached);
     spdlog::info("worker threads {}", workers_->size());

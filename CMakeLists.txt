@@ -351,6 +351,18 @@ if(BUILD_TESTING)
     foreach(test_case IN ITEMS invalid_bind invalid_webrtc registration registration_stop)
         add_test(NAME service_${test_case} COMMAND service_tests ${test_case})
     endforeach()
+    add_test(
+        NAME process_hard_stop
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/process_termination_smoke.sh
+                $<TARGET_FILE:media_server>
+                ${CMAKE_CURRENT_BINARY_DIR}/process-hard-stop
+    )
+    set_tests_properties(
+        process_hard_stop
+        PROPERTIES
+            ENVIRONMENT "MEDIA_SERVER_TERMINATION_THREADS=6;MEDIA_SERVER_TERMINATION_ACTIVE_SESSIONS=0"
+            RUN_SERIAL TRUE
+    )
 
     add_executable(media_pipeline_tests
         tests/media_pipeline_tests.cpp

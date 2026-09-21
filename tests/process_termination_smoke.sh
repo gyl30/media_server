@@ -5,6 +5,21 @@ server_bin="${1:-./build/media_server}"
 work_dir="${2:-${TMPDIR:-/tmp}/media_server-process-termination-smoke}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 signaling_bin="${SIGNALING_BIN:-}"
+worker_threads="${MEDIA_SERVER_TERMINATION_THREADS:-2}"
+active_sessions="${MEDIA_SERVER_TERMINATION_ACTIVE_SESSIONS:-1}"
+termination_signal="${MEDIA_SERVER_TERMINATION_SIGNAL:-TERM}"
+if [[ ! "$worker_threads" =~ ^[1-9][0-9]*$ ]]; then
+    echo "MEDIA_SERVER_TERMINATION_THREADS must be a positive integer" >&2
+    exit 1
+fi
+if [[ "$active_sessions" != 0 && "$active_sessions" != 1 ]]; then
+    echo "MEDIA_SERVER_TERMINATION_ACTIVE_SESSIONS must be 0 or 1" >&2
+    exit 1
+fi
+if [[ "$termination_signal" != TERM && "$termination_signal" != INT ]]; then
+    echo "MEDIA_SERVER_TERMINATION_SIGNAL must be TERM or INT" >&2
+    exit 1
+fi
 mkdir -p "$work_dir"
 work_dir="$(cd "$work_dir" && pwd)"
 server_bin="$(realpath "$server_bin")"
@@ -135,7 +150,7 @@ if [[ "$sse_status" != "HTTP/1.1 200 OK" || -z "$sse_content_type" ]]; then
     exit 1
 fi
 
-"$server_bin" --rtmp-port 19360 --rtsp-port 18564 --http-port "$http_port" --threads 2 \
+"$server_bin" --rtmp-port 19360 --rtsp-port 18564 --http-port "$http_port" --threads "$worker_threads" \
     --signaling-url "http://127.0.0.1:$signaling_http_port" \
     --server-id process-termination-smoke \
     --control-url "http://127.0.0.1:$http_port" \
@@ -145,41 +160,43 @@ main_pid=$!
 
 wait_http "http://127.0.0.1:${http_port}/" "$main_pid" "$work_dir/server.log"
 
-exec 3<>"/dev/tcp/127.0.0.1/${http_port}"
-printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n' >&3
-wait_http "http://127.0.0.1:${http_port}/" "$main_pid" "$work_dir/server.log"
+if [[ "$active_sessions" == 1 ]]; then
+    exec 3<>"/dev/tcp/127.0.0.1/${http_port}"
+    printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n' >&3
+    wait_http "http://127.0.0.1:${http_port}/" "$main_pid" "$work_dir/server.log"
 
-exec 5<>"/dev/tcp/127.0.0.1/19360"
-printf '\x03' >&5
-head -c 1536 /dev/zero >&5
-rtmp_version=""
-if ! IFS= read -r -N 1 -t 2 rtmp_version <&5 || [[ "$rtmp_version" != $'\x03' ]]; then
-    echo "RTMP connection did not complete the first handshake step" >&2
-    exit 1
-fi
-
-exec 6<>"/dev/tcp/127.0.0.1/18564"
-printf 'OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n' >&6
-rtsp_status=""
-while IFS= read -r -t 2 header <&6; do
-    header="${header%$'\r'}"
-    if [[ -z "$rtsp_status" ]]; then
-        rtsp_status="$header"
-    elif [[ -z "$header" ]]; then
-        break
+    exec 5<>"/dev/tcp/127.0.0.1/19360"
+    printf '\x03' >&5
+    head -c 1536 /dev/zero >&5
+    rtmp_version=""
+    if ! IFS= read -r -N 1 -t 2 rtmp_version <&5 || [[ "$rtmp_version" != $'\x03' ]]; then
+        echo "RTMP connection did not complete the first handshake step" >&2
+        exit 1
     fi
-done
-if [[ "$rtsp_status" != "RTSP/1.0 200 OK" ]]; then
-    echo "RTSP connection did not complete OPTIONS: $rtsp_status" >&2
-    exit 1
+
+    exec 6<>"/dev/tcp/127.0.0.1/18564"
+    printf 'OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n' >&6
+    rtsp_status=""
+    while IFS= read -r -t 2 header <&6; do
+        header="${header%$'\r'}"
+        if [[ -z "$rtsp_status" ]]; then
+            rtsp_status="$header"
+        elif [[ -z "$header" ]]; then
+            break
+        fi
+    done
+    if [[ "$rtsp_status" != "RTSP/1.0 200 OK" ]]; then
+        echo "RTSP connection did not complete OPTIONS: $rtsp_status" >&2
+        exit 1
+    fi
 fi
 
 exit_started_ns="$(date +%s%N)"
-kill -TERM "$main_pid"
+kill -"$termination_signal" "$main_pid"
 wait_process_exit "$main_pid" media_server "$work_dir/server.log"
 exit_elapsed_ms=$((($(date +%s%N) - exit_started_ns) / 1000000))
 if ((exit_elapsed_ms > 2000)); then
-    echo "media_server took ${exit_elapsed_ms}ms to exit with active sessions" >&2
+    echo "media_server took ${exit_elapsed_ms}ms to exit after SIG${termination_signal}" >&2
     exit 1
 fi
 main_pid=""
@@ -189,7 +206,7 @@ exec 5>&-
 exec 5<&-
 exec 6>&-
 exec 6<&-
-echo "media_server active-session SIGTERM exit: ${exit_elapsed_ms}ms"
+echo "media_server SIG${termination_signal} exit: ${exit_elapsed_ms}ms"
 
 kill -TERM "$signaling_pid"
 wait_process_exit "$signaling_pid" signaling "$work_dir/signaling.log"
