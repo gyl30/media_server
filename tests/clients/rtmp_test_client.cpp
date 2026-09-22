@@ -142,6 +142,15 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::play(std::st
     co_return boost::system::error_code{};
 }
 
+boost::asio::awaitable<boost::system::error_code> rtmp_test_client::push_video(std::span<const std::uint8_t> video, std::uint32_t timestamp)
+{
+    if (client_ == nullptr || rtmp_client_push_video(client_, video.data(), video.size(), timestamp) != 0)
+    {
+        co_return boost::asio::error::operation_aborted;
+    }
+    co_return co_await flush();
+}
+
 boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_for(std::chrono::seconds duration)
 {
     co_return co_await consume_until(std::chrono::steady_clock::now() + duration);
@@ -174,13 +183,15 @@ boost::asio::awaitable<boost::system::error_code> rtmp_test_client::consume_unti
     boost::asio::steady_timer timer(socket_.get_executor());
     bool expired = false;
     timer.expires_at(deadline);
-    timer.async_wait([this, &expired](const boost::system::error_code& error) {
-        if (!error)
+    timer.async_wait(
+        [this, &expired](const boost::system::error_code& error)
         {
-            expired = true;
-            socket_.cancel();
-        }
-    });
+            if (!error)
+            {
+                expired = true;
+                socket_.cancel();
+            }
+        });
 
     while (!expired)
     {
@@ -203,6 +214,12 @@ void rtmp_test_client::cancel() noexcept
 {
     boost::system::error_code error;
     socket_.cancel(error);
+}
+
+void rtmp_test_client::close() noexcept
+{
+    boost::system::error_code error;
+    socket_.close(error);
 }
 
 int rtmp_test_client::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)

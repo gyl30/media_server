@@ -602,6 +602,12 @@ if(BUILD_TESTING)
     )
     target_link_libraries(fanout_rtmp_generator PRIVATE media_core media_server_link_options)
 
+    add_executable(fanout_rtmp_publisher
+        tests/fanout_rtmp_publisher.cpp
+        tests/clients/rtmp_test_client.cpp
+    )
+    target_link_libraries(fanout_rtmp_publisher PRIVATE media_core media_server_link_options)
+
     add_executable(fanout_rtsp_publisher tests/fanout_rtsp_publisher.cpp)
     target_link_libraries(fanout_rtsp_publisher PRIVATE media_core media_server_link_options)
 
