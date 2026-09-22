@@ -4006,6 +4006,103 @@ void test_hls_play_admission()
     runner.join();
 }
 
+void test_hls_http_keep_alive()
+{
+    test::publish_claim_test_server claim_server;
+    io_context_pool workers(1);
+    auto& worker = workers.context(0);
+    configure_control_plane(worker, claim_server);
+    const config application_config;
+    constexpr std::string_view stream_name = "live/hls-keep-alive";
+
+    auto stream = std::make_shared<media_stream>(std::string(stream_name), worker);
+    require(stream->set_tracks({make_video_track()}), "hls keep alive track");
+    require(stream_registry::instance().add(stream), "hls keep alive stream");
+    boost::asio::ip::tcp::acceptor acceptor(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    std::jthread runner([&worker]() { worker.run(); });
+
+    std::promise<void> ready;
+    auto ready_future = ready.get_future();
+    boost::asio::post(worker.io(),
+                      [stream, &application_config, &ready]()
+                      {
+                          require(hls::segment_count(stream->name(), application_config) == 0U, "hls keep alive segmenter create");
+                          stream->publish(make_video_frame(0, true));
+                          stream->publish(make_video_frame(500'000'000, false));
+                          stream->publish(make_video_frame(2'500'000'000, true));
+                          ready.set_value();
+                      });
+    ready_future.get();
+
+    const auto initial =
+        request_hls(acceptor, worker, application_config, "/play/hls/live/hls-keep-alive/index.m3u8?stream_id=00000000-0000-4000-8000-000000000128");
+    require(initial.result() == boost::beast::http::status::temporary_redirect, "hls keep alive redirect");
+    const auto location = std::string(initial[boost::beast::http::field::location]);
+    const auto secret = location.substr(location.find("?session=") + 9U);
+
+    boost::asio::io_context client_io;
+    boost::asio::ip::tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+    auto connection = std::make_shared<http_session>(worker, acceptor.accept(), application_config);
+    connection->startup();
+    connection.reset();
+
+    boost::beast::flat_buffer buffer;
+    http_request playlist_request(boost::beast::http::verb::get, location, 11);
+    playlist_request.set(boost::beast::http::field::host, "127.0.0.1");
+    playlist_request.keep_alive(true);
+    boost::beast::http::write(client, playlist_request);
+
+    boost::beast::http::response<boost::beast::http::string_body> playlist_response;
+    boost::beast::http::read(client, buffer, playlist_response);
+    require(playlist_response.result() == boost::beast::http::status::ok && playlist_response.keep_alive(),
+            "hls playlist keeps canonical connection");
+    require(playlist_response.body().find("./0.ts?session=" + secret) != std::string::npos, "hls keep alive playlist secret");
+
+    http_request segment_request(boost::beast::http::verb::get, "/play/hls/live/hls-keep-alive/0.ts?session=" + secret, 11);
+    segment_request.set(boost::beast::http::field::host, "127.0.0.1");
+    segment_request.keep_alive(true);
+    boost::beast::http::write(client, segment_request);
+
+    boost::beast::http::response<boost::beast::http::string_body> segment_response;
+    boost::beast::http::read(client, buffer, segment_response);
+    require(segment_response.result() == boost::beast::http::status::ok && segment_response.keep_alive() && !segment_response.body().empty(),
+            "hls segment reuses canonical connection");
+
+    std::promise<void> ended;
+    auto ended_future = ended.get_future();
+    boost::asio::post(worker.io(),
+                      [stream, &ended]()
+                      {
+                          stream->end();
+                          ended.set_value();
+                      });
+    ended_future.get();
+    boost::beast::http::write(client, playlist_request);
+
+    boost::beast::http::response<boost::beast::http::string_body> ended_playlist_response;
+    boost::beast::http::read(client, buffer, ended_playlist_response);
+    require(ended_playlist_response.result() == boost::beast::http::status::ok && ended_playlist_response.keep_alive() &&
+                ended_playlist_response.body().find("#EXT-X-ENDLIST") != std::string::npos,
+            "hls ended playlist keeps canonical connection");
+
+    http_request other_request(boost::beast::http::verb::get, "/not-hls", 11);
+    other_request.set(boost::beast::http::field::host, "127.0.0.1");
+    other_request.keep_alive(true);
+    boost::beast::http::write(client, other_request);
+
+    boost::beast::http::response<boost::beast::http::string_body> other_response;
+    boost::beast::http::read(client, buffer, other_response);
+    require(other_response.result() == boost::beast::http::status::not_found && !other_response.keep_alive(),
+            "hls connection closes on non hls request");
+
+    boost::system::error_code error;
+    client.close(error);
+    hls::shutdown();
+    workers.stop();
+    runner.join();
+}
+
 void test_hls_source_replacement()
 {
     test::publish_claim_test_server claim_server;
@@ -13951,6 +14048,10 @@ int main(int argc, char* argv[])
         else if (scenario == "hls_play_admission")
         {
             media_server::test_hls_play_admission();
+        }
+        else if (scenario == "hls_http_keep_alive")
+        {
+            media_server::test_hls_http_keep_alive();
         }
         else if (scenario == "hls_source_replacement")
         {

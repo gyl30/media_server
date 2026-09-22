@@ -457,6 +457,7 @@ if(BUILD_TESTING)
         stream_registry_session_identity_lifecycle
         hls_module_lifecycle
         hls_play_admission
+        hls_http_keep_alive
         hls_source_replacement
         hls_play_inactivity
         rtsp_input_output_boundaries
