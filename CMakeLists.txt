@@ -627,6 +627,12 @@ if(BUILD_TESTING)
     )
     target_link_libraries(fanout_rtsp_generator PRIVATE media_core media_server_link_options)
 
+    add_executable(fanout_http_flv_generator
+        tests/fanout_http_flv_generator.cpp
+        tests/clients/http_flv_test_client.cpp
+    )
+    target_link_libraries(fanout_http_flv_generator PRIVATE media_core media_server_link_options)
+
     add_executable(fanout_whip_publisher
         tests/fanout_whip_publisher.cpp
         tests/clients/webrtc_test_client.cpp
