@@ -43,6 +43,9 @@ boost::asio::awaitable<boost::system::error_code> rtsp_test_client::play(std::st
 {
     rtp_.clear();
     rtp_by_channel_.clear();
+    received_bytes_ = 0;
+    received_messages_ = 0;
+    capture_rtp_ = true;
     auto error = co_await start(std::move(host), port, mode::play);
     if (error)
     {
@@ -59,7 +62,42 @@ boost::asio::awaitable<boost::system::error_code> rtsp_test_client::play(std::st
             co_return error ? error : boost::asio::error::operation_aborted;
         }
     }
+    capture_rtp_ = false;
     co_return boost::system::error_code{};
+}
+
+boost::asio::awaitable<boost::system::error_code> rtsp_test_client::consume_one()
+{
+    boost::system::error_code error = co_await flush();
+    if (error)
+    {
+        co_return error;
+    }
+
+    std::array<std::uint8_t, 8192> read_buffer{};
+    const auto bytes =
+        co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+    if (error)
+    {
+        co_return error;
+    }
+    if (rtsp_client_input(client_, read_buffer.data(), bytes) != 0)
+    {
+        co_return boost::asio::error::operation_aborted;
+    }
+    co_return boost::system::error_code{};
+}
+
+void rtsp_test_client::cancel() noexcept
+{
+    boost::system::error_code error;
+    socket_.cancel(error);
+}
+
+void rtsp_test_client::close() noexcept
+{
+    boost::system::error_code error;
+    socket_.close(error);
 }
 
 boost::asio::awaitable<boost::system::error_code> rtsp_test_client::start(std::string host, std::uint16_t port, mode operation)
@@ -178,9 +216,14 @@ void rtsp_test_client::rtp_callback(void* param, std::uint8_t channel, const voi
     if ((channel % 2U) == 0U && bytes != 0)
     {
         auto* self = static_cast<rtsp_test_client*>(param);
-        const auto* rtp = static_cast<const std::uint8_t*>(data);
-        self->rtp_.assign(rtp, rtp + bytes);
-        self->rtp_by_channel_[channel] = self->rtp_;
+        self->received_bytes_ += bytes;
+        ++self->received_messages_;
+        if (self->capture_rtp_)
+        {
+            const auto* rtp = static_cast<const std::uint8_t*>(data);
+            self->rtp_.assign(rtp, rtp + bytes);
+            self->rtp_by_channel_[channel] = self->rtp_;
+        }
     }
 }
 

@@ -27,10 +27,15 @@ class rtsp_test_client final
    public:
     boost::asio::awaitable<boost::system::error_code> publish(std::string host, std::uint16_t port, std::string sdp, std::vector<std::uint8_t> rtp);
     boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port, std::size_t rtp_media_count = 1);
+    boost::asio::awaitable<boost::system::error_code> consume_one();
+    void cancel() noexcept;
+    void close() noexcept;
 
     [[nodiscard]] const std::string& sdp() const noexcept { return sdp_; }
     [[nodiscard]] const std::vector<std::uint8_t>& rtp() const noexcept { return rtp_; }
     [[nodiscard]] const std::map<std::uint8_t, std::vector<std::uint8_t>>& rtp_by_channel() const noexcept { return rtp_by_channel_; }
+    [[nodiscard]] std::uint64_t received_bytes() const noexcept { return received_bytes_; }
+    [[nodiscard]] std::uint64_t received_messages() const noexcept { return received_messages_; }
 
    private:
     enum class mode
@@ -75,9 +80,12 @@ class rtsp_test_client final
     std::vector<std::vector<std::uint8_t>> writes_;
     std::vector<std::uint8_t> rtp_;
     std::map<std::uint8_t, std::vector<std::uint8_t>> rtp_by_channel_;
+    std::uint64_t received_bytes_{};
+    std::uint64_t received_messages_{};
     rtsp_client_t* client_{};
     mode mode_{mode::publish};
     bool completed_{};
+    bool capture_rtp_{true};
 };
 
 }    // namespace media_server::test
