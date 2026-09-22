@@ -617,6 +617,12 @@ if(BUILD_TESTING)
     )
     target_link_libraries(fanout_whip_publisher PRIVATE media_core media_server_link_options)
 
+    add_executable(fanout_whep_player
+        tests/fanout_whep_player.cpp
+        tests/clients/webrtc_test_client.cpp
+    )
+    target_link_libraries(fanout_whep_player PRIVATE media_core media_server_link_options)
+
     add_executable(webrtc_signaling_tests tests/webrtc_signaling_tests.cpp)
     target_link_libraries(webrtc_signaling_tests PRIVATE media_core media_server_link_options)
     add_test(NAME webrtc_signaling_tests COMMAND webrtc_signaling_tests)
