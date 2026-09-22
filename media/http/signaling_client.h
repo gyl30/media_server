@@ -3,12 +3,14 @@
 
 #include <mutex>
 #include <chrono>
+#include <optional>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <string_view>
 
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include "config.h"
 #include "media/core/runtime_event.h"
@@ -65,10 +67,26 @@ class signaling_client
 
    private:
     static constexpr std::size_t max_pending_events = 500U;
+    static constexpr std::chrono::milliseconds runtime_event_batch_delay{10};
+
+    class wake_timer_registration
+    {
+       public:
+        wake_timer_registration(signaling_client& client, boost::asio::steady_timer& timer) : client_(client), timer_(timer) {}
+        ~wake_timer_registration();
+
+       private:
+        signaling_client& client_;
+        boost::asio::steady_timer& timer_;
+    };
 
    private:
     std::mutex event_mutex_;
     std::vector<runtime_event> pending_events_;
+    boost::asio::steady_timer* wake_timer_{};
+    std::optional<boost::asio::any_io_executor> wakeup_executor_;
+    std::optional<std::chrono::steady_clock::time_point> event_deadline_;
+    bool wakeup_posted_{};
     config config_;
     std::string instance_id_;
     std::chrono::milliseconds heartbeat_interval_{std::chrono::seconds{5}};

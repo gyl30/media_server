@@ -556,6 +556,9 @@ if(BUILD_TESTING)
         capacity
         overflow
         nonblocking
+        wakeup
+        wakeup_batch
+        heartbeat_deadline
         gb_sender_streaming
     )
         add_test(NAME signaling_event_${test_case} COMMAND signaling_event_tests ${test_case})

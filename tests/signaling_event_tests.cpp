@@ -59,6 +59,7 @@ struct captured_request
 {
     std::string target;
     std::string body;
+    std::chrono::steady_clock::time_point received_at;
 };
 
 class scripted_http_server
@@ -135,7 +136,7 @@ class scripted_http_server
             ++request_index;
             {
                 std::lock_guard lock(mutex_);
-                requests_.push_back({std::string(request.target()), request.body()});
+                requests_.push_back({std::string(request.target()), request.body(), std::chrono::steady_clock::now()});
             }
             condition_.notify_all();
 
@@ -211,9 +212,9 @@ media_server::config client_config(std::string url)
 class client_fixture
 {
    public:
-    explicit client_fixture(std::string url) : work_(boost::asio::make_work_guard(io_))
+    explicit client_fixture(std::string url, std::chrono::milliseconds heartbeat_interval = 20ms) : work_(boost::asio::make_work_guard(io_))
     {
-        media_server::signaling_client::instance().configure(client_config(std::move(url)), "instance-a", 20ms, 500ms);
+        media_server::signaling_client::instance().configure(client_config(std::move(url)), "instance-a", heartbeat_interval, 500ms);
     }
 
     ~client_fixture() { stop(); }
@@ -401,6 +402,62 @@ void test_report_does_not_run_network()
     media_server::signaling_client::instance().report(event(1));
     require(std::chrono::steady_clock::now() - started < 100ms, "report does not block on network");
     require(!server.wait_requests(1, 100ms), "report does not initiate HTTP");
+}
+
+void test_report_wakes_event_delivery()
+{
+    scripted_http_server server;
+    client_fixture fixture(server.url(), 2s);
+    fixture.start();
+    require(server.wait_requests(1, 500ms), "initial heartbeat is immediate");
+    const auto started = std::chrono::steady_clock::now();
+    media_server::signaling_client::instance().report(event(1));
+    require(server.wait_requests(2, 500ms), "report wakes event delivery");
+    fixture.stop();
+    const auto requests = server.requests();
+    require(requests[0].target == "/internal/media-servers/heartbeat", "initial request is heartbeat");
+    require(requests[1].target == "/internal/runtime-events" && batch_events(requests[1]).size() == 1U,
+            "woken event batch uploaded");
+    require(std::chrono::steady_clock::now() - started < 1s, "event upload does not wait for heartbeat");
+}
+
+void test_reports_share_woken_batch()
+{
+    scripted_http_server server;
+    client_fixture fixture(server.url(), 2s);
+    fixture.start();
+    require(server.wait_requests(1, 500ms), "initial heartbeat is immediate");
+    media_server::signaling_client::instance().report(event(1));
+    media_server::signaling_client::instance().report(event(2));
+    media_server::signaling_client::instance().report(event(3));
+    require(server.wait_requests(2, 500ms), "event batch uploaded");
+    fixture.stop();
+    const auto requests = server.requests();
+    require(requests[1].target == "/internal/runtime-events" && batch_events(requests[1]).size() == 3U,
+            "woken reports share one batch");
+}
+
+void test_event_delivery_does_not_starve_heartbeat()
+{
+    scripted_http_server server;
+    client_fixture fixture(server.url());
+    fixture.start();
+    require(server.wait_requests(1, 500ms), "initial heartbeat is immediate");
+
+    const auto deadline = std::chrono::steady_clock::now() + 100ms;
+    std::size_t event_index{};
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        media_server::signaling_client::instance().report(event(++event_index));
+        std::this_thread::sleep_for(1ms);
+    }
+    require(server.wait_requests(3, 500ms), "continuous events upload requests");
+    fixture.stop();
+
+    const auto requests = server.requests();
+    const auto heartbeat = std::find_if(requests.begin() + 1, requests.end(), [deadline](const captured_request& request)
+                                        { return request.target == "/internal/media-servers/heartbeat" && request.received_at < deadline; });
+    require(heartbeat != requests.end(), "continuous event delivery preserves the heartbeat deadline");
 }
 
 void test_gb_sender_streaming_is_not_repeated_after_config_update()
@@ -687,6 +744,18 @@ int main(int argc, char** argv)
     else if (test == "nonblocking")
     {
         test_report_does_not_run_network();
+    }
+    else if (test == "wakeup")
+    {
+        test_report_wakes_event_delivery();
+    }
+    else if (test == "wakeup_batch")
+    {
+        test_reports_share_woken_batch();
+    }
+    else if (test == "heartbeat_deadline")
+    {
+        test_event_delivery_does_not_starve_heartbeat();
     }
     else if (test == "gb_sender_streaming")
     {

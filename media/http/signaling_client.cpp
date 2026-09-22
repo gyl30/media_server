@@ -98,6 +98,18 @@ signaling_client& signaling_client::instance()
     return value;
 }
 
+signaling_client::wake_timer_registration::~wake_timer_registration()
+{
+    std::scoped_lock lock(client_.event_mutex_);
+    if (client_.wake_timer_ == &timer_)
+    {
+        client_.wake_timer_ = nullptr;
+        client_.wakeup_executor_.reset();
+        client_.event_deadline_.reset();
+        client_.wakeup_posted_ = false;
+    }
+}
+
 void signaling_client::configure(const config& cfg,
                                  std::string instance_id,
                                  std::chrono::milliseconds heartbeat_interval,
@@ -181,6 +193,7 @@ void signaling_client::report(runtime_event event)
     }
     bool overflow{};
     std::size_t pending{};
+    std::optional<boost::asio::any_io_executor> wakeup_executor;
     const auto newest_stream_id = event.stream_id;
     {
         std::scoped_lock lock(event_mutex_);
@@ -191,6 +204,30 @@ void signaling_client::report(runtime_event event)
             pending_events_.clear();
         }
         pending_events_.push_back(std::move(event));
+        if (wake_timer_ && !event_deadline_ && !wakeup_posted_)
+        {
+            wakeup_posted_ = true;
+            wakeup_executor = wakeup_executor_;
+        }
+    }
+    if (wakeup_executor)
+    {
+        boost::asio::post(*wakeup_executor,
+                          [this]()
+                          {
+                              boost::asio::steady_timer* wake_timer{};
+                              {
+                                  std::scoped_lock lock(event_mutex_);
+                                  wakeup_posted_ = false;
+                                  if (!wake_timer_ || event_deadline_)
+                                  {
+                                      return;
+                                  }
+                                  wake_timer = wake_timer_;
+                                  event_deadline_ = std::chrono::steady_clock::now() + runtime_event_batch_delay;
+                              }
+                              wake_timer->cancel();
+                          });
     }
     if (overflow)
     {
@@ -257,34 +294,64 @@ void signaling_client::run(boost::asio::yield_context& yield)
     {
         return;
     }
-    boost::asio::steady_timer timer(yield.get_executor());
+    boost::asio::steady_timer wake_timer(yield.get_executor());
+    {
+        std::scoped_lock lock(event_mutex_);
+        wake_timer_ = &wake_timer;
+        wakeup_executor_ = wake_timer.get_executor();
+        event_deadline_.reset();
+        wakeup_posted_ = false;
+    }
+    const wake_timer_registration unregister_wake_timer(*this, wake_timer);
     std::vector<runtime_event> events;
+    auto heartbeat_deadline = std::chrono::steady_clock::now();
+    bool event_delivery_due{};
     for (;;)
     {
-        timer.expires_after(heartbeat_interval_);
-        timer.async_wait(yield);
-
-        const auto result = heartbeat_once(yield);
-        if (result.kind == signaling_result_kind::network_error)
+        // Event delivery must not defer the registration lease indefinitely.
+        if (std::chrono::steady_clock::now() >= heartbeat_deadline)
         {
-            spdlog::warn("signaling heartbeat network error {}", result.error);
-            continue;
-        }
-        if (result.kind == signaling_result_kind::temporary_failure)
-        {
-            spdlog::warn("signaling heartbeat temporary failure status {}", result.status);
-            continue;
-        }
-        if (result.kind == signaling_result_kind::rejected)
-        {
-            spdlog::critical("signaling heartbeat rejected status {}; aborting in 5 seconds", result.status);
-            boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
-            abort_timer.async_wait(yield);
-            std::abort();
+            const auto result = heartbeat_once(yield);
+            heartbeat_deadline = std::chrono::steady_clock::now() + heartbeat_interval_;
+            if (result.kind == signaling_result_kind::network_error)
+            {
+                spdlog::warn("signaling heartbeat network error {}", result.error);
+            }
+            else if (result.kind == signaling_result_kind::temporary_failure)
+            {
+                spdlog::warn("signaling heartbeat temporary failure status {}", result.status);
+            }
+            else if (result.kind == signaling_result_kind::rejected)
+            {
+                spdlog::critical("signaling heartbeat rejected status {}; aborting in 5 seconds", result.status);
+                boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
+                abort_timer.async_wait(yield);
+                std::abort();
+            }
+            else
+            {
+                event_delivery_due = true;
+            }
         }
 
         {
             std::scoped_lock lock(event_mutex_);
+            if (event_deadline_ && std::chrono::steady_clock::now() >= *event_deadline_)
+            {
+                event_deadline_.reset();
+                if (events.empty())
+                {
+                    event_delivery_due = true;
+                }
+            }
+        }
+
+        const bool send_events = event_delivery_due;
+        if (send_events)
+        {
+            event_delivery_due = false;
+            std::scoped_lock lock(event_mutex_);
+            event_deadline_.reset();
             if (events.size() + pending_events_.size() > max_pending_events)
             {
                 events.clear();
@@ -292,25 +359,34 @@ void signaling_client::run(boost::asio::yield_context& yield)
             events.insert(events.end(), std::make_move_iterator(pending_events_.begin()), std::make_move_iterator(pending_events_.end()));
             pending_events_.clear();
         }
-        if (events.empty())
+
+        if (send_events && !events.empty())
         {
-            continue;
+            const auto event_result =
+                request("/internal/runtime-events", runtime_event_batch_body(config_, instance_id_, events), host_, port_, request_timeout_, yield);
+            if (event_result.kind == signaling_result_kind::accepted)
+            {
+                events.clear();
+                event_delivery_due = true;
+                continue;
+            }
+            if (event_result.kind == signaling_result_kind::network_error)
+            {
+                spdlog::warn("runtime event batch network error {}; retaining {} events", event_result.error, events.size());
+            }
+            else
+            {
+                spdlog::warn("runtime event batch delivery failed status {}; retaining {} events", event_result.status, events.size());
+            }
         }
-        const auto event_result =
-            request("/internal/runtime-events", runtime_event_batch_body(config_, instance_id_, events), host_, port_, request_timeout_, yield);
-        if (event_result.kind == signaling_result_kind::accepted)
+
+        boost::system::error_code error;
         {
-            events.clear();
-            continue;
+            std::scoped_lock lock(event_mutex_);
+            const auto wake_deadline = event_deadline_ && *event_deadline_ < heartbeat_deadline ? *event_deadline_ : heartbeat_deadline;
+            wake_timer.expires_at(wake_deadline);
         }
-        if (event_result.kind == signaling_result_kind::network_error)
-        {
-            spdlog::warn("runtime event batch network error {}; retaining {} events", event_result.error, events.size());
-        }
-        else
-        {
-            spdlog::warn("runtime event batch delivery failed status {}; retaining {} events", event_result.status, events.size());
-        }
+        wake_timer.async_wait(yield[error]);
     }
 }
 
