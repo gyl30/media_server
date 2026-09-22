@@ -558,7 +558,7 @@ if(BUILD_TESTING)
         overflow
         nonblocking
         wakeup
-        wakeup_batch
+        initial_batch
         heartbeat_deadline
         gb_sender_streaming
     )

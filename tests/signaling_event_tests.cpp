@@ -442,19 +442,18 @@ void test_report_wakes_event_delivery()
     require(std::chrono::steady_clock::now() - started < 1s, "event upload does not wait for heartbeat");
 }
 
-void test_reports_share_woken_batch()
+void test_pending_reports_share_initial_batch()
 {
     scripted_http_server server;
     client_fixture fixture(server.url(), 2s);
-    fixture.start();
-    require(server.wait_requests(1, 500ms), "initial heartbeat is immediate");
     media_server::signaling_client::instance().report(event(1));
     media_server::signaling_client::instance().report(event(2));
     media_server::signaling_client::instance().report(event(3));
+    fixture.start();
     require(server.wait_requests(2, 500ms), "event batch uploaded");
     fixture.stop();
     const auto requests = server.requests();
-    require(requests[1].target == "/internal/runtime-events" && batch_events(requests[1]).size() == 3U, "woken reports share one batch");
+    require(requests[1].target == "/internal/runtime-events" && batch_events(requests[1]).size() == 3U, "pending reports share initial batch");
 }
 
 void test_event_delivery_does_not_starve_heartbeat()
@@ -775,9 +774,9 @@ int main(int argc, char** argv)
     {
         test_report_wakes_event_delivery();
     }
-    else if (test == "wakeup_batch")
+    else if (test == "initial_batch")
     {
-        test_reports_share_woken_batch();
+        test_pending_reports_share_initial_batch();
     }
     else if (test == "heartbeat_deadline")
     {
