@@ -14,6 +14,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/core/tcp_stream.hpp>
@@ -81,7 +82,10 @@ void append_stun_attribute(std::vector<std::uint8_t>& packet, std::uint16_t type
     }
 }
 
-std::vector<std::uint8_t> make_stun_request(std::string_view username, std::string_view password, const std::array<std::uint8_t, 12>& transaction_id)
+std::vector<std::uint8_t> make_stun_request(std::string_view username,
+                                            std::string_view password,
+                                            const std::array<std::uint8_t, 12>& transaction_id,
+                                            bool nominate)
 {
     std::vector<std::uint8_t> packet;
     append_u16(packet, 0x0001);
@@ -93,7 +97,10 @@ std::vector<std::uint8_t> make_stun_request(std::string_view username, std::stri
     append_stun_attribute(packet, 0x0024, priority);
     constexpr std::array<std::uint8_t, 8> tie_breaker{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
     append_stun_attribute(packet, 0x802a, tie_breaker);
-    append_stun_attribute(packet, 0x0025, {});
+    if (nominate)
+    {
+        append_stun_attribute(packet, 0x0025, {});
+    }
 
     set_stun_length(packet, packet.size() - 20U + 24U);
     std::array<std::uint8_t, 20> digest{};
@@ -343,7 +350,7 @@ std::string webrtc_test_context::make_offer(webrtc_test_direction direction) con
 struct webrtc_test_peer::implementation
 {
     implementation(boost::asio::io_context& io, std::shared_ptr<webrtc_test_context> context_value)
-        : socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), 0)), context(std::move(context_value))
+        : socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::address_v4::any(), 0)), keepalive_timer(io), context(std::move(context_value))
     {
     }
 
@@ -383,9 +390,46 @@ struct webrtc_test_peer::implementation
             });
     }
 
+    void schedule_keepalive(std::shared_ptr<webrtc_test_peer> owner)
+    {
+        keepalive_timer.expires_after(std::chrono::seconds(10));
+        keepalive_timer.async_wait(
+            [this, owner = std::move(owner)](const boost::system::error_code& error)
+            {
+                if (error || closed)
+                {
+                    return;
+                }
+                std::array<std::uint8_t, 12> transaction_id{};
+                const auto sequence = ++keepalive_sequence;
+                for (std::size_t index = 0; index < transaction_id.size(); ++index)
+                {
+                    transaction_id[index] = static_cast<std::uint8_t>(sequence >> ((index % sizeof(sequence)) * 8U));
+                }
+                auto packet = std::make_shared<const std::vector<std::uint8_t>>(make_stun_request(ice_username, ice_password, transaction_id, false));
+                socket.async_send_to(boost::asio::buffer(*packet),
+                                     server_endpoint,
+                                     [this, owner, packet](const boost::system::error_code& send_error, std::size_t)
+                                     {
+                                         if (send_error)
+                                         {
+                                             if (!closed && error_callback)
+                                             {
+                                                 error_callback(send_error);
+                                             }
+                                             return;
+                                         }
+                                         schedule_keepalive(owner);
+                                     });
+            });
+    }
+
     boost::asio::ip::udp::socket socket;
+    boost::asio::steady_timer keepalive_timer;
     std::shared_ptr<webrtc_test_context> context;
     boost::asio::ip::udp::endpoint server_endpoint;
+    std::string ice_username;
+    std::string ice_password;
     ssl_ptr ssl;
     srtp_transport srtp;
     std::array<std::uint8_t, 4096> receive_buffer{};
@@ -394,6 +438,7 @@ struct webrtc_test_peer::implementation
     error_handler error_callback;
     bool established{};
     bool closed{};
+    std::uint64_t keepalive_sequence{};
     std::atomic_uint64_t received_media_datagrams{};
     std::atomic_uint64_t unprotect_failures{};
 };
@@ -419,7 +464,9 @@ bool webrtc_test_peer::establish(std::string_view answer_sdp, std::string& error
     implementation_->server_endpoint = *endpoint;
 
     const std::array<std::uint8_t, 12> transaction_id{9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2};
-    const auto stun = make_stun_request(ice_ufrag + ":" + std::string(client_ice_ufrag), ice_password, transaction_id);
+    implementation_->ice_username = ice_ufrag + ":" + std::string(client_ice_ufrag);
+    implementation_->ice_password = ice_password;
+    const auto stun = make_stun_request(implementation_->ice_username, implementation_->ice_password, transaction_id, true);
     boost::system::error_code socket_error;
     implementation_->socket.non_blocking(true, socket_error);
     if (socket_error || stun.empty())
@@ -583,6 +630,7 @@ void webrtc_test_peer::start_receive(packet_handler packet, error_handler error)
     implementation_->packet_callback = std::move(packet);
     implementation_->error_callback = std::move(error);
     implementation_->receive(shared_from_this());
+    implementation_->schedule_keepalive(shared_from_this());
 }
 
 bool webrtc_test_peer::send_rtp(std::span<const std::uint8_t> packet)
@@ -613,6 +661,7 @@ void webrtc_test_peer::close() noexcept
 {
     implementation_->closed = true;
     boost::system::error_code error;
+    implementation_->keepalive_timer.cancel();
     implementation_->socket.close(error);
 }
 
