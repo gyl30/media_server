@@ -32,7 +32,7 @@ struct hls_segment
 {
     std::uint64_t sequence{};
     double duration{};
-    std::vector<std::uint8_t> data;
+    std::shared_ptr<const std::vector<std::uint8_t>> data;
 };
 
 class hls_segmenter final : public media_sink
@@ -48,6 +48,7 @@ class hls_segmenter final : public media_sink
     [[nodiscard]] std::string playlist(std::string_view base_path, std::string_view query = {}) const;
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> init_segment() const;
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> segment(std::uint64_t sequence) const;
+    [[nodiscard]] std::shared_ptr<const std::vector<std::uint8_t>> segment_buffer(std::uint64_t sequence) const;
     [[nodiscard]] std::size_t segment_count() const;
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ended_at() const;
 

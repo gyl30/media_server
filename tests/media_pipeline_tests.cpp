@@ -11548,6 +11548,17 @@ void test_hls_segmenter()
     const auto viewer_playlist = segmenter.playlist(".", "session=viewer-a");
     require(viewer_playlist.find("./0.ts?session=viewer-a") != std::string::npos, "hls ts viewer query");
 
+    hls_segmenter retained_buffer_segmenter(hls_config{.target_duration_seconds = 1.0, .window_size = 1, .video = {}});
+    retained_buffer_segmenter.on_track(make_video_track());
+    retained_buffer_segmenter.on_frame(make_video_frame(0, true));
+    retained_buffer_segmenter.on_frame(make_video_frame(1'000'000'000, true));
+    const auto retained_buffer = retained_buffer_segmenter.segment_buffer(0);
+    require(retained_buffer && !retained_buffer->empty(), "hls segment buffer is published");
+    const auto retained_size = retained_buffer->size();
+    retained_buffer_segmenter.on_frame(make_video_frame(2'000'000'000, true));
+    require(!retained_buffer_segmenter.segment_buffer(0), "hls segment window releases evicted buffer");
+    require(retained_buffer->size() == retained_size, "hls response buffer survives segment window eviction");
+
     worker_context reconfigured_worker;
     reconfigured_worker.release_work();
     auto& reconfigured_io = reconfigured_worker.io();

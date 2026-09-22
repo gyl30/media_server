@@ -252,13 +252,15 @@ std::optional<std::vector<std::uint8_t>> hls_segmenter::init_segment() const
 
 std::optional<std::vector<std::uint8_t>> hls_segmenter::segment(std::uint64_t sequence) const
 {
+    const auto buffer = segment_buffer(sequence);
+    return buffer ? std::optional<std::vector<std::uint8_t>>(*buffer) : std::nullopt;
+}
+
+std::shared_ptr<const std::vector<std::uint8_t>> hls_segmenter::segment_buffer(std::uint64_t sequence) const
+{
     std::scoped_lock lock(mutex_);
     const auto iterator = std::find_if(segments_.begin(), segments_.end(), [sequence](const hls_segment& item) { return item.sequence == sequence; });
-    if (iterator == segments_.end())
-    {
-        return std::nullopt;
-    }
-    return iterator->data;
+    return iterator == segments_.end() ? std::shared_ptr<const std::vector<std::uint8_t>>{} : iterator->data;
 }
 
 std::size_t hls_segmenter::segment_count() const
@@ -633,7 +635,7 @@ bool hls_segmenter::finish_fmp4_segment(std::int64_t end_pts_ns)
         segments_.push_back(hls_segment{
             .sequence = next_sequence_++,
             .duration = duration,
-            .data = std::move(current_segment_),
+            .data = std::make_shared<const std::vector<std::uint8_t>>(std::move(current_segment_)),
         });
         current_segment_.clear();
         while (segments_.size() > window_size_)
@@ -717,7 +719,7 @@ void hls_segmenter::finish_segment(std::int64_t end_pts_ns)
     segments_.push_back(hls_segment{
         .sequence = next_sequence_++,
         .duration = duration,
-        .data = std::move(current_segment_),
+        .data = std::make_shared<const std::vector<std::uint8_t>>(std::move(current_segment_)),
     });
     current_segment_.clear();
 
