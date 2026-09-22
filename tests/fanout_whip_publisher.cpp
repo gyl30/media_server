@@ -548,7 +548,7 @@ struct io_shard
 {
     boost::asio::io_context io;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work{io.get_executor()};
-    std::thread thread;
+    std::jthread thread;
 };
 
 void stop_shards(std::vector<std::unique_ptr<io_shard>>& shards)
@@ -623,7 +623,12 @@ int main(int argc, char** argv)
         for (std::size_t index = 0; index < config.io_threads; ++index)
         {
             auto shard = std::make_unique<io_shard>();
-            shard->thread = std::thread([pointer = shard.get()]() { pointer->io.run(); });
+            shard->thread = std::jthread(
+                [pointer = shard.get()](std::stop_token stop_token)
+                {
+                    std::stop_callback stop_callback(stop_token, [pointer]() { pointer->io.stop(); });
+                    pointer->io.run();
+                });
             shards.emplace_back(std::move(shard));
         }
 
