@@ -552,7 +552,8 @@ if(BUILD_TESTING)
         batch
         retry
         retry_order
-        retry_overflow
+        retry_backlog
+        batch_split
         capacity
         overflow
         nonblocking

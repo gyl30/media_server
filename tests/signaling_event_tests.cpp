@@ -328,17 +328,36 @@ void test_new_events_follow_failed_batch()
     require(server.wait_requests(2), "old batch request held");
     media_server::signaling_client::instance().report(event(3));
     server.release_hold();
-    require(server.wait_requests(4), "failed batch and new event retried");
+    require(server.wait_requests(5), "failed batch retried before new event");
     fixture.stop();
-    const auto events = batch_events(server.requests()[3]);
-    require(events.size() == 3U, "retry combines old and new events");
-    for (std::size_t index = 0; index < events.size(); ++index)
-    {
-        require(events[index].as_object().at("stream_id").as_string() == stream_id(index + 1U), "old events remain before new event");
-    }
+    const auto requests = server.requests();
+    require(requests[1].body == requests[3].body, "failed batch retained intact before pending events");
+    const auto events = batch_events(requests[4]);
+    require(events.size() == 1U && events.front().as_object().at("stream_id").as_string() == stream_id(3), "new event follows accepted retry");
 }
 
-void test_retry_overflow_keeps_new_events()
+void test_pending_events_are_split_into_batches()
+{
+    scripted_http_server server;
+    client_fixture fixture(server.url());
+    for (std::size_t index = 0; index < 501U; ++index)
+    {
+        media_server::signaling_client::instance().report(event(index));
+    }
+    fixture.start();
+    require(server.wait_requests(3), "pending events uploaded in two batches");
+    fixture.stop();
+    const auto requests = server.requests();
+    const auto first = batch_events(requests[1]);
+    const auto second = batch_events(requests[2]);
+    require(first.size() == 500U && second.size() == 1U, "wire batches retain five hundred event limit");
+    require(first.front().as_object().at("stream_id").as_string() == stream_id(0) &&
+                first.back().as_object().at("stream_id").as_string() == stream_id(499) &&
+                second.front().as_object().at("stream_id").as_string() == stream_id(500),
+            "split batches preserve event order");
+}
+
+void test_new_events_wait_behind_failed_batch()
 {
     scripted_http_server server(
         {response_action::no_content, response_action::hold_server_error, response_action::no_content, response_action::no_content});
@@ -354,10 +373,13 @@ void test_retry_overflow_keeps_new_events()
         media_server::signaling_client::instance().report(event(index));
     }
     server.release_hold();
-    require(server.wait_requests(4), "new events retried after old backlog overflow");
+    require(server.wait_requests(5), "new events follow retried batch");
     fixture.stop();
-    const auto events = batch_events(server.requests()[3]);
-    require(events.size() == 200U, "retry overflow drops old backlog and keeps newer events");
+    const auto requests = server.requests();
+    const auto retried = batch_events(requests[3]);
+    require(retried.size() == 400U, "failed batch remains intact");
+    const auto events = batch_events(requests[4]);
+    require(events.size() == 200U, "pending events follow accepted retry");
     for (std::size_t index = 0; index < events.size(); ++index)
     {
         require(events[index].as_object().at("stream_id").as_string() == stream_id(index + 400U), "new events keep their order");
@@ -382,7 +404,7 @@ void test_overflow_keeps_newest()
 {
     scripted_http_server server;
     client_fixture fixture(server.url());
-    for (std::size_t index = 0; index <= 500U; ++index)
+    for (std::size_t index = 0; index <= 16'000U; ++index)
     {
         media_server::signaling_client::instance().report(event(index));
     }
@@ -390,7 +412,7 @@ void test_overflow_keeps_newest()
     require(server.wait_requests(2), "overflow batch uploaded");
     fixture.stop();
     const auto events = batch_events(server.requests()[1]);
-    require(events.size() == 1U && events.front().as_object().at("stream_id").as_string() == stream_id(500),
+    require(events.size() == 1U && events.front().as_object().at("stream_id").as_string() == stream_id(16'000),
             "overflow clears old backlog and keeps newest");
 }
 
@@ -416,8 +438,7 @@ void test_report_wakes_event_delivery()
     fixture.stop();
     const auto requests = server.requests();
     require(requests[0].target == "/internal/media-servers/heartbeat", "initial request is heartbeat");
-    require(requests[1].target == "/internal/runtime-events" && batch_events(requests[1]).size() == 1U,
-            "woken event batch uploaded");
+    require(requests[1].target == "/internal/runtime-events" && batch_events(requests[1]).size() == 1U, "woken event batch uploaded");
     require(std::chrono::steady_clock::now() - started < 1s, "event upload does not wait for heartbeat");
 }
 
@@ -433,8 +454,7 @@ void test_reports_share_woken_batch()
     require(server.wait_requests(2, 500ms), "event batch uploaded");
     fixture.stop();
     const auto requests = server.requests();
-    require(requests[1].target == "/internal/runtime-events" && batch_events(requests[1]).size() == 3U,
-            "woken reports share one batch");
+    require(requests[1].target == "/internal/runtime-events" && batch_events(requests[1]).size() == 3U, "woken reports share one batch");
 }
 
 void test_event_delivery_does_not_starve_heartbeat()
@@ -455,7 +475,9 @@ void test_event_delivery_does_not_starve_heartbeat()
     fixture.stop();
 
     const auto requests = server.requests();
-    const auto heartbeat = std::find_if(requests.begin() + 1, requests.end(), [deadline](const captured_request& request)
+    const auto heartbeat = std::find_if(requests.begin() + 1,
+                                        requests.end(),
+                                        [deadline](const captured_request& request)
                                         { return request.target == "/internal/media-servers/heartbeat" && request.received_at < deadline; });
     require(heartbeat != requests.end(), "continuous event delivery preserves the heartbeat deadline");
 }
@@ -729,9 +751,13 @@ int main(int argc, char** argv)
     {
         test_new_events_follow_failed_batch();
     }
-    else if (test == "retry_overflow")
+    else if (test == "retry_backlog")
     {
-        test_retry_overflow_keeps_new_events();
+        test_new_events_wait_behind_failed_batch();
+    }
+    else if (test == "batch_split")
+    {
+        test_pending_events_are_split_into_batches();
     }
     else if (test == "capacity")
     {

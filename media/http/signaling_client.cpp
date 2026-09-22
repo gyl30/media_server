@@ -1,6 +1,6 @@
+#include <algorithm>
 #include <cstdlib>
 #include <utility>
-#include <iterator>
 #include <stdexcept>
 
 #include <boost/asio.hpp>
@@ -204,7 +204,8 @@ void signaling_client::report(runtime_event event)
             pending_events_.clear();
         }
         pending_events_.push_back(std::move(event));
-        if (wake_timer_ && !event_deadline_ && !wakeup_posted_)
+        const auto queue_pressure = pending_events_.size() >= max_event_batch_size;
+        if (wake_timer_ && !wakeup_posted_ && (!event_deadline_ || queue_pressure))
         {
             wakeup_posted_ = true;
             wakeup_executor = wakeup_executor_;
@@ -219,12 +220,14 @@ void signaling_client::report(runtime_event event)
                               {
                                   std::scoped_lock lock(event_mutex_);
                                   wakeup_posted_ = false;
-                                  if (!wake_timer_ || event_deadline_)
+                                  if (!wake_timer_)
                                   {
                                       return;
                                   }
                                   wake_timer = wake_timer_;
-                                  event_deadline_ = std::chrono::steady_clock::now() + runtime_event_batch_delay;
+                                  event_deadline_ = std::chrono::steady_clock::now() + (pending_events_.size() >= max_event_batch_size
+                                                                                            ? std::chrono::milliseconds::zero()
+                                                                                            : runtime_event_batch_delay);
                               }
                               wake_timer->cancel();
                           });
@@ -352,12 +355,16 @@ void signaling_client::run(boost::asio::yield_context& yield)
             event_delivery_due = false;
             std::scoped_lock lock(event_mutex_);
             event_deadline_.reset();
-            if (events.size() + pending_events_.size() > max_pending_events)
+            if (events.empty())
             {
-                events.clear();
+                const auto count = std::min(max_event_batch_size, pending_events_.size());
+                events.reserve(count);
+                for (std::size_t index = 0; index < count; ++index)
+                {
+                    events.push_back(std::move(pending_events_.front()));
+                    pending_events_.pop_front();
+                }
             }
-            events.insert(events.end(), std::make_move_iterator(pending_events_.begin()), std::make_move_iterator(pending_events_.end()));
-            pending_events_.clear();
         }
 
         if (send_events && !events.empty())

@@ -3,6 +3,7 @@
 
 #include <mutex>
 #include <chrono>
+#include <deque>
 #include <optional>
 #include <string>
 #include <vector>
@@ -66,7 +67,9 @@ class signaling_client
                                      boost::asio::yield_context& yield) const;
 
    private:
-    static constexpr std::size_t max_pending_events = 500U;
+    static constexpr std::size_t max_event_batch_size = 500U;
+    static constexpr std::size_t max_pending_event_batches = 32U;
+    static constexpr std::size_t max_pending_events = max_event_batch_size * max_pending_event_batches;
     static constexpr std::chrono::milliseconds runtime_event_batch_delay{10};
 
     class wake_timer_registration
@@ -82,7 +85,7 @@ class signaling_client
 
    private:
     std::mutex event_mutex_;
-    std::vector<runtime_event> pending_events_;
+    std::deque<runtime_event> pending_events_;
     boost::asio::steady_timer* wake_timer_{};
     std::optional<boost::asio::any_io_executor> wakeup_executor_;
     std::optional<std::chrono::steady_clock::time_point> event_deadline_;
