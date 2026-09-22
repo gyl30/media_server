@@ -602,6 +602,9 @@ if(BUILD_TESTING)
     )
     target_link_libraries(fanout_rtmp_generator PRIVATE media_core media_server_link_options)
 
+    add_executable(fanout_rtsp_publisher tests/fanout_rtsp_publisher.cpp)
+    target_link_libraries(fanout_rtsp_publisher PRIVATE media_core media_server_link_options)
+
     add_executable(webrtc_signaling_tests tests/webrtc_signaling_tests.cpp)
     target_link_libraries(webrtc_signaling_tests PRIVATE media_core media_server_link_options)
     add_test(NAME webrtc_signaling_tests COMMAND webrtc_signaling_tests)
