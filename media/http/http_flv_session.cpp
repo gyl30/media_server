@@ -133,7 +133,10 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         boost::beast::http::async_write_header(stream_, serializer, yield[error]);
         if (error)
         {
-            http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            if (yield.cancelled() == boost::asio::cancellation_type::none)
+            {
+                http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            }
             return;
         }
         if (closed_)
@@ -152,7 +155,10 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         stream_.async_read_some(boost::asio::buffer(read_buffer), yield[error]);
         if (error)
         {
-            http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            if (yield.cancelled() == boost::asio::cancellation_type::none)
+            {
+                http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            }
             return;
         }
         if (closed_)
@@ -224,7 +230,10 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
         if (error)
         {
             write_in_progress_ = false;
-            http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            if (yield.cancelled() == boost::asio::cancellation_type::none)
+            {
+                http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
+            }
             shutdown();
             return;
         }

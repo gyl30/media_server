@@ -79,7 +79,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     {
         socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port},
                               boost::asio::cancel_after(establishment_timeout_, yield[error]));
-        if (error == boost::asio::error::operation_aborted && socket_.is_open())
+        if (error == boost::asio::error::operation_aborted && yield.cancelled() == boost::asio::cancellation_type::none && socket_.is_open())
         {
             error = boost::asio::error::timed_out;
         }
@@ -87,6 +87,11 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
 
     if (closed_)
     {
+        return;
+    }
+    if (yield.cancelled() != boost::asio::cancellation_type::none)
+    {
+        shutdown();
         return;
     }
     if (error)
@@ -153,7 +158,10 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         }
     }
 
-    gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message());
+    if (yield.cancelled() == boost::asio::cancellation_type::none)
+    {
+        gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message());
+    }
     shutdown();
 }
 
@@ -177,6 +185,11 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
         const auto result = write_queue_.write_one(*transport_, yield);
         if (result.error)
         {
+            if (yield.cancelled() != boost::asio::cancellation_type::none)
+            {
+                shutdown();
+                return;
+            }
             gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, result.error.message());
             shutdown();
             return;

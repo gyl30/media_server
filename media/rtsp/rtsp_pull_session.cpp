@@ -370,6 +370,11 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     {
         return;
     }
+    if (yield.cancelled() != boost::asio::cancellation_type::none)
+    {
+        shutdown();
+        return;
+    }
     if (error)
     {
         if (started_)
@@ -384,6 +389,11 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     boost::asio::async_connect(connect_socket_, endpoints, yield[error]);
     if (closed_)
     {
+        return;
+    }
+    if (yield.cancelled() != boost::asio::cancellation_type::none)
+    {
+        shutdown();
         return;
     }
     if (error)
@@ -437,7 +447,10 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
         const auto bytes = transport_->read(buffer, yield, error);
         if (error)
         {
-            rtsp_event::report_source(event_state::runtime_error, stream_id_, stream_name_, source_id_, {}, error.message());
+            if (yield.cancelled() == boost::asio::cancellation_type::none)
+            {
+                rtsp_event::report_source(event_state::runtime_error, stream_id_, stream_name_, source_id_, {}, error.message());
+            }
             shutdown();
             break;
         }
@@ -501,7 +514,10 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
         const auto result = write_queue_.write_one(*transport_, yield);
         if (result.error)
         {
-            rtsp_event::report_source(event_state::runtime_error, stream_id_, stream_name_, source_id_, {}, result.error.message());
+            if (yield.cancelled() == boost::asio::cancellation_type::none)
+            {
+                rtsp_event::report_source(event_state::runtime_error, stream_id_, stream_name_, source_id_, {}, result.error.message());
+            }
             shutdown();
             return;
         }

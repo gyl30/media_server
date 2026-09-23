@@ -52,7 +52,7 @@ void tcp_listener::accept(boost::asio::ip::tcp::socket& socket,
     if (timeout > std::chrono::milliseconds::zero())
     {
         acceptor_.async_accept(socket, boost::asio::cancel_after(timer_, timeout, yield[error]));
-        if (error == boost::asio::error::operation_aborted && acceptor_.is_open())
+        if (error == boost::asio::error::operation_aborted && yield.cancelled() == boost::asio::cancellation_type::none && acceptor_.is_open())
         {
             error = boost::asio::error::timed_out;
         }

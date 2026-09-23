@@ -116,6 +116,11 @@ void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
         }
         if (error)
         {
+            if (yield.cancelled() != boost::asio::cancellation_type::none)
+            {
+                shutdown();
+                return;
+            }
             if (started_)
             {
                 gb28181_event::report_source(event_state::runtime_error, stream_id_, receiver_.stream_name(), {}, error.message());
@@ -170,6 +175,11 @@ void gb28181_udp_receiver_session::run_rtcp(boost::asio::yield_context yield)
         }
         if (error)
         {
+            if (yield.cancelled() != boost::asio::cancellation_type::none)
+            {
+                shutdown();
+                return;
+            }
             if (started_)
             {
                 gb28181_event::report_source(event_state::runtime_error, stream_id_, receiver_.stream_name(), {}, error.message());

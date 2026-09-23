@@ -369,14 +369,14 @@ int main(int argc, char* argv[])
         {
             media_server::test_udp_sender_queue_overflow_drops_packet();
         }
-    else if (scenario == "rtcp_shutdown")
-    {
-        media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
-    }
-    else if (scenario == "worker_stop")
-    {
-        media_server::test_udp_sender_worker_stop_releases_idle_session();
-    }
+        else if (scenario == "rtcp_shutdown")
+        {
+            media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
+        }
+        else if (scenario == "worker_stop")
+        {
+            media_server::test_udp_sender_worker_stop_releases_idle_session();
+        }
         else
         {
             throw std::runtime_error("unknown gb28181 UDP sender test scenario");

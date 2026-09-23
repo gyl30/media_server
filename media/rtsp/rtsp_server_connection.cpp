@@ -114,7 +114,10 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
         const auto bytes = transport_.read(buffer, yield, error);
         if (error)
         {
-            report_transport_error(error);
+            if (yield.cancelled() == boost::asio::cancellation_type::none)
+            {
+                report_transport_error(error);
+            }
             shutdown();
             return;
         }
@@ -502,7 +505,10 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         const auto result = write_queue_.write_one(transport_, yield);
         if (result.error)
         {
-            report_transport_error(result.error);
+            if (yield.cancelled() == boost::asio::cancellation_type::none)
+            {
+                report_transport_error(result.error);
+            }
             shutdown();
             return;
         }
