@@ -1,12 +1,7 @@
-find_package(Boost REQUIRED)
-find_library(BOOST_URL_LIBRARY NAMES boost_url REQUIRED)
-find_library(BOOST_PROGRAM_OPTIONS_LIBRARY NAMES boost_program_options REQUIRED)
-find_library(BOOST_JSON_LIBRARY NAMES boost_json REQUIRED)
-find_library(BOOST_CONTEXT_LIBRARY NAMES boost_context REQUIRED)
+find_package(Boost 1.89 REQUIRED CONFIG COMPONENTS context url json program_options)
 
 add_compile_definitions(BOOST_ASIO_NO_DEPRECATED)
 
-set(MEDIA_SERVER_BOOST_LIBS ${BOOST_URL_LIBRARY} ${BOOST_JSON_LIBRARY}
-                            ${BOOST_CONTEXT_LIBRARY})
+set(MEDIA_SERVER_BOOST_LIBS Boost::url Boost::json Boost::context)
 
-set(MEDIA_SERVER_BOOST_PROGRAM_OPTIONS_LIB ${BOOST_PROGRAM_OPTIONS_LIBRARY})
+set(MEDIA_SERVER_BOOST_PROGRAM_OPTIONS_LIB Boost::program_options)

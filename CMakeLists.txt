@@ -52,6 +52,16 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Werror
     )
 
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16 AND
+       CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17)
+        target_compile_options(media_server_build_options INTERFACE
+            -Wno-array-bounds
+            -Wno-stringop-overflow
+            -Wno-mismatched-new-delete
+        )
+    endif()
+
     function(media_server_add_compile_option_if_supported option)
         string(MAKE_C_IDENTIFIER "MEDIA_SERVER_CXX_${option}" variable)
         check_cxx_compiler_flag("${option}" ${variable})
@@ -93,7 +103,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             set(CMAKE_REQUIRED_DEFINITIONS -DBOOST_USE_UCONTEXT -DBOOST_USE_ASAN)
             set(CMAKE_REQUIRED_FLAGS "-fsanitize=address,undefined")
             set(CMAKE_REQUIRED_LINK_OPTIONS -fsanitize=address,undefined)
-            set(CMAKE_REQUIRED_LIBRARIES "${BOOST_CONTEXT_LIBRARY}")
+            set(CMAKE_REQUIRED_LIBRARIES Boost::context)
             set(CMAKE_REQUIRED_INCLUDES "${Boost_INCLUDE_DIRS}")
             unset(MEDIA_SERVER_BOOST_CONTEXT_ASAN_COMPATIBLE CACHE)
             check_cxx_source_compiles([=[
