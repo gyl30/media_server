@@ -35,6 +35,57 @@ void require(bool condition, std::string_view message)
     }
 }
 
+class worker_thread final
+{
+   public:
+    worker_thread() : worker_(std::make_unique<worker_context>()), context_(worker_.get()), returned_(returned_signal_.get_future()) {}
+
+    ~worker_thread()
+    {
+        if (!runner_.joinable())
+        {
+            return;
+        }
+        if (!stopped_)
+        {
+            stop();
+        }
+        destroy_signal_.set_value();
+        runner_.join();
+    }
+
+    [[nodiscard]] worker_context& context() const noexcept { return *context_; }
+
+    void start()
+    {
+        auto worker = std::move(worker_);
+        auto destroy = destroy_signal_.get_future();
+        runner_ = std::jthread(
+            [worker = std::move(worker), returned = &returned_signal_, destroy = std::move(destroy)]() mutable
+            {
+                worker->run();
+                returned->set_value();
+                destroy.wait();
+            });
+    }
+
+    void stop()
+    {
+        context_->stop();
+        returned_.get();
+        stopped_ = true;
+    }
+
+   private:
+    std::unique_ptr<worker_context> worker_;
+    worker_context* context_;
+    std::promise<void> returned_signal_;
+    std::future<void> returned_;
+    std::promise<void> destroy_signal_;
+    std::jthread runner_;
+    bool stopped_ = false;
+};
+
 void configure_reporting(worker_context& worker, std::string url)
 {
     config cfg{};
@@ -82,15 +133,15 @@ bool wait_runtime_events(const test::publish_claim_test_server& server, std::siz
 
 void test_rtsp_pull_runtime_failure_events()
 {
-    worker_context worker;
+    worker_thread worker;
     test::publish_claim_test_server server;
-    configure_reporting(worker, server.url());
+    configure_reporting(worker.context(), server.url());
 
-    boost::asio::ip::tcp::acceptor endpoint(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor endpoint(worker.context().io(), {boost::asio::ip::address_v4::loopback(), 0});
     const auto port = endpoint.local_endpoint().port();
     endpoint.close();
 
-    auto session = std::make_shared<rtsp_pull_session>(worker,
+    auto session = std::make_shared<rtsp_pull_session>(worker.context(),
                                                        stream_id,
                                                        source_id,
                                                        "live/runtime-events",
@@ -101,9 +152,9 @@ void test_rtsp_pull_runtime_failure_events()
                                                        std::chrono::milliseconds{200},
                                                        1024U * 1024U);
     require(stream_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event receiver reservation");
-    boost::asio::post(worker.io(), [session]() { require(session->startup(), "runtime event pull startup"); });
+    boost::asio::post(worker.context().io(), [session]() { require(session->startup(), "runtime event pull startup"); });
 
-    std::jthread runner([&worker]() { worker.run(); });
+    worker.start();
     const bool received = wait_runtime_events(server, 3U);
 
     const auto events = runtime_events(server);
@@ -112,7 +163,6 @@ void test_rtsp_pull_runtime_failure_events()
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     const auto final_event_count = runtime_events(server).size();
     worker.stop();
-    runner.join();
 
     require(received, "runtime event count");
     require(events.size() == 3U, "runtime failure emits fact and stopped once");
@@ -132,13 +182,13 @@ void test_rtsp_pull_runtime_failure_events()
 
 void test_rtsp_pull_ordinary_shutdown_reports_stopped()
 {
-    worker_context worker;
+    worker_thread worker;
     test::publish_claim_test_server server;
-    configure_reporting(worker, server.url());
+    configure_reporting(worker.context(), server.url());
 
-    boost::asio::ip::tcp::acceptor endpoint(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::tcp::acceptor endpoint(worker.context().io(), {boost::asio::ip::address_v4::loopback(), 0});
     const auto port = endpoint.local_endpoint().port();
-    auto session = std::make_shared<rtsp_pull_session>(worker,
+    auto session = std::make_shared<rtsp_pull_session>(worker.context(),
                                                        stream_id,
                                                        source_id,
                                                        "live/runtime-events",
@@ -151,8 +201,8 @@ void test_rtsp_pull_ordinary_shutdown_reports_stopped()
     require(stream_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event shutdown reservation");
     std::promise<void> started;
     auto ready = started.get_future();
-    std::jthread runner([&worker]() { worker.run(); });
-    boost::asio::post(worker.io(),
+    worker.start();
+    boost::asio::post(worker.context().io(),
                       [session, &started]()
                       {
                           require(session->startup(), "runtime event shutdown startup");
@@ -166,7 +216,6 @@ void test_rtsp_pull_ordinary_shutdown_reports_stopped()
     const auto events = runtime_events(server);
     const bool released = !stream_registry::instance().take_receiver_session("live/runtime-events");
     worker.stop();
-    runner.join();
 
     require(received, "runtime event count");
     require(stopped && events.size() == 3U && events[0].at("state") == "starting" && events[1].at("state") == "stopped" &&
