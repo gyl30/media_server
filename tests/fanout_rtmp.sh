@@ -244,20 +244,28 @@ print(json.load(open(sys.argv[1], encoding="utf-8"))["publish_url"])
 PY
 )"
 
-if [[ "$profile" == low ]]; then
-    video_input="testsrc2=size=320x180:rate=10"
-    video_rate=(-b:v 220k)
+source_file="${MEDIA_SERVER_FANOUT_SOURCE_FILE:-}"
+if [[ -n "$source_file" ]]; then
+    [[ -r "$source_file" ]] || { echo "source file is not readable: $source_file" >&2; exit 2; }
+    publisher_command=("$ffmpeg_bin" -nostdin -hide_banner -loglevel error -stream_loop -1 -re -i "$source_file" \
+        -map 0:v:0 -map 0:a? -c copy -t "$((estimated_shard_ramp_seconds + duration_seconds + 30))" -f flv "$publish_url")
 else
-    video_input="testsrc2=size=1280x720:rate=30"
-    video_rate=()
-fi
-(
-    trap - EXIT
-    exec "$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
+    if [[ "$profile" == low ]]; then
+        video_input="testsrc2=size=320x180:rate=10"
+        video_rate=(-b:v 220k)
+    else
+        video_input="testsrc2=size=1280x720:rate=30"
+        video_rate=()
+    fi
+    publisher_command=("$ffmpeg_bin" -nostdin -hide_banner -loglevel error -re \
         -f lavfi -i "$video_input" -f lavfi -i sine=frequency=1000:sample_rate=44100 \
         -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
         -g 30 -keyint_min 30 -sc_threshold 0 "${video_rate[@]}" -c:a aac -b:a 48k -ac 1 -t "$((estimated_shard_ramp_seconds + duration_seconds + 30))" \
-        -f flv "$publish_url"
+        -f flv "$publish_url")
+fi
+(
+    trap - EXIT
+    exec "${publisher_command[@]}"
 ) >"$work_dir/publisher.log" 2>&1 &
 publisher_pid=$!
 wait_publisher_streaming
