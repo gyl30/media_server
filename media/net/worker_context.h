@@ -57,6 +57,7 @@ class worker_context final
     };
 
     worker_context();
+    ~worker_context();
 
    public:
     [[nodiscard]] boost::asio::io_context& io() noexcept;

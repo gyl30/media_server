@@ -5,6 +5,18 @@ namespace media_server
 
 worker_context::worker_context() : work_(boost::asio::make_work_guard(io_)) {}
 
+worker_context::~worker_context()
+{
+    for (auto& callback : shutdown_callbacks_)
+    {
+        if (callback.subscription != nullptr)
+        {
+            callback.subscription->worker_ = nullptr;
+        }
+    }
+    shutdown_callbacks_.clear();
+}
+
 worker_context::shutdown_subscription::shutdown_subscription(worker_context& worker, shutdown_callback_list::iterator iterator) noexcept
     : worker_(&worker), iterator_(iterator)
 {
