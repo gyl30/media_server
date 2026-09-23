@@ -259,7 +259,7 @@ void gb28181_udp_receiver_session::schedule_rtcp()
                     }
                     if (write_error)
                     {
-                        if (self->started_)
+                        if (self->started_ && yield.cancelled() == boost::asio::cancellation_type::none)
                         {
                             gb28181_event::report_source(
                                 event_state::runtime_error, self->stream_id_, self->receiver_.stream_name(), {}, write_error.message());
