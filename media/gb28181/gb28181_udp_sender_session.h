@@ -19,11 +19,11 @@
 #include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/net/udp_yield_transport.h"
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
 
-class worker_context;
 class gb28181_rtp_sender;
 
 class gb28181_udp_sender_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_sender_session>
@@ -80,6 +80,7 @@ class gb28181_udp_sender_session final : public stream_session, public std::enab
     bool rtcp_started_{};
     bool media_started_{};
     bool closed_{};
+    worker_context::shutdown_subscription shutdown_subscription_;
 };
 
 }    // namespace media_server

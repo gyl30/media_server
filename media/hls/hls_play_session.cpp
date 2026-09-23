@@ -59,7 +59,15 @@ std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worke
                 continue;
             }
         }
-        session->wait_for_inactivity();
+        session->shutdown_subscription_ = worker.subscribe_shutdown([session]() { session->safe_shutdown(); });
+        if (!session->shutdown_subscription_)
+        {
+            session->safe_shutdown();
+        }
+        else
+        {
+            session->wait_for_inactivity();
+        }
         return session;
     }
 }
@@ -161,8 +169,24 @@ void hls_play_session::handle_inactivity(const boost::system::error_code& error)
         return;
     }
 
+    shutdown_subscription_.reset();
     http_event::report_hls_output(event_state::timeout, stream_id_, stream_name_, "inactivity");
     http_event::report_hls_output(event_state::stopped, stream_id_, stream_name_);
+    remove_session(secret_, this);
+}
+
+void hls_play_session::safe_shutdown()
+{
+    {
+        std::scoped_lock lock(mutex_);
+        if (expired_)
+        {
+            return;
+        }
+        expired_ = true;
+    }
+    shutdown_subscription_.reset();
+    timer_.cancel();
     remove_session(secret_, this);
 }
 

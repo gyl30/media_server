@@ -198,6 +198,22 @@ void test_signal_stops_registration_wait()
     runner.join();
 }
 
+void test_listener_failure_stops_without_signal()
+{
+    controlled_registration_server signaling;
+    auto cfg = signaling_config(signaling.url());
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::acceptor occupied(
+        io, {boost::asio::ip::make_address("127.0.0.1"), cfg.rtmp_port});
+    media_server::service service(std::move(cfg));
+    std::jthread release_registration([&]() {
+        require(signaling.wait_request(), "service registration request starts before listener failure");
+        signaling.release();
+    });
+
+    require(service.run() == 0, "listener startup failure stops service without a signal");
+}
+
 }    // namespace
 
 int main(int argc, char** argv)
@@ -225,6 +241,10 @@ int main(int argc, char** argv)
     else if (test == "registration_stop")
     {
         test_signal_stops_registration_wait();
+    }
+    else if (test == "listener_failure")
+    {
+        test_listener_failure_stops_without_signal();
     }
     else
     {

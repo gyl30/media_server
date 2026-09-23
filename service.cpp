@@ -142,7 +142,16 @@ int service::run()
     signaling_client::instance().configure(config_, instance_id);
 
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
-    signals.async_wait([](const boost::system::error_code&, int) { std::_Exit(0); });
+    control_worker.spawn(
+        [&signals](boost::asio::yield_context yield)
+        {
+            boost::system::error_code error;
+            signals.async_wait(yield[error]);
+            if (yield.cancelled() == boost::asio::cancellation_type::none && !error)
+            {
+                std::_Exit(0);
+            }
+        });
 
     control_worker.spawn([this](boost::asio::yield_context yield) { run_server(yield); });
     spdlog::info("worker threads {}", workers_->size());

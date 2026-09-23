@@ -10,10 +10,11 @@
 #include <boost/system/error_code.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include "media/net/worker_context.h"
+
 namespace media_server
 {
 class hls_segmenter;
-class worker_context;
 
 class hls_play_session final : public std::enable_shared_from_this<hls_play_session>
 {
@@ -39,6 +40,7 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
 
     void wait_for_inactivity();
     void handle_inactivity(const boost::system::error_code& error);
+    void safe_shutdown();
     [[nodiscard]] bool matches(std::string_view stream_name) const;
 
    private:
@@ -53,6 +55,7 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
     std::chrono::steady_clock::time_point last_activity_;
     bool streaming_{};
     bool expired_{};
+    worker_context::shutdown_subscription shutdown_subscription_;
     boost::asio::steady_timer timer_;
 };
 

@@ -5,8 +5,10 @@
 #include <vector>
 #include <cstdint>
 #include <iostream>
+#include <future>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 
 #include <boost/asio/post.hpp>
 #include <boost/asio/buffer.hpp>
@@ -284,6 +286,68 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
     require(weak_session.expired(), "gb udp sender rtcp scheduler released after shutdown");
 }
 
+void test_udp_sender_worker_stop_releases_idle_session()
+{
+    worker_context worker;
+    auto& io = worker.io();
+    boost::asio::ip::udp::socket rtp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
+    boost::asio::ip::udp::socket rtcp_receiver(io, {boost::asio::ip::address_v4::loopback(), 0});
+    auto source = std::make_shared<media_stream>("live/gb-udp-worker-stop", worker);
+    require(source->set_tracks({media_track{
+                .id = 1,
+                .kind = media_kind::video,
+                .codec = codec_id::h264,
+                .clock_rate = 90'000,
+                .channel_count = 0,
+                .codec_config = {0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f,
+                                 0x97, 0x01, 0x6e, 0x40, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80},
+            }}),
+            "gb udp worker stop source tracks");
+    require(stream_registry::instance().add(source), "gb udp worker stop source registry");
+
+    const gb28181_transport_config description{
+        .mode = gb28181_transport::udp,
+        .remote_address = boost::asio::ip::address_v4::loopback(),
+        .remote_rtp_port = rtp_receiver.local_endpoint().port(),
+        .remote_rtcp_port = rtcp_receiver.local_endpoint().port(),
+        .payload_type = 96,
+        .ssrc = 0x12345681U,
+    };
+    auto session = std::make_shared<gb28181_udp_sender_session>(worker,
+                                                                "550e8400-e29b-41d4-a716-446655440000",
+                                                                source,
+                                                                description,
+                                                                boost::asio::ip::address_v4::loopback(),
+                                                                "udp-worker-stop",
+                                                                true,
+                                                                std::chrono::hours{1});
+    require(stream_registry::instance().add_sender_session(source->name(), "udp-worker-stop", session), "gb udp worker stop session registry");
+
+    std::promise<bool> started_signal;
+    auto started = started_signal.get_future();
+    std::promise<void> returned_signal;
+    auto returned = returned_signal.get_future();
+    boost::asio::post(worker.io(), [&]() { started_signal.set_value(session->startup()); });
+    std::jthread runner([&]() {
+        worker.run();
+        returned_signal.set_value();
+    });
+    require(started.get(), "gb udp worker stop session startup");
+
+    worker.request_stop();
+    const auto returned_in_time = returned.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
+    if (!returned_in_time)
+    {
+        worker.stop();
+    }
+    runner.join();
+
+    require(returned_in_time, "worker stop drains idle gb udp sender");
+    require(!stream_registry::instance().take_sender_session(source->name(), "udp-worker-stop"), "worker stop removes gb udp sender registry entry");
+    session.reset();
+    stream_registry::instance().remove(*source);
+}
+
 }    // namespace
 }    // namespace media_server
 
@@ -305,10 +369,14 @@ int main(int argc, char* argv[])
         {
             media_server::test_udp_sender_queue_overflow_drops_packet();
         }
-        else if (scenario == "rtcp_shutdown")
-        {
-            media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
-        }
+    else if (scenario == "rtcp_shutdown")
+    {
+        media_server::test_udp_sender_rtcp_shutdown_releases_scheduler();
+    }
+    else if (scenario == "worker_stop")
+    {
+        media_server::test_udp_sender_worker_stop_releases_idle_session();
+    }
         else
         {
             throw std::runtime_error("unknown gb28181 UDP sender test scenario");

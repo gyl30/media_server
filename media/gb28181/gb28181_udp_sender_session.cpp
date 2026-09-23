@@ -103,6 +103,12 @@ bool gb28181_udp_sender_session::startup()
         return false;
     }
     local_ports_ = *local_ports;
+    shutdown_subscription_ = worker_.subscribe_shutdown([self = shared_from_this()]() { self->safe_shutdown(); });
+    if (!shutdown_subscription_)
+    {
+        shutdown_udp_transports();
+        return false;
+    }
 
     if (rtcp_enabled_)
     {
@@ -110,6 +116,7 @@ bool gb28181_udp_sender_session::startup()
         rtcp_sender_ = rtp_create(&handler, nullptr, config_.ssrc, 0, 90'000, 2 * 1024 * 1024, 1);
         if (rtcp_sender_ == nullptr)
         {
+            shutdown_subscription_.reset();
             shutdown_udp_transports();
             return false;
         }
@@ -142,6 +149,7 @@ bool gb28181_udp_sender_session::startup()
     {
         sender_->shutdown();
         sender_.reset();
+        shutdown_subscription_.reset();
         shutdown_udp_transports();
         if (rtcp_sender_ != nullptr)
         {
@@ -305,6 +313,7 @@ void gb28181_udp_sender_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    shutdown_subscription_.reset();
     media_started_ = false;
     stream_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
     rtcp_timer_.cancel();

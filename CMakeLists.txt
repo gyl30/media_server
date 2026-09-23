@@ -358,9 +358,10 @@ if(BUILD_TESTING)
         service.cpp
     )
     target_link_libraries(service_tests PRIVATE media_core media_server_link_options)
-    foreach(test_case IN ITEMS invalid_bind invalid_webrtc registration registration_stop)
+    foreach(test_case IN ITEMS invalid_bind invalid_webrtc registration registration_stop listener_failure)
         add_test(NAME service_${test_case} COMMAND service_tests ${test_case})
     endforeach()
+    set_tests_properties(service_listener_failure PROPERTIES TIMEOUT 5)
     add_test(
         NAME process_hard_stop
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/process_termination_smoke.sh
@@ -508,6 +509,10 @@ if(BUILD_TESTING)
     target_link_libraries(worker_context_shutdown_tests PRIVATE media_core media_server_link_options)
     add_test(NAME worker_context_shutdown_tests COMMAND worker_context_shutdown_tests)
 
+    add_executable(hls_play_shutdown_tests tests/hls_play_shutdown_tests.cpp)
+    target_link_libraries(hls_play_shutdown_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME hls_play_shutdown_tests COMMAND hls_play_shutdown_tests)
+
     add_executable(tcp_write_queue_tests tests/tcp_write_queue_tests.cpp)
     target_link_libraries(tcp_write_queue_tests PRIVATE media_core media_server_link_options)
     add_test(NAME tcp_write_queue_tests COMMAND tcp_write_queue_tests)
@@ -522,7 +527,7 @@ if(BUILD_TESTING)
 
     add_executable(gb28181_udp_sender_tests tests/gb28181_udp_sender_tests.cpp)
     target_link_libraries(gb28181_udp_sender_tests PRIVATE media_core media_server_link_options)
-    foreach(test_case IN ITEMS sends_rtp queue_overflow rtcp_shutdown)
+    foreach(test_case IN ITEMS sends_rtp queue_overflow rtcp_shutdown worker_stop)
         foreach(iteration RANGE 1 10)
             add_test(NAME gb28181_udp_sender_${test_case}_${iteration} COMMAND gb28181_udp_sender_tests ${test_case})
             set_tests_properties(gb28181_udp_sender_${test_case}_${iteration} PROPERTIES RUN_SERIAL TRUE)
