@@ -27,7 +27,7 @@ http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_str
 void http_flv_session::startup()
 {
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
 void http_flv_session::run(boost::asio::yield_context yield)
@@ -210,10 +210,8 @@ void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_
 
     write_in_progress_ = true;
     const auto self = shared_from_this();
-    boost::asio::spawn(
-        worker_.io(),
-        [self, generation, data = std::move(data)](boost::asio::yield_context yield) mutable { self->run_write(generation, std::move(data), yield); },
-        boost::asio::detached);
+    worker_.spawn(
+        [self, generation, data = std::move(data)](boost::asio::yield_context yield) mutable { self->run_write(generation, std::move(data), yield); });
 }
 
 void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield)

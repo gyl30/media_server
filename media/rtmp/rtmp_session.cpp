@@ -90,7 +90,7 @@ rtmp_session::rtmp_session(worker_context& worker,
 void rtmp_session::startup()
 {
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
 void rtmp_session::run(boost::asio::yield_context yield)
@@ -254,7 +254,7 @@ void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
     if (result == tcp_write_enqueue_result::start_writer)
     {
         const auto self = shared_from_this();
-        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_write(yield); }, boost::asio::detached);
+        worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
     }
 }
 
@@ -348,7 +348,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     stream_name_ = target->stream_name;
     claim_pending_ = true;
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_play_claim(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_play_claim(yield); });
     return RTMP_SERVER_ASYNC_START;
 }
 
@@ -379,7 +379,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     stream_name_ = target->stream_name;
     claim_pending_ = true;
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_publish_claim(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_publish_claim(yield); });
     return RTMP_SERVER_ASYNC_START;
 }
 

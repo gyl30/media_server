@@ -153,7 +153,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     answer_ = std::move(*answer);
     started_ = true;
 
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_udp(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
     for (const auto& track : source_tracks)
     {
@@ -728,7 +728,7 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
     if (start_write)
     {
         const auto self = shared_from_this();
-        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_udp_write(yield); }, boost::asio::detached);
+        worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp_write(yield); });
     }
 }
 

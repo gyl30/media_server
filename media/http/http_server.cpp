@@ -24,7 +24,7 @@ void http_server::startup(boost::system::error_code& error)
     }
 
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
 void http_server::run(boost::asio::yield_context yield)

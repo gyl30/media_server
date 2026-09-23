@@ -173,10 +173,8 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     cleanup.set_active(false);
 
     const auto self = shared_from_this();
-    boost::asio::spawn(
-        worker_.io(), [self, track_index](boost::asio::yield_context yield) { self->run_rtp(track_index, yield); }, boost::asio::detached);
-    boost::asio::spawn(
-        worker_.io(), [self, track_index](boost::asio::yield_context yield) { self->run_rtcp(track_index, yield); }, boost::asio::detached);
+    worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtp(track_index, yield); });
+    worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtcp(track_index, yield); });
 
     rtsp_server_set_session_timeout(server, 60);
     const auto response = "RTP/AVP;unicast;client_port=" + std::to_string(transport.rtp.u.client_port1) + "-" +
@@ -221,7 +219,7 @@ void rtsp_publish_udp_session::schedule_rtcp()
                 return;
             }
 
-            boost::asio::spawn(self->worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtcp_write(yield); }, boost::asio::detached);
+            self->worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp_write(yield); });
         });
 }
 

@@ -1,5 +1,6 @@
 #include <array>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -205,6 +206,41 @@ void test_control_activity_refreshes_timeout()
     require(closed, "refreshed RTSP server connection eventually times out");
 }
 
+void test_worker_shutdown_cancels_pending_read()
+{
+    worker_context worker;
+    boost::asio::io_context client_io;
+    tcp::acceptor acceptor(client_io, {boost::asio::ip::address_v4::loopback(), 0});
+    tcp::socket client(client_io);
+    client.connect(acceptor.local_endpoint());
+    tcp::socket server_socket(worker.io());
+    acceptor.accept(server_socket);
+
+    auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(server_socket), video_transcode_codec::passthrough, 5s);
+    connection->startup();
+    std::promise<void> returned_signal;
+    auto returned = returned_signal.get_future();
+    std::jthread runner(
+        [&worker, &returned_signal]
+        {
+            worker.run();
+            returned_signal.set_value();
+        });
+
+    const auto response = send_options(client, 1);
+    worker.request_stop();
+    const bool returned_in_time = returned.wait_for(500ms) == std::future_status::ready;
+    if (!returned_in_time)
+    {
+        worker.stop();
+    }
+    runner.join();
+
+    require(response.starts_with("RTSP/1.0 200"), "RTSP OPTIONS response before worker shutdown");
+    require(returned_in_time, "RTSP pending read drains during worker shutdown");
+    require(worker.active_task_count() == 0U, "RTSP worker shutdown drains tracked coroutines");
+}
+
 void test_udp_setup_internal_failure_closes_connection()
 {
     media_server::test::publish_claim_test_server claim_server;
@@ -324,6 +360,10 @@ int main(int argc, char** argv)
         else if (test == "control_refreshes_timeout")
         {
             test_control_activity_refreshes_timeout();
+        }
+        else if (test == "worker_shutdown")
+        {
+            test_worker_shutdown_cancels_pending_read();
         }
         else if (test == "udp_setup_internal_failure")
         {

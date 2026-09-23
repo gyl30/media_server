@@ -484,7 +484,7 @@ if(BUILD_TESTING)
 
     add_executable(rtsp_server_connection_tests tests/rtsp_server_connection_tests.cpp)
     target_link_libraries(rtsp_server_connection_tests PRIVATE media_core media_server_link_options)
-    foreach(test_case IN ITEMS idle_timeout control_refreshes_timeout udp_setup_internal_failure record_internal_failure)
+    foreach(test_case IN ITEMS idle_timeout control_refreshes_timeout worker_shutdown udp_setup_internal_failure record_internal_failure)
         add_test(NAME rtsp_server_connection_${test_case} COMMAND rtsp_server_connection_tests ${test_case})
     endforeach()
 
@@ -503,6 +503,10 @@ if(BUILD_TESTING)
     add_executable(tcp_yield_transport_tests tests/tcp_yield_transport_tests.cpp)
     target_link_libraries(tcp_yield_transport_tests PRIVATE media_core media_server_link_options)
     add_test(NAME tcp_yield_transport_tests COMMAND tcp_yield_transport_tests)
+
+    add_executable(worker_context_shutdown_tests tests/worker_context_shutdown_tests.cpp)
+    target_link_libraries(worker_context_shutdown_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME worker_context_shutdown_tests COMMAND worker_context_shutdown_tests)
 
     add_executable(tcp_write_queue_tests tests/tcp_write_queue_tests.cpp)
     target_link_libraries(tcp_write_queue_tests PRIVATE media_core media_server_link_options)

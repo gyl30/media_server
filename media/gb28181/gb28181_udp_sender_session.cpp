@@ -227,8 +227,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
             }
 
             auto packet = std::make_shared<std::vector<std::uint8_t>>(buffer.begin(), buffer.begin() + bytes);
-            boost::asio::spawn(
-                self->worker_.io(),
+            self->worker_.spawn(
                 [self, packet](boost::asio::yield_context yield)
                 {
                     if (self->closed_)
@@ -250,8 +249,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
                         return;
                     }
                     self->schedule_rtcp();
-                },
-                boost::asio::detached);
+                });
         });
 }
 
@@ -290,7 +288,7 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     if (start_write)
     {
         const auto self = shared_from_this();
-        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_rtp_write(yield); }, boost::asio::detached);
+        worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp_write(yield); });
     }
 
     if (rtcp_sender_ != nullptr && !rtcp_started_)

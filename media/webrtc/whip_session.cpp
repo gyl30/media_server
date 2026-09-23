@@ -149,7 +149,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer)
 
     answer_ = std::move(*answer);
     started_ = true;
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_udp(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
     spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_name_, advertised_address_.to_string(), local_port_);
     whip_event::report_publisher(event_state::starting, stream_id_, stream_name_, "ice");
@@ -503,7 +503,7 @@ void whip_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
     if (start_write)
     {
         const auto self = shared_from_this();
-        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_udp_write(yield); }, boost::asio::detached);
+        worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp_write(yield); });
     }
 }
 

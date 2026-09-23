@@ -140,10 +140,7 @@ bool rtsp_pull_session::startup()
     schedule_establishment_timeout();
 
     const auto self = shared_from_this();
-    boost::asio::spawn(
-        worker_.io(),
-        [self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); },
-        boost::asio::detached);
+    worker_.spawn([self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); });
     rtsp_event::report_source(event_state::starting, stream_id_, stream_name_, source_id_, "resolving");
     return true;
 }
@@ -488,7 +485,7 @@ void rtsp_pull_session::write(std::span<const std::uint8_t> data)
     if (result == tcp_write_enqueue_result::start_writer)
     {
         const auto self = shared_from_this();
-        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context write_yield) { self->run_write(write_yield); }, boost::asio::detached);
+        worker_.spawn([self](boost::asio::yield_context write_yield) { self->run_write(write_yield); });
     }
 }
 

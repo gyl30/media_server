@@ -60,7 +60,7 @@ bool gb28181_tcp_sender_session::startup()
 
     started_ = true;
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
     gb28181_event::report_output(
         event_state::starting, stream_id_, stream_name_, config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting");
     return true;
@@ -223,7 +223,7 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     if (result == tcp_write_enqueue_result::start_writer)
     {
         const auto self = shared_from_this();
-        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context write_yield) { self->run_write(write_yield); }, boost::asio::detached);
+        worker_.spawn([self](boost::asio::yield_context write_yield) { self->run_write(write_yield); });
     }
 }
 

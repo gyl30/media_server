@@ -183,15 +183,13 @@ void hls_http_session::handle_request()
 void hls_http_session::claim_play(std::string stream_id, std::string stream_name, std::string redirect_path)
 {
     const auto self = shared_from_this();
-    boost::asio::spawn(
-        worker_.io(),
+    worker_.spawn(
         [self, stream_id = std::move(stream_id), stream_name = std::move(stream_name), redirect_path = std::move(redirect_path)](
             boost::asio::yield_context yield) mutable
         {
             auto result = signaling_client::instance().claim_play(stream_id, "hls", stream_name, yield);
             self->handle_claim(std::move(stream_id), std::move(stream_name), std::move(redirect_path), std::move(result));
-        },
-        boost::asio::detached);
+        });
 }
 
 void hls_http_session::handle_claim(std::string stream_id, std::string stream_name, std::string redirect_path, signaling_request_result result)

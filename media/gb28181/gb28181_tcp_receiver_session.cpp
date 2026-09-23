@@ -53,7 +53,7 @@ bool gb28181_tcp_receiver_session::startup()
 
     started_ = true;
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
     gb28181_event::report_source(
         event_state::starting, stream_id_, receiver_.stream_name(), config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting");
     return true;

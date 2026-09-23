@@ -6,7 +6,6 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/asio/detached.hpp>
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
@@ -46,7 +45,7 @@ rtsp_server_connection::rtsp_server_connection(worker_context& worker,
 void rtsp_server_connection::startup()
 {
     const auto self = shared_from_this();
-    boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run(yield); }, boost::asio::detached);
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
 void rtsp_server_connection::run(boost::asio::yield_context yield)
@@ -467,7 +466,7 @@ void rtsp_server_connection::write(tcp_write_queue::buffer data)
     if (result == tcp_write_enqueue_result::start_writer)
     {
         const auto self = shared_from_this();
-        boost::asio::spawn(worker_.io(), [self](boost::asio::yield_context yield) { self->run_write(yield); }, boost::asio::detached);
+        worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
     }
 }
 

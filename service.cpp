@@ -117,14 +117,15 @@ int service::run()
     }
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
-    auto& control_io = workers_->context(0).io();
+    auto& control_worker = workers_->context(0);
+    auto& control_io = control_worker.io();
     const auto instance_id = boost::uuids::to_string(boost::uuids::random_generator{}());
     signaling_client::instance().configure(config_, instance_id);
 
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
     signals.async_wait([](const boost::system::error_code&, int) { std::_Exit(0); });
 
-    boost::asio::spawn(control_io, [this](boost::asio::yield_context yield) { run_server(yield); }, boost::asio::detached);
+    control_worker.spawn([this](boost::asio::yield_context yield) { run_server(yield); });
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
     return 0;
