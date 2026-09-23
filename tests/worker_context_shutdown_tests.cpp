@@ -4,6 +4,7 @@
 #include <future>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -11,6 +12,7 @@
 
 #include <boost/asio/ip/tcp.hpp>
 
+#include "media/net/io_context_pool.h"
 #include "media/net/worker_context.h"
 
 namespace media_server
@@ -140,6 +142,120 @@ void test_request_stop_drains_spawned_operations()
     require(!spawned_after_stop.load(std::memory_order_acquire), "request_stop rejects new coroutine");
 }
 
+void test_request_stop_runs_callback_shutdown_on_worker()
+{
+    worker_context worker;
+    std::promise<void> started_signal;
+    auto started = started_signal.get_future();
+    std::promise<void> returned_signal;
+    auto returned = returned_signal.get_future();
+    std::optional<worker_context::shutdown_subscription> subscription;
+    std::optional<boost::asio::steady_timer> timer;
+    std::atomic_bool cancelled{};
+    std::thread::id callback_thread;
+    std::thread::id worker_thread;
+
+    boost::asio::post(
+        worker.io(),
+        [&]()
+        {
+            timer.emplace(worker.io(), std::chrono::hours{1});
+            subscription.emplace(worker.subscribe_shutdown(
+                [&]()
+                {
+                    callback_thread = std::this_thread::get_id();
+                    timer->cancel();
+                    subscription->reset();
+                }));
+            require(static_cast<bool>(*subscription), "callback shutdown registered before stop");
+            timer->async_wait(
+                [&](const boost::system::error_code& error)
+                {
+                    cancelled.store(error == boost::asio::error::operation_aborted, std::memory_order_release);
+                    subscription->reset();
+                });
+            started_signal.set_value();
+        });
+
+    std::jthread runner(
+        [&]()
+        {
+            worker_thread = std::this_thread::get_id();
+            worker.run();
+            returned_signal.set_value();
+        });
+    started.get();
+    worker.request_stop();
+    const bool returned_in_time = returned.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
+    if (!returned_in_time)
+    {
+        worker.stop();
+    }
+    runner.join();
+
+    require(returned_in_time, "request_stop drains callback-owned operation");
+    require(cancelled.load(std::memory_order_acquire), "callback shutdown cancels pending timer");
+    require(callback_thread == worker_thread, "callback shutdown runs on worker thread");
+}
+
+void test_pool_request_stop_drains_each_worker()
+{
+    io_context_pool workers(2);
+    std::promise<void> first_started_signal;
+    auto first_started = first_started_signal.get_future();
+    std::promise<void> second_started_signal;
+    auto second_started = second_started_signal.get_future();
+    std::atomic_uint aborted{};
+
+    workers.context(0).spawn(
+        [&first_started_signal, &aborted](boost::asio::yield_context yield)
+        {
+            boost::asio::steady_timer timer(yield.get_executor(), std::chrono::hours{1});
+            first_started_signal.set_value();
+            boost::system::error_code error;
+            timer.async_wait(yield[error]);
+            if (error == boost::asio::error::operation_aborted)
+            {
+                ++aborted;
+            }
+        });
+    workers.context(1).spawn(
+        [&second_started_signal, &aborted](boost::asio::yield_context yield)
+        {
+            boost::asio::steady_timer timer(yield.get_executor(), std::chrono::hours{1});
+            second_started_signal.set_value();
+            boost::system::error_code error;
+            timer.async_wait(yield[error]);
+            if (error == boost::asio::error::operation_aborted)
+            {
+                ++aborted;
+            }
+        });
+
+    std::promise<void> returned_signal;
+    auto returned = returned_signal.get_future();
+    std::jthread runner(
+        [&]()
+        {
+            workers.run();
+            returned_signal.set_value();
+        });
+    first_started.get();
+    second_started.get();
+    workers.request_stop();
+    const bool returned_in_time = returned.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
+    if (!returned_in_time)
+    {
+        workers.stop();
+    }
+    runner.join();
+
+    require(returned_in_time, "pool request_stop lets every worker return naturally");
+    require(aborted.load(std::memory_order_acquire) == 2U, "pool request_stop cancels work on every worker");
+    require(workers.context(0).active_task_count() == 0U, "first worker drains tracked tasks");
+    require(workers.context(1).active_task_count() == 0U, "second worker drains tracked tasks");
+}
+
 }    // namespace
 }    // namespace media_server
 
@@ -148,6 +264,8 @@ int main()
     try
     {
         media_server::test_request_stop_drains_spawned_operations();
+        media_server::test_request_stop_runs_callback_shutdown_on_worker();
+        media_server::test_pool_request_stop_drains_each_worker();
     }
     catch (const std::exception& error)
     {

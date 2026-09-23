@@ -371,6 +371,7 @@ void whep_session::run_udp(boost::asio::yield_context yield)
     }
     if (read_error == boost::asio::error::operation_aborted)
     {
+        shutdown();
         return;
     }
     if (started_)
@@ -398,6 +399,11 @@ void whep_session::run_udp_write(boost::asio::yield_context yield)
         }
         if (error)
         {
+            if (error == boost::asio::error::operation_aborted)
+            {
+                shutdown();
+                return;
+            }
             spdlog::debug("webrtc udp send failed session {} remote {} {} error {}",
                           id_,
                           datagram.endpoint.address().to_string(),

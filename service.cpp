@@ -25,23 +25,35 @@ service::service(config cfg) : config_(std::move(cfg)) {}
 
 service::~service() = default;
 
-void service::stop() { workers_->stop(); }
+void service::stop() { workers_->request_stop(); }
 
-void service::register_signaling(boost::asio::yield_context& yield)
+bool service::register_signaling(boost::asio::yield_context& yield)
 {
     boost::asio::steady_timer retry_timer(yield.get_executor());
     for (;;)
     {
+        if (yield.cancelled() != boost::asio::cancellation_type::none)
+        {
+            return false;
+        }
         const auto registration = signaling_client::instance().register_once(yield);
+        if (yield.cancelled() != boost::asio::cancellation_type::none)
+        {
+            return false;
+        }
         if (registration.kind == signaling_result_kind::accepted)
         {
-            return;
+            return true;
         }
         if (registration.kind == signaling_result_kind::rejected)
         {
             spdlog::critical("signaling registration rejected status {}; aborting in 5 seconds", registration.status);
             boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
             abort_timer.async_wait(yield);
+            if (yield.cancelled() != boost::asio::cancellation_type::none)
+            {
+                return false;
+            }
             std::abort();
         }
         if (registration.kind == signaling_result_kind::temporary_failure)
@@ -55,12 +67,19 @@ void service::register_signaling(boost::asio::yield_context& yield)
 
         retry_timer.expires_after(std::chrono::seconds{1});
         retry_timer.async_wait(yield);
+        if (yield.cancelled() != boost::asio::cancellation_type::none)
+        {
+            return false;
+        }
     }
 }
 
 void service::run_server(boost::asio::yield_context yield)
 {
-    register_signaling(yield);
+    if (!register_signaling(yield))
+    {
+        return;
+    }
 
     boost::scope::scope_exit stop_on_startup_failure([this]() { stop(); });
 

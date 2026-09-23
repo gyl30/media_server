@@ -13,10 +13,10 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "config.h"
+#include "media/net/worker_context.h"
 
 namespace media_server
 {
-class worker_context;
 struct signaling_request_result;
 class hls_play_session;
 class hls_segmenter;
@@ -66,6 +66,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
     request_type request_;
     const config& config_;
     bool closed_{};
+    worker_context::shutdown_subscription shutdown_subscription_;
     boost::asio::steady_timer wait_timer_;
     std::chrono::steady_clock::time_point playlist_deadline_;
 };

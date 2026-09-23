@@ -2,6 +2,7 @@
 #define MEDIA_NET_WORKER_CONTEXT_H
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/bind_executor.hpp>
@@ -11,6 +12,7 @@
 
 #include <atomic>
 #include <exception>
+#include <functional>
 #include <list>
 #include <utility>
 
@@ -20,6 +22,40 @@ namespace media_server
 class worker_context final
 {
    public:
+    class shutdown_subscription;
+
+   private:
+    struct shutdown_callback
+    {
+        std::function<void()> function;
+        shutdown_subscription* subscription{};
+    };
+
+    using shutdown_callback_list = std::list<shutdown_callback>;
+
+   public:
+    class shutdown_subscription final
+    {
+       public:
+        shutdown_subscription() = default;
+        shutdown_subscription(const shutdown_subscription&) = delete;
+        shutdown_subscription& operator=(const shutdown_subscription&) = delete;
+        shutdown_subscription(shutdown_subscription&& other) noexcept;
+        shutdown_subscription& operator=(shutdown_subscription&& other) noexcept;
+        ~shutdown_subscription();
+
+        explicit operator bool() const noexcept;
+        void reset();
+
+       private:
+        friend class worker_context;
+
+        shutdown_subscription(worker_context& worker, shutdown_callback_list::iterator iterator) noexcept;
+
+        worker_context* worker_{};
+        shutdown_callback_list::iterator iterator_{};
+    };
+
     worker_context();
 
    public:
@@ -33,12 +69,13 @@ class worker_context final
             return;
         }
 
-        boost::asio::post(io_, [this, function = std::move(function)]() mutable { spawn_on_owner(std::move(function)); });
+        boost::asio::dispatch(io_, [this, function = std::move(function)]() mutable { spawn_on_owner(std::move(function)); });
     }
 
     void request_stop();
     [[nodiscard]] bool stop_requested() const noexcept;
     [[nodiscard]] std::size_t active_task_count() const noexcept;
+    [[nodiscard]] shutdown_subscription subscribe_shutdown(std::function<void()> callback);
 
     void stop();
     void release_work();
@@ -76,9 +113,12 @@ class worker_context final
                     })));
     }
 
+    void unsubscribe_shutdown(shutdown_callback_list::iterator iterator);
+
     boost::asio::io_context io_{1};
     work_guard work_;
     std::list<task> tasks_;
+    shutdown_callback_list shutdown_callbacks_;
     std::atomic_bool stop_requested_{};
     std::atomic_size_t active_task_count_{};
 };

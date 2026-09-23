@@ -28,7 +28,18 @@ hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_str
 void hls_http_session::startup()
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->handle_request(); });
+    boost::asio::post(
+        worker_.io(),
+        [self]()
+        {
+            self->shutdown_subscription_ = self->worker_.subscribe_shutdown([self]() { self->safe_shutdown(); });
+            if (!self->shutdown_subscription_)
+            {
+                self->safe_shutdown();
+                return;
+            }
+            self->handle_request();
+        });
 }
 
 void hls_http_session::handle_request()
@@ -365,6 +376,7 @@ void hls_http_session::safe_shutdown()
         return;
     }
     closed_ = true;
+    shutdown_subscription_.reset();
     boost::system::error_code error;
     wait_timer_.cancel();
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);

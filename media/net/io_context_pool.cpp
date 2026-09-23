@@ -32,6 +32,14 @@ void io_context_pool::stop()
     }
 }
 
+void io_context_pool::request_stop()
+{
+    for (const auto& context : contexts_)
+    {
+        context->request_stop();
+    }
+}
+
 void io_context_pool::release_work()
 {
     for (const auto& context : contexts_)

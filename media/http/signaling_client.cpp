@@ -311,10 +311,18 @@ void signaling_client::run(boost::asio::yield_context& yield)
     bool event_delivery_due{};
     for (;;)
     {
+        if (yield.cancelled() != boost::asio::cancellation_type::none)
+        {
+            return;
+        }
         // Event delivery must not defer the registration lease indefinitely.
         if (std::chrono::steady_clock::now() >= heartbeat_deadline)
         {
             const auto result = heartbeat_once(yield);
+            if (yield.cancelled() != boost::asio::cancellation_type::none)
+            {
+                return;
+            }
             heartbeat_deadline = std::chrono::steady_clock::now() + heartbeat_interval_;
             if (result.kind == signaling_result_kind::network_error)
             {
@@ -329,6 +337,10 @@ void signaling_client::run(boost::asio::yield_context& yield)
                 spdlog::critical("signaling heartbeat rejected status {}; aborting in 5 seconds", result.status);
                 boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
                 abort_timer.async_wait(yield);
+                if (yield.cancelled() != boost::asio::cancellation_type::none)
+                {
+                    return;
+                }
                 std::abort();
             }
             else
@@ -371,6 +383,10 @@ void signaling_client::run(boost::asio::yield_context& yield)
         {
             const auto event_result =
                 request("/internal/runtime-events", runtime_event_batch_body(config_, instance_id_, events), host_, port_, request_timeout_, yield);
+            if (yield.cancelled() != boost::asio::cancellation_type::none)
+            {
+                return;
+            }
             if (event_result.kind == signaling_result_kind::accepted)
             {
                 events.clear();
@@ -394,6 +410,10 @@ void signaling_client::run(boost::asio::yield_context& yield)
             wake_timer.expires_at(wake_deadline);
         }
         wake_timer.async_wait(yield[error]);
+        if (yield.cancelled() != boost::asio::cancellation_type::none)
+        {
+            return;
+        }
     }
 }
 

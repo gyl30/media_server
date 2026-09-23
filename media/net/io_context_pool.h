@@ -23,6 +23,7 @@ class io_context_pool final
     [[nodiscard]] worker_context& context(std::size_t index) noexcept;
     [[nodiscard]] worker_context& next() noexcept;
 
+    void request_stop();
     void stop();
     void release_work();
     void run();

@@ -22,7 +22,7 @@ class service
     int run();
 
    private:
-    void register_signaling(boost::asio::yield_context& yield);
+    [[nodiscard]] bool register_signaling(boost::asio::yield_context& yield);
     void run_server(boost::asio::yield_context yield);
     void stop();
 
