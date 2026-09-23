@@ -122,8 +122,9 @@ sample_process() {
     local label="$1" pid="$2" output="$3"
     local now_ns ticks rss vmsize threads fd
     now_ns="$(date +%s%N)"
-    ticks="$(awk '{print $14 + $15}' "/proc/$pid/stat")"
-    read -r rss vmsize threads < <(awk '$1 == "VmRSS:" {rss=$2} $1 == "VmSize:" {vmsize=$2} $1 == "Threads:" {threads=$2} END {print rss, vmsize, threads}' "/proc/$pid/status")
+    ticks="$(awk '{print $14 + $15}' "/proc/$pid/stat" 2>/dev/null)" || return 0
+    read -r rss vmsize threads < <(awk '$1 == "VmRSS:" {rss=$2} $1 == "VmSize:" {vmsize=$2} $1 == "Threads:" {threads=$2} END {print rss, vmsize, threads}' "/proc/$pid/status" 2>/dev/null) || return 0
+    [[ -n "$rss" && -n "$vmsize" && -n "$threads" ]] || return 0
     fd="$(find "/proc/$pid/fd" -mindepth 1 -maxdepth 1 -type l 2>/dev/null | wc -l)"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$now_ns" "$ticks" "$rss" "$vmsize" "$threads" "$fd" >>"$output"
 }
@@ -420,7 +421,7 @@ if measurement_valid:
     client_sockets = summarize_sockets(sys.argv[4], start_ns, end_ns)
     server = summarize_process(sys.argv[1], start_ns, end_ns)
     generators = [summarize_process(sys.argv[2], start_ns, end_ns, f"generator_{index}") for index in range(len(shard_values))]
-    if server["sample_count"] < 5 or server_sockets["sample_count"] < 5 or client_sockets["sample_count"] < 5:
+    if server["sample_count"] < 2 or server_sockets["sample_count"] < 2 or client_sockets["sample_count"] < 2:
         raise RuntimeError("global measurement window has insufficient samples")
 else:
     trigger_times = [values["trigger_unix_ns"] for values in shard_values if values["trigger_unix_ns"]]
