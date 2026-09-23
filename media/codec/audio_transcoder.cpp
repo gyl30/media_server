@@ -98,6 +98,7 @@ struct audio_transcoder::state
     AVPacket* output_packet{};
     std::int64_t next_encoder_pts{};
     std::int64_t next_output_pts_ns{};
+    std::optional<std::int64_t> expected_input_sample_pts;
     track_id output_track{};
     codec_id input_codec{};
     codec_id output_codec{};
@@ -456,7 +457,24 @@ bool audio_transcoder::resample_decoded()
 
     const auto frame_sample_pts = av_rescale_q(frame.pts, state_->decoder->pkt_timebase, AVRational{1, frame.sample_rate});
     const auto resampler_pts = av_rescale(frame_sample_pts, state_->encoder->sample_rate, 1);
+    constexpr std::int64_t max_timestamp_gap_divisor = 10;
+    const auto max_timestamp_gap = static_cast<std::int64_t>(frame.sample_rate) / max_timestamp_gap_divisor;
+    if (state_->expected_input_sample_pts)
+    {
+        const auto expected = *state_->expected_input_sample_pts;
+        const auto gap = frame_sample_pts >= expected ? frame_sample_pts - expected : expected - frame_sample_pts;
+        if (gap > max_timestamp_gap)
+        {
+            // A live reader may resync to a newer GOP; do not synthesize the skipped interval.
+            swr_close(state_->resampler);
+            if (swr_init(state_->resampler) < 0)
+            {
+                return false;
+            }
+        }
+    }
     swr_next_pts(state_->resampler, resampler_pts);
+    state_->expected_input_sample_pts = frame_sample_pts + frame.nb_samples;
 
     const auto delayed_samples = swr_get_delay(state_->resampler, frame.sample_rate);
     const auto capacity = av_rescale_rnd(delayed_samples + frame.nb_samples, state_->encoder->sample_rate, frame.sample_rate, AV_ROUND_UP);

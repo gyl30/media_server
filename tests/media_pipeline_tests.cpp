@@ -10375,6 +10375,11 @@ void test_audio_transcoder_timestamp_compensation()
             "audio timestamp nonzero origin adds no leading silence");
     require(run_timeline(gap) - continuous_samples == compensation_samples, "audio timestamp gap inserts silence");
     require(continuous_samples - run_timeline(overlap) == compensation_samples, "audio timestamp overlap trims samples");
+
+    auto resync = continuous;
+    resync[2] += 1'000'000'000;
+    resync[3] += 1'000'000'000;
+    require(run_timeline(resync) == continuous_samples, "audio timestamp reader resync skips stale interval");
 }
 
 void validate_av1_transcoder_output(const encoded_video_fixture& source, const std::vector<media_frame>& output)
