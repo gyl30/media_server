@@ -1,4 +1,3 @@
-#include <cstdlib>
 #include <utility>
 
 #include "config.h"
@@ -20,11 +19,5 @@ int main(int argc, char** argv)
 
     media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::service service(std::move(cfg));
-    const int service_result = service.run();
-    if (service.stopped_by_signal())
-    {
-        // Hard stop leaves deferred stackful coroutine handlers in their io_contexts.
-        std::_Exit(service_result);
-    }
-    return service_result;
+    return service.run();
 }

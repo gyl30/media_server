@@ -20,7 +20,6 @@ class service
 
    public:
     int run();
-    [[nodiscard]] bool stopped_by_signal() const noexcept;
 
    private:
     void register_signaling(boost::asio::yield_context& yield);
@@ -30,7 +29,6 @@ class service
    private:
     config config_;
     std::unique_ptr<io_context_pool> workers_;
-    bool stopped_by_signal_{};
 };
 
 }    // namespace media_server
