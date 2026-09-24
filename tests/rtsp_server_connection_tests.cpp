@@ -238,7 +238,6 @@ void test_worker_shutdown_cancels_pending_read()
 
     require(response.starts_with("RTSP/1.0 200"), "RTSP OPTIONS response before worker shutdown");
     require(returned_in_time, "RTSP pending read drains during worker shutdown");
-    require(worker.active_task_count() == 0U, "RTSP worker shutdown drains tracked coroutines");
 }
 
 void test_udp_setup_internal_failure_closes_connection()

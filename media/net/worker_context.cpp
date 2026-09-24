@@ -96,8 +96,6 @@ void worker_context::request_stop()
 
 bool worker_context::stop_requested() const noexcept { return stop_requested_.load(std::memory_order_acquire); }
 
-std::size_t worker_context::active_task_count() const noexcept { return active_task_count_.load(std::memory_order_acquire); }
-
 worker_context::shutdown_subscription worker_context::subscribe_shutdown(std::function<void()> callback)
 {
     if (stop_requested())

@@ -75,7 +75,6 @@ class worker_context final
 
     void request_stop();
     [[nodiscard]] bool stop_requested() const noexcept;
-    [[nodiscard]] std::size_t active_task_count() const noexcept;
     [[nodiscard]] shutdown_subscription subscribe_shutdown(std::function<void()> callback);
 
     void stop();
@@ -99,7 +98,6 @@ class worker_context final
         }
 
         const auto task_iterator = tasks_.emplace(tasks_.end());
-        active_task_count_.fetch_add(1U, std::memory_order_release);
         boost::asio::spawn(
             io_,
             std::move(function),
@@ -110,7 +108,6 @@ class worker_context final
                     [this, task_iterator](std::exception_ptr)
                     {
                         tasks_.erase(task_iterator);
-                        active_task_count_.fetch_sub(1U, std::memory_order_release);
                     })));
     }
 
@@ -121,7 +118,6 @@ class worker_context final
     std::list<task> tasks_;
     shutdown_callback_list shutdown_callbacks_;
     std::atomic_bool stop_requested_{};
-    std::atomic_size_t active_task_count_{};
 };
 
 }    // namespace media_server
