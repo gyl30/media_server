@@ -107,7 +107,7 @@ wait_process_exit()
         fi
         sleep 0.1
     done
-    echo "$name did not terminate after SIGTERM" >&2
+    echo "$name did not terminate after signal" >&2
     cat "$log" >&2 2>/dev/null || true
     return 1
 }

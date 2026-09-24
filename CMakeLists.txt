@@ -363,13 +363,13 @@ if(BUILD_TESTING)
     endforeach()
     set_tests_properties(service_listener_failure PROPERTIES TIMEOUT 5)
     add_test(
-        NAME process_hard_stop
+        NAME process_signal_shutdown
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/process_termination_smoke.sh
                 $<TARGET_FILE:media_server>
                 ${CMAKE_CURRENT_BINARY_DIR}/process-hard-stop
     )
     set_tests_properties(
-        process_hard_stop
+        process_signal_shutdown
         PROPERTIES
             ENVIRONMENT "MEDIA_SERVER_TERMINATION_THREADS=6;MEDIA_SERVER_TERMINATION_ACTIVE_SESSIONS=0"
             RUN_SERIAL TRUE

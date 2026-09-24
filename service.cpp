@@ -1,7 +1,6 @@
 #include <chrono>
 #include <memory>
 #include <csignal>
-#include <cstdlib>
 #include <utility>
 
 #include <boost/asio.hpp>
@@ -143,13 +142,13 @@ int service::run()
 
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
     control_worker.spawn(
-        [&signals](boost::asio::yield_context yield)
+        [this, &signals](boost::asio::yield_context yield)
         {
             boost::system::error_code error;
             signals.async_wait(yield[error]);
             if (yield.cancelled() == boost::asio::cancellation_type::none && !error)
             {
-                std::_Exit(0);
+                stop();
             }
         });
 
