@@ -15,6 +15,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(PkgConfig REQUIRED)
 
 include(CTest)
 include(CheckCXXCompilerFlag)
@@ -33,6 +34,9 @@ set_property(CACHE MEDIA_SERVER_SANITIZER PROPERTY STRINGS none address undefine
 set(media_server_sanitizers none address undefined thread)
 if(NOT MEDIA_SERVER_SANITIZER IN_LIST media_server_sanitizers)
     message(FATAL_ERROR "MEDIA_SERVER_SANITIZER must be none, address, undefined, or thread")
+endif()
+if(MEDIA_SERVER_SANITIZER STREQUAL "none")
+    pkg_check_modules(JEMALLOC REQUIRED IMPORTED_TARGET jemalloc)
 endif()
 
 add_library(media_server_build_options INTERFACE)
@@ -312,6 +316,9 @@ target_link_libraries(media_server PRIVATE
     media_server_link_options
     ${MEDIA_SERVER_BOOST_PROGRAM_OPTIONS_LIB}
 )
+if(MEDIA_SERVER_SANITIZER STREQUAL "none")
+    target_link_libraries(media_server PRIVATE PkgConfig::JEMALLOC)
+endif()
 
 if(BUILD_TESTING)
     add_test(NAME media_server_help COMMAND media_server --help)
