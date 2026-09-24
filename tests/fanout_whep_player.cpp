@@ -1,4 +1,5 @@
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -7,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -564,10 +566,16 @@ int main(int argc, char** argv)
         }
 
         const auto before = total_media(sessions);
-        std::vector<std::pair<std::uint64_t, std::uint64_t>> session_before;
+        struct session_sample
+        {
+            std::uint64_t bytes{};
+            std::uint64_t video{};
+            std::uint64_t audio{};
+        };
+        std::vector<session_sample> session_before;
         for (const auto& session : sessions)
         {
-            session_before.emplace_back(session->video_packets(), session->audio_packets());
+            session_before.push_back({session->received_bytes(), session->video_packets(), session->audio_packets()});
         }
         const auto process_before = sample_process();
         const auto started = clock_type::now();
@@ -576,19 +584,32 @@ int main(int argc, char** argv)
         const auto process_after = sample_process();
         const auto after = total_media(sessions);
         std::size_t progressing{};
+        std::vector<std::uint64_t> viewer_bytes;
+        viewer_bytes.reserve(sessions.size());
+        std::uint64_t min_video_packets = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t min_audio_packets = std::numeric_limits<std::uint64_t>::max();
         for (std::size_t index = 0; index < sessions.size(); ++index)
         {
-            progressing +=
-                sessions[index]->video_packets() > session_before[index].first && sessions[index]->audio_packets() > session_before[index].second
-                    ? 1U
-                    : 0U;
+            const auto video = sessions[index]->video_packets() - session_before[index].video;
+            const auto audio = sessions[index]->audio_packets() - session_before[index].audio;
+            viewer_bytes.push_back(sessions[index]->received_bytes() - session_before[index].bytes);
+            min_video_packets = std::min(min_video_packets, video);
+            min_audio_packets = std::min(min_audio_packets, audio);
+            progressing += video > 0 && audio > 0 ? 1U : 0U;
         }
+        std::ranges::sort(viewer_bytes);
+        const auto viewer_rate = [&](std::size_t percentile)
+        { return static_cast<double>(viewer_bytes[(viewer_bytes.size() - 1U) * percentile / 100U]) / elapsed; };
         std::cout << "phase=measurement progressing=" << progressing << " runtime_failures=" << results->runtime_failures.load()
                   << " duration_seconds=" << elapsed << " received_bytes=" << after.bytes - before.bytes
                   << " received_packets=" << after.packets - before.packets << " video_packets=" << after.video - before.video
                   << " audio_packets=" << after.audio - before.audio << " media_datagrams=" << after.media_datagrams - before.media_datagrams
                   << " unprotect_failures=" << after.unprotect_failures
                   << " bytes_per_viewer_second=" << static_cast<double>(after.bytes - before.bytes) / elapsed / static_cast<double>(config.viewers)
+                  << " viewer_bytes_per_second_min=" << viewer_rate(0) << " viewer_bytes_per_second_p10=" << viewer_rate(10)
+                  << " viewer_bytes_per_second_p50=" << viewer_rate(50) << " viewer_bytes_per_second_p90=" << viewer_rate(90)
+                  << " viewer_bytes_per_second_max=" << viewer_rate(100) << " viewer_video_packets_min=" << min_video_packets
+                  << " viewer_audio_packets_min=" << min_audio_packets
                   << " generator_cpu_cores=" << (process_after.cpu_seconds - process_before.cpu_seconds) / elapsed
                   << " generator_rss_kib=" << process_after.rss_kib << " generator_pss_kib=" << process_after.pss_kib
                   << " generator_fds=" << process_after.fds << '\n';
