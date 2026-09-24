@@ -69,6 +69,7 @@
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtsp/rtsp_publish_media.h"
 #include "media/webrtc/webrtc_packetizer.h"
+#include "media/webrtc/whep_audio_egress.h"
 #include "tests/clients/rtmp_test_client.h"
 #include "tests/clients/rtsp_test_client.h"
 #include "media/rtmp/rtmp_publish_session.h"
@@ -1084,6 +1085,7 @@ class pull_test_reader final : public media_reader
             std::scoped_lock lock(mutex_);
             thread_ = std::this_thread::get_id();
             frames_.emplace_back(generation_, entry.frame.pts_ns);
+            payloads_.push_back(entry.frame.payload.get());
         }
         if (continuous_)
         {
@@ -1142,6 +1144,12 @@ class pull_test_reader final : public media_reader
     {
         std::scoped_lock lock(mutex_);
         return frames_;
+    }
+
+    [[nodiscard]] std::vector<const void*> payloads() const
+    {
+        std::scoped_lock lock(mutex_);
+        return payloads_;
     }
 
     [[nodiscard]] std::vector<std::pair<std::uint64_t, std::uint64_t>> track_versions() const
@@ -1250,6 +1258,7 @@ class pull_test_reader final : public media_reader
     std::vector<std::pair<std::uint64_t, std::uint64_t>> track_versions_;
     std::vector<std::uint64_t> ready_generations_;
     std::vector<std::pair<std::uint64_t, std::int64_t>> frames_;
+    std::vector<const void*> payloads_;
     std::vector<std::size_t> batch_sizes_;
 };
 
@@ -10163,6 +10172,98 @@ void test_audio_transcoder_aac_opus()
     require(restarted_output.front().pts_ns == 5'000'000'000, "audio transcoder invalid first frame does not start timeline");
 }
 
+void test_whep_shared_audio_egress()
+{
+    worker_context worker;
+    worker.release_work();
+    const auto drain = [&worker]()
+    {
+        worker.io().restart();
+        while (worker.io().poll() != 0)
+        {
+        }
+    };
+
+    auto source = std::make_shared<media_stream>("live/shared-audio", worker);
+    require(source->set_tracks({make_video_track(), make_audio_track()}), "shared audio source tracks");
+    const whep_audio_settings stereo{.channels = 2, .bitrate = 128'000, .max_playback_rate = 48'000};
+    auto first = acquire_whep_audio_egress(source, worker, stereo);
+    auto second = acquire_whep_audio_egress(source, worker, stereo);
+    require(first && first == second, "same source generation and opus settings share encoder");
+    auto output = first->stream();
+    const auto tracks = output->tracks();
+    const auto audio = std::ranges::find_if(tracks, [](const media_track& track) { return track.kind == media_kind::audio; });
+    require(audio != tracks.end() && audio->codec == codec_id::opus && audio->clock_rate == 48'000 && audio->channel_count == 2,
+            "shared audio output advertises opus");
+
+    auto early = std::make_shared<pull_test_reader>(true);
+    static_cast<void>(output->add_reader(early, worker));
+    drain();
+    source->publish(make_video_frame(0, true));
+    std::int64_t pts_ns = 37'000'000;
+    for (const auto& adts : valid_aac_adts_frames)
+    {
+        source->publish(media_frame{
+            .track = audio_track_id,
+            .dts_ns = pts_ns,
+            .pts_ns = pts_ns,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+        });
+        pts_ns += 23'219'954;
+    }
+    drain();
+    require(early->frames().size() > 1, "shared audio produces opus frames");
+
+    auto late = std::make_shared<pull_test_reader>(true);
+    static_cast<void>(output->add_reader(late, worker));
+    drain();
+    require(late->frames() == early->frames() && late->payloads() == early->payloads(), "late viewer receives the same immutable opus frames");
+
+    early->remove();
+    first.reset();
+    const auto before = late->frames().size();
+    for (const auto& adts : valid_aac_adts_frames)
+    {
+        source->publish(media_frame{
+            .track = audio_track_id,
+            .dts_ns = pts_ns,
+            .pts_ns = pts_ns,
+            .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
+        });
+        pts_ns += 23'219'954;
+    }
+    drain();
+    require(late->frames().size() > before, "remaining viewer continues after another leaves");
+
+    auto mono = acquire_whep_audio_egress(source, worker, {.channels = 1, .bitrate = 64'000, .max_playback_rate = 16'000});
+    require(mono && mono != second, "different opus settings use separate encoder state");
+    source->end();
+    drain();
+    require(late->ends() == 1 && second->reason() == whep_audio_egress::end_reason::source_ended,
+            "source end stops shared output and viewer");
+
+    auto replacement = std::make_shared<media_stream>(source->name(), worker);
+    require(replacement->set_tracks({make_video_track(), make_audio_track()}), "replacement source tracks");
+    auto next = acquire_whep_audio_egress(replacement, worker, stereo);
+    require(next && next != second && next->stream() != output, "replacement source generation gets new audio egress");
+    drain();
+    const std::weak_ptr<whep_audio_egress> retired = next;
+    next.reset();
+    drain();
+    require(retired.expired(), "zero viewers release shared audio egress");
+
+    next = acquire_whep_audio_egress(replacement, worker, stereo);
+    require(next != nullptr, "shared audio egress starts again after zero viewers");
+    drain();
+    auto changed = make_audio_track();
+    changed.clock_rate = 32'000;
+    changed.codec_config = {0x12, 0x90};
+    require(replacement->update_track(std::move(changed)), "replacement audio configuration changes");
+    drain();
+    require(next->reason() == whep_audio_egress::end_reason::source_changed,
+            "changed AAC configuration ends old encoder generation");
+}
+
 void test_audio_transcoder_opus_aac()
 {
     const audio_transcoder_config opus_config{
@@ -12372,11 +12473,16 @@ void test_webrtc_rtp_packetizer()
 void require_input_output_boundaries(const std::shared_ptr<media_stream>& stream, worker_context& worker, codec_id codec)
 {
     auto& io = worker.io();
+    auto audio_egress = acquire_whep_audio_egress(
+        stream, worker, {.channels = 2, .bitrate = 128'000, .max_playback_rate = 48'000});
+    require(audio_egress != nullptr, "input output whep audio egress");
     std::vector<std::vector<std::uint8_t>> rtp;
     webrtc_packetizer output({.video_codec = codec,
+                              .audio_codec = codec_id::opus,
                               .video_payload_type = 104,
                               .audio_payload_type = 109,
                               .opus_channel_count = 2,
+                              .prepared_opus = true,
                               .video_mid = "video",
                               .audio_mid = "audio",
                               .video_mid_extension_id = 4,
@@ -12384,7 +12490,7 @@ void require_input_output_boundaries(const std::shared_ptr<media_stream>& stream
                               .rtcp_cname = {}},
                              [&rtp](std::span<const std::uint8_t> packet) { rtp.emplace_back(packet.begin(), packet.end()); });
     const auto reader = std::make_shared<packetizer_test_reader>(output);
-    const auto handle = stream->add_reader(reader, worker);
+    const auto handle = audio_egress->stream()->add_reader(reader, worker);
 
     flv_demux_capture flv;
     const auto demuxer =
@@ -12785,6 +12891,24 @@ void test_whip_media_receiver()
 {
     for (const auto video_codec : {codec_id::h264, codec_id::h265})
     {
+        audio_transcoder sender_audio;
+        require(sender_audio.startup({
+                    .input = {.codec = codec_id::aac, .sample_rate = 44'100, .channel_count = 2},
+                    .output = {.codec = codec_id::opus, .sample_rate = 48'000, .channel_count = 2},
+                    .input_codec_config = aac_asc,
+                    .output_bit_rate = 128'000,
+                    .output_cutoff = 20'000,
+                }),
+                "whip test opus encoder startup");
+        std::vector<media_frame> opus_samples;
+        std::int64_t source_pts_ns = 0;
+        for (const auto& adts : valid_aac_adts_frames)
+        {
+            require(sender_audio.transcode(make_raw_audio_frame(source_pts_ns, adts), opus_samples), "whip test opus encode");
+            source_pts_ns += 23'219'954;
+        }
+        require(!opus_samples.empty(), "whip test encoded opus samples");
+
         worker_context worker;
         auto& io = worker.io();
         const std::string stream_name = video_codec == codec_id::h264 ? "live/whip-h264-opus" : "live/whip-h265-opus";
@@ -12800,11 +12924,10 @@ void test_whip_media_receiver()
         webrtc_packetizer packetizer(
             webrtc_packetizer_config{
                 .video_codec = video_codec,
-                .audio_codec = codec_id::aac,
+                .audio_codec = codec_id::opus,
                 .video_payload_type = 102,
                 .audio_payload_type = 111,
                 .opus_channel_count = 2,
-                .opus_bitrate = 128'000,
                 .opus_max_playback_rate = 48'000,
                 .video_mid = "0",
                 .audio_mid = "1",
@@ -12825,19 +12948,11 @@ void test_whip_media_receiver()
                               require(packetizer.on_track(video_codec == codec_id::h264 ? make_video_track() : make_h265_track()),
                                       "whip media receiver packetizer video track");
                               {
-                                  require(packetizer.on_track(make_audio_track()), "whip media receiver packetizer audio track");
-                                  std::int64_t pts_ns = 0;
-                                  for (const auto& adts : valid_aac_adts_frames)
+                                  require(packetizer.on_track(make_opus_track()), "whip media receiver packetizer audio track");
+                                  for (std::int64_t pts_ns = 0; pts_ns < 80'000'000; pts_ns += 20'000'000)
                                   {
-                                      require(packetizer.on_frame(media_frame{
-                                                  .track = audio_track_id,
-                                                  .dts_ns = pts_ns,
-                                                  .pts_ns = pts_ns,
-                                                  .key_frame = false,
-                                                  .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
-                                              }),
+                                      require(packetizer.on_frame(make_opus_frame(pts_ns, *opus_samples.front().payload)),
                                               "whip media receiver pre-video audio");
-                                      pts_ns += 23'219'954;
                                   }
                               }
                           });
@@ -12894,20 +13009,10 @@ void test_whip_media_receiver()
                               require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(180'000'000, false)
                                                                                         : make_h265_frame(180'000'000, false)),
                                       "whip media receiver next video frame");
+                              for (std::int64_t pts_ns = 100'000'000; pts_ns < 180'000'000; pts_ns += 20'000'000)
                               {
-                                  std::int64_t pts_ns = 100'000'000;
-                                  for (const auto& adts : valid_aac_adts_frames)
-                                  {
-                                      require(packetizer.on_frame(media_frame{
-                                                  .track = audio_track_id,
-                                                  .dts_ns = pts_ns,
-                                                  .pts_ns = pts_ns,
-                                                  .key_frame = false,
-                                                  .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
-                                              }),
-                                              "whip media receiver post-video audio");
-                                      pts_ns += 23'219'954;
-                                  }
+                                  require(packetizer.on_frame(make_opus_frame(pts_ns, *opus_samples.front().payload)),
+                                          "whip media receiver post-video audio");
                               }
                           });
         io.run();
@@ -12939,18 +13044,10 @@ void test_whip_media_receiver()
                                   require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(340'000'000, false)
                                                                                             : make_h265_frame(340'000'000, false)),
                                           "whip rtsp video flush frame");
-                                  std::int64_t pts_ns = 300'000'000;
-                                  for (const auto& adts : valid_aac_adts_frames)
+                                  for (std::int64_t pts_ns = 300'000'000; pts_ns < 380'000'000; pts_ns += 20'000'000)
                                   {
-                                      require(packetizer.on_frame(media_frame{
-                                                  .track = audio_track_id,
-                                                  .dts_ns = pts_ns,
-                                                  .pts_ns = pts_ns,
-                                                  .key_frame = false,
-                                                  .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
-                                              }),
+                                      require(packetizer.on_frame(make_opus_frame(pts_ns, *opus_samples.front().payload)),
                                               "whip rtsp audio frame");
-                                      pts_ns += 23'219'954;
                                   }
                               });
 
@@ -13025,13 +13122,18 @@ void test_whip_media_receiver()
         }
 
         {
+            auto audio_egress = acquire_whep_audio_egress(
+                stream, worker, {.channels = 2, .bitrate = 128'000, .max_playback_rate = 48'000});
+            require(audio_egress != nullptr, "whip whep audio egress");
             std::vector<std::vector<std::uint8_t>> packets;
             webrtc_packetizer output(
                 webrtc_packetizer_config{
                     .video_codec = video_codec,
+                    .audio_codec = codec_id::opus,
                     .video_payload_type = 104,
                     .audio_payload_type = 109,
                     .opus_channel_count = 2,
+                    .prepared_opus = true,
                     .video_mid = "video",
                     .audio_mid = "audio",
                     .video_mid_extension_id = 4,
@@ -13040,7 +13142,7 @@ void test_whip_media_receiver()
                 },
                 [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
             const auto reader = std::make_shared<packetizer_test_reader>(output);
-            const auto handle = stream->add_reader(reader, worker);
+            const auto handle = audio_egress->stream()->add_reader(reader, worker);
             io.run();
             io.restart();
 
@@ -13123,11 +13225,10 @@ void test_whip_hls_output(codec_id video_codec)
     webrtc_packetizer packetizer(
         webrtc_packetizer_config{
             .video_codec = video_codec,
-            .audio_codec = codec_id::aac,
+            .audio_codec = codec_id::opus,
             .video_payload_type = 102,
             .audio_payload_type = 111,
             .opus_channel_count = 2,
-            .opus_bitrate = 128'000,
             .opus_max_playback_rate = 48'000,
             .video_mid = "0",
             .audio_mid = "1",
@@ -13144,7 +13245,7 @@ void test_whip_hls_output(codec_id video_codec)
         {
             require(receiver.startup(), "whip hls receiver startup");
             require(packetizer.on_track(video_codec == codec_id::h264 ? make_video_track() : make_h265_track()), "whip hls packetizer video track");
-            require(packetizer.on_track(make_audio_track()), "whip hls packetizer audio track");
+            require(packetizer.on_track(make_opus_track()), "whip hls packetizer audio track");
             require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(0, true) : make_h265_frame(0, true)),
                     "whip hls initial video key frame");
             require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(40'000'000, false) : make_h265_frame(40'000'000, false)),
@@ -13167,18 +13268,9 @@ void test_whip_hls_output(codec_id video_codec)
             const auto count = hls::segment_count(stream_name, application_config);
             require(count.has_value() && *count == 0U, "whip hls segmenter created");
 
-            std::int64_t pts_ns = 100'000'000;
-            for (const auto& adts : valid_aac_adts_frames)
+            for (std::int64_t pts_ns = 100'000'000; pts_ns < 180'000'000; pts_ns += 20'000'000)
             {
-                require(packetizer.on_frame(media_frame{
-                            .track = audio_track_id,
-                            .dts_ns = pts_ns,
-                            .pts_ns = pts_ns,
-                            .key_frame = false,
-                            .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
-                        }),
-                        "whip hls audio frame");
-                pts_ns += 23'219'954;
+                require(packetizer.on_frame(make_opus_frame(pts_ns)), "whip hls audio frame");
             }
 
             require(packetizer.on_frame(video_codec == codec_id::h264 ? make_video_frame(2'500'000'000, true) : make_h265_frame(2'500'000'000, true)),
@@ -13236,11 +13328,10 @@ void test_whip_rtmp_output()
     webrtc_packetizer packetizer(
         webrtc_packetizer_config{
             .video_codec = codec_id::h264,
-            .audio_codec = codec_id::aac,
+            .audio_codec = codec_id::opus,
             .video_payload_type = 102,
             .audio_payload_type = 111,
             .opus_channel_count = 2,
-            .opus_bitrate = 128'000,
             .opus_max_playback_rate = 48'000,
             .video_mid = "0",
             .audio_mid = "1",
@@ -13256,7 +13347,7 @@ void test_whip_rtmp_output()
                       {
                           require(receiver.startup(), "whip rtmp receiver startup");
                           require(packetizer.on_track(make_video_track()), "whip rtmp packetizer video track");
-                          require(packetizer.on_track(make_audio_track()), "whip rtmp packetizer audio track");
+                          require(packetizer.on_track(make_opus_track()), "whip rtmp packetizer audio track");
                           require(packetizer.on_frame(make_video_frame(0, true)), "whip rtmp initial video key frame");
                           require(packetizer.on_frame(make_video_frame(40'000'000, false)), "whip rtmp initial video flush frame");
                       });
@@ -13290,18 +13381,9 @@ void test_whip_rtmp_output()
     boost::asio::post(io,
                       [&]()
                       {
-                          std::int64_t pts_ns = 100'000'000;
-                          for (const auto& adts : valid_aac_adts_frames)
+                          for (std::int64_t pts_ns = 100'000'000; pts_ns < 180'000'000; pts_ns += 20'000'000)
                           {
-                              require(packetizer.on_frame(media_frame{
-                                          .track = audio_track_id,
-                                          .dts_ns = pts_ns,
-                                          .pts_ns = pts_ns,
-                                          .key_frame = false,
-                                          .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
-                                      }),
-                                      "whip rtmp audio frame");
-                              pts_ns += 23'219'954;
+                              require(packetizer.on_frame(make_opus_frame(pts_ns)), "whip rtmp audio frame");
                           }
                           require(packetizer.on_frame(make_video_frame(300'000'000, true)), "whip rtmp video key frame");
                           require(packetizer.on_frame(make_video_frame(340'000'000, false)), "whip rtmp video flush frame");
@@ -13445,25 +13527,52 @@ void test_webrtc_av1_packetizer()
 
 void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max_playback_rate = 48'000)
 {
+    worker_context worker;
+    worker.release_work();
+    auto source = std::make_shared<media_stream>("live/opus-settings", worker);
+    require(source->set_tracks({make_video_track(), make_audio_track()}), "opus settings source tracks");
+    auto egress = acquire_whep_audio_egress(source,
+                                            worker,
+                                            {.channels = channel_count,
+                                             .bitrate = bitrate > 0 ? bitrate : 64'000 * channel_count,
+                                             .max_playback_rate = max_playback_rate});
+    require(egress != nullptr, "opus settings shared egress starts");
+    auto output = egress->stream();
+    const auto tracks = output->tracks();
+    const auto audio = std::ranges::find_if(tracks, [](const media_track& track) { return track.kind == media_kind::audio; });
+    require(audio != tracks.end() && audio->codec == codec_id::opus && audio->channel_count == channel_count,
+            "opus settings output track");
+
     std::vector<std::vector<std::uint8_t>> packets;
     webrtc_packetizer packetizer(
         webrtc_packetizer_config{
             .audio_payload_type = 111,
             .opus_channel_count = channel_count,
-            .opus_bitrate = bitrate,
             .opus_max_playback_rate = max_playback_rate,
+            .prepared_opus = true,
             .audio_mid = "1",
             .audio_mid_extension_id = 4,
             .rtcp_cname = {},
         },
         [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
-    packetizer.on_track(make_audio_track());
-    require(packetizer.valid(), "webrtc audio packetizer valid");
+    require(packetizer.on_track(*audio), "webrtc prepared opus packetizer accepts track");
+
+    auto sink = std::make_shared<whip_media_capture_sink>();
+    output->add_sink(sink);
+    const auto drain = [&worker]()
+    {
+        worker.io().restart();
+        while (worker.io().poll() != 0)
+        {
+        }
+    };
+    drain();
+    source->publish(make_video_frame(0, true));
 
     std::int64_t pts_ns = 0;
     for (const auto& adts : valid_aac_adts_frames)
     {
-        packetizer.on_frame(media_frame{
+        source->publish(media_frame{
             .track = audio_track_id,
             .dts_ns = pts_ns,
             .pts_ns = pts_ns,
@@ -13471,6 +13580,14 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
             .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
         });
         pts_ns += 23'219'954;
+    }
+    drain();
+    for (const auto& frame : sink->frames())
+    {
+        if (frame.track == audio_track_id)
+        {
+            require(packetizer.on_frame(frame), "webrtc prepared opus packetize");
+        }
     }
 
     require(!packets.empty() && packets.front().size() >= 12, "opus rtp header size");
@@ -13483,6 +13600,8 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
         require(rtp_timestamp(packets[1]) - rtp_timestamp(packets[0]) == 960U, "opus rtp timestamp step");
     }
     packetizer.shutdown();
+    source->end();
+    drain();
 }
 
 void test_webrtc_opus_passthrough()
@@ -13632,21 +13751,25 @@ void test_webrtc_g711_passthrough()
     test_webrtc_g711_passthrough_case(codec_id::g711u);
 }
 
-void test_webrtc_packetizer_runtime_failure()
+void test_whep_audio_egress_runtime_failure()
 {
-    webrtc_packetizer packetizer(webrtc_packetizer_config{.audio_payload_type = 111, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
-                                 [](std::span<const std::uint8_t>) {});
-    require(packetizer.on_track(make_audio_track()), "webrtc runtime failure audio track");
-    require(!packetizer.on_frame(media_frame{
-                .track = audio_track_id,
-                .dts_ns = 0,
-                .pts_ns = 0,
-                .key_frame = false,
-                .payload = std::make_shared<const std::vector<std::uint8_t>>(std::vector<std::uint8_t>{0x00}),
-            }),
-            "webrtc audio transcode failure reported");
-    require(packetizer.valid(), "webrtc runtime failure keeps packetizer valid");
-    packetizer.shutdown();
+    worker_context worker;
+    worker.release_work();
+    auto source = std::make_shared<media_stream>("live/audio-error", worker);
+    require(source->set_tracks({make_video_track(), make_audio_track()}), "shared audio error source tracks");
+    auto egress = acquire_whep_audio_egress(source, worker, {.channels = 2, .bitrate = 128'000, .max_playback_rate = 48'000});
+    require(egress != nullptr, "shared audio error egress starts");
+    worker.io().poll();
+    worker.io().restart();
+    source->publish(make_video_frame(0, true));
+    source->publish(media_frame{
+        .track = audio_track_id,
+        .dts_ns = 0,
+        .pts_ns = 0,
+        .payload = std::make_shared<const std::vector<std::uint8_t>>(std::vector<std::uint8_t>{0x00}),
+    });
+    worker.io().poll();
+    require(egress->reason() == whep_audio_egress::end_reason::transcode_failed, "shared audio transcode failure ends output");
 }
 
 void test_webrtc_packetizer_initialization_failure()
@@ -13663,7 +13786,7 @@ void test_webrtc_packetizer_initialization_failure()
     webrtc_packetizer invalid_audio(
         webrtc_packetizer_config{.audio_payload_type = 111, .opus_channel_count = 3, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
-    require(!invalid_audio.on_track(make_audio_track()), "webrtc invalid opus packetizer rejected");
+    require(!invalid_audio.on_track(make_opus_track()), "webrtc invalid opus packetizer rejected");
     require(invalid_audio.valid(), "webrtc invalid opus packetizer remains valid");
     invalid_audio.shutdown();
 
@@ -13692,7 +13815,7 @@ void test_webrtc_packetizer_initialization_failure()
     webrtc_packetizer invalid_opus_payload(
         webrtc_packetizer_config{.audio_payload_type = 95, .opus_channel_count = 2, .audio_mid = "1", .audio_mid_extension_id = 4, .rtcp_cname = {}},
         [](std::span<const std::uint8_t>) {});
-    require(!invalid_opus_payload.on_track(make_audio_track()), "webrtc rtcp mux opus payload rejected");
+    require(!invalid_opus_payload.on_track(make_opus_track()), "webrtc rtcp mux opus payload rejected");
     require(invalid_opus_payload.valid(), "webrtc rtcp mux opus packetizer remains valid");
     invalid_opus_payload.shutdown();
 }
@@ -13717,20 +13840,12 @@ void test_webrtc_rtcp_sender()
         [&rtcp_packets](std::span<const std::uint8_t> packet) { rtcp_packets.emplace_back(packet.begin(), packet.end()); });
 
     packetizer.on_track(make_video_track());
-    packetizer.on_track(make_audio_track());
+    packetizer.on_track(make_opus_track());
     packetizer.on_frame(make_video_frame(0, true));
 
-    std::int64_t audio_pts_ns = 0;
-    for (const auto& adts : valid_aac_adts_frames)
+    for (std::int64_t audio_pts_ns = 0; audio_pts_ns < 80'000'000; audio_pts_ns += 20'000'000)
     {
-        packetizer.on_frame(media_frame{
-            .track = audio_track_id,
-            .dts_ns = audio_pts_ns,
-            .pts_ns = audio_pts_ns,
-            .key_frame = false,
-            .payload = std::make_shared<const std::vector<std::uint8_t>>(adts),
-        });
-        audio_pts_ns += 23'219'954;
+        packetizer.on_frame(make_opus_frame(audio_pts_ns));
     }
 
     std::optional<std::uint32_t> video_ssrc;
@@ -13809,6 +13924,10 @@ int main(int argc, char* argv[])
         else if (scenario == "rtsp_publish_opus_fmtp")
         {
             media_server::test_rtsp_publish_opus_fmtp_whitespace();
+        }
+        else if (scenario == "whep_shared_audio_egress")
+        {
+            media_server::test_whep_shared_audio_egress();
         }
         else if (scenario.starts_with("rtsp_claim_"))
         {
@@ -14152,6 +14271,8 @@ int main(int argc, char* argv[])
     std::cout << "[pass] rtsp_aac_adts_round_trip\n";
     media_server::test_audio_transcoder_aac_opus();
     std::cout << "[pass] audio_transcoder_aac_opus\n";
+    media_server::test_whep_shared_audio_egress();
+    std::cout << "[pass] whep_shared_audio_egress\n";
     media_server::test_audio_transcoder_opus_aac();
     std::cout << "[pass] audio_transcoder_opus_aac\n";
     media_server::test_audio_transcoder_timestamp_compensation();
@@ -14248,8 +14369,8 @@ int main(int argc, char* argv[])
     std::cout << "[pass] webrtc_opus_packetizer\n";
     media_server::test_webrtc_g711_passthrough();
     std::cout << "[pass] webrtc_g711_passthrough\n";
-    media_server::test_webrtc_packetizer_runtime_failure();
-    std::cout << "[pass] webrtc_packetizer_runtime_failure\n";
+    media_server::test_whep_audio_egress_runtime_failure();
+    std::cout << "[pass] whep_audio_egress_runtime_failure\n";
     media_server::test_webrtc_packetizer_initialization_failure();
     std::cout << "[pass] webrtc_packetizer_initialization_failure\n";
     media_server::test_webrtc_rtcp_sender();

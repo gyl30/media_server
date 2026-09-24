@@ -30,6 +30,7 @@
 namespace media_server
 {
 class worker_context;
+class whep_audio_egress;
 
 struct whep_session_timeouts
 {
@@ -106,6 +107,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
    private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
+    std::shared_ptr<whep_audio_egress> audio_egress_;
     std::string stream_id_;
     std::string stream_name_;
     boost::asio::ip::address advertised_address_;

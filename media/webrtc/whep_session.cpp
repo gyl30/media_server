@@ -14,6 +14,7 @@
 #include "media/net/worker_context.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
+#include "media/webrtc/whep_audio_egress.h"
 
 namespace media_server
 {
@@ -150,18 +151,36 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     spdlog::debug("webrtc session {} remote fingerprint {}", id_, media->fingerprint);
 
+    if (answer->audio_payload_type && answer->audio_codec == codec_id::aac)
+    {
+        audio_egress_ = acquire_whep_audio_egress(stream_,
+                                                  worker_,
+                                                  whep_audio_settings{
+                                                      .channels = answer->audio_channel_count.value_or(1),
+                                                      .bitrate = answer->audio_bitrate.value_or(64'000 * answer->audio_channel_count.value_or(1)),
+                                                      .max_playback_rate = answer->audio_max_playback_rate.value_or(48'000),
+                                                  });
+        if (!audio_egress_)
+        {
+            shutdown();
+            return whep_session_startup_error::internal_error;
+        }
+        stream_ = audio_egress_->stream();
+    }
+
     answer_ = std::move(*answer);
     started_ = true;
 
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
-    for (const auto& track : source_tracks)
+    const auto media_tracks = stream_->tracks();
+    for (const auto& track : media_tracks)
     {
         const bool negotiated_video = answer_.video_codec && track.kind == media_kind::video &&
                                       ((*answer_.video_codec == codec_id::av1 && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
                                        track.codec == *answer_.video_codec);
-        const bool negotiated_audio =
-            answer_.audio_payload_type && answer_.audio_codec && track.kind == media_kind::audio && track.codec == *answer_.audio_codec;
+        const bool negotiated_audio = answer_.audio_payload_type && answer_.audio_codec && track.kind == media_kind::audio &&
+                                      track.codec == (audio_egress_ ? codec_id::opus : *answer_.audio_codec);
         if (negotiated_video || negotiated_audio)
         {
             negotiated_tracks_.emplace(track.id, track);
@@ -218,6 +237,7 @@ void whep_session::safe_shutdown()
     reader_cursor_.reset();
     track_revision_ = 0;
     stream_.reset();
+    audio_egress_.reset();
     certificate_.reset();
     srtp_.reset();
     dtls_timer_.cancel();
@@ -327,7 +347,19 @@ void whep_session::on_end()
     spdlog::info("webrtc source stream ended session {}", id_);
     if (started_)
     {
-        whep_event::report_output(event_state::remote_closed, stream_id_, stream_name_);
+        const auto reason = audio_egress_ ? audio_egress_->reason() : whep_audio_egress::end_reason::source_ended;
+        if (reason == whep_audio_egress::end_reason::source_changed)
+        {
+            whep_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "negotiated_tracks_changed");
+        }
+        else if (reason == whep_audio_egress::end_reason::transcode_failed)
+        {
+            whep_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "media_packetization_failed");
+        }
+        else
+        {
+            whep_event::report_output(event_state::remote_closed, stream_id_, stream_name_);
+        }
     }
     shutdown();
 }
@@ -615,12 +647,12 @@ bool whep_session::startup_media()
     auto packetizer = std::make_unique<webrtc_packetizer>(
         webrtc_packetizer_config{
             .video_codec = answer_.video_codec.value_or(codec_id::h264),
-            .audio_codec = answer_.audio_codec.value_or(codec_id::aac),
+            .audio_codec = audio_egress_ ? codec_id::opus : answer_.audio_codec.value_or(codec_id::aac),
             .video_payload_type = answer_.video_payload_type.value_or(-1),
             .audio_payload_type = answer_.audio_payload_type.value_or(-1),
             .opus_channel_count = answer_.audio_channel_count.value_or(1),
-            .opus_bitrate = answer_.audio_bitrate.value_or(64'000 * answer_.audio_channel_count.value_or(1)),
             .opus_max_playback_rate = answer_.audio_max_playback_rate.value_or(48'000),
+            .prepared_opus = audio_egress_ != nullptr,
             .video_mid = answer_.video_mid.value_or(""),
             .audio_mid = answer_.audio_mid.value_or(""),
             .video_mid_extension_id = answer_.video_mid_extension_id.value_or(-1),

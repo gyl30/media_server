@@ -3560,11 +3560,10 @@ void test_whip_session_ingest(codec_id video_codec)
     webrtc_packetizer packetizer(
         webrtc_packetizer_config{
             .video_codec = video_codec,
-            .audio_codec = codec_id::aac,
+            .audio_codec = codec_id::opus,
             .video_payload_type = 102,
             .audio_payload_type = h265 ? -1 : 111,
             .opus_channel_count = 2,
-            .opus_bitrate = 128'000,
             .opus_max_playback_rate = 48'000,
             .video_mid = "0",
             .audio_mid = h265 ? "" : "1",
@@ -3600,7 +3599,7 @@ void test_whip_session_ingest(codec_id video_codec)
     require(packetizer.on_track(h265 ? make_h265_track() : make_video_track()), "whip input video track");
     if (!h265)
     {
-        require(packetizer.on_track(make_audio_track()), "whip input audio track");
+        require(packetizer.on_track(make_opus_track()), "whip input audio track");
     }
 
     auto key_video = make_video_key_frame(video_codec);

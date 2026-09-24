@@ -9,7 +9,6 @@
 #include <functional>
 
 #include "media/core/media_types.h"
-#include "media/codec/audio_transcoder.h"
 #include "media/codec/video_transcoder.h"
 
 struct rtsp_muxer_t;
@@ -20,12 +19,12 @@ namespace media_server
 struct webrtc_packetizer_config
 {
     codec_id video_codec{codec_id::h264};
-    codec_id audio_codec{codec_id::aac};
+    codec_id audio_codec{codec_id::opus};
     int video_payload_type{-1};
     int audio_payload_type{-1};
     int opus_channel_count{1};
-    int opus_bitrate{-1};
     int opus_max_playback_rate{48'000};
+    bool prepared_opus{};
     std::string video_mid{};
     std::string audio_mid{};
     int video_mid_extension_id{-1};
@@ -54,7 +53,6 @@ class webrtc_packetizer final
     struct track_state
     {
         codec_id codec{};
-        std::unique_ptr<audio_transcoder> transcoder;
         std::unique_ptr<video_transcoder> video_transcoder_;
         int media_id{-1};
         int payload_id{-1};

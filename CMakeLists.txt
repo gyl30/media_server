@@ -264,6 +264,7 @@ add_library(media_core STATIC
     media/webrtc/whip.cpp
     media/webrtc/whip_media_receiver.cpp
     media/webrtc/whep_session.cpp
+    media/webrtc/whep_audio_egress.cpp
     media/webrtc/whep.cpp
     media/webrtc/webrtc_packetizer.cpp
     media/rtmp/rtmp_event.cpp
@@ -408,6 +409,7 @@ if(BUILD_TESTING)
         rtsp_pull_topology
         rtsp_pull_demux_error
         rtsp_publish_opus_fmtp
+        whep_shared_audio_egress
         rtsp_claim_network_error
         rtsp_claim_disconnect
         rtsp_claim_accepted
