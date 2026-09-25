@@ -213,8 +213,8 @@ void test_independent_rtp()
                 out.ps.insert(out.ps.end(), begin, begin + rtp.payloadlen);
             },
             []() {});
-        require(senders[i]->startup(), "sender startup");
     }
+    require(senders[0]->startup(), "first sender startup");
     drain(worker);
     auto payload = std::make_shared<std::vector<std::uint8_t>>(30'000, 0x55);
     (*payload)[0] = 0;
@@ -223,6 +223,8 @@ void test_independent_rtp()
     (*payload)[3] = 1;
     (*payload)[4] = 0x65;
     source->publish({.track = 1, .dts_ns = 1'000'000'000, .pts_ns = 1'040'000'000, .key_frame = true, .payload = payload});
+    drain(worker);
+    require(senders[1]->startup(), "late sender startup");
     drain(worker);
     require(received[0].ps == received[1].ps && received[0].sequences.size() > 1, "fragmented PS payload shared semantically");
     const auto first_timestamp = received[1].timestamps.front();
