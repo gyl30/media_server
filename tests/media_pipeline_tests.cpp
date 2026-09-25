@@ -11761,6 +11761,8 @@ void test_hls_segmenter()
     retained_buffer_segmenter.on_frame(make_video_frame(2'000'000'000, true));
     require(!retained_buffer_segmenter.segment_buffer(0), "hls segment window releases evicted buffer");
     require(retained_buffer->size() == retained_size, "hls response buffer survives segment window eviction");
+    retained_buffer_segmenter.on_end();
+    require(retained_buffer->size() == retained_size, "hls response buffer survives segmenter shutdown");
 
     worker_context reconfigured_worker;
     reconfigured_worker.release_work();
