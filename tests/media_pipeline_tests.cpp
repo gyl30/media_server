@@ -10219,8 +10219,19 @@ void test_whep_shared_audio_egress()
     drain();
     require(late->frames() == early->frames() && late->payloads() == early->payloads(), "late viewer receives the same immutable opus frames");
 
+    auto changed_video = make_video_track();
+    changed_video.codec_config = h264_config_updated;
+    require(source->update_track(std::move(changed_video)), "shared audio video configuration changes");
+    drain();
+    auto after_video_change = acquire_whep_audio_egress(source, worker, stereo);
+    require(after_video_change == second, "video configuration does not duplicate audio encoder");
+    release_whep_audio_egress(after_video_change);
+
     early->remove();
-    first.reset();
+    release_whep_audio_egress(first);
+    release_whep_audio_egress(first);
+    source->publish(make_video_frame(pts_ns, true, h264_config_updated));
+    drain();
     const auto before = late->frames().size();
     for (const auto& adts : valid_aac_adts_frames)
     {
@@ -10248,13 +10259,14 @@ void test_whep_shared_audio_egress()
     require(next && next != second && next->stream() != output, "replacement source generation gets new audio egress");
     drain();
     const std::weak_ptr<whep_audio_egress> retired = next;
-    next.reset();
-    drain();
-    require(retired.expired(), "zero viewers release shared audio egress");
-
+    const auto retired_output = next->stream();
+    auto retired_reader = std::make_shared<pull_test_reader>(true);
+    retired_output->add_reader(retired_reader, worker);
+    release_whep_audio_egress(next);
     next = acquire_whep_audio_egress(replacement, worker, stereo);
-    require(next != nullptr, "shared audio egress starts again after zero viewers");
+    require(next && next != retired.lock(), "pending last-viewer shutdown is not reused");
     drain();
+    require(retired.expired() && retired_reader->ends() == 1, "zero viewers explicitly end and release shared audio egress");
     auto changed = make_audio_track();
     changed.clock_rate = 32'000;
     changed.codec_config = {0x12, 0x90};
@@ -10262,6 +10274,44 @@ void test_whep_shared_audio_egress()
     drain();
     require(next->reason() == whep_audio_egress::end_reason::source_changed,
             "changed AAC configuration ends old encoder generation");
+    release_whep_audio_egress(next);
+    release_whep_audio_egress(second);
+    release_whep_audio_egress(mono);
+    replacement->end();
+    drain();
+
+    auto updating_source = std::make_shared<media_stream>("live/updating-audio", worker);
+    require(updating_source->set_tracks({make_video_track(), make_audio_track()}), "updating source tracks");
+    auto old_config = acquire_whep_audio_egress(updating_source, worker, stereo);
+    drain();
+    auto updated_track = make_video_track();
+    updated_track.codec_config = h264_config_updated;
+    require(updating_source->update_track(std::move(updated_track)), "updating source video configuration");
+    auto pending_config = acquire_whep_audio_egress(updating_source, worker, stereo);
+    require(pending_config && pending_config != old_config, "new viewer does not reuse an outdated derived video configuration");
+    drain();
+    release_whep_audio_egress(pending_config);
+    release_whep_audio_egress(old_config);
+    updating_source->end();
+    drain();
+
+    worker_context other_worker;
+    other_worker.release_work();
+    auto stopping_source = std::make_shared<media_stream>("live/stopping-audio", other_worker);
+    require(stopping_source->set_tracks({make_video_track(), make_audio_track()}), "stopping source tracks");
+    auto held = acquire_whep_audio_egress(stopping_source, worker, stereo);
+    const std::weak_ptr<whep_audio_egress> stopped = held;
+    auto stopped_reader = std::make_shared<pull_test_reader>(true);
+    held->stream()->add_reader(stopped_reader, other_worker);
+    worker.request_stop();
+    drain();
+    other_worker.io().restart();
+    other_worker.io().run();
+    require(held->reason() == whep_audio_egress::end_reason::worker_stopped && stopped_reader->ends() == 1,
+            "encoder owner shutdown ends readers on another worker");
+    release_whep_audio_egress(held);
+    require(stopped.expired(), "last viewer release after owner exit does not post business shutdown");
+    stopping_source->end();
 }
 
 void test_audio_transcoder_opus_aac()
@@ -12605,6 +12655,7 @@ void require_input_output_boundaries(const std::shared_ptr<media_stream>& stream
     output.shutdown();
     play->shutdown();
     sender->shutdown();
+    release_whep_audio_egress(audio_egress);
     io.run();
     io.restart();
 }
@@ -13169,6 +13220,7 @@ void test_whip_media_receiver()
             require(audio_timestamps.size() >= 2U && audio_timestamps[1] - audio_timestamps[0] == 960U, "whip whep transcoded opus 20ms media");
             handle.remove();
             output.shutdown();
+            release_whep_audio_egress(audio_egress);
             io.run();
             io.restart();
         }
@@ -13604,6 +13656,7 @@ void test_webrtc_opus_channel_count(int channel_count, int bitrate = -1, int max
     packetizer.shutdown();
     source->end();
     drain();
+    release_whep_audio_egress(egress);
 }
 
 void test_webrtc_opus_passthrough()
@@ -13772,6 +13825,8 @@ void test_whep_audio_egress_runtime_failure()
     });
     worker.io().poll();
     require(egress->reason() == whep_audio_egress::end_reason::transcode_failed, "shared audio transcode failure ends output");
+    release_whep_audio_egress(egress);
+    source->end();
 }
 
 void test_webrtc_packetizer_initialization_failure()

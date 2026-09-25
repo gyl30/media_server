@@ -30,9 +30,9 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
         source_ended,
         source_changed,
         transcode_failed,
+        unused,
+        worker_stopped,
     };
-
-    ~whep_audio_egress() override;
 
     [[nodiscard]] std::shared_ptr<media_stream> stream() const noexcept;
     [[nodiscard]] end_reason reason() const noexcept;
@@ -44,6 +44,7 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
    private:
     friend std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
         const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings);
+    friend void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 
     whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker, whep_audio_settings settings);
     bool startup(const std::vector<media_track>& tracks);
@@ -61,10 +62,13 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
     std::atomic<end_reason> reason_{end_reason::none};
     std::uint64_t source_revision_{};
     bool reading_{};
+    std::size_t viewers_{};
+    worker_context::shutdown_subscription shutdown_subscription_;
 };
 
 [[nodiscard]] std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings);
+void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 
 }    // namespace media_server
 

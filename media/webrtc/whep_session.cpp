@@ -237,7 +237,7 @@ void whep_session::safe_shutdown()
     reader_cursor_.reset();
     track_revision_ = 0;
     stream_.reset();
-    audio_egress_.reset();
+    release_whep_audio_egress(audio_egress_);
     certificate_.reset();
     srtp_.reset();
     dtls_timer_.cancel();

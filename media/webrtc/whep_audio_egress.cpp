@@ -35,16 +35,6 @@ whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worke
 {
 }
 
-whep_audio_egress::~whep_audio_egress()
-{
-    reader_handle().remove();
-    if (reason_.load(std::memory_order_acquire) == end_reason::none)
-    {
-        auto output = std::move(output_);
-        boost::asio::post(worker_.io(), [output = std::move(output)]() { output->end(); });
-    }
-}
-
 std::shared_ptr<media_stream> whep_audio_egress::stream() const noexcept { return output_; }
 
 whep_audio_egress::end_reason whep_audio_egress::reason() const noexcept { return reason_.load(std::memory_order_acquire); }
@@ -100,21 +90,39 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks)
     {
         return false;
     }
-    source_->add_reader(shared_from_this(), worker_);
+    const auto self = shared_from_this();
+    shutdown_subscription_ = worker_.subscribe_shutdown([self]() { self->finish(end_reason::worker_stopped); });
+    if (!shutdown_subscription_)
+    {
+        return false;
+    }
+    source_->add_reader(self, worker_);
     return true;
 }
 
 bool whep_audio_egress::matches(const std::vector<media_track>& tracks) const
 {
-    if (reason() != end_reason::none || tracks.size() != initial_versions_.size())
+    const auto prepared_tracks = output_->tracks();
+    if (reason() != end_reason::none || tracks.size() != initial_versions_.size() || prepared_tracks.size() != tracks.size())
     {
         return false;
     }
     return std::ranges::all_of(tracks,
-                               [this](const media_track& track)
+                               [this, &prepared_tracks](const media_track& track)
                                {
                                    const auto it = initial_versions_.find(track.id);
-                                   return it != initial_versions_.end() && it->second == track.config_version;
+                                   if (it == initial_versions_.end())
+                                   {
+                                       return false;
+                                   }
+                                   if (track.codec == codec_id::aac)
+                                   {
+                                       return it->second == track.config_version;
+                                   }
+                                   const auto prepared = std::ranges::find_if(prepared_tracks,
+                                                                              [&track](const media_track& value) { return value.id == track.id; });
+                                   return prepared != prepared_tracks.end() && prepared->kind == track.kind && prepared->codec == track.codec &&
+                                          prepared->config_version == track.config_version;
                                });
 }
 
@@ -127,6 +135,9 @@ void whep_audio_egress::finish(end_reason reason)
     }
     reader_handle().remove();
     output_->end();
+    transcoders_.clear();
+    source_.reset();
+    shutdown_subscription_.reset();
 }
 
 void whep_audio_egress::on_tracks(media_track_snapshot_ptr tracks)
@@ -221,8 +232,9 @@ std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     std::erase_if(egresses, [](const auto& entry) { return entry.second.expired(); });
     if (const auto it = egresses.find(key); it != egresses.end())
     {
-        if (auto existing = it->second.lock(); existing && existing->matches(tracks))
+        if (auto existing = it->second.lock(); existing && existing->viewers_ != 0 && existing->matches(tracks))
         {
+            ++existing->viewers_;
             return existing;
         }
     }
@@ -230,10 +242,42 @@ std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, worker, settings));
     if (!created->startup(tracks))
     {
+        created->finish(whep_audio_egress::end_reason::transcode_failed);
         return {};
     }
+    created->viewers_ = 1;
     egresses[key] = created;
     return created;
+}
+
+void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress)
+{
+    auto released = std::exchange(egress, {});
+    if (!released)
+    {
+        return;
+    }
+    {
+        std::scoped_lock lock(egress_mutex);
+        if (--released->viewers_ != 0)
+        {
+            return;
+        }
+    }
+    if (released->reason() != whep_audio_egress::end_reason::none)
+    {
+        return;
+    }
+    released->reader_handle().remove();
+    // worker 的 shutdown subscription 持有 processor，排队请求无需延长其终止后的生命。
+    boost::asio::post(released->worker_.io(),
+                      [weak = std::weak_ptr<whep_audio_egress>(released)]()
+                      {
+                          if (const auto self = weak.lock())
+                          {
+                              self->finish(whep_audio_egress::end_reason::unused);
+                          }
+                      });
 }
 
 }    // namespace media_server
