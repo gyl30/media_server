@@ -600,7 +600,7 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
                                                                   boost::asio::ip::address_v4::loopback(),
                                                                   std::chrono::milliseconds::zero());
     require(stream_registry::instance().add_receiver_session(stream_name, session), "gb rtcp shutdown session registry add");
-    require(session->startup(), "gb rtcp shutdown session startup");
+    const auto started = session->startup();
 
     session->shutdown();
     std::weak_ptr<gb28181_udp_receiver_session> weak_session = session;
@@ -613,6 +613,7 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
         io.restart();
     }
     require(weak_session.expired(), "gb rtcp scheduler released after shutdown");
+    require(started, "gb rtcp shutdown session startup");
 }
 
 }    // namespace
