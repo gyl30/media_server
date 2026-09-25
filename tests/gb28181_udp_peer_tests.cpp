@@ -390,18 +390,10 @@ void test_sender_same_codec_config_version_continues_ps_stream()
     require(sender->startup(), "gb sender config startup");
 
     const auto initial_track = source->tracks().front();
-    auto initial_snapshot = std::make_shared<media_track_snapshot>();
-    initial_snapshot->revision = 1;
-    initial_snapshot->tracks = {initial_track};
-    sender->on_read(media_read_batch{
-        .next_cursor = 2,
-        .tracks = initial_snapshot,
-        .entries =
-            {
-                {.config_version = initial_track.config_version, .frame = make_frame(0, true, initial_config)},
-                {.config_version = initial_track.config_version, .frame = make_frame(40'000'000, false, initial_config)},
-            },
-    });
+    source->publish(make_frame(0, true, initial_config));
+    source->publish(make_frame(40'000'000, false, initial_config));
+    io.run();
+    io.restart();
     require(packet_count > 0U, "gb sender config initial ps output");
     const auto received = stream_registry::instance().find("live/gb-sender-config-received");
     require(received != nullptr, "gb sender config receiver initial stream");
@@ -412,30 +404,17 @@ void test_sender_same_codec_config_version_continues_ps_stream()
     updated_track = source->tracks().front();
     require(updated_track.config_version == 2, "gb sender config source generation increments");
 
-    auto updated_snapshot = std::make_shared<media_track_snapshot>();
-    updated_snapshot->revision = 2;
-    updated_snapshot->tracks = {updated_track};
-    sender->on_tracks(updated_snapshot);
-
     const auto before_resync_packets = packet_count;
-    sender->on_read(media_read_batch{
-        .next_cursor = 4,
-        .tracks = updated_snapshot,
-        .entries =
-            {
-                {.config_version = 1, .frame = make_frame(80'000'000, true, initial_config)},
-                {.config_version = updated_track.config_version, .frame = make_frame(120'000'000, false, updated_config)},
-            },
-    });
-    require(packet_count == before_resync_packets, "gb sender config drops stale generation and waits for key frame");
+    source->publish(make_frame(120'000'000, false, updated_config));
+    io.run();
+    io.restart();
+    require(packet_count == before_resync_packets, "gb sender config waits for key frame after track update");
     require(end_count == 0U, "gb sender config same codec update stays open");
 
     ps_payload.clear();
-    sender->on_read(media_read_batch{
-        .next_cursor = 5,
-        .tracks = updated_snapshot,
-        .entries = {{.config_version = updated_track.config_version, .frame = make_frame(160'000'000, true, updated_config)}},
-    });
+    source->publish(make_frame(160'000'000, true, updated_config));
+    io.run();
+    io.restart();
     require(packet_count > before_resync_packets, "gb sender config resumes existing ps stream on new key frame");
     require(end_count == 0U, "gb sender config remains open after resync");
     require(std::search(ps_payload.begin(), ps_payload.end(), updated_config.begin(), updated_config.end()) != ps_payload.end(),
@@ -443,6 +422,7 @@ void test_sender_same_codec_config_version_continues_ps_stream()
     require(stream_registry::instance().find("live/gb-sender-config-received") == received, "gb sender config receiver stream stays active");
 
     sender->shutdown();
+    source->end();
     receiver.shutdown();
     io.run();
 }

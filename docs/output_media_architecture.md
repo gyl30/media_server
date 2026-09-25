@@ -35,7 +35,7 @@ flowchart TD
 ```
 
 `media/core/media_stream.cpp` 的 publisher 不等待 reader；history 保留最近 GOP
-（关键帧切换时可含前一 GOP），总量受 2500 entries 限制。batch 最多 128 entries。
+（关键帧切换时可含前一 GOP），每 GOP 至多 2500 entries，保留量至多两个这样的 GOP。batch 最多 128 entries。
 reader 单 outstanding read，落后后可从当前关键帧重同步。batch 共享 payload，
 不复制媒体字节。请求 dispatch 到 source worker，回调 post 到 reader worker。
 
@@ -191,3 +191,105 @@ FFmpeg 9.0.1 库、Boost 1.89、jemalloc 5.3.0；构建及 221/221 CTest 通过
 见 `third/ireader/librtp/source/payload/rtp-payload.c:180-183`，不是 MPEG video ES
 packer。PS buffer 使用 rtsp_muxer 内嵌 1 MiB scratch，其 alloc callback 不调用
 malloc；每 session 仍占有这块 scratch，但不能宣称每帧一次 malloc/free。
+
+
+### PS 阶段实现
+
+canonical 与 PS 共用 `media_history<Frame>` 的 bounded history/cursor 算法，
+`media_stream` 仍只接受 canonical `media_frame`。PS 使用独立的 `mpeg_ps_frame`，
+不把容器字节冒充 Annex-B/AAC payload。源按需创建 `mpeg_ps_output`，其 muxer、
+PS history、PSM/PES/SCR/PTS/DTS 和 immutable bytes 都由 source worker 串行维护。
+当前 cache 首次使用后保留到源结束，最后一个 GB sender 离开不销毁这个 warm cache；
+这是固定源成本，未增加后台 worker，也没有 per-viewer PS 队列。
+
+GB sender 删除 `rtsp_muxer_t` 和 PS track mapping，只保留已有 PS RTP encoder、
+2048-byte scratch、独立随机 sequence/timestamp base、PT/SSRC，以及订阅。
+UDP RTCP 和 UDP/TCP transport/session 原实现保持。bootstrap 跨 worker 请求可由
+显式幂等 shutdown 撤销，PS 初始化失败与正常 source end 分开报告。
+
+```mermaid
+flowchart TD
+  I[全部既有输入] --> C[canonical source generation / source worker]
+  C --> H[canonical bounded history]
+  C --> PS[0/1 MPEG-PS preparation + typed bounded PS history]
+  C --> HLS[0/1 HLS segmenter]
+  H --> O[RTSP / RTMP / HTTP-FLV sessions]
+  H --> AAC[共享 AAC 到 Opus / 现有 negotiation profile]
+  AAC --> W[WHEP session RTP + RTCP + MID + SRTP + ICE/DTLS]
+  PS --> G1[GB UDP session: RTP seq/SSRC/base + RTCP]
+  PS --> G2[GB TCP session: RTP seq/SSRC/base + length framing]
+  O --> N[各 session 网络队列与 socket]
+  W --> N
+  G1 --> N
+  G2 --> N
+  HLS --> N
+```
+
+新增逐字节对照测试：H264/H265 × AAC/G711A/G711U，66 帧跨 PSM 周期，
+70 KB video 跨 PES 边界，PTS 与 DTS 不同；PS 内容与原 muxer 相同。
+另测 immutable payload pointer 复用、late viewer、配置变化等待关键帧、
+source end/replacement，以及两个不同 PT/SSRC sender 的序号、时钟和独立退出。
+并覆盖 source/consumer 两个 worker 的 bootstrap 两个阶段取消。
+
+### 已发现的测试问题
+
+- 初次并行运行全量 CTest、GB 集成和两套 sanitizer 时，固定端口发生冲突。
+  `process_signal_shutdown` 明确报 `19360 Address already in use`，RTSP contract
+  同样启动失败。GB peer 测试启动失败后未执行正常清理，触发退出期 UAF。
+  停止并行运行占用相同端口的套件后，失败项单独重跑全部通过。
+- ASan 揭示基线 HLS retained-buffer fixture 少一次 `on_end()`，泄漏 1816 bytes。
+  只修测试的显式结束，并断言已发布 buffer 在 shutdown 后仍有效，独立提交
+  `d1b9d97 结束 HLS 缓冲保留测试中的分段器`。未让 destructor 执行业务 shutdown。
+- 修正后 focused UBSan 45/45、ASan 45/45（detect_leaks=1）通过。
+  ASan 使用已有 Boost ucontext 构建并通过 CMake guard，没有绕过检查。
+- 真实 Chrome 153 首次工具使用 async `waitForFunction` 过早完成：已核对本机
+  Playwright 实现并改成显式等待 getStats。随后 ICE/DTLS connected，
+  H264 466 packets / 30 decoded frames，Opus 48 packets，DELETE 204，peer closed。
+- 集成首次命中 PATH 中 FFmpeg 7 的 ffprobe 版本检查；改用已有
+  `/home/gyl/ffmpeg901/bin` 后 network integration 全部通过。GB integration
+  H264+AAC、H265+G711A、H264+G711U、UDP、TCP active/passive、RTCP SR/RR 均通过。
+
+### PS control / after
+
+准备基准为 1 source worker + 4 sender workers，H264 25 fps / G711A 50 fps，
+固定帧大小，每组 5 秒 × 3 次，表内取中位数，jemalloc。该基准不包含 socket；
+PSS 是每次进程 /proc 100 ms 采样峰值的中位数，CPU 为进程 CPU 秒 / wall 秒。
+
+| sessions | video bytes/frame | CPU before→after（核） | PSS before→after（KiB） | after Gbit/s | after pps |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 16000 | 0.002711→0.003142 | 2763→4070 | 0.003322 | 400.0 |
+| 100 | 16000 | 0.020938→0.019717 | 8051→5722 | 0.332187 | 39999.2 |
+| 1000 | 16000 | 0.206065→0.203567 | 73170→8882 | 3.321871 | 399992.2 |
+| 100 | 256000 | 0.124959→0.041725 | 31723→18374 | 5.181102 | 544988.3 |
+| 500 | 64000 | 0.208189→0.103067 | 51475→12854 | 6.508894 | 699992.1 |
+
+各组所有 viewer 吞吐一致（min=p10=p50=p90=max），sequence errors=0、failures=0。
+16 KB 帧每 viewer 约 415237 B/s，5 秒最少 video/audio packets=1750/250；
+256 KB 为约 6476380 B/s、27000/250；64 KB 为约 1627220 B/s、6750/250。
+1000×16 KB 的 CPU 基本持平，主要收益是 PSS；大帧封装 CPU 降约 50%～67%。
+单 viewer 增加约 1.3 MiB PSS 和 0.00043 核，这是新 PS history 的固定成本。
+
+真实网络第一轮使用 FFmpeg 9.0.1 实时 720p30 H264 2 Mbit/s + AAC 96 kbit/s、
+6 server workers、4 接收进程，warmup 5 秒后采样 15 秒，localhost。
+TCP 包含 2-byte length framing；PSS/FD 取观测窗中位数，避免接收器在窗口末关闭
+连接导致最后一个 FD 样本偏低。以下不是远程网络容量上限。
+
+| transport | sessions | CPU before→after | PSS KiB before→after | FD | Gbit/s before→after | pps before→after |
+|---|---:|---:|---:|---:|---:|---:|
+| udp | 100 | 0.1157→0.1051 | 31405→28812 | 227 | 0.215666→0.215616 | 27080.0→27080.0 |
+| udp | 1000 | 1.1402→1.0600 | 167538→163414 | 2027 | 2.154830→2.156067 | 270668.5→270792.9 |
+| tcp | 100 | 0.0798→0.0738 | 37117→34211 | 127 | 0.216089→0.215961 | 27077.8→27063.1 |
+| tcp | 1000 | 0.8629→0.7525 | 205630→167098 | 1027 | 2.160406→2.160927 | 270795.8→270857.7 |
+
+上述 8 次运行均 queue-full=0、sequence gaps=0、所有 viewer 音视频持续前进。
+1000 路 fairness 与最低包数如下（B/s，顺序 min/p10/p50/p90/max）：
+
+- udp before-707ca60: 269331.5/269353.1/269353.1/269353.1/269373.9；最低 video/audio=3414/645。
+- udp shared-ps: 269220.9/269300.9/269460.9/269798.0/269878.0；最低 video/audio=3410/646。
+- tcp before-707ca60: 269490.3/269900.1/270055.5/270208.5/270229.1；最低 video/audio=3409/645。
+- tcp shared-ps: 269370.5/269652.9/270000.9/270683.5/270683.5；最低 video/audio=3407/644。
+
+原始数据：`.cache/output-before-707ca60/ps-fanout.jsonl`、
+`.cache/output-shared-ps/ps-fanout.jsonl` 及
+`.cache/output-{before-707ca60,shared-ps}-{udp,tcp}-{100,1000}/`。
+没有改变同步 send/sendmmsg、网络队列策略或 RTP header 共享方式。

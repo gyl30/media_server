@@ -3,15 +3,13 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/scope/scope_exit.hpp>
 
-#include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 
 extern "C"
 {
-#include "rtsp-muxer.h"
+#include "rtp-payload.h"
 #include "rtp-profile.h"
 }
 
@@ -35,57 +33,58 @@ gb28181_rtp_sender::gb28181_rtp_sender(worker_context& worker,
 {
 }
 
-bool gb28181_rtp_sender::supported_tracks(const std::vector<media_track>& tracks)
-{
-    if (tracks.empty())
-    {
-        return false;
-    }
-
-    std::size_t video_count = 0;
-    std::size_t audio_count = 0;
-    for (const auto& track : tracks)
-    {
-        if (track.kind == media_kind::video)
-        {
-            ++video_count;
-            if (track.codec != codec_id::h264 && track.codec != codec_id::h265)
-            {
-                return false;
-            }
-        }
-        else
-        {
-            ++audio_count;
-            if (track.codec != codec_id::aac && track.codec != codec_id::g711a && track.codec != codec_id::g711u)
-            {
-                return false;
-            }
-        }
-    }
-    return video_count == 1 && audio_count <= 1;
-}
+bool gb28181_rtp_sender::supported_tracks(const std::vector<media_track>& tracks) { return mpeg_ps_output::supported_tracks(tracks); }
 
 bool gb28181_rtp_sender::startup()
 {
-    if (!stream_ || muxer_ != nullptr || !packet_handler_ || !create_muxer(stream_->tracks()))
+    if (shutdown_requested_.load(std::memory_order_acquire) || !stream_ || packetizer_ || !packet_handler_ ||
+        !supported_tracks(stream_->tracks()) || !create_packetizer())
     {
         return false;
     }
-
-    stream_->add_reader(shared_from_this(), worker_);
+    const auto self = shared_from_this();
+    const auto source = stream_;
+    boost::asio::post(source->worker().io(),
+                      [self, source]()
+                      {
+                          if (self->shutdown_requested_.load(std::memory_order_acquire))
+                          {
+                              return;
+                          }
+                          auto output = source->ps_output();
+                          boost::asio::post(self->worker_.io(),
+                                            [self, output = std::move(output)]()
+                                            {
+                                                if (self->shutdown_requested_.load(std::memory_order_acquire))
+                                                {
+                                                    return;
+                                                }
+                                                if (!output)
+                                                {
+                                                    self->on_end();
+                                                    return;
+                                                }
+                                                self->ps_output_ = output;
+                                                output->stream()->add_reader(self, self->worker_);
+                                            });
+                      });
     return true;
 }
 
 void gb28181_rtp_sender::shutdown()
 {
+    if (shutdown_requested_.exchange(true, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    reader_handle().remove();
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void gb28181_rtp_sender::on_tracks(media_track_snapshot_ptr tracks)
 {
-    if (!packet_handler_)
+    if (shutdown_requested_.load(std::memory_order_acquire) || !packet_handler_)
     {
         return;
     }
@@ -93,9 +92,9 @@ void gb28181_rtp_sender::on_tracks(media_track_snapshot_ptr tracks)
     reader_handle().async_read(reader_cursor_);
 }
 
-void gb28181_rtp_sender::on_read(media_read_batch batch)
+void gb28181_rtp_sender::on_read(media_read_batch_t<mpeg_ps_frame> batch)
 {
-    if (!packet_handler_)
+    if (shutdown_requested_.load(std::memory_order_acquire) || !packet_handler_)
     {
         return;
     }
@@ -120,13 +119,14 @@ void gb28181_rtp_sender::on_read(media_read_batch batch)
             }
         }
 
-        const auto result = rtsp_muxer_input(muxer_,
-                                             state->second.media_id,
-                                             ns_to_milliseconds(entry.frame.pts_ns),
-                                             ns_to_milliseconds(entry.frame.dts_ns),
-                                             entry.frame.payload->data(),
-                                             static_cast<int>(entry.frame.payload->size()),
-                                             entry.frame.key_frame ? 1 : 0);
+        const auto media_timestamp = entry.frame.media_timestamp;
+        if (!first_media_timestamp_)
+        {
+            first_media_timestamp_ = media_timestamp;
+        }
+        const auto timestamp = timestamp_base_ + media_timestamp - *first_media_timestamp_;
+        const auto result =
+            rtp_payload_encode_input(packetizer_, entry.frame.payload->data(), static_cast<int>(entry.frame.payload->size()), timestamp);
         if (result < 0)
         {
             spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
@@ -159,15 +159,14 @@ void gb28181_rtp_sender::on_read(media_read_batch batch)
 
 void gb28181_rtp_sender::on_end()
 {
-    if (end_handler_)
+    if (ps_output_ && ps_output_->failed() && failure_handler_)
+    {
+        failure_handler_();
+    }
+    else if (end_handler_)
     {
         end_handler_();
     }
-}
-
-int gb28181_rtp_sender::muxer_packet_callback(void* param, int, const void* data, int bytes, std::uint32_t, int)
-{
-    return static_cast<gb28181_rtp_sender*>(param)->on_muxer_packet(data, bytes);
 }
 
 void gb28181_rtp_sender::safe_shutdown()
@@ -185,80 +184,21 @@ void gb28181_rtp_sender::safe_shutdown()
     track_states_.clear();
     waiting_for_key_frame_ = true;
     stream_.reset();
-    if (muxer_ != nullptr)
+    ps_output_.reset();
+    if (packetizer_)
     {
-        rtsp_muxer_destroy(muxer_);
-        muxer_ = nullptr;
+        rtp_payload_encode_destroy(packetizer_);
+        packetizer_ = nullptr;
     }
 }
 
-bool gb28181_rtp_sender::create_muxer(const std::vector<media_track>& tracks)
+bool gb28181_rtp_sender::create_packetizer()
 {
-    if (!supported_tracks(tracks))
-    {
-        return false;
-    }
-
-    auto* muxer = rtsp_muxer_create(&gb28181_rtp_sender::muxer_packet_callback, this);
-    if (muxer == nullptr)
-    {
-        return false;
-    }
-    boost::scope::scope_exit cleanup(
-        [&]()
-        {
-            rtsp_muxer_destroy(muxer);
-            track_states_.clear();
-        });
-
     std::random_device device;
-    const auto payload =
-        rtsp_muxer_add_payload(muxer, "RTP/AVP", 90'000, payload_type_, "PS", static_cast<std::uint16_t>(device()), ssrc_, 0, nullptr, 0);
-    if (payload < 0)
-    {
-        return false;
-    }
-
-    for (const auto& track : tracks)
-    {
-        int codec = -1;
-        switch (track.codec)
-        {
-            case codec_id::h264:
-                codec = RTP_PAYLOAD_H264;
-                break;
-            case codec_id::h265:
-                codec = RTP_PAYLOAD_H265;
-                break;
-            case codec_id::aac:
-                codec = RTP_PAYLOAD_MP4A;
-                break;
-            case codec_id::g711a:
-                codec = RTP_PAYLOAD_PCMA;
-                break;
-            case codec_id::g711u:
-                codec = RTP_PAYLOAD_PCMU;
-                break;
-            case codec_id::av1:
-            case codec_id::opus:
-                return false;
-        }
-
-        const auto media = rtsp_muxer_add_media(muxer, payload, codec, track.codec_config.data(), static_cast<int>(track.codec_config.size()));
-        if (media < 0)
-        {
-            return false;
-        }
-        track_states_.emplace(track.id,
-                              track_state{
-                                  .kind = track.kind,
-                                  .config_version = track.config_version,
-                                  .media_id = media,
-                              });
-    }
-    muxer_ = muxer;
-    cleanup.set_active(false);
-    return true;
+    timestamp_base_ = device();
+    rtp_payload_t callbacks{allocate_packet, free_packet, packet_callback};
+    packetizer_ = rtp_payload_encode_create(payload_type_, "PS", static_cast<std::uint16_t>(device()), ssrc_, &callbacks, this);
+    return packetizer_ != nullptr;
 }
 
 void gb28181_rtp_sender::apply_tracks(const media_track_snapshot_ptr& tracks)
@@ -271,7 +211,8 @@ void gb28181_rtp_sender::apply_tracks(const media_track_snapshot_ptr& tracks)
     bool video_changed = false;
     for (const auto& track : tracks->tracks)
     {
-        auto& state = track_states_.at(track.id);
+        auto& state = track_states_[track.id];
+        state.kind = track.kind;
         if (track.kind == media_kind::video && state.config_version != track.config_version)
         {
             video_changed = true;
@@ -283,15 +224,23 @@ void gb28181_rtp_sender::apply_tracks(const media_track_snapshot_ptr& tracks)
     waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
 }
 
-int gb28181_rtp_sender::on_muxer_packet(const void* data, int bytes)
+void* gb28181_rtp_sender::allocate_packet(void* param, int bytes)
 {
-    if (data == nullptr || bytes <= 0 || !packet_handler_)
+    auto& self = *static_cast<gb28181_rtp_sender*>(param);
+    return bytes > 0 && static_cast<std::size_t>(bytes) <= self.packet_buffer_.size() ? self.packet_buffer_.data() : nullptr;
+}
+
+void gb28181_rtp_sender::free_packet(void*, void*) {}
+
+int gb28181_rtp_sender::packet_callback(void* param, const void* data, int bytes, std::uint32_t, int)
+{
+    auto& self = *static_cast<gb28181_rtp_sender*>(param);
+    if (!self.packet_handler_)
     {
         return -1;
     }
-
     const auto* begin = static_cast<const std::uint8_t*>(data);
-    packet_handler_(std::vector<std::uint8_t>(begin, begin + bytes));
+    self.packet_handler_(std::vector<std::uint8_t>(begin, begin + bytes));
     return 0;
 }
 

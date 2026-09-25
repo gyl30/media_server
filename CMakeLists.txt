@@ -220,6 +220,7 @@ add_library(media_core STATIC
     media/core/log.cpp
     media/core/media_stream.cpp
     media/core/stream_registry.cpp
+    media/ps/mpeg_ps_output.cpp
     media/codec/audio_transcoder.cpp
     media/codec/video_transcoder.cpp
     media/codec/codec_utils.cpp
@@ -549,6 +550,16 @@ if(BUILD_TESTING)
 
     add_executable(gb28181_rtp_fixture tests/gb28181_rtp_fixture.cpp)
     target_link_libraries(gb28181_rtp_fixture PRIVATE media_core media_server_link_options)
+
+    add_executable(gb28181_fanout_benchmark tests/gb28181_fanout_benchmark.cpp)
+    target_link_libraries(gb28181_fanout_benchmark PRIVATE media_core media_server_link_options)
+    if(MEDIA_SERVER_SANITIZER STREQUAL "none")
+        target_link_libraries(gb28181_fanout_benchmark PRIVATE PkgConfig::JEMALLOC)
+    endif()
+
+    add_executable(mpeg_ps_output_tests tests/mpeg_ps_output_tests.cpp)
+    target_link_libraries(mpeg_ps_output_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME mpeg_ps_output_tests COMMAND mpeg_ps_output_tests)
 
     add_executable(gb28181_identity_tests tests/gb28181_identity_tests.cpp)
     target_link_libraries(gb28181_identity_tests PRIVATE media_core media_server_link_options)

@@ -2,21 +2,20 @@
 #define MEDIA_GB28181_GB28181_RTP_SENDER_H
 
 #include <map>
+#include <array>
 #include <memory>
 #include <vector>
 #include <cstdint>
 #include <functional>
 
-#include "media/core/media_reader.h"
+#include "media/ps/mpeg_ps_output.h"
 #include "media/core/media_stream.h"
-
-struct rtsp_muxer_t;
 
 namespace media_server
 {
 class worker_context;
 
-class gb28181_rtp_sender final : public media_reader, public std::enable_shared_from_this<gb28181_rtp_sender>
+class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public std::enable_shared_from_this<gb28181_rtp_sender>
 {
    public:
     using packet_handler = std::function<void(std::vector<std::uint8_t>)>;
@@ -39,7 +38,7 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
     void shutdown();
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read(media_read_batch batch) override;
+    void on_read(media_read_batch_t<mpeg_ps_frame> batch) override;
     void on_end() override;
 
    private:
@@ -47,15 +46,15 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
     {
         media_kind kind{};
         std::uint64_t config_version{};
-        int media_id{-1};
     };
 
    private:
-    static int muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
+    static void* allocate_packet(void* param, int bytes);
+    static void free_packet(void* param, void* packet);
+    static int packet_callback(void* param, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
-    [[nodiscard]] bool create_muxer(const std::vector<media_track>& tracks);
+    [[nodiscard]] bool create_packetizer();
     void apply_tracks(const media_track_snapshot_ptr& tracks);
-    int on_muxer_packet(const void* data, int bytes);
 
    private:
     void safe_shutdown();
@@ -68,11 +67,16 @@ class gb28181_rtp_sender final : public media_reader, public std::enable_shared_
     packet_handler packet_handler_;
     end_handler end_handler_;
     failure_handler failure_handler_;
-    rtsp_muxer_t* muxer_{};
+    std::shared_ptr<mpeg_ps_output> ps_output_;
+    void* packetizer_{};
+    std::array<std::uint8_t, 2048> packet_buffer_{};
+    std::uint32_t timestamp_base_{};
+    std::optional<std::uint32_t> first_media_timestamp_;
     std::map<track_id, track_state> track_states_;
     media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     bool waiting_for_key_frame_{true};
+    std::atomic_bool shutdown_requested_{};
 };
 
 }    // namespace media_server

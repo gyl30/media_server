@@ -12,7 +12,10 @@ namespace media_server
 {
 
 class media_stream;
-struct media_reader_state;
+template <typename Frame>
+class media_history;
+template <typename Frame>
+struct media_reader_state_t;
 
 using media_reader_cursor = std::optional<std::uint64_t>;
 
@@ -24,25 +27,28 @@ struct media_track_snapshot
 
 using media_track_snapshot_ptr = std::shared_ptr<const media_track_snapshot>;
 
-struct media_read_entry
+template <typename Frame>
+struct media_read_entry_t
 {
     std::uint64_t config_version{};
-    media_frame frame;
+    Frame frame;
 };
 
-struct media_read_batch
+template <typename Frame>
+struct media_read_batch_t
 {
     std::uint64_t next_cursor{};
     media_track_snapshot_ptr tracks;
-    std::vector<media_read_entry> entries;
+    std::vector<media_read_entry_t<Frame>> entries;
     // true 表示本次 read 曾在 live edge 等待新媒体，而不是立即读取已有 history。
     bool waited_for_media{};
 };
 
-class media_reader_handle final
+template <typename Frame>
+class media_reader_handle_t final
 {
    public:
-    media_reader_handle() = default;
+    media_reader_handle_t() = default;
 
    public:
     // cursor 由 reader worker 保存；每次最多只有一个 outstanding read。
@@ -51,19 +57,20 @@ class media_reader_handle final
     void remove() const;
 
    private:
-    friend class media_stream;
+    friend class media_history<Frame>;
 
-    media_reader_handle(std::weak_ptr<media_stream> stream, std::shared_ptr<media_reader_state> state);
+    media_reader_handle_t(std::weak_ptr<media_history<Frame>> stream, std::shared_ptr<media_reader_state_t<Frame>> state);
 
    private:
-    std::weak_ptr<media_stream> stream_;
-    std::shared_ptr<media_reader_state> state_;
+    std::weak_ptr<media_history<Frame>> stream_;
+    std::shared_ptr<media_reader_state_t<Frame>> state_;
 };
 
-class media_reader
+template <typename Frame>
+class media_reader_t
 {
    public:
-    virtual ~media_reader() = default;
+    virtual ~media_reader_t() = default;
 
    public:
     // tracks 是当前 stream 轨道快照；reader 只处理自己订阅的轨道。
@@ -71,18 +78,23 @@ class media_reader
     // end 撤销 pending read 和尚未执行的 read/tracks 回调，随后只调用一次 on_end。
     // remove 不产生终止回调，并优先于尚未执行的任何 posted 回调。
     virtual void on_tracks(media_track_snapshot_ptr tracks) = 0;
-    virtual void on_read(media_read_batch batch) = 0;
+    virtual void on_read(media_read_batch_t<Frame> batch) = 0;
     virtual void on_end() = 0;
 
    protected:
-    [[nodiscard]] const media_reader_handle& reader_handle() const noexcept { return handle_; }
+    [[nodiscard]] const media_reader_handle_t<Frame>& reader_handle() const noexcept { return handle_; }
 
    private:
-    friend class media_stream;
+    friend class media_history<Frame>;
 
    private:
-    media_reader_handle handle_;
+    media_reader_handle_t<Frame> handle_;
 };
+
+using media_read_entry = media_read_entry_t<media_frame>;
+using media_read_batch = media_read_batch_t<media_frame>;
+using media_reader_handle = media_reader_handle_t<media_frame>;
+using media_reader = media_reader_t<media_frame>;
 
 }    // namespace media_server
 
