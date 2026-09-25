@@ -117,6 +117,7 @@ def main():
     parser.add_argument('--mode', choices=['udp', 'tcp', 'chrome', 'whep'], default='udp')
     parser.add_argument('--viewers', type=int, default=100)
     parser.add_argument('--seconds', type=int, default=15)
+    parser.add_argument('--threads', type=int, default=6)
     parser.add_argument('--signaling', default='.cache/output-before-707ca60/signaling')
     args = parser.parse_args()
     work = Path(args.work_dir).resolve()
@@ -155,7 +156,7 @@ def main():
                            '--http-listen', f'127.0.0.1:{base}', '--sip-listen', f'127.0.0.1:{base + 4}',
                            '--sip-advertise', f'127.0.0.1:{base + 4}'], 'signaling')
         wait_http(signaling_url, signaling)
-        server = start([str(Path(args.server).resolve()), '--threads', '6', '--bind-address', '127.0.0.1',
+        server = start([str(Path(args.server).resolve()), '--threads', str(args.threads), '--bind-address', '127.0.0.1',
                         '--webrtc-address', '127.0.0.1', '--media-ip', '127.0.0.1', '--server-id', 'output-validation',
                         '--rtmp-port', str(base + 1), '--rtsp-port', str(base + 2), '--http-port', str(base + 3),
                         '--signaling-url', signaling_url, '--control-url', control_url], 'server')
@@ -183,16 +184,39 @@ def main():
                     raise RuntimeError(completed.stdout + completed.stderr)
                 result = json.loads(completed.stdout)
             else:
-                player = start([str(Path(args.server).resolve().parent / 'fanout_whep_player'), '--signaling-url', signaling_url,
+                player = start(['stdbuf', '-oL', str(Path(args.server).resolve().parent / 'fanout_whep_player'), '--signaling-url', signaling_url,
                                 '--source-id', source['source_id'], '--viewers', str(args.viewers), '--duration', str(args.seconds),
                                 '--ramp-per-second', '100', '--io-threads', '8'], 'whep')
                 samples = []
+                log_offset = None
                 while player.poll() is None:
-                    samples.append(sample(server.pid))
-                    time.sleep(1)
+                    progress = (work / 'whep.log').read_text()
+                    if 'phase=established' in progress and 'phase=measurement' not in progress:
+                        if log_offset is None:
+                            log_offset = (work / 'server.log').stat().st_size
+                        samples.append(sample(server.pid))
+                    time.sleep(0.5)
+                phases = {}
+                for line in (work / 'whep.log').read_text().splitlines():
+                    if not line.startswith('phase='):
+                        continue
+                    fields = dict(item.split('=', 1) for item in line.split())
+                    phase = fields.pop('phase')
+                    phases[phase] = {key: float(value) for key, value in fields.items()}
+                result = {'mode': 'whep', 'sessions': args.viewers, 'phases': phases, 'player_exit_code': player.returncode}
+                (work / 'samples.json').write_text(json.dumps(samples))
+                if len(samples) >= 2:
+                    first, last = samples[0], samples[-1]
+                    result.update(cpu_cores=(last['cpu'] - first['cpu']) / (last['time'] - first['time']),
+                                  pss_median_kib=statistics.median(s['pss_kib'] for s in samples),
+                                  fd=statistics.median(s['fd'] for s in samples),
+                                  queue_full=(work / 'server.log').read_text()[log_offset:].count('queue full'))
+                if 'measurement' in phases:
+                    measured = phases['measurement']
+                    result.update(gbps=measured['received_bytes'] * 8 / measured['duration_seconds'] / 1e9,
+                                  pps=measured['received_packets'] / measured['duration_seconds'])
                 if player.returncode:
-                    raise RuntimeError('WHEP player failed')
-                result = {'mode': 'whep', 'samples': samples}
+                    raise RuntimeError('WHEP player failed; see ' + str(work / 'whep.log'))
             request(signaling_url + '/api/sources/' + source['source_id'] + '/stop', {})
             source = None
         else:
