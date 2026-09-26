@@ -3918,7 +3918,8 @@ void test_hls_play_admission()
     boost::asio::post(worker.io(),
                       [stream, &application_config, &ready]()
                       {
-                          require(hls::segment_count(stream->name(), application_config) == 0U, "hls viewer segmenter create");
+                          const auto segmenter = hls::get_or_create(stream->name(), application_config);
+                          require(segmenter && segmenter->segment_count() == 0U, "hls viewer segmenter create");
                           stream->publish(make_video_frame(0, true));
                           stream->publish(make_video_frame(500'000'000, false));
                           stream->publish(make_video_frame(2'500'000'000, true));
@@ -3962,7 +3963,8 @@ void test_hls_play_admission()
     require(first_playlist.body().find("./0.ts?session=" + first_secret) != std::string::npos &&
                 second_playlist.body().find("./0.ts?session=" + second_secret) != std::string::npos,
             "hls playlist propagates viewer secrets");
-    require(hls::segment_count(stream_name, application_config) == 1U, "hls viewers share segmenter");
+    const auto segmenter = hls::get_or_create(stream_name, application_config);
+    require(segmenter && segmenter->segment_count() == 1U, "hls viewers share segmenter");
 
     const auto first_refresh = request_hls(acceptor, worker, application_config, first_location);
     require(first_refresh.result() == boost::beast::http::status::ok && claim_server.request_count("/internal/play/claim") == 2U,
@@ -4035,7 +4037,8 @@ void test_hls_http_keep_alive()
     boost::asio::post(worker.io(),
                       [stream, &application_config, &ready]()
                       {
-                          require(hls::segment_count(stream->name(), application_config) == 0U, "hls keep alive segmenter create");
+                          const auto segmenter = hls::get_or_create(stream->name(), application_config);
+                          require(segmenter && segmenter->segment_count() == 0U, "hls keep alive segmenter create");
                           stream->publish(make_video_frame(0, true));
                           stream->publish(make_video_frame(500'000'000, false));
                           stream->publish(make_video_frame(2'500'000'000, true));
@@ -4130,7 +4133,8 @@ void test_hls_source_replacement()
         boost::asio::post(worker.io(),
                           [stream, marker, &application_config, &ready]()
                           {
-                              require(hls::segment_count(stream->name(), application_config) == 0U, "hls replacement segmenter create");
+                              const auto segmenter = hls::get_or_create(stream->name(), application_config);
+                              require(segmenter && segmenter->segment_count() == 0U, "hls replacement segmenter create");
                               auto first = make_video_frame(0, true);
                               auto first_payload = std::make_shared<std::vector<std::uint8_t>>(*first.payload);
                               first_payload->push_back(marker);
@@ -12329,24 +12333,25 @@ void test_hls_module_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls::segment_count("live/hls", application_config) == 0U, "hls first segmenter create");
+                          const auto segmenter = hls::get_or_create("live/hls", application_config);
+                          require(segmenter && segmenter->segment_count() == 0U, "hls first segmenter create");
                           first->publish(make_video_frame(0, true));
                           first->publish(make_video_frame(1'000'000'000, true));
                       });
     io.run();
 
     stream_registry::instance().remove(*first);
-    const auto detached_playlist = hls::playlist("live/hls", application_config);
-    require(detached_playlist.has_value(), "hls segmenter survives registry removal before source end");
+    const auto detached_segmenter = hls::get_or_create("live/hls", application_config);
+    require(detached_segmenter != nullptr, "hls segmenter survives registry removal before source end");
 
     io.restart();
     boost::asio::post(io, [first]() { first->end(); });
     io.run();
 
-    const auto ended_playlist = hls::playlist("live/hls", application_config);
-    require(ended_playlist.has_value(), "hls ended playlist retained");
-    require(ended_playlist->find("#EXT-X-ENDLIST") != std::string::npos, "hls ended playlist marker");
-    const auto ended_segment = hls::segment("live/hls", 0, application_config);
+    const auto ended_segmenter = hls::get_or_create("live/hls", application_config);
+    require(ended_segmenter != nullptr, "hls ended playlist retained");
+    require(ended_segmenter->playlist(".").find("#EXT-X-ENDLIST") != std::string::npos, "hls ended playlist marker");
+    const auto ended_segment = ended_segmenter->segment(0);
     require(ended_segment.has_value() && !ended_segment->empty(), "hls ended segment retained");
 
     io.restart();
@@ -12356,8 +12361,9 @@ void test_hls_module_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls::segment_count("live/hls", application_config) == 0U, "hls replacement segmenter reset");
-                          require(!hls::segment("live/hls", 0, application_config).has_value(), "hls replacement drops old segment");
+                          const auto segmenter = hls::get_or_create("live/hls", application_config);
+                          require(segmenter && segmenter->segment_count() == 0U, "hls replacement segmenter reset");
+                          require(!segmenter->segment(0).has_value(), "hls replacement drops old segment");
                       });
     io.run();
 
@@ -12368,7 +12374,8 @@ void test_hls_module_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls::segment_count("live/hls-overlap", application_config) == 0U, "hls overlap first segmenter create");
+                          const auto segmenter = hls::get_or_create("live/hls-overlap", application_config);
+                          require(segmenter && segmenter->segment_count() == 0U, "hls overlap first segmenter create");
                           overlap_first->publish(make_video_frame(0, true));
                           overlap_first->publish(make_video_frame(1'000'000'000, true));
                       });
@@ -12382,15 +12389,17 @@ void test_hls_module_lifecycle()
     boost::asio::post(io,
                       [&]()
                       {
-                          require(hls::segment_count("live/hls-overlap", application_config) == 0U, "hls overlap replacement segmenter create");
+                          const auto segmenter = hls::get_or_create("live/hls-overlap", application_config);
+                          require(segmenter && segmenter->segment_count() == 0U, "hls overlap replacement segmenter create");
                           overlap_first->end();
                       });
     io.run();
 
-    const auto overlap_playlist = hls::playlist("live/hls-overlap", application_config);
-    require(overlap_playlist.has_value(), "hls overlap replacement playlist available");
-    require(overlap_playlist->find("#EXT-X-ENDLIST") == std::string::npos, "hls old generation end does not end replacement");
-    require(!hls::segment("live/hls-overlap", 0, application_config).has_value(), "hls overlap replacement does not expose old segment");
+    const auto overlap_segmenter = hls::get_or_create("live/hls-overlap", application_config);
+    require(overlap_segmenter != nullptr, "hls overlap replacement playlist available");
+    require(overlap_segmenter->playlist(".").find("#EXT-X-ENDLIST") == std::string::npos,
+            "hls old generation end does not end replacement");
+    require(!overlap_segmenter->segment(0).has_value(), "hls overlap replacement does not expose old segment");
 
     io.restart();
     auto late = std::make_shared<media_stream>("live/hls-late", worker);
@@ -12401,15 +12410,19 @@ void test_hls_module_lifecycle()
                       {
                           late->publish(make_video_frame(0, true));
                           late->publish(make_video_frame(500'000'000, false));
-                          require(hls::segment_count("live/hls-late", application_config) == 0U, "hls late segmenter replays current gop");
+                          const auto segmenter = hls::get_or_create("live/hls-late", application_config);
+                          require(segmenter && segmenter->segment_count() == 0U, "hls late segmenter replays current gop");
                           late->publish(make_video_frame(2'000'000'000, true));
-                          require(hls::segment_count("live/hls-late", application_config) == 1U, "hls late replay participates in first segment");
+                          const auto current_segmenter = hls::get_or_create("live/hls-late", application_config);
+                          require(current_segmenter && current_segmenter->segment_count() == 1U,
+                                  "hls late replay participates in first segment");
                           stream_registry::instance().remove(*late);
                           late->end();
                       });
     io.run();
-    const auto late_playlist = hls::playlist("live/hls-late", application_config);
-    require(late_playlist.has_value() && late_playlist->find("#EXT-X-ENDLIST") != std::string::npos, "hls late segmenter finalizes");
+    const auto late_segmenter = hls::get_or_create("live/hls-late", application_config);
+    require(late_segmenter && late_segmenter->playlist(".").find("#EXT-X-ENDLIST") != std::string::npos,
+            "hls late segmenter finalizes");
 
     hls::shutdown();
 }
@@ -13319,8 +13332,8 @@ void test_whip_hls_output(codec_id video_codec)
         io,
         [&]()
         {
-            const auto count = hls::segment_count(stream_name, application_config);
-            require(count.has_value() && *count == 0U, "whip hls segmenter created");
+            const auto segmenter = hls::get_or_create(stream_name, application_config);
+            require(segmenter && segmenter->segment_count() == 0U, "whip hls segmenter created");
 
             for (std::int64_t pts_ns = 100'000'000; pts_ns < 180'000'000; pts_ns += 20'000'000)
             {
@@ -13337,9 +13350,9 @@ void test_whip_hls_output(codec_id video_codec)
     io.restart();
     require(receiver_ok, "whip hls accepts continued media");
 
-    const auto count = hls::segment_count(stream_name, application_config);
-    require(count.has_value() && *count >= 1U, "whip hls segment created");
-    const auto segment = hls::segment(stream_name, 0, application_config);
+    const auto segmenter = hls::get_or_create(stream_name, application_config);
+    require(segmenter && segmenter->segment_count() >= 1U, "whip hls segment created");
+    const auto segment = segmenter->segment(0);
     require(segment.has_value() && !segment->empty(), "whip hls first segment");
     const auto capture = demux_ts_segment(*segment);
     const auto ts_codec = video_codec == codec_id::h264 ? PSI_STREAM_H264 : PSI_STREAM_H265;
@@ -13358,8 +13371,9 @@ void test_whip_hls_output(codec_id video_codec)
                           packetizer.shutdown();
                       });
     io.run();
-    const auto playlist = hls::playlist(stream_name, application_config);
-    require(playlist.has_value() && playlist->find("#EXT-X-ENDLIST") != std::string::npos, "whip hls ends with source");
+    const auto ended_segmenter = hls::get_or_create(stream_name, application_config);
+    require(ended_segmenter && ended_segmenter->playlist(".").find("#EXT-X-ENDLIST") != std::string::npos,
+            "whip hls ends with source");
     require(stream_registry::instance().find(stream_name) == nullptr, "whip hls stream removed");
     hls::shutdown();
 }

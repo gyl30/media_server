@@ -84,30 +84,6 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const
     return segmenter;
 }
 
-std::optional<std::string> playlist(std::string_view stream_name, const config& application_config, std::string_view query)
-{
-    const auto segmenter = get_or_create(stream_name, application_config);
-    return segmenter ? std::optional<std::string>(segmenter->playlist(".", query)) : std::nullopt;
-}
-
-std::optional<std::vector<std::uint8_t>> init_segment(std::string_view stream_name, const config& application_config)
-{
-    const auto segmenter = get_or_create(stream_name, application_config);
-    return segmenter ? segmenter->init_segment() : std::nullopt;
-}
-
-std::optional<std::vector<std::uint8_t>> segment(std::string_view stream_name, std::uint64_t sequence, const config& application_config)
-{
-    const auto segmenter = get_or_create(stream_name, application_config);
-    return segmenter ? segmenter->segment(sequence) : std::nullopt;
-}
-
-std::optional<std::size_t> segment_count(std::string_view stream_name, const config& application_config)
-{
-    const auto segmenter = get_or_create(stream_name, application_config);
-    return segmenter ? std::optional<std::size_t>(segmenter->segment_count()) : std::nullopt;
-}
-
 void shutdown()
 {
     hls_play_session::shutdown_all();
