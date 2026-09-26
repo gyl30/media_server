@@ -38,8 +38,10 @@ class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public st
     void shutdown();
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read(media_read_batch_t<mpeg_ps_frame> batch) override;
     void on_end() override;
+
+   protected:
+    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
 
    private:
     struct track_state
@@ -73,7 +75,6 @@ class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public st
     std::uint32_t timestamp_base_{};
     std::optional<std::uint32_t> first_media_timestamp_;
     std::map<track_id, track_state> track_states_;
-    media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     bool waiting_for_key_frame_{true};
     std::atomic_bool shutdown_requested_{};

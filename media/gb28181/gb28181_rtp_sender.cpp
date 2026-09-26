@@ -84,28 +84,27 @@ void gb28181_rtp_sender::shutdown()
 
 void gb28181_rtp_sender::on_tracks(media_track_snapshot_ptr tracks)
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || !packet_handler_)
-    {
-        return;
-    }
-    apply_tracks(tracks);
-    async_read(reader_cursor_);
+    on_read_ready(std::move(tracks), false);
 }
 
-void gb28181_rtp_sender::on_read(media_read_batch_t<mpeg_ps_frame> batch)
+void gb28181_rtp_sender::on_read_ready(media_track_snapshot_ptr tracks, bool)
 {
     if (shutdown_requested_.load(std::memory_order_acquire) || !packet_handler_)
     {
         return;
     }
 
-    reader_cursor_ = batch.next_cursor;
-    apply_tracks(batch.tracks);
+    apply_tracks(tracks);
 
-    for (const auto& entry : batch.entries)
+    while (packet_handler_)
     {
-        const auto state = track_states_.find(entry.frame.track);
-        if (state == track_states_.end() || state->second.config_version != entry.config_version || !entry.frame.payload)
+        auto entry = read();
+        if (!entry)
+        {
+            return;
+        }
+        const auto state = track_states_.find(entry->frame.track);
+        if (state == track_states_.end() || state->second.config_version != entry->config_version || !entry->frame.payload)
         {
             continue;
         }
@@ -113,20 +112,20 @@ void gb28181_rtp_sender::on_read(media_read_batch_t<mpeg_ps_frame> batch)
         const bool starts_media = waiting_for_key_frame_;
         if (starts_media)
         {
-            if (state->second.kind != media_kind::video || !entry.frame.key_frame)
+            if (state->second.kind != media_kind::video || !entry->frame.key_frame)
             {
                 continue;
             }
         }
 
-        const auto media_timestamp = entry.frame.media_timestamp;
+        const auto media_timestamp = entry->frame.media_timestamp;
         if (!first_media_timestamp_)
         {
             first_media_timestamp_ = media_timestamp;
         }
         const auto timestamp = timestamp_base_ + media_timestamp - *first_media_timestamp_;
-        const auto result =
-            rtp_payload_encode_input(packetizer_, entry.frame.payload->data(), static_cast<int>(entry.frame.payload->size()), timestamp);
+        const auto result = rtp_payload_encode_input(
+            packetizer_, entry->frame.payload->data(), static_cast<int>(entry->frame.payload->size()), timestamp);
         if (result < 0)
         {
             spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
@@ -149,11 +148,6 @@ void gb28181_rtp_sender::on_read(media_read_batch_t<mpeg_ps_frame> batch)
         {
             waiting_for_key_frame_ = false;
         }
-    }
-
-    if (packet_handler_)
-    {
-        async_read(reader_cursor_);
     }
 }
 
@@ -179,7 +173,6 @@ void gb28181_rtp_sender::safe_shutdown()
     end_handler_ = {};
     failure_handler_ = {};
     remove_reader();
-    reader_cursor_.reset();
     track_revision_ = 0;
     track_states_.clear();
     waiting_for_key_frame_ = true;

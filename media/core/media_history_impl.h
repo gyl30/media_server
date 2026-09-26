@@ -64,6 +64,23 @@ void media_reader_t<Frame>::async_read(media_reader_cursor cursor) const
 }
 
 template <typename Frame>
+std::optional<media_read_entry_t<Frame>> media_reader_t<Frame>::read()
+{
+    if (!state_ || !state_->active.load(std::memory_order_acquire) || state_->terminal.load(std::memory_order_acquire))
+    {
+        return {};
+    }
+    if (batch_index_ < batch_.entries.size())
+    {
+        return std::move(batch_.entries[batch_index_++]);
+    }
+    batch_ = {};
+    batch_index_ = 0;
+    async_read(reader_cursor_);
+    return {};
+}
+
+template <typename Frame>
 void media_reader_t<Frame>::remove_reader() const
 {
     if (!state_ || !state_->active.exchange(false, std::memory_order_acq_rel))

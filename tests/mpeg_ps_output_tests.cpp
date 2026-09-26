@@ -37,27 +37,24 @@ void drain(worker_context& worker)
 class ps_reader final : public media_reader_t<mpeg_ps_frame>
 {
    public:
-    void on_tracks(media_track_snapshot_ptr) override { async_read(cursor); }
-    void on_read(media_read_batch_t<mpeg_ps_frame> batch) override
-    {
-        cursor = batch.next_cursor;
-        for (const auto& entry : batch.entries)
-        {
-            frames.push_back(entry.frame);
-        }
-        ++reads;
-        if (reading)
-        {
-            async_read(cursor);
-        }
-    }
+    void on_tracks(media_track_snapshot_ptr) override { consume(); }
     void on_end() override { ++ends; }
 
-    media_reader_cursor cursor;
+   protected:
+    void on_read_ready(media_track_snapshot_ptr, bool) override { consume(); }
+
+   private:
+    void consume()
+    {
+        while (auto entry = read())
+        {
+            frames.push_back(std::move(entry->frame));
+        }
+    }
+
+   public:
     std::vector<mpeg_ps_frame> frames;
-    int reads{};
     int ends{};
-    bool reading{true};
 };
 
 std::vector<media_track> tracks(codec_id video, codec_id audio)
@@ -278,6 +275,36 @@ void test_cancel_bootstrap()
         sender_worker.run();
     }
 }
+
+void test_reader_owned_batch_progression()
+{
+    worker_context worker;
+    auto source = std::make_shared<media_stream>("test/ps-batch", worker);
+    require(source->set_tracks(tracks(codec_id::h264, codec_id::g711a)), "batch source tracks");
+    auto output = source->ps_output();
+    require(output != nullptr, "batch PS output");
+
+    const auto payload = std::make_shared<const std::vector<std::uint8_t>>(
+        std::initializer_list<std::uint8_t>{0, 0, 0, 1, 0x65, 1});
+    for (int index = 0; index < 150; ++index)
+    {
+        source->publish({.track = 1,
+                         .dts_ns = static_cast<std::int64_t>(index) * 40'000'000,
+                         .pts_ns = static_cast<std::int64_t>(index) * 40'000'000,
+                         .key_frame = index == 0,
+                         .payload = payload});
+    }
+
+    auto reader = std::make_shared<ps_reader>();
+    output->stream()->add_reader(reader, worker);
+    drain(worker);
+    require(reader->frames.size() == 150, "reader advances across the 128-entry history batch boundary");
+    source->end();
+    drain(worker);
+    require(reader->ends == 1, "batch reader receives source end");
+    worker.request_stop();
+    worker.run();
+}
 }    // namespace
 
 int main()
@@ -293,6 +320,7 @@ int main()
         }
         test_independent_rtp();
         test_cancel_bootstrap();
+        test_reader_owned_batch_progression();
     }
     catch (const std::exception& error)
     {
