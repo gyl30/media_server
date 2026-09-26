@@ -14,6 +14,7 @@
 #include "media/core/log.h"
 #include "media/net/tcp_listener.h"
 #include "media/http/http_session.h"
+#include "media/hls/hls.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 #include "media/net/io_context_pool.h"
@@ -220,6 +221,7 @@ int service::run()
     control_worker.spawn([this](boost::asio::yield_context yield) { run_server(yield); });
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
+    hls::shutdown();
     return 0;
 }
 
