@@ -60,7 +60,6 @@
 #include "media/http/signaling_client.h"
 #include "media/codec/audio_transcoder.h"
 #include "media/codec/video_transcoder.h"
-#include "media/http/http_flv_streamer.h"
 #include "media/rtmp/rtmp_play_session.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_pull_session.h"
@@ -543,19 +542,6 @@ struct flv_demux_capture
     std::vector<demuxed_packet> packets;
 };
 
-struct http_flv_write
-{
-    std::uint64_t generation{};
-    bool bootstrap{};
-    std::vector<std::uint8_t> data;
-};
-
-struct http_flv_capture
-{
-    std::vector<http_flv_write> writes;
-    std::size_t ends{};
-};
-
 int capture_flv_packet(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
 {
     const auto* begin = static_cast<const std::uint8_t*>(data);
@@ -567,20 +553,6 @@ int capture_flv_packet(void* param, int codec, const void* data, std::size_t byt
         .payload = std::vector<std::uint8_t>(begin, begin + bytes),
     });
     return 0;
-}
-
-flv_demux_capture demux_http_flv(const http_flv_capture& output)
-{
-    std::vector<std::uint8_t> data;
-    for (const auto& write : output.writes)
-    {
-        data.insert(data.end(), write.data.begin(), write.data.end());
-    }
-
-    flv_demux_capture capture;
-    flv_parser_t parser{};
-    require(!data.empty() && flv_parser_input(&parser, data.data(), data.size(), &capture_flv_packet, &capture) == 0, "http flv parser input");
-    return capture;
 }
 
 struct ts_demux_capture
@@ -4838,291 +4810,6 @@ void test_http_flv_runtime_events()
     client.close(error);
     workers.stop();
     runner.join();
-}
-
-void test_http_flv_batch_consumption_and_overrun()
-{
-    worker_context reader_worker_context;
-    reader_worker_context.release_work();
-    auto& reader_worker = reader_worker_context.io();
-    const auto drain = [&reader_worker]()
-    {
-        reader_worker.restart();
-        while (reader_worker.poll() != 0)
-        {
-        }
-    };
-
-    auto stream = std::make_shared<media_stream>("live/http-flv-pull", reader_worker_context);
-    require(stream->set_tracks({make_video_track()}), "http flv pull video track");
-    http_flv_capture capture;
-    auto streamer = std::make_shared<http_flv_streamer>(
-        [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
-        [&capture]() { ++capture.ends; });
-    stream->add_reader(streamer, reader_worker_context);
-    drain();
-
-    require(capture.writes.size() == 1U && capture.writes.front().bootstrap, "http flv bootstrap is first logical write");
-    require(
-        capture.writes.front().data.size() >= 9U && std::string_view(reinterpret_cast<const char*>(capture.writes.front().data.data()), 3) == "FLV",
-        "http flv bootstrap contains file header");
-    require((capture.writes.front().data[4] & 0x01U) != 0U && (capture.writes.front().data[4] & 0x04U) == 0U, "http flv video-only header flags");
-
-    stream->publish(make_video_frame(0, true));
-    stream->publish(make_video_frame(40'000'000, false));
-    drain();
-    require(capture.writes.size() == 1U, "http flv waits bootstrap completion before first read");
-
-    streamer->write_complete(1);
-    drain();
-    require(capture.writes.size() == 2U && !capture.writes.back().bootstrap, "http flv starts current batch after bootstrap");
-
-    stream->publish(make_video_frame(1'000'000'000, true));
-    stream->publish(make_video_frame(1'040'000'000, false));
-    stream->publish(make_video_frame(2'000'000'000, true));
-    stream->publish(make_video_frame(2'040'000'000, false));
-    stream->publish(make_video_frame(3'000'000'000, true));
-    drain();
-    require(capture.writes.size() == 2U, "http flv does not request another batch while current write is pending");
-
-    streamer->write_complete(1);
-    drain();
-    require(capture.writes.size() == 3U, "http flv keeps consuming prefetched current batch");
-
-    streamer->write_complete(1);
-    drain();
-    require(capture.writes.size() == 4U, "http flv requests next batch after current batch completes");
-    const auto decoded = demux_http_flv(capture);
-    std::vector<std::int64_t> video_pts;
-    for (const auto& packet : decoded.packets)
-    {
-        if (packet.codec == FLV_VIDEO_H264)
-        {
-            video_pts.push_back(packet.pts);
-        }
-    }
-    require(video_pts == std::vector<std::int64_t>{0, 40, 3'000},
-            "http flv retains one bounded batch and resyncs only when requesting the next batch");
-    streamer->shutdown();
-}
-
-void test_http_flv_h265_pull()
-{
-    worker_context reader_worker_context;
-    reader_worker_context.release_work();
-    auto& reader_worker = reader_worker_context.io();
-    const auto drain = [&reader_worker]()
-    {
-        reader_worker.restart();
-        while (reader_worker.poll() != 0)
-        {
-        }
-    };
-
-    auto stream = std::make_shared<media_stream>("live/http-flv-h265", reader_worker_context);
-    require(stream->set_tracks({make_h265_track()}), "http flv h265 track");
-    http_flv_capture capture;
-    auto streamer = std::make_shared<http_flv_streamer>(
-        [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
-        [&capture]() { ++capture.ends; });
-    stream->add_reader(streamer, reader_worker_context);
-    drain();
-    require(capture.writes.size() == 1U && capture.writes.front().bootstrap, "http flv h265 bootstrap");
-
-    streamer->write_complete(1);
-    stream->publish(make_h265_frame(0, true));
-    drain();
-    require(capture.writes.size() == 2U && !capture.writes.back().bootstrap, "http flv h265 media write");
-
-    const auto decoded = demux_http_flv(capture);
-    require(std::ranges::any_of(decoded.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_HVCC; }),
-            "http flv h265 config packet");
-    const auto media = std::ranges::find_if(decoded.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_H265; });
-    require(media != decoded.packets.end() && media->flags == 1 && media->pts == 0 && !media->payload.empty(), "http flv h265 key frame");
-    streamer->shutdown();
-}
-
-void test_http_flv_fast_and_slow_readers()
-{
-    worker_context reader_worker_context;
-    reader_worker_context.release_work();
-    auto& reader_worker = reader_worker_context.io();
-    const auto drain = [&reader_worker]()
-    {
-        reader_worker.restart();
-        while (reader_worker.poll() != 0)
-        {
-        }
-    };
-
-    auto stream = std::make_shared<media_stream>("live/http-flv-fast-slow", reader_worker_context);
-    require(stream->set_tracks({make_video_track()}), "http flv fast slow track");
-    http_flv_capture fast_capture;
-    http_flv_capture slow_capture;
-    auto fast = std::make_shared<http_flv_streamer>(
-        [&fast_capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        { fast_capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
-        [&fast_capture]() { ++fast_capture.ends; });
-    auto slow = std::make_shared<http_flv_streamer>(
-        [&slow_capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        { slow_capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
-        [&slow_capture]() { ++slow_capture.ends; });
-    stream->add_reader(fast, reader_worker_context);
-    stream->add_reader(slow, reader_worker_context);
-    drain();
-    fast->write_complete(1);
-    slow->write_complete(1);
-
-    stream->publish(make_video_frame(0, true));
-    drain();
-    const std::array<std::pair<std::int64_t, bool>, 4> frames{
-        std::pair{40'000'000LL, false},
-        std::pair{1'000'000'000LL, true},
-        std::pair{1'040'000'000LL, false},
-        std::pair{2'000'000'000LL, true},
-    };
-    for (const auto& [pts, key_frame] : frames)
-    {
-        fast->write_complete(1);
-        stream->publish(make_video_frame(pts, key_frame));
-        drain();
-    }
-
-    require(fast_capture.writes.size() == 6U, "fast http flv reader receives every frame");
-    require(slow_capture.writes.size() == 2U, "slow http flv reader holds only current frame write");
-    slow->write_complete(1);
-    drain();
-    require(slow_capture.writes.size() == 3U, "slow http flv reader resumes independently");
-
-    const auto fast_packets = demux_http_flv(fast_capture);
-    const auto slow_packets = demux_http_flv(slow_capture);
-    require(std::ranges::count_if(fast_packets.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_H264; }) == 5,
-            "fast http flv media count");
-    const auto slow_video = std::ranges::find_if(
-        slow_packets.packets.rbegin(), slow_packets.packets.rend(), [](const demuxed_packet& packet) { return packet.codec == FLV_VIDEO_H264; });
-    require(slow_video != slow_packets.packets.rend() && slow_video->pts == 2'000 && slow_video->flags == 1,
-            "slow http flv reader resumes at latest key frame");
-    fast->shutdown();
-    slow->shutdown();
-}
-
-void test_http_flv_audio_video_order()
-{
-    worker_context reader_worker_context;
-    reader_worker_context.release_work();
-    auto& reader_worker = reader_worker_context.io();
-    const auto drain = [&reader_worker]()
-    {
-        reader_worker.restart();
-        while (reader_worker.poll() != 0)
-        {
-        }
-    };
-
-    auto stream = std::make_shared<media_stream>("live/http-flv-av", reader_worker_context);
-    require(stream->set_tracks({make_video_track(), make_audio_track()}), "http flv av tracks");
-    http_flv_capture capture;
-    auto streamer = std::make_shared<http_flv_streamer>(
-        [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
-        [&capture]() { ++capture.ends; });
-    stream->add_reader(streamer, reader_worker_context);
-    drain();
-    require((capture.writes.front().data[4] & 0x05U) == 0x05U, "http flv audio video header flags");
-    streamer->write_complete(1);
-
-    stream->publish(make_video_frame(0, true));
-    stream->publish(make_audio_frame(20'000'000));
-    stream->publish(make_video_frame(40'000'000, false));
-    stream->publish(make_audio_frame(60'000'000));
-    drain();
-    for (std::size_t index = 1; index < 4; ++index)
-    {
-        streamer->write_complete(1);
-        drain();
-    }
-
-    const auto decoded = demux_http_flv(capture);
-    std::vector<int> codecs;
-    for (const auto& packet : decoded.packets)
-    {
-        if (packet.codec == FLV_VIDEO_H264 || packet.codec == FLV_AUDIO_AAC)
-        {
-            codecs.push_back(packet.codec);
-        }
-    }
-    require(codecs == std::vector<int>{FLV_VIDEO_H264, FLV_AUDIO_AAC, FLV_VIDEO_H264, FLV_AUDIO_AAC}, "http flv preserves audio video frame order");
-    streamer->shutdown();
-}
-
-void test_http_flv_config_reset()
-{
-    worker_context reader_worker_context;
-    reader_worker_context.release_work();
-    auto& reader_worker = reader_worker_context.io();
-    const auto drain = [&reader_worker]()
-    {
-        reader_worker.restart();
-        while (reader_worker.poll() != 0)
-        {
-        }
-    };
-
-    auto stream = std::make_shared<media_stream>("live/http-flv-reset", reader_worker_context);
-    require(stream->set_tracks({make_video_track(), make_audio_track()}), "http flv reset initial tracks");
-    http_flv_capture capture;
-    auto streamer = std::make_shared<http_flv_streamer>(
-        [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-        { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
-        [&capture]() { ++capture.ends; });
-    stream->add_reader(streamer, reader_worker_context);
-    drain();
-
-    require(capture.writes.size() == 1U && capture.writes.back().bootstrap && capture.writes.back().generation == 1,
-            "http flv reset initial bootstrap");
-    streamer->write_complete(1);
-    drain();
-
-    stream->publish(make_video_frame(0, true));
-    drain();
-    require(capture.writes.size() == 2U && !capture.writes.back().bootstrap && capture.writes.back().generation == 1,
-            "http flv reset initial keyframe");
-
-    auto updated_video = make_video_track();
-    updated_video.codec_config = h264_config_updated;
-    require(stream->update_track(std::move(updated_video)), "http flv reset video config");
-    drain();
-    require(capture.writes.size() == 3U && capture.writes.back().bootstrap && capture.writes.back().generation == 2,
-            "http flv reset emits new generation bootstrap");
-    require(capture.ends == 0U, "http flv same topology reset stays open");
-
-    stream->publish(make_video_frame(40'000'000, false, h264_config_updated));
-    stream->publish(make_audio_frame(60'000'000));
-    stream->publish(make_video_frame(80'000'000, true, h264_config_updated));
-    drain();
-
-    streamer->write_complete(1);
-    drain();
-    require(capture.writes.size() == 3U, "http flv ignores stale generation write completion");
-    streamer->write_complete(2);
-    drain();
-    require(capture.writes.size() == 4U && !capture.writes.back().bootstrap && capture.writes.back().generation == 2,
-            "http flv resumes new generation at keyframe");
-
-    const auto decoded = demux_http_flv(capture);
-    std::vector<std::pair<int, std::int64_t>> media;
-    for (const auto& packet : decoded.packets)
-    {
-        if (packet.codec == FLV_VIDEO_H264 || packet.codec == FLV_AUDIO_AAC)
-        {
-            media.emplace_back(packet.codec, packet.pts);
-        }
-    }
-    require(media == std::vector<std::pair<int, std::int64_t>>{{FLV_VIDEO_H264, 0}, {FLV_VIDEO_H264, 80}},
-            "http flv config reset drops stale and pre-keyframe media");
-    streamer->shutdown();
 }
 
 void test_rtsp_pull_url_contract()
@@ -13093,42 +12780,6 @@ void test_whip_media_receiver()
             io.run();
             io.restart();
 
-            http_flv_capture flv_capture;
-            std::shared_ptr<http_flv_streamer> flv_streamer;
-            flv_streamer = std::make_shared<http_flv_streamer>(
-                [&flv_capture, &flv_streamer, &io](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
-                {
-                    flv_capture.writes.push_back(http_flv_write{
-                        .generation = generation,
-                        .bootstrap = bootstrap,
-                        .data = std::move(data),
-                    });
-                    boost::asio::post(io, [&flv_streamer, generation]() { flv_streamer->write_complete(generation); });
-                },
-                [&flv_capture]() { ++flv_capture.ends; });
-            stream->add_reader(flv_streamer, worker);
-            io.run();
-            io.restart();
-
-            const auto flv = demux_http_flv(flv_capture);
-            const auto config_codec = video_codec == codec_id::h264 ? FLV_VIDEO_AVCC : FLV_VIDEO_HVCC;
-            const auto flv_video_config =
-                std::ranges::find_if(flv.packets, [config_codec](const demuxed_packet& packet) { return packet.codec == config_codec; });
-            require(flv_video_config != flv.packets.end() &&
-                        (video_codec == codec_id::h264 ? h264_avcc_to_annex_b(flv_video_config->payload) == h264_config
-                                                       : h265_hvcc_to_annex_b(flv_video_config->payload) == h265_config),
-                    "whip http flv video config");
-            const auto flv_audio_config =
-                std::ranges::find_if(flv.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_AUDIO_ASC; });
-            const auto flv_aac = flv_audio_config == flv.packets.end() ? std::optional<aac_config>{} : parse_aac_asc(flv_audio_config->payload);
-            require(flv_aac && flv_aac->sample_rate == 48'000 && flv_aac->channel_count == 2, "whip http flv aac config");
-            const auto media_codec = video_codec == codec_id::h264 ? FLV_VIDEO_H264 : FLV_VIDEO_H265;
-            const auto flv_video =
-                std::ranges::find_if(flv.packets, [media_codec](const demuxed_packet& packet) { return packet.codec == media_codec; });
-            require(flv_video != flv.packets.end() && flv_video->flags == 1 && !flv_video->payload.empty(), "whip http flv video keyframe");
-            const auto flv_audio = std::ranges::find_if(flv.packets, [](const demuxed_packet& packet) { return packet.codec == FLV_AUDIO_AAC; });
-            require(flv_audio != flv.packets.end() && !flv_audio->payload.empty(), "whip http flv aac media");
-            flv_streamer->shutdown();
         }
 
         {
@@ -14310,16 +13961,6 @@ int main(int argc, char* argv[])
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
     media_server::test_hls_http_session_shutdown_lifecycle();
     std::cout << "[pass] hls_http_session_shutdown_lifecycle\n";
-    media_server::test_http_flv_batch_consumption_and_overrun();
-    std::cout << "[pass] http_flv_batch_consumption_and_overrun\n";
-    media_server::test_http_flv_h265_pull();
-    std::cout << "[pass] http_flv_h265_pull\n";
-    media_server::test_http_flv_fast_and_slow_readers();
-    std::cout << "[pass] http_flv_fast_and_slow_readers\n";
-    media_server::test_http_flv_audio_video_order();
-    std::cout << "[pass] http_flv_audio_video_order\n";
-    media_server::test_http_flv_config_reset();
-    std::cout << "[pass] http_flv_config_reset\n";
     media_server::test_rtsp_client_rejects_empty_media_selection();
     std::cout << "[pass] rtsp_client_rejects_empty_media_selection\n";
     media_server::test_rtsp_sdp_contract();

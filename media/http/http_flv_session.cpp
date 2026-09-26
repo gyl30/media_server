@@ -1,4 +1,5 @@
 #include <array>
+#include <span>
 #include <utility>
 #include <optional>
 
@@ -14,13 +15,23 @@
 #include "media/core/stream_registry.h"
 #include "media/http/http_flv_session.h"
 #include "media/http/signaling_client.h"
-#include "media/http/http_flv_streamer.h"
 
 namespace media_server
 {
 
 http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
-    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config)
+    : worker_(worker),
+      stream_(std::move(stream)),
+      request_(std::move(request)),
+      muxer_(
+          [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+          {
+              if (writer_ != nullptr)
+              {
+                  flv_writer_input(writer_, type, data.data(), data.size(), timestamp);
+              }
+          },
+          config.http_video)
 {
 }
 
@@ -109,16 +120,6 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     stream_id_ = std::move(*stream_id);
     http_event::report_flv_output(event_state::starting, stream_id_, stream_name_, "play");
 
-    const auto self = shared_from_this();
-    streamer_ = std::make_shared<http_flv_streamer>(
-        [self](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap) { self->enqueue(generation, std::move(data), bootstrap); },
-        [self]()
-        {
-            http_event::report_flv_output(event_state::remote_closed, self->stream_id_, self->stream_name_, "media");
-            self->shutdown();
-        },
-        config_.http_video);
-
     stream_.expires_never();
     {
         boost::beast::http::response<boost::beast::http::empty_body> response(boost::beast::http::status::ok, request_.version());
@@ -145,7 +146,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         }
     }
 
-    media_stream->add_reader(streamer_, worker_);
+    media_stream->add_reader(shared_from_this(), worker_);
     http_event::report_flv_output(event_state::streaming, stream_id_, stream_name_, "streaming");
 
     std::array<std::uint8_t, 1> read_buffer{};
@@ -210,7 +211,7 @@ void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_
 
     if (data.empty())
     {
-        streamer_->write_complete(generation);
+        write_complete(generation);
         return;
     }
 
@@ -247,7 +248,7 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
         if (!pending_bootstrap_ready_)
         {
             write_in_progress_ = false;
-            streamer_->write_complete(generation);
+            write_complete(generation);
             return;
         }
 
@@ -257,10 +258,151 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
         if (data.empty())
         {
             write_in_progress_ = false;
-            streamer_->write_complete(generation);
+            write_complete(generation);
             return;
         }
     }
+}
+
+void http_flv_session::on_tracks(media_track_snapshot_ptr tracks)
+{
+    if (!closed_)
+    {
+        apply_tracks(tracks);
+    }
+}
+
+void http_flv_session::on_read_ready(media_track_snapshot_ptr tracks, bool)
+{
+    if (closed_ || apply_tracks(tracks))
+    {
+        return;
+    }
+    process_read();
+}
+
+void http_flv_session::on_end()
+{
+    if (closed_)
+    {
+        return;
+    }
+    http_event::report_flv_output(event_state::remote_closed, stream_id_, stream_name_, "media");
+    shutdown();
+}
+
+void http_flv_session::write_complete(std::uint64_t generation)
+{
+    if (!closed_ && generation_ == generation)
+    {
+        process_read();
+    }
+}
+
+bool http_flv_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+{
+    if (!tracks || tracks->revision <= track_revision_)
+    {
+        return false;
+    }
+
+    bool has_audio = false;
+    bool has_video = false;
+    bool video_changed = false;
+    for (const auto& track : tracks->tracks)
+    {
+        has_audio = has_audio || track.kind == media_kind::audio;
+        has_video = has_video || track.kind == media_kind::video;
+        const auto current = reader_tracks_.find(track.id);
+        video_changed = video_changed || (current != reader_tracks_.end() && track.kind == media_kind::video &&
+                                          current->second.config_version != track.config_version);
+    }
+
+    reader_tracks_.clear();
+    output_buffer_.clear();
+    if (writer_ == nullptr)
+    {
+        writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_session::writer_callback, this);
+    }
+    for (const auto& track : tracks->tracks)
+    {
+        reader_tracks_.emplace(track.id, track);
+        muxer_.on_track(track);
+    }
+
+    track_revision_ = tracks->revision;
+    waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
+    ++generation_;
+    enqueue(generation_, std::move(output_buffer_), true);
+    return true;
+}
+
+void http_flv_session::process_read()
+{
+    if (closed_)
+    {
+        return;
+    }
+    for (;;)
+    {
+        auto entry = read();
+        if (!entry)
+        {
+            return;
+        }
+        const auto track = reader_tracks_.find(entry->frame.track);
+        if (track == reader_tracks_.end() || track->second.config_version != entry->config_version)
+        {
+            continue;
+        }
+        if (waiting_for_key_frame_)
+        {
+            if (track->second.kind != media_kind::video || !entry->frame.key_frame)
+            {
+                continue;
+            }
+            waiting_for_key_frame_ = false;
+        }
+
+        output_buffer_.clear();
+        muxer_.on_frame(entry->frame);
+        if (output_buffer_.empty())
+        {
+            continue;
+        }
+        enqueue(generation_, std::move(output_buffer_), false);
+        return;
+    }
+}
+
+int http_flv_session::writer_callback(void* param, const flv_vec_t* vectors, int count)
+{
+    auto* self = static_cast<http_flv_session*>(param);
+    if (self->closed_ || vectors == nullptr || count <= 0)
+    {
+        return 0;
+    }
+
+    std::size_t bytes = 0;
+    for (int index = 0; index < count; ++index)
+    {
+        if (vectors[index].ptr != nullptr && vectors[index].len > 0)
+        {
+            bytes += static_cast<std::size_t>(vectors[index].len);
+        }
+    }
+
+    self->output_buffer_.reserve(self->output_buffer_.size() + bytes);
+    for (int index = 0; index < count; ++index)
+    {
+        if (vectors[index].ptr == nullptr || vectors[index].len <= 0)
+        {
+            continue;
+        }
+        const auto* begin = static_cast<const std::uint8_t*>(vectors[index].ptr);
+        self->output_buffer_.insert(self->output_buffer_.end(), begin, begin + vectors[index].len);
+    }
+    return 0;
 }
 
 void http_flv_session::shutdown()
@@ -276,12 +418,19 @@ void http_flv_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    if (streamer_)
+    if (!stream_id_.empty())
     {
         http_event::report_flv_output(event_state::stopped, stream_id_, stream_name_);
-        streamer_->shutdown();
-        streamer_.reset();
     }
+    remove_reader();
+    muxer_.shutdown();
+    if (writer_ != nullptr)
+    {
+        flv_writer_destroy(writer_);
+        writer_ = nullptr;
+    }
+    reader_tracks_.clear();
+    output_buffer_.clear();
     pending_bootstrap_.clear();
     pending_bootstrap_ready_ = false;
     write_in_progress_ = false;
