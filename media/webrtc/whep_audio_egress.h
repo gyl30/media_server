@@ -38,7 +38,7 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
     [[nodiscard]] end_reason reason() const noexcept;
 
     void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read(media_read_batch batch) override;
+    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
     void on_end() override;
 
    private:
@@ -56,7 +56,6 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
     std::shared_ptr<media_stream> output_;
     std::map<track_id, media_track> source_tracks_;
     std::map<track_id, std::unique_ptr<audio_transcoder>> transcoders_;
-    media_reader_cursor cursor_;
     std::atomic<end_reason> reason_{end_reason::none};
     std::uint64_t source_revision_{};
     bool reading_{};

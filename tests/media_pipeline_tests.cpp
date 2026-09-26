@@ -10199,8 +10199,13 @@ void test_whep_shared_audio_egress()
     auto early = std::make_shared<pull_test_reader>(true);
     output->add_reader(early, worker);
     drain();
-    source->publish(make_video_frame(0, true));
-    std::int64_t pts_ns = 37'000'000;
+    for (std::int64_t frame = 0; frame < 150; ++frame)
+    {
+        source->publish(make_video_frame(frame * 33'000'000, frame == 0));
+    }
+    drain();
+    require(early->frames().size() == 150, "shared audio egress reads across media history batches");
+    std::int64_t pts_ns = 5'000'000'000;
     for (const auto& adts : valid_aac_adts_frames)
     {
         source->publish(media_frame{

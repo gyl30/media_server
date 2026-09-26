@@ -173,36 +173,36 @@ void whep_audio_egress::on_tracks(media_track_snapshot_ptr tracks)
     if (!reading_)
     {
         reading_ = true;
-        async_read(cursor_);
+        (void)read();
     }
 }
 
-void whep_audio_egress::on_read(media_read_batch batch)
+void whep_audio_egress::on_read_ready(media_track_snapshot_ptr tracks, bool)
 {
-    on_tracks(batch.tracks);
-    if (reason() != end_reason::none)
+    on_tracks(std::move(tracks));
+    while (reason() == end_reason::none)
     {
-        return;
-    }
-    cursor_ = batch.next_cursor;
-    for (const auto& entry : batch.entries)
-    {
-        const auto track = source_tracks_.find(entry.frame.track);
-        if (track == source_tracks_.end() || track->second.config_version != entry.config_version)
+        auto entry = read();
+        if (!entry)
+        {
+            return;
+        }
+        const auto track = source_tracks_.find(entry->frame.track);
+        if (track == source_tracks_.end() || track->second.config_version != entry->config_version)
         {
             continue;
         }
-        const auto transcoder = transcoders_.find(entry.frame.track);
+        const auto transcoder = transcoders_.find(entry->frame.track);
         if (transcoder == transcoders_.end())
         {
-            output_->publish(entry.frame);
+            output_->publish(entry->frame);
             continue;
         }
 
         std::vector<media_frame> encoded;
-        if (!transcoder->second->transcode(entry.frame, encoded))
+        if (!transcoder->second->transcode(entry->frame, encoded))
         {
-            spdlog::error("whep shared audio transcode failed track {}", entry.frame.track);
+            spdlog::error("whep shared audio transcode failed track {}", entry->frame.track);
             finish(end_reason::transcode_failed);
             return;
         }
@@ -213,7 +213,6 @@ void whep_audio_egress::on_read(media_read_batch batch)
             output_->publish(std::move(frame));
         }
     }
-    async_read(cursor_);
 }
 
 void whep_audio_egress::on_end() { finish(end_reason::source_ended); }
