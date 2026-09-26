@@ -45,7 +45,6 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks)
     output_tracks.reserve(tracks.size());
     for (const auto& track : tracks)
     {
-        initial_versions_.emplace(track.id, track.config_version);
         source_tracks_.emplace(track.id, track);
         auto output_track = track;
         if (track.codec == codec_id::aac)
@@ -103,21 +102,21 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks)
 bool whep_audio_egress::matches(const std::vector<media_track>& tracks) const
 {
     const auto prepared_tracks = output_->tracks();
-    if (reason() != end_reason::none || tracks.size() != initial_versions_.size() || prepared_tracks.size() != tracks.size())
+    if (reason() != end_reason::none || tracks.size() != source_tracks_.size() || prepared_tracks.size() != tracks.size())
     {
         return false;
     }
     return std::ranges::all_of(tracks,
                                [this, &prepared_tracks](const media_track& track)
                                {
-                                   const auto it = initial_versions_.find(track.id);
-                                   if (it == initial_versions_.end())
+                                   const auto it = source_tracks_.find(track.id);
+                                   if (it == source_tracks_.end())
                                    {
                                        return false;
                                    }
                                    if (track.codec == codec_id::aac)
                                    {
-                                       return it->second == track.config_version;
+                                       return it->second.config_version == track.config_version;
                                    }
                                    const auto prepared = std::ranges::find_if(prepared_tracks,
                                                                               [&track](const media_track& value) { return value.id == track.id; });

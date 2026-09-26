@@ -55,7 +55,6 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
     std::shared_ptr<media_stream> source_;
     std::shared_ptr<media_stream> output_;
     whep_audio_settings settings_;
-    std::map<track_id, std::uint64_t> initial_versions_;
     std::map<track_id, media_track> source_tracks_;
     std::map<track_id, std::unique_ptr<audio_transcoder>> transcoders_;
     media_reader_cursor cursor_;
