@@ -234,7 +234,6 @@ void whep_session::safe_shutdown()
         packetizer_.reset();
     }
     negotiated_tracks_.clear();
-    reader_cursor_.reset();
     track_revision_ = 0;
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
@@ -299,15 +298,14 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
     }
 }
 
-void whep_session::on_read(media_read_batch batch)
+void whep_session::on_read_ready(media_track_snapshot_ptr tracks, bool)
 {
     if (!started_ || !packetizer_)
     {
         return;
     }
 
-    reader_cursor_ = batch.next_cursor;
-    if (!apply_tracks(batch.tracks))
+    if (!apply_tracks(tracks))
     {
         spdlog::info("webrtc negotiated track changed session {}", id_);
         if (started_)
@@ -318,14 +316,19 @@ void whep_session::on_read(media_read_batch batch)
         return;
     }
 
-    for (auto& entry : batch.entries)
+    while (started_)
     {
-        const auto expected = negotiated_tracks_.find(entry.frame.track);
-        if (expected == negotiated_tracks_.end() || expected->second.config_version != entry.config_version)
+        auto entry = read();
+        if (!entry)
+        {
+            return;
+        }
+        const auto expected = negotiated_tracks_.find(entry->frame.track);
+        if (expected == negotiated_tracks_.end() || expected->second.config_version != entry->config_version)
         {
             continue;
         }
-        if (!packetizer_->on_frame(entry.frame))
+        if (!packetizer_->on_frame(entry->frame))
         {
             if (started_)
             {
@@ -334,11 +337,6 @@ void whep_session::on_read(media_read_batch batch)
             shutdown();
             return;
         }
-    }
-
-    if (started_)
-    {
-        async_read(reader_cursor_);
     }
 }
 
@@ -695,7 +693,7 @@ bool whep_session::start_media_read()
             return false;
         }
     }
-    async_read(reader_cursor_);
+    (void)read();
     return true;
 }
 

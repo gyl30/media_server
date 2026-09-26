@@ -285,7 +285,8 @@ bool drive_dtls_client(boost::asio::io_context& io,
                        boost::asio::ip::udp::socket& socket,
                        const boost::asio::ip::udp::endpoint& server_endpoint,
                        Session& session,
-                       dtls_test_client& client)
+                       dtls_test_client& client,
+                       std::vector<std::vector<std::uint8_t>>* received_media = nullptr)
 {
     boost::system::error_code error;
     socket.non_blocking(true, error);
@@ -327,6 +328,11 @@ bool drive_dtls_client(boost::asio::io_context& io,
             if (error || sender != server_endpoint || size == 0)
             {
                 return false;
+            }
+            if (received_media && srtp_transport::is_rtp_or_rtcp(std::span<const std::uint8_t>(buffer.data(), size)))
+            {
+                received_media->emplace_back(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(size));
+                continue;
             }
             if (BIO_write(client.read_bio, buffer.data(), static_cast<int>(size)) != static_cast<int>(size))
             {
@@ -3750,9 +3756,12 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     static_cast<void>(second_client_socket.send_to(boost::asio::buffer(second_nominate), server_endpoint));
     drain_io(io);
 
+    stream->publish(make_video_key_frame(video_codec));
+
     auto client = make_dtls_test_client(client_certificate, srtp_profile);
     require(client.has_value(), "dtls client create");
-    require(drive_dtls_client(io, client_socket, server_endpoint, *session, *client), "dtls handshake");
+    std::vector<std::vector<std::uint8_t>> received_media;
+    require(drive_dtls_client(io, client_socket, server_endpoint, *session, *client, &received_media), "dtls handshake");
     require(session->dtls_connected(), "dtls server connected");
     require(std::string_view(SSL_get_cipher_name(client->ssl.get())) == "ECDHE-ECDSA-AES128-GCM-SHA256", "dtls mandatory webrtc cipher");
     const auto* selected_srtp_profile = SSL_get_selected_srtp_profile(client->ssl.get());
@@ -3817,11 +3826,29 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
         return test_srtp_packet{.rtcp = rtcp, .bytes = std::move(output)};
     };
 
-    stream->publish(make_video_key_frame(video_codec));
-
     std::array<std::uint8_t, 4096> rtp_buffer{};
     boost::asio::ip::udp::endpoint rtp_sender;
     std::optional<test_srtp_packet> clear_rtp;
+    std::optional<test_srtp_packet> clear_server_rtcp;
+    for (const auto& packet : received_media)
+    {
+        auto clear = unprotect_server_packet(packet);
+        if (!clear)
+        {
+            continue;
+        }
+        if (clear->rtcp)
+        {
+            if (!clear_server_rtcp)
+            {
+                clear_server_rtcp = std::move(clear);
+            }
+        }
+        else if (!clear_rtp)
+        {
+            clear_rtp = std::move(clear);
+        }
+    }
     const auto rtp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!clear_rtp && std::chrono::steady_clock::now() < rtp_deadline)
     {
@@ -3853,7 +3880,6 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     require(nal_type == (h265 ? 19U : 5U), "srtp negotiated video codec");
     const auto video_ssrc = read_network_u32(clear_rtp->bytes, 8U);
 
-    std::optional<test_srtp_packet> clear_server_rtcp;
     const auto server_rtcp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!clear_server_rtcp && std::chrono::steady_clock::now() < server_rtcp_deadline)
     {

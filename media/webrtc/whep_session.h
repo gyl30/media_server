@@ -73,8 +73,10 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
 
    public:
     void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read(media_read_batch batch) override;
     void on_end() override;
+
+   protected:
+    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
 
    private:
     struct pending_datagram
@@ -133,7 +135,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     std::string remote_ice_ufrag_;
     webrtc_answer answer_;
     std::uint16_t local_port_{};
-    media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     bool started_{};
 };
