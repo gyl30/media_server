@@ -89,13 +89,13 @@ void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
     if (!apply_tracks(tracks))
     {
         rtsp_event::report_output(event_state::runtime_error, stream_id_, stream_name_, "media", "track_configuration_changed");
-        reader_handle().remove();
+        remove_reader();
         shutdown_handler_();
         return;
     }
     if (batch_.entries.empty() && !waiting_for_output_)
     {
-        reader_handle().async_read(reader_cursor_);
+        async_read(reader_cursor_);
     }
 }
 
@@ -110,7 +110,7 @@ void rtsp_play_session::on_read(media_read_batch batch)
     if (!apply_tracks(batch.tracks))
     {
         rtsp_event::report_output(event_state::runtime_error, stream_id_, stream_name_, "media", "track_configuration_changed");
-        reader_handle().remove();
+        remove_reader();
         shutdown_handler_();
         return;
     }
@@ -181,7 +181,7 @@ void rtsp_play_session::process_batch()
             {
                 spdlog::error("rtsp av1 transcode failed track {}", entry.frame.track);
                 rtsp_event::report_output(event_state::runtime_error, stream_id_, stream_name_, "media", "av1_transcode_failed");
-                reader_handle().remove();
+                remove_reader();
                 shutdown_handler_();
                 return;
             }
@@ -231,7 +231,7 @@ void rtsp_play_session::process_batch()
 
     batch_ = {};
     batch_index_ = 0;
-    reader_handle().async_read(reader_cursor_);
+    async_read(reader_cursor_);
 }
 
 std::size_t rtsp_play_session::queued_output_bytes() const
@@ -302,7 +302,7 @@ void rtsp_play_session::shutdown()
 
 void rtsp_play_session::safe_shutdown()
 {
-    reader_handle().remove();
+    remove_reader();
     batch_ = {};
     batch_index_ = 0;
     waiting_for_output_ = false;

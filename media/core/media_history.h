@@ -27,7 +27,7 @@ class media_history : public std::enable_shared_from_this<media_history<Frame>>
     [[nodiscard]] const std::string& name() const noexcept;
     [[nodiscard]] std::vector<media_track> tracks() const;
 
-    media_reader_handle_t<Frame> add_reader(const std::shared_ptr<media_reader_t<Frame>>& reader, worker_context& worker);
+    void add_reader(const std::shared_ptr<media_reader_t<Frame>>& reader, worker_context& worker);
     // 仅用于发布完整初始轨道集合；成功后 track id/kind/codec 固定。只由 stream owner worker 调用。
     bool set_tracks(std::vector<media_track> tracks);
     // 仅允许已有 track 在固定 codec 内更新配置；实际配置变化时返回 true。只由 stream owner worker 调用。
@@ -46,7 +46,7 @@ class media_history : public std::enable_shared_from_this<media_history<Frame>>
     };
 
    private:
-    friend class media_reader_handle_t<Frame>;
+    friend class media_reader_t<Frame>;
 
     void publish_track_snapshot();
     void request_read(const std::shared_ptr<media_reader_state_t<Frame>>& state, media_reader_cursor cursor);

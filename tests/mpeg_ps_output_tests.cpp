@@ -37,7 +37,7 @@ void drain(worker_context& worker)
 class ps_reader final : public media_reader_t<mpeg_ps_frame>
 {
    public:
-    void on_tracks(media_track_snapshot_ptr) override { reader_handle().async_read(cursor); }
+    void on_tracks(media_track_snapshot_ptr) override { async_read(cursor); }
     void on_read(media_read_batch_t<mpeg_ps_frame> batch) override
     {
         cursor = batch.next_cursor;
@@ -48,7 +48,7 @@ class ps_reader final : public media_reader_t<mpeg_ps_frame>
         ++reads;
         if (reading)
         {
-            reader_handle().async_read(cursor);
+            async_read(cursor);
         }
     }
     void on_end() override { ++ends; }

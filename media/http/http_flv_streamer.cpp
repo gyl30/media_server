@@ -51,7 +51,7 @@ void http_flv_streamer::on_end() { finish(); }
 void http_flv_streamer::shutdown()
 {
     ended_ = true;
-    reader_handle().remove();
+    remove_reader();
     write_handler_ = {};
     end_handler_ = {};
     muxer_.shutdown();
@@ -153,7 +153,7 @@ void http_flv_streamer::process_batch()
 
     batch_ = {};
     batch_index_ = 0;
-    reader_handle().async_read(reader_cursor_);
+    async_read(reader_cursor_);
 }
 
 void http_flv_streamer::finish()

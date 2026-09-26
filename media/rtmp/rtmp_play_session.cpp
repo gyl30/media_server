@@ -44,7 +44,7 @@ void rtmp_play_session::shutdown()
         return;
     }
     closed_ = true;
-    reader_handle().remove();
+    remove_reader();
     reader_cursor_.reset();
     reader_tracks_.clear();
     track_revision_ = 0;
@@ -67,7 +67,7 @@ void rtmp_play_session::on_tracks(media_track_snapshot_ptr tracks)
     apply_tracks(tracks);
     if (!closed_ && batch_.entries.empty() && !waiting_for_output_)
     {
-        reader_handle().async_read(reader_cursor_);
+        async_read(reader_cursor_);
     }
 }
 
@@ -152,7 +152,7 @@ void rtmp_play_session::process_batch()
 
     batch_ = {};
     batch_index_ = 0;
-    reader_handle().async_read(reader_cursor_);
+    async_read(reader_cursor_);
 }
 
 std::size_t rtmp_play_session::queued_output_bytes() const

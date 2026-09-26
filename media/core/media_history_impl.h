@@ -38,13 +38,7 @@ void release_read_outstanding(const std::shared_ptr<media_reader_state_t<Frame>>
 }    // namespace media_history_detail
 
 template <typename Frame>
-media_reader_handle_t<Frame>::media_reader_handle_t(std::weak_ptr<media_history<Frame>> stream, std::shared_ptr<media_reader_state_t<Frame>> state)
-    : stream_(std::move(stream)), state_(std::move(state))
-{
-}
-
-template <typename Frame>
-void media_reader_handle_t<Frame>::async_read(media_reader_cursor cursor) const
+void media_reader_t<Frame>::async_read(media_reader_cursor cursor) const
 {
     if (!state_ || !state_->active.load(std::memory_order_acquire) || state_->terminal.load(std::memory_order_acquire))
     {
@@ -61,7 +55,7 @@ void media_reader_handle_t<Frame>::async_read(media_reader_cursor cursor) const
         media_history_detail::release_read_outstanding(state_);
         return;
     }
-    if (const auto stream = stream_.lock())
+    if (const auto stream = history_.lock())
     {
         stream->request_read(state_, cursor);
         return;
@@ -70,7 +64,7 @@ void media_reader_handle_t<Frame>::async_read(media_reader_cursor cursor) const
 }
 
 template <typename Frame>
-void media_reader_handle_t<Frame>::remove() const
+void media_reader_t<Frame>::remove_reader() const
 {
     if (!state_ || !state_->active.exchange(false, std::memory_order_acq_rel))
     {
@@ -78,7 +72,7 @@ void media_reader_handle_t<Frame>::remove() const
     }
 
     state_->read_outstanding.store(false, std::memory_order_release);
-    if (const auto stream = stream_.lock())
+    if (const auto stream = history_.lock())
     {
         stream->remove_reader(state_);
     }
@@ -103,11 +97,11 @@ std::vector<media_track> media_history<Frame>::tracks() const
 }
 
 template <typename Frame>
-media_reader_handle_t<Frame> media_history<Frame>::add_reader(const std::shared_ptr<media_reader_t<Frame>>& reader, worker_context& worker)
+void media_history<Frame>::add_reader(const std::shared_ptr<media_reader_t<Frame>>& reader, worker_context& worker)
 {
     if (!reader)
     {
-        return {};
+        return;
     }
     const auto self = this->shared_from_this();
 
@@ -115,11 +109,10 @@ media_reader_handle_t<Frame> media_history<Frame>::add_reader(const std::shared_
     state->reader = reader;
     state->worker = &worker;
 
-    media_reader_handle_t<Frame> handle(self, state);
-    reader->handle_ = handle;
+    reader->history_ = self;
+    reader->state_ = state;
 
     boost::asio::dispatch(worker_.io(), [self, state]() { self->add_reader_on_owner(state); });
-    return handle;
 }
 
 template <typename Frame>

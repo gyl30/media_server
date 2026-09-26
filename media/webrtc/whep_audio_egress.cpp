@@ -132,7 +132,7 @@ void whep_audio_egress::finish(end_reason reason)
     {
         return;
     }
-    reader_handle().remove();
+    remove_reader();
     output_->end();
     transcoders_.clear();
     source_.reset();
@@ -173,7 +173,7 @@ void whep_audio_egress::on_tracks(media_track_snapshot_ptr tracks)
     if (!reading_)
     {
         reading_ = true;
-        reader_handle().async_read(cursor_);
+        async_read(cursor_);
     }
 }
 
@@ -213,7 +213,7 @@ void whep_audio_egress::on_read(media_read_batch batch)
             output_->publish(std::move(frame));
         }
     }
-    reader_handle().async_read(cursor_);
+    async_read(cursor_);
 }
 
 void whep_audio_egress::on_end() { finish(end_reason::source_ended); }
@@ -267,7 +267,7 @@ void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress)
     {
         return;
     }
-    released->reader_handle().remove();
+    released->remove_reader();
     // worker 的 shutdown subscription 持有 processor，排队请求无需延长其终止后的生命。
     boost::asio::post(released->worker_.io(),
                       [weak = std::weak_ptr<whep_audio_egress>(released)]()

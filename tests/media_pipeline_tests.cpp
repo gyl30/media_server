@@ -1014,7 +1014,7 @@ class packetizer_test_reader final : public media_reader
         {
             require(packetizer_.on_track(track), "output packetizer accepts input track");
         }
-        reader_handle().async_read(cursor_);
+        async_read(cursor_);
     }
 
     void on_read(media_read_batch batch) override
@@ -1024,7 +1024,7 @@ class packetizer_test_reader final : public media_reader
             require(packetizer_.on_frame(entry.frame), "output packetizer accepts input frame");
         }
         cursor_ = batch.next_cursor;
-        reader_handle().async_read(cursor_);
+        async_read(cursor_);
     }
 
     void on_end() override { packetizer_.shutdown(); }
@@ -1052,7 +1052,7 @@ class pull_test_reader final : public media_reader
                 std::scoped_lock lock(mutex_);
                 cursor = cursor_;
             }
-            reader_handle().async_read(cursor);
+            async_read(cursor);
         }
         condition_.notify_all();
     }
@@ -1094,7 +1094,7 @@ class pull_test_reader final : public media_reader
                 std::scoped_lock lock(mutex_);
                 cursor = cursor_;
             }
-            reader_handle().async_read(cursor);
+            async_read(cursor);
         }
         condition_.notify_all();
     }
@@ -1117,10 +1117,8 @@ class pull_test_reader final : public media_reader
             std::scoped_lock lock(mutex_);
             cursor = cursor_;
         }
-        reader_handle().async_read(cursor);
+        async_read(cursor);
     }
-
-    void remove() { reader_handle().remove(); }
 
     [[nodiscard]] bool wait_for_ready(std::size_t count)
     {
@@ -4945,7 +4943,7 @@ void test_http_flv_batch_consumption_and_overrun()
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&capture]() { ++capture.ends; });
-    static_cast<void>(stream->add_reader(streamer, reader_worker_context));
+    stream->add_reader(streamer, reader_worker_context);
     drain();
 
     require(capture.writes.size() == 1U && capture.writes.front().bootstrap, "http flv bootstrap is first logical write");
@@ -5012,7 +5010,7 @@ void test_http_flv_h265_pull()
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&capture]() { ++capture.ends; });
-    static_cast<void>(stream->add_reader(streamer, reader_worker_context));
+    stream->add_reader(streamer, reader_worker_context);
     drain();
     require(capture.writes.size() == 1U && capture.writes.front().bootstrap, "http flv h265 bootstrap");
 
@@ -5054,8 +5052,8 @@ void test_http_flv_fast_and_slow_readers()
         [&slow_capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { slow_capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&slow_capture]() { ++slow_capture.ends; });
-    static_cast<void>(stream->add_reader(fast, reader_worker_context));
-    static_cast<void>(stream->add_reader(slow, reader_worker_context));
+    stream->add_reader(fast, reader_worker_context);
+    stream->add_reader(slow, reader_worker_context);
     drain();
     fast->write_complete(1);
     slow->write_complete(1);
@@ -5113,7 +5111,7 @@ void test_http_flv_audio_video_order()
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&capture]() { ++capture.ends; });
-    static_cast<void>(stream->add_reader(streamer, reader_worker_context));
+    stream->add_reader(streamer, reader_worker_context);
     drain();
     require((capture.writes.front().data[4] & 0x05U) == 0x05U, "http flv audio video header flags");
     streamer->write_complete(1);
@@ -5162,7 +5160,7 @@ void test_http_flv_config_reset()
         [&capture](std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
         { capture.writes.push_back(http_flv_write{.generation = generation, .bootstrap = bootstrap, .data = std::move(data)}); },
         [&capture]() { ++capture.ends; });
-    static_cast<void>(stream->add_reader(streamer, reader_worker_context));
+    stream->add_reader(streamer, reader_worker_context);
     drain();
 
     require(capture.writes.size() == 1U && capture.writes.back().bootstrap && capture.writes.back().generation == 1,
@@ -5878,8 +5876,8 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
 
     auto video_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{video_track_id});
     auto audio_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{audio_track_id});
-    auto video_handle = stream->add_reader(video_reader, client_worker);
-    auto audio_handle = stream->add_reader(audio_reader, client_worker);
+    stream->add_reader(video_reader, client_worker);
+    stream->add_reader(audio_reader, client_worker);
     require(video_reader->wait_for_ready(1) && audio_reader->wait_for_ready(1), "rtsp rtp-info readers ready");
 
     send_rtp(0, make_rtp(0x60, 2, video_rtp_time, video_pps));
@@ -5895,8 +5893,8 @@ void test_rtsp_pull_rtp_info_aligns_media_timestamps()
     require(video_frames[0].second == 0 && audio_frames[0].second == 0, "rtsp rtp-info maps random origins to zero npt");
     require(video_frames[1].second == 40'000'000 && audio_frames[1].second == 40'000'000, "rtsp rtp-info preserves common audio video npt");
 
-    video_handle.remove();
-    audio_handle.remove();
+    video_reader->remove_reader();
+    audio_reader->remove_reader();
     pull->shutdown();
     boost::system::error_code error;
     socket.close(error);
@@ -5932,8 +5930,6 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
                              });
     auto video_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{video_track_id});
     auto audio_reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{audio_track_id});
-    media_reader_handle video_handle;
-    media_reader_handle audio_handle;
     boost::asio::post(io,
                       [&]()
                       {
@@ -5941,8 +5937,8 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
                           require(media.start_recording(), "rtsp rtcp sync recording");
                           const auto stream = stream_registry::instance().find("live/rtcp-sync");
                           require(stream != nullptr, "rtsp rtcp sync stream");
-                          video_handle = stream->add_reader(video_reader, worker);
-                          audio_handle = stream->add_reader(audio_reader, worker);
+                          stream->add_reader(video_reader, worker);
+                          stream->add_reader(audio_reader, worker);
                       });
     worker.release_work();
     io.run();
@@ -6029,8 +6025,8 @@ void test_rtsp_publish_rtcp_sender_reports_align_media_timestamps()
     boost::asio::post(io,
                       [&]()
                       {
-                          video_handle.remove();
-                          audio_handle.remove();
+                          video_reader->remove_reader();
+                          audio_reader->remove_reader();
                           media.shutdown();
                       });
     io.run();
@@ -10201,7 +10197,7 @@ void test_whep_shared_audio_egress()
             "shared audio output advertises opus");
 
     auto early = std::make_shared<pull_test_reader>(true);
-    static_cast<void>(output->add_reader(early, worker));
+    output->add_reader(early, worker);
     drain();
     source->publish(make_video_frame(0, true));
     std::int64_t pts_ns = 37'000'000;
@@ -10219,7 +10215,7 @@ void test_whep_shared_audio_egress()
     require(early->frames().size() > 1, "shared audio produces opus frames");
 
     auto late = std::make_shared<pull_test_reader>(true);
-    static_cast<void>(output->add_reader(late, worker));
+    output->add_reader(late, worker);
     drain();
     require(late->frames() == early->frames() && late->payloads() == early->payloads(), "late viewer receives the same immutable opus frames");
 
@@ -10231,7 +10227,7 @@ void test_whep_shared_audio_egress()
     require(after_video_change == second, "video configuration does not duplicate audio encoder");
     release_whep_audio_egress(after_video_change);
 
-    early->remove();
+    early->remove_reader();
     release_whep_audio_egress(first);
     release_whep_audio_egress(first);
     source->publish(make_video_frame(pts_ns, true, h264_config_updated));
@@ -11082,8 +11078,8 @@ void test_media_stream_pull_reader_overrun()
                       {
                           owner_thread = std::this_thread::get_id();
                           require(stream->set_tracks({make_video_track()}), "pull overrun track");
-                          static_cast<void>(stream->add_reader(fast, workers.context(1)));
-                          static_cast<void>(stream->add_reader(stalled, workers.context(1)));
+                          stream->add_reader(fast, workers.context(1));
+                          stream->add_reader(stalled, workers.context(1));
                       });
 
     std::thread runner([&workers]() { workers.run(); });
@@ -11149,7 +11145,7 @@ void test_media_stream_pull_reader_duplicate_read()
                       [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track()}), "pull duplicate track");
-                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
+                          stream->add_reader(reader, reader_worker_context);
                       });
     drain(owner);
     drain(reader_worker);
@@ -11207,7 +11203,7 @@ void test_media_stream_pull_reader_batch_limit_and_worker_filtering()
                       [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track(), make_audio_track()}), "pull batch tracks");
-                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
+                          stream->add_reader(reader, reader_worker_context);
                           for (std::size_t index = 0; index < 300; ++index)
                           {
                               const auto pts = static_cast<std::int64_t>(index) * 20'000'000;
@@ -11269,7 +11265,7 @@ void test_media_stream_pull_reader_initial_cursor_starts_current_gop()
                           stream->publish(make_video_frame(40'000'000, false));
                           stream->publish(make_video_frame(1'000'000'000, true));
                           stream->publish(make_video_frame(1'040'000'000, false));
-                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
+                          stream->add_reader(reader, reader_worker_context);
                       });
     drain(owner);
     drain(reader_worker);
@@ -11303,8 +11299,8 @@ void test_media_stream_pull_reader_previous_gop_continuity()
                       [stream, continuity_reader, overrun_reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track()}), "pull continuity track");
-                          static_cast<void>(stream->add_reader(continuity_reader, reader_worker_context));
-                          static_cast<void>(stream->add_reader(overrun_reader, reader_worker_context));
+                          stream->add_reader(continuity_reader, reader_worker_context);
+                          stream->add_reader(overrun_reader, reader_worker_context);
                           stream->publish(make_video_frame(0, true));
                       });
     drain(owner);
@@ -11378,7 +11374,7 @@ void test_media_stream_add_reader_after_end()
     auto reader = std::make_shared<pull_test_reader>(false, false);
     boost::asio::post(owner, [stream]() { stream->end(); });
     boost::asio::post(consumer_worker,
-                      [stream, reader, &reader_worker_context]() { static_cast<void>(stream->add_reader(reader, reader_worker_context)); });
+                      [stream, reader, &reader_worker_context]() { stream->add_reader(reader, reader_worker_context); });
 
     drain(consumer_worker);
     drain(owner);
@@ -11412,7 +11408,7 @@ void test_media_stream_pull_reader_track_snapshot_order()
                       [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track()}), "pull generation initial track");
-                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
+                          stream->add_reader(reader, reader_worker_context);
                       });
     drain(owner);
     drain(reader_worker);
@@ -11455,14 +11451,14 @@ void test_media_stream_pull_reader_track_snapshot_order()
                       [remove_stream, removed_reader, &reader_worker_context]()
                       {
                           require(remove_stream->set_tracks({make_video_track()}), "pull remove track");
-                          static_cast<void>(remove_stream->add_reader(removed_reader, reader_worker_context));
+                          remove_stream->add_reader(removed_reader, reader_worker_context);
                       });
     drain(owner);
     drain(reader_worker);
     drain(owner);
     boost::asio::post(owner, [remove_stream]() { remove_stream->publish(make_video_frame(0, true)); });
     drain(owner);
-    removed_reader->remove();
+    removed_reader->remove_reader();
     drain(reader_worker);
     drain(owner);
     require(removed_reader->frames().empty() && removed_reader->ends() == 0, "remove suppresses already posted callbacks");
@@ -11500,8 +11496,8 @@ void test_media_stream_reader_track_interest()
                       [stream, video_reader, full_reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track(), make_audio_track()}), "pull interest tracks");
-                          static_cast<void>(stream->add_reader(video_reader, reader_worker_context));
-                          static_cast<void>(stream->add_reader(full_reader, reader_worker_context));
+                          stream->add_reader(video_reader, reader_worker_context);
+                          stream->add_reader(full_reader, reader_worker_context);
                       });
     drain_all();
 
@@ -11521,7 +11517,7 @@ void test_media_stream_reader_track_interest()
                           stream->publish(make_video_frame(80'000'000, false));
                           stream->publish(make_audio_frame(100'000'000));
                           stream->publish(make_video_frame(120'000'000, false));
-                          static_cast<void>(stream->add_reader(late_reader, reader_worker_context));
+                          stream->add_reader(late_reader, reader_worker_context);
                       });
     drain_all();
 
@@ -11571,7 +11567,7 @@ void test_media_stream_video_keyframe_barrier_is_sticky()
                       [stream, reader, &reader_worker_context]()
                       {
                           require(stream->set_tracks({make_video_track(), make_audio_track()}), "sticky barrier initial tracks");
-                          static_cast<void>(stream->add_reader(reader, reader_worker_context));
+                          stream->add_reader(reader, reader_worker_context);
                       });
     drain_all();
 
@@ -12555,7 +12551,7 @@ void require_input_output_boundaries(const std::shared_ptr<media_stream>& stream
                               .rtcp_cname = {}},
                              [&rtp](std::span<const std::uint8_t> packet) { rtp.emplace_back(packet.begin(), packet.end()); });
     const auto reader = std::make_shared<packetizer_test_reader>(output);
-    const auto handle = audio_egress->stream()->add_reader(reader, worker);
+    audio_egress->stream()->add_reader(reader, worker);
 
     flv_demux_capture flv;
     const auto demuxer =
@@ -12664,7 +12660,7 @@ void require_input_output_boundaries(const std::shared_ptr<media_stream>& stream
             std::ranges::any_of(ts.packets, [](const demuxed_packet& packet) { return packet.codec == PSI_STREAM_AAC && !packet.payload.empty(); }),
         "input output hls pes media");
     require(hls->playlist("/hls").find("#EXT-X-ENDLIST") != std::string::npos, "input output hls endlist");
-    handle.remove();
+    reader->remove_reader();
     output.shutdown();
     play->shutdown();
     sender->shutdown();
@@ -13162,7 +13158,7 @@ void test_whip_media_receiver()
                     boost::asio::post(io, [&flv_streamer, generation]() { flv_streamer->write_complete(generation); });
                 },
                 [&flv_capture]() { ++flv_capture.ends; });
-            static_cast<void>(stream->add_reader(flv_streamer, worker));
+            stream->add_reader(flv_streamer, worker);
             io.run();
             io.restart();
 
@@ -13208,7 +13204,7 @@ void test_whip_media_receiver()
                 },
                 [&packets](std::span<const std::uint8_t> packet) { packets.emplace_back(packet.begin(), packet.end()); });
             const auto reader = std::make_shared<packetizer_test_reader>(output);
-            const auto handle = audio_egress->stream()->add_reader(reader, worker);
+            audio_egress->stream()->add_reader(reader, worker);
             io.run();
             io.restart();
 
@@ -13231,7 +13227,7 @@ void test_whip_media_receiver()
             }
             require(idr, "whip whep video idr payload");
             require(audio_timestamps.size() >= 2U && audio_timestamps[1] - audio_timestamps[0] == 960U, "whip whep transcoded opus 20ms media");
-            handle.remove();
+            reader->remove_reader();
             output.shutdown();
             release_whep_audio_egress(audio_egress);
             io.run();

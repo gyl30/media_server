@@ -206,7 +206,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
 void whep_session::shutdown()
 {
-    reader_handle().remove();
+    remove_reader();
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
@@ -338,7 +338,7 @@ void whep_session::on_read(media_read_batch batch)
 
     if (started_)
     {
-        reader_handle().async_read(reader_cursor_);
+        async_read(reader_cursor_);
     }
 }
 
@@ -695,7 +695,7 @@ bool whep_session::start_media_read()
             return false;
         }
     }
-    reader_handle().async_read(reader_cursor_);
+    async_read(reader_cursor_);
     return true;
 }
 

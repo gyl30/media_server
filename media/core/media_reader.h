@@ -45,28 +45,6 @@ struct media_read_batch_t
 };
 
 template <typename Frame>
-class media_reader_handle_t final
-{
-   public:
-    media_reader_handle_t() = default;
-
-   public:
-    // cursor 由 reader worker 保存；每次最多只有一个 outstanding read。
-    void async_read(media_reader_cursor cursor) const;
-    // remove 立即使 active 失效，之后不再产生 tracks、read 或 end 回调。
-    void remove() const;
-
-   private:
-    friend class media_history<Frame>;
-
-    media_reader_handle_t(std::weak_ptr<media_history<Frame>> stream, std::shared_ptr<media_reader_state_t<Frame>> state);
-
-   private:
-    std::weak_ptr<media_history<Frame>> stream_;
-    std::shared_ptr<media_reader_state_t<Frame>> state_;
-};
-
-template <typename Frame>
 class media_reader_t
 {
    public:
@@ -80,20 +58,23 @@ class media_reader_t
     virtual void on_tracks(media_track_snapshot_ptr tracks) = 0;
     virtual void on_read(media_read_batch_t<Frame> batch) = 0;
     virtual void on_end() = 0;
+    // 立即使 active 失效，之后不再产生 tracks、read 或 end 回调。
+    void remove_reader() const;
 
    protected:
-    [[nodiscard]] const media_reader_handle_t<Frame>& reader_handle() const noexcept { return handle_; }
+    // cursor 由 reader worker 保存；每次最多只有一个 outstanding read。
+    void async_read(media_reader_cursor cursor) const;
 
    private:
     friend class media_history<Frame>;
 
    private:
-    media_reader_handle_t<Frame> handle_;
+    std::weak_ptr<media_history<Frame>> history_;
+    std::shared_ptr<media_reader_state_t<Frame>> state_;
 };
 
 using media_read_entry = media_read_entry_t<media_frame>;
 using media_read_batch = media_read_batch_t<media_frame>;
-using media_reader_handle = media_reader_handle_t<media_frame>;
 using media_reader = media_reader_t<media_frame>;
 
 }    // namespace media_server

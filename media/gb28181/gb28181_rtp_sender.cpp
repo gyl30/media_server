@@ -77,7 +77,7 @@ void gb28181_rtp_sender::shutdown()
     {
         return;
     }
-    reader_handle().remove();
+    remove_reader();
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
@@ -89,7 +89,7 @@ void gb28181_rtp_sender::on_tracks(media_track_snapshot_ptr tracks)
         return;
     }
     apply_tracks(tracks);
-    reader_handle().async_read(reader_cursor_);
+    async_read(reader_cursor_);
 }
 
 void gb28181_rtp_sender::on_read(media_read_batch_t<mpeg_ps_frame> batch)
@@ -130,7 +130,7 @@ void gb28181_rtp_sender::on_read(media_read_batch_t<mpeg_ps_frame> batch)
         if (result < 0)
         {
             spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
-            reader_handle().remove();
+            remove_reader();
             if (failure_handler_)
             {
                 failure_handler_();
@@ -153,7 +153,7 @@ void gb28181_rtp_sender::on_read(media_read_batch_t<mpeg_ps_frame> batch)
 
     if (packet_handler_)
     {
-        reader_handle().async_read(reader_cursor_);
+        async_read(reader_cursor_);
     }
 }
 
@@ -178,7 +178,7 @@ void gb28181_rtp_sender::safe_shutdown()
     packet_handler_ = {};
     end_handler_ = {};
     failure_handler_ = {};
-    reader_handle().remove();
+    remove_reader();
     reader_cursor_.reset();
     track_revision_ = 0;
     track_states_.clear();
