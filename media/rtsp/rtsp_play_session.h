@@ -64,7 +64,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 
    public:
     void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read(media_read_batch batch) override;
+    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
     void on_end() override;
 
    private:
@@ -87,7 +87,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     int on_muxer_packet(int pid, const void* data, int bytes);
     void write_interleaved(std::uint8_t channel, const void* data, std::size_t bytes);
     [[nodiscard]] int presentation_status() const;
-    void process_batch();
+    void process_read(bool replaying_history);
     [[nodiscard]] std::size_t queued_output_bytes() const;
     [[nodiscard]] bool output_backpressured() const;
     [[nodiscard]] bool output_drained() const;
@@ -111,12 +111,9 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     std::unique_ptr<video_transcoder> video_transcoder_;
     rtsp_muxer_t* muxer_{};
     track_id video_track_id_{};
-    media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
     std::string session_id_;
     bool playing_{};
-    media_read_batch batch_;
-    std::size_t batch_index_{};
     bool closed_{};
     bool waiting_for_output_{};
 };
