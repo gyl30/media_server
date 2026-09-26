@@ -1014,24 +1014,24 @@ class packetizer_test_reader final : public media_reader
         {
             require(packetizer_.on_track(track), "output packetizer accepts input track");
         }
-        async_read(cursor_);
+        consume();
     }
 
-    void on_read(media_read_batch batch) override
-    {
-        for (const auto& entry : batch.entries)
-        {
-            require(packetizer_.on_frame(entry.frame), "output packetizer accepts input frame");
-        }
-        cursor_ = batch.next_cursor;
-        async_read(cursor_);
-    }
+    void on_read_ready(media_track_snapshot_ptr, bool) override { consume(); }
 
     void on_end() override { packetizer_.shutdown(); }
 
    private:
+    void consume()
+    {
+        while (auto entry = read())
+        {
+            require(packetizer_.on_frame(entry->frame), "output packetizer accepts input frame");
+        }
+    }
+
+   private:
     webrtc_packetizer& packetizer_;
-    media_reader_cursor cursor_;
 };
 
 class pull_test_reader final : public media_reader
@@ -1047,55 +1047,15 @@ class pull_test_reader final : public media_reader
         const bool changed = apply_tracks(tracks);
         if (changed && read_on_ready_)
         {
-            media_reader_cursor cursor;
-            {
-                std::scoped_lock lock(mutex_);
-                cursor = cursor_;
-            }
-            async_read(cursor);
+            consume(continuous_);
         }
         condition_.notify_all();
     }
 
-    void on_read(media_read_batch batch) override
+    void on_read_ready(media_track_snapshot_ptr tracks, bool) override
     {
-        {
-            std::scoped_lock lock(mutex_);
-            cursor_ = batch.next_cursor;
-            batch_sizes_.push_back(batch.entries.size());
-        }
-        static_cast<void>(apply_tracks(batch.tracks));
-
-        for (auto& entry : batch.entries)
-        {
-            const auto track = visible_tracks_.find(entry.frame.track);
-            if (track == visible_tracks_.end() || track->second.config_version != entry.config_version)
-            {
-                continue;
-            }
-            if (waiting_for_key_frame_)
-            {
-                if (track->second.kind != media_kind::video || !entry.frame.key_frame)
-                {
-                    continue;
-                }
-                waiting_for_key_frame_ = false;
-            }
-
-            std::scoped_lock lock(mutex_);
-            thread_ = std::this_thread::get_id();
-            frames_.emplace_back(generation_, entry.frame.pts_ns);
-            payloads_.push_back(entry.frame.payload.get());
-        }
-        if (continuous_)
-        {
-            media_reader_cursor cursor;
-            {
-                std::scoped_lock lock(mutex_);
-                cursor = cursor_;
-            }
-            async_read(cursor);
-        }
+        static_cast<void>(apply_tracks(tracks));
+        consume(continuous_);
         condition_.notify_all();
     }
 
@@ -1112,12 +1072,8 @@ class pull_test_reader final : public media_reader
 
     void request()
     {
-        media_reader_cursor cursor;
-        {
-            std::scoped_lock lock(mutex_);
-            cursor = cursor_;
-        }
-        async_read(cursor);
+        consume(false);
+        condition_.notify_all();
     }
 
     [[nodiscard]] bool wait_for_ready(std::size_t count)
@@ -1187,6 +1143,52 @@ class pull_test_reader final : public media_reader
     }
 
    private:
+    void consume(bool drain)
+    {
+        std::size_t consumed{};
+        do
+        {
+            auto entry = read();
+            if (!entry)
+            {
+                break;
+            }
+            ++consumed;
+            consume(std::move(*entry));
+        } while (drain);
+
+        if (drain && consumed != 0)
+        {
+            std::scoped_lock lock(mutex_);
+            batch_sizes_.push_back(consumed);
+        }
+    }
+
+    void consume(media_read_entry entry)
+    {
+        const auto track = visible_tracks_.find(entry.frame.track);
+        if (track == visible_tracks_.end() || track->second.config_version != entry.config_version)
+        {
+            return;
+        }
+        if (waiting_for_key_frame_)
+        {
+            if (track->second.kind != media_kind::video || !entry.frame.key_frame)
+            {
+                return;
+            }
+            waiting_for_key_frame_ = false;
+        }
+
+        {
+            std::scoped_lock lock(mutex_);
+            thread_ = std::this_thread::get_id();
+            frames_.emplace_back(generation_, entry.frame.pts_ns);
+            payloads_.push_back(entry.frame.payload.get());
+        }
+    }
+
+   private:
     [[nodiscard]] bool interested(track_id id) const { return track_ids_.empty() || std::ranges::find(track_ids_, id) != track_ids_.end(); }
 
     bool apply_tracks(const media_track_snapshot_ptr& tracks)
@@ -1249,7 +1251,6 @@ class pull_test_reader final : public media_reader
     std::thread::id thread_;
     std::uint64_t generation_{};
     std::uint64_t end_generation_{};
-    media_reader_cursor cursor_;
     std::uint64_t track_revision_{};
     std::size_t ends_{};
     bool waiting_for_key_frame_{};
@@ -11106,7 +11107,7 @@ void test_media_stream_pull_reader_overrun()
         require(fast->wait_for_frames(index + 2), "fast pull reader keeps pace");
     }
 
-    stalled->request();
+    boost::asio::post(workers.context(1).io(), [stalled]() { stalled->request(); });
     require(stalled->wait_for_frames(2), "stalled pull reader resynchronizes");
 
     boost::asio::post(workers.context(0).io(), [stream]() { stream->end(); });
@@ -11164,22 +11165,24 @@ void test_media_stream_pull_reader_duplicate_read()
                       });
     drain(owner);
 
-    reader->request();
-    reader->request();
-    reader->request();
-    drain(owner);
-
-    reader->request();
-    reader->request();
-    reader->request();
+    boost::asio::post(reader_worker, [reader]() { reader->request(); });
+    boost::asio::post(reader_worker, [reader]() { reader->request(); });
+    boost::asio::post(reader_worker, [reader]() { reader->request(); });
+    drain(reader_worker);
     drain(owner);
     require(reader->frames().empty(), "posted pull callback waits for reader executor");
     drain(reader_worker);
-    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}},
-            "duplicate pull requests produce one bounded batch");
-    require(reader->batch_sizes() == std::vector<std::size_t>{3}, "duplicate pull requests keep one outstanding batch");
+    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}},
+            "duplicate pull requests produce one reader callback");
 
-    reader->request();
+    boost::asio::post(reader_worker, [reader]() { reader->request(); });
+    boost::asio::post(reader_worker, [reader]() { reader->request(); });
+    drain(reader_worker);
+    require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}},
+            "buffered pull entries remain available after duplicate requests");
+
+    boost::asio::post(reader_worker, [reader]() { reader->request(); });
+    drain(reader_worker);
     drain(owner);
     drain(reader_worker);
     require(reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 40'000'000}, {1, 80'000'000}},
@@ -11203,7 +11206,7 @@ void test_media_stream_pull_reader_batch_limit_and_worker_filtering()
     };
 
     auto stream = std::make_shared<media_stream>("live/pull-batch", owner_context);
-    auto reader = std::make_shared<pull_test_reader>(false, false, std::vector<track_id>{video_track_id});
+    auto reader = std::make_shared<pull_test_reader>(true, true, std::vector<track_id>{video_track_id});
     boost::asio::post(owner,
                       [stream, reader, &reader_worker_context]()
                       {
@@ -11225,21 +11228,11 @@ void test_media_stream_pull_reader_batch_limit_and_worker_filtering()
     drain(owner);
     drain(reader_worker);
 
-    reader->request();
-    drain(owner);
-    drain(reader_worker);
-    require(reader->batch_sizes() == std::vector<std::size_t>{128}, "first pull batch is capped at 128 history entries");
-    require(reader->frames().size() == 64U, "video reader filters audio after first batch reaches reader worker");
-
-    reader->request();
-    drain(owner);
-    drain(reader_worker);
-    require(reader->batch_sizes() == std::vector<std::size_t>{128, 128}, "second pull batch is capped at 128 history entries");
-    require(reader->frames().size() == 128U, "video reader keeps cursor across filtered second batch");
-
-    reader->request();
-    drain(owner);
-    drain(reader_worker);
+    for (int iteration = 0; iteration < 4; ++iteration)
+    {
+        drain(owner);
+        drain(reader_worker);
+    }
     require(reader->batch_sizes() == std::vector<std::size_t>{128, 128, 44}, "final pull batch returns remaining history immediately");
     require(reader->frames().size() == 150U, "worker filtering preserves every subscribed video frame");
 }
@@ -11261,7 +11254,7 @@ void test_media_stream_pull_reader_initial_cursor_starts_current_gop()
     };
 
     auto stream = std::make_shared<media_stream>("live/pull-initial-cursor", owner_context);
-    auto reader = std::make_shared<pull_test_reader>(false);
+    auto reader = std::make_shared<pull_test_reader>(true);
     boost::asio::post(owner,
                       [stream, reader, &reader_worker_context]()
                       {
@@ -11311,8 +11304,9 @@ void test_media_stream_pull_reader_previous_gop_continuity()
     drain(owner);
     drain(reader_worker);
 
-    continuity_reader->request();
-    overrun_reader->request();
+    boost::asio::post(reader_worker, [continuity_reader]() { continuity_reader->request(); });
+    boost::asio::post(reader_worker, [overrun_reader]() { overrun_reader->request(); });
+    drain(reader_worker);
     drain(owner);
     drain(reader_worker);
 
@@ -11323,8 +11317,11 @@ void test_media_stream_pull_reader_previous_gop_continuity()
                           stream->publish(make_video_frame(80'000'000, false));
                       });
     drain(owner);
-    continuity_reader->request();
+    boost::asio::post(reader_worker, [continuity_reader]() { continuity_reader->request(); });
+    drain(reader_worker);
     drain(owner);
+    drain(reader_worker);
+    boost::asio::post(reader_worker, [continuity_reader]() { continuity_reader->request(); });
     drain(reader_worker);
 
     boost::asio::post(owner,
@@ -11334,8 +11331,11 @@ void test_media_stream_pull_reader_previous_gop_continuity()
                           stream->publish(make_video_frame(1'040'000'000, false));
                       });
     drain(owner);
-    continuity_reader->request();
+    boost::asio::post(reader_worker, [continuity_reader]() { continuity_reader->request(); });
+    drain(reader_worker);
     drain(owner);
+    drain(reader_worker);
+    boost::asio::post(reader_worker, [continuity_reader]() { continuity_reader->request(); });
     drain(reader_worker);
     require(continuity_reader->frames() ==
                 std::vector<std::pair<std::uint64_t, std::int64_t>>{
@@ -11349,7 +11349,8 @@ void test_media_stream_pull_reader_previous_gop_continuity()
 
     boost::asio::post(owner, [stream]() { stream->publish(make_video_frame(2'000'000'000, true)); });
     drain(owner);
-    overrun_reader->request();
+    boost::asio::post(reader_worker, [overrun_reader]() { overrun_reader->request(); });
+    drain(reader_worker);
     drain(owner);
     drain(reader_worker);
     require(overrun_reader->frames() == std::vector<std::pair<std::uint64_t, std::int64_t>>{{1, 0}, {1, 2'000'000'000}},

@@ -20,7 +20,7 @@ struct media_reader_state_t
     std::atomic_bool active{true};
     std::atomic_bool terminal{};
     std::atomic_bool read_outstanding{};
-    media_reader_cursor pending_cursor;
+    std::optional<std::uint64_t> pending_cursor;
     bool pending_read{};
     bool registered{};
 };
@@ -38,7 +38,7 @@ void release_read_outstanding(const std::shared_ptr<media_reader_state_t<Frame>>
 }    // namespace media_history_detail
 
 template <typename Frame>
-void media_reader_t<Frame>::async_read(media_reader_cursor cursor) const
+void media_reader_t<Frame>::request_read() const
 {
     if (!state_ || !state_->active.load(std::memory_order_acquire) || state_->terminal.load(std::memory_order_acquire))
     {
@@ -57,7 +57,7 @@ void media_reader_t<Frame>::async_read(media_reader_cursor cursor) const
     }
     if (const auto stream = history_.lock())
     {
-        stream->request_read(state_, cursor);
+        stream->request_read(state_, reader_cursor_);
         return;
     }
     media_history_detail::release_read_outstanding(state_);
@@ -76,7 +76,7 @@ std::optional<media_read_entry_t<Frame>> media_reader_t<Frame>::read()
     }
     batch_ = {};
     batch_index_ = 0;
-    async_read(reader_cursor_);
+    request_read();
     return {};
 }
 
@@ -238,7 +238,7 @@ void media_history<Frame>::publish_track_snapshot()
 }
 
 template <typename Frame>
-void media_history<Frame>::request_read(const std::shared_ptr<media_reader_state_t<Frame>>& state, media_reader_cursor cursor)
+void media_history<Frame>::request_read(const std::shared_ptr<media_reader_state_t<Frame>>& state, std::optional<std::uint64_t> cursor)
 {
     if (!state || !state->active.load(std::memory_order_acquire) || state->terminal.load(std::memory_order_acquire))
     {
@@ -289,7 +289,7 @@ void media_history<Frame>::add_reader_on_owner(const std::shared_ptr<media_reade
 }
 
 template <typename Frame>
-void media_history<Frame>::request_read_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state, media_reader_cursor cursor)
+void media_history<Frame>::request_read_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state, std::optional<std::uint64_t> cursor)
 {
     if (ended_ || !state->registered || state->pending_read || !state->active.load(std::memory_order_acquire))
     {
@@ -437,7 +437,7 @@ void media_history<Frame>::complete_reader_from_history(const std::shared_ptr<me
         return;
     }
 
-    media_read_batch_t<Frame> batch;
+    reader_batch batch;
     batch.tracks = track_snapshot_.load(std::memory_order_acquire);
     batch.waited_for_media = waited_for_media;
     batch.entries.reserve(media_history_detail::max_read_batch_entries);
@@ -457,7 +457,7 @@ void media_history<Frame>::complete_reader_from_history(const std::shared_ptr<me
 }
 
 template <typename Frame>
-void media_history<Frame>::deliver_reader_batch(const std::shared_ptr<media_reader_state_t<Frame>>& state, media_read_batch_t<Frame> batch)
+void media_history<Frame>::deliver_reader_batch(const std::shared_ptr<media_reader_state_t<Frame>>& state, reader_batch batch)
 {
     if (!state->active.load(std::memory_order_acquire))
     {
@@ -476,7 +476,7 @@ void media_history<Frame>::deliver_reader_batch(const std::shared_ptr<media_read
                           if (const auto reader = state->reader.lock())
                           {
                               state->read_outstanding.store(false, std::memory_order_release);
-                              reader->on_read(std::move(batch));
+                              reader->deliver_read_batch(std::move(batch));
                               return;
                           }
                           media_history_detail::release_read_outstanding(state);
