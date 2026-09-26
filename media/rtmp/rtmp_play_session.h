@@ -46,11 +46,11 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
 
    public:
     void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read(media_read_batch batch) override;
+    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
     void on_end() override;
 
    private:
-    void process_batch();
+    void process_read(bool replaying_history);
     [[nodiscard]] std::size_t queued_output_bytes() const;
     [[nodiscard]] bool output_backpressured() const;
     [[nodiscard]] bool output_drained() const;
@@ -67,10 +67,7 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
     std::size_t max_output_queue_bytes_{};
     end_handler end_handler_;
     std::map<track_id, media_track> reader_tracks_;
-    media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
-    media_read_batch batch_;
-    std::size_t batch_index_{};
     bool waiting_for_key_frame_{};
     bool closed_{};
     bool waiting_for_output_{};

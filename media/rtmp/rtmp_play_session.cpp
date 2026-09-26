@@ -45,15 +45,12 @@ void rtmp_play_session::shutdown()
     }
     closed_ = true;
     remove_reader();
-    reader_cursor_.reset();
     reader_tracks_.clear();
     track_revision_ = 0;
     waiting_for_key_frame_ = false;
     muxer_.shutdown();
     stream_.reset();
     rtmp_event::report_output(event_state::stopped, stream_id_, stream_name_);
-    batch_ = {};
-    batch_index_ = 0;
     waiting_for_output_ = false;
 }
 
@@ -65,37 +62,31 @@ void rtmp_play_session::on_tracks(media_track_snapshot_ptr tracks)
     }
 
     apply_tracks(tracks);
-    if (!closed_ && batch_.entries.empty() && !waiting_for_output_)
+    if (!closed_ && !waiting_for_output_)
     {
-        async_read(reader_cursor_);
+        process_read(false);
     }
 }
 
-void rtmp_play_session::on_read(media_read_batch batch)
+void rtmp_play_session::on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media)
 {
     if (closed_)
     {
         return;
     }
 
-    reader_cursor_ = batch.next_cursor;
-    apply_tracks(batch.tracks);
+    apply_tracks(tracks);
     if (closed_)
     {
         return;
     }
-
-    batch_ = std::move(batch);
-    batch_index_ = 0;
-    process_batch();
+    process_read(!waited_for_media);
 }
 
 void rtmp_play_session::on_end()
 {
     if (!closed_)
     {
-        batch_ = {};
-        batch_index_ = 0;
         waiting_for_output_ = false;
         rtmp_event::report_output(event_state::remote_closed, stream_id_, stream_name_, "media");
         end_handler_();
@@ -109,50 +100,40 @@ void rtmp_play_session::on_output_progress()
         return;
     }
     waiting_for_output_ = false;
-    process_batch();
+    process_read(true);
 }
 
-void rtmp_play_session::process_batch()
+void rtmp_play_session::process_read(bool replaying_history)
 {
-    while (!closed_ && batch_index_ < batch_.entries.size())
+    while (!closed_)
     {
-        if (!batch_.waited_for_media && output_backpressured())
+        if (replaying_history && output_backpressured())
         {
             waiting_for_output_ = true;
             return;
         }
 
-        auto& entry = batch_.entries[batch_index_++];
-        const auto track = reader_tracks_.find(entry.frame.track);
-        if (track == reader_tracks_.end() || track->second.config_version != entry.config_version)
+        auto entry = read();
+        if (!entry)
+        {
+            return;
+        }
+        const auto track = reader_tracks_.find(entry->frame.track);
+        if (track == reader_tracks_.end() || track->second.config_version != entry->config_version)
         {
             continue;
         }
 
         if (waiting_for_key_frame_)
         {
-            if (track->second.kind != media_kind::video || !entry.frame.key_frame)
+            if (track->second.kind != media_kind::video || !entry->frame.key_frame)
             {
                 continue;
             }
             waiting_for_key_frame_ = false;
         }
-        muxer_.on_frame(entry.frame);
+        muxer_.on_frame(entry->frame);
     }
-
-    if (closed_)
-    {
-        return;
-    }
-    if (!batch_.waited_for_media && output_backpressured())
-    {
-        waiting_for_output_ = true;
-        return;
-    }
-
-    batch_ = {};
-    batch_index_ = 0;
-    async_read(reader_cursor_);
 }
 
 std::size_t rtmp_play_session::queued_output_bytes() const
