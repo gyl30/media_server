@@ -65,7 +65,7 @@ bool gb28181_rtp_sender::startup()
                                                     return;
                                                 }
                                                 self->ps_output_ = output;
-                                                output->stream()->add_reader(self, self->worker_);
+                                                output->add_reader(self, self->worker_);
                                             });
                       });
     return true;

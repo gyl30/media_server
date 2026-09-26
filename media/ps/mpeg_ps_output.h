@@ -19,14 +19,13 @@ struct mpeg_ps_frame
     std::uint32_t media_timestamp{};
 };
 
-class mpeg_ps_output final : public media_sink
+class mpeg_ps_output final : public media_sink, public media_history<mpeg_ps_frame>
 {
    public:
     mpeg_ps_output(std::string name, worker_context& worker);
 
     [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
     [[nodiscard]] bool startup(const std::vector<media_track>& tracks);
-    [[nodiscard]] std::shared_ptr<media_history<mpeg_ps_frame>> stream() const noexcept;
 
     void on_track(const media_track& track) override;
     void on_frame(const media_frame& frame) override;
@@ -38,9 +37,8 @@ class mpeg_ps_output final : public media_sink
     static void free_packet(void* param, void* packet);
     static int write_packet(void* param, int stream, void* packet, std::size_t bytes);
 
-    std::shared_ptr<media_history<mpeg_ps_frame>> output_;
     std::unique_ptr<ps_muxer_t, int (*)(ps_muxer_t*)> muxer_;
-    std::map<track_id, std::pair<media_track, int>> tracks_;
+    std::map<track_id, std::pair<media_track, int>> mux_tracks_;
     std::shared_ptr<std::vector<std::uint8_t>> packet_;
     bool waiting_for_key_frame_{true};
     std::atomic_bool failed_{};

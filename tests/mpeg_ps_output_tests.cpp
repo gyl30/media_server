@@ -90,8 +90,8 @@ void test_shared_bytes(codec_id video, codec_id audio)
     require(output && source->ps_output() == output, "source owns exactly one PS preparation");
     auto first = std::make_shared<ps_reader>();
     auto second = std::make_shared<ps_reader>();
-    output->stream()->add_reader(first, worker);
-    output->stream()->add_reader(second, worker);
+    output->add_reader(first, worker);
+    output->add_reader(second, worker);
     drain(worker);
 
     std::vector<std::uint8_t> legacy_bytes;
@@ -138,7 +138,7 @@ void test_shared_bytes(codec_id video, codec_id audio)
     }
     rtsp_muxer_destroy(legacy);
     auto late = std::make_shared<ps_reader>();
-    output->stream()->add_reader(late, worker);
+    output->add_reader(late, worker);
     drain(worker);
     require(late->frames.size() == 6 && late->frames.front().key_frame, "late reader starts at latest GOP");
     require(late->frames.front().payload == first->frames[60].payload, "late reader reuses retained PS");
@@ -163,9 +163,9 @@ void test_shared_bytes(codec_id video, codec_id audio)
     auto replacement = std::make_shared<media_stream>(source->name(), worker);
     require(replacement->set_tracks(tracks(video, audio)), "replacement tracks");
     auto next = replacement->ps_output();
-    require(next != output && next->stream() != output->stream(), "replacement owns new processor and history");
+    require(next != output, "replacement owns new processor and history");
     auto next_reader = std::make_shared<ps_reader>();
-    next->stream()->add_reader(next_reader, worker);
+    next->add_reader(next_reader, worker);
     drain(worker);
     require(next_reader->frames.empty(), "replacement does not replay previous generation");
     replacement->end();
@@ -296,7 +296,7 @@ void test_reader_owned_batch_progression()
     }
 
     auto reader = std::make_shared<ps_reader>();
-    output->stream()->add_reader(reader, worker);
+    output->add_reader(reader, worker);
     drain(worker);
     require(reader->frames.size() == 150, "reader advances across the 128-entry history batch boundary");
     source->end();

@@ -10,7 +10,7 @@ namespace media_server
 {
 
 mpeg_ps_output::mpeg_ps_output(std::string name, worker_context& worker)
-    : output_(std::make_shared<media_history<mpeg_ps_frame>>(std::move(name), worker)), muxer_(nullptr, &ps_muxer_destroy)
+    : media_history<mpeg_ps_frame>(std::move(name), worker), muxer_(nullptr, &ps_muxer_destroy)
 {
 }
 
@@ -85,9 +85,9 @@ bool mpeg_ps_output::startup(const std::vector<media_track>& tracks)
             on_end();
             return false;
         }
-        tracks_.emplace(track.id, std::pair{track, id});
+        mux_tracks_.emplace(track.id, std::pair{track, id});
     }
-    if (!output_->set_tracks(tracks))
+    if (!set_tracks(tracks))
     {
         failed_.store(true, std::memory_order_release);
         on_end();
@@ -95,8 +95,6 @@ bool mpeg_ps_output::startup(const std::vector<media_track>& tracks)
     }
     return true;
 }
-
-std::shared_ptr<media_history<mpeg_ps_frame>> mpeg_ps_output::stream() const noexcept { return output_; }
 
 bool mpeg_ps_output::failed() const noexcept { return failed_.load(std::memory_order_acquire); }
 
@@ -106,7 +104,7 @@ void mpeg_ps_output::on_track(const media_track& track)
     {
         return;
     }
-    auto& previous = tracks_.at(track.id).first;
+    auto& previous = mux_tracks_.at(track.id).first;
     if (previous.config_version != track.config_version)
     {
         if (track.kind == media_kind::video)
@@ -114,7 +112,7 @@ void mpeg_ps_output::on_track(const media_track& track)
             waiting_for_key_frame_ = true;
         }
         previous = track;
-        output_->update_track(track);
+        update_track(track);
     }
 }
 
@@ -124,7 +122,7 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
     {
         return;
     }
-    const auto& [track, id] = tracks_.at(frame.track);
+    const auto& [track, id] = mux_tracks_.at(frame.track);
     if (waiting_for_key_frame_ && (track.kind != media_kind::video || !frame.key_frame))
     {
         return;
@@ -143,7 +141,7 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
         return;
     }
     waiting_for_key_frame_ = false;
-    output_->publish({.track = frame.track,
+    publish({.track = frame.track,
                       .dts_ns = frame.dts_ns,
                       .pts_ns = frame.pts_ns,
                       .key_frame = frame.key_frame,
@@ -153,7 +151,7 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
 
 void mpeg_ps_output::on_end()
 {
-    output_->end();
+    end();
     packet_.reset();
     muxer_.reset();
 }
