@@ -40,11 +40,8 @@
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
 #include "media/core/media_sink.h"
-#include "media/http/http_server.h"
 #include "media/net/port_manager.h"
 #include "media/net/tcp_listener.h"
-#include "media/rtmp/rtmp_server.h"
-#include "media/rtsp/rtsp_server.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
 #include "media/hls/hls_segmenter.h"
@@ -3667,87 +3664,6 @@ void test_gb28181_multi_sender_identity()
     io.run();
 }
 
-void test_rtmp_server_lifecycle()
-{
-    config application_config;
-    application_config.rtmp_port = 0;
-    std::weak_ptr<rtmp_server> weak_server;
-    {
-        io_context_pool workers(1);
-        auto server = std::make_shared<rtmp_server>(workers, application_config);
-        boost::system::error_code startup_error;
-        server->startup(startup_error);
-        require(!startup_error, "rtmp server lifecycle startup");
-        weak_server = server;
-
-        std::promise<void> started;
-        auto started_future = started.get_future();
-        std::jthread runner([&workers]() { workers.run(); });
-        boost::asio::post(workers.context(0).io(), [&started]() { started.set_value(); });
-        started_future.wait();
-        server.reset();
-        require(!weak_server.expired(), "rtmp server accept coroutine keeps server alive");
-
-        workers.stop();
-        runner.join();
-    }
-    require(weak_server.expired(), "rtmp server event loop teardown releases accept coroutine ownership");
-}
-
-void test_http_server_lifecycle()
-{
-    config application_config;
-    application_config.http_port = 0;
-    std::weak_ptr<http_server> weak_server;
-    {
-        io_context_pool workers(1);
-        auto server = std::make_shared<http_server>(workers, application_config);
-        boost::system::error_code startup_error;
-        server->startup(startup_error);
-        require(!startup_error, "http server lifecycle startup");
-        weak_server = server;
-
-        std::promise<void> started;
-        auto started_future = started.get_future();
-        std::jthread runner([&workers]() { workers.run(); });
-        boost::asio::post(workers.context(0).io(), [&started]() { started.set_value(); });
-        started_future.wait();
-        server.reset();
-        require(!weak_server.expired(), "http server accept coroutine keeps server alive");
-
-        workers.stop();
-        runner.join();
-    }
-    require(weak_server.expired(), "http server event loop teardown releases accept coroutine ownership");
-}
-
-void test_rtsp_server_lifecycle()
-{
-    config application_config;
-    application_config.rtsp_port = 0;
-    std::weak_ptr<rtsp_server> weak_server;
-    {
-        io_context_pool workers(1);
-        auto server = std::make_shared<rtsp_server>(workers, application_config);
-        boost::system::error_code startup_error;
-        server->startup(startup_error);
-        require(!startup_error, "rtsp server lifecycle startup");
-        weak_server = server;
-
-        std::promise<void> started;
-        auto started_future = started.get_future();
-        std::jthread runner([&workers]() { workers.run(); });
-        boost::asio::post(workers.context(0).io(), [&started]() { started.set_value(); });
-        started_future.wait();
-        server.reset();
-        require(!weak_server.expired(), "rtsp server accept coroutine keeps server alive");
-
-        workers.stop();
-        runner.join();
-    }
-    require(weak_server.expired(), "rtsp server event loop teardown releases accept coroutine ownership");
-}
-
 std::string start_http_flv_client(boost::asio::ip::tcp::socket& client, std::string_view path)
 {
     const auto request = "GET " + std::string(path) +
@@ -6529,6 +6445,34 @@ void test_rtsp_sdp_contract()
     require(config.empty(), "rtsp sdp invalid base64 leaves config empty");
 }
 
+void start_rtsp_test_listener(io_context_pool& workers, const config& application_config)
+{
+    auto& listener_worker = workers.next();
+    auto listener = std::make_shared<tcp_listener>(
+        listener_worker.io(), application_config.rtsp_port, boost::asio::ip::make_address(application_config.bind_address));
+    boost::system::error_code startup_error;
+    listener->startup(startup_error);
+    require(!startup_error, "rtsp test listener startup");
+    listener_worker.spawn(
+        [&workers, listener, codec = application_config.rtsp_video.codec](boost::asio::yield_context yield)
+        {
+            boost::system::error_code error;
+            for (;;)
+            {
+                auto& worker = workers.next();
+                boost::asio::ip::tcp::socket socket(worker.io());
+                listener->accept(socket, {}, yield, error);
+                if (error)
+                {
+                    return;
+                }
+                auto connection = std::make_shared<rtsp_server_connection>(
+                    worker, std::move(socket), codec, std::chrono::milliseconds{60'000}, 1024U * 1024U);
+                connection->startup();
+            }
+        });
+}
+
 void test_rtsp_publish_opus_fmtp_whitespace()
 {
     test::publish_claim_test_server claim_server;
@@ -6539,10 +6483,7 @@ void test_rtsp_publish_opus_fmtp_whitespace()
     config application_config;
     application_config.rtsp_port = port;
     configure_signaling_client(claim_server.url());
-    auto server = std::make_shared<rtsp_server>(workers, application_config);
-    boost::system::error_code startup_error;
-    server->startup(startup_error);
-    require(!startup_error, "rtsp opus whitespace server startup");
+    start_rtsp_test_listener(workers, application_config);
     std::jthread runner([&workers]() { workers.run(); });
 
     boost::asio::io_context client_io;
@@ -7183,10 +7124,7 @@ void test_rtsp_publish_server_contract()
     config application_config;
     application_config.rtsp_port = port;
     configure_signaling_client(claim_server.url());
-    auto server = std::make_shared<rtsp_server>(workers, application_config);
-    boost::system::error_code startup_error;
-    server->startup(startup_error);
-    require(!startup_error, "rtsp publish server startup");
+    start_rtsp_test_listener(workers, application_config);
     std::jthread runner([&workers]() { workers.run(); });
 
     boost::asio::io_context client_io;
@@ -14370,14 +14308,8 @@ int main(int argc, char* argv[])
     std::cout << "[pass] tcp_listener_timeout_preserves_listener\n";
     media_server::test_tcp_listener_shutdown_lifecycle();
     std::cout << "[pass] tcp_listener_shutdown_lifecycle\n";
-    media_server::test_rtmp_server_lifecycle();
-    std::cout << "[pass] rtmp_server_lifecycle\n";
-    media_server::test_http_server_lifecycle();
-    std::cout << "[pass] http_server_lifecycle\n";
     media_server::test_hls_http_session_shutdown_lifecycle();
     std::cout << "[pass] hls_http_session_shutdown_lifecycle\n";
-    media_server::test_rtsp_server_lifecycle();
-    std::cout << "[pass] rtsp_server_lifecycle\n";
     media_server::test_http_flv_batch_consumption_and_overrun();
     std::cout << "[pass] http_flv_batch_consumption_and_overrun\n";
     media_server::test_http_flv_h265_pull();

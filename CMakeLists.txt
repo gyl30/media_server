@@ -246,7 +246,6 @@ add_library(media_core STATIC
     media/http/whep_http.cpp
     media/http/whip_http.cpp
     media/http/http_session.cpp
-    media/http/http_server.cpp
     media/gb28181/gb28181_event.cpp
     media/gb28181/gb28181_rtp_receiver.cpp
     media/gb28181/gb28181_rtp_sender.cpp
@@ -272,7 +271,6 @@ add_library(media_core STATIC
     media/rtmp/rtmp_publish_session.cpp
     media/rtmp/rtmp_play_session.cpp
     media/rtmp/rtmp_session.cpp
-    media/rtmp/rtmp_server.cpp
     media/rtsp/rtsp_sdp.cpp
     media/rtsp/rtsp_event.cpp
     media/rtsp/rtsp_uri.cpp
@@ -283,7 +281,6 @@ add_library(media_core STATIC
     media/rtsp/rtsp_publish_udp_session.cpp
     media/rtsp/rtsp_play_session.cpp
     media/rtsp/rtsp_publish_media.cpp
-    media/rtsp/rtsp_server.cpp
     media/rtsp/rtsp_server_connection.cpp
 )
 

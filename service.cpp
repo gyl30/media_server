@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <csignal>
 #include <utility>
@@ -11,14 +12,54 @@
 
 #include "service.h"
 #include "media/core/log.h"
-#include "media/http/http_server.h"
-#include "media/rtmp/rtmp_server.h"
-#include "media/rtsp/rtsp_server.h"
+#include "media/net/tcp_listener.h"
+#include "media/http/http_session.h"
+#include "media/rtmp/rtmp_session.h"
+#include "media/rtsp/rtsp_server_connection.h"
 #include "media/net/io_context_pool.h"
 #include "media/http/signaling_client.h"
 
 namespace media_server
 {
+
+namespace
+{
+
+template <typename StartSession>
+bool start_tcp_listener(io_context_pool& workers,
+                        boost::asio::ip::address bind_address,
+                        std::uint16_t port,
+                        StartSession start_session,
+                        boost::system::error_code& error)
+{
+    auto& listener_worker = workers.next();
+    auto listener = std::make_shared<tcp_listener>(listener_worker.io(), port, std::move(bind_address));
+    listener->startup(error);
+    if (error)
+    {
+        return false;
+    }
+
+    listener_worker.spawn(
+        [&workers, listener, start_session = std::move(start_session)](boost::asio::yield_context yield) mutable
+        {
+            boost::system::error_code accept_error;
+            for (;;)
+            {
+                auto& worker = workers.next();
+                boost::asio::ip::tcp::socket socket(worker.io());
+                listener->accept(socket, {}, yield, accept_error);
+                if (accept_error)
+                {
+                    return;
+                }
+                start_session(worker, std::move(socket));
+            }
+        });
+    return true;
+}
+
+}    // namespace
 
 service::service(config cfg) : config_(std::move(cfg)) {}
 
@@ -83,23 +124,47 @@ void service::run_server(boost::asio::yield_context yield)
     boost::scope::scope_exit stop_on_startup_failure([this]() { stop(); });
 
     boost::system::error_code network_error;
-    auto rtmp = std::make_shared<rtmp_server>(*workers_, config_);
-    rtmp->startup(network_error);
-    if (network_error)
+    const auto bind_address = boost::asio::ip::make_address(config_.bind_address);
+    if (!start_tcp_listener(
+            *workers_,
+            bind_address,
+            config_.rtmp_port,
+            [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
+            {
+                auto session = std::make_shared<rtmp_session>(
+                    worker, std::move(socket), config_.rtmp_video, std::chrono::milliseconds{15'000}, 1024U * 1024U);
+                session->startup();
+            },
+            network_error))
     {
         spdlog::error("rtmp listen failed port {} error {}", config_.rtmp_port, network_error.message());
         return;
     }
-    auto rtsp = std::make_shared<rtsp_server>(*workers_, config_);
-    rtsp->startup(network_error);
-    if (network_error)
+    if (!start_tcp_listener(
+            *workers_,
+            bind_address,
+            config_.rtsp_port,
+            [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
+            {
+                auto connection = std::make_shared<rtsp_server_connection>(
+                    worker, std::move(socket), config_.rtsp_video.codec, std::chrono::milliseconds{60'000}, 1024U * 1024U);
+                connection->startup();
+            },
+            network_error))
     {
         spdlog::error("rtsp listen failed port {} error {}", config_.rtsp_port, network_error.message());
         return;
     }
-    auto http = std::make_shared<http_server>(*workers_, config_);
-    http->startup(network_error);
-    if (network_error)
+    if (!start_tcp_listener(
+            *workers_,
+            bind_address,
+            config_.http_port,
+            [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
+            {
+                auto session = std::make_shared<http_session>(worker, std::move(socket), config_);
+                session->startup();
+            },
+            network_error))
     {
         spdlog::error("http listen failed port {} error {}", config_.http_port, network_error.message());
         return;
