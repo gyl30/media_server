@@ -46,15 +46,14 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
         const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings);
     friend void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 
-    whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker, whep_audio_settings settings);
-    bool startup(const std::vector<media_track>& tracks);
+    whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker);
+    bool startup(const std::vector<media_track>& tracks, whep_audio_settings settings);
     [[nodiscard]] bool matches(const std::vector<media_track>& tracks) const;
     void finish(end_reason reason);
 
     worker_context& worker_;
     std::shared_ptr<media_stream> source_;
     std::shared_ptr<media_stream> output_;
-    whep_audio_settings settings_;
     std::map<track_id, media_track> source_tracks_;
     std::map<track_id, std::unique_ptr<audio_transcoder>> transcoders_;
     media_reader_cursor cursor_;

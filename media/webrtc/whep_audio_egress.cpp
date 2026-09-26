@@ -30,8 +30,8 @@ std::map<egress_key, std::weak_ptr<whep_audio_egress>> egresses;
 
 }    // namespace
 
-whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker, whep_audio_settings settings)
-    : worker_(worker), source_(std::move(source)), output_(std::make_shared<media_stream>(source_->name(), worker)), settings_(settings)
+whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker)
+    : worker_(worker), source_(std::move(source)), output_(std::make_shared<media_stream>(source_->name(), worker))
 {
 }
 
@@ -39,7 +39,7 @@ std::shared_ptr<media_stream> whep_audio_egress::stream() const noexcept { retur
 
 whep_audio_egress::end_reason whep_audio_egress::reason() const noexcept { return reason_.load(std::memory_order_acquire); }
 
-bool whep_audio_egress::startup(const std::vector<media_track>& tracks)
+bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_audio_settings settings)
 {
     std::vector<media_track> output_tracks;
     output_tracks.reserve(tracks.size());
@@ -51,27 +51,27 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks)
         {
             auto transcoder = std::make_unique<audio_transcoder>();
             int cutoff = 20'000;
-            if (settings_.max_playback_rate <= 8'000)
+            if (settings.max_playback_rate <= 8'000)
             {
                 cutoff = 4'000;
             }
-            else if (settings_.max_playback_rate <= 12'000)
+            else if (settings.max_playback_rate <= 12'000)
             {
                 cutoff = 6'000;
             }
-            else if (settings_.max_playback_rate <= 16'000)
+            else if (settings.max_playback_rate <= 16'000)
             {
                 cutoff = 8'000;
             }
-            else if (settings_.max_playback_rate <= 24'000)
+            else if (settings.max_playback_rate <= 24'000)
             {
                 cutoff = 12'000;
             }
             if (!transcoder->startup(audio_transcoder_config{
                     .input = {.codec = codec_id::aac, .sample_rate = track.clock_rate, .channel_count = track.channel_count},
-                    .output = {.codec = codec_id::opus, .sample_rate = 48'000, .channel_count = static_cast<std::uint16_t>(settings_.channels)},
+                    .output = {.codec = codec_id::opus, .sample_rate = 48'000, .channel_count = static_cast<std::uint16_t>(settings.channels)},
                     .input_codec_config = track.codec_config,
-                    .output_bit_rate = settings_.bitrate,
+                    .output_bit_rate = settings.bitrate,
                     .output_cutoff = cutoff,
                 }))
             {
@@ -80,7 +80,7 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks)
             transcoders_.emplace(track.id, std::move(transcoder));
             output_track.codec = codec_id::opus;
             output_track.clock_rate = 48'000;
-            output_track.channel_count = static_cast<std::uint16_t>(settings_.channels);
+            output_track.channel_count = static_cast<std::uint16_t>(settings.channels);
             output_track.codec_config.clear();
         }
         output_tracks.push_back(std::move(output_track));
@@ -238,8 +238,8 @@ std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
         }
     }
 
-    auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, worker, settings));
-    if (!created->startup(tracks))
+    auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, worker));
+    if (!created->startup(tracks, settings))
     {
         created->finish(whep_audio_egress::end_reason::transcode_failed);
         return {};
