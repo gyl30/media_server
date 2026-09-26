@@ -29,21 +29,18 @@ void http_flv_streamer::on_tracks(media_track_snapshot_ptr tracks)
     apply_tracks(tracks);
 }
 
-void http_flv_streamer::on_read(media_read_batch batch)
+void http_flv_streamer::on_read_ready(media_track_snapshot_ptr tracks, bool)
 {
     if (ended_)
     {
         return;
     }
 
-    reader_cursor_ = batch.next_cursor;
-    batch_ = std::move(batch);
-    batch_index_ = 0;
-    if (apply_tracks(batch_.tracks))
+    if (apply_tracks(tracks))
     {
         return;
     }
-    process_batch();
+    process_read();
 }
 
 void http_flv_streamer::on_end() { finish(); }
@@ -61,7 +58,6 @@ void http_flv_streamer::shutdown()
         writer_ = nullptr;
     }
     reader_tracks_.clear();
-    batch_ = {};
     output_buffer_.clear();
 }
 
@@ -71,7 +67,7 @@ void http_flv_streamer::write_complete(std::uint64_t generation)
     {
         return;
     }
-    process_batch();
+    process_read();
 }
 
 bool http_flv_streamer::apply_tracks(const media_track_snapshot_ptr& tracks)
@@ -115,23 +111,27 @@ bool http_flv_streamer::apply_tracks(const media_track_snapshot_ptr& tracks)
     return true;
 }
 
-void http_flv_streamer::process_batch()
+void http_flv_streamer::process_read()
 {
     if (ended_)
     {
         return;
     }
-    while (batch_index_ < batch_.entries.size())
+    for (;;)
     {
-        auto& entry = batch_.entries[batch_index_++];
-        const auto track = reader_tracks_.find(entry.frame.track);
-        if (track == reader_tracks_.end() || track->second.config_version != entry.config_version)
+        auto entry = read();
+        if (!entry)
+        {
+            return;
+        }
+        const auto track = reader_tracks_.find(entry->frame.track);
+        if (track == reader_tracks_.end() || track->second.config_version != entry->config_version)
         {
             continue;
         }
         if (waiting_for_key_frame_)
         {
-            if (track->second.kind != media_kind::video || !entry.frame.key_frame)
+            if (track->second.kind != media_kind::video || !entry->frame.key_frame)
             {
                 continue;
             }
@@ -139,7 +139,7 @@ void http_flv_streamer::process_batch()
         }
 
         output_buffer_.clear();
-        muxer_.on_frame(entry.frame);
+        muxer_.on_frame(entry->frame);
         if (output_buffer_.empty())
         {
             continue;
@@ -150,10 +150,6 @@ void http_flv_streamer::process_batch()
         }
         return;
     }
-
-    batch_ = {};
-    batch_index_ = 0;
-    async_read(reader_cursor_);
 }
 
 void http_flv_streamer::finish()

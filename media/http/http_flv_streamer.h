@@ -25,7 +25,7 @@ class http_flv_streamer final : public media_reader
 
    public:
     void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read(media_read_batch batch) override;
+    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
     void on_end() override;
     void shutdown();
     void write_complete(std::uint64_t generation);
@@ -33,21 +33,18 @@ class http_flv_streamer final : public media_reader
    private:
     static int writer_callback(void* param, const flv_vec_t* vectors, int count);
     bool apply_tracks(const media_track_snapshot_ptr& tracks);
-    void process_batch();
+    void process_read();
     void finish();
 
    private:
     write_handler write_handler_;
     end_handler end_handler_;
     std::map<track_id, media_track> reader_tracks_;
-    media_read_batch batch_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
     flv_muxer muxer_;
     std::uint64_t generation_{};
-    media_reader_cursor reader_cursor_;
     std::uint64_t track_revision_{};
-    std::size_t batch_index_{};
     bool waiting_for_key_frame_{};
     bool ended_{};
 };
