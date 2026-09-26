@@ -23,7 +23,6 @@ struct state
 {
     std::mutex mutex;
     std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions;
-    std::map<std::string, std::weak_ptr<whep_session>, std::less<>> stream_sessions;
 };
 
 state& runtime()
@@ -37,28 +36,20 @@ create_result failed(create_error error) { return {.error = error, .session_id =
 void cleanup_expired(state& current)
 {
     std::erase_if(current.sessions, [](const auto& entry) { return entry.second.expired(); });
-    std::erase_if(current.stream_sessions, [](const auto& entry) { return entry.second.expired(); });
 }
 
-void release_stream_session(state& current, const whep_session& expected)
+void release_session(state& current, const whep_session& expected)
 {
-    const auto iterator = current.stream_sessions.find(expected.stream_id());
-    if (iterator == current.stream_sessions.end())
+    const auto iterator = current.sessions.find(expected.id());
+    if (iterator == current.sessions.end())
     {
         return;
     }
     const auto session = iterator->second.lock();
     if (!session || session.get() == &expected)
     {
-        current.stream_sessions.erase(iterator);
+        current.sessions.erase(iterator);
     }
-}
-
-void release_stream_session(const std::shared_ptr<whep_session>& expected)
-{
-    auto& current = runtime();
-    std::scoped_lock lock(current.mutex);
-    release_stream_session(current, *expected);
 }
 
 }    // namespace
@@ -128,46 +119,46 @@ create_result create(
                                                   whep_session_timeouts{},
                                                   application_config.whep_video,
                                                   1024U * 1024U);
+    const auto& session_id = session->id();
+    bool session_id_collision = false;
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
         cleanup_expired(current);
-        if (!current.stream_sessions.emplace(session->stream_id(), session).second)
+        for (const auto& item : current.sessions)
         {
-            spdlog::debug("whep create stream id already active {}", session->stream_id());
-            return failed(create_error::stream_id_conflict);
+            if (const auto active = item.second.lock(); active && active->stream_id() == session->stream_id())
+            {
+                spdlog::debug("whep create stream id already active {}", session->stream_id());
+                return failed(create_error::stream_id_conflict);
+            }
         }
+        session_id_collision = !current.sessions.emplace(session_id, session).second;
+    }
+    if (session_id_collision)
+    {
+        spdlog::error("whep session id collision {}", session_id);
+        whep_event::report_output(event_state::runtime_error, session->stream_id(), session->stream_name(), {}, "session_id_collision");
+        return failed(create_error::internal_error);
     }
     switch (session->startup(std::move(*offer)))
     {
         case whep_session_startup_error::none:
             break;
         case whep_session_startup_error::invalid_offer:
-            release_stream_session(session);
-            return failed(create_error::invalid_offer);
-        case whep_session_startup_error::internal_error:
-            release_stream_session(session);
-            return failed(create_error::internal_error);
-    }
-
-    const auto& session_id = session->id();
-    bool inserted = false;
-    {
-        auto& current = runtime();
-        std::scoped_lock lock(current.mutex);
-        cleanup_expired(current);
-        inserted = current.sessions.emplace(session_id, session).second;
-        if (!inserted)
         {
-            release_stream_session(current, *session);
+            auto& current = runtime();
+            std::scoped_lock lock(current.mutex);
+            release_session(current, *session);
+            return failed(create_error::invalid_offer);
         }
-    }
-    if (!inserted)
-    {
-        spdlog::error("whep session id collision {}", session_id);
-        whep_event::report_output(event_state::runtime_error, session->stream_id(), session->stream_name(), {}, "session_id_collision");
-        session->shutdown();
-        return failed(create_error::internal_error);
+        case whep_session_startup_error::internal_error:
+        {
+            auto& current = runtime();
+            std::scoped_lock lock(current.mutex);
+            release_session(current, *session);
+            return failed(create_error::internal_error);
+        }
     }
 
     spdlog::info("whep session created {} stream {}", session_id, stream_name);
@@ -202,10 +193,6 @@ bool remove(std::string_view session_id)
         }
         session = iterator->second.lock();
         current.sessions.erase(iterator);
-        if (session)
-        {
-            release_stream_session(current, *session);
-        }
     }
     if (!session)
     {
@@ -230,7 +217,6 @@ void shutdown()
         }
     }
     current.sessions.clear();
-    current.stream_sessions.clear();
 }
 
 }    // namespace media_server::whep
