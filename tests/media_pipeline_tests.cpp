@@ -10889,9 +10889,9 @@ void test_media_stream_sink_lifecycle()
                           stream->add_sink(sink);
                           require(sink->tracks == 1, "sink receives current track on attach");
 
-                          auto duplicate = std::make_shared<counting_sink>();
-                          stream->add_sink(duplicate);
-                          require(duplicate->tracks == 0, "stream keeps one source-owner sink");
+                          auto second_sink = std::make_shared<counting_sink>();
+                          stream->add_sink(second_sink);
+                          require(second_sink->tracks == 1, "stream attaches multiple source-owner sinks");
 
                           auto owned_stream = std::make_shared<media_stream>("live/owned-sink", worker);
                           require(owned_stream->set_tracks({make_video_track()}), "owned sink track");
@@ -10908,6 +10908,7 @@ void test_media_stream_sink_lifecycle()
                           stream->publish(make_video_frame(0, true));
                           stream->publish(make_video_frame(40'000'000, false));
                           require(sink->frames == 2, "sink receives live frames");
+                          require(second_sink->frames == 2, "second sink receives live frames");
 
                           require(!stream->update_track(make_audio_track()), "runtime track addition rejected");
                           require(!stream->update_track(make_video_track()), "identical config ignored");
@@ -10923,13 +10924,16 @@ void test_media_stream_sink_lifecycle()
                           require(stream->tracks().front().config_version == 2, "stream increments config version");
                           require(!stream->update_track(make_video_track(2)), "changed config duplicate ignored");
                           require(sink->tracks == 2, "sink receives only actual config updates");
+                          require(second_sink->tracks == 2, "second sink receives only actual config updates");
 
                           stream->end();
                           stream->end();
                           require(sink->ends == 1, "sink receives one stream end");
+                          require(second_sink->ends == 1, "second sink receives one stream end");
 
                           stream->publish(make_video_frame(80'000'000, false));
                           require(sink->frames == 2, "ended stream stops sink media");
+                          require(second_sink->frames == 2, "ended stream stops second sink media");
 
                           auto late = std::make_shared<counting_sink>();
                           stream->add_sink(late);

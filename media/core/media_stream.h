@@ -24,10 +24,11 @@ class media_stream final : public media_history<media_frame>
     [[nodiscard]] std::shared_ptr<mpeg_ps_output> ps_output();
 
    private:
+    void attach_sink(std::shared_ptr<media_sink> sink);
     void replay_to(media_sink& sink);
 
-    std::shared_ptr<media_sink> sink_;
-    std::shared_ptr<mpeg_ps_output> ps_output_;
+    std::vector<std::shared_ptr<media_sink>> sinks_;
+    std::weak_ptr<mpeg_ps_output> ps_output_;
     std::uint64_t sink_replay_barrier_sequence_{};
 };
 
