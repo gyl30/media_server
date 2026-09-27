@@ -11,53 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-
-def proc_cpu(pid, tid=None):
-    path = Path(f"/proc/{pid}/stat") if tid is None else Path(f"/proc/{pid}/task/{tid}/stat")
-    stat = path.read_text().rsplit(") ", 1)[1].split()
-    return (int(stat[11]) + int(stat[12])) / os.sysconf("SC_CLK_TCK")
-
-
-def proc_status(pid, tid=None):
-    path = Path(f"/proc/{pid}/status") if tid is None else Path(f"/proc/{pid}/task/{tid}/status")
-    values = {}
-    for line in path.read_text().splitlines():
-        key, _, value = line.partition(":")
-        if key in {"VmRSS", "voluntary_ctxt_switches", "nonvoluntary_ctxt_switches"}:
-            values[key] = int(value.split()[0])
-    return values
-
-
-def proc_snapshot(pid):
-    tasks = {}
-    for task in Path(f"/proc/{pid}/task").iterdir():
-        try:
-            task_status = proc_status(pid, task.name)
-            tasks[task.name] = {
-                "cpu": proc_cpu(pid, task.name),
-                "context_switches": task_status["voluntary_ctxt_switches"]
-                + task_status["nonvoluntary_ctxt_switches"],
-                "migrations": next(
-                    int(line.split(":", 1)[1])
-                    for line in Path(f"/proc/{pid}/task/{task.name}/sched").read_text().splitlines()
-                    if line.startswith("se.nr_migrations")
-                ),
-            }
-        except (FileNotFoundError, ProcessLookupError):
-            continue
-
-    pss_kib = 0
-    for line in Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines():
-        if line.startswith("Pss:"):
-            pss_kib = int(line.split()[1])
-            break
-    return {
-        "cpu": proc_cpu(pid),
-        "rss_kib": proc_status(pid)["VmRSS"],
-        "pss_kib": pss_kib,
-        "fd": len(list(Path(f"/proc/{pid}/fd").iterdir())),
-        "threads": tasks,
-    }
+from process_metrics import proc_cpu, proc_snapshot, thread_rates
 
 
 def loopback_packets():
@@ -177,20 +131,9 @@ async def measure(args, server, publishers):
             task.cancel()
     results = await asyncio.gather(*viewers)
     rates = [result["bytes"] / elapsed for result in results]
-    thread_cpu = {
-        tid: (state["cpu"] - before_server["threads"].get(tid, {"cpu": state["cpu"]})["cpu"]) / elapsed
-        for tid, state in after_server["threads"].items()
-    }
-    thread_switches = {
-        tid: state["context_switches"]
-        - before_server["threads"].get(tid, {"context_switches": state["context_switches"]})["context_switches"]
-        for tid, state in after_server["threads"].items()
-    }
-    thread_migrations = {
-        tid: state["migrations"]
-        - before_server["threads"].get(tid, {"migrations": state["migrations"]})["migrations"]
-        for tid, state in after_server["threads"].items()
-    }
+    thread_cpu = thread_rates(before_server, after_server, "cpu", elapsed)
+    thread_switches = thread_rates(before_server, after_server, "context_switches", elapsed)
+    thread_migrations = thread_rates(before_server, after_server, "migrations", elapsed)
     return {
         "elapsed_seconds": elapsed,
         "ready": sum(result["established"] for result in results),
@@ -211,8 +154,8 @@ async def measure(args, server, publishers):
         "server_pss_kib_median": statistics.median(sample["pss_kib"] for sample in samples),
         "server_fd_median": statistics.median(sample["fd"] for sample in samples),
         "server_thread_cpu_cores": thread_cpu,
-        "server_thread_context_switches_per_second": {tid: value / elapsed for tid, value in thread_switches.items()},
-        "server_thread_migrations_per_second": {tid: value / elapsed for tid, value in thread_migrations.items()},
+        "server_thread_context_switches_per_second": thread_switches,
+        "server_thread_migrations_per_second": thread_migrations,
         "loopback_packets_per_second": (after_packets - before_packets) / elapsed,
     }
 

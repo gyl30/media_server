@@ -310,3 +310,12 @@ target_link_libraries(media_server PRIVATE
 if(MEDIA_SERVER_SANITIZER STREQUAL "none")
     target_link_libraries(media_server PRIVATE PkgConfig::JEMALLOC)
 endif()
+
+option(MEDIA_SERVER_BUILD_BENCHMARKS "Build standalone performance clients" OFF)
+if(MEDIA_SERVER_BUILD_BENCHMARKS)
+    add_executable(whep_fanout
+        bench/whep_fanout.cpp
+        bench/clients/webrtc_client.cpp
+    )
+    target_link_libraries(whep_fanout PRIVATE media_core media_server_link_options)
+endif()
