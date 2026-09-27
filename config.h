@@ -20,10 +20,6 @@ struct config
     std::string bind_address{"127.0.0.1"};
     std::string webrtc_address{"127.0.0.1"};
     std::size_t threads{std::max(1U, std::thread::hardware_concurrency())};
-    std::string signaling_url;
-    std::string server_id;
-    std::string control_url;
-    std::string media_ip;
     video_transcode_config rtmp_video;
     video_transcode_config rtsp_video;
     video_transcode_config http_video;

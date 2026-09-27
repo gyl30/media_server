@@ -4,7 +4,6 @@
 #include <iostream>
 #include <string_view>
 
-#include <boost/url/parse.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/program_options.hpp>
 
@@ -43,18 +42,6 @@ bool parse_video_transcode_codec(std::string_view text, video_transcode_codec& c
     return false;
 }
 
-bool valid_http_base_url(std::string_view text)
-{
-    const auto parsed = boost::urls::parse_uri(text);
-    if (!parsed)
-    {
-        return false;
-    }
-    const auto url = *parsed;
-    return url.scheme() == "http" && !url.host().empty() && !url.has_userinfo() && (url.path().empty() || url.path() == "/") && !url.has_query() &&
-           !url.has_fragment();
-}
-
 void print_usage(const boost::program_options::options_description& options) { std::cout << "usage: media_server [options]\n" << options << '\n'; }
 
 }    // namespace
@@ -82,10 +69,6 @@ int parse_config(int argc, char** argv, config* cfg)
         "rtsp-video-codec", boost::program_options::value<std::string>(&rtsp_video_codec), "passthrough|av1")(
         "http-video-codec", boost::program_options::value<std::string>(&http_video_codec), "passthrough|av1")(
         "whep-video-codec", boost::program_options::value<std::string>(&whep_video_codec), "passthrough|av1");
-    options.add_options()("signaling-url", boost::program_options::value<std::string>(&result.signaling_url), "GB28181 signaling base URL")(
-        "server-id", boost::program_options::value<std::string>(&result.server_id), "stable media server identity")(
-        "control-url", boost::program_options::value<std::string>(&result.control_url), "media server control URL")(
-        "media-ip", boost::program_options::value<std::string>(&result.media_ip), "media address advertised to GB28181 devices");
 
     boost::program_options::variables_map values;
     try
@@ -141,25 +124,6 @@ int parse_config(int argc, char** argv, config* cfg)
     {
         print_usage(options);
         return 1;
-    }
-
-    const bool has_signaling_value =
-        !result.signaling_url.empty() || !result.server_id.empty() || !result.control_url.empty() || !result.media_ip.empty();
-    if (has_signaling_value && (result.signaling_url.empty() || result.server_id.empty() || result.control_url.empty() || result.media_ip.empty() ||
-                                !valid_http_base_url(result.signaling_url) || !valid_http_base_url(result.control_url)))
-    {
-        print_usage(options);
-        return 1;
-    }
-    if (has_signaling_value)
-    {
-        boost::system::error_code media_ip_error;
-        const auto media_ip = boost::asio::ip::make_address(result.media_ip, media_ip_error);
-        if (media_ip_error || media_ip.is_unspecified())
-        {
-            print_usage(options);
-            return 1;
-        }
     }
 
     if (values.count("help") != 0U)
