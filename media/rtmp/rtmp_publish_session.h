@@ -28,7 +28,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     using shutdown_handler = std::function<void()>;
 
     rtmp_publish_session(worker_context& worker,
-                         std::string stream_id,
                          std::string stream_name,
                          std::chrono::milliseconds initial_tracks_timeout,
                          shutdown_handler on_shutdown);
@@ -38,7 +37,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     void shutdown();
 
    public:
-    [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
     [[nodiscard]] const std::string& stream_name() const noexcept { return stream_->name(); }
 
    public:
@@ -64,7 +62,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
 
    private:
     worker_context& worker_;
-    std::string stream_id_;
     boost::asio::steady_timer initial_tracks_timer_;
     std::chrono::milliseconds initial_tracks_timeout_;
     std::shared_ptr<media_stream> stream_;

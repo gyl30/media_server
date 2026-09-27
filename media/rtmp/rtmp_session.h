@@ -21,13 +21,7 @@ struct rtmp_server_t;
 namespace media_server
 {
 
-struct rtmp_target
-{
-    std::string stream_id;
-    std::string stream_name;
-};
-
-[[nodiscard]] std::optional<rtmp_target> parse_rtmp_target(std::string_view app, std::string_view stream);
+[[nodiscard]] std::optional<std::string> parse_rtmp_target(std::string_view app, std::string_view stream);
 
 class worker_context;
 class rtmp_publish_session;
@@ -64,16 +58,9 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     void write(std::shared_ptr<std::vector<std::uint8_t>> data);
 
    private:
-    void report_transport_error(const boost::system::error_code& error);
-
-   private:
     int on_delete_stream(std::uint32_t stream_id);
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
-
-   private:
-    void run_play_claim(boost::asio::yield_context yield);
-    void run_publish_claim(boost::asio::yield_context yield);
 
    private:
     void safe_shutdown();
@@ -87,9 +74,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     rtmp_server_t* rtmp_context_{};
     std::shared_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;
-    std::string stream_id_;
     std::string stream_name_;
-    bool claim_pending_{};
     bool closed_{};
 };
 

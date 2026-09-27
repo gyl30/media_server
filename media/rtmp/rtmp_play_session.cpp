@@ -1,6 +1,5 @@
 #include <utility>
 
-#include "media/rtmp/rtmp_event.h"
 #include "media/net/worker_context.h"
 #include "media/rtmp/rtmp_play_session.h"
 
@@ -8,8 +7,6 @@ namespace media_server
 {
 
 rtmp_play_session::rtmp_play_session(worker_context& worker,
-                                     std::string stream_id,
-                                     std::string stream_name,
                                      std::shared_ptr<media_stream> stream,
                                      flv_muxer::packet_handler packet_handler,
                                      video_transcode_config video,
@@ -17,8 +14,6 @@ rtmp_play_session::rtmp_play_session(worker_context& worker,
                                      queue_bytes_handler queued_output_bytes,
                                      std::size_t max_output_queue_bytes)
     : worker_(worker),
-      stream_id_(std::move(stream_id)),
-      stream_name_(std::move(stream_name)),
       stream_(std::move(stream)),
       muxer_(std::move(packet_handler), video),
       queued_output_bytes_(std::move(queued_output_bytes)),
@@ -34,7 +29,6 @@ void rtmp_play_session::startup()
         return;
     }
     stream_->add_reader(shared_from_this(), worker_);
-    rtmp_event::report_output(event_state::streaming, stream_id_, stream_name_, "streaming");
 }
 
 void rtmp_play_session::shutdown()
@@ -50,7 +44,6 @@ void rtmp_play_session::shutdown()
     waiting_for_key_frame_ = false;
     muxer_.shutdown();
     stream_.reset();
-    rtmp_event::report_output(event_state::stopped, stream_id_, stream_name_);
     waiting_for_output_ = false;
 }
 
@@ -88,7 +81,6 @@ void rtmp_play_session::on_end()
     if (!closed_)
     {
         waiting_for_output_ = false;
-        rtmp_event::report_output(event_state::remote_closed, stream_id_, stream_name_, "media");
         end_handler_();
     }
 }

@@ -254,13 +254,10 @@ static_assert(std::is_constructible_v<gb28181_rtp_sender,
 static_assert(std::is_constructible_v<rtmp_publish_session,
                                       worker_context&,
                                       std::string,
-                                      std::string,
                                       std::chrono::milliseconds,
                                       rtmp_publish_session::shutdown_handler>);
 static_assert(std::is_constructible_v<rtmp_play_session,
                                       worker_context&,
-                                      std::string,
-                                      std::string,
                                       std::shared_ptr<media_stream>,
                                       flv_muxer::packet_handler,
                                       video_transcode_config,
@@ -1509,28 +1506,20 @@ struct rtmp_status
 
 void test_rtmp_target_parsing()
 {
-    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000001";
-    for (const auto& [stream, expected_name] : std::array<std::pair<std::string_view, std::string_view>, 4>{
-             std::pair{"camera?stream_id=00000000-0000-4000-8000-000000000001", "live/camera"},
-             std::pair{"camera?token=x&stream_id=00000000-0000-4000-8000-000000000001&mode=live", "live/camera"},
-             std::pair{"camera?mode=live&stream_id=00000000-0000-4000-8000-000000000001", "live/camera"},
-             std::pair{"folder/camera%20one?stream%5Fid=00000000-0000-4000-8000-000000000001", "live/folder/camera one"},
+    for (const auto& [stream, expected_name] : std::array<std::pair<std::string_view, std::string_view>, 2>{
+             std::pair{"camera", "live/camera"},
+             std::pair{"folder/camera%20one", "live/folder/camera one"},
          })
     {
         const auto target = parse_rtmp_target("live", stream);
-        require(target && target->stream_name == expected_name && target->stream_id == stream_id, "rtmp target parsed");
+        require(target && *target == expected_name, "rtmp target parsed");
     }
 
     for (const auto stream : {
-             "camera",
+             "",
              "camera?stream_id=",
-             "camera?stream_id=not-a-uuid",
-             "camera?stream_id=00000000-0000-4000-8000-00000000000A",
-             "camera?stream_id=00000000-0000-1000-8000-000000000001",
-             "camera?stream_id=00000000-0000-4000-7000-000000000001",
-             "camera?stream_id=00000000-0000-4000-8000-000000000001&stream_id=00000000-0000-4000-8000-000000000002",
-             "?stream_id=00000000-0000-4000-8000-000000000001",
-             "camera?stream_id=00000000-0000-4000-8000-000000000001#fragment",
+             "camera?token=x",
+             "camera#fragment",
          })
     {
         require(!parse_rtmp_target("live", stream), "invalid rtmp target rejected");
@@ -1620,7 +1609,7 @@ class rtmp_publish_test_peer final
         const auto separator = stream_name_.find('/');
         require(separator != std::string::npos, "rtmp publish stream name");
         const auto app = stream_name_.substr(0, separator);
-        const auto stream = stream_name_.substr(separator + 1) + "?stream_id=" + stream_id;
+        const auto stream = stream_name_.substr(separator + 1) + (control_plane_ ? "?stream_id=" + stream_id : "");
         rtmp_client_handler_t handler{};
         handler.send = &rtmp_publish_test_peer::send_callback;
         const auto tc_url = "rtmp://127.0.0.1:" + std::to_string(acceptor_.local_endpoint().port()) + '/' + app;
@@ -2037,7 +2026,7 @@ class rtmp_play_test_peer final
         handler.onaudio = &rtmp_play_test_peer::audio_callback;
         handler.onscript = &rtmp_play_test_peer::media_callback;
         const auto tc_url = "rtmp://127.0.0.1:" + std::to_string(acceptor_.local_endpoint().port()) + "/live";
-        const auto stream = stream_id.empty() ? std::string{"camera"} : "camera?stream_id=" + stream_id;
+        const auto stream = control_plane_ ? "camera?stream_id=" + stream_id : std::string{"camera"};
         client_ = rtmp_client_create("live", stream.c_str(), tc_url.c_str(), this, &handler);
         require(client_ != nullptr, "rtmp play client");
         require(rtmp_client_start(client_, 2) == 0, "rtmp play client start");
@@ -3188,8 +3177,6 @@ void test_rtmp_play_output_backpressure()
     bool ended = false;
     auto play = std::make_shared<rtmp_play_session>(
         worker,
-        "00000000-0000-4000-8000-000000000024",
-        stream->name(),
         stream,
         [&output_packets](int, std::span<const std::uint8_t>, std::uint32_t) { ++output_packets; },
         video_transcode_config{},
@@ -12195,8 +12182,6 @@ void require_input_output_boundaries(const std::shared_ptr<media_stream>& stream
         std::unique_ptr<flv_demuxer_t, decltype(&flv_demuxer_destroy)>(flv_demuxer_create(&capture_flv_packet, &flv), &flv_demuxer_destroy);
     auto play = std::make_shared<rtmp_play_session>(
         worker,
-        "00000000-0000-4000-8000-000000000021",
-        stream->name(),
         stream,
         [&](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         { require(flv_demuxer_input(demuxer.get(), type, data.data(), data.size(), timestamp) == 0, "input output flv demux"); },
@@ -12402,9 +12387,9 @@ void test_rtmp_duplicate_publisher_preserves_source()
     int original_shutdowns = 0;
     int duplicate_shutdowns = 0;
     auto original = std::make_shared<rtmp_publish_session>(
-        worker, "550e8400-e29b-41d4-a716-446655440000", "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++original_shutdowns; });
+        worker, "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++original_shutdowns; });
     auto duplicate = std::make_shared<rtmp_publish_session>(
-        worker, "550e8400-e29b-41d4-b716-446655440001", "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++duplicate_shutdowns; });
+        worker, "live/duplicate-rtmp", std::chrono::seconds(1), [&]() { ++duplicate_shutdowns; });
     const auto sink = std::make_shared<whip_media_capture_sink>();
     std::shared_ptr<media_stream> published;
     boost::asio::post(io,
@@ -12461,7 +12446,6 @@ void test_rtmp_input_output_boundaries()
         auto& io = worker.io();
         io.restart();
         auto input = std::make_shared<rtmp_publish_session>(worker,
-                                                            "550e8400-e29b-41d4-a716-446655440000",
                                                             "live/rtmp-outputs",
                                                             std::chrono::seconds(1),
                                                             []() { require(false, "rtmp input unexpected shutdown"); });
@@ -12528,7 +12512,7 @@ void test_rtmp_publish_propagates_media_input_error()
     worker_context worker;
     int video_shutdowns = 0;
     auto video = std::make_shared<rtmp_publish_session>(
-        worker, "550e8400-e29b-41d4-a716-446655440000", "live/rtmp-video-input-error", std::chrono::seconds(1), [&]() { ++video_shutdowns; });
+        worker, "live/rtmp-video-input-error", std::chrono::seconds(1), [&]() { ++video_shutdowns; });
     require(video->startup(), "rtmp video input error startup");
     const auto h264 = make_rtmp_video_sequence_header(make_video_track());
     const auto h265 = make_rtmp_video_sequence_header(make_h265_track());
@@ -12539,7 +12523,7 @@ void test_rtmp_publish_propagates_media_input_error()
 
     int script_shutdowns = 0;
     auto script = std::make_shared<rtmp_publish_session>(
-        worker, "550e8400-e29b-41d4-a716-446655440001", "live/rtmp-script-input-error", std::chrono::seconds(1), [&]() { ++script_shutdowns; });
+        worker, "live/rtmp-script-input-error", std::chrono::seconds(1), [&]() { ++script_shutdowns; });
     require(script->startup(), "rtmp script input error startup");
     const std::array<std::uint8_t, 1> malformed_script{AMF_STRING};
     const auto script_result = script->on_script(malformed_script);
@@ -13030,8 +13014,6 @@ void test_whip_rtmp_output()
     bool ended = false;
     auto play = std::make_shared<rtmp_play_session>(
         worker,
-        "00000000-0000-4000-8000-000000000022",
-        stream->name(),
         stream,
         [&packets](int type, std::span<const std::uint8_t> data, std::uint32_t)
         { packets.emplace_back(type, std::vector<std::uint8_t>(data.begin(), data.end())); },

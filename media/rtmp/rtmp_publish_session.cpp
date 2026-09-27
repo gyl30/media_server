@@ -6,7 +6,6 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 
-#include "media/rtmp/rtmp_event.h"
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -30,12 +29,10 @@ constexpr track_id audio_track_id = 2;
 }    // namespace
 
 rtmp_publish_session::rtmp_publish_session(worker_context& worker,
-                                           std::string stream_id,
                                            std::string stream_name,
                                            std::chrono::milliseconds initial_tracks_timeout,
                                            shutdown_handler on_shutdown)
     : worker_(worker),
-      stream_id_(std::move(stream_id)),
       initial_tracks_timer_(worker_.io()),
       initial_tracks_timeout_(initial_tracks_timeout),
       stream_(std::make_shared<media_stream>(std::move(stream_name), worker_)),
@@ -45,11 +42,9 @@ rtmp_publish_session::rtmp_publish_session(worker_context& worker,
 
 bool rtmp_publish_session::startup()
 {
-    rtmp_event::report_publisher(event_state::starting, stream_id_, stream_->name(), "publish");
     demuxer_ = flv_demuxer_create(&rtmp_publish_session::demux_callback, this);
     if (demuxer_ == nullptr)
     {
-        rtmp_event::report_publisher(event_state::runtime_error, stream_id_, stream_->name(), "setup", "publish_startup_failed");
         return false;
     }
 
@@ -65,7 +60,6 @@ bool rtmp_publish_session::startup()
             if (auto handler = std::move(self->shutdown_handler_))
             {
                 spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_->name());
-                rtmp_event::report_publisher(event_state::timeout, self->stream_id_, self->stream_->name(), "media", "initial_tracks_timeout");
                 handler();
             }
         });
@@ -85,7 +79,6 @@ void rtmp_publish_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    rtmp_event::report_publisher(event_state::stopped, stream_id_, stream_->name());
     shutdown_handler_ = {};
     initial_tracks_timer_.cancel();
     if (stream_)
@@ -394,7 +387,6 @@ void rtmp_publish_session::try_initialize_tracks()
     {
         if (auto handler = std::move(shutdown_handler_))
         {
-            rtmp_event::report_publisher(event_state::timeout, stream_id_, stream_->name(), "media", "initial_tracks_timeout");
             handler();
         }
         return;
@@ -416,16 +408,11 @@ void rtmp_publish_session::try_initialize_tracks()
         if (auto handler = std::move(shutdown_handler_))
         {
             spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
-            rtmp_event::report_publisher(event_state::runtime_error, stream_id_, stream_->name(), "media", "stream_registry_add_failed");
             handler();
         }
         return;
     }
     initial_tracks_timer_.cancel();
-    if (shutdown_handler_)
-    {
-        rtmp_event::report_publisher(event_state::streaming, stream_id_, stream_->name(), "streaming");
-    }
     spdlog::info("rtmp publish tracks ready audio {}", *expected_audio_);
 }
 

@@ -267,7 +267,6 @@ add_library(media_core STATIC
     media/webrtc/whep_audio_egress.cpp
     media/webrtc/whep.cpp
     media/webrtc/webrtc_packetizer.cpp
-    media/rtmp/rtmp_event.cpp
     media/rtmp/rtmp_publish_session.cpp
     media/rtmp/rtmp_play_session.cpp
     media/rtmp/rtmp_session.cpp
