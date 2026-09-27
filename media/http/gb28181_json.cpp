@@ -6,7 +6,6 @@
 #include <boost/json.hpp>
 #include <boost/asio/ip/address.hpp>
 
-#include "media/core/stream_id.h"
 #include "media/http/gb28181_json.h"
 
 namespace media_server
@@ -200,7 +199,7 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
     auto transport = required_transport(*object);
     auto payload_type = required_payload_type(*object);
     auto ssrc = required_ssrc(*object);
-    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name || !transport || !payload_type || !ssrc)
+    if (!stream_id || !stream_name || !transport || !payload_type || !ssrc)
     {
         return std::nullopt;
     }
@@ -269,7 +268,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
     auto transport = required_transport(*object);
     auto payload_type = required_payload_type(*object);
     auto ssrc = required_ssrc(*object);
-    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name || !sender_id || !transport || !payload_type || !ssrc)
+    if (!stream_id || !stream_name || !sender_id || !transport || !payload_type || !ssrc)
     {
         return std::nullopt;
     }
@@ -363,7 +362,7 @@ std::optional<gb28181_receiver_identity> parse_gb28181_receiver_delete(std::stri
     }
     auto stream_id = required_string(*object, "stream_id");
     auto stream_name = required_string(*object, "stream_name");
-    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name)
+    if (!stream_id || !stream_name)
     {
         return std::nullopt;
     }
@@ -380,7 +379,7 @@ std::optional<gb28181_sender_identity> parse_gb28181_sender_delete(std::string_v
     auto stream_id = required_string(*object, "stream_id");
     auto stream_name = required_string(*object, "stream_name");
     auto sender_id = required_string(*object, "sender_id");
-    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name || !sender_id)
+    if (!stream_id || !stream_name || !sender_id)
     {
         return std::nullopt;
     }

@@ -9,7 +9,6 @@
 
 #include <boost/json.hpp>
 
-#include "media/core/stream_id.h"
 #include "media/http/rtsp_pull_http.h"
 #include "media/core/stream_registry.h"
 #include "media/control/control_session_registry.h"
@@ -127,7 +126,7 @@ std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body
     auto url = required_string(*object, "url");
     std::string username;
     std::string password;
-    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name || !url ||
+    if (!stream_id || !stream_name || !url ||
         !optional_string(*object, "username", username) || !optional_string(*object, "password", password) ||
         (object->if_contains("password") != nullptr && username.empty()))
     {
@@ -151,7 +150,7 @@ std::optional<rtsp_pull_identity> parse_delete_identity(std::string_view body)
     }
     auto stream_id = required_string(*object, "stream_id");
     auto stream_name = required_string(*object, "stream_name");
-    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name)
+    if (!stream_id || !stream_name)
     {
         return std::nullopt;
     }
