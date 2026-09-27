@@ -4,7 +4,9 @@
 #include <span>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
+#include <boost/asio/buffer.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/io_context.hpp>
@@ -30,6 +32,11 @@ class udp_yield_transport final
                       const boost::asio::ip::udp::endpoint& endpoint,
                       boost::asio::yield_context& yield,
                       boost::system::error_code& error);
+    template <typename Handler>
+    void async_write(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint, Handler&& handler)
+    {
+        socket_.async_send_to(boost::asio::buffer(data), endpoint, std::forward<Handler>(handler));
+    }
     [[nodiscard]] boost::asio::ip::udp::endpoint local_endpoint(boost::system::error_code& error) const;
     void shutdown();
 

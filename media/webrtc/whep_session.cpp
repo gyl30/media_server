@@ -362,41 +362,45 @@ void whep_session::run_udp(boost::asio::yield_context yield)
     shutdown();
 }
 
-void whep_session::run_udp_write(boost::asio::yield_context yield)
+void whep_session::start_udp_write()
 {
-    for (;;)
+    if (!started_ || udp_write_queue_.empty())
     {
-        if (!started_ || udp_write_queue_.empty())
-        {
-            return;
-        }
+        return;
+    }
 
-        const auto datagram = udp_write_queue_.front();
-        boost::system::error_code error;
-        udp_transport_.write(std::span<const std::uint8_t>{datagram.packet->data(), datagram.packet->size()}, datagram.endpoint, yield, error);
-        if (!started_)
+    const auto& datagram = udp_write_queue_.front();
+    // 队首在发送完成回调前保持存活，供异步 socket 使用其 packet buffer。
+    const auto self = shared_from_this();
+    udp_transport_.async_write(std::span<const std::uint8_t>{datagram.packet->data(), datagram.packet->size()},
+                               datagram.endpoint,
+                               [self](boost::system::error_code error, std::size_t) { self->handle_udp_write(error); });
+}
+
+void whep_session::handle_udp_write(boost::system::error_code error)
+{
+    if (!started_)
+    {
+        return;
+    }
+    if (error)
+    {
+        if (error != boost::asio::error::operation_aborted)
         {
-            return;
-        }
-        if (error)
-        {
-            if (error == boost::asio::error::operation_aborted)
-            {
-                shutdown();
-                return;
-            }
+            const auto& endpoint = udp_write_queue_.front().endpoint;
             spdlog::debug("webrtc udp send failed session {} remote {} {} error {}",
                           id_,
-                          datagram.endpoint.address().to_string(),
-                          datagram.endpoint.port(),
+                          endpoint.address().to_string(),
+                          endpoint.port(),
                           error.message());
-            shutdown();
-            return;
         }
-
-        queued_write_bytes_ -= datagram.packet->size();
-        udp_write_queue_.pop_front();
+        shutdown();
+        return;
     }
+
+    queued_write_bytes_ -= udp_write_queue_.front().packet->size();
+    udp_write_queue_.pop_front();
+    start_udp_write();
 }
 
 void whep_session::handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
@@ -690,8 +694,7 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
     });
     if (start_write)
     {
-        const auto self = shared_from_this();
-        worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp_write(yield); });
+        start_udp_write();
     }
 }
 
