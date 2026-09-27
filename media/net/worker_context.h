@@ -77,8 +77,6 @@ class worker_context final
     [[nodiscard]] bool stop_requested() const noexcept;
     [[nodiscard]] shutdown_subscription subscribe_shutdown(std::function<void()> callback);
 
-    void stop();
-    void release_work();
     void run();
 
    private:

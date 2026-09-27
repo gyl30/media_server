@@ -107,10 +107,6 @@ worker_context::shutdown_subscription worker_context::subscribe_shutdown(std::fu
 
 void worker_context::unsubscribe_shutdown(shutdown_callback_list::iterator iterator) { shutdown_callbacks_.erase(iterator); }
 
-void worker_context::stop() { io_.stop(); }
-
-void worker_context::release_work() { work_.reset(); }
-
 void worker_context::run() { io_.run(); }
 
 }    // namespace media_server
