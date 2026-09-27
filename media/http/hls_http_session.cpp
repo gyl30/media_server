@@ -90,6 +90,10 @@ void hls_http_session::handle_request()
     std::optional<std::string> secret;
     for (const auto parameter : target.params())
     {
+        if (file == "init.mp4" && parameter.key == "v" && parameter.has_value)
+        {
+            continue;
+        }
         if (parameter.key != "session")
         {
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid hls query\n", false);
