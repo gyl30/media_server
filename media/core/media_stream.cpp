@@ -48,10 +48,10 @@ bool media_stream::set_tracks(std::vector<media_track> tracks)
     return true;
 }
 
-bool media_stream::update_track(media_track track)
+bool media_stream::update_track(media_track track, bool codec_state_reset)
 {
     const auto id = track.id;
-    if (!media_history::update_track(std::move(track)))
+    if (!media_history::update_track(std::move(track), codec_state_reset))
     {
         return false;
     }

@@ -161,7 +161,7 @@ bool media_history<Frame>::set_tracks(std::vector<media_track> tracks)
 }
 
 template <typename Frame>
-bool media_history<Frame>::update_track(media_track track)
+bool media_history<Frame>::update_track(media_track track, bool codec_state_reset)
 {
     if (ended_ || track.id == 0)
     {
@@ -173,7 +173,7 @@ bool media_history<Frame>::update_track(media_track track)
     {
         return false;
     }
-    if (existing->second.clock_rate == track.clock_rate && existing->second.channel_count == track.channel_count &&
+    if (!codec_state_reset && existing->second.clock_rate == track.clock_rate && existing->second.channel_count == track.channel_count &&
         existing->second.codec_config == track.codec_config)
     {
         return false;

@@ -215,17 +215,22 @@ void flv_muxer::startup_video_transcoder(const media_track& track)
 
 void flv_muxer::input_av1(const media_frame& frame)
 {
-    if (!video_transcoder_ || frame.track != video_track_id_)
+    if (frame.track != video_track_id_ && tracks_.at(frame.track).codec != codec_id::av1)
     {
         return;
     }
     std::vector<media_frame> output;
-    if (!video_transcoder_->transcode(frame, output))
+    std::span<const media_frame> frames(&frame, 1);
+    if (tracks_.at(frame.track).codec != codec_id::av1)
     {
-        spdlog::error("flv av1 transcode failed track {}", frame.track);
-        return;
+        if (!video_transcoder_ || !video_transcoder_->transcode(frame, output))
+        {
+            spdlog::error("flv av1 transcode failed track {}", frame.track);
+            return;
+        }
+        frames = output;
     }
-    for (const auto& encoded : output)
+    for (const auto& encoded : frames)
     {
         if (!encoded.payload)
         {

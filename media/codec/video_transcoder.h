@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include <cstdint>
+#include <compare>
 #include <optional>
 
 #include "media/core/media_types.h"
@@ -16,6 +17,8 @@ struct av1_encoding_parameters
     std::uint8_t profile{};
     std::uint8_t level_idx{};
     std::uint8_t tier{};
+
+    auto operator<=>(const av1_encoding_parameters&) const = default;
 };
 
 struct video_transcoder_config

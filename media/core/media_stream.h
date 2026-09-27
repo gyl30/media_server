@@ -15,7 +15,7 @@ class media_stream final : public media_history<media_frame>
 
     void add_sink(const std::shared_ptr<media_sink>& sink);
     bool set_tracks(std::vector<media_track> tracks);
-    bool update_track(media_track track);
+    bool update_track(media_track track, bool codec_state_reset = false);
     void publish(media_frame frame);
     void end();
 

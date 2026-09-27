@@ -223,6 +223,7 @@ add_library(media_core STATIC
     media/ps/mpeg_ps_output.cpp
     media/codec/audio_transcoder.cpp
     media/codec/video_transcoder.cpp
+    media/codec/av1_video_egress.cpp
     media/codec/codec_utils.cpp
     media/net/worker_context.cpp
     media/net/io_context_pool.cpp

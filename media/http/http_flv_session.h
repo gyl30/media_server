@@ -24,6 +24,7 @@ extern "C"
 namespace media_server
 {
 class worker_context;
+class av1_video_egress;
 class http_flv_session final : public media_reader, public std::enable_shared_from_this<http_flv_session>
 {
    public:
@@ -72,6 +73,8 @@ class http_flv_session final : public media_reader, public std::enable_shared_fr
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
     flv_muxer muxer_;
+    std::shared_ptr<av1_video_egress> video_egress_;
+    bool av1_output_{};
     std::uint64_t generation_{};
     std::uint64_t track_revision_{};
     bool waiting_for_key_frame_{};
