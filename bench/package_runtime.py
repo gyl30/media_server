@@ -58,7 +58,7 @@ def main():
         parser.error(f"output already exists: {args.output}")
 
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    executables = ("media_server", "whep_fanout", "rtmp_fanout", "rtsp_fanout", "gb_ps_fanout")
+    executables = ("media_server", "whep_fanout", "whip_publisher", "rtmp_fanout", "rtsp_fanout", "gb_ps_fanout")
     files = [(args.build_dir / name, Path("build") / name) for name in executables]
     files.extend((path, Path("bench") / path.name) for path in Path("bench").glob("*.py") if path.name != "package_runtime.py")
     files.extend(((args.ffmpeg_bin, Path("bin/ffmpeg")), (args.fixture, Path(".cache/perf_fixture_720p30.flv"))))

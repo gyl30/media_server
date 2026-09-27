@@ -14,6 +14,12 @@
 namespace media_server::bench
 {
 
+enum class webrtc_client_direction
+{
+    publish,
+    play,
+};
+
 struct webrtc_http_response
 {
     unsigned int status{};
@@ -28,7 +34,7 @@ class webrtc_client_context final
 
     ~webrtc_client_context();
 
-    [[nodiscard]] std::string make_offer() const;
+    [[nodiscard]] std::string make_offer(webrtc_client_direction direction = webrtc_client_direction::play) const;
 
    private:
     struct implementation;
@@ -51,6 +57,7 @@ class webrtc_client_peer final : public std::enable_shared_from_this<webrtc_clie
    public:
     bool establish(std::string_view answer_sdp, std::string& error);
     void start_receive(packet_handler packet, error_handler error);
+    bool send_rtp(std::span<const std::uint8_t> packet);
     bool send_rtcp(std::span<const std::uint8_t> packet);
     void close() noexcept;
 

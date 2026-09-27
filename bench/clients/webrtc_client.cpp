@@ -311,8 +311,9 @@ webrtc_client_context::webrtc_client_context(std::unique_ptr<implementation> sta
 
 webrtc_client_context::~webrtc_client_context() = default;
 
-std::string webrtc_client_context::make_offer() const
+std::string webrtc_client_context::make_offer(webrtc_client_direction direction) const
 {
+    const auto media_direction = direction == webrtc_client_direction::publish ? "sendonly" : "recvonly";
     std::ostringstream sdp;
     sdp << "v=0\r\n"
         << "o=- 1000 2 IN IP4 127.0.0.1\r\n"
@@ -327,7 +328,7 @@ std::string webrtc_client_context::make_offer() const
         << "a=setup:actpass\r\n"
         << "a=mid:0\r\n"
         << "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
-        << "a=recvonly\r\n"
+        << "a=" << media_direction << "\r\n"
         << "a=rtcp-mux\r\n"
         << "a=rtpmap:102 H264/90000\r\n"
         << "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n"
@@ -339,7 +340,7 @@ std::string webrtc_client_context::make_offer() const
         << "a=setup:actpass\r\n"
         << "a=mid:1\r\n"
         << "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
-        << "a=recvonly\r\n"
+        << "a=" << media_direction << "\r\n"
         << "a=rtcp-mux\r\n"
         << "a=rtpmap:111 opus/48000/2\r\n"
         << "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n";
@@ -628,6 +629,18 @@ void webrtc_client_peer::start_receive(packet_handler packet, error_handler erro
     implementation_->error_callback = std::move(error);
     implementation_->receive(shared_from_this());
     implementation_->schedule_keepalive(shared_from_this());
+}
+
+bool webrtc_client_peer::send_rtp(std::span<const std::uint8_t> packet)
+{
+    auto protected_packet = implementation_->srtp.protect_rtp(packet);
+    if (!protected_packet)
+    {
+        return false;
+    }
+    boost::system::error_code error;
+    implementation_->socket.send_to(boost::asio::buffer(*protected_packet), implementation_->server_endpoint, 0, error);
+    return !error;
 }
 
 bool webrtc_client_peer::send_rtcp(std::span<const std::uint8_t> packet)

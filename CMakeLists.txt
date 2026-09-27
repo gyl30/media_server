@@ -333,4 +333,10 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
         bench/clients/webrtc_client.cpp
     )
     target_link_libraries(whep_fanout PRIVATE media_core media_server_link_options)
+
+    add_executable(whip_publisher
+        bench/whip_publisher.cpp
+        bench/clients/webrtc_client.cpp
+    )
+    target_link_libraries(whip_publisher PRIVATE media_core media_server_link_options)
 endif()
