@@ -35,6 +35,7 @@ struct configuration
 {
     std::string whep_url;
     std::size_t viewers{};
+    std::size_t sources{1};
     std::size_t ramp_per_second{100};
     std::size_t io_threads{4};
     std::chrono::seconds warmup{5};
@@ -93,6 +94,10 @@ configuration parse_arguments(int argc, char** argv)
         {
             config.viewers = std::stoull(argument_value(index, argc, argv, argument));
         }
+        else if (argument == "--sources")
+        {
+            config.sources = std::stoull(argument_value(index, argc, argv, argument));
+        }
         else if (argument == "--ramp-per-second")
         {
             config.ramp_per_second = std::stoull(argument_value(index, argc, argv, argument));
@@ -114,7 +119,8 @@ configuration parse_arguments(int argc, char** argv)
             throw std::runtime_error("unknown argument " + std::string(argument));
         }
     }
-    if (config.whep_url.empty() || config.viewers == 0U || config.ramp_per_second == 0U ||
+    if (config.whep_url.empty() || config.viewers == 0U || config.sources == 0U ||
+        (config.sources > 1U && !config.whep_url.ends_with("perf0")) || config.ramp_per_second == 0U ||
         config.io_threads == 0U || config.io_threads > 64U || config.duration.count() <= 0 || config.warmup.count() < 0)
     {
         throw std::runtime_error("whep-url, viewers, ramp-per-second, io-threads and positive duration are required");
@@ -394,7 +400,10 @@ int main(int argc, char** argv)
             auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context);
             media_server::bench::webrtc_http_response response;
             std::string error;
-            const auto posted = media_server::bench::post_webrtc_offer(config.whep_url, offer, response, error);
+            const auto url = config.sources == 1U
+                                 ? config.whep_url
+                                 : config.whep_url.substr(0, config.whep_url.size() - 1U) + std::to_string(index % config.sources);
+            const auto posted = media_server::bench::post_webrtc_offer(url, offer, response, error);
             if (!posted || response.status != 201U || !peer->establish(response.body, error))
             {
                 ++results->establishment_failures;

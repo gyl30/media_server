@@ -71,17 +71,17 @@ def wait_for_listener(host, port):
     raise RuntimeError("media server did not open RTMP listener")
 
 
-def wait_for_stream(host, port):
+def wait_for_stream(host, port, name="live/perf0"):
     for _ in range(100):
         try:
             with socket.create_connection((host, port), timeout=2) as connection:
-                connection.sendall(f"GET /live/perf0.flv HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
+                connection.sendall(f"GET /{name}.flv HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
                 if connection.recv(64).startswith(b"HTTP/1.1 200"):
                     return
         except OSError:
             pass
         time.sleep(0.1)
-    raise RuntimeError("source perf0 did not become readable")
+    raise RuntimeError(f"source {name} did not become readable")
 
 
 def wait_for_phase(path, process, phase, timeout):

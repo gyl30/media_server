@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--ffmpeg-bin", type=Path, default=Path("/home/gyl/bin/ffmpeg"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--viewers", type=int, required=True)
+    parser.add_argument("--sources", type=int, default=1)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--client-threads", type=int, default=8)
     parser.add_argument("--ramp-per-second", type=int, default=100)
@@ -29,7 +30,7 @@ def main():
     parser.add_argument("--rtsp-port", type=int, default=18554)
     parser.add_argument("--http-port", type=int, default=18080)
     args = parser.parse_args()
-    if min(args.viewers, args.workers, args.client_threads, args.ramp_per_second, args.duration) < 1 or args.warmup < 0:
+    if min(args.viewers, args.sources, args.workers, args.client_threads, args.ramp_per_second, args.duration) < 1 or args.warmup < 0:
         parser.error("viewers, workers, client-threads, ramp-per-second and duration must be positive")
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -46,15 +47,18 @@ def main():
         client = None
         try:
             wait_for_listener(args.host, args.rtmp_port)
+            addresses = [f"rtmp://{args.host}:{args.rtmp_port}/live/perf{index}" for index in range(args.sources)]
+            output = addresses[0] if args.sources == 1 else "|".join(f"[f=flv]{address}" for address in addresses)
             publisher = subprocess.Popen(
                 [str(args.ffmpeg_bin), "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
-                 "-c", "copy", "-f", "flv", f"rtmp://{args.host}:{args.rtmp_port}/live/perf0"],
+                 "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", "flv" if args.sources == 1 else "tee", output],
                 stdout=publisher_log, stderr=subprocess.STDOUT,
             )
-            wait_for_stream(args.host, args.http_port)
+            for index in range(args.sources):
+                wait_for_stream(args.host, args.http_port, f"live/perf{index}")
             client = subprocess.Popen(
                 [str(args.client_bin), "--whep-url", f"http://{args.host}:{args.http_port}/play/whep/live/perf0",
-                 "--viewers", str(args.viewers), "--io-threads", str(args.client_threads),
+                 "--viewers", str(args.viewers), "--sources", str(args.sources), "--io-threads", str(args.client_threads),
                  "--ramp-per-second", str(args.ramp_per_second), "--warmup", str(args.warmup),
                  "--duration", str(args.duration)], stdout=client_log, stderr=client_error,
             )
@@ -74,7 +78,7 @@ def main():
             result = {
                 "config": {
                     "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                    "fixture": str(args.fixture), "viewers": args.viewers, "workers": args.workers,
+                    "fixture": str(args.fixture), "viewers": args.viewers, "sources": args.sources, "workers": args.workers,
                     "client_threads": args.client_threads, "ramp_per_second": args.ramp_per_second,
                     "warmup_seconds": args.warmup, "duration_seconds": args.duration,
                     "kernel": platform.release(),
