@@ -14,6 +14,7 @@
 #include "media/http/gb28181_http.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 
 namespace media_server
 {
@@ -23,10 +24,11 @@ namespace
 constexpr std::string_view stream_id_a = "550e8400-e29b-41d4-a716-446655440000";
 constexpr std::string_view stream_id_b = "550e8400-e29b-41d4-b716-446655440001";
 
-class foreign_receiver_session final : public stream_session
+class foreign_receiver_session final : public control_session
 {
    public:
     void shutdown() override {}
+    [[nodiscard]] std::string_view stream_id() const noexcept override { return {}; }
 };
 
 void require(bool condition, std::string_view message)
@@ -215,14 +217,14 @@ void test_receiver_delete_preserves_foreign_session()
     worker_context worker;
 
     auto foreign = std::make_shared<foreign_receiver_session>();
-    require(stream_registry::instance().add_receiver_session("live/foreign", foreign), "gb receiver foreign identity");
+    require(control_session_registry::instance().add_receiver_session("live/foreign", foreign), "gb receiver foreign identity");
     const auto response =
         receiver_request(worker, request("/gb28181/receiver/delete", {{"stream_id", stream_id_a}, {"stream_name", "live/foreign"}}));
     require_json_response(response,
                           boost::beast::http::status::internal_server_error,
                           R"({"error":"operation_failed"})",
                           "gb receiver delete preserves foreign session");
-    require(stream_registry::instance().take_receiver_session("live/foreign") == foreign, "gb receiver foreign identity retained");
+    require(control_session_registry::instance().take_receiver_session_as<control_session>("live/foreign") == foreign, "gb receiver foreign identity retained");
 }
 
 void test_request_namespace_dispatch()

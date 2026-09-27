@@ -12,6 +12,7 @@
 #include "media/net/worker_context.h"
 #include "media/http/rtsp_pull_http.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
 namespace media_server
@@ -23,10 +24,11 @@ constexpr char stream_id_a[] = "550e8400-e29b-41d4-a716-446655440000";
 constexpr char stream_id_b[] = "550e8400-e29b-41d4-b716-446655440001";
 constexpr char source_id[] = "10000000-0000-4000-8000-000000000001";
 
-class foreign_receiver_session final : public stream_session
+class foreign_receiver_session final : public control_session
 {
    public:
     void shutdown() override {}
+    [[nodiscard]] std::string_view stream_id() const noexcept override { return {}; }
 };
 
 void require(bool condition, std::string_view message)
@@ -250,12 +252,12 @@ void test_delete_preserves_foreign_receiver()
     worker_context worker;
 
     auto foreign = std::make_shared<foreign_receiver_session>();
-    require(stream_registry::instance().add_receiver_session("live/foreign", foreign), "rtsp pull foreign receiver identity");
+    require(control_session_registry::instance().add_receiver_session("live/foreign", foreign), "rtsp pull foreign receiver identity");
     require_response(handle(worker, request("/rtsp/pull/delete", delete_body("live/foreign"))),
                      boost::beast::http::status::not_found,
                      R"({"error":"not_found"})",
                      "rtsp pull delete preserves foreign receiver");
-    require(stream_registry::instance().take_receiver_session("live/foreign") == foreign, "rtsp pull foreign receiver retained");
+    require(control_session_registry::instance().take_receiver_session_as<control_session>("live/foreign") == foreign, "rtsp pull foreign receiver retained");
 }
 
 void test_delayed_shutdown_preserves_replacement()
@@ -263,16 +265,16 @@ void test_delayed_shutdown_preserves_replacement()
     worker_context worker;
 
     auto old_session = std::make_shared<rtsp_pull_session>(worker, stream_id_a, source_id, "live/replacement", "rtsp://127.0.0.1:9/live/old");
-    require(stream_registry::instance().add_receiver_session("live/replacement", old_session), "rtsp pull old identity");
-    auto removed = stream_registry::instance().take_receiver_session("live/replacement");
+    require(control_session_registry::instance().add_receiver_session("live/replacement", old_session), "rtsp pull old identity");
+    auto removed = control_session_registry::instance().take_receiver_session_as<control_session>("live/replacement");
     require(removed.get() == old_session.get(), "rtsp pull old identity removed");
 
     auto replacement = std::make_shared<rtsp_pull_session>(worker, stream_id_b, source_id, "live/replacement", "rtsp://127.0.0.1:9/live/new");
-    require(stream_registry::instance().add_receiver_session("live/replacement", replacement), "rtsp pull replacement identity");
+    require(control_session_registry::instance().add_receiver_session("live/replacement", replacement), "rtsp pull replacement identity");
     old_session->shutdown();
     worker.release_work();
     worker.io().run();
-    auto retained = stream_registry::instance().take_receiver_session("live/replacement");
+    auto retained = control_session_registry::instance().take_receiver_session_as<control_session>("live/replacement");
     require(retained.get() == replacement.get(), "rtsp pull delayed shutdown preserves replacement");
 
     replacement->shutdown();

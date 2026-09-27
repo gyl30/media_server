@@ -472,7 +472,7 @@ if(BUILD_TESTING)
         rtsp_play_unsetup_audio_update_keeps_video_continuity
         rtsp_play_rejects_stale_description
         stream_registry_generation_lifecycle
-        stream_registry_session_identity_lifecycle
+        control_session_registry_identity_lifecycle
         hls_module_lifecycle
         hls_play_admission
         hls_http_keep_alive
@@ -515,6 +515,10 @@ if(BUILD_TESTING)
     add_executable(worker_context_shutdown_tests tests/worker_context_shutdown_tests.cpp)
     target_link_libraries(worker_context_shutdown_tests PRIVATE media_core media_server_link_options)
     add_test(NAME worker_context_shutdown_tests COMMAND worker_context_shutdown_tests)
+
+    add_executable(control_session_registry_tests tests/control_session_registry_tests.cpp)
+    target_link_libraries(control_session_registry_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME control_session_registry_tests COMMAND control_session_registry_tests)
 
     add_executable(hls_play_shutdown_tests tests/hls_play_shutdown_tests.cpp)
     target_link_libraries(hls_play_shutdown_tests PRIVATE media_core media_server_link_options)

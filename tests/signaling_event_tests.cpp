@@ -25,6 +25,7 @@
 #include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/http/signaling_client.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
@@ -550,7 +551,7 @@ void test_gb_sender_streaming_is_not_repeated_after_config_update()
                           }});
                           const bool registered =
                               media_server::stream_registry::instance().add(source) &&
-                              media_server::stream_registry::instance().add_sender_session(source->name(), "event-sender", session);
+                              media_server::control_session_registry::instance().add_sender_session(source->name(), "event-sender", session);
                           const bool running = tracks && registered && session->startup();
                           started.set_value(running);
                           if (running)

@@ -15,6 +15,7 @@
 #include "media/core/media_stream.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
 #include "media/gb28181/gb28181_udp_receiver_session.h"
@@ -154,7 +155,7 @@ void test_udp_sender_releases_pair_after_shutdown()
                                                                 boost::asio::ip::address_v4::loopback(),
                                                                 "sender",
                                                                 false);
-    require(stream_registry::instance().add_sender_session(stream->name(), "sender", session), "port release sender registry");
+    require(control_session_registry::instance().add_sender_session(stream->name(), "sender", session), "port release sender registry");
     require(session->startup(), "port release sender startup");
 
     boost::system::error_code bind_error;

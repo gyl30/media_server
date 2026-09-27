@@ -18,6 +18,7 @@
 #include "media/net/port_manager.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_udp_receiver_session.h"
 
@@ -282,7 +283,7 @@ void test_udp_session_fatal_codec_change_unregisters()
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     auto session = std::make_shared<gb28181_udp_receiver_session>(
         worker, std::string{stream_id}, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds{1'000});
-    require(stream_registry::instance().add_receiver_session(stream_name, session), "gb fatal codec session registry add");
+    require(control_session_registry::instance().add_receiver_session(stream_name, session), "gb fatal codec session registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb fatal codec session startup");
@@ -309,7 +310,7 @@ void test_udp_session_fatal_codec_change_unregisters()
         io.restart();
     }
     require(!stream_registry::instance().find(stream_name), "gb fatal codec session removes stream");
-    require(!stream_registry::instance().take_receiver_session(stream_name), "gb fatal codec session unregisters owner");
+    require(!control_session_registry::instance().take_receiver_session_as<control_session>(stream_name), "gb fatal codec session unregisters owner");
     io.run();
     session->shutdown();
     io.restart();
@@ -599,7 +600,7 @@ void test_udp_session_rtcp_shutdown_releases_scheduler()
                                                                   description,
                                                                   boost::asio::ip::address_v4::loopback(),
                                                                   std::chrono::milliseconds::zero());
-    require(stream_registry::instance().add_receiver_session(stream_name, session), "gb rtcp shutdown session registry add");
+    require(control_session_registry::instance().add_receiver_session(stream_name, session), "gb rtcp shutdown session registry add");
     const auto started = session->startup();
 
     session->shutdown();

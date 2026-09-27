@@ -15,6 +15,7 @@
 #include "media/http/gb28181_http.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 #include "media/gb28181/gb28181_tcp_receiver_session.h"
@@ -220,7 +221,7 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     auto session = std::make_shared<gb28181_tcp_receiver_session>(
         worker, std::string{stream_id}, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(1));
-    require(stream_registry::instance().add_receiver_session(stream_name, session), "gb receiver repeated shutdown registry add");
+    require(control_session_registry::instance().add_receiver_session(stream_name, session), "gb receiver repeated shutdown registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb receiver repeated shutdown startup");
@@ -234,7 +235,7 @@ void test_tcp_receiver_repeated_shutdown_is_idempotent()
                  });
     io.run();
 
-    const auto remaining = stream_registry::instance().take_receiver_session(stream_name);
+    const auto remaining = control_session_registry::instance().take_receiver_session_as<control_session>(stream_name);
     require(!remaining, "gb receiver repeated shutdown unregisters session");
 }
 
@@ -255,7 +256,7 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
                                                                 boost::asio::ip::address_v4::loopback(),
                                                                 std::chrono::seconds(1),
                                                                 1024U * 1024U);
-    require(stream_registry::instance().add_sender_session(stream->name(), "repeated-shutdown", session), "gb sender repeated shutdown registry add");
+    require(control_session_registry::instance().add_sender_session(stream->name(), "repeated-shutdown", session), "gb sender repeated shutdown registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb sender repeated shutdown startup");
@@ -269,7 +270,7 @@ void test_tcp_sender_repeated_shutdown_is_idempotent()
                  });
     io.run();
 
-    const auto remaining = stream_registry::instance().take_sender_session(stream->name(), "repeated-shutdown");
+    const auto remaining = control_session_registry::instance().take_sender_session(stream->name(), "repeated-shutdown");
     require(!remaining, "gb sender repeated shutdown unregisters session");
 }
 
@@ -284,13 +285,13 @@ void test_tcp_timeout_unregisters_receiver_session()
     constexpr std::string_view stream_id = "550e8400-e29b-41d4-a716-446655440000";
     auto session = std::make_shared<gb28181_tcp_receiver_session>(
         worker, std::string{stream_id}, stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::milliseconds(5));
-    require(stream_registry::instance().add_receiver_session(stream_name, session), "gb receiver timeout registry add");
+    require(control_session_registry::instance().add_receiver_session(stream_name, session), "gb receiver timeout registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb receiver timeout startup");
     io.run();
 
-    const auto remaining = stream_registry::instance().take_receiver_session(stream_name);
+    const auto remaining = control_session_registry::instance().take_receiver_session_as<control_session>(stream_name);
     require(!remaining, "gb receiver timeout unregisters session");
 }
 
@@ -311,13 +312,13 @@ void test_tcp_timeout_unregisters_sender_session()
                                                                 boost::asio::ip::address_v4::loopback(),
                                                                 std::chrono::milliseconds(5),
                                                                 1024U * 1024U);
-    require(stream_registry::instance().add_sender_session(stream->name(), "timeout", session), "gb sender timeout registry add");
+    require(control_session_registry::instance().add_sender_session(stream->name(), "timeout", session), "gb sender timeout registry add");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb sender timeout startup");
     io.run();
 
-    const auto remaining = stream_registry::instance().take_sender_session(stream->name(), "timeout");
+    const auto remaining = control_session_registry::instance().take_sender_session(stream->name(), "timeout");
     require(!remaining, "gb sender timeout unregisters session");
 }
 

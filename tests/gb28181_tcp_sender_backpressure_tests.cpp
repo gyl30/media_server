@@ -14,6 +14,7 @@
 #include "media/core/media_stream.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 
 namespace media_server
@@ -93,7 +94,7 @@ void test_tcp_sender_write_backlog_limit()
     };
     auto session = std::make_shared<gb28181_tcp_sender_session>(
         worker, "550e8400-e29b-41d4-a716-446655440000", source, "backpressure", description, boost::asio::ip::address_v4::loopback(), 1s, 0U);
-    require(stream_registry::instance().add_sender_session(source->name(), "backpressure", session), "gb tcp backpressure session registry");
+    require(control_session_registry::instance().add_sender_session(source->name(), "backpressure", session), "gb tcp backpressure session registry");
     require(session->startup(), "gb tcp backpressure startup");
 
     worker.release_work();

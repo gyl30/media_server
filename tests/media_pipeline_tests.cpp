@@ -54,6 +54,7 @@
 #include "media/webrtc/whep_session.h"
 #include "media/hls/hls_play_session.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/rtsp/rtsp_pull_media.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
@@ -3330,12 +3331,12 @@ void test_gb28181_tcp_active_connect_successful()
                                                .ssrc = 10'000'2101};
     auto session = std::make_shared<gb28181_tcp_receiver_session>(
         worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(2));
-    require(stream_registry::instance().add_receiver_session(stream_name, session), "gb28181 tcp active registry add");
+    require(control_session_registry::instance().add_receiver_session(stream_name, session), "gb28181 tcp active registry add");
     require(session->startup(), "gb28181 tcp active startup");
 
     io.run_for(std::chrono::milliseconds(100));
     require(peer && peer->is_open(), "gb28181 tcp active connects to peer");
-    require(stream_registry::instance().take_receiver_session(stream_name) == session, "gb28181 tcp active remains registered after connect");
+    require(control_session_registry::instance().take_receiver_session_as<control_session>(stream_name) == session, "gb28181 tcp active remains registered after connect");
 
     session->shutdown();
     boost::system::error_code error;
@@ -3365,13 +3366,13 @@ void test_gb28181_tcp_active_connection_refused()
                                                .ssrc = 10'000'2102};
     auto session = std::make_shared<gb28181_tcp_receiver_session>(
         worker, "550e8400-e29b-41d4-a716-446655440000", stream_name, description, boost::asio::ip::address_v4::loopback(), std::chrono::seconds(5));
-    require(stream_registry::instance().add_receiver_session(stream_name, session), "gb28181 tcp active refusal registry add");
+    require(control_session_registry::instance().add_receiver_session(stream_name, session), "gb28181 tcp active refusal registry add");
     require(session->startup(), "gb28181 tcp active refusal startup");
     const auto started_at = std::chrono::steady_clock::now();
 
     io.run();
 
-    require(!stream_registry::instance().take_receiver_session(stream_name), "gb28181 tcp active refusal unregisters session");
+    require(!control_session_registry::instance().take_receiver_session_as<control_session>(stream_name), "gb28181 tcp active refusal unregisters session");
     require(std::chrono::steady_clock::now() - started_at < std::chrono::seconds(2), "gb28181 tcp active refusal does not wait for timeout");
 }
 
@@ -11324,11 +11325,12 @@ void test_stream_registry_generation_lifecycle()
     require(!stream_registry::instance().find("live/generation"), "registry replacement removed");
 }
 
-void test_stream_registry_session_identity_lifecycle()
+void test_control_session_registry_identity_lifecycle()
 {
-    struct session final : stream_session
+    struct session final : control_session
     {
         void shutdown() override {}
+        [[nodiscard]] std::string_view stream_id() const noexcept override { return {}; }
     };
     worker_context worker;
     const std::string name = "live/session-generation";
@@ -11338,40 +11340,40 @@ void test_stream_registry_session_identity_lifecycle()
     auto replacement = std::make_shared<session>();
     auto sender_a = std::make_shared<session>();
     auto sender_b = std::make_shared<session>();
-    require(stream_registry::instance().add_receiver_session(name, receiver), "registry reserves receiver before publication");
+    require(control_session_registry::instance().add_receiver_session(name, receiver), "registry reserves receiver before publication");
     require(
-        stream_registry::instance().add_sender_session(name, "a", sender_a) && stream_registry::instance().add_sender_session(name, "b", sender_b),
+        control_session_registry::instance().add_sender_session(name, "a", sender_a) && control_session_registry::instance().add_sender_session(name, "b", sender_b),
         "registry independent senders");
     require(stream_registry::instance().add(stream), "registry publishes alongside sessions");
-    require(!stream_registry::instance().add_receiver_session(name, replacement), "registry duplicate receiver preserves owner");
-    require(!stream_registry::instance().add_sender_session(name, "a", replacement), "registry duplicate sender preserves owner");
+    require(!control_session_registry::instance().add_receiver_session(name, replacement), "registry duplicate receiver preserves owner");
+    require(!control_session_registry::instance().add_sender_session(name, "a", replacement), "registry duplicate sender preserves owner");
 
-    require(stream_registry::instance().take_receiver_session(name) == receiver, "registry takes original receiver");
-    require(stream_registry::instance().add_receiver_session(name, replacement), "registry receiver replacement");
-    stream_registry::instance().remove_receiver_session(name, *receiver);
-    require(stream_registry::instance().take_sender_session(name, "a") == sender_a, "registry takes original sender");
-    require(stream_registry::instance().add_sender_session(name, "a", replacement), "registry sender replacement");
-    stream_registry::instance().remove_sender_session(name, "a", *sender_a);
+    require(control_session_registry::instance().take_receiver_session_as<control_session>(name) == receiver, "registry takes original receiver");
+    require(control_session_registry::instance().add_receiver_session(name, replacement), "registry receiver replacement");
+    control_session_registry::instance().remove_receiver_session(name, *receiver);
+    require(control_session_registry::instance().take_sender_session(name, "a") == sender_a, "registry takes original sender");
+    require(control_session_registry::instance().add_sender_session(name, "a", replacement), "registry sender replacement");
+    control_session_registry::instance().remove_sender_session(name, "a", *sender_a);
     require(stream_registry::instance().find(name) == stream, "session removal preserves published stream");
 
     stream_registry::instance().remove(*stream);
     require(!stream_registry::instance().find(name), "stream removal hides publication");
-    require(stream_registry::instance().take_receiver_session(name) == replacement, "stale receiver cleanup and stream removal preserve replacement");
-    require(stream_registry::instance().take_sender_session(name, "a") == replacement,
+    require(control_session_registry::instance().take_receiver_session_as<control_session>(name) == replacement, "stale receiver cleanup and stream removal preserve replacement");
+    require(control_session_registry::instance().take_sender_session(name, "a") == replacement,
             "stale sender cleanup and stream removal preserve replacement");
-    require(stream_registry::instance().take_sender_session(name, "b") == sender_b, "other sender survives sibling and stream removal");
-    require(!stream_registry::instance().take_receiver_session(name) && !stream_registry::instance().take_sender_session(name, "a") &&
-                !stream_registry::instance().take_sender_session(name, "b"),
+    require(control_session_registry::instance().take_sender_session(name, "b") == sender_b, "other sender survives sibling and stream removal");
+    require(!control_session_registry::instance().take_receiver_session_as<control_session>(name) && !control_session_registry::instance().take_sender_session(name, "a") &&
+                !control_session_registry::instance().take_sender_session(name, "b"),
             "taken registry sessions cannot be taken twice");
 
-    require(stream_registry::instance().add(stream) && stream_registry::instance().add_receiver_session(name, receiver) &&
-                stream_registry::instance().add_sender_session(name, "a", sender_a),
+    require(stream_registry::instance().add(stream) && control_session_registry::instance().add_receiver_session(name, receiver) &&
+                control_session_registry::instance().add_sender_session(name, "a", sender_a),
             "registry name reusable after cleanup");
     const std::weak_ptr<session> weak_receiver = receiver;
     const std::weak_ptr<session> weak_sender = sender_a;
     const std::weak_ptr<media_stream> weak_stream = stream;
-    require(stream_registry::instance().take_receiver_session(name) == receiver, "registry takes reusable receiver");
-    require(stream_registry::instance().take_sender_session(name, "a") == sender_a, "registry takes reusable sender");
+    require(control_session_registry::instance().take_receiver_session_as<control_session>(name) == receiver, "registry takes reusable receiver");
+    require(control_session_registry::instance().take_sender_session(name, "a") == sender_a, "registry takes reusable sender");
     stream_registry::instance().remove(*stream);
     receiver.reset();
     sender_a.reset();
@@ -13827,9 +13829,9 @@ int main(int argc, char* argv[])
         {
             media_server::test_stream_registry_generation_lifecycle();
         }
-        else if (scenario == "stream_registry_session_identity_lifecycle")
+        else if (scenario == "control_session_registry_identity_lifecycle")
         {
-            media_server::test_stream_registry_session_identity_lifecycle();
+            media_server::test_control_session_registry_identity_lifecycle();
         }
         else if (scenario == "hls_module_lifecycle")
         {

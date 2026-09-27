@@ -15,6 +15,7 @@
 #include "media/core/runtime_event.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "tests/clients/publish_claim_test_server.h"
@@ -100,7 +101,7 @@ void test_rtsp_pull_runtime_failure_events()
                                                        std::chrono::milliseconds{200},
                                                        std::chrono::milliseconds{200},
                                                        1024U * 1024U);
-    require(stream_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event receiver reservation");
+    require(control_session_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event receiver reservation");
     boost::asio::post(worker.io(), [session]() { require(session->startup(), "runtime event pull startup"); });
 
     std::jthread runner([&worker]() { worker.run(); });
@@ -109,7 +110,7 @@ void test_rtsp_pull_runtime_failure_events()
         const bool received = wait_runtime_events(server, 3U);
 
         const auto events = runtime_events(server);
-        const bool released = !stream_registry::instance().take_receiver_session("live/runtime-events");
+        const bool released = !control_session_registry::instance().take_receiver_session_as<control_session>("live/runtime-events");
         session->shutdown();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         const auto final_event_count = runtime_events(server).size();
@@ -157,7 +158,7 @@ void test_rtsp_pull_ordinary_shutdown_reports_stopped()
                                                        std::chrono::seconds{5},
                                                        std::chrono::seconds{5},
                                                        1024U * 1024U);
-    require(stream_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event shutdown reservation");
+    require(control_session_registry::instance().add_receiver_session("live/runtime-events", session), "runtime event shutdown reservation");
     std::promise<void> started;
     auto ready = started.get_future();
     std::jthread runner([&worker]() { worker.run(); });
@@ -175,7 +176,7 @@ void test_rtsp_pull_ordinary_shutdown_reports_stopped()
         session->shutdown();
         const bool stopped = wait_runtime_events(server, 3U);
         const auto events = runtime_events(server);
-        const bool released = !stream_registry::instance().take_receiver_session("live/runtime-events");
+        const bool released = !control_session_registry::instance().take_receiver_session_as<control_session>("live/runtime-events");
         worker.request_stop();
         runner.join();
 

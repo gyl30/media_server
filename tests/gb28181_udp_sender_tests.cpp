@@ -18,6 +18,7 @@
 #include "media/core/media_stream.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
 
 extern "C"
@@ -103,7 +104,7 @@ void test_udp_sender_session_sends_rtp()
                                                                 false,
                                                                 std::chrono::milliseconds{25'000},
                                                                 1024U * 1024U);
-    require(stream_registry::instance().add_sender_session(source->name(), "udp-sender", session), "gb udp sender session registry");
+    require(control_session_registry::instance().add_sender_session(source->name(), "udp-sender", session), "gb udp sender session registry");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb udp sender session startup");
@@ -182,7 +183,7 @@ void test_udp_sender_queue_overflow_drops_packet()
                                                                 false,
                                                                 std::chrono::milliseconds{25'000},
                                                                 0U);
-    require(stream_registry::instance().add_sender_session(source->name(), "udp-overflow", session), "gb udp overflow sender registry");
+    require(control_session_registry::instance().add_sender_session(source->name(), "udp-overflow", session), "gb udp overflow sender registry");
     bool started = false;
     run_on_owner(worker, [&]() { started = session->startup(); });
     require(started, "gb udp overflow session startup");
@@ -203,7 +204,7 @@ void test_udp_sender_queue_overflow_drops_packet()
     io.restart();
 
     require(rtp_receiver.available() == 0U, "gb udp overflow drops new packet");
-    auto registered = stream_registry::instance().take_sender_session(source->name(), "udp-overflow");
+    auto registered = control_session_registry::instance().take_sender_session(source->name(), "udp-overflow");
     require(registered.get() == session.get(), "gb udp overflow keeps session running");
 
     std::weak_ptr<gb28181_udp_sender_session> weak_session = session;
@@ -257,7 +258,7 @@ void test_udp_sender_rtcp_shutdown_releases_scheduler()
                                                                 "udp-sender-rtcp",
                                                                 true,
                                                                 std::chrono::milliseconds::zero());
-    require(stream_registry::instance().add_sender_session(source->name(), "udp-sender-rtcp", session), "gb udp sender rtcp session registry");
+    require(control_session_registry::instance().add_sender_session(source->name(), "udp-sender-rtcp", session), "gb udp sender rtcp session registry");
     require(session->startup(), "gb udp sender rtcp session startup");
 
     io.run_for(std::chrono::milliseconds(20));
@@ -321,7 +322,7 @@ void test_udp_sender_worker_stop_releases_idle_session()
                                                                 "udp-worker-stop",
                                                                 true,
                                                                 std::chrono::hours{1});
-    require(stream_registry::instance().add_sender_session(source->name(), "udp-worker-stop", session), "gb udp worker stop session registry");
+    require(control_session_registry::instance().add_sender_session(source->name(), "udp-worker-stop", session), "gb udp worker stop session registry");
 
     std::promise<bool> started_signal;
     auto started = started_signal.get_future();
@@ -343,7 +344,7 @@ void test_udp_sender_worker_stop_releases_idle_session()
     runner.join();
 
     require(returned_in_time, "worker stop drains idle gb udp sender");
-    require(!stream_registry::instance().take_sender_session(source->name(), "udp-worker-stop"), "worker stop removes gb udp sender registry entry");
+    require(!control_session_registry::instance().take_sender_session(source->name(), "udp-worker-stop"), "worker stop removes gb udp sender registry entry");
     session.reset();
     stream_registry::instance().remove(*source);
 }
