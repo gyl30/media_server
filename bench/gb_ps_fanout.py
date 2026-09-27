@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from fanout_support import proc_snapshot, stop_process, thread_rates, wait_for_phase
+from fanout_support import benchmark_head, proc_snapshot, stop_process, thread_rates, wait_for_phase
 
 
 def main():
@@ -47,7 +47,7 @@ def main():
             measurement = json.loads(result_line)
             result = {
                 "config": {
-                    "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                    "head": benchmark_head(),
                     "viewers": args.viewers, "duration_seconds": args.duration,
                     "frame_bytes": args.frame_bytes, "kernel": platform.release(),
                     "transport": "packet callback only; no UDP/TCP socket",

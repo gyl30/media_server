@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from fanout_support import proc_cpu, proc_snapshot, thread_rates
+from fanout_support import benchmark_head, proc_cpu, proc_snapshot, thread_rates
 
 
 def loopback_packets():
@@ -210,7 +210,7 @@ def main():
             ))
         result = asyncio.run(measure(args, server, publishers))
         result["config"] = {
-            "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+            "head": benchmark_head(),
             "fixture": str(args.fixture), "sources": args.sources, "viewers": args.viewers, "workers": args.workers,
             "warmup_seconds": args.warmup, "duration_seconds": args.duration, "ramp_per_second": args.ramp_per_second,
             "kernel": platform.release(), "cpu_count": os.cpu_count(),

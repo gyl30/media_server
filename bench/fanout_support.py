@@ -6,6 +6,10 @@ import time
 from pathlib import Path
 
 
+def benchmark_head():
+    return os.environ.get("MEDIA_SERVER_BENCH_HEAD") or subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+
+
 def proc_cpu(pid, tid=None):
     path = Path(f"/proc/{pid}/stat") if tid is None else Path(f"/proc/{pid}/task/{tid}/stat")
     stat = path.read_text().rsplit(") ", 1)[1].split()

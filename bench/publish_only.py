@@ -9,7 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from fanout_support import proc_snapshot, stop_process, thread_rates, wait_for_listener
+from fanout_support import benchmark_head, proc_snapshot, stop_process, thread_rates, wait_for_listener
 
 
 def source_ready(host, port, name):
@@ -86,7 +86,7 @@ def main():
             source_status = {name: source_ready(args.host, args.http_port, name) for name in names}
             result = {
                 "config": {
-                    "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                    "head": benchmark_head(),
                     "fixture": str(args.fixture), "sources": args.sources, "workers": args.workers,
                     "warmup_seconds": args.warmup, "duration_seconds": args.duration, "kernel": platform.release(),
                 },

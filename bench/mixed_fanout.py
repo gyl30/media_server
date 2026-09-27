@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from fanout_support import parse_phase, proc_snapshot, stop_process, thread_rates, wait_for_listener, wait_for_phase, wait_for_stream
+from fanout_support import benchmark_head, parse_phase, proc_snapshot, stop_process, thread_rates, wait_for_listener, wait_for_phase, wait_for_stream
 
 
 def main():
@@ -83,7 +83,7 @@ def main():
                 client.wait(timeout=30)
             result = {
                 "config": {
-                    "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                    "head": benchmark_head(),
                     "fixture": str(args.fixture), "viewers_per_protocol": args.viewers_per_protocol,
                     "workers": args.workers, "warmup_seconds": args.warmup,
                     "server_measurement_seconds": args.duration,

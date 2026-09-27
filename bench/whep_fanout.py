@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from fanout_support import parse_phase, proc_snapshot, stop_process, thread_rates, wait_for_listener, wait_for_phase, wait_for_stream
+from fanout_support import benchmark_head, parse_phase, proc_snapshot, stop_process, thread_rates, wait_for_listener, wait_for_phase, wait_for_stream
 
 
 def main():
@@ -77,7 +77,7 @@ def main():
             disconnect = parse_phase(wait_for_phase(client_log_path, client, "disconnect", 5))
             result = {
                 "config": {
-                    "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+                    "head": benchmark_head(),
                     "fixture": str(args.fixture), "viewers": args.viewers, "sources": args.sources, "workers": args.workers,
                     "client_threads": args.client_threads, "ramp_per_second": args.ramp_per_second,
                     "warmup_seconds": args.warmup, "duration_seconds": args.duration,
