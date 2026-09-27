@@ -12,9 +12,12 @@
 
 #include "service.h"
 #include "media/core/log.h"
+#include "media/control/control_session_registry.h"
 #include "media/net/tcp_listener.h"
 #include "media/http/http_session.h"
 #include "media/hls/hls.h"
+#include "media/webrtc/whip.h"
+#include "media/webrtc/whep.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 #include "media/net/io_context_pool.h"
@@ -66,7 +69,13 @@ service::service(config cfg) : config_(std::move(cfg)) {}
 
 service::~service() = default;
 
-void service::stop() { workers_->request_stop(); }
+void service::stop()
+{
+    whip::shutdown();
+    whep::shutdown();
+    control_session_registry::instance().shutdown_all();
+    workers_->request_stop();
+}
 
 bool service::register_signaling(boost::asio::yield_context& yield)
 {

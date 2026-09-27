@@ -14,6 +14,10 @@ control_session_registry& control_session_registry::instance()
 bool control_session_registry::add_receiver_session(std::string stream_name, std::shared_ptr<control_session> session)
 {
     std::scoped_lock lock(mutex_);
+    if (stopping_)
+    {
+        return false;
+    }
     const auto iterator = sessions_.try_emplace(std::move(stream_name)).first;
     if (iterator->second.receiver_session)
     {
@@ -41,6 +45,10 @@ void control_session_registry::remove_receiver_session(std::string_view stream_n
 bool control_session_registry::add_sender_session(std::string stream_name, std::string sender_id, std::shared_ptr<control_session> session)
 {
     std::scoped_lock lock(mutex_);
+    if (stopping_)
+    {
+        return false;
+    }
     const auto iterator = sessions_.try_emplace(std::move(stream_name)).first;
     return iterator->second.sender_sessions.emplace(std::move(sender_id), std::move(session)).second;
 }
@@ -91,6 +99,27 @@ void control_session_registry::remove_sender_session(std::string_view stream_nam
     if (empty(stream_iterator->second))
     {
         sessions_.erase(stream_iterator);
+    }
+}
+
+void control_session_registry::shutdown_all()
+{
+    std::map<std::string, session_entry, std::less<>> detached;
+    {
+        std::scoped_lock lock(mutex_);
+        stopping_ = true;
+        detached.swap(sessions_);
+    }
+    for (const auto& [stream_name, entry] : detached)
+    {
+        if (entry.receiver_session)
+        {
+            entry.receiver_session->shutdown();
+        }
+        for (const auto& [sender_id, session] : entry.sender_sessions)
+        {
+            session->shutdown();
+        }
     }
 }
 

@@ -53,6 +53,7 @@ class control_session_registry final
                                                                       std::string_view sender_id,
                                                                       std::string_view expected_stream_id = {});
     void remove_sender_session(std::string_view stream_name, std::string_view sender_id, const control_session& expected);
+    void shutdown_all();
 
    private:
     struct session_entry
@@ -66,6 +67,7 @@ class control_session_registry final
 
     mutable std::mutex mutex_;
     std::map<std::string, session_entry, std::less<>> sessions_;
+    bool stopping_{};
 };
 
 }    // namespace media_server
