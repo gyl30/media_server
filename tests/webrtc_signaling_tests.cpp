@@ -17,7 +17,6 @@
 #include <boost/crc.hpp>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
-#include <boost/json.hpp>
 #include <openssl/hmac.h>
 #include <openssl/srtp.h>
 #include <boost/url/parse.hpp>
@@ -46,11 +45,9 @@
 #include "media/webrtc/whep_session.h"
 #include "media/webrtc/whip_session.h"
 #include "media/core/stream_registry.h"
-#include "media/http/signaling_client.h"
 #include "media/webrtc/srtp_transport.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/webrtc_packetizer.h"
-#include "tests/clients/publish_claim_test_server.h"
 
 extern "C"
 {
@@ -1219,33 +1216,6 @@ void test_whep_http_namespace_dispatch()
     require(reserved_name_response.result() == boost::beast::http::status::ok, "whep reserved stream endpoint status");
 }
 
-void configure_test_signaling(std::string url)
-{
-    config application_config;
-    application_config.signaling_url = std::move(url);
-    application_config.server_id = "media-1";
-    signaling_client::instance().configure(application_config, "instance-a");
-}
-
-void test_whip_publish_claim(bool accepted)
-{
-    test::publish_claim_test_server claim_server(accepted ? boost::beast::http::status::no_content : boost::beast::http::status::forbidden);
-    configure_test_signaling(claim_server.url());
-    whep_http_test_peer peer;
-    const auto response = peer.post("/publish/whip/live/whip-claim", make_whip_offer(webrtc_offer_sdp), control_stream_id);
-    require(response.result() == (accepted ? boost::beast::http::status::created : boost::beast::http::status::forbidden),
-            "whip publish claim result");
-    const auto claim = claim_server.wait_request("/internal/publish/claim");
-    const auto body = boost::json::parse(claim.body).as_object();
-    require(body.at("stream_id").as_string() == control_stream_id && body.at("protocol") == "whip" && body.at("stream_name") == "live/whip-claim",
-            "whip publish claim identity");
-    if (accepted)
-    {
-        require(peer.remove(std::string(response[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
-                "whip accepted session cleanup");
-    }
-}
-
 void test_whep_http_cors()
 {
     whep_http_test_peer peer;
@@ -1374,11 +1344,6 @@ void test_whip_http_lifecycle()
 
     require_whip_options(peer.options("/publish/whip/live/whip-camera", "POST"), "POST, OPTIONS", true);
 
-    const auto missing_stream_id = peer.post("/publish/whip/live/whip-missing", offer);
-    require(missing_stream_id.result() == boost::beast::http::status::bad_request, "whip missing stream id rejected");
-    const auto invalid_stream_id = peer.post("/publish/whip/live/whip-invalid-id", offer, "invalid");
-    require(invalid_stream_id.result() == boost::beast::http::status::bad_request, "whip invalid stream id rejected");
-
     const auto endpoint_get = peer.request(boost::beast::http::verb::get, "/publish/whip/live/whip-camera");
     require(endpoint_get.result() == boost::beast::http::status::method_not_allowed, "whip endpoint get status");
     require(endpoint_get[boost::beast::http::field::allow] == "POST, OPTIONS", "whip endpoint get allow");
@@ -1395,7 +1360,7 @@ void test_whip_http_lifecycle()
     require(peer.remove(std::string(after_invalid[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
             "whip invalid offer replacement delete");
 
-    const auto created = peer.post("/publish/whip/live/whip-camera", offer, control_stream_id);
+    const auto created = peer.post("/publish/whip/live/whip-camera", offer);
     require(created.result() == boost::beast::http::status::created, "whip create status");
     require(created[boost::beast::http::field::content_type] == "application/sdp", "whip create content type");
     require(created[boost::beast::http::field::cache_control] == "no-store", "whip create cache control");
@@ -1549,7 +1514,6 @@ void test_whip_establishment_timeout()
     require(certificate != nullptr, "whip establishment timeout certificate");
 
     auto session = std::make_shared<whip_session>(worker,
-                                                  std::string{control_stream_id},
                                                   "live/whip-establishment-timeout",
                                                   boost::asio::ip::make_address("127.0.0.1"),
                                                   certificate,
@@ -1585,7 +1549,6 @@ void test_whip_udp_queue_overflow()
     require(certificate != nullptr, "whip udp overflow certificate");
 
     auto session = std::make_shared<whip_session>(worker,
-                                                  std::string{control_stream_id},
                                                   "live/whip-udp-overflow",
                                                   boost::asio::ip::make_address("127.0.0.1"),
                                                   certificate,
@@ -3487,7 +3450,7 @@ void test_whip_session_ingest(codec_id video_codec)
 
     const std::string stream_name = h265 ? "live/whip-dtls-h265" : "live/whip-dtls";
     auto session = std::make_shared<whip_session>(
-        worker, std::string{control_stream_id}, stream_name, boost::asio::ip::make_address("127.0.0.1"), server_certificate);
+        worker, stream_name, boost::asio::ip::make_address("127.0.0.1"), server_certificate);
     require(session->startup(*offer) == whip_session_startup_error::none, "whip session startup");
     require(session->answer_sdp().find("a=recvonly\r\n") != std::string::npos, "whip session recvonly answer");
     if (h265)
@@ -3948,14 +3911,6 @@ int main(int argc, char* argv[])
         else if (scenario == "whep_http_cors")
         {
             media_server::test_whep_http_cors();
-        }
-        else if (scenario == "whip_publish_claim_accepted")
-        {
-            media_server::test_whip_publish_claim(true);
-        }
-        else if (scenario == "whip_publish_claim_rejected")
-        {
-            media_server::test_whip_publish_claim(false);
         }
         else if (scenario == "whip_http_lifecycle")
         {
