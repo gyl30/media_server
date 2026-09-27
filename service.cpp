@@ -155,6 +155,7 @@ int service::run()
 
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_worker = workers_->context(0);
+    hls::startup(control_worker);
     auto& control_io = control_worker.io();
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
     control_worker.spawn(

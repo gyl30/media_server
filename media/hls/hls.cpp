@@ -5,10 +5,13 @@
 #include <string>
 #include <algorithm>
 
+#include <boost/asio/steady_timer.hpp>
+
 #include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
 #include "media/hls/hls_play_session.h"
 #include "media/core/stream_registry.h"
+#include "media/net/worker_context.h"
 
 namespace media_server::hls
 {
@@ -53,6 +56,27 @@ void remove_expired_segmenters(std::chrono::steady_clock::time_point now)
 }
 
 }    // namespace
+
+void startup(worker_context& worker)
+{
+    worker.spawn([](boost::asio::yield_context yield)
+                 {
+                     boost::asio::steady_timer timer(yield.get_executor());
+                     for (;;)
+                     {
+                         timer.expires_after(std::chrono::seconds(1));
+                         boost::system::error_code error;
+                         timer.async_wait(yield[error]);
+                         if (error || yield.cancelled() != boost::asio::cancellation_type::none)
+                         {
+                             return;
+                         }
+                         auto& current = runtime();
+                         std::scoped_lock lock(current.mutex);
+                         remove_expired_segmenters(std::chrono::steady_clock::now());
+                     }
+                 });
+}
 
 std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const config& application_config)
 {

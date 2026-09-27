@@ -9,10 +9,13 @@
 namespace media_server
 {
 class hls_segmenter;
+class worker_context;
 }
 
 namespace media_server::hls
 {
+
+void startup(worker_context& worker);
 
 [[nodiscard]] std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const config& config);
 
