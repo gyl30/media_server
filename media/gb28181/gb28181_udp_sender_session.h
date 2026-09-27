@@ -78,7 +78,6 @@ class gb28181_udp_sender_session final : public control_session, public std::ena
     void* rtcp_sender_{};
     bool rtcp_enabled_{};
     bool rtcp_started_{};
-    bool media_started_{};
     bool closed_{};
     worker_context::shutdown_subscription shutdown_subscription_;
 };

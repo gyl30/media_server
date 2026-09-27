@@ -244,7 +244,6 @@ add_library(media_core STATIC
     media/http/whep_http.cpp
     media/http/whip_http.cpp
     media/http/http_session.cpp
-    media/gb28181/gb28181_event.cpp
     media/gb28181/gb28181_rtp_receiver.cpp
     media/gb28181/gb28181_rtp_sender.cpp
     media/gb28181/gb28181_udp_receiver_session.cpp

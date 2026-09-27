@@ -11,7 +11,6 @@
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_event.h"
 #include "media/gb28181/gb28181_tcp_receiver_session.h"
 
 namespace media_server
@@ -54,8 +53,6 @@ bool gb28181_tcp_receiver_session::startup()
     started_ = true;
     const auto self = shared_from_this();
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
-    gb28181_event::report_source(
-        event_state::starting, stream_id_, receiver_.stream_name(), config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting");
     return true;
 }
 
@@ -101,14 +98,6 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         {
             spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_name(), error.message());
         }
-        if (started_)
-        {
-            gb28181_event::report_source(error == boost::asio::error::timed_out ? event_state::timeout : event_state::runtime_error,
-                                         stream_id_,
-                                         receiver_.stream_name(),
-                                         {},
-                                         error == boost::asio::error::timed_out ? "establishment_timeout" : error.message());
-        }
         shutdown();
         return;
     }
@@ -117,10 +106,6 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
     if (!receiver_.startup())
     {
         spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
-        if (started_)
-        {
-            gb28181_event::report_source(event_state::runtime_error, stream_id_, receiver_.stream_name(), {}, "receiver_startup_failed");
-        }
         shutdown();
         return;
     }
@@ -140,7 +125,6 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
                 shutdown();
                 return;
             }
-            gb28181_event::report_source(event_state::runtime_error, stream_id_, receiver_.stream_name(), {}, error.message());
             shutdown();
             return;
         }
@@ -158,18 +142,9 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
             if (packet_bytes != 0U)
             {
                 const std::span packet{input_buffer.data() + offset, packet_bytes};
-                const bool was_recording = receiver_.recording();
                 const auto result = receiver_.receive_rtp(packet);
-                if (!was_recording && receiver_.recording())
-                {
-                    gb28181_event::report_source(event_state::streaming, stream_id_, receiver_.stream_name(), "streaming");
-                }
                 if (result == gb28181_rtp_receive_result::fatal)
                 {
-                    if (started_)
-                    {
-                        gb28181_event::report_source(event_state::protocol_error, stream_id_, receiver_.stream_name(), {}, "media_input_failed");
-                    }
                     shutdown();
                     return;
                 }
@@ -195,10 +170,6 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    if (started_)
-    {
-        gb28181_event::report_source(event_state::stopped, stream_id_, receiver_.stream_name());
-    }
     started_ = false;
     control_session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)

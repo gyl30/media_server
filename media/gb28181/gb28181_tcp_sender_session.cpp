@@ -12,7 +12,6 @@
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_event.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 
@@ -61,8 +60,6 @@ bool gb28181_tcp_sender_session::startup()
     started_ = true;
     const auto self = shared_from_this();
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
-    gb28181_event::report_output(
-        event_state::starting, stream_id_, stream_name_, config_.mode == gb28181_transport::tcp_passive ? "listening" : "connecting");
     return true;
 }
 
@@ -100,14 +97,6 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         {
             spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_->name(), sender_id_, error.message());
         }
-        if (started_)
-        {
-            gb28181_event::report_output(error == boost::asio::error::timed_out ? event_state::timeout : event_state::runtime_error,
-                                         stream_id_,
-                                         stream_name_,
-                                         {},
-                                         error == boost::asio::error::timed_out ? "establishment_timeout" : error.message());
-        }
         shutdown();
         return;
     }
@@ -120,28 +109,10 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         config_.payload_type,
         config_.ssrc,
         [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
-        [self]()
-        {
-            if (self->started_)
-            {
-                gb28181_event::report_output(event_state::remote_closed, self->stream_id_, self->stream_name_);
-            }
-            self->shutdown();
-        },
-        [self]()
-        {
-            if (self->started_)
-            {
-                gb28181_event::report_output(event_state::runtime_error, self->stream_id_, self->stream_name_, {}, "sender_mux_failed");
-            }
-            self->shutdown();
-        });
+        [self]() { self->shutdown(); },
+        [self]() { self->shutdown(); });
     if (!sender_->startup())
     {
-        if (started_)
-        {
-            gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "sender_startup_failed");
-        }
         shutdown();
         return;
     }
@@ -158,10 +129,6 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         }
     }
 
-    if (yield.cancelled() == boost::asio::cancellation_type::none)
-    {
-        gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, error.message());
-    }
     shutdown();
 }
 
@@ -190,7 +157,6 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
                 shutdown();
                 return;
             }
-            gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, result.error.message());
             shutdown();
             return;
         }
@@ -205,7 +171,6 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     }
     if (packet.size() > std::numeric_limits<std::uint16_t>::max())
     {
-        gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "packet_too_large");
         shutdown();
         return;
     }
@@ -220,18 +185,12 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     const auto result = write_queue_.enqueue(std::move(frame));
     if (result == tcp_write_enqueue_result::overflow)
     {
-        gb28181_event::report_output(event_state::runtime_error, stream_id_, stream_name_, {}, "write_queue_overflow");
         shutdown();
         return;
     }
     if (result == tcp_write_enqueue_result::stopped)
     {
         return;
-    }
-    if (!media_started_)
-    {
-        media_started_ = true;
-        gb28181_event::report_output(event_state::streaming, stream_id_, stream_name_, "streaming");
     }
     if (result == tcp_write_enqueue_result::start_writer)
     {
@@ -248,12 +207,7 @@ void gb28181_tcp_sender_session::safe_shutdown()
     }
     closed_ = true;
     write_queue_.stop();
-    if (started_)
-    {
-        gb28181_event::report_output(event_state::stopped, stream_id_, stream_name_);
-    }
     started_ = false;
-    media_started_ = false;
     control_session_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
     if (listener_)
     {
