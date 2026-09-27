@@ -23,7 +23,6 @@ struct state
 {
     std::mutex mutex;
     std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions;
-    bool stopping{};
 };
 
 state& runtime()
@@ -125,10 +124,6 @@ create_result create(
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
-        if (current.stopping)
-        {
-            return failed(create_error::internal_error);
-        }
         cleanup_expired(current);
         for (const auto& item : current.sessions)
         {
@@ -214,7 +209,6 @@ void shutdown()
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
-    current.stopping = true;
     for (const auto& [id, entry] : current.sessions)
     {
         if (const auto session = entry.lock())

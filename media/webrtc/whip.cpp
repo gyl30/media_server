@@ -31,7 +31,6 @@ struct state
     std::mutex mutex;
     std::map<std::string, session_entry, std::less<>> sessions;
     std::set<std::string, std::less<>> streams;
-    bool stopping{};
 };
 
 state& runtime()
@@ -102,10 +101,6 @@ create_result create(
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
-        if (current.stopping)
-        {
-            return failed(create_error::internal_error);
-        }
         cleanup_expired(current);
         if (!current.streams.emplace(stream_name).second)
         {
@@ -135,25 +130,15 @@ create_result create(
 
     const auto session_id = session->id();
     bool inserted = false;
-    bool stopping = false;
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
         cleanup_expired(current);
-        stopping = current.stopping;
-        if (!stopping)
-        {
-            inserted = current.sessions.emplace(session_id, session_entry{.stream_name = std::string(stream_name), .session = session}).second;
-        }
+        inserted = current.sessions.emplace(session_id, session_entry{.stream_name = std::string(stream_name), .session = session}).second;
         if (!inserted)
         {
             current.streams.erase(std::string(stream_name));
         }
-    }
-    if (stopping)
-    {
-        session->shutdown();
-        return failed(create_error::internal_error);
     }
     if (!inserted)
     {
@@ -199,7 +184,6 @@ void shutdown()
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
-    current.stopping = true;
     for (const auto& [id, entry] : current.sessions)
     {
         if (const auto session = entry.session.lock())
