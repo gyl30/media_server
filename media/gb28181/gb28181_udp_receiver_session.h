@@ -26,7 +26,6 @@ class gb28181_udp_receiver_session final : public control_session, public std::e
 {
    public:
     gb28181_udp_receiver_session(worker_context& worker,
-                                 std::string stream_id,
                                  std::string stream_name,
                                  gb28181_transport_config config,
                                  boost::asio::ip::address bind_address,
@@ -35,9 +34,6 @@ class gb28181_udp_receiver_session final : public control_session, public std::e
    public:
     [[nodiscard]] bool startup();
     void shutdown() override;
-
-   public:
-    [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    public:
     [[nodiscard]] std::optional<port_manager::port_pair> local_ports() const noexcept;
@@ -53,7 +49,6 @@ class gb28181_udp_receiver_session final : public control_session, public std::e
 
    private:
     worker_context& worker_;
-    std::string stream_id_;
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
     gb28181_rtp_receiver receiver_;

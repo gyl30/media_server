@@ -23,7 +23,6 @@ namespace
 struct rtsp_pull_create_config
 {
     std::string stream_id;
-    std::string source_id;
     std::string stream_name;
     std::string url;
     std::string username;
@@ -118,18 +117,17 @@ bool optional_string(const boost::json::object& object, std::string_view key, st
 std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_id", "source_id", "stream_name", "url", "username", "password"}))
+    if (!object || !has_only_fields(*object, {"stream_id", "stream_name", "url", "username", "password"}))
     {
         return std::nullopt;
     }
 
     auto stream_id = required_string(*object, "stream_id");
-    auto source_id = required_string(*object, "source_id");
     auto stream_name = required_string(*object, "stream_name");
     auto url = required_string(*object, "url");
     std::string username;
     std::string password;
-    if (!stream_id || !valid_stream_id(*stream_id) || !source_id || !valid_stream_id(*source_id) || !stream_name || !url ||
+    if (!stream_id || !valid_stream_id(*stream_id) || !stream_name || !url ||
         !optional_string(*object, "username", username) || !optional_string(*object, "password", password) ||
         (object->if_contains("password") != nullptr && username.empty()))
     {
@@ -137,7 +135,6 @@ std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body
     }
     return rtsp_pull_create_config{
         .stream_id = std::move(*stream_id),
-        .source_id = std::move(*source_id),
         .stream_name = std::move(*stream_name),
         .url = std::move(*url),
         .username = std::move(username),
@@ -192,8 +189,6 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
 
     const auto stream_name = config.stream_name;
     auto session = std::make_shared<rtsp_pull_session>(worker,
-                                                       std::move(config.stream_id),
-                                                       std::move(config.source_id),
                                                        stream_name,
                                                        std::move(config.url),
                                                        std::move(config.username),
@@ -201,7 +196,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
                                                        std::chrono::milliseconds{15'000},
                                                        std::chrono::milliseconds{15'000},
                                                        1024U * 1024U);
-    if (!control_session_registry::instance().add_receiver_session(stream_name, session))
+    if (!control_session_registry::instance().add_receiver_session(stream_name, std::move(config.stream_id), session))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
     }

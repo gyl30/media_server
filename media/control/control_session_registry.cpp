@@ -11,7 +11,7 @@ control_session_registry& control_session_registry::instance()
     return registry;
 }
 
-bool control_session_registry::add_receiver_session(std::string stream_name, std::shared_ptr<control_session> session)
+bool control_session_registry::add_receiver_session(std::string stream_name, std::string stream_id, std::shared_ptr<control_session> session)
 {
     std::scoped_lock lock(mutex_);
     if (stopping_)
@@ -19,11 +19,11 @@ bool control_session_registry::add_receiver_session(std::string stream_name, std
         return false;
     }
     const auto iterator = sessions_.try_emplace(std::move(stream_name)).first;
-    if (iterator->second.receiver_session)
+    if (iterator->second.receiver_session.session)
     {
         return false;
     }
-    iterator->second.receiver_session = std::move(session);
+    iterator->second.receiver_session = {.stream_id = std::move(stream_id), .session = std::move(session)};
     return true;
 }
 
@@ -31,18 +31,19 @@ void control_session_registry::remove_receiver_session(std::string_view stream_n
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = sessions_.find(stream_name);
-    if (iterator == sessions_.end() || iterator->second.receiver_session.get() != &expected)
+    if (iterator == sessions_.end() || iterator->second.receiver_session.session.get() != &expected)
     {
         return;
     }
-    iterator->second.receiver_session.reset();
+    iterator->second.receiver_session = {};
     if (empty(iterator->second))
     {
         sessions_.erase(iterator);
     }
 }
 
-bool control_session_registry::add_sender_session(std::string stream_name, std::string sender_id, std::shared_ptr<control_session> session)
+bool control_session_registry::add_sender_session(
+    std::string stream_name, std::string sender_id, std::string stream_id, std::shared_ptr<control_session> session)
 {
     std::scoped_lock lock(mutex_);
     if (stopping_)
@@ -50,7 +51,9 @@ bool control_session_registry::add_sender_session(std::string stream_name, std::
         return false;
     }
     const auto iterator = sessions_.try_emplace(std::move(stream_name)).first;
-    return iterator->second.sender_sessions.emplace(std::move(sender_id), std::move(session)).second;
+    return iterator->second.sender_sessions
+        .emplace(std::move(sender_id), registered_session{.stream_id = std::move(stream_id), .session = std::move(session)})
+        .second;
 }
 
 std::shared_ptr<control_session> control_session_registry::take_sender_session(std::string_view stream_name,
@@ -66,12 +69,11 @@ std::shared_ptr<control_session> control_session_registry::take_sender_session(s
             return {};
         }
         const auto sender_iterator = stream_iterator->second.sender_sessions.find(sender_id);
-        if (sender_iterator == stream_iterator->second.sender_sessions.end() ||
-            (!expected_stream_id.empty() && sender_iterator->second->stream_id() != expected_stream_id))
+        if (sender_iterator == stream_iterator->second.sender_sessions.end() || sender_iterator->second.stream_id != expected_stream_id)
         {
             return {};
         }
-        session = std::move(sender_iterator->second);
+        session = std::move(sender_iterator->second.session);
         stream_iterator->second.sender_sessions.erase(sender_iterator);
         if (empty(stream_iterator->second))
         {
@@ -90,11 +92,10 @@ void control_session_registry::remove_sender_session(std::string_view stream_nam
         return;
     }
     const auto sender_iterator = stream_iterator->second.sender_sessions.find(sender_id);
-    if (sender_iterator == stream_iterator->second.sender_sessions.end() || sender_iterator->second.get() != &expected)
+    if (sender_iterator == stream_iterator->second.sender_sessions.end() || sender_iterator->second.session.get() != &expected)
     {
         return;
     }
-    sender_iterator->second.reset();
     stream_iterator->second.sender_sessions.erase(sender_iterator);
     if (empty(stream_iterator->second))
     {
@@ -112,20 +113,20 @@ void control_session_registry::shutdown_all()
     }
     for (const auto& [stream_name, entry] : detached)
     {
-        if (entry.receiver_session)
+        if (entry.receiver_session.session)
         {
-            entry.receiver_session->shutdown();
+            entry.receiver_session.session->shutdown();
         }
         for (const auto& [sender_id, session] : entry.sender_sessions)
         {
-            session->shutdown();
+            session.session->shutdown();
         }
     }
 }
 
 bool control_session_registry::empty(const session_entry& entry)
 {
-    return !entry.receiver_session && entry.sender_sessions.empty();
+    return !entry.receiver_session.session && entry.sender_sessions.empty();
 }
 
 }    // namespace media_server

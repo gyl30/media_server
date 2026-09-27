@@ -30,7 +30,6 @@ class gb28181_udp_sender_session final : public control_session, public std::ena
 {
    public:
     gb28181_udp_sender_session(worker_context& worker,
-                               std::string stream_id,
                                std::shared_ptr<media_stream> stream,
                                gb28181_transport_config config,
                                boost::asio::ip::address bind_address,
@@ -42,9 +41,6 @@ class gb28181_udp_sender_session final : public control_session, public std::ena
    public:
     [[nodiscard]] bool startup();
     void shutdown() override;
-
-   public:
-    [[nodiscard]] std::string_view stream_id() const noexcept override;
 
    private:
     [[nodiscard]] std::optional<port_manager::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
@@ -58,7 +54,6 @@ class gb28181_udp_sender_session final : public control_session, public std::ena
 
    private:
     worker_context& worker_;
-    std::string stream_id_;
     std::shared_ptr<media_stream> stream_;
     std::string stream_name_;
     std::string sender_id_;

@@ -33,8 +33,6 @@ class rtsp_pull_session final : public control_session, public std::enable_share
 {
    public:
     rtsp_pull_session(worker_context& worker,
-                      std::string stream_id,
-                      std::string source_id,
                       std::string stream_name,
                       std::string url,
                       std::string username = {},
@@ -52,10 +50,6 @@ class rtsp_pull_session final : public control_session, public std::enable_share
     void shutdown() override;
 
    public:
-    [[nodiscard]] std::string_view stream_id() const noexcept override;
-    [[nodiscard]] std::string_view source_id() const noexcept;
-    [[nodiscard]] std::string_view stream_name() const noexcept;
-
    private:
     struct parsed_url
     {
@@ -95,8 +89,6 @@ class rtsp_pull_session final : public control_session, public std::enable_share
 
    private:
     worker_context& worker_;
-    std::string stream_id_;
-    std::string source_id_;
     std::string stream_name_;
     std::string url_;
     std::string username_;
