@@ -62,7 +62,8 @@ whep_session::whep_session(worker_context& worker,
       max_write_queue_bytes_(max_write_queue_bytes),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
-      ice_activity_timer_(worker_.io())
+      ice_activity_timer_(worker_.io()),
+      id_(random_hex(16))
 {
 }
 
@@ -99,7 +100,6 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         return whep_session_startup_error::internal_error;
     }
 
-    id_ = random_hex(16);
     ice_ufrag_ = random_hex(8);
     ice_pwd_ = random_hex(16);
     if (id_.empty() || ice_ufrag_.empty() || ice_pwd_.empty())
