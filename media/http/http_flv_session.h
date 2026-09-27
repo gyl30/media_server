@@ -63,7 +63,6 @@ class http_flv_session final : public media_reader, public std::enable_shared_fr
     boost::beast::tcp_stream stream_;
     request_type request_;
     bool closed_{};
-    std::string stream_id_;
     std::string stream_name_;
     std::vector<std::uint8_t> pending_bootstrap_;
     std::uint64_t pending_generation_{};

@@ -4587,7 +4587,7 @@ void test_http_flv_client_disconnect()
     session.reset();
 
     std::jthread runner([&io]() { io.run(); });
-    require(start_http_flv_client(client, "/live/http-flv-disconnect.flv?stream_id=00000000-0000-4000-8000-000000000011").starts_with("HTTP/1.1 200"),
+    require(start_http_flv_client(client, "/live/http-flv-disconnect.flv").starts_with("HTTP/1.1 200"),
             "http flv response status");
     drain_http_flv_client(client);
 
@@ -4622,7 +4622,7 @@ void test_http_flv_stream_end_during_write()
     session.reset();
 
     std::jthread runner([&io]() { io.run(); });
-    require(start_http_flv_client(client, "/live/http-flv-end-write.flv?stream_id=00000000-0000-4000-8000-000000000012").starts_with("HTTP/1.1 200"),
+    require(start_http_flv_client(client, "/live/http-flv-end-write.flv").starts_with("HTTP/1.1 200"),
             "http flv response status");
     drain_http_flv_client(client);
 
@@ -4657,7 +4657,7 @@ void test_http_flv_pending_bootstrap_end()
 
     std::jthread runner([&io]() { io.run(); });
     require(
-        start_http_flv_client(client, "/live/http-flv-pending-end.flv?stream_id=00000000-0000-4000-8000-000000000013").starts_with("HTTP/1.1 200"),
+        start_http_flv_client(client, "/live/http-flv-pending-end.flv").starts_with("HTTP/1.1 200"),
         "http flv response status");
     drain_http_flv_client(client);
 

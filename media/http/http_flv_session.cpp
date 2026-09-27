@@ -1,7 +1,6 @@
 #include <array>
 #include <span>
 #include <utility>
-#include <optional>
 
 #include <boost/url/parse.hpp>
 #include <boost/asio/post.hpp>
@@ -9,12 +8,9 @@
 #include <boost/asio/detached.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
 
-#include "media/core/stream_id.h"
-#include "media/http/http_event.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/http/http_flv_session.h"
-#include "media/http/signaling_client.h"
 
 namespace media_server
 {
@@ -81,32 +77,9 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         stream_name_.append(segment);
     }
 
-    std::optional<std::string> stream_id;
-    for (const auto parameter : target.params())
+    if (target.has_query() || stream_name_.empty())
     {
-        if (parameter.key != "stream_id")
-        {
-            continue;
-        }
-        if (stream_id || !parameter.has_value)
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream id\n", yield);
-            return;
-        }
-        stream_id = parameter.value;
-    }
-    if (!stream_id || !valid_stream_id(*stream_id) || stream_name_.empty())
-    {
-        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream id\n", yield);
-        return;
-    }
-
-    const auto claim = signaling_client::instance().claim_play(*stream_id, "http-flv", stream_name_, yield);
-    if (claim.kind != signaling_result_kind::accepted)
-    {
-        const auto status =
-            claim.kind == signaling_result_kind::rejected ? boost::beast::http::status::forbidden : boost::beast::http::status::service_unavailable;
-        send_text_response(status, "text/plain", "play claim failed\n", yield);
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream name\n", yield);
         return;
     }
 
@@ -116,9 +89,6 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
         return;
     }
-
-    stream_id_ = std::move(*stream_id);
-    http_event::report_flv_output(event_state::starting, stream_id_, stream_name_, "play");
 
     stream_.expires_never();
     {
@@ -134,10 +104,6 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         boost::beast::http::async_write_header(stream_, serializer, yield[error]);
         if (error)
         {
-            if (yield.cancelled() == boost::asio::cancellation_type::none)
-            {
-                http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
-            }
             return;
         }
         if (closed_)
@@ -147,7 +113,6 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     }
 
     media_stream->add_reader(shared_from_this(), worker_);
-    http_event::report_flv_output(event_state::streaming, stream_id_, stream_name_, "streaming");
 
     std::array<std::uint8_t, 1> read_buffer{};
     for (;;)
@@ -156,10 +121,6 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         stream_.async_read_some(boost::asio::buffer(read_buffer), yield[error]);
         if (error)
         {
-            if (yield.cancelled() == boost::asio::cancellation_type::none)
-            {
-                http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
-            }
             return;
         }
         if (closed_)
@@ -199,7 +160,6 @@ void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_
     {
         if (!bootstrap)
         {
-            http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", "write_queue_overflow");
             shutdown();
             return;
         }
@@ -231,10 +191,6 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
         if (error)
         {
             write_in_progress_ = false;
-            if (yield.cancelled() == boost::asio::cancellation_type::none)
-            {
-                http_event::report_flv_output(event_state::runtime_error, stream_id_, stream_name_, "transport", error.message());
-            }
             shutdown();
             return;
         }
@@ -287,7 +243,6 @@ void http_flv_session::on_end()
     {
         return;
     }
-    http_event::report_flv_output(event_state::remote_closed, stream_id_, stream_name_, "media");
     shutdown();
 }
 
@@ -418,10 +373,6 @@ void http_flv_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    if (!stream_id_.empty())
-    {
-        http_event::report_flv_output(event_state::stopped, stream_id_, stream_name_);
-    }
     remove_reader();
     muxer_.shutdown();
     if (writer_ != nullptr)
