@@ -34,7 +34,7 @@ class webrtc_client_context final
 
     ~webrtc_client_context();
 
-    [[nodiscard]] std::string make_offer(webrtc_client_direction direction = webrtc_client_direction::play) const;
+    [[nodiscard]] std::string make_offer(webrtc_client_direction direction = webrtc_client_direction::play, bool av1 = false) const;
 
    private:
     struct implementation;

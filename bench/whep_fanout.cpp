@@ -34,6 +34,7 @@ using clock_type = std::chrono::steady_clock;
 struct configuration
 {
     std::string whep_url;
+    bool av1{};
     std::size_t viewers{};
     std::size_t sources{1};
     std::size_t ramp_per_second{100};
@@ -89,6 +90,15 @@ configuration parse_arguments(int argc, char** argv)
         if (argument == "--whep-url")
         {
             config.whep_url = argument_value(index, argc, argv, argument);
+        }
+        else if (argument == "--video-codec")
+        {
+            const auto codec = argument_value(index, argc, argv, argument);
+            if (codec != "passthrough" && codec != "av1")
+            {
+                throw std::runtime_error("video-codec must be passthrough or av1");
+            }
+            config.av1 = codec == "av1";
         }
         else if (argument == "--viewers")
         {
@@ -175,8 +185,10 @@ class play_session final : public std::enable_shared_from_this<play_session>
     play_session(std::shared_ptr<shared_results> results,
                  std::shared_ptr<media_server::bench::webrtc_client_peer> peer,
                  std::string resource_url,
-                 std::size_t index)
-        : results_(std::move(results)), peer_(std::move(peer)), resource_url_(std::move(resource_url)), index_(index)
+                 std::size_t index,
+                 std::uint8_t video_payload_type)
+        : results_(std::move(results)), peer_(std::move(peer)), resource_url_(std::move(resource_url)), index_(index),
+          video_payload_type_(video_payload_type)
     {
     }
 
@@ -225,7 +237,7 @@ class play_session final : public std::enable_shared_from_this<play_session>
             return;
         }
         const auto payload_type = static_cast<std::uint8_t>(packet[1] & 0x7fU);
-        if (payload_type == 102U)
+        if (payload_type == video_payload_type_)
         {
             ++video_packets_;
             if (!pli_sent_)
@@ -280,6 +292,7 @@ class play_session final : public std::enable_shared_from_this<play_session>
     std::shared_ptr<media_server::bench::webrtc_client_peer> peer_;
     std::string resource_url_;
     std::size_t index_{};
+    std::uint8_t video_payload_type_{};
     std::atomic_uint64_t video_packets_{};
     std::atomic_uint64_t audio_packets_{};
     std::atomic_uint64_t received_bytes_{};
@@ -391,7 +404,7 @@ int main(int argc, char** argv)
 
         std::vector<std::shared_ptr<play_session>> sessions;
         sessions.reserve(config.viewers);
-        const auto offer = context->make_offer();
+        const auto offer = context->make_offer(media_server::bench::webrtc_client_direction::play, config.av1);
         const auto ramp_started = clock_type::now();
         const auto ramp_interval = std::chrono::nanoseconds{1'000'000'000LL / static_cast<std::int64_t>(config.ramp_per_second)};
         for (std::size_t index = 0; index < config.viewers; ++index)
@@ -420,7 +433,7 @@ int main(int argc, char** argv)
             }
             else
             {
-                auto session = std::make_shared<play_session>(results, peer, response.location, index);
+                auto session = std::make_shared<play_session>(results, peer, response.location, index, config.av1 ? 103U : 102U);
                 sessions.push_back(session);
                 ++results->ready;
                 boost::asio::post(shard.io, [session]() { session->start(); });

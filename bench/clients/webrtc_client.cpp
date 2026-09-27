@@ -311,7 +311,7 @@ webrtc_client_context::webrtc_client_context(std::unique_ptr<implementation> sta
 
 webrtc_client_context::~webrtc_client_context() = default;
 
-std::string webrtc_client_context::make_offer(webrtc_client_direction direction) const
+std::string webrtc_client_context::make_offer(webrtc_client_direction direction, bool av1) const
 {
     const auto media_direction = direction == webrtc_client_direction::publish ? "sendonly" : "recvonly";
     std::ostringstream sdp;
@@ -320,7 +320,7 @@ std::string webrtc_client_context::make_offer(webrtc_client_direction direction)
         << "s=-\r\n"
         << "t=0 0\r\n"
         << "a=group:BUNDLE 0 1\r\n"
-        << "m=video 9 UDP/TLS/RTP/SAVPF 102\r\n"
+        << "m=video 9 UDP/TLS/RTP/SAVPF " << (av1 ? 103 : 102) << "\r\n"
         << "c=IN IP4 0.0.0.0\r\n"
         << "a=ice-ufrag:" << client_ice_ufrag << "\r\n"
         << "a=ice-pwd:" << client_ice_password << "\r\n"
@@ -330,8 +330,8 @@ std::string webrtc_client_context::make_offer(webrtc_client_direction direction)
         << "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n"
         << "a=" << media_direction << "\r\n"
         << "a=rtcp-mux\r\n"
-        << "a=rtpmap:102 H264/90000\r\n"
-        << "a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n"
+        << (av1 ? "a=rtpmap:103 AV1/90000\r\na=fmtp:103 profile=0;level-idx=5;tier=0\r\n"
+                : "a=rtpmap:102 H264/90000\r\na=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n")
         << "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
         << "c=IN IP4 0.0.0.0\r\n"
         << "a=ice-ufrag:" << client_ice_ufrag << "\r\n"
