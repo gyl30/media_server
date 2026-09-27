@@ -267,7 +267,6 @@ add_library(media_core STATIC
     media/rtmp/rtmp_play_session.cpp
     media/rtmp/rtmp_session.cpp
     media/rtsp/rtsp_sdp.cpp
-    media/rtsp/rtsp_event.cpp
     media/rtsp/rtsp_uri.cpp
     media/rtsp/rtsp_pull_session.cpp
     media/rtsp/rtsp_pull_media.cpp
