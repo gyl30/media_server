@@ -10,7 +10,6 @@ namespace media_server
 
 struct rtsp_target
 {
-    std::string stream_id;
     std::string stream_name;
 };
 

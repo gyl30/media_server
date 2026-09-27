@@ -9,9 +9,7 @@
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
-#include "media/rtsp/rtsp_event.h"
 #include "media/net/worker_context.h"
-#include "media/http/signaling_client.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
@@ -55,8 +53,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
         return;
     }
 
-    yield_ = &yield;
-    boost::scope::scope_exit clear_yield([this]() { yield_ = nullptr; });
     boost::system::error_code endpoint_error;
     const auto peer = transport_.remote_endpoint(endpoint_error);
     if (endpoint_error)
@@ -116,7 +112,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
         {
             if (yield.cancelled() == boost::asio::cancellation_type::none)
             {
-                report_transport_error(error);
+                spdlog::debug("rtsp read failed: {}", error.message());
             }
             shutdown();
             return;
@@ -144,16 +140,12 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 rtsp_need_more_data = result > 0;
                 if (result < 0)
                 {
-                    report_publisher_event(event_state::protocol_error, "control", "rtsp_input_failed");
-                    report_output_event(event_state::protocol_error, "control", "rtsp_input_failed");
                     shutdown();
                     return;
                 }
                 consumed = remaining.size() - remaining_bytes;
                 if (result == 0 && consumed == 0)
                 {
-                    report_publisher_event(event_state::protocol_error, "control", "rtsp_input_made_no_progress");
-                    report_output_event(event_state::protocol_error, "control", "rtsp_input_made_no_progress");
                     shutdown();
                     return;
                 }
@@ -161,8 +153,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
 
             if (consumed == 0 || consumed > remaining.size())
             {
-                report_publisher_event(event_state::protocol_error, "control", "invalid_rtsp_input_consumption");
-                report_output_event(event_state::protocol_error, "control", "invalid_rtsp_input_consumption");
                 shutdown();
                 return;
             }
@@ -351,30 +341,12 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     }
 
     self->publish_session_ = publish;
-    const auto stream_id = publish->stream_id();
-    const auto stream_name = publish->stream_name();
-    const auto result = signaling_client::instance().claim_publish(stream_id, "rtsp", stream_name, *self->yield_);
-    if (self->closed_ || self->publish_session_ != publish)
+    const auto reply_result = publish->accept_announce(server);
+    if (reply_result != 0)
     {
-        return -1;
+        self->shutdown();
     }
-
-    if (result.kind == signaling_result_kind::accepted)
-    {
-        self->record_control_activity();
-        const auto reply_result = publish->accept_announce(server);
-        if (reply_result != 0)
-        {
-            self->shutdown();
-        }
-        return reply_result;
-    }
-
-    spdlog::warn("rtsp publish claim failed stream {} stream_id {} status {} error {}", stream_name, stream_id, result.status, result.error);
-    publish->shutdown();
-    self->publish_session_.reset();
-    const auto reply_status = result.kind == signaling_result_kind::rejected ? 403 : 503;
-    return self->reply_announce_and_close(server, reply_status);
+    return reply_result;
 }
 
 int rtsp_server_connection::record_callback(
@@ -452,8 +424,6 @@ void rtsp_server_connection::write(tcp_write_queue::buffer data)
     const auto result = write_queue_.enqueue(std::move(data), close_after_write);
     if (result == tcp_write_enqueue_result::overflow)
     {
-        report_publisher_event(event_state::runtime_error, "transport", "write_queue_overflow");
-        report_output_event(event_state::runtime_error, "transport", "write_queue_overflow");
         shutdown();
         return;
     }
@@ -471,18 +441,6 @@ void rtsp_server_connection::write(tcp_write_queue::buffer data)
         const auto self = shared_from_this();
         worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
     }
-}
-
-int rtsp_server_connection::reply_announce_and_close(rtsp_server_t* server, int status)
-{
-    close_next_write_ = true;
-    const auto result = rtsp_server_reply_announce(server, status);
-    close_next_write_ = false;
-    if (!closing_after_write_)
-    {
-        shutdown();
-    }
-    return result;
 }
 
 void rtsp_server_connection::run_write(boost::asio::yield_context yield)
@@ -507,7 +465,7 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
         {
             if (yield.cancelled() == boost::asio::cancellation_type::none)
             {
-                report_transport_error(result.error);
+                spdlog::debug("rtsp write failed: {}", result.error.message());
             }
             shutdown();
             return;
@@ -541,21 +499,8 @@ int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
         target->stream_name.resize(separator);
     }
 
-    const auto result = signaling_client::instance().claim_play(target->stream_id, "rtsp", target->stream_name, *yield_);
-    if (closed_ || play_session_ || publish_session_)
-    {
-        return -1;
-    }
-    if (result.kind != signaling_result_kind::accepted)
-    {
-        spdlog::warn(
-            "rtsp play claim failed stream {} stream_id {} status {} error {}", target->stream_name, target->stream_id, result.status, result.error);
-        return result.kind == signaling_result_kind::rejected ? 403 : 503;
-    }
-
     const auto owner = shared_from_this();
     play_session_ = std::make_shared<rtsp_play_session>(worker_,
-                                                        std::move(target->stream_id),
                                                         std::move(target->stream_name),
                                                         video_codec_,
                                                         local_address_,
@@ -563,32 +508,7 @@ int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
                                                         [owner]() { return owner->write_queue_.queued_bytes(); },
                                                         write_queue_.max_bytes());
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
-    play_session_->startup();
     return 200;
-}
-
-void rtsp_server_connection::report_publisher_event(event_state state, std::string_view stage, std::string_view error)
-{
-    if (!publish_session_)
-    {
-        return;
-    }
-    rtsp_event::report_publisher(state, publish_session_->stream_id(), publish_session_->stream_name(), stage, error);
-}
-
-void rtsp_server_connection::report_output_event(event_state state, std::string_view stage, std::string_view error)
-{
-    if (!play_session_)
-    {
-        return;
-    }
-    rtsp_event::report_output(state, play_session_->stream_id(), play_session_->stream_name(), stage, error);
-}
-
-void rtsp_server_connection::report_transport_error(const boost::system::error_code& error)
-{
-    report_publisher_event(event_state::runtime_error, "transport", error.message());
-    report_output_event(event_state::runtime_error, "transport", error.message());
 }
 
 void rtsp_server_connection::record_control_activity() { last_control_activity_ = std::chrono::steady_clock::now(); }
@@ -609,8 +529,6 @@ void rtsp_server_connection::schedule_inactivity_timeout()
                 self->schedule_inactivity_timeout();
                 return;
             }
-            self->report_publisher_event(event_state::timeout, "control", "inactivity_timeout");
-            self->report_output_event(event_state::timeout, "control", "inactivity_timeout");
             self->shutdown();
         });
 }

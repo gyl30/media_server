@@ -129,7 +129,7 @@ namespace
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 constexpr std::string_view rtsp_pull_source_id = "10000000-0000-4000-8000-000000000001";
-constexpr std::string_view rtsp_play_query = "?stream_id=00000000-0000-4000-8000-000000000010";
+constexpr std::string_view rtsp_play_query = "";
 
 using rtsp_write_handler = std::function<void(std::span<const std::uint8_t>)>;
 using rtsp_play_write_handler = rtsp_play_session::write_handler;
@@ -158,7 +158,6 @@ static_assert(
 static_assert(std::is_constructible_v<rtsp_play_session,
                                       worker_context&,
                                       std::string,
-                                      std::string,
                                       video_transcode_codec,
                                       boost::asio::ip::address,
                                       rtsp_play_write_handler,
@@ -166,7 +165,6 @@ static_assert(std::is_constructible_v<rtsp_play_session,
                                       std::size_t>);
 static_assert(!std::is_constructible_v<rtsp_play_session,
                                        boost::asio::io_context::executor_type,
-                                       std::string,
                                        std::string,
                                        video_transcode_codec,
                                        boost::asio::ip::address,
@@ -6236,28 +6234,20 @@ void test_rtsp_uri_contract()
     require(rtsp_path_from_uri("/live/test/trackID=2") == "live/test/trackID=2", "rtsp uri preserves opaque track segment");
     require(rtsp_path_from_uri("rtsp://[").empty(), "rtsp uri invalid stream");
 
-    constexpr std::string_view stream_id = "00000000-0000-4000-8000-000000000001";
-    for (const auto& [uri, expected_name] : std::array<std::pair<std::string_view, std::string_view>, 4>{
-             std::pair{"rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-000000000001", "live/camera"},
-             std::pair{"rtsp://127.0.0.1:8554/live/camera?token=x&stream_id=00000000-0000-4000-8000-000000000001&mode=record", "live/camera"},
-             std::pair{"rtsp://127.0.0.1:8554/live/camera?mode=record&stream_id=00000000-0000-4000-8000-000000000001", "live/camera"},
-             std::pair{"rtsp://127.0.0.1:8554/live/camera%20one?stream%5Fid=00000000-0000-4000-8000-000000000001", "live/camera one"},
+    for (const auto& [uri, expected_name] : std::array<std::pair<std::string_view, std::string_view>, 3>{
+             std::pair{"rtsp://127.0.0.1:8554/live/camera", "live/camera"},
+             std::pair{"/live/camera", "live/camera"},
+             std::pair{"rtsp://127.0.0.1:8554/live/camera%20one", "live/camera one"},
          })
     {
         const auto target = parse_rtsp_target(uri);
-        require(target && target->stream_name == expected_name && target->stream_id == stream_id, "rtsp publish target parsed");
+        require(target && target->stream_name == expected_name, "rtsp media target parsed");
     }
 
     for (const auto uri : {
-             "rtsp://127.0.0.1:8554/live/camera",
-             "rtsp://127.0.0.1:8554/live/camera?stream_id=",
-             "rtsp://127.0.0.1:8554/live/camera?stream_id=not-a-uuid",
-             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-00000000000A",
-             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-1000-8000-000000000001",
-             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-7000-000000000001",
-             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-000000000001&stream_id=00000000-0000-4000-8000-000000000002",
-             "rtsp://127.0.0.1:8554/?stream_id=00000000-0000-4000-8000-000000000001",
-             "rtsp://127.0.0.1:8554/live/camera?stream_id=00000000-0000-4000-8000-000000000001#fragment",
+             "rtsp://127.0.0.1:8554/",
+             "rtsp://127.0.0.1:8554/live/camera#fragment",
+             "rtsp://[",
          })
     {
         require(!parse_rtsp_target(uri), "invalid rtsp target rejected");
@@ -6805,7 +6795,7 @@ void test_rtsp_publish_server_contract()
     boost::asio::ip::tcp::socket client(client_io);
     client.connect({boost::asio::ip::address_v4::loopback(), port});
     const auto base = "rtsp://127.0.0.1:" + std::to_string(port) + "/live/publish";
-    constexpr std::string_view publish_query = "?stream_id=00000000-0000-4000-8000-000000000001";
+    constexpr std::string_view publish_query = "";
     const auto video_control = base + "/trackID=0";
     const auto request = [&](std::string value)
     {
@@ -7574,7 +7564,6 @@ void test_rtsp_play_reply_error()
 
     rtsp_play_reply_fixture fixture{
         .session = std::make_shared<rtsp_play_session>(worker,
-                                                       "00000000-0000-4000-8000-000000000012",
                                                        "live/play-reply-error",
                                                        video_transcode_codec::passthrough,
                                                        boost::asio::ip::address_v4::loopback(),
@@ -7628,7 +7617,6 @@ void test_rtsp_play_terminal_failure_quiesces_reader()
     std::size_t shutdowns = 0;
     rtsp_play_reply_fixture fixture{
         .session = std::make_shared<rtsp_play_session>(worker,
-                                                       "00000000-0000-4000-8000-000000000013",
                                                        "live/play-terminal-failure",
                                                        video_transcode_codec::passthrough,
                                                        boost::asio::ip::address_v4::loopback(),
@@ -7716,7 +7704,6 @@ void test_rtsp_play_output_backpressure()
     bool ended = false;
     rtsp_play_reply_fixture fixture{
         .session = std::make_shared<rtsp_play_session>(worker,
-                                                       "00000000-0000-4000-8000-000000000023",
                                                        stream->name(),
                                                        video_transcode_codec::passthrough,
                                                        boost::asio::ip::address_v4::loopback(),
@@ -7815,20 +7802,6 @@ void test_rtsp_play_output_backpressure()
 
 void test_rtsp_play_session_contract()
 {
-    {
-        rtsp_play_test_peer peer;
-        const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-        require(peer.request("DESCRIBE " + base + " RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n").starts_with("RTSP/1.0 400"),
-                "rtsp play requires stream id");
-    }
-    {
-        rtsp_play_test_peer peer;
-        const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
-        require(peer.request("DESCRIBE " + base + "?stream_id=invalid RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n")
-                    .starts_with("RTSP/1.0 400"),
-                "rtsp play rejects invalid stream id");
-    }
-
     rtsp_play_test_peer peer;
     const auto base = "rtsp://127.0.0.1:" + std::to_string(peer.port()) + "/live/test";
 

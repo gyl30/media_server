@@ -12,7 +12,6 @@
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
-#include "media/rtsp/rtsp_event.h"
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -59,7 +58,6 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_play_session::rtsp_play_session(worker_context& worker,
-                                     std::string stream_id,
                                      std::string stream_name,
                                      video_transcode_codec video_codec,
                                      boost::asio::ip::address local_address,
@@ -67,7 +65,6 @@ rtsp_play_session::rtsp_play_session(worker_context& worker,
                                      queue_bytes_handler queued_output_bytes,
                                      std::size_t max_output_queue_bytes)
     : worker_(worker),
-      stream_id_(std::move(stream_id)),
       stream_name_(std::move(stream_name)),
       video_codec_(video_codec),
       local_address_(std::move(local_address)),
@@ -76,8 +73,6 @@ rtsp_play_session::rtsp_play_session(worker_context& worker,
       max_output_queue_bytes_(max_output_queue_bytes)
 {
 }
-
-void rtsp_play_session::startup() { rtsp_event::report_output(event_state::starting, stream_id_, stream_name_, "play"); }
 
 void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
 {
@@ -88,7 +83,6 @@ void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
 
     if (!apply_tracks(tracks))
     {
-        rtsp_event::report_output(event_state::runtime_error, stream_id_, stream_name_, "media", "track_configuration_changed");
         remove_reader();
         shutdown_handler_();
         return;
@@ -108,7 +102,6 @@ void rtsp_play_session::on_read_ready(media_track_snapshot_ptr tracks, bool wait
 
     if (!apply_tracks(tracks))
     {
-        rtsp_event::report_output(event_state::runtime_error, stream_id_, stream_name_, "media", "track_configuration_changed");
         remove_reader();
         shutdown_handler_();
         return;
@@ -181,7 +174,6 @@ void rtsp_play_session::process_read(bool replaying_history)
             if (!video_transcoder_->transcode(entry->frame, output))
             {
                 spdlog::error("rtsp av1 transcode failed track {}", entry->frame.track);
-                rtsp_event::report_output(event_state::runtime_error, stream_id_, stream_name_, "media", "av1_transcode_failed");
                 remove_reader();
                 shutdown_handler_();
                 return;
@@ -237,7 +229,6 @@ void rtsp_play_session::on_end()
     if (!closed_)
     {
         waiting_for_output_ = false;
-        rtsp_event::report_output(event_state::remote_closed, stream_id_, stream_name_, "media");
         shutdown_handler_();
     }
 }
@@ -251,7 +242,6 @@ bool rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std
 {
     if (session_id_.empty())
     {
-        rtsp_event::report_output(event_state::protocol_error, stream_id_, stream_name_, "control", "interleaved_without_session");
         return false;
     }
     if (muxer_ == nullptr || data.empty())
@@ -267,7 +257,6 @@ bool rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std
         }
         if (rtsp_muxer_onrtcp(muxer_, state.payload_index, data.data(), static_cast<int>(data.size())) < 0)
         {
-            rtsp_event::report_output(event_state::protocol_error, stream_id_, stream_name_, "control", "rtcp_input_failed");
             return false;
         }
         return true;
@@ -303,7 +292,6 @@ void rtsp_play_session::safe_shutdown()
     }
     write_handler_ = {};
     shutdown_handler_ = {};
-    rtsp_event::report_output(event_state::stopped, stream_id_, stream_name_);
 }
 
 int rtsp_play_session::on_describe(rtsp_server_t* server, std::string_view uri)
@@ -471,7 +459,6 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
     }
     playing_ = true;
     stream_->add_reader(shared_from_this(), worker_);
-    rtsp_event::report_output(event_state::streaming, stream_id_, stream_name_, "streaming");
     return 0;
 }
 
@@ -483,10 +470,6 @@ int rtsp_play_session::on_teardown(rtsp_server_t* server, std::string_view, std:
     }
 
     const auto result = rtsp_server_reply_teardown(server, 200);
-    if (result == 0)
-    {
-        rtsp_event::report_output(event_state::stop_requested, stream_id_, stream_name_, "control");
-    }
     return result == 0 ? -1 : result;
 }
 

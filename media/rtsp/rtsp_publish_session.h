@@ -49,7 +49,6 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     int on_record(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
 
    public:
-    [[nodiscard]] const std::string& stream_id() const noexcept { return stream_id_; }
     [[nodiscard]] const std::string& stream_name() const noexcept { return stream_name_; }
 
    private:
@@ -64,7 +63,6 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     std::shared_ptr<rtsp_publish_tcp_session> tcp_session_;
     std::shared_ptr<rtsp_publish_udp_session> udp_session_;
     std::vector<rtsp_publish_track_description> descriptions_;
-    std::string stream_id_;
     std::string stream_name_;
     std::string session_id_;
     bool announce_prepared_{};

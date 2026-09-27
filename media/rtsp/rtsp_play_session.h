@@ -33,7 +33,6 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     using write_handler = std::function<void(std::vector<std::uint8_t>)>;
     using queue_bytes_handler = std::function<std::size_t()>;
     rtsp_play_session(worker_context& worker,
-                      std::string stream_id,
                       std::string stream_name,
                       video_transcode_codec video_codec,
                       boost::asio::ip::address local_address,
@@ -45,11 +44,9 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
    public:
-    void startup();
     void shutdown();
 
    public:
-    [[nodiscard]] std::string_view stream_id() const noexcept { return stream_id_; }
     [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
     [[nodiscard]] bool waiting_for_output() const noexcept { return waiting_for_output_; }
     void on_output_progress();
@@ -98,7 +95,6 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 
    private:
     worker_context& worker_;
-    std::string stream_id_;
     std::string stream_name_;
     video_transcode_codec video_codec_;
     boost::asio::ip::address local_address_;
