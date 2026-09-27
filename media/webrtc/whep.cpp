@@ -8,7 +8,6 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "media/webrtc/whep.h"
-#include "media/webrtc/whep_event.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/whep_session.h"
 #include "media/core/stream_registry.h"
@@ -54,8 +53,7 @@ void release_session(state& current, const whep_session& expected)
 
 }    // namespace
 
-create_result create(
-    worker_context& worker, std::string stream_id, std::string_view stream_name, std::string_view offer_sdp, const config& application_config)
+create_result create(worker_context& worker, std::string_view stream_name, std::string_view offer_sdp, const config& application_config)
 {
     spdlog::debug("whep create stream {} offer_bytes {}", stream_name, offer_sdp.size());
 
@@ -112,7 +110,6 @@ create_result create(
     }
 
     auto session = std::make_shared<whep_session>(worker,
-                                                  std::move(stream_id),
                                                   stream,
                                                   advertised_address,
                                                   std::move(certificate),
@@ -125,20 +122,11 @@ create_result create(
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
         cleanup_expired(current);
-        for (const auto& item : current.sessions)
-        {
-            if (const auto active = item.second.lock(); active && active->stream_id() == session->stream_id())
-            {
-                spdlog::debug("whep create stream id already active {}", session->stream_id());
-                return failed(create_error::stream_id_conflict);
-            }
-        }
         session_id_collision = !current.sessions.emplace(session_id, session).second;
     }
     if (session_id_collision)
     {
         spdlog::error("whep session id collision {}", session_id);
-        whep_event::report_output(event_state::runtime_error, session->stream_id(), session->stream_name(), {}, "session_id_collision");
         return failed(create_error::internal_error);
     }
     switch (session->startup(std::move(*offer)))
@@ -199,7 +187,6 @@ bool remove(std::string_view session_id)
         spdlog::debug("whep session remove expired {}", session_id);
         return false;
     }
-    whep_event::report_output(event_state::stop_requested, session->stream_id(), session->stream_name());
     session->shutdown();
     spdlog::info("whep session removed {}", session_id);
     return true;

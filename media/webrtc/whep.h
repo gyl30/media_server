@@ -19,7 +19,6 @@ enum class create_error
 {
     none,
     stream_not_found,
-    stream_id_conflict,
     invalid_offer,
     internal_error,
 };
@@ -31,8 +30,7 @@ struct create_result
     std::string answer_sdp;
 };
 
-[[nodiscard]] create_result create(
-    worker_context& worker, std::string stream_id, std::string_view stream_name, std::string_view offer_sdp, const config& application_config);
+[[nodiscard]] create_result create(worker_context& worker, std::string_view stream_name, std::string_view offer_sdp, const config& application_config);
 [[nodiscard]] bool contains(std::string_view session_id);
 [[nodiscard]] bool remove(std::string_view session_id);
 void shutdown();

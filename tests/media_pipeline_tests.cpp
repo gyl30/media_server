@@ -209,7 +209,6 @@ static_assert(std::is_constructible_v<http_flv_session, worker_context&, boost::
 static_assert(std::is_constructible_v<whip_media_receiver, worker_context&, std::string, whip_media_receiver_config>);
 static_assert(std::is_constructible_v<whep_session,
                                       worker_context&,
-                                      std::string,
                                       std::shared_ptr<media_stream>,
                                       boost::asio::ip::address,
                                       std::shared_ptr<dtls_certificate>>);

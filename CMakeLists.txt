@@ -257,7 +257,6 @@ add_library(media_core STATIC
     media/webrtc/stun_message.cpp
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
-    media/webrtc/whep_event.cpp
     media/webrtc/whip_event.cpp
     media/webrtc/whip_session.cpp
     media/webrtc/whip.cpp
@@ -681,8 +680,6 @@ if(BUILD_TESTING)
         http_head_response_contract
         http_method_contract
         whep_http_cors
-        whep_play_claim_accepted
-        whep_play_claim_rejected
         whip_publish_claim_accepted
         whip_publish_claim_rejected
         whip_http_lifecycle

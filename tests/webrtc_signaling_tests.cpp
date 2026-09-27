@@ -1152,7 +1152,7 @@ void require_whep_options(const boost::beast::http::response<boost::beast::http:
     require(response.result() == boost::beast::http::status::ok, "whep options status");
     require(response["Access-Control-Allow-Origin"] == "*", "whep options allow origin");
     require(response["Access-Control-Allow-Methods"] == methods, "whep options allow methods");
-    require(response["Access-Control-Allow-Headers"] == "Content-Type, X-Stream-ID", "whep options allow headers");
+    require(response["Access-Control-Allow-Headers"] == "Content-Type", "whep options allow headers");
     require((response["Accept-Post"] == "application/sdp") == accept_post, "whep options accept post");
     require(response[boost::beast::http::field::content_length] == "0", "whep options content length");
     require(response.body().empty(), "whep options empty body");
@@ -1227,24 +1227,6 @@ void configure_test_signaling(std::string url)
     signaling_client::instance().configure(application_config, "instance-a");
 }
 
-void test_whep_play_claim(bool accepted)
-{
-    test::publish_claim_test_server claim_server(accepted ? boost::beast::http::status::no_content : boost::beast::http::status::forbidden);
-    configure_test_signaling(claim_server.url());
-    whep_http_test_peer peer;
-    const auto response = peer.post("/play/whep/live/camera", webrtc_offer_sdp, control_stream_id);
-    require(response.result() == (accepted ? boost::beast::http::status::created : boost::beast::http::status::forbidden), "whep play claim result");
-    const auto claim = claim_server.wait_request("/internal/play/claim");
-    const auto body = boost::json::parse(claim.body).as_object();
-    require(body.at("stream_id").as_string() == control_stream_id && body.at("protocol") == "whep" && body.at("stream_name") == "live/camera",
-            "whep play claim identity");
-    if (accepted)
-    {
-        require(peer.remove(std::string(response[boost::beast::http::field::location])).result() == boost::beast::http::status::no_content,
-                "whep accepted session cleanup");
-    }
-}
-
 void test_whip_publish_claim(bool accepted)
 {
     test::publish_claim_test_server claim_server(accepted ? boost::beast::http::status::no_content : boost::beast::http::status::forbidden);
@@ -1269,15 +1251,7 @@ void test_whep_http_cors()
     whep_http_test_peer peer;
     const auto old_endpoint = peer.request(boost::beast::http::verb::get, "/whep/live/camera");
     require(old_endpoint.result() == boost::beast::http::status::not_found, "whep old route status");
-    require_whep_options(peer.options("/play/whep/live/camera", "POST", "Content-Type, X-Stream-ID"), "GET, HEAD, POST, OPTIONS", true);
-
-    const auto missing_stream_id = peer.post("/play/whep/live/camera", webrtc_offer_sdp, {});
-    require(missing_stream_id.result() == boost::beast::http::status::bad_request, "whep missing stream id rejected");
-    require(missing_stream_id[boost::beast::http::field::access_control_allow_origin] == "*", "whep stream id error allow origin");
-    const auto noncanonical_stream_id = peer.post("/play/whep/live/camera", webrtc_offer_sdp, "550E8400-E29B-41D4-A716-446655440000");
-    require(noncanonical_stream_id.result() == boost::beast::http::status::bad_request, "whep noncanonical stream id rejected");
-    const auto non_v4_stream_id = peer.post("/play/whep/live/camera", webrtc_offer_sdp, "550e8400-e29b-11d4-a716-446655440000");
-    require(non_v4_stream_id.result() == boost::beast::http::status::bad_request, "whep non-v4 stream id rejected");
+    require_whep_options(peer.options("/play/whep/live/camera", "POST"), "GET, HEAD, POST, OPTIONS", true);
 
     const auto endpoint_get = peer.request(boost::beast::http::verb::get, "/play/whep/live/camera");
     require(endpoint_get.result() == boost::beast::http::status::ok, "whep endpoint get status");
@@ -1324,7 +1298,7 @@ void test_whep_http_cors()
         "whep missing session head allow origin");
     require(missing_head.body().empty(), "whep missing session head body");
 
-    const auto created = peer.post("/play/whep/live/camera", webrtc_offer_sdp, control_stream_id);
+    const auto created = peer.post("/play/whep/live/camera");
     require(created.result() == boost::beast::http::status::created, "whep cors create status");
     require(created["Access-Control-Allow-Origin"] == "*", "whep create allow origin");
     require(created["Access-Control-Expose-Headers"] == "Location", "whep create expose location");
@@ -1333,9 +1307,11 @@ void test_whep_http_cors()
     require(location.starts_with("/play/whep/session/"), "whep create location");
     require(created.body().starts_with("v=0\r\n"), "whep create answer");
 
-    const auto duplicate = peer.post("/play/whep/live/camera", webrtc_offer_sdp, control_stream_id);
-    require(duplicate.result() == boost::beast::http::status::conflict, "whep duplicate stream id rejected");
-    require(duplicate["Access-Control-Allow-Origin"] == "*", "whep duplicate stream id allow origin");
+    const auto second = peer.post("/play/whep/live/camera");
+    require(second.result() == boost::beast::http::status::created, "whep multiple viewers accepted");
+    const auto second_location = std::string(second[boost::beast::http::field::location]);
+    require(second_location != location, "whep viewers have distinct resource ids");
+    require(peer.remove(second_location).result() == boost::beast::http::status::no_content, "whep second viewer delete");
 
     require_whep_options(peer.options(location, "DELETE"), "GET, HEAD, DELETE, OPTIONS", false);
 
@@ -2714,7 +2690,7 @@ void test_whep_session_startup_errors()
     const auto make_session = [&](std::shared_ptr<media_stream> source, std::shared_ptr<dtls_certificate> session_certificate)
     {
         return std::make_shared<whep_session>(
-            worker, std::string{control_stream_id}, std::move(source), boost::asio::ip::make_address("127.0.0.1"), std::move(session_certificate));
+            worker, std::move(source), boost::asio::ip::make_address("127.0.0.1"), std::move(session_certificate));
     };
 
     auto invalid_offer = *offer;
@@ -2737,7 +2713,7 @@ void test_whep_session_startup_errors()
     require(make_session(stream, nullptr)->startup(*offer) == whep_session_startup_error::internal_error, "startup errors internal error");
 
     auto unavailable_address =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("192.0.2.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("192.0.2.1"), certificate);
     require(unavailable_address->startup(*offer) == whep_session_startup_error::internal_error, "startup errors unavailable local address");
 }
 
@@ -2757,20 +2733,17 @@ void test_whep_session_lifecycle()
     const auto video_ice_offset = missing_ice_offer.find(video_ice_ufrag);
     require(video_ice_offset != std::string::npos, "whep invalid offer ice attribute");
     missing_ice_offer.erase(video_ice_offset, video_ice_ufrag.size());
-    require(whep::create(worker, std::string{control_stream_id}, "live/test", missing_ice_offer, application_config).error ==
+    require(whep::create(worker, "live/test", missing_ice_offer, application_config).error ==
                 whep::create_error::invalid_offer,
             "whep semantic invalid offer");
 
-    const auto first = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
-    const auto duplicate = whep::create(worker, std::string{control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
-    require(duplicate.error == whep::create_error::stream_id_conflict, "whep reject duplicate runtime stream id");
-    const auto second = whep::create(worker, std::string{alternate_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    const auto first = whep::create(worker, "live/test", webrtc_offer_sdp, application_config);
+    const auto second = whep::create(worker, "live/test", webrtc_offer_sdp, application_config);
     require(first.error == whep::create_error::none && second.error == whep::create_error::none, "whep create multiple sessions");
     require(!first.session_id.empty() && !second.session_id.empty(), "whep session ids");
     require(first.session_id != second.session_id, "whep unique session ids");
-    require(first.session_id != control_stream_id, "whep session id differs from runtime stream id");
-    require(first.answer_sdp.find("a=msid:" + std::string{control_stream_id} + "\r\n") != std::string::npos,
-            "whep answer preserves runtime stream id");
+    require(first.answer_sdp.find("a=msid:" + first.session_id + "\r\n") != std::string::npos,
+            "whep answer uses session identity for msid");
     require(first.answer_sdp.find("a=ice-lite\r\n") != std::string::npos, "whep answer sdp");
     require(first.answer_sdp.find("a=candidate:1 1 UDP 2130706431 127.0.0.1 ") != std::string::npos, "whep host candidate");
     require(sdp_attribute(first.answer_sdp, "ice-ufrag") != sdp_attribute(second.answer_sdp, "ice-ufrag"), "whep unique ice ufrag");
@@ -2783,7 +2756,7 @@ void test_whep_session_lifecycle()
     require(whep::remove(second.session_id), "whep remove second session");
     drain_io(io);
 
-    const auto third = whep::create(worker, std::string{replacement_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    const auto third = whep::create(worker, "live/test", webrtc_offer_sdp, application_config);
     require(third.error == whep::create_error::none, "whep recreate viewer");
 
     stream_registry::instance().remove(*stream);
@@ -2795,7 +2768,7 @@ void test_whep_session_lifecycle()
     require(replacement->set_tracks({make_video_track(), make_audio_track()}), "initial tracks");
     require(stream_registry::instance().add(replacement), "whep replacement registry add");
 
-    const auto replacement_session = whep::create(worker, std::string{updated_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    const auto replacement_session = whep::create(worker, "live/test", webrtc_offer_sdp, application_config);
     require(replacement_session.error == whep::create_error::none, "whep create after republish");
     require(replacement_session.session_id != third.session_id, "whep republish new session id");
 
@@ -2806,7 +2779,7 @@ void test_whep_session_lifecycle()
     require(!whep::contains(replacement_session.session_id), "whep source config change releases session resource");
     require(!whep::remove(replacement_session.session_id), "whep source config change releases session");
 
-    const auto updated_session = whep::create(worker, std::string{final_control_stream_id}, "live/test", webrtc_offer_sdp, application_config);
+    const auto updated_session = whep::create(worker, "live/test", webrtc_offer_sdp, application_config);
     require(updated_session.error == whep::create_error::none, "whep create after config change");
     require(whep::remove(updated_session.session_id), "whep remove updated session");
     drain_io(io);
@@ -2822,23 +2795,11 @@ void test_whep_session_churn()
     require(stream->set_tracks({make_video_track(), make_audio_track()}), "whep churn tracks");
     require(stream_registry::instance().add(stream), "whep churn stream add");
 
-    constexpr std::array<std::string_view, 10> stream_ids{
-        "00000000-0000-4000-8000-000000000101",
-        "00000000-0000-4000-8000-000000000102",
-        "00000000-0000-4000-8000-000000000103",
-        "00000000-0000-4000-8000-000000000104",
-        "00000000-0000-4000-8000-000000000105",
-        "00000000-0000-4000-8000-000000000106",
-        "00000000-0000-4000-8000-000000000107",
-        "00000000-0000-4000-8000-000000000108",
-        "00000000-0000-4000-8000-000000000109",
-        "00000000-0000-4000-8000-000000000110",
-    };
     const config application_config;
     std::vector<std::string> session_ids;
-    for (const auto stream_id : stream_ids)
+    for (int index = 0; index < 10; ++index)
     {
-        const auto created = whep::create(worker, std::string{stream_id}, stream->name(), webrtc_offer_sdp, application_config);
+        const auto created = whep::create(worker, stream->name(), webrtc_offer_sdp, application_config);
         require(created.error == whep::create_error::none, "whep churn create viewer");
         require(std::ranges::find(session_ids, created.session_id) == session_ids.end(), "whep churn unique session id");
         session_ids.push_back(created.session_id);
@@ -2870,7 +2831,7 @@ void test_whep_opus_source_session_lifecycle()
     compatible_sdp.replace(fmtp,
                            std::string_view("a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n").size(),
                            "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1;maxaveragebitrate=510000\r\n");
-    const auto session = whep::create(worker, std::string{control_stream_id}, "live/opus", compatible_sdp, application_config);
+    const auto session = whep::create(worker, "live/opus", compatible_sdp, application_config);
     require(session.error == whep::create_error::none && session.answer_sdp.find("a=rtpmap:111 opus/48000/2\r\n") != std::string::npos &&
                 session.answer_sdp.find("sprop-stereo=0") != std::string::npos,
             "whep opus source session answer");
@@ -2902,10 +2863,10 @@ void test_whep_negotiated_track_lifecycle()
     require(video_only_offer.has_value(), "negotiated tracks video offer");
 
     auto video_session =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     require(video_session->startup(*video_only_offer) == whep_session_startup_error::none, "negotiated tracks video session");
-    require(video_session->stream_id() == control_stream_id && video_session->id() != video_session->stream_id(),
-            "whep preserves runtime identity separately from session id");
+    require(video_session->answer_sdp().find("a=msid:" + video_session->id() + "\r\n") != std::string::npos,
+            "whep answer uses session identity for msid");
     require(video_session->answer_sdp().find("a=group:BUNDLE 0\r\n") != std::string::npos, "negotiated tracks video answer");
 
     auto updated_audio = make_audio_track();
@@ -2933,7 +2894,7 @@ void test_whep_negotiated_track_lifecycle()
     require(audio_only_offer.has_value(), "negotiated tracks audio offer");
 
     auto audio_session =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     require(audio_session->startup(*audio_only_offer) == whep_session_startup_error::none, "negotiated tracks audio session");
     require(audio_session->answer_sdp().find("a=group:BUNDLE 1\r\n") != std::string::npos, "negotiated tracks audio answer");
 
@@ -2966,7 +2927,7 @@ void test_whep_self_owned_lifecycle()
     require(certificate != nullptr, "self owned certificate");
 
     auto session =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     require(session->startup(*offer) == whep_session_startup_error::none, "self owned session startup");
     const std::weak_ptr<whep_session> weak_session = session;
     session.reset();
@@ -2992,9 +2953,9 @@ void test_whep_multi_session_isolation()
     require(certificate != nullptr, "multi certificate");
 
     auto first =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     auto second =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     require(first->startup(*offer) == whep_session_startup_error::none && second->startup(*offer) == whep_session_startup_error::none,
             "multi sessions startup");
     require(first->id() != second->id(), "multi unique session ids");
@@ -3060,7 +3021,6 @@ void test_whep_establishment_timeout()
     auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "establishment timeout certificate");
     auto session = std::make_shared<whep_session>(worker,
-                                                  std::string{control_stream_id},
                                                   stream,
                                                   boost::asio::ip::make_address("127.0.0.1"),
                                                   certificate,
@@ -3099,7 +3059,6 @@ void test_whep_ice_activity_timeout()
     require(certificate != nullptr, "ice activity timeout certificate");
 
     auto session = std::make_shared<whep_session>(worker,
-                                                  std::string{control_stream_id},
                                                   stream,
                                                   boost::asio::ip::make_address("127.0.0.1"),
                                                   certificate,
@@ -3208,7 +3167,7 @@ void test_whep_stun_unknown_attribute_contract()
     require(certificate != nullptr, "stun unknown certificate");
 
     auto session =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     require(session->startup(*offer) == whep_session_startup_error::none, "stun unknown session startup");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
@@ -3278,7 +3237,7 @@ void test_whep_udp_send_queue()
     require(certificate != nullptr, "udp send queue certificate");
 
     auto session =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     require(session->startup(*offer) == whep_session_startup_error::none, "udp send queue session startup");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
@@ -3360,7 +3319,6 @@ void test_whep_udp_queue_overflow()
     require(certificate != nullptr, "whep udp overflow certificate");
 
     auto session = std::make_shared<whep_session>(worker,
-                                                  std::string{control_stream_id},
                                                   stream,
                                                   boost::asio::ip::make_address("127.0.0.1"),
                                                   certificate,
@@ -3410,7 +3368,7 @@ void test_whep_ice_lite()
     require(certificate != nullptr, "ice certificate");
 
     auto session =
-        std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+        std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
     require(session->startup(*offer) == whep_session_startup_error::none, "ice session startup");
 
     const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
@@ -3468,7 +3426,7 @@ void test_whep_selected_bundle_transport()
         const auto offer = parse_webrtc_offer(sdp);
         require(offer.has_value(), "selected transport offer");
         auto session =
-            std::make_shared<whep_session>(worker, std::string{control_stream_id}, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
+            std::make_shared<whep_session>(worker, stream, boost::asio::ip::make_address("127.0.0.1"), certificate);
         require(session->startup(*offer) == whep_session_startup_error::none, "selected transport session startup");
 
         const auto local_ufrag = sdp_attribute(session->answer_sdp(), "ice-ufrag");
@@ -3727,7 +3685,6 @@ void test_whep_dtls(codec_id video_codec, const char* srtp_profile, bool server_
     require(offer.has_value(), "dtls parse offer");
 
     auto session = std::make_shared<whep_session>(worker,
-                                                  std::string{control_stream_id},
                                                   stream,
                                                   boost::asio::ip::make_address("127.0.0.1"),
                                                   server_certificate,
@@ -3991,14 +3948,6 @@ int main(int argc, char* argv[])
         else if (scenario == "whep_http_cors")
         {
             media_server::test_whep_http_cors();
-        }
-        else if (scenario == "whep_play_claim_accepted")
-        {
-            media_server::test_whep_play_claim(true);
-        }
-        else if (scenario == "whep_play_claim_rejected")
-        {
-            media_server::test_whep_play_claim(false);
         }
         else if (scenario == "whip_publish_claim_accepted")
         {

@@ -20,8 +20,7 @@ using whep_http_string_response = boost::beast::http::response<boost::beast::htt
 [[nodiscard]] whep_http_string_response handle_whep_request(const whep_http_request& request,
                                                             worker_context& worker,
                                                             const boost::urls::url_view& target,
-                                                            const config& application_config,
-                                                            boost::asio::yield_context& yield);
+                                                            const config& application_config);
 
 }    // namespace media_server
 

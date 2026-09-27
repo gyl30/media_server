@@ -49,7 +49,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
 {
    public:
     whep_session(worker_context& worker,
-                 std::string stream_id,
                  std::shared_ptr<media_stream> stream,
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
@@ -63,8 +62,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
 
    public:
     [[nodiscard]] const std::string& id() const noexcept;
-    [[nodiscard]] const std::string& stream_id() const noexcept;
-    [[nodiscard]] const std::string& stream_name() const noexcept;
     [[nodiscard]] const std::string& answer_sdp() const noexcept;
     [[nodiscard]] std::uint16_t local_port() const noexcept;
     [[nodiscard]] bool ice_connected() const noexcept;
@@ -110,8 +107,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     std::shared_ptr<whep_audio_egress> audio_egress_;
-    std::string stream_id_;
-    std::string stream_name_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
     video_transcode_config video_config_;
