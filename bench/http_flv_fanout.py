@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from process_metrics import proc_cpu, proc_snapshot, thread_rates
+from fanout_support import proc_cpu, proc_snapshot, thread_rates
 
 
 def loopback_packets():

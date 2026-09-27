@@ -313,6 +313,12 @@ endif()
 
 option(MEDIA_SERVER_BUILD_BENCHMARKS "Build standalone performance clients" OFF)
 if(MEDIA_SERVER_BUILD_BENCHMARKS)
+    add_executable(rtmp_fanout
+        bench/rtmp_fanout.cpp
+        bench/clients/rtmp_client.cpp
+    )
+    target_link_libraries(rtmp_fanout PRIVATE media_core media_server_link_options)
+
     add_executable(whep_fanout
         bench/whep_fanout.cpp
         bench/clients/webrtc_client.cpp

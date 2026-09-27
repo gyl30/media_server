@@ -1,4 +1,8 @@
 import os
+import signal
+import socket
+import subprocess
+import time
 from pathlib import Path
 
 
@@ -55,3 +59,60 @@ def thread_rates(before, after, field, elapsed):
         tid: (state[field] - before["threads"].get(tid, {field: state[field]})[field]) / elapsed
         for tid, state in after["threads"].items()
     }
+
+
+def wait_for_listener(host, port):
+    for _ in range(100):
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError("media server did not open RTMP listener")
+
+
+def wait_for_stream(host, port):
+    for _ in range(100):
+        try:
+            with socket.create_connection((host, port), timeout=2) as connection:
+                connection.sendall(f"GET /live/perf0.flv HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
+                if connection.recv(64).startswith(b"HTTP/1.1 200"):
+                    return
+        except OSError:
+            pass
+        time.sleep(0.1)
+    raise RuntimeError("source perf0 did not become readable")
+
+
+def wait_for_phase(path, process, phase, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for line in path.read_text().splitlines():
+            if line.startswith(f"phase={phase} ") or line == f"phase={phase}":
+                return line
+        if process.poll() is not None:
+            raise RuntimeError(f"fanout client exited {process.returncode} before {phase}: {path.read_text()}")
+        time.sleep(0.05)
+    raise RuntimeError(f"fanout client did not reach {phase} within {timeout}s: {path.read_text()}")
+
+
+def parse_phase(line):
+    values = {}
+    for field in line.split():
+        key, _, value = field.partition("=")
+        if value:
+            try:
+                values[key] = float(value) if any(char in value for char in ".eE") else int(value)
+            except ValueError:
+                values[key] = value
+    return values
+
+
+def stop_process(process):
+    if process is not None and process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()

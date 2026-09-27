@@ -12,16 +12,15 @@ from fanout_support import parse_phase, proc_snapshot, stop_process, thread_rate
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Direct RTMP publish to WHEP fanout benchmark")
+    parser = argparse.ArgumentParser(description="Direct RTMP publish to RTMP fanout benchmark")
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--server-bin", type=Path, default=Path("build/media_server"))
-    parser.add_argument("--client-bin", type=Path, default=Path("build/whep_fanout"))
+    parser.add_argument("--client-bin", type=Path, default=Path("build/rtmp_fanout"))
     parser.add_argument("--ffmpeg-bin", type=Path, default=Path("/home/gyl/bin/ffmpeg"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--viewers", type=int, required=True)
     parser.add_argument("--workers", type=int, default=6)
-    parser.add_argument("--client-threads", type=int, default=8)
-    parser.add_argument("--ramp-per-second", type=int, default=100)
+    parser.add_argument("--ramp-per-second", type=int, default=50)
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--duration", type=int, default=20)
     parser.add_argument("--host", default="127.0.0.1")
@@ -29,13 +28,12 @@ def main():
     parser.add_argument("--rtsp-port", type=int, default=18554)
     parser.add_argument("--http-port", type=int, default=18080)
     args = parser.parse_args()
-    if min(args.viewers, args.workers, args.client_threads, args.ramp_per_second, args.duration) < 1 or args.warmup < 0:
-        parser.error("viewers, workers, client-threads, ramp-per-second and duration must be positive")
+    if min(args.viewers, args.workers, args.ramp_per_second, args.duration) < 1 or args.warmup < 0:
+        parser.error("viewers, workers, ramp-per-second and duration must be positive")
 
     args.output.mkdir(parents=True, exist_ok=True)
-    server_log_path = args.output / "server.log"
     client_log_path = args.output / "client.log"
-    with server_log_path.open("w") as server_log, (args.output / "publisher.log").open("w") as publisher_log, \
+    with (args.output / "server.log").open("w") as server_log, (args.output / "publisher.log").open("w") as publisher_log, \
          client_log_path.open("w") as client_log, (args.output / "client-error.log").open("w") as client_error:
         server = subprocess.Popen(
             [str(args.server_bin), "--threads", str(args.workers), "--rtmp-port", str(args.rtmp_port),
@@ -53,36 +51,47 @@ def main():
             )
             wait_for_stream(args.host, args.http_port)
             client = subprocess.Popen(
-                [str(args.client_bin), "--whep-url", f"http://{args.host}:{args.http_port}/play/whep/live/perf0",
-                 "--viewers", str(args.viewers), "--io-threads", str(args.client_threads),
+                [str(args.client_bin), "--stream-name", "live/perf0", "--media-host", args.host,
+                 "--media-port", str(args.rtmp_port), "--viewers", str(args.viewers),
                  "--ramp-per-second", str(args.ramp_per_second), "--warmup", str(args.warmup),
                  "--duration", str(args.duration)], stdout=client_log, stderr=client_error,
             )
-            established = parse_phase(wait_for_phase(client_log_path, client, "established", max(90, args.viewers / 10)))
-            wait_for_phase(client_log_path, client, "measurement_start", args.warmup + 30)
+            wait_for_phase(client_log_path, client, "measurement_start", max(90, args.viewers / 10 + args.warmup))
             before_server = proc_snapshot(server.pid)
             samples = []
+            client_samples = [proc_snapshot(client.pid)]
             started = time.monotonic()
             while time.monotonic() - started < args.duration:
                 time.sleep(min(1, max(0, args.duration - (time.monotonic() - started))))
                 samples.append(proc_snapshot(server.pid))
+                if client.poll() is None:
+                    try:
+                        client_samples.append(proc_snapshot(client.pid))
+                    except FileNotFoundError:
+                        pass
             elapsed = time.monotonic() - started
             after_server = proc_snapshot(server.pid)
             measurement = parse_phase(wait_for_phase(client_log_path, client, "measurement", 30))
-            client.wait(timeout=max(30, args.viewers / 10))
-            disconnect = parse_phase(wait_for_phase(client_log_path, client, "disconnect", 5))
+            client.wait(timeout=10)
             result = {
                 "config": {
                     "head": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                     "fixture": str(args.fixture), "viewers": args.viewers, "workers": args.workers,
-                    "client_threads": args.client_threads, "ramp_per_second": args.ramp_per_second,
-                    "warmup_seconds": args.warmup, "duration_seconds": args.duration,
-                    "kernel": platform.release(),
+                    "ramp_per_second": args.ramp_per_second, "warmup_seconds": args.warmup,
+                    "duration_seconds": args.duration, "kernel": platform.release(),
                 },
-                "established": established,
                 "measurement": measurement,
-                "disconnect": disconnect,
                 "client_exit": client.returncode,
+                "aggregate_gbit_per_second": 8 * (measurement["steady_video_bytes"] + measurement["steady_audio_bytes"]) /
+                                             (1e9 * args.duration),
+                "viewer_video_bytes_per_second": {
+                    point: measurement[f"viewer_video_bytes_{point}"] / args.duration
+                    for point in ("min", "p10", "p50", "p90", "max")
+                },
+                "viewer_audio_bytes_per_second": {
+                    point: measurement[f"viewer_audio_bytes_{point}"] / args.duration
+                    for point in ("min", "p10", "p50", "p90", "max")
+                },
                 "server_cpu_cores": (after_server["cpu"] - before_server["cpu"]) / elapsed,
                 "server_rss_kib_median": statistics.median(sample["rss_kib"] for sample in samples),
                 "server_pss_kib_median": statistics.median(sample["pss_kib"] for sample in samples),
@@ -90,12 +99,12 @@ def main():
                 "server_thread_cpu_cores": thread_rates(before_server, after_server, "cpu", elapsed),
                 "server_thread_context_switches_per_second": thread_rates(before_server, after_server, "context_switches", elapsed),
                 "server_thread_migrations_per_second": thread_rates(before_server, after_server, "migrations", elapsed),
-                "client_cpu_cores": measurement["generator_cpu_cores"],
-                "queue_full_events": server_log_path.read_text().count("whep udp write queue full"),
+                "client_cpu_cores": measurement["client_cpu_cores"],
+                "client_pss_kib_median": statistics.median(sample["pss_kib"] for sample in client_samples),
             }
             (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
             print(json.dumps(result, indent=2))
-            if client.returncode != 0 or established["media_ready"] != args.viewers or measurement["progressing"] != args.viewers:
+            if client.returncode != 0 or measurement["progressing"] != args.viewers:
                 raise SystemExit(1)
         finally:
             stop_process(client)
