@@ -17,7 +17,7 @@
 
 `media_reader` 按消费者的节奏请求下一项。它持有游标、批次和等待状态，输出 session 只决定何时继续读取，并持有自己的封装、加密、背压和 socket。reader 回调在消费者 worker；源的发布、历史和同步 sink 在源 worker。两种 worker 之间只搬运共享的媒体引用和有界批次，不为每帧向每个消费者无限投递任务。
 
-`media_sink` 只用于确定性、可共享且适合在源 worker 同步执行的处理。MPEG-PS 输出同时是 sink 和派生 history：一次封装，多名 GB 发送者各自维护 RTP 与传输状态。HLS 分段也是 sink，但播放列表与片段在源结束后仍需保留，因此有独立的保留生命周期。WHEP 的 AAC→Opus 处理成本较高，位于共享处理 worker，生成新的 `media_stream`；不为接口统一而强迫它在源 worker 同步运行。
+`media_sink` 只用于确定性、可共享且适合在源 worker 同步接收媒体的处理。MPEG-PS 输出同时是 sink 和派生 history：一次封装，多名 GB 发送者各自维护 RTP 与传输状态。HLS 分段也是 sink，但播放列表与片段在源结束后仍需保留，因此有独立的保留生命周期。HLS 的代际替换和保留期结束可从源 worker 之外调用 `on_end()`；分段器用自身互斥保护该终止操作与媒体写入，终止后不再接收旧源帧。WHEP 的 AAC→Opus 处理成本较高，位于共享处理 worker，生成新的 `media_stream`；不为接口统一而强迫它在源 worker 同步运行。
 
 媒体源目录只负责按名称发现当前发布实例，并以对象身份保护删除。由 HTTP 控制接口创建、按 `stream_id` 删除的 GB/RTSP 会话属于控制层；它们可以早于媒体源存在，也可以在媒体源消失后继续完成关闭，不能作为媒体源目录的状态。协议输入在归一化为上述轨道和帧时结束；协议输出从 session 的 mux、packetizer、控制状态和传输开始。
 
