@@ -17,7 +17,6 @@
 
 namespace media_server
 {
-struct signaling_request_result;
 class hls_play_session;
 class hls_segmenter;
 
@@ -34,8 +33,6 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
 
    private:
     void handle_request();
-    void claim_play(std::string stream_id, std::string stream_name, std::string redirect_path);
-    void handle_claim(std::string stream_id, std::string stream_name, std::string redirect_path, signaling_request_result result);
     void wait_for_playlist(std::shared_ptr<hls_play_session> viewer, std::shared_ptr<hls_segmenter> segmenter);
     void send_redirect(std::string location);
     void send_text_response(boost::beast::http::status status,
@@ -43,8 +40,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
                             std::string body,
                             bool keep_alive,
                             std::string_view allow = {},
-                            std::shared_ptr<hls_play_session> viewer = {},
-                            bool mark_streaming = false);
+                            std::shared_ptr<hls_play_session> viewer = {});
     void send_binary_response(boost::beast::http::status status,
                               std::string_view content_type,
                               std::shared_ptr<const std::vector<std::uint8_t>> body,
@@ -52,8 +48,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
                               std::shared_ptr<hls_play_session> viewer);
     void response_completed(const boost::system::error_code& error,
                             bool keep_alive,
-                            std::shared_ptr<hls_play_session> viewer = {},
-                            bool mark_streaming = false);
+                            std::shared_ptr<hls_play_session> viewer = {});
     void read_request();
 
    private:

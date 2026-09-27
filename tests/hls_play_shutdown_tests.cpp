@@ -39,7 +39,7 @@ void test_request_stop_cancels_hls_inactivity_timer()
         [&]()
         {
             const auto session = hls_play_session::create(
-                worker, "00000000-0000-4000-8000-000000000001", "live/hls-worker-stop", std::make_shared<hls_segmenter>());
+                worker, "live/hls-worker-stop", std::make_shared<hls_segmenter>());
             created_signal.set_value(session->secret());
         });
 

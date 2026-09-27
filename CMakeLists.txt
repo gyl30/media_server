@@ -236,7 +236,6 @@ add_library(media_core STATIC
     media/hls/hls_play_session.cpp
     media/hls/hls_segmenter.cpp
     media/hls/hls.cpp
-    media/http/http_event.cpp
     media/http/http_flv_session.cpp
     media/http/hls_http_session.cpp
     media/http/gb28181_json.cpp

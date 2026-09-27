@@ -7,7 +7,6 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/uuid/random_generator.hpp>
 
-#include "media/http/http_event.h"
 #include "media/net/worker_context.h"
 #include "media/hls/hls_play_session.h"
 
@@ -42,7 +41,6 @@ void remove_session(std::string_view secret, const hls_play_session* expected)
 }    // namespace
 
 std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worker,
-                                                           std::string stream_id,
                                                            std::string stream_name,
                                                            std::shared_ptr<hls_segmenter> segmenter)
 {
@@ -51,7 +49,7 @@ std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worke
     for (;;)
     {
         auto secret = boost::uuids::to_string(generator());
-        auto session = std::shared_ptr<hls_play_session>(new hls_play_session(worker, stream_id, stream_name, std::move(secret), segmenter));
+        auto session = std::shared_ptr<hls_play_session>(new hls_play_session(worker, stream_name, std::move(secret), segmenter));
         {
             std::scoped_lock lock(current.mutex);
             if (!current.by_secret.emplace(session->secret(), session).second)
@@ -99,9 +97,8 @@ void hls_play_session::shutdown_all()
 }
 
 hls_play_session::hls_play_session(
-    worker_context& worker, std::string stream_id, std::string stream_name, std::string secret, std::shared_ptr<hls_segmenter> segmenter)
-    : stream_id_(std::move(stream_id)),
-      stream_name_(std::move(stream_name)),
+    worker_context& worker, std::string stream_name, std::string secret, std::shared_ptr<hls_segmenter> segmenter)
+    : stream_name_(std::move(stream_name)),
       secret_(std::move(secret)),
       segmenter_(std::move(segmenter)),
       last_activity_(std::chrono::steady_clock::now()),
@@ -117,17 +114,6 @@ bool hls_play_session::refresh()
         return false;
     }
     last_activity_ = std::chrono::steady_clock::now();
-    return true;
-}
-
-bool hls_play_session::mark_streaming()
-{
-    std::scoped_lock lock(mutex_);
-    if (expired_ || streaming_)
-    {
-        return false;
-    }
-    streaming_ = true;
     return true;
 }
 
@@ -170,8 +156,6 @@ void hls_play_session::handle_inactivity(const boost::system::error_code& error)
     }
 
     shutdown_subscription_.reset();
-    http_event::report_hls_output(event_state::timeout, stream_id_, stream_name_, "inactivity");
-    http_event::report_hls_output(event_state::stopped, stream_id_, stream_name_);
     remove_session(secret_, this);
 }
 
