@@ -3,8 +3,6 @@
 
 #include <memory>
 
-#include <boost/asio/spawn.hpp>
-
 #include "config.h"
 
 namespace media_server
@@ -22,8 +20,7 @@ class service
     int run();
 
    private:
-    [[nodiscard]] bool register_signaling(boost::asio::yield_context& yield);
-    void run_server(boost::asio::yield_context yield);
+    void run_server();
     void stop();
 
    private:

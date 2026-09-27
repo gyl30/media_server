@@ -6,9 +6,7 @@
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
-#include <boost/uuid/uuid_io.hpp>
 #include <boost/scope/scope_exit.hpp>
-#include <boost/uuid/random_generator.hpp>
 
 #include "service.h"
 #include "media/core/log.h"
@@ -21,7 +19,6 @@
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 #include "media/net/io_context_pool.h"
-#include "media/http/signaling_client.h"
 
 namespace media_server
 {
@@ -77,60 +74,8 @@ void service::stop()
     workers_->request_stop();
 }
 
-bool service::register_signaling(boost::asio::yield_context& yield)
+void service::run_server()
 {
-    boost::asio::steady_timer retry_timer(yield.get_executor());
-    for (;;)
-    {
-        if (yield.cancelled() != boost::asio::cancellation_type::none)
-        {
-            return false;
-        }
-        const auto registration = signaling_client::instance().register_once(yield);
-        if (yield.cancelled() != boost::asio::cancellation_type::none)
-        {
-            return false;
-        }
-        if (registration.kind == signaling_result_kind::accepted)
-        {
-            return true;
-        }
-        if (registration.kind == signaling_result_kind::rejected)
-        {
-            spdlog::critical("signaling registration rejected status {}; aborting in 5 seconds", registration.status);
-            boost::asio::steady_timer abort_timer(yield.get_executor(), std::chrono::seconds{5});
-            abort_timer.async_wait(yield);
-            if (yield.cancelled() != boost::asio::cancellation_type::none)
-            {
-                return false;
-            }
-            std::abort();
-        }
-        if (registration.kind == signaling_result_kind::temporary_failure)
-        {
-            spdlog::warn("signaling registration temporary failure status {}; retrying in 1 second", registration.status);
-        }
-        else
-        {
-            spdlog::warn("signaling registration network error {}; retrying in 1 second", registration.error);
-        }
-
-        retry_timer.expires_after(std::chrono::seconds{1});
-        retry_timer.async_wait(yield);
-        if (yield.cancelled() != boost::asio::cancellation_type::none)
-        {
-            return false;
-        }
-    }
-}
-
-void service::run_server(boost::asio::yield_context yield)
-{
-    if (!register_signaling(yield))
-    {
-        return;
-    }
-
     boost::scope::scope_exit stop_on_startup_failure([this]() { stop(); });
 
     boost::system::error_code network_error;
@@ -188,7 +133,6 @@ void service::run_server(boost::asio::yield_context yield)
     spdlog::info("rtsp play path app/stream");
     spdlog::info("http flv path app/stream.flv");
 
-    signaling_client::instance().run(yield);
 }
 
 int service::run()
@@ -212,9 +156,6 @@ int service::run()
     workers_ = std::make_unique<io_context_pool>(config_.threads);
     auto& control_worker = workers_->context(0);
     auto& control_io = control_worker.io();
-    const auto instance_id = boost::uuids::to_string(boost::uuids::random_generator{}());
-    signaling_client::instance().configure(config_, instance_id);
-
     boost::asio::signal_set signals(control_io, SIGINT, SIGTERM);
     control_worker.spawn(
         [this, &signals](boost::asio::yield_context yield)
@@ -227,7 +168,7 @@ int service::run()
             }
         });
 
-    control_worker.spawn([this](boost::asio::yield_context yield) { run_server(yield); });
+    control_worker.spawn([this](boost::asio::yield_context) { run_server(); });
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
     hls::shutdown();

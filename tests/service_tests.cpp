@@ -1,5 +1,4 @@
 #include <array>
-#include <mutex>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -8,10 +7,8 @@
 #include <utility>
 #include <iostream>
 #include <stdexcept>
-#include <condition_variable>
 
 #include <boost/asio.hpp>
-#include <boost/beast.hpp>
 
 #include "config.h"
 #include "service.h"
@@ -62,7 +59,7 @@ bool wait_listening(std::uint16_t port)
     return false;
 }
 
-media_server::config signaling_config(std::string url)
+media_server::config media_config()
 {
     media_server::config cfg;
     cfg.threads = 3;
@@ -70,147 +67,31 @@ media_server::config signaling_config(std::string url)
     cfg.rtmp_port = ports[0];
     cfg.rtsp_port = ports[1];
     cfg.http_port = ports[2];
-    cfg.signaling_url = std::move(url);
-    cfg.server_id = "media-1";
-    cfg.control_url = "http://127.0.0.1:" + std::to_string(cfg.http_port);
-    cfg.media_ip = "127.0.0.1";
     return cfg;
 }
 
-class controlled_registration_server
+void test_media_listeners_start()
 {
-   public:
-    controlled_registration_server()
-        : acceptor_(io_, {boost::asio::ip::make_address("127.0.0.1"), 0}), port_(acceptor_.local_endpoint().port()), thread_([this]() { run(); })
-    {
-    }
-
-    ~controlled_registration_server()
-    {
-        {
-            std::lock_guard lock(mutex_);
-            stopping_ = true;
-            released_ = true;
-        }
-        condition_.notify_all();
-        boost::asio::ip::tcp::socket wake(io_);
-        boost::system::error_code ignored;
-        wake.connect({boost::asio::ip::make_address("127.0.0.1"), port_}, ignored);
-        if (thread_.joinable())
-        {
-            thread_.join();
-        }
-    }
-
-   public:
-    [[nodiscard]] std::string url() const { return "http://127.0.0.1:" + std::to_string(port_); }
-
-    bool wait_request()
-    {
-        std::unique_lock lock(mutex_);
-        return condition_.wait_for(lock, 2s, [this]() { return requested_; });
-    }
-
-    void release()
-    {
-        {
-            std::lock_guard lock(mutex_);
-            released_ = true;
-        }
-        condition_.notify_all();
-    }
-
-   private:
-    void run()
-    {
-        boost::asio::ip::tcp::socket socket(io_);
-        boost::system::error_code error;
-        acceptor_.accept(socket, error);
-        if (error)
-        {
-            return;
-        }
-        boost::beast::flat_buffer buffer;
-        boost::beast::http::request<boost::beast::http::string_body> request;
-        boost::beast::http::read(socket, buffer, request, error);
-        if (error)
-        {
-            return;
-        }
-        {
-            std::lock_guard lock(mutex_);
-            requested_ = true;
-        }
-        condition_.notify_all();
-        {
-            std::unique_lock lock(mutex_);
-            condition_.wait(lock, [this]() { return released_; });
-            if (stopping_)
-            {
-                return;
-            }
-        }
-        boost::beast::http::response<boost::beast::http::string_body> response{boost::beast::http::status::no_content, request.version()};
-        response.prepare_payload();
-        boost::beast::http::write(socket, response, error);
-    }
-
-   private:
-    boost::asio::io_context io_;
-    boost::asio::ip::tcp::acceptor acceptor_;
-    std::uint16_t port_;
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    bool requested_{};
-    bool released_{};
-    bool stopping_{};
-    std::thread thread_;
-};
-
-void test_signaling_registration_precedes_media_listeners()
-{
-    controlled_registration_server signaling;
-    auto cfg = signaling_config(signaling.url());
-    const auto http_port = cfg.http_port;
+    auto cfg = media_config();
+    const auto ports = std::array{cfg.rtmp_port, cfg.rtsp_port, cfg.http_port};
     media_server::service service(std::move(cfg));
     std::jthread runner([&]() { service.run(); });
 
-    const bool registration_started = signaling.wait_request();
-    const bool listening_before_registration = can_connect(http_port);
-    signaling.release();
-    const bool listening_after_registration = wait_listening(http_port);
-    require(registration_started, "service starts signaling registration");
-    require(!listening_before_registration, "media listeners wait for signaling registration");
-    require(listening_after_registration, "media listeners start after signaling registration");
+    const bool rtmp_listening = wait_listening(ports[0]);
+    const bool rtsp_listening = wait_listening(ports[1]);
+    const bool http_listening = wait_listening(ports[2]);
     std::raise(SIGTERM);
     runner.join();
-}
-
-void test_signal_stops_registration_wait()
-{
-    controlled_registration_server signaling;
-    auto cfg = signaling_config(signaling.url());
-    media_server::service service(std::move(cfg));
-    std::jthread runner([&]() { service.run(); });
-
-    require(signaling.wait_request(), "service registration request starts before signal");
-    std::raise(SIGTERM);
-    runner.join();
+    require(rtmp_listening && rtsp_listening && http_listening, "media listeners start independently");
 }
 
 void test_listener_failure_stops_without_signal()
 {
-    controlled_registration_server signaling;
-    auto cfg = signaling_config(signaling.url());
+    auto cfg = media_config();
     boost::asio::io_context io;
     boost::asio::ip::tcp::acceptor occupied(
         io, {boost::asio::ip::make_address("127.0.0.1"), cfg.rtmp_port});
     media_server::service service(std::move(cfg));
-    std::jthread release_registration([&]() {
-        require(signaling.wait_request(), "service registration request starts before listener failure");
-        signaling.release();
-    });
-
     require(service.run() == 0, "listener startup failure stops service without a signal");
 }
 
@@ -234,13 +115,9 @@ int main(int argc, char** argv)
         media_server::service service(std::move(cfg));
         require(service.run() == 1, "service rejects invalid webrtc address");
     }
-    else if (test == "registration")
+    else if (test == "media_listeners")
     {
-        test_signaling_registration_precedes_media_listeners();
-    }
-    else if (test == "registration_stop")
-    {
-        test_signal_stops_registration_wait();
+        test_media_listeners_start();
     }
     else if (test == "listener_failure")
     {

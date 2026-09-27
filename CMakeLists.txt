@@ -364,7 +364,7 @@ if(BUILD_TESTING)
         service.cpp
     )
     target_link_libraries(service_tests PRIVATE media_core media_server_link_options)
-    foreach(test_case IN ITEMS invalid_bind invalid_webrtc registration registration_stop listener_failure)
+    foreach(test_case IN ITEMS invalid_bind invalid_webrtc media_listeners listener_failure)
         add_test(NAME service_${test_case} COMMAND service_tests ${test_case})
     endforeach()
     set_tests_properties(service_listener_failure PROPERTIES TIMEOUT 5)
