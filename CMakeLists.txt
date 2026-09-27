@@ -240,7 +240,6 @@ add_library(media_core STATIC
     media/http/gb28181_json.cpp
     media/http/gb28181_http.cpp
     media/http/rtsp_pull_http.cpp
-    media/http/signaling_client.cpp
     media/http/whep_http.cpp
     media/http/whip_http.cpp
     media/http/http_session.cpp
