@@ -328,6 +328,9 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
     )
     target_link_libraries(rtsp_fanout PRIVATE media_core media_server_link_options)
 
+    add_executable(rtsp_publisher bench/rtsp_publisher.cpp)
+    target_link_libraries(rtsp_publisher PRIVATE media_core media_server_link_options)
+
     add_executable(whep_fanout
         bench/whep_fanout.cpp
         bench/clients/webrtc_client.cpp
