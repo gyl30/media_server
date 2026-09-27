@@ -13,7 +13,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/net/port_manager.h"
-#include "media/core/stream_registry.h"
+#include "media/control/control_session_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/net/udp_yield_transport.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
@@ -22,7 +22,7 @@ namespace media_server
 {
 class worker_context;
 
-class gb28181_udp_receiver_session final : public stream_session, public std::enable_shared_from_this<gb28181_udp_receiver_session>
+class gb28181_udp_receiver_session final : public control_session, public std::enable_shared_from_this<gb28181_udp_receiver_session>
 {
    public:
     gb28181_udp_receiver_session(worker_context& worker,

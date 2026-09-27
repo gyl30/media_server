@@ -284,7 +284,7 @@ void gb28181_udp_receiver_session::safe_shutdown()
         gb28181_event::report_source(event_state::stopped, stream_id_, receiver_.stream_name());
     }
     started_ = false;
-    stream_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
+    control_session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     rtcp_timer_.cancel();
     rtp_transport_.shutdown();
     rtcp_transport_.shutdown();

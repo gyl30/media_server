@@ -220,6 +220,7 @@ add_library(media_core STATIC
     media/core/log.cpp
     media/core/media_stream.cpp
     media/core/stream_registry.cpp
+    media/control/control_session_registry.cpp
     media/ps/mpeg_ps_output.cpp
     media/codec/audio_transcoder.cpp
     media/codec/video_transcoder.cpp

@@ -315,7 +315,7 @@ void gb28181_udp_sender_session::safe_shutdown()
     closed_ = true;
     shutdown_subscription_.reset();
     media_started_ = false;
-    stream_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
+    control_session_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
     rtcp_timer_.cancel();
     if (sender_)
     {

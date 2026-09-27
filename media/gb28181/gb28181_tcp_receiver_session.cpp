@@ -200,7 +200,7 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         gb28181_event::report_source(event_state::stopped, stream_id_, receiver_.stream_name());
     }
     started_ = false;
-    stream_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
+    control_session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)
     {
         listener_->shutdown();
