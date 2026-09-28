@@ -41,6 +41,7 @@ class av1_video_egress final : public media_reader, public std::enable_shared_fr
     std::atomic_bool ended_{};
     std::uint64_t source_revision_{};
     bool reading_{};
+    bool waiting_for_source_key_frame_{true};
     std::size_t viewers_{};
     worker_context::shutdown_subscription shutdown_subscription_;
 };

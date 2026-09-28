@@ -47,6 +47,7 @@ bool av1_video_egress::startup_transcoder(const media_track& track)
         return false;
     }
     transcoder_ = std::move(transcoder);
+    waiting_for_source_key_frame_ = true;
     return true;
 }
 
@@ -167,6 +168,14 @@ void av1_video_egress::on_read_ready(media_track_snapshot_ptr tracks, bool)
         {
             output_->publish(entry->frame);
             continue;
+        }
+        if (waiting_for_source_key_frame_)
+        {
+            if (!entry->frame.key_frame)
+            {
+                continue;
+            }
+            waiting_for_source_key_frame_ = false;
         }
         std::vector<media_frame> encoded;
         if (!transcoder_->transcode(entry->frame, encoded))
