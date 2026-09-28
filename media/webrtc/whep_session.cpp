@@ -11,6 +11,7 @@
 #include <boost/asio/detached.hpp>
 
 #include "media/net/worker_context.h"
+#include "media/codec/av1_video_egress.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
 #include "media/webrtc/whep_audio_egress.h"
@@ -147,6 +148,24 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     spdlog::debug("webrtc session {} remote fingerprint {}", id_, media->fingerprint);
 
+    if (answer->video_codec == codec_id::av1)
+    {
+        for (const auto& track : source_tracks)
+        {
+            if (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265))
+            {
+                video_egress_ = acquire_av1_video_egress(stream_, worker_, whep_av1_parameters);
+                if (!video_egress_)
+                {
+                    shutdown();
+                    return whep_session_startup_error::internal_error;
+                }
+                stream_ = video_egress_->stream();
+                break;
+            }
+        }
+    }
+
     if (answer->audio_payload_type && answer->audio_codec == codec_id::aac)
     {
         audio_egress_ = acquire_whep_audio_egress(stream_,
@@ -228,6 +247,7 @@ void whep_session::safe_shutdown()
     track_revision_ = 0;
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
+    release_av1_video_egress(video_egress_);
     certificate_.reset();
     srtp_.reset();
     dtls_timer_.cancel();

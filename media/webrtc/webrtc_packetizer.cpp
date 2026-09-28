@@ -27,12 +27,6 @@ constexpr std::uint32_t opus_sample_rate = 48'000U;
 constexpr std::size_t rtcp_buffer_size = 4096;
 constexpr std::size_t max_mid_size = 16;
 constexpr std::string_view rtcp_name = "media_server";
-constexpr av1_encoding_parameters whep_av1_parameters{
-    .profile = 0,
-    .level_idx = 8,
-    .tier = 0,
-};
-
 bool rtcp_mux_payload_type_allowed(int payload_type) { return payload_type >= 0 && payload_type <= 127 && (payload_type < 64 || payload_type > 95); }
 
 }    // namespace
@@ -64,6 +58,10 @@ bool webrtc_packetizer::on_track(const media_track& track)
         else if (track.codec == codec_id::h265)
         {
             added = add_h265_track(track);
+        }
+        else if (track.codec == codec_id::av1)
+        {
+            added = add_av1_track(track);
         }
     }
     else if (track.kind == media_kind::video && config_.video_payload_type >= 0 && config_.video_codec == codec_id::av1 &&
@@ -287,16 +285,20 @@ bool webrtc_packetizer::add_av1_track(const media_track& track)
         return false;
     }
 
-    auto transcoder = std::make_unique<video_transcoder>();
-    if (!transcoder->startup(video_transcoder_config{
-            .input_codec = track.codec,
-            .output_codec = codec_id::av1,
-            .input_codec_config = track.codec_config,
-            .av1 = whep_av1_parameters,
-        }))
+    std::unique_ptr<video_transcoder> transcoder;
+    if (track.codec != codec_id::av1)
     {
-        spdlog::error("webrtc av1 video transcoder startup failed track {}", track.id);
-        return false;
+        transcoder = std::make_unique<video_transcoder>();
+        if (!transcoder->startup(video_transcoder_config{
+                .input_codec = track.codec,
+                .output_codec = codec_id::av1,
+                .input_codec_config = track.codec_config,
+                .av1 = whep_av1_parameters,
+            }))
+        {
+            spdlog::error("webrtc av1 video transcoder startup failed track {}", track.id);
+            return false;
+        }
     }
 
     aom_av1_t av1{};

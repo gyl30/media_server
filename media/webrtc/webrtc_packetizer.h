@@ -15,6 +15,11 @@ struct rtsp_muxer_t;
 
 namespace media_server
 {
+inline constexpr av1_encoding_parameters whep_av1_parameters{
+    .profile = 0,
+    .level_idx = 8,
+    .tier = 0,
+};
 
 struct webrtc_packetizer_config
 {
