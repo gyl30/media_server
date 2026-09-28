@@ -128,16 +128,23 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
         return -1;
     }
 
-    const auto reserved = port_manager::instance().acquire_pair();
-    if (!reserved)
-    {
-        return -1;
-    }
-    const auto local_ports = *reserved;
     state.rtp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport.rtp.u.client_port1);
     state.rtcp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport.rtp.u.client_port2);
     state.rtp_transport.emplace(worker_.io());
     state.rtcp_transport.emplace(worker_.io());
+
+    boost::system::error_code network_error;
+    const auto reserved = port_manager::instance().acquire_pair_and_bind(
+        *state.rtp_transport, *state.rtcp_transport, bind_address_, network_error);
+    if (!reserved)
+    {
+        state.rtp_transport.reset();
+        state.rtcp_transport.reset();
+        state.rtp_endpoint = {};
+        state.rtcp_endpoint = {};
+        return -1;
+    }
+    const auto local_ports = *reserved;
 
     boost::scope::scope_exit cleanup(
         [&]()
@@ -151,16 +158,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
             port_manager::instance().release(local_ports);
         });
 
-    boost::system::error_code network_error;
-    state.rtp_transport->startup(bind_address_, local_ports.first, network_error);
-    if (!network_error)
-    {
-        state.rtcp_transport->startup(bind_address_, local_ports.second, network_error);
-    }
-    if (!network_error)
-    {
-        state.rtp_transport->connect(state.rtp_endpoint, network_error);
-    }
+    state.rtp_transport->connect(state.rtp_endpoint, network_error);
     if (!network_error)
     {
         state.rtcp_transport->connect(state.rtcp_endpoint, network_error);

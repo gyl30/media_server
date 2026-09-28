@@ -1,8 +1,13 @@
 #include <limits>
+#include <vector>
 #include <exception>
 #include <stdexcept>
 
+#include <boost/asio/error.hpp>
+#include <boost/scope/scope_exit.hpp>
+
 #include "media/net/port_manager.h"
+#include "media/net/udp_yield_transport.h"
 
 namespace media_server
 {
@@ -37,7 +42,7 @@ port_manager::port_manager(int start_port, int end_port)
     end_port_ = static_cast<std::uint16_t>(end_port);
 }
 
-std::optional<std::uint16_t> port_manager::acquire()
+std::optional<std::uint16_t> port_manager::reserve()
 {
     std::scoped_lock lock(mutex_);
     for (std::uint32_t port = start_port_; port <= end_port_; ++port)
@@ -51,7 +56,7 @@ std::optional<std::uint16_t> port_manager::acquire()
     return std::nullopt;
 }
 
-std::optional<port_manager::port_pair> port_manager::acquire_pair()
+std::optional<port_manager::port_pair> port_manager::reserve_pair()
 {
     std::scoped_lock lock(mutex_);
     std::uint32_t first = start_port_;
@@ -72,6 +77,84 @@ std::optional<port_manager::port_pair> port_manager::acquire_pair()
         return port_pair{.first = rtp, .second = rtcp};
     }
     return std::nullopt;
+}
+
+std::optional<std::uint16_t> port_manager::acquire_and_bind(udp_yield_transport& transport,
+                                                            const boost::asio::ip::address& bind_address,
+                                                            boost::system::error_code& error)
+{
+    std::vector<std::uint16_t> failed_reservations;
+    boost::scope::scope_exit release_failed(
+        [&]()
+        {
+            for (const auto port : failed_reservations)
+            {
+                release(port);
+            }
+        });
+
+    error.clear();
+    for (;;)
+    {
+        const auto reserved = reserve();
+        if (!reserved)
+        {
+            return std::nullopt;
+        }
+        transport.startup(bind_address, *reserved, error);
+        if (!error)
+        {
+            return reserved;
+        }
+        failed_reservations.push_back(*reserved);
+        if (error != boost::asio::error::address_in_use)
+        {
+            return std::nullopt;
+        }
+    }
+}
+
+std::optional<port_manager::port_pair> port_manager::acquire_pair_and_bind(udp_yield_transport& rtp_transport,
+                                                                           udp_yield_transport& rtcp_transport,
+                                                                           const boost::asio::ip::address& bind_address,
+                                                                           boost::system::error_code& error)
+{
+    std::vector<port_pair> failed_reservations;
+    boost::scope::scope_exit release_failed(
+        [&]()
+        {
+            for (const auto pair : failed_reservations)
+            {
+                release(pair);
+            }
+        });
+
+    error.clear();
+    for (;;)
+    {
+        const auto reserved = reserve_pair();
+        if (!reserved)
+        {
+            return std::nullopt;
+        }
+        rtp_transport.startup(bind_address, reserved->first, error);
+        if (!error)
+        {
+            rtcp_transport.startup(bind_address, reserved->second, error);
+        }
+        if (!error)
+        {
+            return reserved;
+        }
+
+        rtp_transport.shutdown();
+        rtcp_transport.shutdown();
+        failed_reservations.push_back(*reserved);
+        if (error != boost::asio::error::address_in_use)
+        {
+            return std::nullopt;
+        }
+    }
 }
 
 void port_manager::release(std::uint16_t port)

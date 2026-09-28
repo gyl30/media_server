@@ -78,24 +78,15 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         spdlog::error("webrtc whep startup rejected unspecified local address");
         return whep_session_startup_error::internal_error;
     }
-    const auto reserved = port_manager::instance().acquire();
+    boost::system::error_code udp_error;
+    const auto reserved = port_manager::instance().acquire_and_bind(udp_transport_, advertised_address_, udp_error);
     if (!reserved)
     {
-        spdlog::error("webrtc udp port allocation failed");
+        spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
         return whep_session_startup_error::internal_error;
     }
     local_port_reservation_ = *reserved;
     const auto self = shared_from_this();
-    boost::system::error_code udp_error;
-    udp_transport_.startup(advertised_address_, local_port_reservation_, udp_error);
-    if (udp_error)
-    {
-        port_manager::instance().release(local_port_reservation_);
-        local_port_reservation_ = 0;
-        spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
-        shutdown();
-        return whep_session_startup_error::internal_error;
-    }
 
     ice_ufrag_ = random_hex(8);
     ice_pwd_ = random_hex(16);

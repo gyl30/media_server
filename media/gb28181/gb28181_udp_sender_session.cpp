@@ -8,7 +8,6 @@
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/scope/scope_exit.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -49,30 +48,8 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
 
 std::optional<port_manager::port_pair> gb28181_udp_sender_session::prepare_udp_transports(boost::asio::ip::address bind_address)
 {
-    const auto reserved = port_manager::instance().acquire_pair();
-    if (!reserved)
-    {
-        return std::nullopt;
-    }
-
-    const auto local_ports = *reserved;
-    boost::scope::scope_exit release_ports([&]() { port_manager::instance().release(local_ports); });
     boost::system::error_code network_error;
-    rtp_transport_.startup(bind_address, local_ports.first, network_error);
-    if (network_error)
-    {
-        return std::nullopt;
-    }
-
-    rtcp_transport_.startup(std::move(bind_address), local_ports.second, network_error);
-    if (network_error)
-    {
-        rtp_transport_.shutdown();
-        return std::nullopt;
-    }
-
-    release_ports.set_active(false);
-    return local_ports;
+    return port_manager::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address, network_error);
 }
 
 void gb28181_udp_sender_session::shutdown_udp_transports()

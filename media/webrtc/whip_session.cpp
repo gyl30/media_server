@@ -74,24 +74,14 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer)
         return whip_session_startup_error::internal_error;
     }
 
-    const auto reserved = port_manager::instance().acquire();
+    boost::system::error_code udp_error;
+    const auto reserved = port_manager::instance().acquire_and_bind(udp_transport_, advertised_address_, udp_error);
     if (!reserved)
     {
-        spdlog::error("webrtc udp port allocation failed");
+        spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
         return whip_session_startup_error::internal_error;
     }
     local_port_reservation_ = *reserved;
-
-    boost::system::error_code udp_error;
-    udp_transport_.startup(advertised_address_, local_port_reservation_, udp_error);
-    if (udp_error)
-    {
-        port_manager::instance().release(local_port_reservation_);
-        local_port_reservation_ = 0;
-        spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
-        shutdown();
-        return whip_session_startup_error::internal_error;
-    }
 
     id_ = random_hex(16);
     ice_ufrag_ = random_hex(8);
