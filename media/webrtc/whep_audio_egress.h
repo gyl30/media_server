@@ -6,7 +6,7 @@
 #include <memory>
 #include <vector>
 
-#include "media/core/media_reader.h"
+#include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
 #include "media/codec/audio_transcoder.h"
 
@@ -21,7 +21,7 @@ struct whep_audio_settings
     int max_playback_rate{};
 };
 
-class whep_audio_egress final : public media_reader, public std::enable_shared_from_this<whep_audio_egress>
+class whep_audio_egress final : public std::enable_shared_from_this<whep_audio_egress>
 {
    public:
     enum class end_reason
@@ -36,9 +36,8 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
     [[nodiscard]] std::shared_ptr<media_stream> stream() const noexcept;
     [[nodiscard]] end_reason reason() const noexcept;
 
-    void on_tracks(media_tracks_ptr tracks) override;
-    void on_media_available() override;
-    void on_end() override;
+    void process_media_available();
+    void handle_source_end();
 
    private:
     friend std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
@@ -52,6 +51,7 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
 
     worker_context& worker_;
     std::shared_ptr<media_stream> source_;
+    std::shared_ptr<media_sink> sink_;
     std::shared_ptr<media_stream> output_;
     std::map<track_id, media_track> source_tracks_;
     std::map<track_id, std::unique_ptr<audio_transcoder>> transcoders_;

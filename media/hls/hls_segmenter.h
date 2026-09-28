@@ -30,15 +30,16 @@ struct hls_segment
     std::shared_ptr<const std::vector<std::uint8_t>> data;
 };
 
-class hls_segmenter final : public media_sink
+class media_stream;
+
+class hls_segmenter final : public std::enable_shared_from_this<hls_segmenter>
 {
    public:
     explicit hls_segmenter(hls_config config = {});
 
    public:
-    void on_track(const media_track& track) override;
-    void on_frame(const media_frame& frame) override;
-    void on_end() override;
+    bool startup(const std::shared_ptr<media_stream>& source);
+    void shutdown();
 
     [[nodiscard]] std::string playlist(std::string_view base_path, std::string_view query = {}) const;
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> segment(std::uint64_t sequence) const;
@@ -54,6 +55,10 @@ class hls_segmenter final : public media_sink
     void discard_segment();
     void finish_segment(std::int64_t end_pts_ns);
     [[nodiscard]] int add_track_to_muxer(const media_track& track);
+    void process();
+    void process_track(const media_track& track);
+    void process_frame(const media_frame& frame);
+    void finish();
 
    private:
     mutable std::mutex mutex_;
@@ -69,6 +74,7 @@ class hls_segmenter final : public media_sink
     std::int64_t segment_max_pts_ns_{};
     std::optional<std::chrono::steady_clock::time_point> ended_at_;
     bool waiting_for_key_frame_{};
+    std::shared_ptr<media_sink> sink_;
 
 };
 

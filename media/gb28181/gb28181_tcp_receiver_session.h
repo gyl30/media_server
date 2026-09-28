@@ -31,7 +31,7 @@ class gb28181_tcp_receiver_session final : public control_session, public std::e
 
    public:
     [[nodiscard]] bool startup();
-    void shutdown() override;
+    void shutdown();
 
    private:
     void run(boost::asio::yield_context yield);

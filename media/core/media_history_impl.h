@@ -52,14 +52,14 @@ bool append(std::deque<media_history_entry_t<Frame>>& history,
 }    // namespace media_history_detail
 
 template <typename Frame>
-struct media_reader_state_t
+struct media_sink_state_t
 {
-    std::weak_ptr<media_reader_t<Frame>> reader;
+    std::weak_ptr<media_sink_t<Frame>> sink;
     worker_context* worker{};
     std::atomic_bool active{true};
     // 只由 source owner worker 访问；表示本 state 是否实际计入了 group。
     bool member{};
-    bool waiting{};
+    std::function<void(bool)> waiter;
 };
 
 template <typename Frame>
@@ -85,8 +85,7 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
     std::deque<entry> history;
     std::optional<std::uint64_t> gop_start;
     std::size_t gop_frames{};
-    media_tracks_ptr tracks;
-    std::vector<std::shared_ptr<media_reader_state_t<Frame>>> readers;
+    std::vector<std::shared_ptr<media_sink_state_t<Frame>>> sinks;
     worker_context::shutdown_subscription shutdown_subscription;
     bool ended{};
 
@@ -103,7 +102,7 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
         }
     }
 
-    void install(snapshot initial, media_tracks_ptr fixed_tracks)
+    void install(snapshot initial)
     {
         if (worker.stop_requested())
         {
@@ -117,11 +116,11 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
                 if (const auto group = weak.lock())
                 {
                     group->ended = true;
-                    for (const auto& state : group->readers)
+                    for (const auto& state : group->sinks)
                     {
                         state->active.store(false, std::memory_order_release);
                     }
-                    group->readers.clear();
+                    group->sinks.clear();
                     group->history.clear();
                     group->retire();
                 }
@@ -129,45 +128,44 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
         history = std::move(initial.history);
         gop_start = initial.gop_start;
         gop_frames = initial.gop_frames;
-        tracks = std::move(fixed_tracks);
     }
 
-    void attach(const std::shared_ptr<media_reader_state_t<Frame>>& state)
+    void attach(const std::shared_ptr<media_sink_state_t<Frame>>& state)
     {
         if (ended || worker.stop_requested() || !state->active.load(std::memory_order_acquire))
         {
             return;
         }
-        const auto reader = state->reader.lock();
-        if (!reader)
+        const auto sink = state->sink.lock();
+        if (!sink)
         {
             return;
         }
-        reader->worker_history_ = this->shared_from_this();
-        readers.push_back(state);
-        if (tracks)
-        {
-            reader->on_tracks(tracks);
-        }
+        sink->worker_history_ = this->shared_from_this();
+        sinks.push_back(state);
         if (state->active.load(std::memory_order_acquire) && !history.empty())
         {
-            reader->on_media_available();
+            if (state->waiter)
+            {
+                auto waiter = std::move(state->waiter);
+                waiter(false);
+            }
         }
     }
 
-    void detach(const std::shared_ptr<media_reader_state_t<Frame>>& state)
+    void detach(const std::shared_ptr<media_sink_state_t<Frame>>& state)
     {
-        std::erase(readers, state);
-        if (readers.empty())
+        std::erase(sinks, state);
+        if (sinks.empty())
         {
             shutdown_subscription.reset();
             history.clear();
         }
     }
 
-    [[nodiscard]] std::optional<media_read_entry_t<Frame>> read(std::optional<std::uint64_t>& cursor)
+    [[nodiscard]] std::optional<Frame> read(std::optional<std::uint64_t>& cursor)
     {
-        if (ended || history.empty())
+        if (history.empty())
         {
             return {};
         }
@@ -186,7 +184,7 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
             return {};
         }
         cursor = it->sequence + 1;
-        return media_read_entry_t<Frame>{.frame = it->frame};
+        return it->frame;
     }
 
     [[nodiscard]] std::size_t pending_size()
@@ -255,16 +253,17 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
 
     void notify_waiting()
     {
-        for (const auto& state : readers)
+        for (const auto& state : sinks)
         {
-            if (!state->waiting || !state->active.load(std::memory_order_acquire))
+            if (!state->waiter || !state->active.load(std::memory_order_acquire))
             {
                 continue;
             }
-            if (const auto reader = state->reader.lock())
+            if (const auto sink = state->sink.lock())
             {
-                state->waiting = false;
-                reader->on_media_available();
+                static_cast<void>(sink);
+                auto waiter = std::move(state->waiter);
+                waiter(false);
             }
         }
     }
@@ -306,18 +305,21 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
                 notify_waiting();
             }
             ended = true;
-            for (const auto& state : readers)
+            for (const auto& state : sinks)
             {
                 if (state->active.load(std::memory_order_acquire))
                 {
-                    if (const auto reader = state->reader.lock())
+                    if (const auto sink = state->sink.lock())
                     {
-                        reader->on_end();
+                        static_cast<void>(sink);
+                        if (state->waiter)
+                        {
+                            auto waiter = std::move(state->waiter);
+                            waiter(true);
+                        }
                     }
                 }
             }
-            readers.clear();
-            history.clear();
             shutdown_subscription.reset();
             return;
         }
@@ -329,29 +331,28 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
 };
 
 template <typename Frame>
-media_reader_t<Frame>::~media_reader_t()
+media_sink_t<Frame>::~media_sink_t()
 {
-    remove_reader();
+    close();
 }
 
 template <typename Frame>
-std::optional<media_read_entry_t<Frame>> media_reader_t<Frame>::read()
+std::optional<Frame> media_sink_t<Frame>::read()
 {
     if (!state_ || !state_->active.load(std::memory_order_acquire) || !worker_history_)
     {
         return {};
     }
-    if (auto next = worker_history_->read(reader_cursor_))
+    if (auto next = worker_history_->read(cursor_))
     {
-        state_->waiting = false;
+        state_->waiter = {};
         return next;
     }
-    state_->waiting = true;
     return {};
 }
 
 template <typename Frame>
-void media_reader_t<Frame>::remove_reader() const
+void media_sink_t<Frame>::close() const
 {
     if (!state_ || !state_->active.exchange(false, std::memory_order_acq_rel))
     {
@@ -359,8 +360,36 @@ void media_reader_t<Frame>::remove_reader() const
     }
     if (const auto source = history_.lock())
     {
-        source->remove_reader(state_);
+        source->remove_sink(state_);
     }
+}
+
+template <typename Frame>
+void media_sink_t<Frame>::async_wait(std::function<void(bool)> handler)
+{
+    if (!state_ || !state_->active.load(std::memory_order_acquire))
+    {
+        if (handler)
+        {
+            handler(true);
+        }
+        return;
+    }
+    if (state_->waiter)
+    {
+        return;
+    }
+    if (!worker_history_)
+    {
+        state_->waiter = std::move(handler);
+        return;
+    }
+    if (worker_history_->ended && worker_history_->history.empty())
+    {
+        handler(true);
+        return;
+    }
+    state_->waiter = std::move(handler);
 }
 
 template <typename Frame>
@@ -387,19 +416,19 @@ std::vector<media_track> media_history<Frame>::tracks() const
 }
 
 template <typename Frame>
-void media_history<Frame>::add_reader(const std::shared_ptr<media_reader_t<Frame>>& reader, worker_context& worker)
+void media_history<Frame>::add_sink(const std::shared_ptr<media_sink_t<Frame>>& sink, worker_context& worker)
 {
-    if (!reader)
+    if (!sink)
     {
         return;
     }
     const auto self = this->shared_from_this();
-    auto state = std::make_shared<media_reader_state_t<Frame>>();
-    state->reader = reader;
+    auto state = std::make_shared<media_sink_state_t<Frame>>();
+    state->sink = sink;
     state->worker = &worker;
-    reader->history_ = self;
-    reader->state_ = state;
-    boost::asio::dispatch(worker_.io(), [self, state]() { self->add_reader_on_owner(state); });
+    sink->history_ = self;
+    sink->state_ = state;
+    boost::asio::dispatch(worker_.io(), [self, state]() { self->add_sink_on_owner(state); });
 }
 
 template <typename Frame>
@@ -477,22 +506,16 @@ template <typename Frame>
 std::shared_ptr<media_worker_history_t<Frame>> media_history<Frame>::make_worker_history(worker_context& worker)
 {
     auto group = std::make_shared<media_worker_history_t<Frame>>(worker, this->shared_from_this());
-    auto tracks = std::make_shared<media_tracks>();
-    tracks->reserve(tracks_.size());
-    for (const auto& [id, track] : tracks_)
-    {
-        tracks->push_back(track);
-    }
     typename media_worker_history_t<Frame>::snapshot initial{
         .history = history_,
         .gop_start = current_gop_start_sequence_,
         .gop_frames = current_gop_frames_};
-    boost::asio::post(worker.io(), [group, tracks, initial = std::move(initial)]() mutable { group->install(std::move(initial), tracks); });
+    boost::asio::post(worker.io(), [group, initial = std::move(initial)]() mutable { group->install(std::move(initial)); });
     return group;
 }
 
 template <typename Frame>
-void media_history<Frame>::add_reader_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state)
+void media_history<Frame>::add_sink_on_owner(const std::shared_ptr<media_sink_state_t<Frame>>& state)
 {
     if (!state->active.load(std::memory_order_acquire) || state->worker->stop_requested())
     {
@@ -500,7 +523,14 @@ void media_history<Frame>::add_reader_on_owner(const std::shared_ptr<media_reade
     }
     if (ended_)
     {
-        dispatch_reader_end(state);
+        boost::asio::post(state->worker->io(), [state]()
+                          {
+                              if (state->active.load(std::memory_order_acquire) && state->waiter)
+                              {
+                                  auto waiter = std::move(state->waiter);
+                                  waiter(true);
+                              }
+                          });
         return;
     }
     auto& group = workers_[state->worker];
@@ -514,14 +544,14 @@ void media_history<Frame>::add_reader_on_owner(const std::shared_ptr<media_reade
 }
 
 template <typename Frame>
-void media_history<Frame>::remove_reader(const std::shared_ptr<media_reader_state_t<Frame>>& state)
+void media_history<Frame>::remove_sink(const std::shared_ptr<media_sink_state_t<Frame>>& state)
 {
     const auto self = this->shared_from_this();
-    boost::asio::dispatch(worker_.io(), [self, state]() { self->remove_reader_on_owner(state); });
+    boost::asio::dispatch(worker_.io(), [self, state]() { self->remove_sink_on_owner(state); });
 }
 
 template <typename Frame>
-void media_history<Frame>::remove_reader_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state)
+void media_history<Frame>::remove_sink_on_owner(const std::shared_ptr<media_sink_state_t<Frame>>& state)
 {
     if (!state->member)
     {
@@ -572,21 +602,6 @@ void media_history<Frame>::replace_worker_history(const std::shared_ptr<media_wo
         .gop_frames = current_gop_frames_});
 }
 
-template <typename Frame>
-void media_history<Frame>::dispatch_reader_end(const std::shared_ptr<media_reader_state_t<Frame>>& state)
-{
-    boost::asio::post(state->worker->io(),
-                      [state]()
-                      {
-                          if (state->active.load(std::memory_order_acquire))
-                          {
-                              if (const auto reader = state->reader.lock())
-                              {
-                                  reader->on_end();
-                              }
-                          }
-                      });
-}
 }    // namespace media_server
 
 #endif

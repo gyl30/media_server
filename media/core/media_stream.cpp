@@ -1,7 +1,5 @@
 #include <utility>
 
-#include <boost/asio/dispatch.hpp>
-
 #include "media/core/media_stream.h"
 #include "media/ps/mpeg_ps_output.h"
 
@@ -11,41 +9,9 @@ media_stream::media_stream(std::string name, worker_context& worker) : media_his
 
 worker_context& media_stream::worker() const noexcept { return worker_; }
 
-void media_stream::add_sink(const std::shared_ptr<media_sink>& sink)
-{
-    if (!sink)
-    {
-        return;
-    }
-    const auto self = std::static_pointer_cast<media_stream>(shared_from_this());
-    boost::asio::dispatch(worker_.io(), [self, sink]() { self->attach_sink(sink); });
-}
-
-void media_stream::attach_sink(std::shared_ptr<media_sink> sink)
-{
-    if (ended_)
-    {
-        sink->on_end();
-        return;
-    }
-    sinks_.push_back(std::move(sink));
-    replay_to(*sinks_.back());
-}
-
 bool media_stream::set_tracks(std::vector<media_track> tracks)
 {
-    if (!media_history::set_tracks(std::move(tracks)))
-    {
-        return false;
-    }
-    for (const auto& sink : sinks_)
-    {
-        for (const auto& [id, track] : tracks_)
-        {
-            sink->on_track(track);
-        }
-    }
-    return true;
+    return media_history::set_tracks(std::move(tracks));
 }
 
 void media_stream::publish(media_frame frame)
@@ -55,10 +21,6 @@ void media_stream::publish(media_frame frame)
         return;
     }
     media_history::publish(frame);
-    for (const auto& sink : sinks_)
-    {
-        sink->on_frame(frame);
-    }
 }
 
 void media_stream::end()
@@ -68,34 +30,6 @@ void media_stream::end()
         return;
     }
     media_history::end();
-    auto sinks = std::move(sinks_);
-    for (const auto& sink : sinks)
-    {
-        sink->on_end();
-    }
-}
-
-void media_stream::replay_to(media_sink& sink)
-{
-    std::vector<media_frame> frames;
-    if (current_gop_start_sequence_)
-    {
-        for (const auto& entry : history_)
-        {
-            if (entry.sequence >= *current_gop_start_sequence_)
-            {
-                frames.push_back(entry.frame);
-            }
-        }
-    }
-    for (const auto& [id, track] : tracks_)
-    {
-        sink.on_track(track);
-    }
-    for (const auto& frame : frames)
-    {
-        sink.on_frame(frame);
-    }
 }
 
 std::shared_ptr<mpeg_ps_output> media_stream::ps_output()
@@ -109,12 +43,11 @@ std::shared_ptr<mpeg_ps_output> media_stream::ps_output()
         return output;
     }
     auto output = std::make_shared<mpeg_ps_output>(name_, worker_);
-    if (!output->startup(tracks()))
+    if (!output->startup(std::static_pointer_cast<media_stream>(shared_from_this()), tracks()))
     {
         return output;
     }
     ps_output_ = output;
-    attach_sink(output);
     return output;
 }
 

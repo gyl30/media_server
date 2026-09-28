@@ -15,7 +15,7 @@ namespace media_server
 {
 class worker_context;
 
-class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public std::enable_shared_from_this<gb28181_rtp_sender>
+class gb28181_rtp_sender final : public std::enable_shared_from_this<gb28181_rtp_sender>
 {
    public:
     using packet_handler = std::function<void(std::vector<std::uint8_t>)>;
@@ -27,7 +27,7 @@ class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public st
                        std::uint8_t payload_type,
                        std::uint32_t ssrc,
                        packet_handler on_packet,
-                       end_handler on_end,
+                       end_handler handle_source_end,
                        failure_handler on_failure = {});
 
    public:
@@ -37,11 +37,10 @@ class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public st
     [[nodiscard]] bool startup();
     void shutdown();
 
-    void on_tracks(media_tracks_ptr tracks) override;
-    void on_end() override;
+    void handle_source_end();
 
    protected:
-    void on_media_available() override;
+    void process_media_available();
 
    private:
     struct track_state
@@ -55,7 +54,7 @@ class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public st
     static int packet_callback(void* param, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
     [[nodiscard]] bool create_packetizer();
-    void apply_tracks(const media_tracks_ptr& tracks);
+    void apply_tracks(const std::vector<media_track>& tracks);
 
    private:
     void safe_shutdown();
@@ -69,6 +68,7 @@ class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public st
     end_handler end_handler_;
     failure_handler failure_handler_;
     std::shared_ptr<mpeg_ps_output> ps_output_;
+    std::shared_ptr<media_sink_t<mpeg_ps_frame>> sink_;
     void* packetizer_{};
     std::array<std::uint8_t, 2048> packet_buffer_{};
     std::uint32_t timestamp_base_{};

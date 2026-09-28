@@ -12,7 +12,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 
-#include "media/core/media_reader.h"
+#include "media/core/media_sink.h"
 #include "media/flv/flv_muxer.h"
 
 extern "C"
@@ -23,7 +23,7 @@ extern "C"
 namespace media_server
 {
 class worker_context;
-class http_flv_session final : public media_reader, public std::enable_shared_from_this<http_flv_session>
+class http_flv_session final : public std::enable_shared_from_this<http_flv_session>
 {
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
@@ -35,9 +35,8 @@ class http_flv_session final : public media_reader, public std::enable_shared_fr
     void shutdown();
 
    protected:
-    void on_tracks(media_tracks_ptr tracks) override;
-    void on_media_available() override;
-    void on_end() override;
+    void process_media_available();
+    void handle_source_end();
 
    private:
     void run(boost::asio::yield_context yield);
@@ -71,6 +70,7 @@ class http_flv_session final : public media_reader, public std::enable_shared_fr
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
     flv_muxer muxer_;
+    std::shared_ptr<media_sink> sink_;
     std::uint64_t generation_{};
     bool waiting_for_key_frame_{};
 };

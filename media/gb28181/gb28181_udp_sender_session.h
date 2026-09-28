@@ -40,7 +40,7 @@ class gb28181_udp_sender_session final : public control_session, public std::ena
 
    public:
     [[nodiscard]] bool startup();
-    void shutdown() override;
+    void shutdown();
 
    private:
     [[nodiscard]] std::optional<port_manager::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);

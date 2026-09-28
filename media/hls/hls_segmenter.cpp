@@ -9,6 +9,7 @@
 
 #include "media/hls/hls_segmenter.h"
 #include "media/codec/codec_utils.h"
+#include "media/core/media_stream.h"
 
 extern "C"
 {
@@ -29,7 +30,7 @@ hls_segmenter::hls_segmenter(hls_config config)
     recreate_muxer();
 }
 
-void hls_segmenter::on_track(const media_track& track)
+void hls_segmenter::process_track(const media_track& track)
 {
     std::scoped_lock lock(mutex_);
     if (ended_at_.has_value() || tracks_.contains(track.id))
@@ -47,7 +48,7 @@ void hls_segmenter::on_track(const media_track& track)
     waiting_for_key_frame_ = true;
 }
 
-void hls_segmenter::on_frame(const media_frame& frame)
+void hls_segmenter::process_frame(const media_frame& frame)
 {
     std::scoped_lock lock(mutex_);
     if (ended_at_.has_value() || !frame.payload)
@@ -107,8 +108,13 @@ void hls_segmenter::on_frame(const media_frame& frame)
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
 }
 
-void hls_segmenter::on_end()
+void hls_segmenter::finish()
 {
+    if (sink_)
+    {
+        sink_->close();
+        sink_.reset();
+    }
     std::scoped_lock lock(mutex_);
     if (ended_at_.has_value())
     {
@@ -125,6 +131,74 @@ void hls_segmenter::on_end()
         stream_ids_.clear();
     }
     ended_at_ = std::chrono::steady_clock::now();
+}
+
+bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
+{
+    if (!source || sink_)
+    {
+        return false;
+    }
+    for (const auto& track : source->tracks())
+    {
+        process_track(track);
+    }
+    sink_ = std::make_shared<media_sink>();
+    source->add_sink(sink_, source->worker());
+    const auto weak = weak_from_this();
+    sink_->async_wait([weak](bool ended)
+                       {
+                           if (const auto self = weak.lock())
+                           {
+                               if (ended)
+                               {
+                                   self->finish();
+                               }
+                               else
+                               {
+                                   self->process();
+                               }
+                           }
+                       });
+    process();
+    return true;
+}
+
+void hls_segmenter::process()
+{
+    if (!sink_)
+    {
+        return;
+    }
+    while (const auto entry = sink_->read())
+    {
+        process_frame(*entry);
+    }
+    const auto weak = weak_from_this();
+    sink_->async_wait([weak](bool ended)
+                      {
+                          if (const auto self = weak.lock())
+                          {
+                              if (ended)
+                              {
+                                  self->finish();
+                              }
+                              else
+                              {
+                                  self->process();
+                              }
+                          }
+                      });
+}
+
+void hls_segmenter::shutdown()
+{
+    if (sink_)
+    {
+        sink_->close();
+        sink_.reset();
+    }
+    finish();
 }
 
 std::string hls_segmenter::playlist(std::string_view base_path, std::string_view query) const

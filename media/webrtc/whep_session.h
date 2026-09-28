@@ -17,7 +17,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/net/port_manager.h"
-#include "media/core/media_reader.h"
+#include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/dtls_transport.h"
@@ -44,7 +44,7 @@ enum class whep_session_startup_error
     internal_error,
 };
 
-class whep_session final : public media_reader, public std::enable_shared_from_this<whep_session>
+class whep_session final : public std::enable_shared_from_this<whep_session>
 {
    public:
     whep_session(worker_context& worker,
@@ -67,11 +67,10 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     [[nodiscard]] bool srtp_started() const noexcept;
 
    public:
-    void on_tracks(media_tracks_ptr tracks) override;
-    void on_end() override;
+    void handle_source_end();
 
    protected:
-    void on_media_available() override;
+    void process_media_available();
 
    private:
     struct pending_datagram
@@ -105,6 +104,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
    private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
+    std::shared_ptr<media_sink> sink_;
     std::shared_ptr<whep_audio_egress> audio_egress_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;

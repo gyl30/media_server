@@ -168,7 +168,8 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
             negotiated_tracks_.emplace(track.id, track);
         }
     }
-    stream_->add_reader(shared_from_this(), worker_);
+    sink_ = std::make_shared<media_sink>();
+    stream_->add_sink(sink_, worker_);
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
     spdlog::debug(
@@ -187,7 +188,11 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
 void whep_session::shutdown()
 {
-    remove_reader();
+    if (sink_)
+    {
+        sink_->close();
+        sink_.reset();
+    }
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
@@ -244,25 +249,7 @@ bool whep_session::dtls_connected() const noexcept { return dtls_ != nullptr && 
 
 bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
 
-void whep_session::on_tracks(media_tracks_ptr tracks)
-{
-    if (!started_)
-    {
-        return;
-    }
-    if (!apply_tracks(tracks))
-    {
-        spdlog::info("webrtc negotiated track changed session {}", id_);
-        shutdown();
-        return;
-    }
-    if (packetizer_ && !media_started_ && !start_media_read())
-    {
-        shutdown();
-    }
-}
-
-void whep_session::on_media_available()
+void whep_session::process_media_available()
 {
     if (!started_ || !packetizer_)
     {
@@ -270,17 +257,35 @@ void whep_session::on_media_available()
     }
     while (started_)
     {
-        auto entry = read();
+        auto entry = sink_ ? sink_->read() : std::optional<media_frame>{};
         if (!entry)
         {
+            const auto weak = weak_from_this();
+            if (sink_)
+            {
+                sink_->async_wait([weak](bool ended)
+                       {
+                           if (const auto self = weak.lock())
+                           {
+                               if (ended)
+                               {
+                                   self->handle_source_end();
+                               }
+                               else
+                               {
+                                   self->process_media_available();
+                               }
+                           }
+                       });
+            }
             return;
         }
-        const auto expected = negotiated_tracks_.find(entry->frame.track);
+        const auto expected = negotiated_tracks_.find(entry->track);
         if (expected == negotiated_tracks_.end())
         {
             continue;
         }
-        if (!packetizer_->on_frame(entry->frame))
+        if (!packetizer_->on_frame(*entry))
         {
             shutdown();
             return;
@@ -288,7 +293,7 @@ void whep_session::on_media_available()
     }
 }
 
-void whep_session::on_end()
+void whep_session::handle_source_end()
 {
     spdlog::info("webrtc source stream ended session {}", id_);
     shutdown();
@@ -602,7 +607,7 @@ bool whep_session::start_media_read()
         }
     }
     media_started_ = true;
-    on_media_available();
+    process_media_available();
     return true;
 }
 

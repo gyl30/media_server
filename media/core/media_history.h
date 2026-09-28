@@ -9,7 +9,7 @@
 #include <optional>
 
 #include "media/net/worker_context.h"
-#include "media/core/media_reader.h"
+#include "media/core/media_sink.h"
 
 namespace media_server
 {
@@ -34,7 +34,7 @@ class media_history : public std::enable_shared_from_this<media_history<Frame>>
     [[nodiscard]] const std::string& name() const noexcept;
     [[nodiscard]] std::vector<media_track> tracks() const;
 
-    void add_reader(const std::shared_ptr<media_reader_t<Frame>>& reader, worker_context& worker);
+    void add_sink(const std::shared_ptr<media_sink_t<Frame>>& sink, worker_context& worker);
     // 仅用于发布完整初始轨道集合；成功后 track id/kind/codec 固定。只由 stream owner worker 调用。
     bool set_tracks(std::vector<media_track> tracks);
     // 只由 stream owner worker 调用。
@@ -46,15 +46,14 @@ class media_history : public std::enable_shared_from_this<media_history<Frame>>
     using media_history_entry = media_history_entry_t<Frame>;
 
    private:
-    friend class media_reader_t<Frame>;
+    friend class media_sink_t<Frame>;
     friend struct media_worker_history_t<Frame>;
 
-    void remove_reader(const std::shared_ptr<media_reader_state_t<Frame>>& state);
-    void add_reader_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state);
-    void remove_reader_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state);
+    void remove_sink(const std::shared_ptr<media_sink_state_t<Frame>>& state);
+    void add_sink_on_owner(const std::shared_ptr<media_sink_state_t<Frame>>& state);
+    void remove_sink_on_owner(const std::shared_ptr<media_sink_state_t<Frame>>& state);
     void remove_worker(const std::shared_ptr<media_worker_history_t<Frame>>& group);
     void reset_history();
-    void dispatch_reader_end(const std::shared_ptr<media_reader_state_t<Frame>>& state);
     [[nodiscard]] std::shared_ptr<media_worker_history_t<Frame>> make_worker_history(worker_context& worker);
     void replace_worker_history(const std::shared_ptr<media_worker_history_t<Frame>>& group);
 
@@ -67,7 +66,7 @@ class media_history : public std::enable_shared_from_this<media_history<Frame>>
     std::optional<std::uint64_t> current_gop_start_sequence_;
     std::size_t current_gop_frames_{};
     std::uint64_t next_history_sequence_{};
-    // 仅用于 owner worker 内阻止 end 后到达的 reader/sink 请求，不参与 registry 可发现性。
+    // 仅用于 owner worker 内阻止 end 后到达的 sink 请求，不参与 registry 可发现性。
     bool ended_{};
 };
 

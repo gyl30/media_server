@@ -98,12 +98,15 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name)
         {
             return existing->second.segmenter;
         }
-        existing->second.segmenter->on_end();
+        existing->second.segmenter->shutdown();
         current.segmenters.erase(existing);
     }
 
     auto segmenter = std::make_shared<hls_segmenter>();
-    stream->add_sink(segmenter);
+    if (!segmenter->startup(stream))
+    {
+        return {};
+    }
     current.segmenters.emplace(std::string(stream_name), entry{.stream = stream, .segmenter = segmenter});
     return segmenter;
 }
@@ -115,7 +118,7 @@ void shutdown()
     std::scoped_lock lock(current.mutex);
     for (auto& [stream_name, value] : current.segmenters)
     {
-        value.segmenter->on_end();
+        value.segmenter->shutdown();
     }
     current.segmenters.clear();
 }

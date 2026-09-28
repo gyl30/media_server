@@ -21,14 +21,14 @@ gb28181_rtp_sender::gb28181_rtp_sender(worker_context& worker,
                                        std::uint8_t payload_type,
                                        std::uint32_t ssrc,
                                        packet_handler on_packet,
-                                       end_handler on_end,
+                                       end_handler handle_source_end,
                                        failure_handler on_failure)
     : worker_(worker),
       stream_(std::move(stream)),
       payload_type_(payload_type),
       ssrc_(ssrc),
       packet_handler_(std::move(on_packet)),
-      end_handler_(std::move(on_end)),
+      end_handler_(std::move(handle_source_end)),
       failure_handler_(std::move(on_failure))
 {
 }
@@ -53,7 +53,7 @@ bool gb28181_rtp_sender::startup()
                           }
                           auto output = source->ps_output();
                           boost::asio::post(self->worker_.io(),
-                                            [self, output = std::move(output)]()
+                                            [self, source, output = std::move(output)]()
                                             {
                                                 if (self->shutdown_requested_.load(std::memory_order_acquire))
                                                 {
@@ -61,11 +61,14 @@ bool gb28181_rtp_sender::startup()
                                                 }
                                                 if (!output)
                                                 {
-                                                    self->on_end();
+                                                    self->handle_source_end();
                                                     return;
                                                 }
                                                 self->ps_output_ = output;
-                                                output->add_reader(self, self->worker_);
+                                                self->apply_tracks(source->tracks());
+                                                self->sink_ = std::make_shared<media_sink_t<mpeg_ps_frame>>();
+                                                output->add_sink(self->sink_, self->worker_);
+                                                self->process_media_available();
                                             });
                       });
     return true;
@@ -77,18 +80,15 @@ void gb28181_rtp_sender::shutdown()
     {
         return;
     }
-    remove_reader();
+    if (sink_)
+    {
+        sink_->close();
+    }
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void gb28181_rtp_sender::on_tracks(media_tracks_ptr tracks)
-{
-    apply_tracks(tracks);
-    on_media_available();
-}
-
-void gb28181_rtp_sender::on_media_available()
+void gb28181_rtp_sender::process_media_available()
 {
     if (shutdown_requested_.load(std::memory_order_acquire) || !packet_handler_)
     {
@@ -97,13 +97,28 @@ void gb28181_rtp_sender::on_media_available()
 
     while (packet_handler_)
     {
-        auto entry = read();
+        auto entry = sink_->read();
         if (!entry)
         {
+            const auto weak = weak_from_this();
+            sink_->async_wait([weak](bool ended)
+                       {
+                           if (const auto self = weak.lock())
+                           {
+                               if (ended)
+                               {
+                                   self->handle_source_end();
+                               }
+                               else
+                               {
+                                   self->process_media_available();
+                               }
+                           }
+                       });
             return;
         }
-        const auto state = track_states_.find(entry->frame.track);
-        if (state == track_states_.end() || !entry->frame.payload)
+        const auto state = track_states_.find(entry->track);
+        if (state == track_states_.end() || !entry->payload)
         {
             continue;
         }
@@ -111,24 +126,27 @@ void gb28181_rtp_sender::on_media_available()
         const bool starts_media = waiting_for_key_frame_;
         if (starts_media)
         {
-            if (state->second.kind != media_kind::video || !entry->frame.key_frame)
+            if (state->second.kind != media_kind::video || !entry->key_frame)
             {
                 continue;
             }
         }
 
-        const auto media_timestamp = entry->frame.media_timestamp;
+        const auto media_timestamp = entry->media_timestamp;
         if (!first_media_timestamp_)
         {
             first_media_timestamp_ = media_timestamp;
         }
         const auto timestamp = timestamp_base_ + media_timestamp - *first_media_timestamp_;
         const auto result = rtp_payload_encode_input(
-            packetizer_, entry->frame.payload->data(), static_cast<int>(entry->frame.payload->size()), timestamp);
+            packetizer_, entry->payload->data(), static_cast<int>(entry->payload->size()), timestamp);
         if (result < 0)
         {
             spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
-            remove_reader();
+            if (sink_)
+            {
+                sink_->close();
+            }
             if (failure_handler_)
             {
                 failure_handler_();
@@ -150,7 +168,7 @@ void gb28181_rtp_sender::on_media_available()
     }
 }
 
-void gb28181_rtp_sender::on_end()
+void gb28181_rtp_sender::handle_source_end()
 {
     if (ps_output_ && ps_output_->failed() && failure_handler_)
     {
@@ -171,7 +189,11 @@ void gb28181_rtp_sender::safe_shutdown()
     packet_handler_ = {};
     end_handler_ = {};
     failure_handler_ = {};
-    remove_reader();
+    if (sink_)
+    {
+        sink_->close();
+        sink_.reset();
+    }
     track_states_.clear();
     waiting_for_key_frame_ = true;
     stream_.reset();
@@ -192,14 +214,14 @@ bool gb28181_rtp_sender::create_packetizer()
     return packetizer_ != nullptr;
 }
 
-void gb28181_rtp_sender::apply_tracks(const media_tracks_ptr& tracks)
+void gb28181_rtp_sender::apply_tracks(const std::vector<media_track>& tracks)
 {
-    if (!tracks || !track_states_.empty())
+    if (!track_states_.empty())
     {
         return;
     }
 
-    for (const auto& track : *tracks)
+    for (const auto& track : tracks)
     {
         auto& state = track_states_[track.id];
         state.kind = track.kind;

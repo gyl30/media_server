@@ -95,7 +95,9 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_aud
     {
         return false;
     }
-    source_->add_reader(self, worker_);
+    sink_ = std::make_shared<media_sink>();
+    source_->add_sink(sink_, worker_);
+    process_media_available();
     return true;
 }
 
@@ -135,47 +137,57 @@ void whep_audio_egress::finish(end_reason reason)
     {
         return;
     }
-    remove_reader();
+    if (sink_)
+    {
+        sink_->close();
+        sink_.reset();
+    }
     output_->end();
     transcoders_.clear();
     source_.reset();
     shutdown_subscription_.reset();
 }
 
-void whep_audio_egress::on_tracks(media_tracks_ptr)
-{
-    if (reason() != end_reason::none)
-    {
-        return;
-    }
-    on_media_available();
-}
-
-void whep_audio_egress::on_media_available()
+void whep_audio_egress::process_media_available()
 {
     while (reason() == end_reason::none)
     {
-        auto entry = read();
+        auto entry = sink_->read();
         if (!entry)
         {
+            const auto weak = weak_from_this();
+            sink_->async_wait([weak](bool ended)
+                       {
+                           if (const auto self = weak.lock())
+                           {
+                               if (ended)
+                               {
+                                   self->handle_source_end();
+                               }
+                               else
+                               {
+                                   self->process_media_available();
+                               }
+                           }
+                       });
             return;
         }
-        const auto track = source_tracks_.find(entry->frame.track);
+        const auto track = source_tracks_.find(entry->track);
         if (track == source_tracks_.end())
         {
             continue;
         }
-        const auto transcoder = transcoders_.find(entry->frame.track);
+        const auto transcoder = transcoders_.find(entry->track);
         if (transcoder == transcoders_.end())
         {
-            output_->publish(entry->frame);
+            output_->publish(*entry);
             continue;
         }
 
         std::vector<media_frame> encoded;
-        if (!transcoder->second->transcode(entry->frame, encoded))
+        if (!transcoder->second->transcode(*entry, encoded))
         {
-            spdlog::error("whep shared audio transcode failed track {}", entry->frame.track);
+            spdlog::error("whep shared audio transcode failed track {}", entry->track);
             finish(end_reason::transcode_failed);
             return;
         }
@@ -188,7 +200,7 @@ void whep_audio_egress::on_media_available()
     }
 }
 
-void whep_audio_egress::on_end() { finish(end_reason::source_ended); }
+void whep_audio_egress::handle_source_end() { finish(end_reason::source_ended); }
 
 std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings)
@@ -239,7 +251,10 @@ void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress)
     {
         return;
     }
-    released->remove_reader();
+    if (released->sink_)
+    {
+        released->sink_->close();
+    }
     // worker 的 shutdown subscription 持有 processor，排队请求无需延长其终止后的生命。
     boost::asio::post(released->worker_.io(),
                       [weak = std::weak_ptr<whep_audio_egress>(released)]()

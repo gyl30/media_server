@@ -9,7 +9,7 @@ namespace media_server
 rtmp_play_session::rtmp_play_session(worker_context& worker,
                                      std::shared_ptr<media_stream> stream,
                                      flv_muxer::packet_handler packet_handler,
-                                     end_handler on_end,
+                                     end_handler handle_source_end,
                                      queue_bytes_handler queued_output_bytes,
                                      std::size_t max_output_queue_bytes)
     : worker_(worker),
@@ -17,7 +17,7 @@ rtmp_play_session::rtmp_play_session(worker_context& worker,
       muxer_(std::move(packet_handler)),
       queued_output_bytes_(std::move(queued_output_bytes)),
       max_output_queue_bytes_(max_output_queue_bytes),
-      end_handler_(std::move(on_end))
+      end_handler_(std::move(handle_source_end))
 {
 }
 
@@ -27,7 +27,10 @@ void rtmp_play_session::startup()
     {
         return;
     }
-    stream_->add_reader(shared_from_this(), worker_);
+    apply_tracks(std::make_shared<const media_tracks>(stream_->tracks()));
+    sink_ = std::make_shared<media_sink>();
+    stream_->add_sink(sink_, worker_);
+    process_read();
 }
 
 void rtmp_play_session::shutdown()
@@ -37,44 +40,16 @@ void rtmp_play_session::shutdown()
         return;
     }
     closed_ = true;
-    remove_reader();
-    reader_tracks_.clear();
+    if (sink_)
+    {
+        sink_->close();
+        sink_.reset();
+    }
+    sink_tracks_.clear();
     waiting_for_key_frame_ = false;
     muxer_.shutdown();
     stream_.reset();
     waiting_for_output_ = false;
-}
-
-void rtmp_play_session::on_tracks(media_tracks_ptr tracks)
-{
-    if (closed_)
-    {
-        return;
-    }
-
-    apply_tracks(tracks);
-    if (!closed_ && !waiting_for_output_)
-    {
-        process_read();
-    }
-}
-
-void rtmp_play_session::on_media_available()
-{
-    if (closed_)
-    {
-        return;
-    }
-    process_read();
-}
-
-void rtmp_play_session::on_end()
-{
-    if (!closed_)
-    {
-        waiting_for_output_ = false;
-        end_handler_();
-    }
 }
 
 void rtmp_play_session::on_output_progress()
@@ -98,27 +73,46 @@ void rtmp_play_session::process_read()
             return;
         }
 
-        auto entry = read();
+        auto entry = sink_ ? sink_->read() : std::optional<media_frame>{};
         if (!entry)
         {
+            if (sink_ && !waiting_for_output_)
+            {
+                const auto weak = weak_from_this();
+                sink_->async_wait([weak](bool ended)
+                                  {
+                                      if (const auto self = weak.lock())
+                                      {
+                                          if (ended && !self->source_ended_)
+                                          {
+                                              self->source_ended_ = true;
+                                              self->end_handler_();
+                                          }
+                                          else
+                                          {
+                                              self->process_read();
+                                          }
+                                      }
+                                  });
+            }
             return;
         }
         first_entry = false;
-        const auto track = reader_tracks_.find(entry->frame.track);
-        if (track == reader_tracks_.end())
+        const auto track = sink_tracks_.find(entry->track);
+        if (track == sink_tracks_.end())
         {
             continue;
         }
 
         if (waiting_for_key_frame_)
         {
-            if (track->second.kind != media_kind::video || !entry->frame.key_frame)
+        if (track->second.kind != media_kind::video || !entry->key_frame)
             {
                 continue;
             }
             waiting_for_key_frame_ = false;
         }
-        muxer_.on_frame(entry->frame);
+        muxer_.on_frame(*entry);
     }
 }
 
@@ -134,14 +128,14 @@ bool rtmp_play_session::output_drained() const { return queued_output_bytes() <=
 
 void rtmp_play_session::apply_tracks(const media_tracks_ptr& tracks)
 {
-    if (!tracks || !reader_tracks_.empty())
+    if (!tracks || !sink_tracks_.empty())
     {
         return;
     }
 
     for (const auto& track : *tracks)
     {
-        reader_tracks_.emplace(track.id, track);
+        sink_tracks_.emplace(track.id, track);
         muxer_.on_track(track);
     }
 }

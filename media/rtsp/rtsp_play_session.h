@@ -14,7 +14,7 @@
 
 #include <boost/asio/ip/address.hpp>
 
-#include "media/core/media_reader.h"
+#include "media/core/media_sink.h"
 
 struct rtsp_muxer_t;
 struct rtsp_server_t;
@@ -24,7 +24,7 @@ namespace media_server
 {
 
 class worker_context;
-class rtsp_play_session final : public media_reader, public std::enable_shared_from_this<rtsp_play_session>
+class rtsp_play_session final : public std::enable_shared_from_this<rtsp_play_session>
 {
    public:
     using write_handler = std::function<void(std::vector<std::uint8_t>)>;
@@ -56,9 +56,8 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
 
    public:
-    void on_tracks(media_tracks_ptr tracks) override;
-    void on_media_available() override;
-    void on_end() override;
+    void process_media_available();
+    void handle_source_end();
 
    private:
     struct track_state
@@ -96,6 +95,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     write_handler write_handler_;
     std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
+    std::shared_ptr<media_sink> sink_;
     std::shared_ptr<media_stream> source_generation_;
     queue_bytes_handler queued_output_bytes_;
     std::size_t max_output_queue_bytes_{};

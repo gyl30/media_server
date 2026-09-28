@@ -1,5 +1,6 @@
 #include "media/ps/mpeg_ps_output.h"
 #include "media/codec/codec_utils.h"
+#include "media/core/media_stream.h"
 
 extern "C"
 {
@@ -40,7 +41,7 @@ bool mpeg_ps_output::supported_tracks(const std::vector<media_track>& tracks)
     return video_count == 1 && audio_count <= 1;
 }
 
-bool mpeg_ps_output::startup(const std::vector<media_track>& tracks)
+bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source, const std::vector<media_track>& tracks)
 {
     if (muxer_ || !supported_tracks(tracks))
     {
@@ -51,7 +52,7 @@ bool mpeg_ps_output::startup(const std::vector<media_track>& tracks)
     if (!muxer_)
     {
         failed_.store(true, std::memory_order_release);
-        on_end();
+        finish();
         return false;
     }
     for (const auto& track : tracks)
@@ -81,7 +82,7 @@ bool mpeg_ps_output::startup(const std::vector<media_track>& tracks)
         if (id < 0)
         {
             failed_.store(true, std::memory_order_release);
-            on_end();
+            finish();
             return false;
         }
         mux_tracks_.emplace(track.id, std::pair{track.kind, id});
@@ -89,20 +90,18 @@ bool mpeg_ps_output::startup(const std::vector<media_track>& tracks)
     if (!set_tracks(tracks))
     {
         failed_.store(true, std::memory_order_release);
-        on_end();
+        finish();
         return false;
     }
+    sink_ = std::make_shared<media_sink>();
+    source->add_sink(sink_, source->worker());
+    process();
     return true;
 }
 
 bool mpeg_ps_output::failed() const noexcept { return failed_.load(std::memory_order_acquire); }
 
-void mpeg_ps_output::on_track(const media_track& track)
-{
-    static_cast<void>(track);
-}
-
-void mpeg_ps_output::on_frame(const media_frame& frame)
+void mpeg_ps_output::process_frame(const media_frame& frame)
 {
     if (!muxer_)
     {
@@ -123,7 +122,7 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
                        frame.payload->size()) < 0)
     {
         failed_.store(true, std::memory_order_release);
-        on_end();
+        finish();
         return;
     }
     waiting_for_key_frame_ = false;
@@ -135,11 +134,43 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
                       .media_timestamp = static_cast<std::uint32_t>(pts)});
 }
 
-void mpeg_ps_output::on_end()
+void mpeg_ps_output::finish()
 {
+    if (sink_)
+    {
+        sink_->close();
+        sink_.reset();
+    }
     end();
     packet_.reset();
     muxer_.reset();
+}
+
+void mpeg_ps_output::process()
+{
+    if (!sink_)
+    {
+        return;
+    }
+    while (const auto entry = sink_->read())
+    {
+        process_frame(*entry);
+    }
+    const auto weak = std::weak_ptr<mpeg_ps_output>(std::static_pointer_cast<mpeg_ps_output>(media_history<mpeg_ps_frame>::shared_from_this()));
+    sink_->async_wait([weak](bool ended)
+                      {
+                          if (const auto self = weak.lock())
+                          {
+                              if (ended)
+                              {
+                                  self->finish();
+                              }
+                              else
+                              {
+                                  self->process();
+                              }
+                          }
+                      });
 }
 
 void* mpeg_ps_output::allocate_packet(void* param, std::size_t bytes)

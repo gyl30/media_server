@@ -10,14 +10,14 @@
 #include <string_view>
 
 #include "media/flv/flv_muxer.h"
-#include "media/core/media_reader.h"
+#include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
 
 namespace media_server
 {
 
 class worker_context;
-class rtmp_play_session final : public media_reader, public std::enable_shared_from_this<rtmp_play_session>
+class rtmp_play_session final : public std::enable_shared_from_this<rtmp_play_session>
 {
    public:
     using end_handler = std::function<void()>;
@@ -26,7 +26,7 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
     rtmp_play_session(worker_context& worker,
                       std::shared_ptr<media_stream> stream,
                       flv_muxer::packet_handler packet_handler,
-                      end_handler on_end,
+                      end_handler handle_source_end,
                       queue_bytes_handler queued_output_bytes,
                       std::size_t max_output_queue_bytes);
 
@@ -39,9 +39,6 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
     void on_output_progress();
 
    public:
-    void on_tracks(media_tracks_ptr tracks) override;
-    void on_media_available() override;
-    void on_end() override;
 
    private:
     void process_read();
@@ -54,14 +51,16 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
    private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
+    std::shared_ptr<media_sink> sink_;
     flv_muxer muxer_;
     queue_bytes_handler queued_output_bytes_;
     std::size_t max_output_queue_bytes_{};
     end_handler end_handler_;
-    std::map<track_id, media_track> reader_tracks_;
+    std::map<track_id, media_track> sink_tracks_;
     bool waiting_for_key_frame_{};
     bool closed_{};
     bool waiting_for_output_{};
+    bool source_ended_{};
 };
 
 }    // namespace media_server

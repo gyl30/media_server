@@ -111,7 +111,13 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         }
     }
 
-    media_stream->add_reader(shared_from_this(), worker_);
+    if (!apply_tracks(std::make_shared<const media_tracks>(media_stream->tracks())))
+    {
+        return;
+    }
+    sink_ = std::make_shared<media_sink>();
+    media_stream->add_sink(sink_, worker_);
+    process_read();
 
     std::array<std::uint8_t, 1> read_buffer{};
     for (;;)
@@ -219,15 +225,7 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
     }
 }
 
-void http_flv_session::on_tracks(media_tracks_ptr tracks)
-{
-    if (!closed_)
-    {
-        apply_tracks(tracks);
-    }
-}
-
-void http_flv_session::on_media_available()
+void http_flv_session::process_media_available()
 {
     if (closed_ || write_in_progress_)
     {
@@ -236,7 +234,7 @@ void http_flv_session::on_media_available()
     process_read();
 }
 
-void http_flv_session::on_end()
+void http_flv_session::handle_source_end()
 {
     if (closed_)
     {
@@ -292,19 +290,37 @@ void http_flv_session::process_read()
     }
     for (;;)
     {
-        auto entry = read();
+        auto entry = sink_ ? sink_->read() : std::optional<media_frame>{};
         if (!entry)
         {
+            const auto weak = weak_from_this();
+            if (sink_)
+            {
+                sink_->async_wait([weak](bool ended)
+                       {
+                           if (const auto self = weak.lock())
+                           {
+                               if (ended)
+                               {
+                                   self->handle_source_end();
+                               }
+                               else
+                               {
+                                   self->process_media_available();
+                               }
+                           }
+                       });
+            }
             return;
         }
-        const auto track = reader_tracks_.find(entry->frame.track);
+        const auto track = reader_tracks_.find(entry->track);
         if (track == reader_tracks_.end())
         {
             continue;
         }
         if (waiting_for_key_frame_)
         {
-            if (track->second.kind != media_kind::video || !entry->frame.key_frame)
+        if (track->second.kind != media_kind::video || !entry->key_frame)
             {
                 continue;
             }
@@ -312,7 +328,7 @@ void http_flv_session::process_read()
         }
 
         output_buffer_.clear();
-        muxer_.on_frame(entry->frame);
+        muxer_.on_frame(*entry);
         if (output_buffer_.empty())
         {
             continue;
@@ -365,7 +381,11 @@ void http_flv_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    remove_reader();
+    if (sink_)
+    {
+        sink_->close();
+        sink_.reset();
+    }
     muxer_.shutdown();
     if (writer_ != nullptr)
     {

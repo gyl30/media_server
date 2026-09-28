@@ -47,7 +47,7 @@ class rtsp_pull_session final : public control_session, public std::enable_share
 
    public:
     bool startup();
-    void shutdown() override;
+    void shutdown();
 
    public:
    private:
