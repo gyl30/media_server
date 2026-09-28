@@ -288,20 +288,12 @@ void whep_session::on_tracks(media_track_snapshot_ptr tracks)
     }
 }
 
-void whep_session::on_read_ready(media_track_snapshot_ptr tracks, bool)
+void whep_session::on_media_available(bool)
 {
     if (!started_ || !packetizer_)
     {
         return;
     }
-
-    if (!apply_tracks(tracks))
-    {
-        spdlog::info("webrtc negotiated track changed session {}", id_);
-        shutdown();
-        return;
-    }
-
     while (started_)
     {
         auto entry = read();
@@ -635,7 +627,7 @@ bool whep_session::start_media_read()
             return false;
         }
     }
-    (void)read();
+    on_media_available(false);
     return true;
 }
 

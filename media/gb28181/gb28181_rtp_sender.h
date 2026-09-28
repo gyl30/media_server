@@ -41,7 +41,7 @@ class gb28181_rtp_sender final : public media_reader_t<mpeg_ps_frame>, public st
     void on_end() override;
 
    protected:
-    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
+    void on_media_available(bool waited_for_media) override;
 
    private:
     struct track_state

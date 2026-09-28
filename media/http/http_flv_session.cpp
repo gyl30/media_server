@@ -248,9 +248,9 @@ void http_flv_session::on_tracks(media_track_snapshot_ptr tracks)
     }
 }
 
-void http_flv_session::on_read_ready(media_track_snapshot_ptr tracks, bool)
+void http_flv_session::on_media_available(bool)
 {
-    if (closed_ || apply_tracks(tracks))
+    if (closed_ || write_in_progress_)
     {
         return;
     }

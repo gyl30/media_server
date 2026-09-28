@@ -61,7 +61,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 
    public:
     void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
+    void on_media_available(bool waited_for_media) override;
     void on_end() override;
 
    private:

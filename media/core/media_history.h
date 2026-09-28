@@ -18,6 +18,15 @@ namespace media_server
 class worker_context;
 
 template <typename Frame>
+struct media_history_entry_t
+{
+    std::uint64_t sequence{};
+    std::uint64_t config_version{};
+    media_kind kind{};
+    Frame frame;
+};
+
+template <typename Frame>
 class media_history : public std::enable_shared_from_this<media_history<Frame>>
 {
    public:
@@ -38,40 +47,28 @@ class media_history : public std::enable_shared_from_this<media_history<Frame>>
     void end();
 
    protected:
-    struct media_history_entry
-    {
-        std::uint64_t sequence{};
-        std::uint64_t config_version{};
-        Frame frame;
-    };
+    using media_history_entry = media_history_entry_t<Frame>;
 
    private:
     friend class media_reader_t<Frame>;
+    friend struct media_worker_history_t<Frame>;
 
     void publish_track_snapshot();
-    using reader_batch = typename media_reader_t<Frame>::read_batch;
-
-    void request_read(const std::shared_ptr<media_reader_state_t<Frame>>& state, std::optional<std::uint64_t> cursor);
     void remove_reader(const std::shared_ptr<media_reader_state_t<Frame>>& state);
     void add_reader_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state);
-    void request_read_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state, std::optional<std::uint64_t> cursor);
     void remove_reader_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state);
-    void remove_inactive_readers();
+    void remove_worker(const std::shared_ptr<media_worker_history_t<Frame>>& group);
     void reset_history();
-    void dispatch_reader_tracks(const media_track_snapshot_ptr& tracks);
-    void end_readers();
-    void append_history(std::uint64_t sequence, const Frame& frame, const media_track& track);
-    void dispatch_pending_readers();
-    void complete_reader_from_history(const std::shared_ptr<media_reader_state_t<Frame>>& state, bool waited_for_media);
-    void deliver_reader_batch(const std::shared_ptr<media_reader_state_t<Frame>>& state, reader_batch batch);
-    void dispatch_reader_tracks(const std::shared_ptr<media_reader_state_t<Frame>>& state, media_track_snapshot_ptr tracks);
+    void dispatch_reader_tracks(const media_track_snapshot_ptr& tracks, bool reset_video_gop = false);
     void dispatch_reader_end(const std::shared_ptr<media_reader_state_t<Frame>>& state);
+    [[nodiscard]] std::shared_ptr<media_worker_history_t<Frame>> make_worker_history(worker_context& worker);
+    void replace_worker_history(const std::shared_ptr<media_worker_history_t<Frame>>& group);
 
    protected:
     std::string name_;
     worker_context& worker_;
     std::map<track_id, media_track> tracks_;
-    std::vector<std::shared_ptr<media_reader_state_t<Frame>>> readers_;
+    std::map<worker_context*, std::shared_ptr<media_worker_history_t<Frame>>> workers_;
     std::deque<media_history_entry> history_;
     std::optional<std::uint64_t> current_gop_start_sequence_;
     std::size_t current_gop_frames_{};

@@ -77,18 +77,12 @@ void rtmp_play_session::on_tracks(media_track_snapshot_ptr tracks)
     apply_tracks(tracks);
     if (!closed_ && !waiting_for_output_)
     {
-        process_read(false);
+        process_read(true);
     }
 }
 
-void rtmp_play_session::on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media)
+void rtmp_play_session::on_media_available(bool waited_for_media)
 {
-    if (closed_)
-    {
-        return;
-    }
-
-    apply_tracks(tracks);
     if (closed_)
     {
         return;
@@ -117,9 +111,10 @@ void rtmp_play_session::on_output_progress()
 
 void rtmp_play_session::process_read(bool replaying_history)
 {
+    bool first_entry = true;
     while (!closed_)
     {
-        if (replaying_history && output_backpressured())
+        if ((replaying_history || !first_entry) && output_backpressured())
         {
             waiting_for_output_ = true;
             return;
@@ -130,6 +125,7 @@ void rtmp_play_session::process_read(bool replaying_history)
         {
             return;
         }
+        first_entry = false;
         const auto track = reader_tracks_.find(entry->frame.track);
         if (track == reader_tracks_.end() || track->second.config_version != entry->config_version)
         {

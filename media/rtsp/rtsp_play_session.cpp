@@ -91,24 +91,16 @@ void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
     }
     if (!waiting_for_output_)
     {
-        process_read(false);
+        process_read(true);
     }
 }
 
-void rtsp_play_session::on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media)
+void rtsp_play_session::on_media_available(bool waited_for_media)
 {
     if (closed_)
     {
         return;
     }
-
-    if (!apply_tracks(tracks))
-    {
-        remove_reader();
-        shutdown_handler_();
-        return;
-    }
-
     process_read(!waited_for_media);
 }
 
@@ -124,9 +116,10 @@ void rtsp_play_session::on_output_progress()
 
 void rtsp_play_session::process_read(bool replaying_history)
 {
+    bool first_entry = true;
     while (!closed_)
     {
-        if (replaying_history && output_backpressured())
+        if ((replaying_history || !first_entry) && output_backpressured())
         {
             waiting_for_output_ = true;
             return;
@@ -137,6 +130,7 @@ void rtsp_play_session::process_read(bool replaying_history)
         {
             return;
         }
+        first_entry = false;
         const auto iterator = track_states_.find(entry->frame.track);
         if (iterator == track_states_.end() || !entry->frame.payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0 ||
             iterator->second.config_version != entry->config_version)

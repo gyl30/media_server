@@ -84,17 +84,16 @@ void gb28181_rtp_sender::shutdown()
 
 void gb28181_rtp_sender::on_tracks(media_track_snapshot_ptr tracks)
 {
-    on_read_ready(std::move(tracks), false);
+    apply_tracks(tracks);
+    on_media_available(false);
 }
 
-void gb28181_rtp_sender::on_read_ready(media_track_snapshot_ptr tracks, bool)
+void gb28181_rtp_sender::on_media_available(bool)
 {
     if (shutdown_requested_.load(std::memory_order_acquire) || !packet_handler_)
     {
         return;
     }
-
-    apply_tracks(tracks);
 
     while (packet_handler_)
     {

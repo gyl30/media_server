@@ -145,13 +145,12 @@ void av1_video_egress::on_tracks(media_track_snapshot_ptr tracks)
     if (!reading_)
     {
         reading_ = true;
-        (void)read();
+        on_media_available(false);
     }
 }
 
-void av1_video_egress::on_read_ready(media_track_snapshot_ptr tracks, bool)
+void av1_video_egress::on_media_available(bool)
 {
-    on_tracks(std::move(tracks));
     while (!ended_.load(std::memory_order_acquire))
     {
         auto entry = read();

@@ -74,7 +74,7 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     void on_end() override;
 
    protected:
-    void on_read_ready(media_track_snapshot_ptr tracks, bool waited_for_media) override;
+    void on_media_available(bool waited_for_media) override;
 
    private:
     struct pending_datagram
