@@ -51,6 +51,8 @@ class port_manager final
    private:
     std::uint16_t start_port_{};
     std::uint16_t end_port_{};
+    std::uint32_t next_port_{};
+    std::uint32_t next_pair_port_{};
     std::mutex mutex_;
     std::set<std::uint16_t> reserved_;
 };

@@ -40,13 +40,22 @@ port_manager::port_manager(int start_port, int end_port)
     }
     start_port_ = static_cast<std::uint16_t>(start_port);
     end_port_ = static_cast<std::uint16_t>(end_port);
+    next_port_ = start_port_;
+    next_pair_port_ = start_port_;
+    if ((next_pair_port_ & 1U) != 0U)
+    {
+        ++next_pair_port_;
+    }
 }
 
 std::optional<std::uint16_t> port_manager::reserve()
 {
     std::scoped_lock lock(mutex_);
-    for (std::uint32_t port = start_port_; port <= end_port_; ++port)
+    const auto candidate_count = static_cast<std::uint32_t>(end_port_) - start_port_ + 1U;
+    for (std::uint32_t index = 0; index < candidate_count; ++index)
     {
+        const auto port = next_port_;
+        next_port_ = port == end_port_ ? start_port_ : port + 1U;
         const auto value = static_cast<std::uint16_t>(port);
         if (reserved_.insert(value).second)
         {
@@ -59,13 +68,21 @@ std::optional<std::uint16_t> port_manager::reserve()
 std::optional<port_manager::port_pair> port_manager::reserve_pair()
 {
     std::scoped_lock lock(mutex_);
-    std::uint32_t first = start_port_;
-    if ((first & 1U) != 0U)
+    std::uint32_t first_candidate = start_port_;
+    if ((first_candidate & 1U) != 0U)
     {
-        ++first;
+        ++first_candidate;
     }
-    for (; first + 1U <= end_port_; first += 2U)
+    if (first_candidate + 1U > end_port_)
     {
+        return std::nullopt;
+    }
+    const auto last_candidate = (static_cast<std::uint32_t>(end_port_) - 1U) & ~1U;
+    const auto candidate_count = (last_candidate - first_candidate) / 2U + 1U;
+    for (std::uint32_t index = 0; index < candidate_count; ++index)
+    {
+        const auto first = next_pair_port_;
+        next_pair_port_ = first == last_candidate ? first_candidate : first + 2U;
         const auto rtp = static_cast<std::uint16_t>(first);
         const auto rtcp = static_cast<std::uint16_t>(first + 1U);
         if (reserved_.contains(rtp) || reserved_.contains(rtcp))
@@ -99,6 +116,7 @@ std::optional<std::uint16_t> port_manager::acquire_and_bind(udp_yield_transport&
         const auto reserved = reserve();
         if (!reserved)
         {
+            error.clear();
             return std::nullopt;
         }
         transport.startup(bind_address, *reserved, error);
@@ -135,6 +153,7 @@ std::optional<port_manager::port_pair> port_manager::acquire_pair_and_bind(udp_y
         const auto reserved = reserve_pair();
         if (!reserved)
         {
+            error.clear();
             return std::nullopt;
         }
         rtp_transport.startup(bind_address, reserved->first, error);
