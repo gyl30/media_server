@@ -13,20 +13,11 @@ extern "C"
 namespace media_server
 {
 
-flv_muxer::flv_muxer(packet_handler handler, video_transcode_config video)
-    : packet_handler_(std::move(handler)), video_config_(video), muxer_(flv_muxer_create(&flv_muxer::on_packet, this))
-{
-    if (muxer_ != nullptr && video_config_.codec == video_transcode_codec::av1)
-    {
-        flv_muxer_set_enhanced_rtmp(muxer_, 1);
-    }
-}
+flv_muxer::flv_muxer(packet_handler handler) : packet_handler_(std::move(handler)), muxer_(flv_muxer_create(&flv_muxer::on_packet, this)) {}
 
 void flv_muxer::shutdown()
 {
     packet_handler_ = {};
-    video_transcoder_.reset();
-    video_track_id_ = 0;
     tracks_.clear();
     if (muxer_ != nullptr)
     {
@@ -54,20 +45,11 @@ void flv_muxer::on_track(const media_track& track)
     }
 
     tracks_.emplace(track.id, track);
-    if (video_config_.codec == video_transcode_codec::av1 && track.kind == media_kind::video)
-    {
-        startup_video_transcoder(track);
-    }
-
     prime_video_config(track, 0);
 }
 
 void flv_muxer::prime_video_config(const media_track& track, std::uint32_t timestamp)
 {
-    if (video_config_.codec == video_transcode_codec::av1 && track.kind == media_kind::video)
-    {
-        return;
-    }
     if (track.codec_config.empty() && track.codec != codec_id::opus)
     {
         return;
@@ -125,12 +107,6 @@ void flv_muxer::on_frame(const media_frame& frame)
 
     const auto pts = ns_to_flv_milliseconds(frame.pts_ns);
     const auto dts = ns_to_flv_milliseconds(frame.dts_ns);
-    if (video_config_.codec == video_transcode_codec::av1 && iterator->second.kind == media_kind::video)
-    {
-        input_av1(frame);
-        return;
-    }
-
     int result = -1;
 
     switch (iterator->second.codec)
@@ -154,72 +130,12 @@ void flv_muxer::on_frame(const media_frame& frame)
         case codec_id::g711u:
             result = flv_muxer_g711u(muxer_, frame.payload->data(), frame.payload->size(), pts, dts);
             break;
-        case codec_id::av1:
-            break;
     }
 
     if (result != 0)
 
     {
         spdlog::error("flv mux failed track {} result {}", frame.track, result);
-    }
-}
-
-void flv_muxer::startup_video_transcoder(const media_track& track)
-{
-    video_transcoder_.reset();
-    video_track_id_ = 0;
-    if (track.codec != codec_id::h264 && track.codec != codec_id::h265)
-    {
-        return;
-    }
-    auto transcoder = std::make_unique<video_transcoder>();
-    if (!transcoder->startup(video_transcoder_config{
-            .input_codec = track.codec,
-            .output_codec = codec_id::av1,
-            .input_codec_config = track.codec_config,
-        }))
-    {
-        spdlog::error("flv av1 transcoder startup failed track {}", track.id);
-        return;
-    }
-    video_track_id_ = track.id;
-    video_transcoder_ = std::move(transcoder);
-}
-
-void flv_muxer::input_av1(const media_frame& frame)
-{
-    if (frame.track != video_track_id_ && tracks_.at(frame.track).codec != codec_id::av1)
-    {
-        return;
-    }
-    std::vector<media_frame> output;
-    std::span<const media_frame> frames(&frame, 1);
-    if (tracks_.at(frame.track).codec != codec_id::av1)
-    {
-        if (!video_transcoder_ || !video_transcoder_->transcode(frame, output))
-        {
-            spdlog::error("flv av1 transcode failed track {}", frame.track);
-            return;
-        }
-        frames = output;
-    }
-    for (const auto& encoded : frames)
-    {
-        if (!encoded.payload)
-        {
-            continue;
-        }
-        const auto result = flv_muxer_av1(muxer_,
-                                          encoded.payload->data(),
-                                          encoded.payload->size(),
-                                          ns_to_flv_milliseconds(encoded.pts_ns),
-                                          ns_to_flv_milliseconds(encoded.dts_ns),
-                                          encoded.key_frame ? 1 : 0);
-        if (result != 0)
-        {
-            spdlog::error("flv av1 mux failed track {} result {}", frame.track, result);
-        }
     }
 }
 

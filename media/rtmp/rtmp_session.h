@@ -14,7 +14,6 @@
 
 #include "media/net/tcp_write_queue.h"
 #include "media/net/tcp_yield_transport.h"
-#include "media/codec/video_transcode_config.h"
 
 struct rtmp_server_t;
 
@@ -32,7 +31,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
    public:
     rtmp_session(worker_context& worker,
                  boost::asio::ip::tcp::socket socket,
-                 video_transcode_config video = {},
                  std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
 
@@ -70,7 +68,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     tcp_yield_transport transport_;
     tcp_write_queue write_queue_;
     std::chrono::milliseconds initial_tracks_timeout_;
-    video_transcode_config video_config_;
     rtmp_server_t* rtmp_context_{};
     std::shared_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;

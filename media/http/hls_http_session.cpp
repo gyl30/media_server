@@ -17,8 +17,8 @@
 namespace media_server
 {
 
-hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
-    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(config), wait_timer_(worker_.io())
+hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request)
+    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), wait_timer_(worker_.io())
 {
 }
 
@@ -90,10 +90,6 @@ void hls_http_session::handle_request()
     std::optional<std::string> secret;
     for (const auto parameter : target.params())
     {
-        if (file == "init.mp4" && parameter.key == "v" && parameter.has_value)
-        {
-            continue;
-        }
         if (parameter.key != "session")
         {
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid hls query\n", false);
@@ -109,7 +105,7 @@ void hls_http_session::handle_request()
 
     if (!secret && file == "index.m3u8")
     {
-        const auto segmenter = hls::get_or_create(stream_name, config_);
+        const auto segmenter = hls::get_or_create(stream_name);
         if (!segmenter)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", false);
@@ -145,29 +141,14 @@ void hls_http_session::handle_request()
         return;
     }
 
-    if (file == "init.mp4")
-    {
-        const auto init = segmenter ? segmenter->init_segment() : std::nullopt;
-        if (!init)
-        {
-            send_text_response(boost::beast::http::status::not_found, "text/plain", "init segment not found\n", false);
-            return;
-        }
-        send_binary_response(
-            boost::beast::http::status::ok, "video/mp4", std::make_shared<const std::vector<std::uint8_t>>(*init), request_.keep_alive(), viewer);
-        return;
-    }
-
     const bool transport_stream = file.ends_with(".ts");
-    const bool fragmented_mp4 = file.ends_with(".m4s");
-    const bool fmp4_mode = config_.http_video.codec == video_transcode_codec::av1;
-    if ((!transport_stream && !fragmented_mp4) || (transport_stream && fmp4_mode) || (fragmented_mp4 && !fmp4_mode))
+    if (!transport_stream)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", false);
         return;
     }
 
-    const auto suffix_size = transport_stream ? 3U : 4U;
+    const auto suffix_size = 3U;
     const std::string_view number(file.data(), file.size() - suffix_size);
     std::uint64_t sequence = 0;
     const auto [pointer, parse_error] = std::from_chars(number.data(), number.data() + number.size(), sequence);
@@ -183,7 +164,7 @@ void hls_http_session::handle_request()
         send_text_response(boost::beast::http::status::not_found, "text/plain", "segment not found\n", false);
         return;
     }
-    send_binary_response(boost::beast::http::status::ok, fragmented_mp4 ? "video/mp4" : "video/mp2t", segment, request_.keep_alive(), viewer);
+    send_binary_response(boost::beast::http::status::ok, "video/mp2t", segment, request_.keep_alive(), viewer);
 }
 
 void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewer, std::shared_ptr<hls_segmenter> segmenter)

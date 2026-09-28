@@ -10,7 +10,6 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "media/core/media_types.h"
-#include "media/codec/video_transcode_config.h"
 
 namespace media_server
 {
@@ -75,7 +74,6 @@ struct webrtc_answer_config
     std::string ice_ufrag;
     std::string ice_pwd;
     std::string fingerprint;
-    video_transcode_config video;
 };
 
 [[nodiscard]] std::optional<webrtc_offer> parse_webrtc_offer(std::string_view sdp);

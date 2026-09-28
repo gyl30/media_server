@@ -17,8 +17,6 @@ namespace media_server
 {
 
 class worker_context;
-class av1_video_egress;
-
 class rtmp_play_session final : public media_reader, public std::enable_shared_from_this<rtmp_play_session>
 {
    public:
@@ -28,7 +26,6 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
     rtmp_play_session(worker_context& worker,
                       std::shared_ptr<media_stream> stream,
                       flv_muxer::packet_handler packet_handler,
-                      video_transcode_config video,
                       end_handler on_end,
                       queue_bytes_handler queued_output_bytes,
                       std::size_t max_output_queue_bytes);
@@ -57,9 +54,7 @@ class rtmp_play_session final : public media_reader, public std::enable_shared_f
    private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
-    std::shared_ptr<av1_video_egress> video_egress_;
     flv_muxer muxer_;
-    bool av1_output_{};
     queue_bytes_handler queued_output_bytes_;
     std::size_t max_output_queue_bytes_{};
     end_handler end_handler_;

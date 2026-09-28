@@ -74,7 +74,6 @@ bool mpeg_ps_output::startup(const std::vector<media_track>& tracks)
             case codec_id::g711u:
                 codec = PSI_STREAM_AUDIO_G711U;
                 break;
-            case codec_id::av1:
             case codec_id::opus:
                 break;
         }

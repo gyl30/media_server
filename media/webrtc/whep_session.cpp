@@ -11,7 +11,6 @@
 #include <boost/asio/detached.hpp>
 
 #include "media/net/worker_context.h"
-#include "media/codec/av1_video_egress.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
 #include "media/webrtc/whep_audio_egress.h"
@@ -47,13 +46,11 @@ whep_session::whep_session(worker_context& worker,
                            boost::asio::ip::address advertised_address,
                            std::shared_ptr<dtls_certificate> certificate,
                            whep_session_timeouts timeouts,
-                           video_transcode_config video,
                            std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
       advertised_address_(std::move(advertised_address)),
       certificate_(std::move(certificate)),
-      video_config_(video),
       timeouts_(timeouts),
       udp_transport_(worker_.io()),
       max_write_queue_bytes_(max_write_queue_bytes),
@@ -107,7 +104,6 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
                                          .ice_ufrag = ice_ufrag_,
                                          .ice_pwd = ice_pwd_,
                                          .fingerprint = certificate_->sha256_fingerprint(),
-                                         .video = video_config_,
                                      });
     if (!answer)
     {
@@ -139,24 +135,6 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     spdlog::debug("webrtc session {} remote fingerprint {}", id_, media->fingerprint);
 
-    if (answer->video_codec == codec_id::av1)
-    {
-        for (const auto& track : source_tracks)
-        {
-            if (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265))
-            {
-                video_egress_ = acquire_av1_video_egress(stream_, worker_, whep_av1_parameters);
-                if (!video_egress_)
-                {
-                    shutdown();
-                    return whep_session_startup_error::internal_error;
-                }
-                stream_ = video_egress_->stream();
-                break;
-            }
-        }
-    }
-
     if (answer->audio_payload_type && answer->audio_codec == codec_id::aac)
     {
         audio_egress_ = acquire_whep_audio_egress(stream_,
@@ -182,9 +160,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     const auto initial_tracks = stream_->tracks();
     for (const auto& track : initial_tracks)
     {
-        const bool negotiated_video = answer_.video_codec && track.kind == media_kind::video &&
-                                      ((*answer_.video_codec == codec_id::av1 && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
-                                       track.codec == *answer_.video_codec);
+        const bool negotiated_video = answer_.video_codec && track.kind == media_kind::video && track.codec == *answer_.video_codec;
         const bool negotiated_audio = answer_.audio_payload_type && answer_.audio_codec && track.kind == media_kind::audio &&
                                       track.codec == (audio_egress_ ? codec_id::opus : *answer_.audio_codec);
         if (negotiated_video || negotiated_audio)
@@ -238,7 +214,6 @@ void whep_session::safe_shutdown()
     media_started_ = false;
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
-    release_av1_video_egress(video_egress_);
     certificate_.reset();
     srtp_.reset();
     dtls_timer_.cancel();

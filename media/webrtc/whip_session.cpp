@@ -102,7 +102,6 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer)
                                        .ice_ufrag = ice_ufrag_,
                                        .ice_pwd = ice_pwd_,
                                        .fingerprint = certificate_->sha256_fingerprint(),
-                                       .video = {},
                                    });
     if (!answer)
     {

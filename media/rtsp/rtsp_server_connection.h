@@ -16,7 +16,6 @@
 
 #include "media/net/tcp_write_queue.h"
 #include "media/net/tcp_yield_transport.h"
-#include "media/codec/video_transcode_config.h"
 
 extern "C"
 {
@@ -35,7 +34,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
    public:
     rtsp_server_connection(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
-                           video_transcode_codec video_codec,
                            std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
                            std::size_t max_write_queue_bytes = 1024U * 1024U);
 
@@ -76,7 +74,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
 
    private:
     worker_context& worker_;
-    video_transcode_codec video_codec_;
     tcp_yield_transport transport_;
     tcp_write_queue write_queue_;
     boost::asio::steady_timer inactivity_timer_;

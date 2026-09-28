@@ -114,7 +114,6 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
                                                   advertised_address,
                                                   std::move(certificate),
                                                   whep_session_timeouts{},
-                                                  application_config.whep_video,
                                                   1024U * 1024U);
     const auto& session_id = session->id();
     bool session_id_collision = false;

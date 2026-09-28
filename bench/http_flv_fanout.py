@@ -179,7 +179,6 @@ def main():
     parser.add_argument("--sources", type=int, default=1)
     parser.add_argument("--viewers", type=int, required=True)
     parser.add_argument("--workers", type=int, default=6)
-    parser.add_argument("--video-codec", choices=("passthrough", "av1"), default="passthrough")
     parser.add_argument("--ramp-per-second", type=int, default=100)
     parser.add_argument("--warmup", type=float, default=5)
     parser.add_argument("--duration", type=float, default=20)
@@ -194,8 +193,7 @@ def main():
     server_log = (args.output / "server.log").open("w")
     server = subprocess.Popen(
         [str(args.server_bin), "--threads", str(args.workers), "--rtmp-port", str(args.rtmp_port), "--rtsp-port", str(args.rtsp_port),
-         "--http-port", str(args.http_port), "--bind-address", args.host, "--webrtc-address", args.host,
-         "--http-video-codec", args.video_codec],
+         "--http-port", str(args.http_port), "--bind-address", args.host, "--webrtc-address", args.host],
         stdout=server_log, stderr=subprocess.STDOUT,
     )
     publishers = []
@@ -214,7 +212,6 @@ def main():
         result["config"] = {
             "head": benchmark_head(),
             "fixture": str(args.fixture), "sources": args.sources, "viewers": args.viewers, "workers": args.workers,
-            "video_codec": args.video_codec,
             "warmup_seconds": args.warmup, "duration_seconds": args.duration, "ramp_per_second": args.ramp_per_second,
             "kernel": platform.release(), "cpu_count": os.cpu_count(),
         }

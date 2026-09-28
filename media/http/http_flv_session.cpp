@@ -9,14 +9,13 @@
 #include <boost/beast/http/chunk_encode.hpp>
 
 #include "media/net/worker_context.h"
-#include "media/codec/av1_video_egress.h"
 #include "media/core/stream_registry.h"
 #include "media/http/http_flv_session.h"
 
 namespace media_server
 {
 
-http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config)
+http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request)
     : worker_(worker),
       stream_(std::move(stream)),
       request_(std::move(request)),
@@ -27,9 +26,7 @@ http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_str
               {
                   flv_writer_input(writer_, type, data.data(), data.size(), timestamp);
               }
-          },
-          config.http_video),
-      av1_output_(config.http_video.codec == video_transcode_codec::av1)
+          })
 {
 }
 
@@ -90,24 +87,6 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
         return;
-    }
-
-    if (av1_output_)
-    {
-        for (const auto& track : media_stream->tracks())
-        {
-            if (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265))
-            {
-                video_egress_ = acquire_av1_video_egress(media_stream, worker_, std::nullopt);
-                if (!video_egress_)
-                {
-                    send_text_response(boost::beast::http::status::unsupported_media_type, "text/plain", "av1 output unavailable\n", yield);
-                    return;
-                }
-                media_stream = video_egress_->stream();
-                break;
-            }
-        }
     }
 
     stream_.expires_never();
@@ -388,7 +367,6 @@ void http_flv_session::safe_shutdown()
     closed_ = true;
     remove_reader();
     muxer_.shutdown();
-    release_av1_video_egress(video_egress_);
     if (writer_ != nullptr)
     {
         flv_writer_destroy(writer_);

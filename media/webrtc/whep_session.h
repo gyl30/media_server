@@ -25,13 +25,11 @@
 #include "media/net/udp_yield_transport.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/webrtc_packetizer.h"
-#include "media/codec/video_transcode_config.h"
 
 namespace media_server
 {
 class worker_context;
 class whep_audio_egress;
-class av1_video_egress;
 
 struct whep_session_timeouts
 {
@@ -54,7 +52,6 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
                  boost::asio::ip::address advertised_address,
                  std::shared_ptr<dtls_certificate> certificate,
                  whep_session_timeouts timeouts = {},
-                 video_transcode_config video = {},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
 
    public:
@@ -109,10 +106,8 @@ class whep_session final : public media_reader, public std::enable_shared_from_t
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     std::shared_ptr<whep_audio_egress> audio_egress_;
-    std::shared_ptr<av1_video_egress> video_egress_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
-    video_transcode_config video_config_;
     whep_session_timeouts timeouts_;
     std::map<track_id, media_track> negotiated_tracks_;
     std::unique_ptr<dtls_transport> dtls_;

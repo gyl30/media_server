@@ -78,7 +78,7 @@ void startup(worker_context& worker)
                  });
 }
 
-std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const config& application_config)
+std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name)
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
@@ -102,7 +102,7 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name, const
         current.segmenters.erase(existing);
     }
 
-    auto segmenter = std::make_shared<hls_segmenter>(hls_config{.video = application_config.http_video});
+    auto segmenter = std::make_shared<hls_segmenter>();
     stream->add_sink(segmenter);
     current.segmenters.emplace(std::string(stream_name), entry{.stream = stream, .segmenter = segmenter});
     return segmenter;

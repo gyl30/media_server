@@ -34,7 +34,6 @@ using clock_type = std::chrono::steady_clock;
 struct configuration
 {
     std::string whep_url;
-    bool av1{};
     std::size_t viewers{};
     std::size_t sources{1};
     std::size_t ramp_per_second{100};
@@ -90,15 +89,6 @@ configuration parse_arguments(int argc, char** argv)
         if (argument == "--whep-url")
         {
             config.whep_url = argument_value(index, argc, argv, argument);
-        }
-        else if (argument == "--video-codec")
-        {
-            const auto codec = argument_value(index, argc, argv, argument);
-            if (codec != "passthrough" && codec != "av1")
-            {
-                throw std::runtime_error("video-codec must be passthrough or av1");
-            }
-            config.av1 = codec == "av1";
         }
         else if (argument == "--viewers")
         {
@@ -404,7 +394,7 @@ int main(int argc, char** argv)
 
         std::vector<std::shared_ptr<play_session>> sessions;
         sessions.reserve(config.viewers);
-        const auto offer = context->make_offer(media_server::bench::webrtc_client_direction::play, config.av1);
+        const auto offer = context->make_offer(media_server::bench::webrtc_client_direction::play);
         const auto ramp_started = clock_type::now();
         const auto ramp_interval = std::chrono::nanoseconds{1'000'000'000LL / static_cast<std::int64_t>(config.ramp_per_second)};
         for (std::size_t index = 0; index < config.viewers; ++index)
@@ -433,7 +423,7 @@ int main(int argc, char** argv)
             }
             else
             {
-                auto session = std::make_shared<play_session>(results, peer, response.location, index, config.av1 ? 103U : 102U);
+                auto session = std::make_shared<play_session>(results, peer, response.location, index, 102U);
                 sessions.push_back(session);
                 ++results->ready;
                 boost::asio::post(shard.io, [session]() { session->start(); });

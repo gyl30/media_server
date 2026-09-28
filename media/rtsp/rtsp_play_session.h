@@ -15,7 +15,6 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "media/core/media_reader.h"
-#include "media/codec/video_transcode_config.h"
 
 struct rtsp_muxer_t;
 struct rtsp_server_t;
@@ -25,8 +24,6 @@ namespace media_server
 {
 
 class worker_context;
-class av1_video_egress;
-
 class rtsp_play_session final : public media_reader, public std::enable_shared_from_this<rtsp_play_session>
 {
    public:
@@ -34,7 +31,6 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     using queue_bytes_handler = std::function<std::size_t()>;
     rtsp_play_session(worker_context& worker,
                       std::string stream_name,
-                      video_transcode_codec video_codec,
                       boost::asio::ip::address local_address,
                       write_handler write,
                       queue_bytes_handler queued_output_bytes,
@@ -96,13 +92,11 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
    private:
     worker_context& worker_;
     std::string stream_name_;
-    video_transcode_codec video_codec_;
     boost::asio::ip::address local_address_;
     write_handler write_handler_;
     std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
     std::shared_ptr<media_stream> source_generation_;
-    std::shared_ptr<av1_video_egress> video_egress_;
     queue_bytes_handler queued_output_bytes_;
     std::size_t max_output_queue_bytes_{};
     std::map<track_id, track_state> track_states_;

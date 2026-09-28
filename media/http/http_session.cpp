@@ -95,7 +95,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/play/hls" || path.starts_with("/play/hls/"))
     {
-        const auto session = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request), config_);
+        const auto session = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request));
         session->startup();
         return;
     }
@@ -103,7 +103,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     const auto decoded_path = parsed->path();
     if (decoded_path.ends_with(".flv"))
     {
-        const auto session = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request), config_);
+        const auto session = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request));
         session->startup();
         return;
     }

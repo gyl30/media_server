@@ -1,4 +1,3 @@
-#include <array>
 #include <memory>
 #include <random>
 #include <vector>
@@ -15,12 +14,10 @@
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
-#include "media/codec/av1_video_egress.h"
 #include "media/rtsp/rtsp_play_session.h"
 
 extern "C"
 {
-#include "aom-av1.h"
 #include "rtp-packet.h"
 #include "rtsp-muxer.h"
 #include "rtp-payload.h"
@@ -34,23 +31,17 @@ namespace media_server
 
 namespace
 {
-constexpr av1_encoding_parameters rtsp_av1_parameters{
-    .profile = 0,
-    .level_idx = 13,
-    .tier = 0,
-};
-
 std::uint32_t random_u32()
 {
     std::random_device device;
     return (static_cast<std::uint32_t>(device()) << 16U) ^ static_cast<std::uint32_t>(device());
 }
 
-[[nodiscard]] bool rtsp_play_track_supported(const media_track& track, video_transcode_codec video_codec)
+[[nodiscard]] bool rtsp_play_track_supported(const media_track& track)
 {
     return (track.kind == media_kind::video &&
             (track.codec == codec_id::h264 || track.codec == codec_id::h265 ||
-             (video_codec == video_transcode_codec::av1 && track.codec == codec_id::av1))) ||
+             false)) ||
            (track.kind == media_kind::audio && (track.codec == codec_id::aac ||
                                                 (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
                                                  (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty()) ||
@@ -61,14 +52,12 @@ std::uint32_t random_u32()
 
 rtsp_play_session::rtsp_play_session(worker_context& worker,
                                      std::string stream_name,
-                                     video_transcode_codec video_codec,
                                      boost::asio::ip::address local_address,
                                      write_handler write,
                                      queue_bytes_handler queued_output_bytes,
                                      std::size_t max_output_queue_bytes)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
-      video_codec_(video_codec),
       local_address_(std::move(local_address)),
       write_handler_(std::move(write)),
       queued_output_bytes_(std::move(queued_output_bytes)),
@@ -249,7 +238,6 @@ void rtsp_play_session::safe_shutdown()
         stream_.reset();
     }
     source_generation_.reset();
-    release_av1_video_egress(video_egress_);
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
@@ -417,52 +405,9 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
         return rtsp_server_reply_play(server, 200, npt, nullptr, nullptr);
     }
 
-    if (source_generation_ && !video_egress_)
-    {
-        auto prepared_egress = acquire_av1_video_egress(source_generation_, worker_, rtsp_av1_parameters);
-        if (!prepared_egress)
-        {
-            return rtsp_server_reply_play(server, 415, nullptr, nullptr, nullptr);
-        }
-        auto prepared_stream = prepared_egress->stream();
-        std::size_t prepared_track_count = 0;
-        for (const auto& track : prepared_stream->tracks())
-        {
-            if (!rtsp_play_track_supported(track, video_codec_))
-            {
-                continue;
-            }
-            const auto state = track_states_.find(track.id);
-            if (state == track_states_.end() || state->second.codec != track.codec)
-            {
-                release_av1_video_egress(prepared_egress);
-                return rtsp_server_reply_play(server, 455, nullptr, nullptr, nullptr);
-            }
-            ++prepared_track_count;
-        }
-        if (prepared_track_count != track_states_.size())
-        {
-            release_av1_video_egress(prepared_egress);
-            return rtsp_server_reply_play(server, 455, nullptr, nullptr, nullptr);
-        }
-        stream_ = std::move(prepared_stream);
-        if (const auto status = presentation_status(); status != 0)
-        {
-            stream_ = source_generation_;
-            release_av1_video_egress(prepared_egress);
-            return rtsp_server_reply_play(server, status, nullptr, nullptr, nullptr);
-        }
-        video_egress_ = std::move(prepared_egress);
-    }
-
     const auto result = rtsp_server_reply_play(server, 200, npt, nullptr, nullptr);
     if (result != 0)
     {
-        if (video_egress_)
-        {
-            stream_ = source_generation_;
-            release_av1_video_egress(video_egress_);
-        }
         return result;
     }
     playing_ = true;
@@ -554,7 +499,7 @@ int rtsp_play_session::presentation_status() const
         std::size_t supported_source_tracks = 0;
         for (const auto& track : source_generation_->tracks())
         {
-            if (!rtsp_play_track_supported(track, video_codec_))
+            if (!rtsp_play_track_supported(track))
             {
                 continue;
             }
@@ -570,7 +515,7 @@ int rtsp_play_session::presentation_status() const
     std::size_t supported_count = 0;
     for (const auto& track : current)
     {
-        if (!rtsp_play_track_supported(track, video_codec_))
+        if (!rtsp_play_track_supported(track))
         {
             continue;
         }
@@ -610,7 +555,6 @@ int rtsp_play_session::prepare_presentation()
     track_states_.clear();
     stream_.reset();
     source_generation_.reset();
-    release_av1_video_egress(video_egress_);
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
@@ -623,30 +567,6 @@ int rtsp_play_session::prepare_presentation()
         return 404;
     }
     auto snapshot = stream->tracks();
-    bool prepare_av1_egress = false;
-    if (video_codec_ == video_transcode_codec::av1)
-    {
-        std::size_t video_tracks = 0;
-        for (auto& track : snapshot)
-        {
-            if (track.kind == media_kind::video)
-            {
-                ++video_tracks;
-            }
-            if (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265))
-            {
-                prepare_av1_egress = true;
-                track.codec = codec_id::av1;
-                track.clock_rate = 90'000;
-                track.codec_config.clear();
-            }
-        }
-        if (prepare_av1_egress && video_tracks != 1)
-        {
-            return 415;
-        }
-    }
-
     auto* prepared_muxer = rtsp_muxer_create(&rtsp_play_session::muxer_packet_callback, this);
     if (prepared_muxer == nullptr)
     {
@@ -658,7 +578,7 @@ int rtsp_play_session::prepare_presentation()
     int next_payload_type = 96;
     for (const auto& track : snapshot)
     {
-        if (!rtsp_play_track_supported(track, video_codec_))
+        if (!rtsp_play_track_supported(track))
         {
             continue;
         }
@@ -668,28 +588,7 @@ int rtsp_play_session::prepare_presentation()
         int rtp_codec{-1};
         int frequency{};
         int payload_type{-1};
-        if (track.kind == media_kind::video && video_codec_ == video_transcode_codec::av1)
-        {
-            aom_av1_t av1{};
-            av1.marker = 1;
-            av1.version = 1;
-            av1.seq_profile = rtsp_av1_parameters.profile;
-            av1.seq_level_idx_0 = rtsp_av1_parameters.level_idx;
-            av1.seq_tier_0 = rtsp_av1_parameters.tier;
-            av1.chroma_subsampling_x = 1;
-            av1.chroma_subsampling_y = 1;
-            std::array<std::uint8_t, 4> config{};
-            if (aom_av1_codec_configuration_record_save(&av1, config.data(), config.size()) != static_cast<int>(config.size()))
-            {
-                return 415;
-            }
-            extra.assign(config.begin(), config.end());
-            encoding = "AV1";
-            rtp_codec = RTP_PAYLOAD_AV1;
-            frequency = 90'000;
-            payload_type = next_payload_type++;
-        }
-        else if (track.codec == codec_id::h264)
+        if (track.codec == codec_id::h264)
         {
             extra = h264_annex_b_to_avcc(track.codec_config);
             if (extra.empty())
@@ -770,10 +669,6 @@ int rtsp_play_session::prepare_presentation()
     }
 
     stream_ = std::move(stream);
-    if (prepare_av1_egress)
-    {
-        source_generation_ = stream_;
-    }
     track_states_ = std::move(prepared_tracks);
     muxer_ = prepared_muxer;
     cleanup_muxer.set_active(false);

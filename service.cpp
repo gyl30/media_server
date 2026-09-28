@@ -86,8 +86,7 @@ void service::run_server()
             config_.rtmp_port,
             [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
             {
-                auto session = std::make_shared<rtmp_session>(
-                    worker, std::move(socket), config_.rtmp_video, std::chrono::milliseconds{15'000}, 1024U * 1024U);
+                auto session = std::make_shared<rtmp_session>(worker, std::move(socket), std::chrono::milliseconds{15'000}, 1024U * 1024U);
                 session->startup();
             },
             network_error))
@@ -101,8 +100,7 @@ void service::run_server()
             config_.rtsp_port,
             [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
             {
-                auto connection = std::make_shared<rtsp_server_connection>(
-                    worker, std::move(socket), config_.rtsp_video.codec, std::chrono::milliseconds{60'000}, 1024U * 1024U);
+                auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket), std::chrono::milliseconds{60'000}, 1024U * 1024U);
                 connection->startup();
             },
             network_error))

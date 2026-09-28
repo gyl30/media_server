@@ -55,14 +55,12 @@ std::optional<std::string> parse_rtmp_target(std::string_view app, std::string_v
 
 rtmp_session::rtmp_session(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
-                           video_transcode_config video,
                            std::chrono::milliseconds initial_tracks_timeout,
                            std::size_t max_write_queue_bytes)
     : worker_(worker),
       transport_(std::move(socket)),
       write_queue_(max_write_queue_bytes),
-      initial_tracks_timeout_(initial_tracks_timeout),
-      video_config_(video)
+      initial_tracks_timeout_(initial_tracks_timeout)
 {
 }
 
@@ -279,7 +277,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
     stream_name_ = *target;
     auto media = stream_registry::instance().find(stream_name_);
-    if (!media || (video_config_.codec == video_transcode_codec::av1 && !rtmp_server_peer_supports_fourcc(rtmp_context_, "av01")))
+    if (!media)
     {
         return -1;
     }
@@ -303,7 +301,6 @@ int rtmp_session::on_play(std::string app, std::string stream)
                 static_cast<void>(rtmp_server_send_audio(self->rtmp_context_, data.data(), data.size(), timestamp));
             }
         },
-        video_config_,
         [self]() { self->shutdown(); },
         [self]() { return self->write_queue_.queued_bytes(); },
         write_queue_.max_bytes());

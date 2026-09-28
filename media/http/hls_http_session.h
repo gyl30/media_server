@@ -12,7 +12,6 @@
 #include <boost/beast/http.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include "config.h"
 #include "media/net/worker_context.h"
 
 namespace media_server
@@ -25,7 +24,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& config);
+    hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request);
 
    public:
     void startup();
@@ -59,7 +58,6 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
     boost::beast::tcp_stream stream_;
     boost::beast::flat_buffer buffer_;
     request_type request_;
-    const config& config_;
     bool closed_{};
     worker_context::shutdown_subscription shutdown_subscription_;
     boost::asio::steady_timer wait_timer_;

@@ -28,11 +28,9 @@ constexpr std::size_t rtsp_read_buffer_bytes = 64U * 1024U;
 
 rtsp_server_connection::rtsp_server_connection(worker_context& worker,
                                                boost::asio::ip::tcp::socket socket,
-                                               video_transcode_codec video_codec,
                                                std::chrono::milliseconds inactivity_timeout,
                                                std::size_t max_write_queue_bytes)
     : worker_(worker),
-      video_codec_(video_codec),
       transport_(std::move(socket)),
       write_queue_(max_write_queue_bytes),
       inactivity_timer_(worker_.io()),
@@ -502,7 +500,6 @@ int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
     const auto owner = shared_from_this();
     play_session_ = std::make_shared<rtsp_play_session>(worker_,
                                                         std::move(target->stream_name),
-                                                        video_codec_,
                                                         local_address_,
                                                         [owner](std::vector<std::uint8_t> data) { owner->write(std::move(data)); },
                                                         [owner]() { return owner->write_queue_.queued_bytes(); },

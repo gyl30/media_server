@@ -9,18 +9,11 @@
 #include <functional>
 
 #include "media/core/media_types.h"
-#include "media/codec/video_transcoder.h"
 
 struct rtsp_muxer_t;
 
 namespace media_server
 {
-inline constexpr av1_encoding_parameters whep_av1_parameters{
-    .profile = 0,
-    .level_idx = 8,
-    .tier = 0,
-};
-
 struct webrtc_packetizer_config
 {
     codec_id video_codec{codec_id::h264};
@@ -58,7 +51,6 @@ class webrtc_packetizer final
     struct track_state
     {
         codec_id codec{};
-        std::unique_ptr<video_transcoder> video_transcoder_;
         int media_id{-1};
         int payload_id{-1};
         std::size_t rtp_extension_bytes{};
@@ -67,7 +59,6 @@ class webrtc_packetizer final
 
     bool add_h264_track(const media_track& track);
     bool add_h265_track(const media_track& track);
-    bool add_av1_track(const media_track& track);
     bool add_audio_track(const media_track& track);
     bool configure_rtcp(int payload_id);
     void remove_track(track_id id);

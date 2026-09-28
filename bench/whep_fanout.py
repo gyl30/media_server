@@ -21,7 +21,6 @@ def main():
     parser.add_argument("--viewers", type=int, required=True)
     parser.add_argument("--sources", type=int, default=1)
     parser.add_argument("--workers", type=int, default=6)
-    parser.add_argument("--video-codec", choices=("passthrough", "av1"), default="passthrough")
     parser.add_argument("--client-threads", type=int, default=8)
     parser.add_argument("--ramp-per-second", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=5)
@@ -42,7 +41,7 @@ def main():
         server = subprocess.Popen(
             [str(args.server_bin), "--threads", str(args.workers), "--rtmp-port", str(args.rtmp_port),
              "--rtsp-port", str(args.rtsp_port), "--http-port", str(args.http_port), "--bind-address", args.host,
-             "--webrtc-address", args.host, "--whep-video-codec", args.video_codec], stdout=server_log, stderr=subprocess.STDOUT,
+             "--webrtc-address", args.host], stdout=server_log, stderr=subprocess.STDOUT,
         )
         publisher = None
         client = None
@@ -61,7 +60,7 @@ def main():
                 [str(args.client_bin), "--whep-url", f"http://{args.host}:{args.http_port}/play/whep/live/perf0",
                  "--viewers", str(args.viewers), "--sources", str(args.sources), "--io-threads", str(args.client_threads),
                  "--ramp-per-second", str(args.ramp_per_second), "--warmup", str(args.warmup),
-                 "--duration", str(args.duration), "--video-codec", args.video_codec], stdout=client_log, stderr=client_error,
+                 "--duration", str(args.duration)], stdout=client_log, stderr=client_error,
             )
             established = parse_phase(wait_for_phase(client_log_path, client, "established", max(90, args.viewers / 10)))
             wait_for_phase(client_log_path, client, "measurement_start", args.warmup + 30)
@@ -80,7 +79,6 @@ def main():
                 "config": {
                     "head": benchmark_head(),
                     "fixture": str(args.fixture), "viewers": args.viewers, "sources": args.sources, "workers": args.workers,
-                    "video_codec": args.video_codec,
                     "client_threads": args.client_threads, "ramp_per_second": args.ramp_per_second,
                     "warmup_seconds": args.warmup, "duration_seconds": args.duration,
                     "kernel": platform.release(),

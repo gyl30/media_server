@@ -1,6 +1,5 @@
 #include <utility>
 
-#include "media/codec/av1_video_egress.h"
 #include "media/net/worker_context.h"
 #include "media/rtmp/rtmp_play_session.h"
 
@@ -10,14 +9,12 @@ namespace media_server
 rtmp_play_session::rtmp_play_session(worker_context& worker,
                                      std::shared_ptr<media_stream> stream,
                                      flv_muxer::packet_handler packet_handler,
-                                     video_transcode_config video,
                                      end_handler on_end,
                                      queue_bytes_handler queued_output_bytes,
                                      std::size_t max_output_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
-      muxer_(std::move(packet_handler), video),
-      av1_output_(video.codec == video_transcode_codec::av1),
+      muxer_(std::move(packet_handler)),
       queued_output_bytes_(std::move(queued_output_bytes)),
       max_output_queue_bytes_(max_output_queue_bytes),
       end_handler_(std::move(on_end))
@@ -29,23 +26,6 @@ void rtmp_play_session::startup()
     if (closed_ || !stream_)
     {
         return;
-    }
-    if (av1_output_)
-    {
-        for (const auto& track : stream_->tracks())
-        {
-            if (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265))
-            {
-                video_egress_ = acquire_av1_video_egress(stream_, worker_, std::nullopt);
-                if (!video_egress_)
-                {
-                    end_handler_();
-                    return;
-                }
-                stream_ = video_egress_->stream();
-                break;
-            }
-        }
     }
     stream_->add_reader(shared_from_this(), worker_);
 }
@@ -62,7 +42,6 @@ void rtmp_play_session::shutdown()
     waiting_for_key_frame_ = false;
     muxer_.shutdown();
     stream_.reset();
-    release_av1_video_egress(video_egress_);
     waiting_for_output_ = false;
 }
 
