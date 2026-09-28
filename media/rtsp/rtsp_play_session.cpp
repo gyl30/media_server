@@ -425,9 +425,64 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
         return rtsp_server_reply_play(server, 200, npt, nullptr, nullptr);
     }
 
+    if (source_generation_ && !video_egress_)
+    {
+        auto prepared_egress = acquire_av1_video_egress(source_generation_, worker_, rtsp_av1_parameters);
+        if (!prepared_egress)
+        {
+            return rtsp_server_reply_play(server, 415, nullptr, nullptr, nullptr);
+        }
+        auto prepared_stream = prepared_egress->stream();
+        std::map<track_id, std::uint64_t> prepared_track_versions;
+        for (const auto& track : prepared_stream->tracks())
+        {
+            if (!rtsp_play_track_supported(track, video_codec_))
+            {
+                continue;
+            }
+            const auto state = track_states_.find(track.id);
+            if (state == track_states_.end() || state->second.codec != track.codec)
+            {
+                release_av1_video_egress(prepared_egress);
+                return rtsp_server_reply_play(server, 455, nullptr, nullptr, nullptr);
+            }
+            prepared_track_versions.emplace(track.id, track.config_version);
+        }
+        if (prepared_track_versions.size() != track_states_.size())
+        {
+            release_av1_video_egress(prepared_egress);
+            return rtsp_server_reply_play(server, 455, nullptr, nullptr, nullptr);
+        }
+        for (auto& [id, state] : track_states_)
+        {
+            state.config_version = prepared_track_versions.at(id);
+        }
+        stream_ = std::move(prepared_stream);
+        if (const auto status = presentation_status(); status != 0)
+        {
+            for (auto& [id, state] : track_states_)
+            {
+                state.config_version = source_track_versions_.at(id);
+            }
+            stream_ = source_generation_;
+            release_av1_video_egress(prepared_egress);
+            return rtsp_server_reply_play(server, status, nullptr, nullptr, nullptr);
+        }
+        video_egress_ = std::move(prepared_egress);
+    }
+
     const auto result = rtsp_server_reply_play(server, 200, npt, nullptr, nullptr);
     if (result != 0)
     {
+        if (video_egress_)
+        {
+            for (auto& [id, state] : track_states_)
+            {
+                state.config_version = source_track_versions_.at(id);
+            }
+            stream_ = source_generation_;
+            release_av1_video_egress(video_egress_);
+        }
         return result;
     }
     playing_ = true;
@@ -595,35 +650,35 @@ int rtsp_play_session::prepare_presentation()
     {
         return 404;
     }
-    auto source_generation = stream;
+    auto snapshot = stream->tracks();
     std::map<track_id, std::uint64_t> prepared_source_track_versions;
-    std::shared_ptr<av1_video_egress> prepared_egress;
+    bool prepare_av1_egress = false;
     if (video_codec_ == video_transcode_codec::av1)
     {
-        const auto source_tracks = stream->tracks();
-        for (const auto& track : source_tracks)
+        std::size_t video_tracks = 0;
+        for (auto& track : snapshot)
         {
+            if (track.kind == media_kind::video)
+            {
+                ++video_tracks;
+            }
+            if (rtsp_play_track_supported(track, video_codec_))
+            {
+                prepared_source_track_versions.emplace(track.id, track.config_version);
+            }
             if (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265))
             {
-                for (const auto& source_track : source_tracks)
-                {
-                    if (rtsp_play_track_supported(source_track, video_codec_))
-                    {
-                        prepared_source_track_versions.emplace(source_track.id, source_track.config_version);
-                    }
-                }
-                prepared_egress = acquire_av1_video_egress(stream, worker_, rtsp_av1_parameters);
-                if (!prepared_egress)
-                {
-                    return 415;
-                }
-                stream = prepared_egress->stream();
-                break;
+                prepare_av1_egress = true;
+                track.codec = codec_id::av1;
+                track.clock_rate = 90'000;
+                track.codec_config.clear();
             }
         }
+        if (prepare_av1_egress && video_tracks != 1)
+        {
+            return 415;
+        }
     }
-    boost::scope::scope_exit cleanup_egress([&]() { release_av1_video_egress(prepared_egress); });
-    const auto snapshot = stream->tracks();
 
     auto* prepared_muxer = rtsp_muxer_create(&rtsp_play_session::muxer_packet_callback, this);
     if (prepared_muxer == nullptr)
@@ -748,12 +803,11 @@ int rtsp_play_session::prepare_presentation()
     }
 
     stream_ = std::move(stream);
-    if (prepared_egress)
+    if (prepare_av1_egress)
     {
-        source_generation_ = std::move(source_generation);
+        source_generation_ = stream_;
         source_track_versions_ = std::move(prepared_source_track_versions);
     }
-    video_egress_ = std::move(prepared_egress);
     track_states_ = std::move(prepared_tracks);
     muxer_ = prepared_muxer;
     cleanup_muxer.set_active(false);
