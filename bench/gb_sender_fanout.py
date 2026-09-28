@@ -241,15 +241,36 @@ def make_udp_socket(host):
     return sock
 
 
-def make_result(args, state, senders, establishment_seconds, elapsed, before_bytes, before_packets, deleted, cleanup_errors):
-    byte_deltas = [
-        state.bytes_by_ssrc.get(sender.ssrc, 0) - before_bytes.get(sender.ssrc, 0)
-        for sender in senders
-    ]
-    packet_deltas = [
-        state.packets_by_ssrc.get(sender.ssrc, 0) - before_packets.get(sender.ssrc, 0)
-        for sender in senders
-    ]
+def make_result(
+    args,
+    state,
+    senders,
+    establishment_seconds,
+    elapsed,
+    before_bytes,
+    before_packets,
+    before_sequence_gaps,
+    deleted,
+    cleanup_errors,
+):
+    if before_bytes is None or elapsed <= 0:
+        byte_deltas = [0] * len(senders)
+        packet_deltas = [0] * len(senders)
+        sequence_gap_deltas = [0] * len(senders)
+    else:
+        byte_deltas = [
+            state.bytes_by_ssrc.get(sender.ssrc, 0) - before_bytes.get(sender.ssrc, 0)
+            for sender in senders
+        ]
+        packet_deltas = [
+            state.packets_by_ssrc.get(sender.ssrc, 0) - before_packets.get(sender.ssrc, 0)
+            for sender in senders
+        ]
+        sequence_gap_deltas = [
+            state.sequence_gaps.get(sender.ssrc, 0)
+            - before_sequence_gaps.get(sender.ssrc, 0)
+            for sender in senders
+        ]
     byte_rates = [value / elapsed for value in byte_deltas] if elapsed else []
     packet_rates = [value / elapsed for value in packet_deltas] if elapsed else []
     progressing = sum(
@@ -284,7 +305,7 @@ def make_result(args, state, senders, establishment_seconds, elapsed, before_byt
             "packets_per_second": sum(packet_deltas) / elapsed if elapsed else 0,
             "viewer_bytes_per_second": distribution(byte_rates),
             "viewer_packets_per_second": distribution(packet_rates),
-            "sequence_gaps": sum(state.sequence_gaps.values()),
+            "sequence_gaps": sum(sequence_gap_deltas),
             "tcp_disconnects": state.tcp_disconnects,
         },
         "cleanup": {
@@ -308,8 +329,9 @@ async def run(args):
     establishment_started = time.monotonic()
     establishment_seconds = 0
     elapsed = 0
-    before_bytes = {}
-    before_packets = {}
+    before_bytes = None
+    before_packets = None
+    before_sequence_gaps = None
 
     try:
         loop = asyncio.get_running_loop()
@@ -373,6 +395,7 @@ async def run(args):
         await asyncio.sleep(args.warmup)
         before_bytes = state.bytes_by_ssrc.copy()
         before_packets = state.packets_by_ssrc.copy()
+        before_sequence_gaps = state.sequence_gaps.copy()
         state.measurement_started = True
         print("phase=measurement_start", flush=True)
         started = time.monotonic()
@@ -401,6 +424,7 @@ async def run(args):
         elapsed,
         before_bytes,
         before_packets,
+        before_sequence_gaps,
         deleted,
         cleanup_errors,
     )
