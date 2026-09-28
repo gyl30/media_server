@@ -28,7 +28,6 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
     {
         none,
         source_ended,
-        source_changed,
         transcode_failed,
         unused,
         worker_stopped,
@@ -57,7 +56,6 @@ class whep_audio_egress final : public media_reader, public std::enable_shared_f
     std::map<track_id, media_track> source_tracks_;
     std::map<track_id, std::unique_ptr<audio_transcoder>> transcoders_;
     std::atomic<end_reason> reason_{end_reason::none};
-    bool reading_{};
     std::size_t viewers_{};
     worker_context::shutdown_subscription shutdown_subscription_;
 };

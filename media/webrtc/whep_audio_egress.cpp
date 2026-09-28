@@ -142,34 +142,13 @@ void whep_audio_egress::finish(end_reason reason)
     shutdown_subscription_.reset();
 }
 
-void whep_audio_egress::on_tracks(media_tracks_ptr tracks)
+void whep_audio_egress::on_tracks(media_tracks_ptr)
 {
-    if (reason() != end_reason::none || !tracks)
+    if (reason() != end_reason::none)
     {
         return;
     }
-
-    if (tracks->size() != source_tracks_.size())
-    {
-        finish(end_reason::source_changed);
-        return;
-    }
-    for (const auto& track : *tracks)
-    {
-        auto it = source_tracks_.find(track.id);
-        if (it == source_tracks_.end() || it->second.kind != track.kind || it->second.codec != track.codec ||
-            it->second.clock_rate != track.clock_rate || it->second.channel_count != track.channel_count ||
-            it->second.codec_config != track.codec_config)
-        {
-            finish(end_reason::source_changed);
-            return;
-        }
-    }
-    if (!reading_)
-    {
-        reading_ = true;
-        on_media_available();
-    }
+    on_media_available();
 }
 
 void whep_audio_egress::on_media_available()

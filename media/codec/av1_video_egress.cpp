@@ -99,34 +99,13 @@ void av1_video_egress::finish()
     shutdown_subscription_.reset();
 }
 
-void av1_video_egress::on_tracks(media_tracks_ptr tracks)
+void av1_video_egress::on_tracks(media_tracks_ptr)
 {
-    if (ended_.load(std::memory_order_acquire) || !tracks)
+    if (ended_.load(std::memory_order_acquire))
     {
         return;
     }
-
-    if (tracks->size() != source_tracks_.size())
-    {
-        finish();
-        return;
-    }
-    for (const auto& track : *tracks)
-    {
-        auto previous = source_tracks_.find(track.id);
-        if (previous == source_tracks_.end() || previous->second.kind != track.kind || previous->second.codec != track.codec ||
-            previous->second.clock_rate != track.clock_rate || previous->second.channel_count != track.channel_count ||
-            previous->second.codec_config != track.codec_config)
-        {
-            finish();
-            return;
-        }
-    }
-    if (!reading_)
-    {
-        reading_ = true;
-        on_media_available();
-    }
+    on_media_available();
 }
 
 void av1_video_egress::on_media_available()

@@ -3,7 +3,6 @@
 
 #include <map>
 #include <deque>
-#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -68,7 +67,6 @@ class media_history : public std::enable_shared_from_this<media_history<Frame>>
     std::optional<std::uint64_t> current_gop_start_sequence_;
     std::size_t current_gop_frames_{};
     std::uint64_t next_history_sequence_{};
-    std::atomic<media_tracks_ptr> track_snapshot_;
     // 仅用于 owner worker 内阻止 end 后到达的 reader/sink 请求，不参与 registry 可发现性。
     bool ended_{};
 };

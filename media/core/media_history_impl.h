@@ -2,6 +2,7 @@
 #define MEDIA_CORE_MEDIA_HISTORY_IMPL_H
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <utility>
 
@@ -56,7 +57,8 @@ struct media_reader_state_t
     std::weak_ptr<media_reader_t<Frame>> reader;
     worker_context* worker{};
     std::atomic_bool active{true};
-    bool terminal{};
+    // 只由 source owner worker 访问；表示本 state 是否实际计入了 group。
+    bool member{};
     bool waiting{};
 };
 
@@ -306,7 +308,6 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
             ended = true;
             for (const auto& state : readers)
             {
-                state->terminal = true;
                 if (state->active.load(std::memory_order_acquire))
                 {
                     if (const auto reader = state->reader.lock())
@@ -336,7 +337,7 @@ media_reader_t<Frame>::~media_reader_t()
 template <typename Frame>
 std::optional<media_read_entry_t<Frame>> media_reader_t<Frame>::read()
 {
-    if (!state_ || !state_->active.load(std::memory_order_acquire) || state_->terminal || !worker_history_)
+    if (!state_ || !state_->active.load(std::memory_order_acquire) || !worker_history_)
     {
         return {};
     }
@@ -376,8 +377,13 @@ const std::string& media_history<Frame>::name() const noexcept
 template <typename Frame>
 std::vector<media_track> media_history<Frame>::tracks() const
 {
-    const auto snapshot = track_snapshot_.load(std::memory_order_acquire);
-    return snapshot ? *snapshot : std::vector<media_track>{};
+    std::vector<media_track> result;
+    result.reserve(tracks_.size());
+    for (const auto& [id, track] : tracks_)
+    {
+        result.push_back(track);
+    }
+    return result;
 }
 
 template <typename Frame>
@@ -416,13 +422,6 @@ bool media_history<Frame>::set_tracks(std::vector<media_track> tracks)
         }
     }
     tracks_ = std::move(initial_tracks);
-    auto snapshot = std::make_shared<media_tracks>();
-    snapshot->reserve(tracks_.size());
-    for (const auto& [id, track] : tracks_)
-    {
-        snapshot->push_back(track);
-    }
-    track_snapshot_.store(std::move(snapshot), std::memory_order_release);
     return true;
 }
 
@@ -478,7 +477,12 @@ template <typename Frame>
 std::shared_ptr<media_worker_history_t<Frame>> media_history<Frame>::make_worker_history(worker_context& worker)
 {
     auto group = std::make_shared<media_worker_history_t<Frame>>(worker, this->shared_from_this());
-    const auto tracks = track_snapshot_.load(std::memory_order_acquire);
+    auto tracks = std::make_shared<media_tracks>();
+    tracks->reserve(tracks_.size());
+    for (const auto& [id, track] : tracks_)
+    {
+        tracks->push_back(track);
+    }
     typename media_worker_history_t<Frame>::snapshot initial{
         .history = history_,
         .gop_start = current_gop_start_sequence_,
@@ -505,6 +509,7 @@ void media_history<Frame>::add_reader_on_owner(const std::shared_ptr<media_reade
         group = make_worker_history(*state->worker);
     }
     ++group->source_subscribers;
+    state->member = true;
     boost::asio::post(state->worker->io(), [group, state]() { group->attach(state); });
 }
 
@@ -518,6 +523,11 @@ void media_history<Frame>::remove_reader(const std::shared_ptr<media_reader_stat
 template <typename Frame>
 void media_history<Frame>::remove_reader_on_owner(const std::shared_ptr<media_reader_state_t<Frame>>& state)
 {
+    if (!state->member)
+    {
+        return;
+    }
+    state->member = false;
     const auto found = workers_.find(state->worker);
     if (found != workers_.end())
     {
@@ -568,7 +578,6 @@ void media_history<Frame>::dispatch_reader_end(const std::shared_ptr<media_reade
     boost::asio::post(state->worker->io(),
                       [state]()
                       {
-                          state->terminal = true;
                           if (state->active.load(std::memory_order_acquire))
                           {
                               if (const auto reader = state->reader.lock())
