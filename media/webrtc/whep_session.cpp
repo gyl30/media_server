@@ -168,8 +168,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
             negotiated_tracks_.emplace(track.id, track);
         }
     }
-    sink_ = std::make_shared<media_sink>();
-    stream_->add_sink(sink_, worker_);
+    stream_->add_sink(shared_from_this(), worker_);
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
     spdlog::debug(
@@ -188,10 +187,9 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
 void whep_session::shutdown()
 {
-    if (sink_)
+    if (stream_)
     {
-        sink_->close();
-        sink_.reset();
+        stream_->remove_sink(this);
     }
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
@@ -249,73 +247,27 @@ bool whep_session::dtls_connected() const noexcept { return dtls_ != nullptr && 
 
 bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
 
-void whep_session::process_media_available()
+void whep_session::on_frame(const media_frame& frame)
 {
-    if (!started_ || !packetizer_)
+    if (!started_ || !media_started_ || !packetizer_)
     {
         return;
     }
-    while (started_)
+    const auto expected = negotiated_tracks_.find(frame.track);
+    if (expected == negotiated_tracks_.end())
     {
-        auto entry = sink_ ? sink_->read() : std::optional<media_frame>{};
-        if (!entry)
-        {
-            const auto weak = weak_from_this();
-            if (sink_)
-            {
-                sink_->async_wait([weak](bool ended)
-                       {
-                           if (const auto self = weak.lock())
-                           {
-                               if (ended)
-                               {
-                                   self->handle_source_end();
-                               }
-                               else
-                               {
-                                   self->process_media_available();
-                               }
-                           }
-                       });
-            }
-            return;
-        }
-        const auto expected = negotiated_tracks_.find(entry->track);
-        if (expected == negotiated_tracks_.end())
-        {
-            continue;
-        }
-        if (!packetizer_->on_frame(*entry))
-        {
-            shutdown();
-            return;
-        }
+        return;
+    }
+    if (!packetizer_->on_frame(frame))
+    {
+        shutdown();
     }
 }
 
-void whep_session::handle_source_end()
+void whep_session::on_end()
 {
     spdlog::info("webrtc source stream ended session {}", id_);
     shutdown();
-}
-
-bool whep_session::apply_tracks(const media_tracks_ptr& tracks)
-{
-    if (!tracks)
-    {
-        return true;
-    }
-
-    for (const auto& [id, expected] : negotiated_tracks_)
-    {
-        const auto track = std::ranges::find_if(*tracks, [id](const media_track& current) { return current.id == id; });
-        if (track == tracks->end() || track->kind != expected.kind || track->codec != expected.codec || track->clock_rate != expected.clock_rate ||
-            track->channel_count != expected.channel_count || track->codec_config != expected.codec_config)
-        {
-            return false;
-        }
-    }
-    return true;
 }
 
 void whep_session::run_udp(boost::asio::yield_context yield)
@@ -607,7 +559,6 @@ bool whep_session::start_media_read()
         }
     }
     media_started_ = true;
-    process_media_available();
     return true;
 }
 

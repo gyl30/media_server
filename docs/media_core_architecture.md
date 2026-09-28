@@ -1,31 +1,38 @@
 # 媒体核心边界
 
-## 从产品能力推导的模型
+`media_stream` 表示一个 source generation。输入协议先收集完整的固定轨道，调用 `set_tracks()` 后再将 stream 放入 registry；stream 对外可见后，轨道、codec 和 codec config 在整个 generation 内不再变化。配置变化意味着旧 generation 结束并创建新的 stream。
 
-一个发布实例需要确定的轨道配置、带时间戳的媒体帧、起播历史和结束通知。多个播放者需要独立的消费节奏，但不应让发布者等待慢播放者。因此核心只有两种交付关系：源 worker 上的同步派生处理，以及消费者 worker 上的有界异步订阅。它们是不同的调度契约，不需要统一成带 mode 的接口。
+媒体核心只做一件事：把 canonical `media_frame` 推送给 sink。
 
 ```text
-输入协议 → 归一化 → media_stream（一个发布实例）
-                         ├─ 有界 GOP history → media_reader → 输出协议 session
-                         └─ media_sink → 确定性派生处理 → 可选的派生 history
-                                                        └─ media_reader → 输出协议 session
+输入协议 → canonical media_stream
+                         ├─ RTMP sink
+                         ├─ RTSP sink
+                         ├─ HTTP-FLV sink
+                         ├─ WHEP sink
+                         ├─ HLS sink
+                         ├─ 共享 AAC→Opus sink → media_stream
+                         └─ MPEG-PS sink → GB28181 sender
 ```
 
-`media_stream` 的对象身份就是 source generation。同名重新发布必须创建新对象；名称只用于发现，不能作为派生处理或订阅状态的代际身份。canonical 视频为完整 H264/H265 Annex-B AU 或已支持的 AV1 temporal unit，音频为 AAC/ADTS、Opus、G711A/U。核心不保存 RTP、FLV、PS、ICE 等协议状态。
+`media_stream` 保存固定 tracks、source worker 和按目标 worker 分组的 sink。source worker 上的 sink 直接调用；其他 worker 每个 frame 最多投递一个 drain handler，handler 在目标 worker 内依次调用该组 sinks。跨 worker 的临时 pending frame 队列有固定上限，溢出时结束该组，避免把慢 sink 变成无界 Asio handler backlog。`media_frame` 的 payload 使用共享 buffer，fanout 不为每个 sink 复制媒体内容。
 
-轨道和 `config_version` 由源 worker 修改。不可变轨道快照是跨 worker 的发布视图，不是第二份可独立修改的轨道配置。历史条目同时保存帧和发布时的配置版本；订阅者不能用当前轨道配置冒充历史帧的配置。有限 GOP history 属于发布实例，消费者只有游标和至多一个未完成读取；落后的消费者从可解码的历史位置重新同步。
+sink 是具体的 push 接口：
 
-`media_reader` 按消费者的节奏请求下一项。它持有游标、批次和等待状态，输出 session 只决定何时继续读取，并持有自己的封装、加密、背压和 socket。reader 回调在消费者 worker；源的发布、历史和同步 sink 在源 worker。两种 worker 之间只搬运共享的媒体引用和有界批次，不为每帧向每个消费者无限投递任务。
+```cpp
+class media_sink {
+public:
+    virtual ~media_sink() = default;
+    virtual worker_context& worker() noexcept = 0;
+    virtual void on_frame(const media_frame&) = 0;
+    virtual void on_end() = 0;
+};
+```
 
-`media_sink` 只用于确定性、可共享且适合在源 worker 同步接收媒体的处理。MPEG-PS 输出同时是 sink 和派生 history：一次封装，多名 GB 发送者各自维护 RTP 与传输状态。HLS 分段也是 sink，但播放列表与片段在源结束后仍需保留，因此有独立的保留生命周期。HLS 的代际替换和保留期结束可从源 worker 之外调用 `on_end()`；分段器用自身互斥保护该终止操作与媒体写入，终止后不再接收旧源帧。WHEP 的 AAC→Opus 处理成本较高，位于共享处理 worker，生成新的 `media_stream`；不为接口统一而强迫它在源 worker 同步运行。
+sink 不读取历史、不拥有 cursor，也不等待媒体。tracks 由 consumer 启动时直接从 source 读取。网络输出自己的 write queue、背压和关闭策略仍由协议 session 负责；media core 不为慢 viewer 保存 replay history，也不反压 publisher。
 
-媒体源目录只负责按名称发现当前发布实例，并以对象身份保护删除。由 HTTP 控制接口创建、按 `stream_id` 删除的 GB/RTSP 会话属于控制层；它们可以早于媒体源存在，也可以在媒体源消失后继续完成关闭，不能作为媒体源目录的状态。协议输入在归一化为上述轨道和帧时结束；协议输出从 session 的 mux、packetizer、控制状态和传输开始。
+source end 在每个 worker 组内排在此前已经排队的 frame 之后，再调用 sink 的 `on_end()`。sink 可以在回调中关闭自身；stream 在 owner worker 串行处理注册和移除，跨 worker 的 queued callback 只依赖 sink 自身的 closed 状态。
 
-## 不采用的结构
+HLS 是 source worker 上的普通 sink，继续保留 MPEG-TS 分段、playlist 和结束后的片段 retention。AAC→Opus 是按 source generation 与音频参数共享的派生 sink，输出新的 `media_stream`。MPEG-PS 是 GB28181 模块内的共享派生输出：一个 source generation 只创建一个 PS muxer，再把 PS frame 推送给多个 sender；每个 sender 独立维护 RTP、SSRC、sequence 和传输状态。
 
-- 不用 publisher-driven 的逐帧、逐消费者 `post`：慢消费者会积累无界队列。
-- 不把同步 sink 和异步 reader 合成带模式的万能 consumer：发布路径与慢消费者隔离的契约会变得隐含。
-- 不建立通用事件日志或 MediaGraph：现有产品只需有界起播历史，额外的事件种类、保留策略和节点调度会增加核心词汇。
-- 不照搬 mms-server 的协议桥接矩阵、ZLMediaKit 的全协议 muxer 或 SRS 的逐消费者媒体队列；只借鉴它们的 source→consumer、按需派生和有界起播缓存。
-
-在这个模型下，`media_history` 的模板与批次是内部实现，不是协议层必须理解的一级领域概念。协议特定的转换器和保留输出仍可有独立对象，因为它们确实拥有不同的资源或生命周期。只有出现新的真实共享需求时，才考虑比直接 source ownership 更通用的派生输出管理方式。
+核心没有 reader、pull API、GOP replay、cursor、runtime track event、AV1 或通用 `Frame` template。协议层只接收真实媒体帧和 source end，任何 codec/config 变化都通过结束当前 generation 表达。

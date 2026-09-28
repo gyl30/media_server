@@ -1,13 +1,21 @@
 #ifndef MEDIA_PS_MPEG_PS_OUTPUT_H
 #define MEDIA_PS_MPEG_PS_OUTPUT_H
 
-#include "media/core/media_history.h"
+#include <atomic>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <vector>
+
 #include "media/core/media_sink.h"
 
 struct ps_muxer_t;
 
 namespace media_server
 {
+
+class media_stream;
+class worker_context;
 
 struct mpeg_ps_frame
 {
@@ -19,31 +27,51 @@ struct mpeg_ps_frame
     std::uint32_t media_timestamp{};
 };
 
-class media_stream;
+class mpeg_ps_sink
+{
+   public:
+    virtual ~mpeg_ps_sink() = default;
+    [[nodiscard]] virtual worker_context& worker() noexcept = 0;
+    virtual void on_ps_frame(const mpeg_ps_frame& frame) = 0;
+    virtual void on_end() = 0;
+};
 
-class mpeg_ps_output final : public media_history<mpeg_ps_frame>
+class mpeg_ps_output final : public media_sink, public std::enable_shared_from_this<mpeg_ps_output>
 {
    public:
     mpeg_ps_output(std::string name, worker_context& worker);
 
     [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
-    [[nodiscard]] bool startup(const std::shared_ptr<media_stream>& source, const std::vector<media_track>& tracks);
+    [[nodiscard]] bool startup(const std::shared_ptr<media_stream>& source);
     [[nodiscard]] bool failed() const noexcept;
 
+    [[nodiscard]] worker_context& worker() noexcept override;
+    void on_frame(const media_frame& frame) override;
+    void on_end() override;
+
+    void add_sink(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker);
+    void remove_sink(mpeg_ps_sink* sink);
+
    private:
+    struct sink_group;
     static void* allocate_packet(void* param, std::size_t bytes);
     static void free_packet(void* param, void* packet);
     static int write_packet(void* param, int stream, void* packet, std::size_t bytes);
-    void process();
-    void process_frame(const media_frame& frame);
+    void add_sink_owner(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker);
+    void remove_sink_owner(mpeg_ps_sink* sink);
+    void publish(mpeg_ps_frame frame);
+    void end_sinks();
     void finish();
 
+    std::string name_;
+    worker_context& worker_;
+    std::shared_ptr<media_stream> source_;
     std::unique_ptr<ps_muxer_t, int (*)(ps_muxer_t*)> muxer_;
     std::map<track_id, std::pair<media_kind, int>> mux_tracks_;
     std::shared_ptr<std::vector<std::uint8_t>> packet_;
     bool waiting_for_key_frame_{true};
     std::atomic_bool failed_{};
-    std::shared_ptr<media_sink> sink_;
+    std::map<worker_context*, std::shared_ptr<sink_group>> sink_groups_;
 };
 
 }    // namespace media_server

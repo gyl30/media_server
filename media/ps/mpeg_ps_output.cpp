@@ -1,6 +1,15 @@
+#include <algorithm>
+#include <deque>
+#include <mutex>
+#include <utility>
+
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/post.hpp>
+
 #include "media/ps/mpeg_ps_output.h"
-#include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
+#include "media/net/worker_context.h"
+#include "media/codec/codec_utils.h"
 
 extern "C"
 {
@@ -9,11 +18,84 @@ extern "C"
 
 namespace media_server
 {
+namespace
+{
+constexpr std::size_t max_pending_frames = 2500;
+}
+
+struct mpeg_ps_output::sink_group
+{
+    worker_context& worker;
+    std::mutex mutex;
+    std::vector<std::weak_ptr<mpeg_ps_sink>> sinks;
+    std::deque<mpeg_ps_frame> pending;
+    bool drain_queued{};
+    bool pending_end{};
+
+    explicit sink_group(worker_context& target) : worker(target) {}
+
+    [[nodiscard]] std::vector<std::shared_ptr<mpeg_ps_sink>> snapshot_sinks()
+    {
+        std::scoped_lock lock(mutex);
+        std::vector<std::shared_ptr<mpeg_ps_sink>> result;
+        std::erase_if(sinks, [](const auto& sink) { return sink.expired(); });
+        for (const auto& weak : sinks)
+        {
+            if (auto sink = weak.lock())
+            {
+                result.push_back(std::move(sink));
+            }
+        }
+        return result;
+    }
+
+    void drain()
+    {
+        for (;;)
+        {
+            std::deque<mpeg_ps_frame> frames;
+            bool finish = false;
+            {
+                std::scoped_lock lock(mutex);
+                frames.swap(pending);
+                if (frames.empty() && pending_end)
+                {
+                    pending_end = false;
+                    drain_queued = false;
+                    finish = true;
+                }
+                else if (frames.empty())
+                {
+                    drain_queued = false;
+                    return;
+                }
+            }
+            const auto sinks_snapshot = snapshot_sinks();
+            for (const auto& frame : frames)
+            {
+                for (const auto& sink : sinks_snapshot)
+                {
+                    sink->on_ps_frame(frame);
+                }
+            }
+            if (finish)
+            {
+                for (const auto& sink : sinks_snapshot)
+                {
+                    sink->on_end();
+                }
+                return;
+            }
+        }
+    }
+};
 
 mpeg_ps_output::mpeg_ps_output(std::string name, worker_context& worker)
-    : media_history<mpeg_ps_frame>(std::move(name), worker), muxer_(nullptr, &ps_muxer_destroy)
+    : name_(std::move(name)), worker_(worker), muxer_(nullptr, &ps_muxer_destroy)
 {
 }
+
+worker_context& mpeg_ps_output::worker() noexcept { return worker_; }
 
 bool mpeg_ps_output::supported_tracks(const std::vector<media_track>& tracks)
 {
@@ -41,12 +123,13 @@ bool mpeg_ps_output::supported_tracks(const std::vector<media_track>& tracks)
     return video_count == 1 && audio_count <= 1;
 }
 
-bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source, const std::vector<media_track>& tracks)
+bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
 {
-    if (muxer_ || !supported_tracks(tracks))
+    if (muxer_ || !source || !supported_tracks(source->tracks()))
     {
         return false;
     }
+    source_ = source;
     const ps_muxer_func_t callbacks{allocate_packet, free_packet, write_packet};
     muxer_.reset(ps_muxer_create(&callbacks, this));
     if (!muxer_)
@@ -55,7 +138,7 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source, const 
         finish();
         return false;
     }
-    for (const auto& track : tracks)
+    for (const auto& track : source->tracks())
     {
         int codec = 0;
         switch (track.codec)
@@ -87,39 +170,31 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source, const 
         }
         mux_tracks_.emplace(track.id, std::pair{track.kind, id});
     }
-    if (!set_tracks(tracks))
-    {
-        failed_.store(true, std::memory_order_release);
-        finish();
-        return false;
-    }
-    sink_ = std::make_shared<media_sink>();
-    source->add_sink(sink_, source->worker());
-    process();
+    source->add_sink(shared_from_this(), source->worker());
     return true;
 }
 
 bool mpeg_ps_output::failed() const noexcept { return failed_.load(std::memory_order_acquire); }
 
-void mpeg_ps_output::process_frame(const media_frame& frame)
+void mpeg_ps_output::on_frame(const media_frame& frame)
 {
-    if (!muxer_)
+    if (!muxer_ || !frame.payload)
     {
         return;
     }
-    const auto& [kind, id] = mux_tracks_.at(frame.track);
+    const auto iterator = mux_tracks_.find(frame.track);
+    if (iterator == mux_tracks_.end())
+    {
+        return;
+    }
+    const auto& [kind, id] = iterator->second;
     if (waiting_for_key_frame_ && (kind != media_kind::video || !frame.key_frame))
     {
         return;
     }
     const auto pts = ns_to_milliseconds(frame.pts_ns) * 90;
-    if (ps_muxer_input(muxer_.get(),
-                       id,
-                       frame.key_frame ? MPEG_FLAG_IDR_FRAME : 0,
-                       pts,
-                       ns_to_milliseconds(frame.dts_ns) * 90,
-                       frame.payload->data(),
-                       frame.payload->size()) < 0)
+    if (ps_muxer_input(muxer_.get(), id, frame.key_frame ? MPEG_FLAG_IDR_FRAME : 0, pts, ns_to_milliseconds(frame.dts_ns) * 90,
+                       frame.payload->data(), frame.payload->size()) < 0)
     {
         failed_.store(true, std::memory_order_release);
         finish();
@@ -127,50 +202,165 @@ void mpeg_ps_output::process_frame(const media_frame& frame)
     }
     waiting_for_key_frame_ = false;
     publish({.track = frame.track,
-                      .dts_ns = frame.dts_ns,
-                      .pts_ns = frame.pts_ns,
-                      .key_frame = frame.key_frame,
-                      .payload = std::move(packet_),
-                      .media_timestamp = static_cast<std::uint32_t>(pts)});
+             .dts_ns = frame.dts_ns,
+             .pts_ns = frame.pts_ns,
+             .key_frame = frame.key_frame,
+             .payload = std::move(packet_),
+             .media_timestamp = static_cast<std::uint32_t>(pts)});
+}
+
+void mpeg_ps_output::on_end() { finish(); }
+
+void mpeg_ps_output::add_sink(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker)
+{
+    if (!sink)
+    {
+        return;
+    }
+    auto* target = &worker;
+    boost::asio::dispatch(worker_.io(), [self = shared_from_this(), sink = std::move(sink), target]() mutable
+                          { self->add_sink_owner(std::move(sink), *target); });
+}
+
+void mpeg_ps_output::add_sink_owner(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker)
+{
+    auto& group = sink_groups_[&worker];
+    if (!group)
+    {
+        group = std::make_shared<sink_group>(worker);
+    }
+    std::scoped_lock lock(group->mutex);
+    group->sinks.emplace_back(std::move(sink));
+}
+
+void mpeg_ps_output::remove_sink(mpeg_ps_sink* sink)
+{
+    if (!sink)
+    {
+        return;
+    }
+    boost::asio::dispatch(worker_.io(), [self = shared_from_this(), sink]() { self->remove_sink_owner(sink); });
+}
+
+void mpeg_ps_output::remove_sink_owner(mpeg_ps_sink* sink)
+{
+    for (auto iterator = sink_groups_.begin(); iterator != sink_groups_.end();)
+    {
+        const auto& group = iterator->second;
+        {
+            std::scoped_lock lock(group->mutex);
+            std::erase_if(group->sinks, [sink](const auto& weak)
+                          {
+                              const auto current = weak.lock();
+                              return !current || current.get() == sink;
+                          });
+        }
+        if (group->snapshot_sinks().empty())
+        {
+            iterator = sink_groups_.erase(iterator);
+        }
+        else
+        {
+            ++iterator;
+        }
+    }
+}
+
+void mpeg_ps_output::publish(mpeg_ps_frame frame)
+{
+    std::vector<std::shared_ptr<sink_group>> groups;
+    groups.reserve(sink_groups_.size());
+    for (const auto& [worker, group] : sink_groups_)
+    {
+        static_cast<void>(worker);
+        groups.push_back(group);
+    }
+    for (const auto& group : groups)
+    {
+        if (&group->worker == &worker_)
+        {
+            for (const auto& sink : group->snapshot_sinks())
+            {
+                sink->on_ps_frame(frame);
+            }
+            continue;
+        }
+        bool schedule = false;
+        {
+            std::scoped_lock lock(group->mutex);
+            if (group->pending_end)
+            {
+                continue;
+            }
+            if (group->pending.size() >= max_pending_frames)
+            {
+                group->pending.clear();
+                group->pending_end = true;
+            }
+            else
+            {
+                group->pending.push_back(frame);
+            }
+            if (!group->drain_queued)
+            {
+                group->drain_queued = true;
+                schedule = true;
+            }
+        }
+        if (schedule)
+        {
+            boost::asio::post(group->worker.io(), [group]() { group->drain(); });
+        }
+    }
+}
+
+void mpeg_ps_output::end_sinks()
+{
+    std::vector<std::shared_ptr<sink_group>> groups;
+    groups.reserve(sink_groups_.size());
+    for (const auto& [worker, group] : sink_groups_)
+    {
+        static_cast<void>(worker);
+        groups.push_back(group);
+    }
+    sink_groups_.clear();
+    for (const auto& group : groups)
+    {
+        if (&group->worker == &worker_)
+        {
+            for (const auto& sink : group->snapshot_sinks())
+            {
+                sink->on_end();
+            }
+            continue;
+        }
+        bool schedule = false;
+        {
+            std::scoped_lock lock(group->mutex);
+            group->pending_end = true;
+            if (!group->drain_queued)
+            {
+                group->drain_queued = true;
+                schedule = true;
+            }
+        }
+        if (schedule)
+        {
+            boost::asio::post(group->worker.io(), [group]() { group->drain(); });
+        }
+    }
 }
 
 void mpeg_ps_output::finish()
 {
-    if (sink_)
+    if (source_)
     {
-        sink_->close();
-        sink_.reset();
+        source_->remove_sink(this);
+        source_.reset();
     }
-    end();
+    end_sinks();
     packet_.reset();
     muxer_.reset();
-}
-
-void mpeg_ps_output::process()
-{
-    if (!sink_)
-    {
-        return;
-    }
-    while (const auto entry = sink_->read())
-    {
-        process_frame(*entry);
-    }
-    const auto weak = std::weak_ptr<mpeg_ps_output>(std::static_pointer_cast<mpeg_ps_output>(media_history<mpeg_ps_frame>::shared_from_this()));
-    sink_->async_wait([weak](bool ended)
-                      {
-                          if (const auto self = weak.lock())
-                          {
-                              if (ended)
-                              {
-                                  self->finish();
-                              }
-                              else
-                              {
-                                  self->process();
-                              }
-                          }
-                      });
 }
 
 void* mpeg_ps_output::allocate_packet(void* param, std::size_t bytes)

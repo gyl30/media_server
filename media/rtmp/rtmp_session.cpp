@@ -226,10 +226,6 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         }
         if (write_queue_.empty())
         {
-            if (play_ && play_->waiting_for_output())
-            {
-                play_->on_output_progress();
-            }
             return;
         }
 
@@ -238,10 +234,6 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
         {
             shutdown();
             return;
-        }
-        if (!write_queue_.empty() && play_ && play_->waiting_for_output())
-        {
-            play_->on_output_progress();
         }
     }
 }
@@ -301,9 +293,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
                 static_cast<void>(rtmp_server_send_audio(self->rtmp_context_, data.data(), data.size(), timestamp));
             }
         },
-        [self]() { self->shutdown(); },
-        [self]() { return self->write_queue_.queued_bytes(); },
-        write_queue_.max_bytes());
+        [self]() { self->shutdown(); });
     boost::asio::post(worker_.io(), [self]()
                       {
                           if (!self->closed_ && self->play_)

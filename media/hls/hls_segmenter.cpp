@@ -10,6 +10,7 @@
 #include "media/hls/hls_segmenter.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
+#include "media/net/worker_context.h"
 
 extern "C"
 {
@@ -110,11 +111,6 @@ void hls_segmenter::process_frame(const media_frame& frame)
 
 void hls_segmenter::finish()
 {
-    if (sink_)
-    {
-        sink_->close();
-        sink_.reset();
-    }
     std::scoped_lock lock(mutex_);
     if (ended_at_.has_value())
     {
@@ -135,7 +131,7 @@ void hls_segmenter::finish()
 
 bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
 {
-    if (!source || sink_)
+    if (!source || source_)
     {
         return false;
     }
@@ -143,60 +139,23 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
     {
         process_track(track);
     }
-    sink_ = std::make_shared<media_sink>();
-    source->add_sink(sink_, source->worker());
-    const auto weak = weak_from_this();
-    sink_->async_wait([weak](bool ended)
-                       {
-                           if (const auto self = weak.lock())
-                           {
-                               if (ended)
-                               {
-                                   self->finish();
-                               }
-                               else
-                               {
-                                   self->process();
-                               }
-                           }
-                       });
-    process();
+    source_ = source;
+    source->add_sink(shared_from_this(), source->worker());
     return true;
 }
 
-void hls_segmenter::process()
-{
-    if (!sink_)
-    {
-        return;
-    }
-    while (const auto entry = sink_->read())
-    {
-        process_frame(*entry);
-    }
-    const auto weak = weak_from_this();
-    sink_->async_wait([weak](bool ended)
-                      {
-                          if (const auto self = weak.lock())
-                          {
-                              if (ended)
-                              {
-                                  self->finish();
-                              }
-                              else
-                              {
-                                  self->process();
-                              }
-                          }
-                      });
-}
+worker_context& hls_segmenter::worker() noexcept { return source_->worker(); }
+
+void hls_segmenter::on_frame(const media_frame& frame) { process_frame(frame); }
+
+void hls_segmenter::on_end() { finish(); }
 
 void hls_segmenter::shutdown()
 {
-    if (sink_)
+    if (source_)
     {
-        sink_->close();
-        sink_.reset();
+        source_->remove_sink(this);
+        source_.reset();
     }
     finish();
 }

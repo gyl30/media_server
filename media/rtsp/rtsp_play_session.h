@@ -24,17 +24,15 @@ namespace media_server
 {
 
 class worker_context;
-class rtsp_play_session final : public std::enable_shared_from_this<rtsp_play_session>
+class media_stream;
+class rtsp_play_session final : public media_sink, public std::enable_shared_from_this<rtsp_play_session>
 {
    public:
     using write_handler = std::function<void(std::vector<std::uint8_t>)>;
-    using queue_bytes_handler = std::function<std::size_t()>;
     rtsp_play_session(worker_context& worker,
                       std::string stream_name,
                       boost::asio::ip::address local_address,
-                      write_handler write,
-                      queue_bytes_handler queued_output_bytes,
-                      std::size_t max_output_queue_bytes);
+                      write_handler write);
 
    public:
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
@@ -44,8 +42,9 @@ class rtsp_play_session final : public std::enable_shared_from_this<rtsp_play_se
 
    public:
     [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
-    [[nodiscard]] bool waiting_for_output() const noexcept { return waiting_for_output_; }
-    void on_output_progress();
+    [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
+    void on_frame(const media_frame& frame) override;
+    void on_end() override;
 
    public:
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
@@ -56,9 +55,6 @@ class rtsp_play_session final : public std::enable_shared_from_this<rtsp_play_se
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
 
    public:
-    void process_media_available();
-    void handle_source_end();
-
    private:
     struct track_state
     {
@@ -75,14 +71,9 @@ class rtsp_play_session final : public std::enable_shared_from_this<rtsp_play_se
 
    private:
     [[nodiscard]] int prepare_presentation();
-    [[nodiscard]] bool apply_tracks(const media_tracks_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
     void write_interleaved(std::uint8_t channel, const void* data, std::size_t bytes);
     [[nodiscard]] int presentation_status() const;
-    void process_read();
-    [[nodiscard]] std::size_t queued_output_bytes() const;
-    [[nodiscard]] bool output_backpressured() const;
-    [[nodiscard]] bool output_drained() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
    private:
@@ -95,16 +86,12 @@ class rtsp_play_session final : public std::enable_shared_from_this<rtsp_play_se
     write_handler write_handler_;
     std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
-    std::shared_ptr<media_sink> sink_;
     std::shared_ptr<media_stream> source_generation_;
-    queue_bytes_handler queued_output_bytes_;
-    std::size_t max_output_queue_bytes_{};
     std::map<track_id, track_state> track_states_;
     rtsp_muxer_t* muxer_{};
     std::string session_id_;
     bool playing_{};
     bool closed_{};
-    bool waiting_for_output_{};
 };
 
 }    // namespace media_server

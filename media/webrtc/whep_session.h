@@ -44,7 +44,7 @@ enum class whep_session_startup_error
     internal_error,
 };
 
-class whep_session final : public std::enable_shared_from_this<whep_session>
+class whep_session final : public media_sink, public std::enable_shared_from_this<whep_session>
 {
    public:
     whep_session(worker_context& worker,
@@ -67,10 +67,9 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     [[nodiscard]] bool srtp_started() const noexcept;
 
    public:
-    void handle_source_end();
-
-   protected:
-    void process_media_available();
+    [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
+    void on_frame(const media_frame& frame) override;
+    void on_end() override;
 
    private:
     struct pending_datagram
@@ -87,7 +86,6 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
     void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_dtls(std::span<const std::uint8_t> packet);
     bool startup_media();
-    bool apply_tracks(const media_tracks_ptr& tracks);
     bool start_media_read();
     void send_rtp(std::span<const std::uint8_t> packet);
     void send_rtcp(std::span<const std::uint8_t> packet);
@@ -104,7 +102,6 @@ class whep_session final : public std::enable_shared_from_this<whep_session>
    private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
-    std::shared_ptr<media_sink> sink_;
     std::shared_ptr<whep_audio_egress> audio_egress_;
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;

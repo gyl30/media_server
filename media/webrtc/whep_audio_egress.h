@@ -21,7 +21,7 @@ struct whep_audio_settings
     int max_playback_rate{};
 };
 
-class whep_audio_egress final : public std::enable_shared_from_this<whep_audio_egress>
+class whep_audio_egress final : public media_sink, public std::enable_shared_from_this<whep_audio_egress>
 {
    public:
     enum class end_reason
@@ -36,8 +36,9 @@ class whep_audio_egress final : public std::enable_shared_from_this<whep_audio_e
     [[nodiscard]] std::shared_ptr<media_stream> stream() const noexcept;
     [[nodiscard]] end_reason reason() const noexcept;
 
-    void process_media_available();
-    void handle_source_end();
+    [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
+    void on_frame(const media_frame& frame) override;
+    void on_end() override;
 
    private:
     friend std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
@@ -51,7 +52,6 @@ class whep_audio_egress final : public std::enable_shared_from_this<whep_audio_e
 
     worker_context& worker_;
     std::shared_ptr<media_stream> source_;
-    std::shared_ptr<media_sink> sink_;
     std::shared_ptr<media_stream> output_;
     std::map<track_id, media_track> source_tracks_;
     std::map<track_id, std::unique_ptr<audio_transcoder>> transcoders_;

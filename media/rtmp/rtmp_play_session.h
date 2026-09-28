@@ -1,7 +1,6 @@
 #ifndef MEDIA_RTMP_RTMP_PLAY_SESSION_H
 #define MEDIA_RTMP_RTMP_PLAY_SESSION_H
 
-#include <map>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -17,49 +16,31 @@ namespace media_server
 {
 
 class worker_context;
-class rtmp_play_session final : public std::enable_shared_from_this<rtmp_play_session>
+class rtmp_play_session final : public media_sink, public std::enable_shared_from_this<rtmp_play_session>
 {
    public:
     using end_handler = std::function<void()>;
-    using queue_bytes_handler = std::function<std::size_t()>;
 
     rtmp_play_session(worker_context& worker,
                       std::shared_ptr<media_stream> stream,
                       flv_muxer::packet_handler packet_handler,
-                      end_handler handle_source_end,
-                      queue_bytes_handler queued_output_bytes,
-                      std::size_t max_output_queue_bytes);
+                      end_handler handle_source_end);
 
    public:
     void startup();
     void shutdown();
 
-   public:
-    [[nodiscard]] bool waiting_for_output() const noexcept { return waiting_for_output_; }
-    void on_output_progress();
-
-   public:
-
-   private:
-    void process_read();
-    [[nodiscard]] std::size_t queued_output_bytes() const;
-    [[nodiscard]] bool output_backpressured() const;
-    [[nodiscard]] bool output_drained() const;
-
-    void apply_tracks(const media_tracks_ptr& tracks);
+    [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
+    void on_frame(const media_frame& frame) override;
+    void on_end() override;
 
    private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
-    std::shared_ptr<media_sink> sink_;
     flv_muxer muxer_;
-    queue_bytes_handler queued_output_bytes_;
-    std::size_t max_output_queue_bytes_{};
     end_handler end_handler_;
-    std::map<track_id, media_track> sink_tracks_;
-    bool waiting_for_key_frame_{};
+    bool waiting_for_key_frame_{true};
     bool closed_{};
-    bool waiting_for_output_{};
     bool source_ended_{};
 };
 

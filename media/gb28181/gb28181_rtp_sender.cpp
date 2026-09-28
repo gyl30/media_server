@@ -61,14 +61,12 @@ bool gb28181_rtp_sender::startup()
                                                 }
                                                 if (!output)
                                                 {
-                                                    self->handle_source_end();
+                                                    self->on_end();
                                                     return;
                                                 }
                                                 self->ps_output_ = output;
                                                 self->apply_tracks(source->tracks());
-                                                self->sink_ = std::make_shared<media_sink_t<mpeg_ps_frame>>();
-                                                output->add_sink(self->sink_, self->worker_);
-                                                self->process_media_available();
+                                                output->add_sink(self, self->worker_);
                                             });
                       });
     return true;
@@ -80,95 +78,59 @@ void gb28181_rtp_sender::shutdown()
     {
         return;
     }
-    if (sink_)
-    {
-        sink_->close();
-    }
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void gb28181_rtp_sender::process_media_available()
+void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
 {
     if (shutdown_requested_.load(std::memory_order_acquire) || !packet_handler_)
     {
         return;
     }
-
-    while (packet_handler_)
+    const auto state = track_states_.find(frame.track);
+    if (state == track_states_.end() || !frame.payload)
     {
-        auto entry = sink_->read();
-        if (!entry)
-        {
-            const auto weak = weak_from_this();
-            sink_->async_wait([weak](bool ended)
-                       {
-                           if (const auto self = weak.lock())
-                           {
-                               if (ended)
-                               {
-                                   self->handle_source_end();
-                               }
-                               else
-                               {
-                                   self->process_media_available();
-                               }
-                           }
-                       });
-            return;
-        }
-        const auto state = track_states_.find(entry->track);
-        if (state == track_states_.end() || !entry->payload)
-        {
-            continue;
-        }
+        return;
+    }
 
-        const bool starts_media = waiting_for_key_frame_;
-        if (starts_media)
-        {
-            if (state->second.kind != media_kind::video || !entry->key_frame)
-            {
-                continue;
-            }
-        }
+    const bool starts_media = waiting_for_key_frame_;
+    if (starts_media && (state->second.kind != media_kind::video || !frame.key_frame))
+    {
+        return;
+    }
 
-        const auto media_timestamp = entry->media_timestamp;
-        if (!first_media_timestamp_)
+    const auto media_timestamp = frame.media_timestamp;
+    if (!first_media_timestamp_)
+    {
+        first_media_timestamp_ = media_timestamp;
+    }
+    const auto timestamp = timestamp_base_ + media_timestamp - *first_media_timestamp_;
+    const auto result = rtp_payload_encode_input(packetizer_, frame.payload->data(), static_cast<int>(frame.payload->size()), timestamp);
+    if (result < 0)
+    {
+        spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
+        if (failure_handler_)
         {
-            first_media_timestamp_ = media_timestamp;
+            failure_handler_();
         }
-        const auto timestamp = timestamp_base_ + media_timestamp - *first_media_timestamp_;
-        const auto result = rtp_payload_encode_input(
-            packetizer_, entry->payload->data(), static_cast<int>(entry->payload->size()), timestamp);
-        if (result < 0)
+        else if (end_handler_)
         {
-            spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
-            if (sink_)
-            {
-                sink_->close();
-            }
-            if (failure_handler_)
-            {
-                failure_handler_();
-            }
-            else if (end_handler_)
-            {
-                end_handler_();
-            }
-            else
-            {
-                shutdown();
-            }
-            return;
+            end_handler_();
         }
-        if (starts_media)
+        else
         {
-            waiting_for_key_frame_ = false;
+            shutdown();
         }
+        return;
+    }
+    if (starts_media)
+    {
+        waiting_for_key_frame_ = false;
     }
 }
 
-void gb28181_rtp_sender::handle_source_end()
+void gb28181_rtp_sender::on_end()
 {
     if (ps_output_ && ps_output_->failed() && failure_handler_)
     {
@@ -189,11 +151,6 @@ void gb28181_rtp_sender::safe_shutdown()
     packet_handler_ = {};
     end_handler_ = {};
     failure_handler_ = {};
-    if (sink_)
-    {
-        sink_->close();
-        sink_.reset();
-    }
     track_states_.clear();
     waiting_for_key_frame_ = true;
     stream_.reset();

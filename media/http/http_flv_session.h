@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <map>
+#include <deque>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -23,7 +24,8 @@ extern "C"
 namespace media_server
 {
 class worker_context;
-class http_flv_session final : public std::enable_shared_from_this<http_flv_session>
+class media_stream;
+class http_flv_session final : public media_sink, public std::enable_shared_from_this<http_flv_session>
 {
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
@@ -33,10 +35,6 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
    public:
     void startup();
     void shutdown();
-
-   protected:
-    void process_media_available();
-    void handle_source_end();
 
    private:
     void run(boost::asio::yield_context yield);
@@ -49,9 +47,6 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     void enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
     void run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield);
     static int writer_callback(void* param, const flv_vec_t* vectors, int count);
-    bool apply_tracks(const media_tracks_ptr& tracks);
-    void process_read();
-    void write_complete(std::uint64_t generation);
 
    private:
     void safe_shutdown();
@@ -62,17 +57,22 @@ class http_flv_session final : public std::enable_shared_from_this<http_flv_sess
     request_type request_;
     bool closed_{};
     std::string stream_name_;
-    std::vector<std::uint8_t> pending_bootstrap_;
-    std::uint64_t pending_generation_{};
-    bool pending_bootstrap_ready_{};
+    std::deque<std::vector<std::uint8_t>> pending_output_;
+    std::size_t pending_output_bytes_{};
     bool write_in_progress_{};
-    std::map<track_id, media_track> reader_tracks_;
+    std::map<track_id, media_track> tracks_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
     flv_muxer muxer_;
-    std::shared_ptr<media_sink> sink_;
+    std::shared_ptr<media_stream> source_;
     std::uint64_t generation_{};
     bool waiting_for_key_frame_{};
+    static constexpr std::size_t max_pending_output_bytes_ = 4U * 1024U * 1024U;
+
+   public:
+    [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
+    void on_frame(const media_frame& frame) override;
+    void on_end() override;
 };
 
 }    // namespace media_server

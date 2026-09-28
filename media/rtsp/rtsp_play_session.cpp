@@ -53,134 +53,70 @@ std::uint32_t random_u32()
 rtsp_play_session::rtsp_play_session(worker_context& worker,
                                      std::string stream_name,
                                      boost::asio::ip::address local_address,
-                                     write_handler write,
-                                     queue_bytes_handler queued_output_bytes,
-                                     std::size_t max_output_queue_bytes)
+                                     write_handler write)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
       local_address_(std::move(local_address)),
-      write_handler_(std::move(write)),
-      queued_output_bytes_(std::move(queued_output_bytes)),
-      max_output_queue_bytes_(max_output_queue_bytes)
+      write_handler_(std::move(write))
 {
 }
 
-void rtsp_play_session::process_media_available()
+void rtsp_play_session::on_frame(const media_frame& entry)
 {
-    if (closed_)
+    if (closed_ || !playing_)
     {
         return;
     }
-    process_read();
-}
 
-void rtsp_play_session::on_output_progress()
-{
-    if (closed_ || !waiting_for_output_ || !output_drained())
+    const auto iterator = track_states_.find(entry.track);
+    if (iterator == track_states_.end() || !entry.payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0)
     {
         return;
     }
-    waiting_for_output_ = false;
-    process_read();
-}
 
-void rtsp_play_session::process_read()
-{
-    bool first_entry = true;
-    while (!closed_)
+    const auto& state = iterator->second;
+    if (state.codec == codec_id::opus || state.codec == codec_id::g711a || state.codec == codec_id::g711u)
     {
-        if (!first_entry && output_backpressured())
+        constexpr std::int64_t nanoseconds_per_millisecond = 1'000'000;
+        if ((entry.pts_ns % nanoseconds_per_millisecond) != 0 || (entry.dts_ns % nanoseconds_per_millisecond) != 0)
         {
-            waiting_for_output_ = true;
+            spdlog::error("rtsp play audio timestamp precision unsupported track {} codec {} pts_ns {} dts_ns {}",
+                          entry.track,
+                          to_string(state.codec),
+                          entry.pts_ns,
+                          entry.dts_ns);
             return;
         }
 
-        auto entry = sink_ ? sink_->read() : std::optional<media_frame>{};
-        if (!entry)
+        const auto packet_size = rtp_packet_getsize();
+        const auto payload_capacity = packet_size - RTP_FIXED_HEADER;
+        if (entry.payload->size() > static_cast<std::size_t>(payload_capacity))
         {
-            const auto weak = weak_from_this();
-            if (sink_)
-            {
-                sink_->async_wait([weak](bool ended)
-                       {
-                           if (const auto self = weak.lock())
-                           {
-                               if (ended)
-                               {
-                                   self->handle_source_end();
-                               }
-                               else
-                               {
-                                   self->process_media_available();
-                               }
-                           }
-                       });
-            }
+            spdlog::error("rtsp play audio packet too large track {} codec {} bytes {} capacity {}",
+                          entry.track,
+                          to_string(state.codec),
+                          entry.payload->size(),
+                          payload_capacity);
             return;
-        }
-        first_entry = false;
-        const auto iterator = track_states_.find(entry->track);
-        if (iterator == track_states_.end() || !entry->payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0)
-        {
-            continue;
-        }
-
-        const auto& state = iterator->second;
-        if (state.codec == codec_id::opus || state.codec == codec_id::g711a || state.codec == codec_id::g711u)
-        {
-            constexpr std::int64_t nanoseconds_per_millisecond = 1'000'000;
-            if ((entry->pts_ns % nanoseconds_per_millisecond) != 0 || (entry->dts_ns % nanoseconds_per_millisecond) != 0)
-            {
-                spdlog::error("rtsp play audio timestamp precision unsupported track {} codec {} pts_ns {} dts_ns {}",
-                              entry->track,
-                              to_string(state.codec),
-                              entry->pts_ns,
-                              entry->dts_ns);
-                continue;
-            }
-
-            const auto packet_size = rtp_packet_getsize();
-            const auto payload_capacity = packet_size - RTP_FIXED_HEADER;
-            if (entry->payload->size() > static_cast<std::size_t>(payload_capacity))
-            {
-                spdlog::error("rtsp play audio packet too large track {} codec {} bytes {} capacity {}",
-                              entry->track,
-                              to_string(state.codec),
-                              entry->payload->size(),
-                              payload_capacity);
-                continue;
-            }
-        }
-        const auto mux_result = rtsp_muxer_input(muxer_,
-                                                 state.media_id,
-                                                 ns_to_milliseconds(entry->pts_ns),
-                                                 ns_to_milliseconds(entry->dts_ns),
-                                                 entry->payload->data(),
-                                                 static_cast<int>(entry->payload->size()),
-                                                 entry->key_frame ? 1 : 0);
-        if (mux_result < 0)
-        {
-            spdlog::error("rtsp play mux failed result {}", mux_result);
         }
     }
-
+    const auto mux_result = rtsp_muxer_input(muxer_,
+                                             state.media_id,
+                                             ns_to_milliseconds(entry.pts_ns),
+                                             ns_to_milliseconds(entry.dts_ns),
+                                             entry.payload->data(),
+                                             static_cast<int>(entry.payload->size()),
+                                             entry.key_frame ? 1 : 0);
+    if (mux_result < 0)
+    {
+        spdlog::error("rtsp play mux failed result {}", mux_result);
+    }
 }
 
-std::size_t rtsp_play_session::queued_output_bytes() const
-{
-    return queued_output_bytes_();
-}
-
-// history replay 只使用半个 queue；恢复水位形成滞回，并为单帧展开及 control output 保留余量。
-bool rtsp_play_session::output_backpressured() const { return queued_output_bytes() >= max_output_queue_bytes_ / 2U; }
-
-bool rtsp_play_session::output_drained() const { return queued_output_bytes() <= max_output_queue_bytes_ / 4U; }
-
-void rtsp_play_session::handle_source_end()
+void rtsp_play_session::on_end()
 {
     if (!closed_)
     {
-        waiting_for_output_ = false;
         shutdown_handler_();
     }
 }
@@ -229,12 +165,10 @@ void rtsp_play_session::shutdown()
 
 void rtsp_play_session::safe_shutdown()
 {
-    if (sink_)
+    if (stream_)
     {
-        sink_->close();
-        sink_.reset();
+        stream_->remove_sink(this);
     }
-    waiting_for_output_ = false;
     if (stream_)
     {
         spdlog::debug("rtsp play shutdown {}", stream_->name());
@@ -414,9 +348,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
         return result;
     }
     playing_ = true;
-    sink_ = std::make_shared<media_sink>();
-    stream_->add_sink(sink_, worker_);
-    process_read();
+    stream_->add_sink(shared_from_this(), worker_);
     return 0;
 }
 
@@ -464,28 +396,6 @@ void rtsp_play_session::write_interleaved(std::uint8_t channel, const void* data
     std::memcpy(packet.data() + 2U, &network_bytes, sizeof(network_bytes));
     std::memcpy(packet.data() + 4U, data, bytes);
     write_handler_(std::move(packet));
-}
-
-bool rtsp_play_session::apply_tracks(const media_tracks_ptr& tracks)
-{
-    if (!tracks)
-    {
-        return true;
-    }
-
-    for (const auto& [id, state] : track_states_)
-    {
-        if (state.rtp_channel < 0)
-        {
-            continue;
-        }
-        const auto current = std::ranges::find_if(*tracks, [id](const media_track& track) { return track.id == id; });
-        if (current == tracks->end() || current->kind != state.kind || current->codec != state.codec)
-        {
-            return false;
-        }
-    }
-    return true;
 }
 
 int rtsp_play_session::presentation_status() const
@@ -571,7 +481,7 @@ int rtsp_play_session::prepare_presentation()
     {
         return 404;
     }
-    auto snapshot = stream->tracks();
+    const auto& snapshot = stream->tracks();
     auto* prepared_muxer = rtsp_muxer_create(&rtsp_play_session::muxer_packet_callback, this);
     if (prepared_muxer == nullptr)
     {
