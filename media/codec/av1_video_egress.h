@@ -17,8 +17,8 @@ class av1_video_egress final : public media_reader, public std::enable_shared_fr
    public:
     [[nodiscard]] std::shared_ptr<media_stream> stream() const noexcept;
 
-    void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_media_available(bool waited_for_media) override;
+    void on_tracks(media_tracks_ptr tracks) override;
+    void on_media_available() override;
     void on_end() override;
 
    private:
@@ -39,7 +39,6 @@ class av1_video_egress final : public media_reader, public std::enable_shared_fr
     std::unique_ptr<video_transcoder> transcoder_;
     track_id video_track_id_{};
     std::atomic_bool ended_{};
-    std::uint64_t source_revision_{};
     bool reading_{};
     bool waiting_for_source_key_frame_{true};
     std::size_t viewers_{};

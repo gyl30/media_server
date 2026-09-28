@@ -57,7 +57,7 @@ class rtsp_publish_media final
 
    private:
     int on_demuxed_packet(avpacket_t* packet);
-    bool update_track_from_packet(const avpacket_t& packet);
+    bool validate_track_from_packet(const avpacket_t& packet);
 
    private:
     worker_context& worker_;

@@ -60,15 +60,15 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
 
    public:
-    void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_media_available(bool waited_for_media) override;
+    void on_tracks(media_tracks_ptr tracks) override;
+    void on_media_available() override;
     void on_end() override;
 
    private:
     struct track_state
     {
+        media_kind kind{};
         codec_id codec{};
-        std::uint64_t config_version{};
         int payload_index{-1};
         int media_id{-1};
         int rtp_channel{-1};
@@ -80,11 +80,11 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
 
    private:
     [[nodiscard]] int prepare_presentation();
-    [[nodiscard]] bool apply_tracks(const media_track_snapshot_ptr& tracks);
+    [[nodiscard]] bool apply_tracks(const media_tracks_ptr& tracks);
     int on_muxer_packet(int pid, const void* data, int bytes);
     void write_interleaved(std::uint8_t channel, const void* data, std::size_t bytes);
     [[nodiscard]] int presentation_status() const;
-    void process_read(bool replaying_history);
+    void process_read();
     [[nodiscard]] std::size_t queued_output_bytes() const;
     [[nodiscard]] bool output_backpressured() const;
     [[nodiscard]] bool output_drained() const;
@@ -106,9 +106,7 @@ class rtsp_play_session final : public media_reader, public std::enable_shared_f
     queue_bytes_handler queued_output_bytes_;
     std::size_t max_output_queue_bytes_{};
     std::map<track_id, track_state> track_states_;
-    std::map<track_id, std::uint64_t> source_track_versions_;
     rtsp_muxer_t* muxer_{};
-    std::uint64_t track_revision_{};
     std::string session_id_;
     bool playing_{};
     bool closed_{};

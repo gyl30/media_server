@@ -48,21 +48,6 @@ bool media_stream::set_tracks(std::vector<media_track> tracks)
     return true;
 }
 
-bool media_stream::update_track(media_track track, bool codec_state_reset)
-{
-    const auto id = track.id;
-    if (!media_history::update_track(std::move(track), codec_state_reset))
-    {
-        return false;
-    }
-    sink_replay_barrier_sequence_ = next_history_sequence_;
-    for (const auto& sink : sinks_)
-    {
-        sink->on_track(tracks_.at(id));
-    }
-    return true;
-}
-
 void media_stream::publish(media_frame frame)
 {
     if (ended_ || !frame.payload || frame.payload->empty() || !tracks_.contains(frame.track))
@@ -93,7 +78,7 @@ void media_stream::end()
 void media_stream::replay_to(media_sink& sink)
 {
     std::vector<media_frame> frames;
-    if (current_gop_start_sequence_ && *current_gop_start_sequence_ >= sink_replay_barrier_sequence_)
+    if (current_gop_start_sequence_)
     {
         for (const auto& entry : history_)
         {

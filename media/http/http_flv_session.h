@@ -37,8 +37,8 @@ class http_flv_session final : public media_reader, public std::enable_shared_fr
     void shutdown();
 
    protected:
-    void on_tracks(media_track_snapshot_ptr tracks) override;
-    void on_media_available(bool waited_for_media) override;
+    void on_tracks(media_tracks_ptr tracks) override;
+    void on_media_available() override;
     void on_end() override;
 
    private:
@@ -52,7 +52,7 @@ class http_flv_session final : public media_reader, public std::enable_shared_fr
     void enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
     void run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield);
     static int writer_callback(void* param, const flv_vec_t* vectors, int count);
-    bool apply_tracks(const media_track_snapshot_ptr& tracks);
+    bool apply_tracks(const media_tracks_ptr& tracks);
     void process_read();
     void write_complete(std::uint64_t generation);
 
@@ -76,7 +76,6 @@ class http_flv_session final : public media_reader, public std::enable_shared_fr
     std::shared_ptr<av1_video_egress> video_egress_;
     bool av1_output_{};
     std::uint64_t generation_{};
-    std::uint64_t track_revision_{};
     bool waiting_for_key_frame_{};
 };
 

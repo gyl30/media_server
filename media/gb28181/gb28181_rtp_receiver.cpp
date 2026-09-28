@@ -231,8 +231,7 @@ void gb28181_rtp_receiver::apply_topology()
                                .codec = *video_codec_,
                                .clock_rate = 90'000,
                                .channel_count = 0,
-                               .codec_config = {},
-                               .config_version = 0};
+                               .codec_config = {}};
     if (audio_codec_ == codec_id::g711a || audio_codec_ == codec_id::g711u)
     {
         audio_track_ = media_track{
@@ -242,10 +241,8 @@ void gb28181_rtp_receiver::apply_topology()
             .clock_rate = 8'000,
             .channel_count = 1,
             .codec_config = {},
-            .config_version = 0,
         };
     }
-    try_start_recording();
 }
 
 int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
@@ -277,10 +274,14 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
         return -1;
     }
 
-    if (update_track_from_packet(*packet))
+    if (validate_track_from_packet(*packet))
     {
         avpkt2bs_destroy(&bitstream_);
         avpkt2bs_create(&bitstream_);
+    }
+    if (fatal_codec_change_)
+    {
+        return -1;
     }
     if (!recording_ && !try_start_recording())
     {
@@ -305,7 +306,7 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     return 0;
 }
 
-bool gb28181_rtp_receiver::update_track_from_packet(const avpacket_t& packet)
+bool gb28181_rtp_receiver::validate_track_from_packet(const avpacket_t& packet)
 {
     auto track = media_track_from_avstream_config(*packet.stream, video_track_id, audio_track_id);
     if (!track)
@@ -329,11 +330,13 @@ bool gb28181_rtp_receiver::update_track_from_packet(const avpacket_t& packet)
     {
         return false;
     }
-    current = *track;
     if (recording_)
     {
-        stream_->update_track(std::move(*track));
+        spdlog::warn("gb28181 track config changed stream {}", stream_name_);
+        fatal_codec_change_ = true;
+        return false;
     }
+    current = *track;
     return true;
 }
 
@@ -343,7 +346,8 @@ bool gb28181_rtp_receiver::try_start_recording()
     {
         return true;
     }
-    if (!video_codec_ || !video_track_ || (audio_codec_ && !audio_track_))
+    if (!video_codec_ || !video_track_ || ((video_codec_ == codec_id::h264 || video_codec_ == codec_id::h265) && video_track_->codec_config.empty()) ||
+        (audio_codec_ && !audio_track_) || (audio_codec_ == codec_id::aac && audio_track_->codec_config.empty()))
     {
         return false;
     }

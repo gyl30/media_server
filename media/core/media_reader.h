@@ -19,18 +19,12 @@ struct media_reader_state_t;
 template <typename Frame>
 struct media_worker_history_t;
 
-struct media_track_snapshot
-{
-    std::uint64_t revision{};
-    std::vector<media_track> tracks;
-};
-
-using media_track_snapshot_ptr = std::shared_ptr<const media_track_snapshot>;
+using media_tracks = std::vector<media_track>;
+using media_tracks_ptr = std::shared_ptr<const media_tracks>;
 
 template <typename Frame>
 struct media_read_entry_t
 {
-    std::uint64_t config_version{};
     Frame frame;
 };
 
@@ -43,7 +37,7 @@ class media_reader_t
    public:
     // tracks 是当前 stream 轨道快照；reader 只处理自己订阅的轨道。
     // remove 不产生终止回调，并优先于尚未执行的任何 posted 回调。
-    virtual void on_tracks(media_track_snapshot_ptr tracks) = 0;
+    virtual void on_tracks(media_tracks_ptr tracks) = 0;
     virtual void on_end() = 0;
     // 立即使 active 失效，之后不再产生 tracks、read 或 end 回调。
     void remove_reader() const;
@@ -51,7 +45,7 @@ class media_reader_t
    protected:
     // 在 reader worker 上从本地有界 history 读取；无新媒体时返回空。
     [[nodiscard]] std::optional<media_read_entry_t<Frame>> read();
-    virtual void on_media_available(bool waited_for_media) = 0;
+    virtual void on_media_available() = 0;
 
    private:
     friend class media_history<Frame>;

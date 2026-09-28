@@ -155,9 +155,13 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
         return -1;
     }
 
-    // ireader 会随码流更新 packet.stream 中的配置，核心负责过滤未变化配置。
-    // avpkt2bs 会缓存首次解析的编解码配置，配置代际变化时重置后再转换当前帧。
-    if (update_track_from_packet(*packet))
+    // avpkt2bs 会缓存首次解析的编解码配置；ready 后配置变化结束当前 source generation。
+    const bool config_changed = validate_track_from_packet(*packet);
+    if (fatal_)
+    {
+        return -1;
+    }
+    if (config_changed)
     {
         avpkt2bs_destroy(&bitstream_);
         avpkt2bs_create(&bitstream_);
@@ -194,7 +198,7 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
     return 0;
 }
 
-bool rtsp_pull_media::update_track_from_packet(const avpacket_t& packet)
+bool rtsp_pull_media::validate_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
     auto track = media_track_from_avstream_config(input, video_track_id, audio_track_id);
@@ -205,12 +209,14 @@ bool rtsp_pull_media::update_track_from_packet(const avpacket_t& packet)
 
     if (tracks_initialized_)
     {
-        const bool changed = media_stream_->update_track(*track);
-        if (changed)
+        const auto& fixed = track->kind == media_kind::video ? initial_video_track_ : initial_audio_track_;
+        if (!fixed || fixed->codec != track->codec || fixed->clock_rate != track->clock_rate || fixed->channel_count != track->channel_count ||
+            fixed->codec_config != track->codec_config)
         {
-            spdlog::info("rtsp pull track {} {}", to_string(track->kind), to_string(track->codec));
+            spdlog::warn("rtsp pull track config changed {} {}", to_string(track->kind), to_string(track->codec));
+            fatal_ = true;
         }
-        return changed;
+        return false;
     }
 
     bool changed = false;
@@ -238,8 +244,6 @@ bool rtsp_pull_media::try_initialize_tracks()
         tracks.push_back(std::move(*initial_audio_track_));
     }
     tracks_initialized_ = media_stream_->set_tracks(std::move(tracks));
-    initial_video_track_.reset();
-    initial_audio_track_.reset();
     if (!tracks_initialized_)
     {
         return false;

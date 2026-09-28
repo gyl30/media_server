@@ -47,19 +47,14 @@ void hls_segmenter::on_track(const media_track& track)
     }
 
     const auto existing = tracks_.find(track.id);
-    const bool reconfigured = existing != tracks_.end() && existing->second.config_version != track.config_version;
-    tracks_.insert_or_assign(track.id, track);
+    if (existing != tracks_.end())
+    {
+        return;
+    }
+    tracks_.emplace(track.id, track);
 
     if (video_config_.codec == video_transcode_codec::av1)
     {
-        if (reconfigured)
-        {
-            if (fmp4_ != nullptr && segment_start_pts_ns_)
-            {
-                finish_fmp4_segment(segment_max_pts_ns_);
-            }
-            reset_fmp4(true, track.kind == media_kind::video);
-        }
         if (track.kind == media_kind::video)
         {
             startup_video_transcoder(track);

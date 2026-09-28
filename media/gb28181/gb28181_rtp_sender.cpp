@@ -82,13 +82,13 @@ void gb28181_rtp_sender::shutdown()
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void gb28181_rtp_sender::on_tracks(media_track_snapshot_ptr tracks)
+void gb28181_rtp_sender::on_tracks(media_tracks_ptr tracks)
 {
     apply_tracks(tracks);
-    on_media_available(false);
+    on_media_available();
 }
 
-void gb28181_rtp_sender::on_media_available(bool)
+void gb28181_rtp_sender::on_media_available()
 {
     if (shutdown_requested_.load(std::memory_order_acquire) || !packet_handler_)
     {
@@ -103,7 +103,7 @@ void gb28181_rtp_sender::on_media_available(bool)
             return;
         }
         const auto state = track_states_.find(entry->frame.track);
-        if (state == track_states_.end() || state->second.config_version != entry->config_version || !entry->frame.payload)
+        if (state == track_states_.end() || !entry->frame.payload)
         {
             continue;
         }
@@ -172,7 +172,6 @@ void gb28181_rtp_sender::safe_shutdown()
     end_handler_ = {};
     failure_handler_ = {};
     remove_reader();
-    track_revision_ = 0;
     track_states_.clear();
     waiting_for_key_frame_ = true;
     stream_.reset();
@@ -193,27 +192,18 @@ bool gb28181_rtp_sender::create_packetizer()
     return packetizer_ != nullptr;
 }
 
-void gb28181_rtp_sender::apply_tracks(const media_track_snapshot_ptr& tracks)
+void gb28181_rtp_sender::apply_tracks(const media_tracks_ptr& tracks)
 {
-    if (!tracks || tracks->revision <= track_revision_)
+    if (!tracks || !track_states_.empty())
     {
         return;
     }
 
-    bool video_changed = false;
-    for (const auto& track : tracks->tracks)
+    for (const auto& track : *tracks)
     {
         auto& state = track_states_[track.id];
         state.kind = track.kind;
-        if (track.kind == media_kind::video && state.config_version != track.config_version)
-        {
-            video_changed = true;
-        }
-        state.config_version = track.config_version;
     }
-
-    track_revision_ = tracks->revision;
-    waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
 }
 
 void* gb28181_rtp_sender::allocate_packet(void* param, int bytes)

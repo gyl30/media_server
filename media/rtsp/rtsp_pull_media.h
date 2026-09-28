@@ -52,7 +52,7 @@ class rtsp_pull_media final
 
    private:
     int on_demuxed_packet(avpacket_t* packet);
-    [[nodiscard]] bool update_track_from_packet(const avpacket_t& packet);
+    [[nodiscard]] bool validate_track_from_packet(const avpacket_t& packet);
     [[nodiscard]] bool try_initialize_tracks();
 
    private:

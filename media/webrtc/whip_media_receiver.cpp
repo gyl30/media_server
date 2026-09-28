@@ -316,7 +316,7 @@ bool whip_media_receiver::update_video_track(const avpacket_t& packet)
     {
         return true;
     }
-    if (published_ && !media_stream_->update_track(*track))
+    if (published_)
     {
         return false;
     }

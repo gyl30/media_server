@@ -59,7 +59,6 @@ void rtmp_play_session::shutdown()
     closed_ = true;
     remove_reader();
     reader_tracks_.clear();
-    track_revision_ = 0;
     waiting_for_key_frame_ = false;
     muxer_.shutdown();
     stream_.reset();
@@ -67,7 +66,7 @@ void rtmp_play_session::shutdown()
     waiting_for_output_ = false;
 }
 
-void rtmp_play_session::on_tracks(media_track_snapshot_ptr tracks)
+void rtmp_play_session::on_tracks(media_tracks_ptr tracks)
 {
     if (closed_)
     {
@@ -77,17 +76,17 @@ void rtmp_play_session::on_tracks(media_track_snapshot_ptr tracks)
     apply_tracks(tracks);
     if (!closed_ && !waiting_for_output_)
     {
-        process_read(true);
+        process_read();
     }
 }
 
-void rtmp_play_session::on_media_available(bool waited_for_media)
+void rtmp_play_session::on_media_available()
 {
     if (closed_)
     {
         return;
     }
-    process_read(!waited_for_media);
+    process_read();
 }
 
 void rtmp_play_session::on_end()
@@ -106,15 +105,15 @@ void rtmp_play_session::on_output_progress()
         return;
     }
     waiting_for_output_ = false;
-    process_read(true);
+    process_read();
 }
 
-void rtmp_play_session::process_read(bool replaying_history)
+void rtmp_play_session::process_read()
 {
     bool first_entry = true;
     while (!closed_)
     {
-        if ((replaying_history || !first_entry) && output_backpressured())
+        if (!first_entry && output_backpressured())
         {
             waiting_for_output_ = true;
             return;
@@ -127,7 +126,7 @@ void rtmp_play_session::process_read(bool replaying_history)
         }
         first_entry = false;
         const auto track = reader_tracks_.find(entry->frame.track);
-        if (track == reader_tracks_.end() || track->second.config_version != entry->config_version)
+        if (track == reader_tracks_.end())
         {
             continue;
         }
@@ -154,34 +153,18 @@ bool rtmp_play_session::output_backpressured() const { return queued_output_byte
 
 bool rtmp_play_session::output_drained() const { return queued_output_bytes() <= max_output_queue_bytes_ / 4U; }
 
-void rtmp_play_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+void rtmp_play_session::apply_tracks(const media_tracks_ptr& tracks)
 {
-    if (!tracks || tracks->revision <= track_revision_)
+    if (!tracks || !reader_tracks_.empty())
     {
         return;
     }
 
-    bool video_changed = false;
-    if (track_revision_ != 0)
-    {
-        for (const auto& track : tracks->tracks)
-        {
-            const auto current = reader_tracks_.find(track.id);
-            if (current != reader_tracks_.end() && track.kind == media_kind::video && current->second.config_version != track.config_version)
-            {
-                video_changed = true;
-            }
-        }
-    }
-
-    reader_tracks_.clear();
-    for (const auto& track : tracks->tracks)
+    for (const auto& track : *tracks)
     {
         reader_tracks_.emplace(track.id, track);
         muxer_.on_track(track);
     }
-    track_revision_ = tracks->revision;
-    waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
 }
 
 }    // namespace media_server

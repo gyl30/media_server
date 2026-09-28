@@ -116,12 +116,15 @@ bool whep_audio_egress::matches(const std::vector<media_track>& tracks) const
                                    }
                                    if (track.codec == codec_id::aac)
                                    {
-                                       return it->second.config_version == track.config_version;
+                                       return it->second.kind == track.kind && it->second.codec == track.codec &&
+                                              it->second.clock_rate == track.clock_rate && it->second.channel_count == track.channel_count &&
+                                              it->second.codec_config == track.codec_config;
                                    }
                                    const auto prepared = std::ranges::find_if(prepared_tracks,
                                                                               [&track](const media_track& value) { return value.id == track.id; });
                                    return prepared != prepared_tracks.end() && prepared->kind == track.kind && prepared->codec == track.codec &&
-                                          prepared->config_version == track.config_version;
+                                          prepared->clock_rate == track.clock_rate && prepared->channel_count == track.channel_count &&
+                                          prepared->codec_config == track.codec_config;
                                });
 }
 
@@ -139,45 +142,37 @@ void whep_audio_egress::finish(end_reason reason)
     shutdown_subscription_.reset();
 }
 
-void whep_audio_egress::on_tracks(media_track_snapshot_ptr tracks)
+void whep_audio_egress::on_tracks(media_tracks_ptr tracks)
 {
-    if (reason() != end_reason::none || !tracks || tracks->revision <= source_revision_)
+    if (reason() != end_reason::none || !tracks)
     {
         return;
     }
-    source_revision_ = tracks->revision;
-    for (const auto& track : tracks->tracks)
+
+    if (tracks->size() != source_tracks_.size())
+    {
+        finish(end_reason::source_changed);
+        return;
+    }
+    for (const auto& track : *tracks)
     {
         auto it = source_tracks_.find(track.id);
-        if (it == source_tracks_.end())
+        if (it == source_tracks_.end() || it->second.kind != track.kind || it->second.codec != track.codec ||
+            it->second.clock_rate != track.clock_rate || it->second.channel_count != track.channel_count ||
+            it->second.codec_config != track.codec_config)
         {
             finish(end_reason::source_changed);
             return;
         }
-        if (it->second.config_version == track.config_version)
-        {
-            continue;
-        }
-        if (track.codec == codec_id::aac)
-        {
-            finish(end_reason::source_changed);
-            return;
-        }
-        if (!output_->update_track(track))
-        {
-            finish(end_reason::source_changed);
-            return;
-        }
-        it->second = track;
     }
     if (!reading_)
     {
         reading_ = true;
-        on_media_available(false);
+        on_media_available();
     }
 }
 
-void whep_audio_egress::on_media_available(bool)
+void whep_audio_egress::on_media_available()
 {
     while (reason() == end_reason::none)
     {
@@ -187,7 +182,7 @@ void whep_audio_egress::on_media_available(bool)
             return;
         }
         const auto track = source_tracks_.find(entry->frame.track);
-        if (track == source_tracks_.end() || track->second.config_version != entry->config_version)
+        if (track == source_tracks_.end())
         {
             continue;
         }

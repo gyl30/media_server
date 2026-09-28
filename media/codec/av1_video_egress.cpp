@@ -99,57 +99,37 @@ void av1_video_egress::finish()
     shutdown_subscription_.reset();
 }
 
-void av1_video_egress::on_tracks(media_track_snapshot_ptr tracks)
+void av1_video_egress::on_tracks(media_tracks_ptr tracks)
 {
-    if (ended_.load(std::memory_order_acquire) || !tracks || tracks->revision <= source_revision_)
+    if (ended_.load(std::memory_order_acquire) || !tracks)
     {
         return;
     }
-    source_revision_ = tracks->revision;
-    for (const auto& track : tracks->tracks)
+
+    if (tracks->size() != source_tracks_.size())
+    {
+        finish();
+        return;
+    }
+    for (const auto& track : *tracks)
     {
         auto previous = source_tracks_.find(track.id);
-        if (previous == source_tracks_.end())
+        if (previous == source_tracks_.end() || previous->second.kind != track.kind || previous->second.codec != track.codec ||
+            previous->second.clock_rate != track.clock_rate || previous->second.channel_count != track.channel_count ||
+            previous->second.codec_config != track.codec_config)
         {
             finish();
             return;
         }
-        if (previous->second.config_version == track.config_version)
-        {
-            continue;
-        }
-        if (track.id == video_track_id_)
-        {
-            if (!startup_transcoder(track))
-            {
-                finish();
-                return;
-            }
-            auto output_track = track;
-            output_track.codec = codec_id::av1;
-            output_track.clock_rate = 90'000;
-            output_track.codec_config.clear();
-            if (!output_->update_track(std::move(output_track), true))
-            {
-                finish();
-                return;
-            }
-        }
-        else if (!output_->update_track(track, true))
-        {
-            finish();
-            return;
-        }
-        previous->second = track;
     }
     if (!reading_)
     {
         reading_ = true;
-        on_media_available(false);
+        on_media_available();
     }
 }
 
-void av1_video_egress::on_media_available(bool)
+void av1_video_egress::on_media_available()
 {
     while (!ended_.load(std::memory_order_acquire))
     {
@@ -159,7 +139,7 @@ void av1_video_egress::on_media_available(bool)
             return;
         }
         const auto track = source_tracks_.find(entry->frame.track);
-        if (track == source_tracks_.end() || track->second.config_version != entry->config_version)
+        if (track == source_tracks_.end())
         {
             continue;
         }

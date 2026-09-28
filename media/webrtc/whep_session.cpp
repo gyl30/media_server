@@ -179,8 +179,8 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
-    const auto media_tracks = stream_->tracks();
-    for (const auto& track : media_tracks)
+    const auto initial_tracks = stream_->tracks();
+    for (const auto& track : initial_tracks)
     {
         const bool negotiated_video = answer_.video_codec && track.kind == media_kind::video &&
                                       ((*answer_.video_codec == codec_id::av1 && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
@@ -235,7 +235,7 @@ void whep_session::safe_shutdown()
         packetizer_.reset();
     }
     negotiated_tracks_.clear();
-    track_revision_ = 0;
+    media_started_ = false;
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
     release_av1_video_egress(video_egress_);
@@ -269,26 +269,25 @@ bool whep_session::dtls_connected() const noexcept { return dtls_ != nullptr && 
 
 bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
 
-void whep_session::on_tracks(media_track_snapshot_ptr tracks)
+void whep_session::on_tracks(media_tracks_ptr tracks)
 {
     if (!started_)
     {
         return;
     }
-    const bool initial_snapshot = track_revision_ == 0;
     if (!apply_tracks(tracks))
     {
         spdlog::info("webrtc negotiated track changed session {}", id_);
         shutdown();
         return;
     }
-    if (packetizer_ && initial_snapshot && !start_media_read())
+    if (packetizer_ && !media_started_ && !start_media_read())
     {
         shutdown();
     }
 }
 
-void whep_session::on_media_available(bool)
+void whep_session::on_media_available()
 {
     if (!started_ || !packetizer_)
     {
@@ -302,7 +301,7 @@ void whep_session::on_media_available(bool)
             return;
         }
         const auto expected = negotiated_tracks_.find(entry->frame.track);
-        if (expected == negotiated_tracks_.end() || expected->second.config_version != entry->config_version)
+        if (expected == negotiated_tracks_.end())
         {
             continue;
         }
@@ -320,22 +319,22 @@ void whep_session::on_end()
     shutdown();
 }
 
-bool whep_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+bool whep_session::apply_tracks(const media_tracks_ptr& tracks)
 {
-    if (!tracks || tracks->revision <= track_revision_)
+    if (!tracks)
     {
         return true;
     }
 
     for (const auto& [id, expected] : negotiated_tracks_)
     {
-        const auto track = std::ranges::find_if(tracks->tracks, [id](const media_track& current) { return current.id == id; });
-        if (track == tracks->tracks.end() || track->config_version != expected.config_version)
+        const auto track = std::ranges::find_if(*tracks, [id](const media_track& current) { return current.id == id; });
+        if (track == tracks->end() || track->kind != expected.kind || track->codec != expected.codec || track->clock_rate != expected.clock_rate ||
+            track->channel_count != expected.channel_count || track->codec_config != expected.codec_config)
         {
             return false;
         }
     }
-    track_revision_ = tracks->revision;
     return true;
 }
 
@@ -602,7 +601,7 @@ bool whep_session::startup_media()
 
     srtp_ = std::move(srtp);
     packetizer_ = std::move(packetizer);
-    if (track_revision_ != 0 && !start_media_read())
+    if (!media_started_ && !start_media_read())
     {
         return false;
     }
@@ -615,7 +614,7 @@ bool whep_session::startup_media()
 
 bool whep_session::start_media_read()
 {
-    if (!packetizer_ || track_revision_ == 0)
+    if (!packetizer_ || media_started_)
     {
         return false;
     }
@@ -627,7 +626,8 @@ bool whep_session::start_media_read()
             return false;
         }
     }
-    on_media_available(false);
+    media_started_ = true;
+    on_media_available();
     return true;
 }
 

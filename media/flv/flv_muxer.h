@@ -42,7 +42,6 @@ class flv_muxer final
     std::map<track_id, media_track> tracks_;
     std::unique_ptr<video_transcoder> video_transcoder_;
     track_id video_track_id_{};
-    bool video_config_pending_{};
 };
 
 }    // namespace media_server

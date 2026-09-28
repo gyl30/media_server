@@ -240,7 +240,7 @@ void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint
     }
 }
 
-void http_flv_session::on_tracks(media_track_snapshot_ptr tracks)
+void http_flv_session::on_tracks(media_tracks_ptr tracks)
 {
     if (!closed_)
     {
@@ -248,7 +248,7 @@ void http_flv_session::on_tracks(media_track_snapshot_ptr tracks)
     }
 }
 
-void http_flv_session::on_media_available(bool)
+void http_flv_session::on_media_available()
 {
     if (closed_ || write_in_progress_)
     {
@@ -274,39 +274,32 @@ void http_flv_session::write_complete(std::uint64_t generation)
     }
 }
 
-bool http_flv_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+bool http_flv_session::apply_tracks(const media_tracks_ptr& tracks)
 {
-    if (!tracks || tracks->revision <= track_revision_)
+    if (!tracks || writer_ != nullptr)
     {
         return false;
     }
 
     bool has_audio = false;
     bool has_video = false;
-    bool video_changed = false;
-    for (const auto& track : tracks->tracks)
+    for (const auto& track : *tracks)
     {
         has_audio = has_audio || track.kind == media_kind::audio;
         has_video = has_video || track.kind == media_kind::video;
-        const auto current = reader_tracks_.find(track.id);
-        video_changed = video_changed || (current != reader_tracks_.end() && track.kind == media_kind::video &&
-                                          current->second.config_version != track.config_version);
     }
 
-    reader_tracks_.clear();
     output_buffer_.clear();
     if (writer_ == nullptr)
     {
         writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_session::writer_callback, this);
     }
-    for (const auto& track : tracks->tracks)
+    for (const auto& track : *tracks)
     {
         reader_tracks_.emplace(track.id, track);
         muxer_.on_track(track);
     }
 
-    track_revision_ = tracks->revision;
-    waiting_for_key_frame_ = waiting_for_key_frame_ || video_changed;
     ++generation_;
     enqueue(generation_, std::move(output_buffer_), true);
     return true;
@@ -326,7 +319,7 @@ void http_flv_session::process_read()
             return;
         }
         const auto track = reader_tracks_.find(entry->frame.track);
-        if (track == reader_tracks_.end() || track->second.config_version != entry->config_version)
+        if (track == reader_tracks_.end())
         {
             continue;
         }

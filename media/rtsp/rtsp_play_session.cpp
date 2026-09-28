@@ -76,7 +76,7 @@ rtsp_play_session::rtsp_play_session(worker_context& worker,
 {
 }
 
-void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
+void rtsp_play_session::on_tracks(media_tracks_ptr tracks)
 {
     if (closed_)
     {
@@ -91,17 +91,17 @@ void rtsp_play_session::on_tracks(media_track_snapshot_ptr tracks)
     }
     if (!waiting_for_output_)
     {
-        process_read(true);
+        process_read();
     }
 }
 
-void rtsp_play_session::on_media_available(bool waited_for_media)
+void rtsp_play_session::on_media_available()
 {
     if (closed_)
     {
         return;
     }
-    process_read(!waited_for_media);
+    process_read();
 }
 
 void rtsp_play_session::on_output_progress()
@@ -111,15 +111,15 @@ void rtsp_play_session::on_output_progress()
         return;
     }
     waiting_for_output_ = false;
-    process_read(true);
+    process_read();
 }
 
-void rtsp_play_session::process_read(bool replaying_history)
+void rtsp_play_session::process_read()
 {
     bool first_entry = true;
     while (!closed_)
     {
-        if ((replaying_history || !first_entry) && output_backpressured())
+        if (!first_entry && output_backpressured())
         {
             waiting_for_output_ = true;
             return;
@@ -132,8 +132,7 @@ void rtsp_play_session::process_read(bool replaying_history)
         }
         first_entry = false;
         const auto iterator = track_states_.find(entry->frame.track);
-        if (iterator == track_states_.end() || !entry->frame.payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0 ||
-            iterator->second.config_version != entry->config_version)
+        if (iterator == track_states_.end() || !entry->frame.payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0)
         {
             continue;
         }
@@ -250,7 +249,6 @@ void rtsp_play_session::safe_shutdown()
         stream_.reset();
     }
     source_generation_.reset();
-    source_track_versions_.clear();
     release_av1_video_egress(video_egress_);
     if (muxer_ != nullptr)
     {
@@ -427,7 +425,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
             return rtsp_server_reply_play(server, 415, nullptr, nullptr, nullptr);
         }
         auto prepared_stream = prepared_egress->stream();
-        std::map<track_id, std::uint64_t> prepared_track_versions;
+        std::size_t prepared_track_count = 0;
         for (const auto& track : prepared_stream->tracks())
         {
             if (!rtsp_play_track_supported(track, video_codec_))
@@ -440,24 +438,16 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
                 release_av1_video_egress(prepared_egress);
                 return rtsp_server_reply_play(server, 455, nullptr, nullptr, nullptr);
             }
-            prepared_track_versions.emplace(track.id, track.config_version);
+            ++prepared_track_count;
         }
-        if (prepared_track_versions.size() != track_states_.size())
+        if (prepared_track_count != track_states_.size())
         {
             release_av1_video_egress(prepared_egress);
             return rtsp_server_reply_play(server, 455, nullptr, nullptr, nullptr);
         }
-        for (auto& [id, state] : track_states_)
-        {
-            state.config_version = prepared_track_versions.at(id);
-        }
         stream_ = std::move(prepared_stream);
         if (const auto status = presentation_status(); status != 0)
         {
-            for (auto& [id, state] : track_states_)
-            {
-                state.config_version = source_track_versions_.at(id);
-            }
             stream_ = source_generation_;
             release_av1_video_egress(prepared_egress);
             return rtsp_server_reply_play(server, status, nullptr, nullptr, nullptr);
@@ -470,10 +460,6 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
     {
         if (video_egress_)
         {
-            for (auto& [id, state] : track_states_)
-            {
-                state.config_version = source_track_versions_.at(id);
-            }
             stream_ = source_generation_;
             release_av1_video_egress(video_egress_);
         }
@@ -530,9 +516,9 @@ void rtsp_play_session::write_interleaved(std::uint8_t channel, const void* data
     write_handler_(std::move(packet));
 }
 
-bool rtsp_play_session::apply_tracks(const media_track_snapshot_ptr& tracks)
+bool rtsp_play_session::apply_tracks(const media_tracks_ptr& tracks)
 {
-    if (!tracks || tracks->revision <= track_revision_)
+    if (!tracks)
     {
         return true;
     }
@@ -543,14 +529,12 @@ bool rtsp_play_session::apply_tracks(const media_track_snapshot_ptr& tracks)
         {
             continue;
         }
-        const auto current = std::ranges::find_if(tracks->tracks, [id](const media_track& track) { return track.id == id; });
-        if (current == tracks->tracks.end() || current->config_version != state.config_version)
+        const auto current = std::ranges::find_if(*tracks, [id](const media_track& track) { return track.id == id; });
+        if (current == tracks->end() || current->kind != state.kind || current->codec != state.codec)
         {
             return false;
         }
     }
-
-    track_revision_ = tracks->revision;
     return true;
 }
 
@@ -575,13 +559,8 @@ int rtsp_play_session::presentation_status() const
                 continue;
             }
             ++supported_source_tracks;
-            const auto prepared = source_track_versions_.find(track.id);
-            if (prepared == source_track_versions_.end() || prepared->second != track.config_version)
-            {
-                return 455;
-            }
         }
-        if (supported_source_tracks != source_track_versions_.size())
+        if (supported_source_tracks != track_states_.size())
         {
             return 455;
         }
@@ -597,7 +576,7 @@ int rtsp_play_session::presentation_status() const
         }
         ++supported_count;
         const auto iterator = track_states_.find(track.id);
-        if (iterator == track_states_.end() || iterator->second.config_version != track.config_version)
+        if (iterator == track_states_.end() || iterator->second.codec != track.codec)
         {
             return 455;
         }
@@ -631,7 +610,6 @@ int rtsp_play_session::prepare_presentation()
     track_states_.clear();
     stream_.reset();
     source_generation_.reset();
-    source_track_versions_.clear();
     release_av1_video_egress(video_egress_);
     if (muxer_ != nullptr)
     {
@@ -645,7 +623,6 @@ int rtsp_play_session::prepare_presentation()
         return 404;
     }
     auto snapshot = stream->tracks();
-    std::map<track_id, std::uint64_t> prepared_source_track_versions;
     bool prepare_av1_egress = false;
     if (video_codec_ == video_transcode_codec::av1)
     {
@@ -655,10 +632,6 @@ int rtsp_play_session::prepare_presentation()
             if (track.kind == media_kind::video)
             {
                 ++video_tracks;
-            }
-            if (rtsp_play_track_supported(track, video_codec_))
-            {
-                prepared_source_track_versions.emplace(track.id, track.config_version);
             }
             if (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265))
             {
@@ -775,8 +748,8 @@ int rtsp_play_session::prepare_presentation()
         }
 
         track_state state;
+        state.kind = track.kind;
         state.codec = track.codec;
-        state.config_version = track.config_version;
         state.payload_index = rtsp_muxer_add_payload(
             prepared_muxer, "RTP/AVP", frequency, payload_type, encoding, 0, random_u32(), 0, extra.data(), static_cast<int>(extra.size()));
         if (state.payload_index < 0)
@@ -800,7 +773,6 @@ int rtsp_play_session::prepare_presentation()
     if (prepare_av1_egress)
     {
         source_generation_ = stream_;
-        source_track_versions_ = std::move(prepared_source_track_versions);
     }
     track_states_ = std::move(prepared_tracks);
     muxer_ = prepared_muxer;

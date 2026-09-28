@@ -85,7 +85,7 @@ bool mpeg_ps_output::startup(const std::vector<media_track>& tracks)
             on_end();
             return false;
         }
-        mux_tracks_.emplace(track.id, std::pair{track, id});
+        mux_tracks_.emplace(track.id, std::pair{track.kind, id});
     }
     if (!set_tracks(tracks))
     {
@@ -100,20 +100,7 @@ bool mpeg_ps_output::failed() const noexcept { return failed_.load(std::memory_o
 
 void mpeg_ps_output::on_track(const media_track& track)
 {
-    if (!muxer_)
-    {
-        return;
-    }
-    auto& previous = mux_tracks_.at(track.id).first;
-    if (previous.config_version != track.config_version)
-    {
-        if (track.kind == media_kind::video)
-        {
-            waiting_for_key_frame_ = true;
-        }
-        previous = track;
-        update_track(track);
-    }
+    static_cast<void>(track);
 }
 
 void mpeg_ps_output::on_frame(const media_frame& frame)
@@ -122,8 +109,8 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
     {
         return;
     }
-    const auto& [track, id] = mux_tracks_.at(frame.track);
-    if (waiting_for_key_frame_ && (track.kind != media_kind::video || !frame.key_frame))
+    const auto& [kind, id] = mux_tracks_.at(frame.track);
+    if (waiting_for_key_frame_ && (kind != media_kind::video || !frame.key_frame))
     {
         return;
     }

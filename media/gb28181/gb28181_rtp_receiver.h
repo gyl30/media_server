@@ -60,7 +60,7 @@ class gb28181_rtp_receiver final
     int on_demuxed_packet(avpacket_t* packet);
     void on_stream(int codecid, bool finish);
     void apply_topology();
-    bool update_track_from_packet(const avpacket_t& packet);
+    bool validate_track_from_packet(const avpacket_t& packet);
     bool try_start_recording();
 
    private:

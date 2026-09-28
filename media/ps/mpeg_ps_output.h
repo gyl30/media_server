@@ -38,7 +38,7 @@ class mpeg_ps_output final : public media_sink, public media_history<mpeg_ps_fra
     static int write_packet(void* param, int stream, void* packet, std::size_t bytes);
 
     std::unique_ptr<ps_muxer_t, int (*)(ps_muxer_t*)> muxer_;
-    std::map<track_id, std::pair<media_track, int>> mux_tracks_;
+    std::map<track_id, std::pair<media_kind, int>> mux_tracks_;
     std::shared_ptr<std::vector<std::uint8_t>> packet_;
     bool waiting_for_key_frame_{true};
     std::atomic_bool failed_{};

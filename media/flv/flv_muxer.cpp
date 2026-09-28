@@ -48,32 +48,15 @@ void flv_muxer::on_track(const media_track& track)
         return;
     }
     const auto existing = tracks_.find(track.id);
-    if (existing != tracks_.end() && existing->second.config_version == track.config_version)
+    if (existing != tracks_.end())
     {
         return;
     }
 
-    const bool reconfigured = existing != tracks_.end();
-    tracks_.insert_or_assign(track.id, track);
+    tracks_.emplace(track.id, track);
     if (video_config_.codec == video_transcode_codec::av1 && track.kind == media_kind::video)
     {
         startup_video_transcoder(track);
-    }
-
-    if (reconfigured)
-    {
-        if (video_config_.codec == video_transcode_codec::av1 && track.kind == media_kind::audio)
-        {
-            if (track.codec == codec_id::opus)
-            {
-                video_config_pending_ = true;
-            }
-            return;
-        }
-        // flv_muxer 会缓存视频 sequence-header 状态，视频配置代际变化时统一重置。
-        flv_muxer_reset(muxer_);
-        video_config_pending_ = true;
-        return;
     }
 
     prime_video_config(track, 0);
@@ -142,15 +125,6 @@ void flv_muxer::on_frame(const media_frame& frame)
 
     const auto pts = ns_to_flv_milliseconds(frame.pts_ns);
     const auto dts = ns_to_flv_milliseconds(frame.dts_ns);
-    if (video_config_pending_)
-    {
-        for (const auto& [id, current] : tracks_)
-        {
-            prime_video_config(current, dts);
-        }
-        video_config_pending_ = false;
-    }
-
     if (video_config_.codec == video_transcode_codec::av1 && iterator->second.kind == media_kind::video)
     {
         input_av1(frame);

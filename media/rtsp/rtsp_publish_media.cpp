@@ -217,10 +217,9 @@ int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
         return -1;
     }
 
-    if (update_track_from_packet(*packet))
+    if (!validate_track_from_packet(*packet))
     {
-        avpkt2bs_destroy(&bitstream_);
-        avpkt2bs_create(&bitstream_);
+        return -1;
     }
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
     if (bytes <= 0 || bitstream_.ptr == nullptr)
@@ -238,7 +237,7 @@ int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
     return 0;
 }
 
-bool rtsp_publish_media::update_track_from_packet(const avpacket_t& packet)
+bool rtsp_publish_media::validate_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
     auto track = media_track_from_avstream_config(input, video_track_id, audio_track_id);
@@ -258,12 +257,19 @@ bool rtsp_publish_media::update_track_from_packet(const avpacket_t& packet)
 
     const auto state = std::find_if(descriptions_.begin(),
                                     descriptions_.end(),
-                                    [track](const rtsp_publish_track_description& value) { return value.track.codec == track->codec; });
-    if (state == descriptions_.end() || !media_stream_->update_track(*track))
+                                    [track](const rtsp_publish_track_description& value) { return value.track.id == track->id; });
+    if (state == descriptions_.end())
     {
+        protocol_error_ = true;
         return false;
     }
-    state->track = std::move(*track);
+    if (state->track.codec != track->codec || state->track.clock_rate != track->clock_rate || state->track.channel_count != track->channel_count ||
+        state->track.codec_config != track->codec_config)
+    {
+        spdlog::warn("rtsp publish track config changed {}", to_string(track->codec));
+        protocol_error_ = true;
+        return false;
+    }
     return true;
 }
 

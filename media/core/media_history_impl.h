@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <mutex>
 #include <utility>
-#include <variant>
 
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
@@ -68,31 +67,23 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
 
     struct snapshot
     {
-        media_track_snapshot_ptr tracks;
         std::deque<entry> history;
         std::optional<std::uint64_t> gop_start;
         std::size_t gop_frames{};
     };
-
-    struct track_event
-    {
-        media_track_snapshot_ptr tracks;
-        bool reset_video_gop{};
-    };
-
-    using event = std::variant<entry, track_event, snapshot, std::monostate>;
-
     worker_context& worker;
     std::weak_ptr<media_history<Frame>> source;
     std::mutex pending_mutex;
-    std::deque<event> pending;
+    std::deque<entry> pending;
+    std::optional<snapshot> pending_snapshot;
+    bool pending_end{};
     bool drain_queued{};
     std::size_t source_subscribers{};
 
     std::deque<entry> history;
     std::optional<std::uint64_t> gop_start;
     std::size_t gop_frames{};
-    media_track_snapshot_ptr tracks;
+    media_tracks_ptr tracks;
     std::vector<std::shared_ptr<media_reader_state_t<Frame>>> readers;
     worker_context::shutdown_subscription shutdown_subscription;
     bool ended{};
@@ -110,7 +101,7 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
         }
     }
 
-    void install(snapshot initial)
+    void install(snapshot initial, media_tracks_ptr fixed_tracks)
     {
         if (worker.stop_requested())
         {
@@ -136,7 +127,7 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
         history = std::move(initial.history);
         gop_start = initial.gop_start;
         gop_frames = initial.gop_frames;
-        tracks = std::move(initial.tracks);
+        tracks = std::move(fixed_tracks);
     }
 
     void attach(const std::shared_ptr<media_reader_state_t<Frame>>& state)
@@ -158,7 +149,7 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
         }
         if (state->active.load(std::memory_order_acquire) && !history.empty())
         {
-            reader->on_media_available(false);
+            reader->on_media_available();
         }
     }
 
@@ -193,7 +184,7 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
             return {};
         }
         cursor = it->sequence + 1;
-        return media_read_entry_t<Frame>{.config_version = it->config_version, .frame = it->frame};
+        return media_read_entry_t<Frame>{.frame = it->frame};
     }
 
     [[nodiscard]] std::size_t pending_size()
@@ -202,7 +193,7 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
         return pending.size();
     }
 
-    void enqueue(event next)
+    void enqueue_frame(entry next)
     {
         bool schedule = false;
         {
@@ -227,7 +218,26 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
         {
             std::scoped_lock lock(pending_mutex);
             pending.clear();
-            pending.emplace_back(std::move(latest));
+            pending_snapshot = std::move(latest);
+            if (!drain_queued)
+            {
+                drain_queued = true;
+                schedule = true;
+            }
+        }
+        if (schedule)
+        {
+            const auto self = this->shared_from_this();
+            boost::asio::post(worker.io(), [self]() { self->drain(); });
+        }
+    }
+
+    void enqueue_end()
+    {
+        bool schedule = false;
+        {
+            std::scoped_lock lock(pending_mutex);
+            pending_end = true;
             if (!drain_queued)
             {
                 drain_queued = true;
@@ -252,17 +262,23 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
             if (const auto reader = state->reader.lock())
             {
                 state->waiting = false;
-                reader->on_media_available(true);
+                reader->on_media_available();
             }
         }
     }
 
     void drain()
     {
-        std::deque<event> ready;
+        std::deque<entry> ready;
+        std::optional<snapshot> replacement;
+        bool end_requested = false;
         {
             std::scoped_lock lock(pending_mutex);
             ready.swap(pending);
+            replacement = std::move(pending_snapshot);
+            pending_snapshot.reset();
+            end_requested = pending_end;
+            pending_end = false;
             drain_queued = false;
         }
         if (ended)
@@ -270,81 +286,39 @@ struct media_worker_history_t : std::enable_shared_from_this<media_worker_histor
             return;
         }
         bool media_added = false;
-        for (auto& next : ready)
+        if (replacement)
         {
-            if (auto* frame = std::get_if<entry>(&next))
+            history = std::move(replacement->history);
+            gop_start = replacement->gop_start;
+            gop_frames = replacement->gop_frames;
+            media_added = !history.empty();
+        }
+        for (auto& frame : ready)
+        {
+            media_added = media_history_detail::append(history, gop_start, gop_frames, std::move(frame)) || media_added;
+        }
+        if (end_requested)
+        {
+            if (media_added)
             {
-                media_added = media_history_detail::append(history, gop_start, gop_frames, std::move(*frame)) || media_added;
+                notify_waiting();
             }
-            else if (auto* update = std::get_if<track_event>(&next))
+            ended = true;
+            for (const auto& state : readers)
             {
-                if (media_added)
+                state->terminal = true;
+                if (state->active.load(std::memory_order_acquire))
                 {
-                    notify_waiting();
-                    media_added = false;
-                }
-                tracks = std::move(update->tracks);
-                if (update->reset_video_gop)
-                {
-                    gop_start.reset();
-                    gop_frames = 0;
-                }
-                for (const auto& state : readers)
-                {
-                    if (state->active.load(std::memory_order_acquire))
+                    if (const auto reader = state->reader.lock())
                     {
-                        if (const auto reader = state->reader.lock())
-                        {
-                            reader->on_tracks(tracks);
-                        }
+                        reader->on_end();
                     }
                 }
             }
-            else if (auto* replacement = std::get_if<snapshot>(&next))
-            {
-                const bool tracks_changed = !tracks || !replacement->tracks || tracks->revision != replacement->tracks->revision;
-                history = std::move(replacement->history);
-                gop_start = replacement->gop_start;
-                gop_frames = replacement->gop_frames;
-                tracks = std::move(replacement->tracks);
-                if (tracks_changed)
-                {
-                    for (const auto& state : readers)
-                    {
-                        if (state->active.load(std::memory_order_acquire))
-                        {
-                            if (const auto reader = state->reader.lock())
-                            {
-                                reader->on_tracks(tracks);
-                            }
-                        }
-                    }
-                }
-                media_added = !history.empty();
-            }
-            else
-            {
-                if (media_added)
-                {
-                    notify_waiting();
-                }
-                ended = true;
-                for (const auto& state : readers)
-                {
-                    state->terminal = true;
-                    if (state->active.load(std::memory_order_acquire))
-                    {
-                        if (const auto reader = state->reader.lock())
-                        {
-                            reader->on_end();
-                        }
-                    }
-                }
-                readers.clear();
-                history.clear();
-                shutdown_subscription.reset();
-                return;
-            }
+            readers.clear();
+            history.clear();
+            shutdown_subscription.reset();
+            return;
         }
         if (media_added)
         {
@@ -403,7 +377,7 @@ template <typename Frame>
 std::vector<media_track> media_history<Frame>::tracks() const
 {
     const auto snapshot = track_snapshot_.load(std::memory_order_acquire);
-    return snapshot ? snapshot->tracks : std::vector<media_track>{};
+    return snapshot ? *snapshot : std::vector<media_track>{};
 }
 
 template <typename Frame>
@@ -436,46 +410,19 @@ bool media_history<Frame>::set_tracks(std::vector<media_track> tracks)
         {
             return false;
         }
-        track.config_version = 1;
         if (!initial_tracks.emplace(track.id, std::move(track)).second)
         {
             return false;
         }
     }
     tracks_ = std::move(initial_tracks);
-    publish_track_snapshot();
-    dispatch_reader_tracks(track_snapshot_.load(std::memory_order_acquire));
-    return true;
-}
-
-template <typename Frame>
-bool media_history<Frame>::update_track(media_track track, bool codec_state_reset)
-{
-    if (ended_ || track.id == 0)
+    auto snapshot = std::make_shared<media_tracks>();
+    snapshot->reserve(tracks_.size());
+    for (const auto& [id, track] : tracks_)
     {
-        return false;
+        snapshot->push_back(track);
     }
-    const auto existing = tracks_.find(track.id);
-    if (existing == tracks_.end() || existing->second.kind != track.kind || existing->second.codec != track.codec)
-    {
-        return false;
-    }
-    if (!codec_state_reset && existing->second.clock_rate == track.clock_rate && existing->second.channel_count == track.channel_count &&
-        existing->second.codec_config == track.codec_config)
-    {
-        return false;
-    }
-    track.config_version = existing->second.config_version + 1;
-    const auto id = track.id;
-    tracks_.insert_or_assign(id, std::move(track));
-    publish_track_snapshot();
-    const bool reset_video_gop = tracks_.at(id).kind == media_kind::video;
-    if (reset_video_gop)
-    {
-        current_gop_start_sequence_.reset();
-        current_gop_frames_ = 0;
-    }
-    dispatch_reader_tracks(track_snapshot_.load(std::memory_order_acquire), reset_video_gop);
+    track_snapshot_.store(std::move(snapshot), std::memory_order_release);
     return true;
 }
 
@@ -492,7 +439,7 @@ void media_history<Frame>::publish(Frame frame)
         return;
     }
     const auto sequence = next_history_sequence_++;
-    media_history_entry entry{.sequence = sequence, .config_version = track->second.config_version, .kind = track->second.kind, .frame = frame};
+    media_history_entry entry{.sequence = sequence, .kind = track->second.kind, .frame = frame};
     const bool had_history = !history_.empty();
     if (!media_history_detail::append(history_, current_gop_start_sequence_, current_gop_frames_, entry) && !had_history)
     {
@@ -506,7 +453,7 @@ void media_history<Frame>::publish(Frame frame)
         }
         else
         {
-            group->enqueue(entry);
+            group->enqueue_frame(entry);
         }
     }
 }
@@ -522,34 +469,21 @@ void media_history<Frame>::end()
     reset_history();
     for (const auto& [worker, group] : workers_)
     {
-        group->enqueue(std::monostate{});
+        group->enqueue_end();
     }
     workers_.clear();
-}
-
-template <typename Frame>
-void media_history<Frame>::publish_track_snapshot()
-{
-    auto snapshot = std::make_shared<media_track_snapshot>();
-    snapshot->revision = ++track_revision_;
-    snapshot->tracks.reserve(tracks_.size());
-    for (const auto& [id, track] : tracks_)
-    {
-        snapshot->tracks.push_back(track);
-    }
-    track_snapshot_.store(std::move(snapshot), std::memory_order_release);
 }
 
 template <typename Frame>
 std::shared_ptr<media_worker_history_t<Frame>> media_history<Frame>::make_worker_history(worker_context& worker)
 {
     auto group = std::make_shared<media_worker_history_t<Frame>>(worker, this->shared_from_this());
+    const auto tracks = track_snapshot_.load(std::memory_order_acquire);
     typename media_worker_history_t<Frame>::snapshot initial{
-        .tracks = track_snapshot_.load(std::memory_order_acquire),
         .history = history_,
         .gop_start = current_gop_start_sequence_,
         .gop_frames = current_gop_frames_};
-    boost::asio::post(worker.io(), [group, initial = std::move(initial)]() mutable { group->install(std::move(initial)); });
+    boost::asio::post(worker.io(), [group, tracks, initial = std::move(initial)]() mutable { group->install(std::move(initial), tracks); });
     return group;
 }
 
@@ -620,26 +554,9 @@ void media_history<Frame>::reset_history()
 }
 
 template <typename Frame>
-void media_history<Frame>::dispatch_reader_tracks(const media_track_snapshot_ptr& tracks, bool reset_video_gop)
-{
-    for (const auto& [worker, group] : workers_)
-    {
-        if (group->pending_size() >= media_history_detail::max_gop_frames)
-        {
-            replace_worker_history(group);
-        }
-        else
-        {
-            group->enqueue(typename media_worker_history_t<Frame>::track_event{tracks, reset_video_gop});
-        }
-    }
-}
-
-template <typename Frame>
 void media_history<Frame>::replace_worker_history(const std::shared_ptr<media_worker_history_t<Frame>>& group)
 {
     group->replace_pending(typename media_worker_history_t<Frame>::snapshot{
-        .tracks = track_snapshot_.load(std::memory_order_acquire),
         .history = history_,
         .gop_start = current_gop_start_sequence_,
         .gop_frames = current_gop_frames_});

@@ -197,9 +197,11 @@ int rtmp_publish_session::handle_video_config(int codec, std::span<const std::ui
         try_initialize_tracks();
         return 0;
     }
-    if (stream_->update_track(std::move(track)))
+    if (!initial_video_track_ || initial_video_track_->codec != track.codec || initial_video_track_->clock_rate != track.clock_rate ||
+        initial_video_track_->channel_count != track.channel_count || initial_video_track_->codec_config != track.codec_config)
     {
-        spdlog::info("rtmp publish track video {}", to_string(video_codec));
+        spdlog::warn("rtmp publish video config changed {}", to_string(video_codec));
+        return -1;
     }
     return 0;
 }
@@ -239,9 +241,11 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
             try_initialize_tracks();
             return 0;
         }
-        if (stream_->update_track(std::move(track)))
+        if (!initial_audio_track_ || initial_audio_track_->codec != track.codec || initial_audio_track_->clock_rate != track.clock_rate ||
+            initial_audio_track_->channel_count != track.channel_count || initial_audio_track_->codec_config != track.codec_config)
         {
-            spdlog::info("rtmp publish track audio aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
+            spdlog::warn("rtmp publish audio config changed aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
+            return -1;
         }
         return 0;
     }
@@ -266,7 +270,12 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
         try_initialize_tracks();
         return 0;
     }
-    stream_->update_track(std::move(track));
+    if (!initial_audio_track_ || initial_audio_track_->codec != track.codec || initial_audio_track_->clock_rate != track.clock_rate ||
+        initial_audio_track_->channel_count != track.channel_count || initial_audio_track_->codec_config != track.codec_config)
+    {
+        spdlog::warn("rtmp publish audio config changed opus");
+        return -1;
+    }
     return 0;
 }
 
