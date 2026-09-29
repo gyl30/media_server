@@ -93,6 +93,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
                           to_string(state.codec),
                           entry.pts_ns,
                           entry.dts_ns);
+            shutdown();
             shutdown_handler_();
             return;
         }
@@ -106,6 +107,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
                           to_string(state.codec),
                           entry.payload->size(),
                           payload_capacity);
+            shutdown();
             shutdown_handler_();
             return;
         }
@@ -120,6 +122,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
     if (mux_result < 0)
     {
         spdlog::error("rtsp play mux failed result {}", mux_result);
+        shutdown();
         shutdown_handler_();
     }
 }

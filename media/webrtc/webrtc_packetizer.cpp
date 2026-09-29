@@ -170,7 +170,7 @@ int webrtc_packetizer::on_packet(void* param, int pid, const void* data, int byt
 
     if (self->rtp_handler_)
     {
-        self->rtp_handler_(packet);
+        return self->rtp_handler_(packet);
     }
     return 0;
 }
@@ -366,11 +366,11 @@ bool webrtc_packetizer::configure_rtcp(int payload_id)
     return true;
 }
 
-void webrtc_packetizer::emit_rtcp(int payload_id)
+bool webrtc_packetizer::emit_rtcp(int payload_id)
 {
     if (!rtcp_handler_ || muxer_ == nullptr)
     {
-        return;
+        return true;
     }
 
     std::array<std::uint8_t, rtcp_buffer_size> buffer{};
@@ -378,20 +378,20 @@ void webrtc_packetizer::emit_rtcp(int payload_id)
     if (bytes < 0)
     {
         spdlog::error("webrtc rtcp report failed payload {} result {}", payload_id, bytes);
-        return;
+        return false;
     }
     if (bytes == 0)
     {
-        return;
+        return true;
     }
     if (static_cast<std::size_t>(bytes) > buffer.size())
     {
         spdlog::error("webrtc rtcp report too large payload {} bytes {}", payload_id, bytes);
-        return;
+        return false;
     }
 
     spdlog::trace("webrtc rtcp report generated payload {} size {}", payload_id, bytes);
-    rtcp_handler_(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(bytes)));
+    return rtcp_handler_(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(bytes))) == 0;
 }
 
 bool webrtc_packetizer::input_video(track_state& state, const media_frame& frame)
@@ -417,8 +417,7 @@ bool webrtc_packetizer::input_video(track_state& state, const media_frame& frame
         spdlog::error("webrtc video rtp packetize failed codec {} result {}", to_string(state.codec), result);
         return false;
     }
-    emit_rtcp(state.payload_id);
-    return true;
+    return emit_rtcp(state.payload_id);
 }
 
 bool webrtc_packetizer::input_audio(track_state& state, const media_frame& frame)
@@ -430,7 +429,7 @@ bool webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
         {
             spdlog::error(
                 "webrtc audio passthrough timestamp precision unsupported track {} pts_ns {} dts_ns {}", frame.track, frame.pts_ns, frame.dts_ns);
-            return true;
+            return false;
         }
 
         const auto packet_size = rtp_packet_getsize();
@@ -439,7 +438,7 @@ bool webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
         {
             spdlog::error(
                 "webrtc audio passthrough packet too large track {} bytes {} capacity {}", frame.track, frame.payload->size(), payload_capacity);
-            return true;
+            return false;
         }
 
         const auto result = rtsp_muxer_input(muxer_,
@@ -454,8 +453,7 @@ bool webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
             spdlog::error("webrtc audio rtp packetize failed codec {} result {}", to_string(state.codec), result);
             return false;
         }
-        emit_rtcp(state.payload_id);
-        return true;
+        return emit_rtcp(state.payload_id);
     }
 
     return true;

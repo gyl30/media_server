@@ -88,12 +88,12 @@ void hls_segmenter::process_frame(const media_frame& frame)
         muxer_, stream_iterator->second, flags, ns_to_90khz(frame.pts_ns), ns_to_90khz(frame.dts_ns), frame.payload->data(), frame.payload->size());
     if (result != 0)
     {
-        if (result == -ENOBUFS)
+        if (result != -ENOBUFS)
         {
-            discard_segment();
-            return;
+            spdlog::error("hls ts write failed track {} result {}", frame.track, result);
         }
-        spdlog::error("hls ts write failed track {} result {}", frame.track, result);
+        discard_segment();
+        return;
     }
     segment_max_pts_ns_ = std::max(segment_max_pts_ns_, frame.pts_ns);
 }

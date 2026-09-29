@@ -33,7 +33,7 @@ struct webrtc_packetizer_config
 class webrtc_packetizer final
 {
    public:
-    using packet_handler = std::function<void(std::span<const std::uint8_t>)>;
+    using packet_handler = std::function<int(std::span<const std::uint8_t>)>;
 
     webrtc_packetizer(webrtc_packetizer_config config, packet_handler rtp_handler, packet_handler rtcp_handler = {});
 
@@ -62,7 +62,7 @@ class webrtc_packetizer final
     bool add_audio_track(const media_track& track);
     bool configure_rtcp(int payload_id);
     void remove_track(track_id id);
-    void emit_rtcp(int payload_id);
+    [[nodiscard]] bool emit_rtcp(int payload_id);
     bool input_video(track_state& state, const media_frame& frame);
     bool input_audio(track_state& state, const media_frame& frame);
 

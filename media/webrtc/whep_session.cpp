@@ -190,6 +190,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
 void whep_session::shutdown()
 {
+    started_ = false;
     if (stream_)
     {
         stream_->remove_sink(this);
@@ -208,7 +209,6 @@ void whep_session::safe_shutdown()
     {
         dtls_->shutdown();
     }
-    started_ = false;
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
     if (packetizer_)
@@ -520,8 +520,8 @@ bool whep_session::startup_media()
             .audio_mid_extension_id = answer_.audio_mid_extension_id.value_or(-1),
             .rtcp_cname = id_,
         },
-        [self](std::span<const std::uint8_t> packet) { self->send_rtp(packet); },
-        [self](std::span<const std::uint8_t> packet) { self->send_rtcp(packet); });
+        [self](std::span<const std::uint8_t> packet) { return self->send_rtp(packet); },
+        [self](std::span<const std::uint8_t> packet) { return self->send_rtcp(packet); });
 
     if (!packetizer->valid())
     {
@@ -546,11 +546,11 @@ bool whep_session::startup_media()
     return true;
 }
 
-void whep_session::send_rtp(std::span<const std::uint8_t> packet)
+int whep_session::send_rtp(std::span<const std::uint8_t> packet)
 {
     if (!srtp_)
     {
-        return;
+        return -1;
     }
 
     spdlog::trace("webrtc rtp protect session {} plain_size {}", id_, packet.size());
@@ -558,17 +558,18 @@ void whep_session::send_rtp(std::span<const std::uint8_t> packet)
     if (!protected_packet)
     {
         spdlog::error("webrtc srtp protect failed session {}", id_);
-        return;
+        return -1;
     }
     spdlog::trace("webrtc rtp protected session {} protected_size {}", id_, protected_packet->size());
     send_udp(std::move(*protected_packet));
+    return 0;
 }
 
-void whep_session::send_rtcp(std::span<const std::uint8_t> packet)
+int whep_session::send_rtcp(std::span<const std::uint8_t> packet)
 {
     if (!srtp_)
     {
-        return;
+        return -1;
     }
 
     spdlog::trace("webrtc rtcp protect session {} plain_size {}", id_, packet.size());
@@ -576,10 +577,11 @@ void whep_session::send_rtcp(std::span<const std::uint8_t> packet)
     if (!protected_packet)
     {
         spdlog::error("webrtc srtcp protect failed session {}", id_);
-        return;
+        return -1;
     }
     spdlog::trace("webrtc rtcp protected session {} protected_size {}", id_, protected_packet->size());
     send_udp(std::move(*protected_packet));
+    return 0;
 }
 
 void whep_session::send_udp(std::vector<std::uint8_t> packet)
