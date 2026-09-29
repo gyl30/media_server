@@ -110,13 +110,13 @@ bool media_stream::set_tracks(std::vector<media_track> tracks)
     return true;
 }
 
-void media_stream::add_sink(std::shared_ptr<media_sink> sink, worker_context& worker)
+void media_stream::add_sink(std::shared_ptr<media_sink> sink)
 {
     if (!sink)
     {
         return;
     }
-    auto* target = &worker;
+    auto* target = &sink->worker();
     boost::asio::dispatch(worker_.io(), [self = shared_from_this(), sink = std::move(sink), target]() mutable
                           { self->add_sink_owner(std::move(sink), *target); });
 }
@@ -188,6 +188,7 @@ void media_stream::publish(media_frame frame)
         static_cast<void>(worker);
         groups.push_back(group);
     }
+    std::vector<std::shared_ptr<sink_group>> overflowed_groups;
     for (const auto& group : groups)
     {
         if (&group->worker == &worker_)
@@ -209,6 +210,7 @@ void media_stream::publish(media_frame frame)
             {
                 group->pending.clear();
                 group->pending_end = true;
+                overflowed_groups.push_back(group);
             }
             else
             {
@@ -223,6 +225,20 @@ void media_stream::publish(media_frame frame)
         if (schedule)
         {
             boost::asio::post(group->worker.io(), [group]() { group->drain(); });
+        }
+    }
+    for (const auto& overflowed : overflowed_groups)
+    {
+        for (auto iterator = sink_groups_.begin(); iterator != sink_groups_.end();)
+        {
+            if (iterator->second == overflowed)
+            {
+                iterator = sink_groups_.erase(iterator);
+            }
+            else
+            {
+                ++iterator;
+            }
         }
     }
 }

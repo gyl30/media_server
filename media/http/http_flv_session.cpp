@@ -136,7 +136,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     }
     ++generation_;
     enqueue(generation_, std::move(output_buffer_), true);
-    media_stream->add_sink(shared_from_this(), worker_);
+    media_stream->add_sink(shared_from_this());
 
     std::array<std::uint8_t, 1> read_buffer{};
     for (;;)

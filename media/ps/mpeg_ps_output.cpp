@@ -170,7 +170,7 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
         }
         mux_tracks_.emplace(track.id, std::pair{track.kind, id});
     }
-    source->add_sink(shared_from_this(), source->worker());
+    source->add_sink(shared_from_this());
     return true;
 }
 
@@ -211,19 +211,24 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
 
 void mpeg_ps_output::on_end() { finish(); }
 
-void mpeg_ps_output::add_sink(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker)
+void mpeg_ps_output::add_sink(std::shared_ptr<mpeg_ps_sink> sink)
 {
     if (!sink)
     {
         return;
     }
-    auto* target = &worker;
+    auto* target = &sink->worker();
     boost::asio::dispatch(worker_.io(), [self = shared_from_this(), sink = std::move(sink), target]() mutable
                           { self->add_sink_owner(std::move(sink), *target); });
 }
 
 void mpeg_ps_output::add_sink_owner(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker)
 {
+    if (!source_ || !muxer_)
+    {
+        boost::asio::post(worker.io(), [sink = std::move(sink)]() { sink->on_end(); });
+        return;
+    }
     auto& group = sink_groups_[&worker];
     if (!group)
     {
@@ -275,6 +280,7 @@ void mpeg_ps_output::publish(mpeg_ps_frame frame)
         static_cast<void>(worker);
         groups.push_back(group);
     }
+    std::vector<std::shared_ptr<sink_group>> overflowed_groups;
     for (const auto& group : groups)
     {
         if (&group->worker == &worker_)
@@ -296,6 +302,7 @@ void mpeg_ps_output::publish(mpeg_ps_frame frame)
             {
                 group->pending.clear();
                 group->pending_end = true;
+                overflowed_groups.push_back(group);
             }
             else
             {
@@ -310,6 +317,20 @@ void mpeg_ps_output::publish(mpeg_ps_frame frame)
         if (schedule)
         {
             boost::asio::post(group->worker.io(), [group]() { group->drain(); });
+        }
+    }
+    for (const auto& overflowed : overflowed_groups)
+    {
+        for (auto iterator = sink_groups_.begin(); iterator != sink_groups_.end();)
+        {
+            if (iterator->second == overflowed)
+            {
+                iterator = sink_groups_.erase(iterator);
+            }
+            else
+            {
+                ++iterator;
+            }
         }
     }
 }

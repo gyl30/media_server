@@ -40,8 +40,7 @@ std::uint32_t random_u32()
 [[nodiscard]] bool rtsp_play_track_supported(const media_track& track)
 {
     return (track.kind == media_kind::video &&
-            (track.codec == codec_id::h264 || track.codec == codec_id::h265 ||
-             false)) ||
+            (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
            (track.kind == media_kind::audio && (track.codec == codec_id::aac ||
                                                 (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
                                                  (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty()) ||
@@ -348,7 +347,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
         return result;
     }
     playing_ = true;
-    stream_->add_sink(shared_from_this(), worker_);
+    stream_->add_sink(shared_from_this());
     return 0;
 }
 

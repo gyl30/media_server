@@ -49,7 +49,7 @@ class mpeg_ps_output final : public media_sink, public std::enable_shared_from_t
     void on_frame(const media_frame& frame) override;
     void on_end() override;
 
-    void add_sink(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker);
+    void add_sink(std::shared_ptr<mpeg_ps_sink> sink);
     void remove_sink(mpeg_ps_sink* sink);
 
    private:

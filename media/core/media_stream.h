@@ -23,7 +23,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     [[nodiscard]] const std::vector<media_track>& tracks() const noexcept;
 
     bool set_tracks(std::vector<media_track> tracks);
-    void add_sink(std::shared_ptr<media_sink> sink, worker_context& worker);
+    void add_sink(std::shared_ptr<media_sink> sink);
     void remove_sink(media_sink* sink);
     void publish(media_frame frame);
     void end();

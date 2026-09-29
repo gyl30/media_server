@@ -140,7 +140,7 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
         process_track(track);
     }
     source_ = source;
-    source->add_sink(shared_from_this(), source->worker());
+    source->add_sink(shared_from_this());
     return true;
 }
 

@@ -29,7 +29,7 @@ void rtmp_play_session::startup()
         muxer_.on_track(track);
     }
     waiting_for_key_frame_ = true;
-    stream_->add_sink(shared_from_this(), worker_);
+    stream_->add_sink(shared_from_this());
 }
 
 void rtmp_play_session::shutdown()

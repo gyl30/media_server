@@ -66,7 +66,7 @@ bool gb28181_rtp_sender::startup()
                                                 }
                                                 self->ps_output_ = output;
                                                 self->apply_tracks(source->tracks());
-                                                output->add_sink(self, self->worker_);
+                                                output->add_sink(self);
                                             });
                       });
     return true;

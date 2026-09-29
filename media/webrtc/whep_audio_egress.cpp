@@ -95,7 +95,7 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_aud
     {
         return false;
     }
-    source_->add_sink(shared_from_this(), worker_);
+    source_->add_sink(shared_from_this());
     return true;
 }
 
