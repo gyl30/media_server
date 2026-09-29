@@ -21,15 +21,13 @@ gb28181_rtp_sender::gb28181_rtp_sender(worker_context& worker,
                                        std::uint8_t payload_type,
                                        std::uint32_t ssrc,
                                        packet_handler on_packet,
-                                       end_handler handle_source_end,
-                                       failure_handler on_failure)
+                                       end_handler handle_source_end)
     : worker_(worker),
       stream_(std::move(stream)),
       payload_type_(payload_type),
       ssrc_(ssrc),
       packet_handler_(std::move(on_packet)),
-      end_handler_(std::move(handle_source_end)),
-      failure_handler_(std::move(on_failure))
+      end_handler_(std::move(handle_source_end))
 {
 }
 
@@ -41,6 +39,14 @@ bool gb28181_rtp_sender::startup()
         !supported_tracks(stream_->tracks()) || !create_packetizer())
     {
         return false;
+    }
+    for (const auto& track : stream_->tracks())
+    {
+        if (track.kind == media_kind::video)
+        {
+            video_track_ = track.id;
+            break;
+        }
     }
     const auto self = shared_from_this();
     const auto source = stream_;
@@ -65,7 +71,6 @@ bool gb28181_rtp_sender::startup()
                                                     return;
                                                 }
                                                 self->ps_output_ = output;
-                                                self->apply_tracks(source->tracks());
                                                 output->add_sink(self);
                                             });
                       });
@@ -88,14 +93,13 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
     {
         return;
     }
-    const auto state = track_states_.find(frame.track);
-    if (state == track_states_.end() || !frame.payload)
+    if (!frame.payload)
     {
         return;
     }
 
     const bool starts_media = waiting_for_key_frame_;
-    if (starts_media && (state->second.kind != media_kind::video || !frame.key_frame))
+    if (starts_media && (frame.track != video_track_ || !frame.key_frame))
     {
         return;
     }
@@ -110,11 +114,7 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
     if (result < 0)
     {
         spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
-        if (failure_handler_)
-        {
-            failure_handler_();
-        }
-        else if (end_handler_)
+        if (end_handler_)
         {
             end_handler_();
         }
@@ -132,11 +132,7 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
 
 void gb28181_rtp_sender::on_end()
 {
-    if (ps_output_ && ps_output_->failed() && failure_handler_)
-    {
-        failure_handler_();
-    }
-    else if (end_handler_)
+    if (end_handler_)
     {
         end_handler_();
     }
@@ -150,8 +146,6 @@ void gb28181_rtp_sender::safe_shutdown()
     }
     packet_handler_ = {};
     end_handler_ = {};
-    failure_handler_ = {};
-    track_states_.clear();
     waiting_for_key_frame_ = true;
     stream_.reset();
     ps_output_.reset();
@@ -169,20 +163,6 @@ bool gb28181_rtp_sender::create_packetizer()
     rtp_payload_t callbacks{allocate_packet, free_packet, packet_callback};
     packetizer_ = rtp_payload_encode_create(payload_type_, "PS", static_cast<std::uint16_t>(device()), ssrc_, &callbacks, this);
     return packetizer_ != nullptr;
-}
-
-void gb28181_rtp_sender::apply_tracks(const std::vector<media_track>& tracks)
-{
-    if (!track_states_.empty())
-    {
-        return;
-    }
-
-    for (const auto& track : tracks)
-    {
-        auto& state = track_states_[track.id];
-        state.kind = track.kind;
-    }
 }
 
 void* gb28181_rtp_sender::allocate_packet(void* param, int bytes)

@@ -31,7 +31,6 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
                                                        std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
-      stream_name_(stream_ ? stream_->name() : std::string{}),
       sender_id_(std::move(sender_id)),
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
@@ -103,7 +102,6 @@ bool gb28181_udp_sender_session::startup()
         config_.payload_type,
         config_.ssrc,
         [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
-        [self]() { self->shutdown(); },
         [self]() { self->shutdown(); });
     if (!sender_->startup())
     {
@@ -263,7 +261,10 @@ void gb28181_udp_sender_session::safe_shutdown()
     }
     closed_ = true;
     shutdown_subscription_.reset();
-    session_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
+    if (stream_)
+    {
+        session_registry::instance().remove_sender_session(stream_->name(), sender_id_, *this);
+    }
     rtcp_timer_.cancel();
     if (sender_)
     {
@@ -277,7 +278,10 @@ void gb28181_udp_sender_session::safe_shutdown()
         rtcp_sender_ = nullptr;
     }
     rtcp_started_ = false;
-    spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream_name_, sender_id_);
+    if (stream_)
+    {
+        spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream_->name(), sender_id_);
+    }
     stream_.reset();
 }
 

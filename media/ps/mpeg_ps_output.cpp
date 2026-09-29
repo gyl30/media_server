@@ -5,6 +5,7 @@
 
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
+#include <spdlog/spdlog.h>
 
 #include "media/ps/mpeg_ps_output.h"
 #include "media/core/media_stream.h"
@@ -90,8 +91,7 @@ struct mpeg_ps_output::sink_group
     }
 };
 
-mpeg_ps_output::mpeg_ps_output(std::string name, worker_context& worker)
-    : name_(std::move(name)), worker_(worker), muxer_(nullptr, &ps_muxer_destroy)
+mpeg_ps_output::mpeg_ps_output(worker_context& worker) : worker_(worker), muxer_(nullptr, &ps_muxer_destroy)
 {
 }
 
@@ -134,7 +134,7 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
     muxer_.reset(ps_muxer_create(&callbacks, this));
     if (!muxer_)
     {
-        failed_.store(true, std::memory_order_release);
+        spdlog::error("mpeg ps muxer create failed stream {}", source->name());
         finish();
         return false;
     }
@@ -164,7 +164,7 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
         const auto id = ps_muxer_add_stream(muxer_.get(), codec, nullptr, 0);
         if (id < 0)
         {
-            failed_.store(true, std::memory_order_release);
+            spdlog::error("mpeg ps muxer add track failed stream {} track {}", source->name(), track.id);
             finish();
             return false;
         }
@@ -173,8 +173,6 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
     source->add_sink(shared_from_this());
     return true;
 }
-
-bool mpeg_ps_output::failed() const noexcept { return failed_.load(std::memory_order_acquire); }
 
 void mpeg_ps_output::on_frame(const media_frame& frame)
 {
@@ -196,7 +194,7 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
     if (ps_muxer_input(muxer_.get(), id, frame.key_frame ? MPEG_FLAG_IDR_FRAME : 0, pts, ns_to_milliseconds(frame.dts_ns) * 90,
                        frame.payload->data(), frame.payload->size()) < 0)
     {
-        failed_.store(true, std::memory_order_release);
+        spdlog::error("mpeg ps muxer input failed stream {} track {}", source_->name(), frame.track);
         finish();
         return;
     }

@@ -123,7 +123,6 @@ int main(int argc, char** argv)
                 ++count.packets;
                 count.video_packet ? ++count.video : ++count.audio;
             },
-            []() {},
             [&]() { ++failures; });
         on_worker(worker,
                   [&]()
@@ -172,6 +171,10 @@ int main(int argc, char** argv)
     for (std::size_t i = 0; i < senders.size(); ++i)
     {
         on_worker(workers[1 + i % (worker_count - 1)], [&]() { senders[i]->shutdown(); });
+    }
+    for (std::size_t i = 1; i < workers.size(); ++i)
+    {
+        on_worker(workers[i], []() {});
     }
     on_worker(workers[0], [&]() { source->end(); });
     for (auto& worker : workers)

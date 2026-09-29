@@ -1,7 +1,6 @@
 #ifndef MEDIA_PS_MPEG_PS_OUTPUT_H
 #define MEDIA_PS_MPEG_PS_OUTPUT_H
 
-#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -39,12 +38,10 @@ class mpeg_ps_sink
 class mpeg_ps_output final : public media_sink, public std::enable_shared_from_this<mpeg_ps_output>
 {
    public:
-    mpeg_ps_output(std::string name, worker_context& worker);
+    explicit mpeg_ps_output(worker_context& worker);
 
     [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
     [[nodiscard]] bool startup(const std::shared_ptr<media_stream>& source);
-    [[nodiscard]] bool failed() const noexcept;
-
     [[nodiscard]] worker_context& worker() noexcept override;
     void on_frame(const media_frame& frame) override;
     void on_end() override;
@@ -63,14 +60,12 @@ class mpeg_ps_output final : public media_sink, public std::enable_shared_from_t
     void end_sinks();
     void finish();
 
-    std::string name_;
     worker_context& worker_;
     std::shared_ptr<media_stream> source_;
     std::unique_ptr<ps_muxer_t, int (*)(ps_muxer_t*)> muxer_;
     std::map<track_id, std::pair<media_kind, int>> mux_tracks_;
     std::shared_ptr<std::vector<std::uint8_t>> packet_;
     bool waiting_for_key_frame_{true};
-    std::atomic_bool failed_{};
     std::map<worker_context*, std::shared_ptr<sink_group>> sink_groups_;
 };
 

@@ -26,7 +26,6 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
                                                        std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
-      stream_name_(stream_ ? stream_->name() : std::string{}),
       sender_id_(std::move(sender_id)),
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
@@ -107,7 +106,6 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         config_.payload_type,
         config_.ssrc,
         [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
-        [self]() { self->shutdown(); },
         [self]() { self->shutdown(); });
     if (!sender_->startup())
     {
@@ -204,7 +202,10 @@ void gb28181_tcp_sender_session::safe_shutdown()
     closed_ = true;
     write_queue_.stop();
     started_ = false;
-    session_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
+    if (stream_)
+    {
+        session_registry::instance().remove_sender_session(stream_->name(), sender_id_, *this);
+    }
     if (listener_)
     {
         listener_->shutdown();
@@ -221,7 +222,10 @@ void gb28181_tcp_sender_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    spdlog::debug("gb28181 tcp sender shutdown {} sender {}", stream_name_, sender_id_);
+    if (stream_)
+    {
+        spdlog::debug("gb28181 tcp sender shutdown {} sender {}", stream_->name(), sender_id_);
+    }
     stream_.reset();
 }
 

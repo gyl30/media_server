@@ -1,7 +1,6 @@
 #ifndef MEDIA_GB28181_GB28181_RTP_SENDER_H
 #define MEDIA_GB28181_GB28181_RTP_SENDER_H
 
-#include <map>
 #include <array>
 #include <memory>
 #include <vector>
@@ -20,15 +19,13 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
    public:
     using packet_handler = std::function<void(std::vector<std::uint8_t>)>;
     using end_handler = std::function<void()>;
-    using failure_handler = std::function<void()>;
 
     gb28181_rtp_sender(worker_context& worker,
                        std::shared_ptr<media_stream> stream,
                        std::uint8_t payload_type,
                        std::uint32_t ssrc,
                        packet_handler on_packet,
-                       end_handler handle_source_end,
-                       failure_handler on_failure = {});
+                       end_handler handle_source_end);
 
    public:
     [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
@@ -42,18 +39,11 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
     void on_end() override;
 
    private:
-    struct track_state
-    {
-        media_kind kind{};
-    };
-
-   private:
     static void* allocate_packet(void* param, int bytes);
     static void free_packet(void* param, void* packet);
     static int packet_callback(void* param, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
     [[nodiscard]] bool create_packetizer();
-    void apply_tracks(const std::vector<media_track>& tracks);
 
    private:
     void safe_shutdown();
@@ -65,13 +55,12 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
     std::uint32_t ssrc_{};
     packet_handler packet_handler_;
     end_handler end_handler_;
-    failure_handler failure_handler_;
     std::shared_ptr<mpeg_ps_output> ps_output_;
     void* packetizer_{};
     std::array<std::uint8_t, 2048> packet_buffer_{};
     std::uint32_t timestamp_base_{};
     std::optional<std::uint32_t> first_media_timestamp_;
-    std::map<track_id, track_state> track_states_;
+    track_id video_track_{};
     bool waiting_for_key_frame_{true};
     std::atomic_bool shutdown_requested_{};
 };

@@ -300,7 +300,7 @@ std::shared_ptr<mpeg_ps_output> media_stream::ps_output()
     {
         return output;
     }
-    auto output = std::make_shared<mpeg_ps_output>(name_, worker_);
+    auto output = std::make_shared<mpeg_ps_output>(worker_);
     if (!output->startup(std::static_pointer_cast<media_stream>(shared_from_this())))
     {
         return {};

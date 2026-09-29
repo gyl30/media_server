@@ -55,7 +55,6 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
    private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
-    std::string stream_name_;
     std::string sender_id_;
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
