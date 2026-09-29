@@ -110,8 +110,10 @@ gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std
         return gb28181_rtp_receive_result::ignored;
     }
 
-    static_cast<void>(rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size())));
-    return fatal_codec_change_ ? gb28181_rtp_receive_result::fatal : gb28181_rtp_receive_result::accepted;
+    demux_error_ = false;
+    const auto result = rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size()));
+    const auto callback_error = std::exchange(demux_error_, false);
+    return result < 0 || callback_error ? gb28181_rtp_receive_result::fatal : gb28181_rtp_receive_result::accepted;
 }
 
 int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
@@ -157,7 +159,13 @@ const std::string& gb28181_rtp_receiver::stream_name() const noexcept { return s
 
 int gb28181_rtp_receiver::packet_callback(void* param, avpacket_t* packet)
 {
-    return static_cast<gb28181_rtp_receiver*>(param)->on_demuxed_packet(packet);
+    auto* receiver = static_cast<gb28181_rtp_receiver*>(param);
+    const auto result = receiver->on_demuxed_packet(packet);
+    if (result < 0)
+    {
+        receiver->demux_error_ = true;
+    }
+    return result;
 }
 
 void gb28181_rtp_receiver::stream_callback(void* param, int, int codecid, const void*, int, int finish)
@@ -167,7 +175,7 @@ void gb28181_rtp_receiver::stream_callback(void* param, int, int codecid, const 
 
 void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
 {
-    if (closed_ || fatal_codec_change_)
+    if (closed_ || demux_error_)
     {
         return;
     }
@@ -201,18 +209,17 @@ void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
 
     if (finish)
     {
-        apply_topology();
+        demux_error_ = !apply_topology();
         pending_topology_ = {};
     }
 }
 
-void gb28181_rtp_receiver::apply_topology()
+bool gb28181_rtp_receiver::apply_topology()
 {
     if (pending_topology_.invalid || !pending_topology_.video)
     {
         spdlog::warn("gb28181 unsupported ps topology stream {}", stream_name_);
-        fatal_codec_change_ = true;
-        return;
+        return false;
     }
 
     if (video_codec_)
@@ -220,9 +227,9 @@ void gb28181_rtp_receiver::apply_topology()
         if (video_codec_ != pending_topology_.video || audio_codec_ != pending_topology_.audio)
         {
             spdlog::warn("gb28181 ps topology change stream {}", stream_name_);
-            fatal_codec_change_ = true;
+            return false;
         }
-        return;
+        return true;
     }
 
     video_codec_ = pending_topology_.video;
@@ -244,11 +251,12 @@ void gb28181_rtp_receiver::apply_topology()
             .codec_config = {},
         };
     }
+    return true;
 }
 
 int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || closed_ || fatal_codec_change_)
+    if (packet == nullptr || packet->stream == nullptr || closed_ || demux_error_)
     {
         return -1;
     }
@@ -259,7 +267,6 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
         if (video_codec_)
         {
             spdlog::warn("gb28181 unsupported raw codec stream {} codecid {}", stream_name_, packet->stream->codecid);
-            fatal_codec_change_ = true;
             return -1;
         }
         return 0;
@@ -271,22 +278,26 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     if (is_video(*codec) ? video_codec_ != codec : audio_codec_ != codec)
     {
         spdlog::warn("gb28181 raw codec change stream {} codec {}", stream_name_, to_string(*codec));
-        fatal_codec_change_ = true;
         return -1;
     }
 
-    if (validate_track_from_packet(*packet))
+    const auto track_result = update_track_from_packet(*packet);
+    if (track_result < 0)
+    {
+        return -1;
+    }
+    if (track_result > 0)
     {
         avpkt2bs_destroy(&bitstream_);
         avpkt2bs_create(&bitstream_);
     }
-    if (fatal_codec_change_)
+    if (!recording_)
     {
-        return -1;
-    }
-    if (!recording_ && !try_start_recording())
-    {
-        return fatal_codec_change_ ? -1 : 0;
+        const auto publish_result = try_publish_stream();
+        if (publish_result <= 0)
+        {
+            return publish_result;
+        }
     }
 
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
@@ -307,12 +318,12 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     return 0;
 }
 
-bool gb28181_rtp_receiver::validate_track_from_packet(const avpacket_t& packet)
+int gb28181_rtp_receiver::update_track_from_packet(const avpacket_t& packet)
 {
     auto track = media_track_from_avstream_config(*packet.stream, video_track_id, audio_track_id);
     if (!track)
     {
-        return false;
+        return 0;
     }
 
     if (recording_)
@@ -322,41 +333,41 @@ bool gb28181_rtp_receiver::validate_track_from_packet(const avpacket_t& packet)
             fixed->channel_count != track->channel_count || fixed->codec_config != track->codec_config)
         {
             spdlog::warn("gb28181 track config changed stream {}", stream_name_);
-            fatal_codec_change_ = true;
+            return -1;
         }
-        return false;
+        return 0;
     }
 
     auto& current = track->kind == media_kind::video ? video_track_ : audio_track_;
     if (!current)
     {
         current = *track;
-        return true;
+        return 1;
     }
     if (current->codec != track->codec)
     {
-        return false;
+        return 0;
     }
     const bool changed =
         current->clock_rate != track->clock_rate || current->channel_count != track->channel_count || current->codec_config != track->codec_config;
     if (!changed)
     {
-        return false;
+        return 0;
     }
     current = *track;
-    return true;
+    return 1;
 }
 
-bool gb28181_rtp_receiver::try_start_recording()
+int gb28181_rtp_receiver::try_publish_stream()
 {
     if (recording_)
     {
-        return true;
+        return 1;
     }
     if (!video_codec_ || !video_track_ || ((video_codec_ == codec_id::h264 || video_codec_ == codec_id::h265) && video_track_->codec_config.empty()) ||
         (audio_codec_ && !audio_track_) || (audio_codec_ == codec_id::aac && audio_track_->codec_config.empty()))
     {
-        return false;
+        return 0;
     }
 
     std::vector<media_track> tracks;
@@ -368,14 +379,13 @@ bool gb28181_rtp_receiver::try_start_recording()
     if (!stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(stream_))
     {
         spdlog::warn("gb28181 stream register failed {}", stream_name_);
-        fatal_codec_change_ = true;
-        return false;
+        return -1;
     }
     recording_ = true;
     video_track_.reset();
     audio_track_.reset();
     spdlog::info("gb28181 stream started {}", stream_name_);
-    return true;
+    return 1;
 }
 
 }    // namespace media_server

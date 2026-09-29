@@ -59,9 +59,9 @@ class gb28181_rtp_receiver final
 
     int on_demuxed_packet(avpacket_t* packet);
     void on_stream(int codecid, bool finish);
-    void apply_topology();
-    bool validate_track_from_packet(const avpacket_t& packet);
-    bool try_start_recording();
+    [[nodiscard]] bool apply_topology();
+    [[nodiscard]] int update_track_from_packet(const avpacket_t& packet);
+    [[nodiscard]] int try_publish_stream();
 
    private:
     worker_context& worker_;
@@ -77,7 +77,7 @@ class gb28181_rtp_receiver final
     std::optional<media_track> video_track_;
     std::optional<media_track> audio_track_;
     bool recording_{};
-    bool fatal_codec_change_{};
+    bool demux_error_{};
     bool closed_{};
 };
 
