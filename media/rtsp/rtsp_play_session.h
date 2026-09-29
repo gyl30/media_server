@@ -42,7 +42,6 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     void shutdown();
 
    public:
-    [[nodiscard]] std::string_view stream_name() const noexcept { return stream_name_; }
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
     void on_frame(const media_frame& frame) override;
     void on_end() override;

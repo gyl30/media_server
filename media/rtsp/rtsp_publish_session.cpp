@@ -55,7 +55,7 @@ bool rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const 
 
 int rtsp_publish_session::prepare_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
-    if (announce_prepared_ || !session_id_.empty() || sdp == nullptr || length <= 0)
+    if (!descriptions_.empty() || !session_id_.empty() || sdp == nullptr || length <= 0)
     {
         return 455;
     }
@@ -145,18 +145,16 @@ int rtsp_publish_session::prepare_announce(rtsp_server_t* server, std::string_vi
 
     stream_name_ = target->stream_name;
     descriptions_ = std::move(descriptions);
-    announce_prepared_ = true;
     return 200;
 }
 
 int rtsp_publish_session::accept_announce(rtsp_server_t* server)
 {
-    if (!announce_prepared_ || !session_id_.empty())
+    if (descriptions_.empty() || !session_id_.empty())
     {
         return rtsp_server_reply_announce(server, 455);
     }
 
-    announce_prepared_ = false;
     session_id_ = std::to_string(random_u32());
     return rtsp_server_reply_announce(server, 200);
 }
@@ -285,6 +283,8 @@ void rtsp_publish_session::safe_shutdown()
         udp_session_->safe_shutdown();
         udp_session_.reset();
     }
+    descriptions_.clear();
+    stream_name_.clear();
     write_handler_ = {};
     shutdown_handler_ = {};
 }

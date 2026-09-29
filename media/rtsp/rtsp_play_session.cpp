@@ -429,22 +429,7 @@ int rtsp_play_session::presentation_status() const
         return 455;
     }
 
-    const auto current = stream_->tracks();
-    std::size_t supported_count = 0;
-    for (const auto& track : current)
-    {
-        if (!rtsp_play_track_supported(track))
-        {
-            continue;
-        }
-        ++supported_count;
-        const auto iterator = track_states_.find(track.id);
-        if (iterator == track_states_.end() || iterator->second.codec != track.codec)
-        {
-            return 455;
-        }
-    }
-    return supported_count == track_states_.size() ? 0 : 455;
+    return 0;
 }
 
 bool rtsp_play_session::channels_available(track_id id, int rtp_channel, int rtcp_channel) const
