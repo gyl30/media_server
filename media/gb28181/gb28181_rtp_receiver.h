@@ -77,7 +77,6 @@ class gb28181_rtp_receiver final
     std::optional<media_track> audio_track_;
     std::optional<int> video_stream_;
     std::optional<int> audio_stream_;
-    int* current_input_result_{};
     bool closed_{};
 };
 

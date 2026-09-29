@@ -110,12 +110,8 @@ gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std
         return gb28181_rtp_receive_result::ignored;
     }
 
-    int packet_result = 0;
-    current_input_result_ = &packet_result;
     const auto result = rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size()));
-    current_input_result_ = nullptr;
-    return result < 0 || packet_result < 0 ? gb28181_rtp_receive_result::fatal
-                                           : gb28181_rtp_receive_result::accepted;
+    return result < 0 ? gb28181_rtp_receive_result::fatal : gb28181_rtp_receive_result::accepted;
 }
 
 int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
@@ -161,13 +157,7 @@ const std::string& gb28181_rtp_receiver::stream_name() const noexcept { return s
 
 int gb28181_rtp_receiver::packet_callback(void* param, avpacket_t* packet)
 {
-    auto* receiver = static_cast<gb28181_rtp_receiver*>(param);
-    const auto result = receiver->on_demuxed_packet(packet);
-    if (result < 0 && receiver->current_input_result_ != nullptr)
-    {
-        *receiver->current_input_result_ = result;
-    }
-    return result;
+    return static_cast<gb28181_rtp_receiver*>(param)->on_demuxed_packet(packet);
 }
 
 void gb28181_rtp_receiver::stream_callback(void* param, int, int codecid, const void*, int, int finish)
