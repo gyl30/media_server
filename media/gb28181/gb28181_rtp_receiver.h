@@ -43,7 +43,6 @@ class gb28181_rtp_receiver final
 
    public:
     [[nodiscard]] const std::string& stream_name() const noexcept;
-    [[nodiscard]] bool recording() const noexcept { return recording_; }
 
    private:
     struct ps_topology
@@ -61,7 +60,6 @@ class gb28181_rtp_receiver final
     void on_stream(int codecid, bool finish);
     [[nodiscard]] bool apply_topology(const ps_topology& topology);
     [[nodiscard]] int update_track_from_packet(const avpacket_t& packet);
-    [[nodiscard]] int try_publish_stream();
 
    private:
     worker_context& worker_;
@@ -80,7 +78,6 @@ class gb28181_rtp_receiver final
     std::optional<int> video_stream_;
     std::optional<int> audio_stream_;
     int* current_input_result_{};
-    bool recording_{};
     bool closed_{};
 };
 

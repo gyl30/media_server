@@ -93,7 +93,7 @@ bool rtsp_pull_media::input_packet(std::uint8_t channel, std::span<const std::ui
 
     if (!rtcp && media_stream_->tracks().empty())
     {
-        if (try_publish_stream() < 0)
+        if (register_stream_if_ready() < 0)
         {
             return false;
         }
@@ -231,14 +231,14 @@ int rtsp_pull_media::update_track_from_packet(const avpacket_t& packet)
                   pending->codec_config != track->codec_config;
     }
     pending = *track;
-    if (try_publish_stream() < 0)
+    if (register_stream_if_ready() < 0)
     {
         return -1;
     }
     return changed ? 1 : 0;
 }
 
-int rtsp_pull_media::try_publish_stream()
+int rtsp_pull_media::register_stream_if_ready()
 {
     if (!media_stream_->tracks().empty() || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
     {

@@ -313,13 +313,29 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
         avpkt2bs_destroy(&bitstream_);
         avpkt2bs_create(&bitstream_);
     }
-    if (!recording_)
+    if (stream_->tracks().empty())
     {
-        const auto publish_result = try_publish_stream();
-        if (publish_result <= 0)
+        if (!video_codec_ || !video_track_ ||
+            ((video_codec_ == codec_id::h264 || video_codec_ == codec_id::h265) && video_track_->codec_config.empty()) ||
+            (audio_codec_ && !audio_track_) || (audio_codec_ == codec_id::aac && audio_track_->codec_config.empty()))
         {
-            return publish_result;
+            return 0;
         }
+
+        std::vector<media_track> tracks;
+        tracks.push_back(*video_track_);
+        if (audio_track_)
+        {
+            tracks.push_back(*audio_track_);
+        }
+        if (!stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(stream_))
+        {
+            spdlog::warn("gb28181 stream register failed {}", stream_name_);
+            return -1;
+        }
+        video_track_.reset();
+        audio_track_.reset();
+        spdlog::info("gb28181 stream started {}", stream_name_);
     }
 
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
@@ -348,7 +364,7 @@ int gb28181_rtp_receiver::update_track_from_packet(const avpacket_t& packet)
         return 0;
     }
 
-    if (recording_)
+    if (!stream_->tracks().empty())
     {
         const auto fixed = std::ranges::find_if(stream_->tracks(), [&track](const media_track& value) { return value.id == track->id; });
         if (fixed == stream_->tracks().end() || fixed->codec != track->codec || fixed->clock_rate != track->clock_rate ||
@@ -377,36 +393,6 @@ int gb28181_rtp_receiver::update_track_from_packet(const avpacket_t& packet)
         return 0;
     }
     current = *track;
-    return 1;
-}
-
-int gb28181_rtp_receiver::try_publish_stream()
-{
-    if (recording_)
-    {
-        return 1;
-    }
-    if (!video_codec_ || !video_track_ || ((video_codec_ == codec_id::h264 || video_codec_ == codec_id::h265) && video_track_->codec_config.empty()) ||
-        (audio_codec_ && !audio_track_) || (audio_codec_ == codec_id::aac && audio_track_->codec_config.empty()))
-    {
-        return 0;
-    }
-
-    std::vector<media_track> tracks;
-    tracks.push_back(*video_track_);
-    if (audio_track_)
-    {
-        tracks.push_back(*audio_track_);
-    }
-    if (!stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(stream_))
-    {
-        spdlog::warn("gb28181 stream register failed {}", stream_name_);
-        return -1;
-    }
-    recording_ = true;
-    video_track_.reset();
-    audio_track_.reset();
-    spdlog::info("gb28181 stream started {}", stream_name_);
     return 1;
 }
 

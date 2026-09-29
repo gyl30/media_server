@@ -159,7 +159,7 @@ int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
     }
 
     expected_audio_ = audio;
-    return try_publish_stream();
+    return register_stream_if_ready();
 }
 
 int rtmp_publish_session::demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
@@ -197,7 +197,7 @@ int rtmp_publish_session::handle_video_config(int codec, std::span<const std::ui
             return -1;
         }
         initial_video_track_ = std::move(track);
-        return try_publish_stream();
+        return register_stream_if_ready();
     }
     const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == video_track_id; });
     if (fixed == stream_->tracks().end() || fixed->codec != track.codec || fixed->clock_rate != track.clock_rate ||
@@ -240,7 +240,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
                 return -1;
             }
             initial_audio_track_ = std::move(track);
-            return try_publish_stream();
+            return register_stream_if_ready();
         }
         const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
         if (fixed == stream_->tracks().end() || fixed->codec != track.codec || fixed->clock_rate != track.clock_rate ||
@@ -274,7 +274,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
             return -1;
         }
         initial_audio_track_ = std::move(track);
-        return try_publish_stream();
+        return register_stream_if_ready();
     }
     const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
     if (fixed == stream_->tracks().end() || fixed->codec != track.codec || fixed->clock_rate != track.clock_rate ||
@@ -308,7 +308,7 @@ int rtmp_publish_session::initialize_g711_track(int codec)
             .channel_count = 1,
             .codec_config = {},
         };
-        return try_publish_stream();
+        return register_stream_if_ready();
     }
     const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
     return fixed != stream_->tracks().end() && fixed->codec == audio_codec ? 0 : -1;
@@ -397,7 +397,7 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
     return publish_media(codec, data, pts, dts, flags);
 }
 
-int rtmp_publish_session::try_publish_stream()
+int rtmp_publish_session::register_stream_if_ready()
 {
     if (!shutdown_handler_ || !stream_->tracks().empty() || !expected_audio_.has_value() || !initial_video_track_ ||
         (*expected_audio_ && !initial_audio_track_))

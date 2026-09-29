@@ -48,7 +48,6 @@ class whip_media_receiver final
    private:
     int on_demuxed_packet(avpacket_t* packet);
     bool update_video_track(const avpacket_t& packet);
-    bool publish_stream();
     bool apply_sender_report(rtsp_demuxer_t* demuxer);
 
    private:
@@ -70,7 +69,6 @@ class whip_media_receiver final
         std::int64_t pts{};
     };
     std::optional<rtcp_sync> rtcp_sync_;
-    bool published_{};
     bool closed_{};
 };
 

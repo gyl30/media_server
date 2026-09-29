@@ -53,7 +53,7 @@ class rtsp_pull_media final
    private:
     int on_demuxed_packet(avpacket_t* packet);
     [[nodiscard]] int update_track_from_packet(const avpacket_t& packet);
-    [[nodiscard]] int try_publish_stream();
+    [[nodiscard]] int register_stream_if_ready();
 
    private:
     worker_context& worker_;

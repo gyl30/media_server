@@ -221,7 +221,6 @@ void whip_media_receiver::shutdown()
     audio_track_.reset();
     video_ssrc_.reset();
     audio_ssrc_.reset();
-    published_ = false;
     rtcp_sync_.reset();
 }
 
@@ -272,11 +271,22 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
 
     if (video)
     {
-        if (!published_ && video_track_ && !publish_stream())
+        if (media_stream_->tracks().empty() && video_track_)
         {
-            return -1;
+            std::vector<media_track> tracks;
+            tracks.push_back(*video_track_);
+            if (audio_track_)
+            {
+                tracks.push_back(*audio_track_);
+            }
+            if (!media_stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(media_stream_))
+            {
+                return -1;
+            }
+            video_track_.reset();
+            audio_track_.reset();
         }
-        if (published_)
+        if (!media_stream_->tracks().empty())
         {
             media_stream_->publish(frame);
         }
@@ -288,7 +298,7 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
     {
         return -1;
     }
-    if (published_)
+    if (!media_stream_->tracks().empty())
     {
         for (auto& encoded : output)
         {
@@ -309,7 +319,7 @@ bool whip_media_receiver::update_video_track(const avpacket_t& packet)
     {
         return false;
     }
-    if (published_)
+    if (!media_stream_->tracks().empty())
     {
         const auto fixed = std::ranges::find_if(media_stream_->tracks(), [](const media_track& value) { return value.id == video_track_id; });
         return fixed != media_stream_->tracks().end() && fixed->codec == track->codec && fixed->clock_rate == track->clock_rate &&
@@ -325,29 +335,6 @@ bool whip_media_receiver::update_video_track(const avpacket_t& packet)
     video_track_ = std::move(*track);
     avpkt2bs_destroy(&bitstream_);
     avpkt2bs_create(&bitstream_);
-    return true;
-}
-
-bool whip_media_receiver::publish_stream()
-{
-    if (published_ || !video_track_)
-    {
-        return published_;
-    }
-
-    std::vector<media_track> tracks;
-    tracks.push_back(*video_track_);
-    if (audio_track_)
-    {
-        tracks.push_back(*audio_track_);
-    }
-    if (!media_stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(media_stream_))
-    {
-        return false;
-    }
-    published_ = true;
-    video_track_.reset();
-    audio_track_.reset();
     return true;
 }
 
