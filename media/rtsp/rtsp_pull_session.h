@@ -13,7 +13,7 @@
 #include <boost/asio.hpp>
 
 #include "media/net/tcp_write_queue.h"
-#include "media/control/control_session_registry.h"
+#include "media/core/session_registry.h"
 #include "media/net/tcp_yield_transport.h"
 
 extern "C"
@@ -29,7 +29,7 @@ namespace media_server
 class worker_context;
 class rtsp_pull_media;
 
-class rtsp_pull_session final : public control_session, public std::enable_shared_from_this<rtsp_pull_session>
+class rtsp_pull_session final : public session, public std::enable_shared_from_this<rtsp_pull_session>
 {
    public:
     rtsp_pull_session(worker_context& worker,

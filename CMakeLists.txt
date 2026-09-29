@@ -219,13 +219,13 @@ add_library(media_core STATIC
     media/core/log.cpp
     media/core/media_stream.cpp
     media/core/stream_registry.cpp
-    media/control/control_session_registry.cpp
+    media/core/session_registry.cpp
     media/ps/mpeg_ps_output.cpp
     media/codec/audio_transcoder.cpp
     media/codec/codec_utils.cpp
     media/net/worker_context.cpp
-    media/net/io_context_pool.cpp
-    media/net/port_manager.cpp
+    media/net/worker_pool.cpp
+    media/net/media_port_pool.cpp
     media/net/tcp_write_queue.cpp
     media/net/tcp_yield_transport.cpp
     media/net/udp_yield_transport.cpp

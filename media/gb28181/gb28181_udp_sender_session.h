@@ -14,9 +14,9 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include "media/net/port_manager.h"
+#include "media/net/media_port_pool.h"
 #include "media/core/media_stream.h"
-#include "media/control/control_session_registry.h"
+#include "media/core/session_registry.h"
 #include "media/gb28181/gb28181_types.h"
 #include "media/net/udp_yield_transport.h"
 #include "media/net/worker_context.h"
@@ -26,7 +26,7 @@ namespace media_server
 
 class gb28181_rtp_sender;
 
-class gb28181_udp_sender_session final : public control_session, public std::enable_shared_from_this<gb28181_udp_sender_session>
+class gb28181_udp_sender_session final : public session, public std::enable_shared_from_this<gb28181_udp_sender_session>
 {
    public:
     gb28181_udp_sender_session(worker_context& worker,
@@ -43,7 +43,7 @@ class gb28181_udp_sender_session final : public control_session, public std::ena
     void shutdown();
 
    private:
-    [[nodiscard]] std::optional<port_manager::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
+    [[nodiscard]] std::optional<media_port_pool::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
     void shutdown_udp_transports();
     void run_rtp_write(boost::asio::yield_context yield);
     void schedule_rtcp();
@@ -68,7 +68,7 @@ class gb28181_udp_sender_session final : public control_session, public std::ena
     std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
     std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
-    std::optional<port_manager::port_pair> local_ports_;
+    std::optional<media_port_pool::port_pair> local_ports_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
     void* rtcp_sender_{};
     bool rtcp_enabled_{};

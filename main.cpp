@@ -2,7 +2,7 @@
 
 #include "config.h"
 #include "service.h"
-#include "media/net/port_manager.h"
+#include "media/net/media_port_pool.h"
 
 int main(int argc, char** argv)
 {
@@ -17,7 +17,7 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    media_server::port_manager::init(media_server::default_media_port_start, media_server::default_media_port_end);
+    media_server::media_port_pool::init(media_server::default_media_port_start, media_server::default_media_port_end);
     media_server::service service(std::move(cfg));
     return service.run();
 }

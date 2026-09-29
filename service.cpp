@@ -10,7 +10,7 @@
 
 #include "service.h"
 #include "media/core/log.h"
-#include "media/control/control_session_registry.h"
+#include "media/core/session_registry.h"
 #include "media/net/tcp_listener.h"
 #include "media/http/http_session.h"
 #include "media/hls/hls.h"
@@ -18,7 +18,7 @@
 #include "media/webrtc/whep.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
-#include "media/net/io_context_pool.h"
+#include "media/net/worker_pool.h"
 
 namespace media_server
 {
@@ -27,7 +27,7 @@ namespace
 {
 
 template <typename StartSession>
-bool start_tcp_listener(io_context_pool& workers,
+bool start_tcp_listener(worker_pool& workers,
                         boost::asio::ip::address bind_address,
                         std::uint16_t port,
                         StartSession start_session,
@@ -70,7 +70,7 @@ void service::stop()
 {
     whip::shutdown();
     whep::shutdown();
-    control_session_registry::instance().shutdown_all();
+    session_registry::instance().shutdown_all();
     workers_->request_stop();
 }
 
@@ -151,7 +151,7 @@ int service::run()
         return 1;
     }
 
-    workers_ = std::make_unique<io_context_pool>(config_.threads);
+    workers_ = std::make_unique<worker_pool>(config_.threads);
     auto& control_worker = workers_->context(0);
     hls::startup(control_worker);
     auto& control_io = control_worker.io();

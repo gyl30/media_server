@@ -228,7 +228,7 @@ void rtsp_pull_session::safe_shutdown()
     write_queue_.stop();
     started_ = false;
     media_started_ = false;
-    control_session_registry::instance().remove_receiver_session(stream_name_, *this);
+    session_registry::instance().remove_receiver_session(stream_name_, *this);
     if (media_)
     {
         media_->shutdown();

@@ -1,5 +1,5 @@
-#ifndef MEDIA_NET_IO_CONTEXT_POOL_H
-#define MEDIA_NET_IO_CONTEXT_POOL_H
+#ifndef MEDIA_NET_WORKER_POOL_H
+#define MEDIA_NET_WORKER_POOL_H
 
 #include <atomic>
 #include <memory>
@@ -13,10 +13,10 @@
 namespace media_server
 {
 
-class io_context_pool final
+class worker_pool final
 {
    public:
-    explicit io_context_pool(std::size_t size);
+    explicit worker_pool(std::size_t size);
 
    public:
     [[nodiscard]] std::size_t size() const noexcept;

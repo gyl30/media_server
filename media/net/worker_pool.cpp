@@ -1,11 +1,11 @@
 #include <thread>
 
-#include "media/net/io_context_pool.h"
+#include "media/net/worker_pool.h"
 
 namespace media_server
 {
 
-io_context_pool::io_context_pool(std::size_t size)
+worker_pool::worker_pool(std::size_t size)
 {
     contexts_.reserve(size);
     for (std::size_t index = 0; index < size; ++index)
@@ -14,17 +14,17 @@ io_context_pool::io_context_pool(std::size_t size)
     }
 }
 
-std::size_t io_context_pool::size() const noexcept { return contexts_.size(); }
+std::size_t worker_pool::size() const noexcept { return contexts_.size(); }
 
-worker_context& io_context_pool::context(std::size_t index) noexcept { return *contexts_[index]; }
+worker_context& worker_pool::context(std::size_t index) noexcept { return *contexts_[index]; }
 
-worker_context& io_context_pool::next() noexcept
+worker_context& worker_pool::next() noexcept
 {
     const auto index = next_.fetch_add(1U, std::memory_order_relaxed) % contexts_.size();
     return *contexts_[index];
 }
 
-void io_context_pool::request_stop()
+void worker_pool::request_stop()
 {
     for (const auto& context : contexts_)
     {
@@ -32,7 +32,7 @@ void io_context_pool::request_stop()
     }
 }
 
-void io_context_pool::run()
+void worker_pool::run()
 {
     std::vector<std::thread> threads;
     threads.reserve(contexts_.size() - 1U);

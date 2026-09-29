@@ -16,7 +16,7 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "media/net/port_manager.h"
+#include "media/net/media_port_pool.h"
 #include "media/net/udp_yield_transport.h"
 #include "media/rtsp/rtsp_publish_media.h"
 
@@ -50,7 +50,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
         std::optional<udp_yield_transport> rtcp_transport;
         boost::asio::ip::udp::endpoint rtp_endpoint;
         boost::asio::ip::udp::endpoint rtcp_endpoint;
-        std::optional<port_manager::port_pair> local_ports;
+        std::optional<media_port_pool::port_pair> local_ports;
     };
 
    private:

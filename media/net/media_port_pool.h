@@ -1,5 +1,5 @@
-#ifndef MEDIA_NET_PORT_MANAGER_H
-#define MEDIA_NET_PORT_MANAGER_H
+#ifndef MEDIA_NET_MEDIA_PORT_POOL_H
+#define MEDIA_NET_MEDIA_PORT_POOL_H
 
 #include <set>
 #include <mutex>
@@ -15,7 +15,7 @@ namespace media_server
 
 class udp_yield_transport;
 
-class port_manager final
+class media_port_pool final
 {
    public:
     struct port_pair
@@ -26,7 +26,7 @@ class port_manager final
 
    public:
     static void init(int start_port, int end_port);
-    [[nodiscard]] static port_manager& instance();
+    [[nodiscard]] static media_port_pool& instance();
 
     [[nodiscard]] std::optional<std::uint16_t> acquire_and_bind(udp_yield_transport& transport,
                                                                 const boost::asio::ip::address& bind_address,
@@ -40,13 +40,13 @@ class port_manager final
     void release(port_pair pair);
 
    private:
-    port_manager(int start_port, int end_port);
+    media_port_pool(int start_port, int end_port);
 
     [[nodiscard]] std::optional<std::uint16_t> reserve();
     [[nodiscard]] std::optional<port_pair> reserve_pair();
 
    private:
-    static std::unique_ptr<port_manager> instance_;
+    static std::unique_ptr<media_port_pool> instance_;
 
    private:
     std::uint16_t start_port_{};

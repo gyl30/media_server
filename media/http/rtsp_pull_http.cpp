@@ -11,7 +11,7 @@
 
 #include "media/http/rtsp_pull_http.h"
 #include "media/core/stream_registry.h"
-#include "media/control/control_session_registry.h"
+#include "media/core/session_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
 namespace media_server
@@ -195,13 +195,13 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
                                                        std::chrono::milliseconds{15'000},
                                                        std::chrono::milliseconds{15'000},
                                                        1024U * 1024U);
-    if (!control_session_registry::instance().add_receiver_session(stream_name, std::move(config.stream_id), session))
+    if (!session_registry::instance().add_receiver_session(stream_name, std::move(config.stream_id), session))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
     }
     if (!session->startup())
     {
-        control_session_registry::instance().remove_receiver_session(stream_name, *session);
+        session_registry::instance().remove_receiver_session(stream_name, *session);
         session->shutdown();
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
@@ -237,7 +237,7 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = control_session_registry::instance().take_receiver_session_as<rtsp_pull_session>(identity->stream_name, identity->stream_id);
+    auto session = session_registry::instance().take_receiver_session_as<rtsp_pull_session>(identity->stream_name, identity->stream_id);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");

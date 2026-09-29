@@ -8,7 +8,7 @@
 namespace media_server
 {
 
-class io_context_pool;
+class worker_pool;
 
 class service
 {
@@ -25,7 +25,7 @@ class service
 
    private:
     config config_;
-    std::unique_ptr<io_context_pool> workers_;
+    std::unique_ptr<worker_pool> workers_;
 };
 
 }    // namespace media_server

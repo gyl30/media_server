@@ -10,7 +10,7 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
 
-#include "media/net/port_manager.h"
+#include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whip_session.h"
@@ -75,7 +75,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer)
     }
 
     boost::system::error_code udp_error;
-    const auto reserved = port_manager::instance().acquire_and_bind(udp_transport_, advertised_address_, udp_error);
+    const auto reserved = media_port_pool::instance().acquire_and_bind(udp_transport_, advertised_address_, udp_error);
     if (!reserved)
     {
         spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
@@ -177,7 +177,7 @@ void whip_session::safe_shutdown()
     local_port_ = 0;
     if (local_port_reservation_ != 0)
     {
-        port_manager::instance().release(local_port_reservation_);
+        media_port_pool::instance().release(local_port_reservation_);
         local_port_reservation_ = 0;
     }
 

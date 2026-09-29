@@ -46,10 +46,10 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
 {
 }
 
-std::optional<port_manager::port_pair> gb28181_udp_sender_session::prepare_udp_transports(boost::asio::ip::address bind_address)
+std::optional<media_port_pool::port_pair> gb28181_udp_sender_session::prepare_udp_transports(boost::asio::ip::address bind_address)
 {
     boost::system::error_code network_error;
-    return port_manager::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address, network_error);
+    return media_port_pool::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address, network_error);
 }
 
 void gb28181_udp_sender_session::shutdown_udp_transports()
@@ -58,7 +58,7 @@ void gb28181_udp_sender_session::shutdown_udp_transports()
     rtcp_transport_.shutdown();
     if (local_ports_)
     {
-        port_manager::instance().release(*local_ports_);
+        media_port_pool::instance().release(*local_ports_);
         local_ports_.reset();
     }
 }
@@ -263,7 +263,7 @@ void gb28181_udp_sender_session::safe_shutdown()
     }
     closed_ = true;
     shutdown_subscription_.reset();
-    control_session_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
+    session_registry::instance().remove_sender_session(stream_name_, sender_id_, *this);
     rtcp_timer_.cancel();
     if (sender_)
     {

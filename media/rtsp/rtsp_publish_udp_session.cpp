@@ -134,7 +134,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     state.rtcp_transport.emplace(worker_.io());
 
     boost::system::error_code network_error;
-    const auto reserved = port_manager::instance().acquire_pair_and_bind(
+    const auto reserved = media_port_pool::instance().acquire_pair_and_bind(
         *state.rtp_transport, *state.rtcp_transport, bind_address_, network_error);
     if (!reserved)
     {
@@ -155,7 +155,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
             state.rtcp_transport.reset();
             state.rtp_endpoint = {};
             state.rtcp_endpoint = {};
-            port_manager::instance().release(local_ports);
+            media_port_pool::instance().release(local_ports);
         });
 
     state.rtp_transport->connect(state.rtp_endpoint, network_error);
@@ -270,7 +270,7 @@ void rtsp_publish_udp_session::safe_shutdown()
         }
         if (state.local_ports)
         {
-            port_manager::instance().release(*state.local_ports);
+            media_port_pool::instance().release(*state.local_ports);
             state.local_ports.reset();
         }
     }

@@ -6,24 +6,24 @@
 #include <boost/asio/error.hpp>
 #include <boost/scope/scope_exit.hpp>
 
-#include "media/net/port_manager.h"
+#include "media/net/media_port_pool.h"
 #include "media/net/udp_yield_transport.h"
 
 namespace media_server
 {
 
-std::unique_ptr<port_manager> port_manager::instance_;
+std::unique_ptr<media_port_pool> media_port_pool::instance_;
 
-void port_manager::init(int start_port, int end_port)
+void media_port_pool::init(int start_port, int end_port)
 {
     if (instance_)
     {
         std::terminate();
     }
-    instance_.reset(new port_manager(start_port, end_port));
+    instance_.reset(new media_port_pool(start_port, end_port));
 }
 
-port_manager& port_manager::instance()
+media_port_pool& media_port_pool::instance()
 {
     if (!instance_)
     {
@@ -32,7 +32,7 @@ port_manager& port_manager::instance()
     return *instance_;
 }
 
-port_manager::port_manager(int start_port, int end_port)
+media_port_pool::media_port_pool(int start_port, int end_port)
 {
     if (start_port <= 0 || start_port > end_port || end_port > std::numeric_limits<std::uint16_t>::max())
     {
@@ -48,7 +48,7 @@ port_manager::port_manager(int start_port, int end_port)
     }
 }
 
-std::optional<std::uint16_t> port_manager::reserve()
+std::optional<std::uint16_t> media_port_pool::reserve()
 {
     std::scoped_lock lock(mutex_);
     const auto candidate_count = static_cast<std::uint32_t>(end_port_) - start_port_ + 1U;
@@ -65,7 +65,7 @@ std::optional<std::uint16_t> port_manager::reserve()
     return std::nullopt;
 }
 
-std::optional<port_manager::port_pair> port_manager::reserve_pair()
+std::optional<media_port_pool::port_pair> media_port_pool::reserve_pair()
 {
     std::scoped_lock lock(mutex_);
     std::uint32_t first_candidate = start_port_;
@@ -96,7 +96,7 @@ std::optional<port_manager::port_pair> port_manager::reserve_pair()
     return std::nullopt;
 }
 
-std::optional<std::uint16_t> port_manager::acquire_and_bind(udp_yield_transport& transport,
+std::optional<std::uint16_t> media_port_pool::acquire_and_bind(udp_yield_transport& transport,
                                                             const boost::asio::ip::address& bind_address,
                                                             boost::system::error_code& error)
 {
@@ -132,7 +132,7 @@ std::optional<std::uint16_t> port_manager::acquire_and_bind(udp_yield_transport&
     }
 }
 
-std::optional<port_manager::port_pair> port_manager::acquire_pair_and_bind(udp_yield_transport& rtp_transport,
+std::optional<media_port_pool::port_pair> media_port_pool::acquire_pair_and_bind(udp_yield_transport& rtp_transport,
                                                                            udp_yield_transport& rtcp_transport,
                                                                            const boost::asio::ip::address& bind_address,
                                                                            boost::system::error_code& error)
@@ -176,13 +176,13 @@ std::optional<port_manager::port_pair> port_manager::acquire_pair_and_bind(udp_y
     }
 }
 
-void port_manager::release(std::uint16_t port)
+void media_port_pool::release(std::uint16_t port)
 {
     std::scoped_lock lock(mutex_);
     reserved_.erase(port);
 }
 
-void port_manager::release(port_pair pair)
+void media_port_pool::release(port_pair pair)
 {
     std::scoped_lock lock(mutex_);
     reserved_.erase(pair.first);
