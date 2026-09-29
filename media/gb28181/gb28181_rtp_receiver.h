@@ -59,7 +59,7 @@ class gb28181_rtp_receiver final
 
     int on_demuxed_packet(avpacket_t* packet);
     void on_stream(int codecid, bool finish);
-    [[nodiscard]] bool apply_topology();
+    [[nodiscard]] bool apply_topology(const ps_topology& topology);
     [[nodiscard]] int update_track_from_packet(const avpacket_t& packet);
     [[nodiscard]] int try_publish_stream();
 
@@ -72,12 +72,15 @@ class gb28181_rtp_receiver final
     std::shared_ptr<media_stream> stream_;
     avpkt2bs_t bitstream_{};
     ps_topology pending_topology_;
+    std::optional<ps_topology> announced_topology_;
     std::optional<codec_id> video_codec_;
     std::optional<codec_id> audio_codec_;
     std::optional<media_track> video_track_;
     std::optional<media_track> audio_track_;
+    std::optional<int> video_stream_;
+    std::optional<int> audio_stream_;
+    int* current_input_result_{};
     bool recording_{};
-    bool demux_error_{};
     bool closed_{};
 };
 

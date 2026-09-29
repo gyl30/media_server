@@ -110,10 +110,12 @@ gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std
         return gb28181_rtp_receive_result::ignored;
     }
 
-    demux_error_ = false;
+    int packet_result = 0;
+    current_input_result_ = &packet_result;
     const auto result = rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size()));
-    const auto callback_error = std::exchange(demux_error_, false);
-    return result < 0 || callback_error ? gb28181_rtp_receive_result::fatal : gb28181_rtp_receive_result::accepted;
+    current_input_result_ = nullptr;
+    return result < 0 || packet_result < 0 ? gb28181_rtp_receive_result::fatal
+                                           : gb28181_rtp_receive_result::accepted;
 }
 
 int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
@@ -161,9 +163,9 @@ int gb28181_rtp_receiver::packet_callback(void* param, avpacket_t* packet)
 {
     auto* receiver = static_cast<gb28181_rtp_receiver*>(param);
     const auto result = receiver->on_demuxed_packet(packet);
-    if (result < 0)
+    if (result < 0 && receiver->current_input_result_ != nullptr)
     {
-        receiver->demux_error_ = true;
+        *receiver->current_input_result_ = result;
     }
     return result;
 }
@@ -175,7 +177,7 @@ void gb28181_rtp_receiver::stream_callback(void* param, int, int codecid, const 
 
 void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
 {
-    if (closed_ || demux_error_)
+    if (closed_)
     {
         return;
     }
@@ -209,14 +211,14 @@ void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
 
     if (finish)
     {
-        demux_error_ = !apply_topology();
+        announced_topology_ = pending_topology_;
         pending_topology_ = {};
     }
 }
 
-bool gb28181_rtp_receiver::apply_topology()
+bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
 {
-    if (pending_topology_.invalid || !pending_topology_.video)
+    if (topology.invalid || !topology.video)
     {
         spdlog::warn("gb28181 unsupported ps topology stream {}", stream_name_);
         return false;
@@ -224,7 +226,7 @@ bool gb28181_rtp_receiver::apply_topology()
 
     if (video_codec_)
     {
-        if (video_codec_ != pending_topology_.video || audio_codec_ != pending_topology_.audio)
+        if (video_codec_ != topology.video || audio_codec_ != topology.audio)
         {
             spdlog::warn("gb28181 ps topology change stream {}", stream_name_);
             return false;
@@ -232,8 +234,8 @@ bool gb28181_rtp_receiver::apply_topology()
         return true;
     }
 
-    video_codec_ = pending_topology_.video;
-    audio_codec_ = pending_topology_.audio;
+    video_codec_ = topology.video;
+    audio_codec_ = topology.audio;
     video_track_ = media_track{.id = video_track_id,
                                .kind = media_kind::video,
                                .codec = *video_codec_,
@@ -256,9 +258,18 @@ bool gb28181_rtp_receiver::apply_topology()
 
 int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || closed_ || demux_error_)
+    if (packet == nullptr || packet->stream == nullptr || closed_)
     {
         return -1;
+    }
+
+    if (announced_topology_)
+    {
+        if (!apply_topology(*announced_topology_))
+        {
+            return -1;
+        }
+        announced_topology_.reset();
     }
 
     const auto codec = codec_from_avpacket(packet->stream->codecid);
@@ -279,6 +290,17 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     {
         spdlog::warn("gb28181 raw codec change stream {} codec {}", stream_name_, to_string(*codec));
         return -1;
+    }
+
+    auto& observed_stream = is_video(*codec) ? video_stream_ : audio_stream_;
+    if (observed_stream && *observed_stream != packet->stream->stream)
+    {
+        spdlog::warn("gb28181 multiple {} streams {}", to_string(is_video(*codec) ? media_kind::video : media_kind::audio), stream_name_);
+        return -1;
+    }
+    if (!observed_stream)
+    {
+        observed_stream = packet->stream->stream;
     }
 
     const auto track_result = update_track_from_packet(*packet);
