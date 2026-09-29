@@ -184,17 +184,7 @@ void whip_session::safe_shutdown()
 
 const std::string& whip_session::id() const noexcept { return id_; }
 
-const std::string& whip_session::stream_name() const noexcept { return stream_name_; }
-
 const std::string& whip_session::answer_sdp() const noexcept { return answer_.sdp; }
-
-std::uint16_t whip_session::local_port() const noexcept { return local_port_reservation_; }
-
-bool whip_session::ice_connected() const noexcept { return remote_endpoint_.has_value(); }
-
-bool whip_session::dtls_connected() const noexcept { return dtls_ != nullptr && dtls_->connected(); }
-
-bool whip_session::srtp_started() const noexcept { return srtp_ != nullptr && media_receiver_ != nullptr; }
 
 void whip_session::run_udp(boost::asio::yield_context yield)
 {
@@ -531,7 +521,7 @@ void whip_session::startup_establishment_timeout()
     establishment_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || !self->started_ || self->srtp_started())
+            if (error || !self->started_ || (self->srtp_ && self->media_receiver_))
             {
                 return;
             }

@@ -60,10 +60,6 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
    public:
     [[nodiscard]] const std::string& id() const noexcept;
     [[nodiscard]] const std::string& answer_sdp() const noexcept;
-    [[nodiscard]] std::uint16_t local_port() const noexcept;
-    [[nodiscard]] bool ice_connected() const noexcept;
-    [[nodiscard]] bool dtls_connected() const noexcept;
-    [[nodiscard]] bool srtp_started() const noexcept;
 
    public:
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }

@@ -37,8 +37,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     void shutdown();
 
    public:
-    [[nodiscard]] const std::string& stream_name() const noexcept { return stream_->name(); }
-
    public:
     int on_video(const void* data, std::size_t bytes, std::uint32_t timestamp);
     int on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp);

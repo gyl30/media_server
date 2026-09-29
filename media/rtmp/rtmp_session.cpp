@@ -119,7 +119,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     rtmp_context_ = nullptr;
     rtmp_server_destroy(context);
     safe_shutdown();
-    spdlog::debug("rtmp shutdown {}", stream_name_);
+    spdlog::debug("rtmp shutdown");
 }
 
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
@@ -267,8 +267,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
         return -1;
     }
 
-    stream_name_ = *target;
-    auto media = stream_registry::instance().find(stream_name_);
+    auto media = stream_registry::instance().find(*target);
     if (!media)
     {
         return -1;
@@ -301,7 +300,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
                               self->play_->startup();
                           }
                       });
-    spdlog::info("rtmp play {}", stream_name_);
+    spdlog::info("rtmp play {}", *target);
     return 0;
 }
 
@@ -323,9 +322,8 @@ int rtmp_session::on_publish(std::string app, std::string stream)
         return -1;
     }
 
-    stream_name_ = *target;
     const auto self = shared_from_this();
-    auto publish = std::make_shared<rtmp_publish_session>(worker_, stream_name_, initial_tracks_timeout_, [self]() { self->shutdown(); });
+    auto publish = std::make_shared<rtmp_publish_session>(worker_, *target, initial_tracks_timeout_, [self]() { self->shutdown(); });
     if (!publish->startup())
     {
         publish->shutdown();
@@ -333,7 +331,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     }
 
     publish_ = std::move(publish);
-    spdlog::info("rtmp publish {}", stream_name_);
+    spdlog::info("rtmp publish {}", *target);
     return 0;
 }
 

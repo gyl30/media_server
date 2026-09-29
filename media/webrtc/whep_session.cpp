@@ -243,14 +243,6 @@ const std::string& whep_session::id() const noexcept { return id_; }
 
 const std::string& whep_session::answer_sdp() const noexcept { return answer_.sdp; }
 
-std::uint16_t whep_session::local_port() const noexcept { return local_port_reservation_; }
-
-bool whep_session::ice_connected() const noexcept { return remote_endpoint_.has_value(); }
-
-bool whep_session::dtls_connected() const noexcept { return dtls_ != nullptr && dtls_->connected(); }
-
-bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
-
 void whep_session::on_frame(const media_frame& frame)
 {
     if (!started_ || !packetizer_)
@@ -681,7 +673,7 @@ void whep_session::startup_establishment_timeout()
     establishment_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || !self->started_ || self->srtp_started())
+            if (error || !self->started_ || self->srtp_)
             {
                 return;
             }
