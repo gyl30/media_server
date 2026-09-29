@@ -23,13 +23,10 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
                                                                   std::string stream_name,
                                                                   std::shared_ptr<hls_segmenter> segmenter);
     [[nodiscard]] static std::shared_ptr<hls_play_session> find(std::string_view secret, std::string_view stream_name);
-    static void shutdown_all();
-
-    [[nodiscard]] const std::string& stream_name() const noexcept { return stream_name_; }
     [[nodiscard]] const std::string& secret() const noexcept { return secret_; }
     [[nodiscard]] const std::shared_ptr<hls_segmenter>& segmenter() const noexcept { return segmenter_; }
 
-    [[nodiscard]] bool refresh();
+    void refresh();
 
    private:
     hls_play_session(

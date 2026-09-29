@@ -279,7 +279,7 @@ void hls_http_session::response_completed(const boost::system::error_code& error
 {
     if (!error && viewer)
     {
-        static_cast<void>(viewer->refresh());
+        viewer->refresh();
     }
     if (error || closed_ || !keep_alive)
     {

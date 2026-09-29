@@ -28,7 +28,6 @@ constexpr std::size_t max_segment_bytes = 16U * 1024U * 1024U;
 hls_segmenter::hls_segmenter(hls_config config)
     : target_duration_seconds_(config.target_duration_seconds), window_size_(config.window_size)
 {
-    recreate_muxer();
 }
 
 void hls_segmenter::process_frame(const media_frame& frame)
@@ -67,7 +66,15 @@ void hls_segmenter::process_frame(const media_frame& frame)
     if (segment_boundary && !current_segment_.empty())
     {
         finish_segment(frame.pts_ns);
-        recreate_muxer();
+        if (!recreate_muxer(tracks_))
+        {
+            spdlog::error("hls ts muxer recreation failed");
+            mpeg_ts_destroy(muxer_);
+            muxer_ = nullptr;
+            stream_ids_.clear();
+            ended_at_ = std::chrono::steady_clock::now();
+            return;
+        }
         segment_start_pts_ns_ = frame.pts_ns;
         segment_max_pts_ns_ = frame.pts_ns;
     }
@@ -117,19 +124,20 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
     {
         return false;
     }
+    std::map<track_id, media_track> tracks;
+    bool has_video = false;
+    for (const auto& track : source->tracks())
     {
-        std::scoped_lock lock(mutex_);
-        for (const auto& track : source->tracks())
-        {
-            tracks_.emplace(track.id, track);
-            const auto stream_id = add_track_to_muxer(track);
-            if (stream_id <= 0)
-            {
-                return false;
-            }
-            stream_ids_.insert_or_assign(track.id, stream_id);
-        }
+        tracks.emplace(track.id, track);
+        has_video = has_video || track.kind == media_kind::video;
     }
+    std::scoped_lock lock(mutex_);
+    if (!recreate_muxer(tracks))
+    {
+        return false;
+    }
+    tracks_ = std::move(tracks);
+    waiting_for_key_frame_ = has_video;
     source_ = source;
     source->add_sink(shared_from_this());
     return true;
@@ -181,12 +189,6 @@ std::string hls_segmenter::playlist(std::string_view base_path, std::string_view
     return output.str();
 }
 
-std::optional<std::vector<std::uint8_t>> hls_segmenter::segment(std::uint64_t sequence) const
-{
-    const auto buffer = segment_buffer(sequence);
-    return buffer ? std::optional<std::vector<std::uint8_t>>(*buffer) : std::nullopt;
-}
-
 std::shared_ptr<const std::vector<std::uint8_t>> hls_segmenter::segment_buffer(std::uint64_t sequence) const
 {
     std::scoped_lock lock(mutex_);
@@ -222,27 +224,36 @@ int hls_segmenter::ts_write(void* param, const void* packet, std::size_t bytes)
     return 0;
 }
 
-void hls_segmenter::recreate_muxer()
+bool hls_segmenter::recreate_muxer(const std::map<track_id, media_track>& tracks)
 {
-    if (muxer_ != nullptr)
-    {
-        mpeg_ts_destroy(muxer_);
-    }
     const mpeg_ts_func_t functions{
         .alloc = &hls_segmenter::ts_alloc,
         .free = &hls_segmenter::ts_free,
         .write = &hls_segmenter::ts_write,
     };
-    muxer_ = mpeg_ts_create(&functions, this);
-    stream_ids_.clear();
-    for (const auto& [id, track] : tracks_)
+    auto* muxer = mpeg_ts_create(&functions, this);
+    if (muxer == nullptr)
     {
-        const auto stream_id = add_track_to_muxer(track);
-        if (stream_id > 0)
-        {
-            stream_ids_.insert_or_assign(id, stream_id);
-        }
+        return false;
     }
+    std::map<track_id, int> stream_ids;
+    for (const auto& [id, track] : tracks)
+    {
+        const auto stream_id = add_track_to_muxer(muxer, track);
+        if (stream_id <= 0)
+        {
+            mpeg_ts_destroy(muxer);
+            return false;
+        }
+        stream_ids.emplace(id, stream_id);
+    }
+    if (muxer_ != nullptr)
+    {
+        mpeg_ts_destroy(muxer_);
+    }
+    muxer_ = muxer;
+    stream_ids_ = std::move(stream_ids);
+    return true;
 }
 
 void hls_segmenter::finish_segment(std::int64_t end_pts_ns)
@@ -275,30 +286,37 @@ void hls_segmenter::finish_segment(std::int64_t end_pts_ns)
 void hls_segmenter::discard_segment()
 {
     spdlog::warn("hls discarding unfinished segment {}", next_sequence_);
-    recreate_muxer();
+    if (!recreate_muxer(tracks_))
+    {
+        spdlog::error("hls ts muxer recreation failed");
+        mpeg_ts_destroy(muxer_);
+        muxer_ = nullptr;
+        stream_ids_.clear();
+        ended_at_ = std::chrono::steady_clock::now();
+    }
     std::vector<std::uint8_t>().swap(current_segment_);
     segment_start_pts_ns_.reset();
     segment_max_pts_ns_ = 0;
     waiting_for_key_frame_ = true;
 }
 
-int hls_segmenter::add_track_to_muxer(const media_track& track)
+int hls_segmenter::add_track_to_muxer(void* muxer, const media_track& track)
 {
     switch (track.codec)
     {
         case codec_id::h264:
-            return mpeg_ts_add_stream(muxer_, PSI_STREAM_H264, nullptr, 0);
+            return mpeg_ts_add_stream(muxer, PSI_STREAM_H264, nullptr, 0);
         case codec_id::h265:
-            return mpeg_ts_add_stream(muxer_, PSI_STREAM_H265, nullptr, 0);
+            return mpeg_ts_add_stream(muxer, PSI_STREAM_H265, nullptr, 0);
         case codec_id::aac:
-            return mpeg_ts_add_stream(muxer_, PSI_STREAM_AAC, nullptr, 0);
+            return mpeg_ts_add_stream(muxer, PSI_STREAM_AAC, nullptr, 0);
         case codec_id::g711a:
             return track.clock_rate == 8'000 && track.channel_count == 1 && track.codec_config.empty()
-                       ? mpeg_ts_add_stream(muxer_, PSI_STREAM_AUDIO_G711A, nullptr, 0)
+                       ? mpeg_ts_add_stream(muxer, PSI_STREAM_AUDIO_G711A, nullptr, 0)
                        : -1;
         case codec_id::g711u:
             return track.clock_rate == 8'000 && track.channel_count == 1 && track.codec_config.empty()
-                       ? mpeg_ts_add_stream(muxer_, PSI_STREAM_AUDIO_G711U, nullptr, 0)
+                       ? mpeg_ts_add_stream(muxer, PSI_STREAM_AUDIO_G711U, nullptr, 0)
                        : -1;
         case codec_id::opus:
             return -1;

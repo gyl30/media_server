@@ -113,7 +113,6 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name)
 
 void shutdown()
 {
-    hls_play_session::shutdown_all();
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
     for (auto& [stream_name, value] : current.segmenters)

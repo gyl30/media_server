@@ -45,7 +45,6 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
     void on_end() override;
 
     [[nodiscard]] std::string playlist(std::string_view base_path, std::string_view query = {}) const;
-    [[nodiscard]] std::optional<std::vector<std::uint8_t>> segment(std::uint64_t sequence) const;
     [[nodiscard]] std::shared_ptr<const std::vector<std::uint8_t>> segment_buffer(std::uint64_t sequence) const;
     [[nodiscard]] std::size_t segment_count() const;
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ended_at() const;
@@ -54,10 +53,10 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
     static void* ts_alloc(void* param, std::size_t bytes);
     static void ts_free(void* param, void* packet);
     static int ts_write(void* param, const void* packet, std::size_t bytes);
-    void recreate_muxer();
+    [[nodiscard]] bool recreate_muxer(const std::map<track_id, media_track>& tracks);
     void discard_segment();
     void finish_segment(std::int64_t end_pts_ns);
-    [[nodiscard]] int add_track_to_muxer(const media_track& track);
+    [[nodiscard]] static int add_track_to_muxer(void* muxer, const media_track& track);
     void process_frame(const media_frame& frame);
     void finish();
 
