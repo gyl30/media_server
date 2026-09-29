@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <vector>
 #include <utility>
 
@@ -314,6 +315,18 @@ bool gb28181_rtp_receiver::validate_track_from_packet(const avpacket_t& packet)
         return false;
     }
 
+    if (recording_)
+    {
+        const auto fixed = std::ranges::find_if(stream_->tracks(), [&track](const media_track& value) { return value.id == track->id; });
+        if (fixed == stream_->tracks().end() || fixed->codec != track->codec || fixed->clock_rate != track->clock_rate ||
+            fixed->channel_count != track->channel_count || fixed->codec_config != track->codec_config)
+        {
+            spdlog::warn("gb28181 track config changed stream {}", stream_name_);
+            fatal_codec_change_ = true;
+        }
+        return false;
+    }
+
     auto& current = track->kind == media_kind::video ? video_track_ : audio_track_;
     if (!current)
     {
@@ -328,12 +341,6 @@ bool gb28181_rtp_receiver::validate_track_from_packet(const avpacket_t& packet)
         current->clock_rate != track->clock_rate || current->channel_count != track->channel_count || current->codec_config != track->codec_config;
     if (!changed)
     {
-        return false;
-    }
-    if (recording_)
-    {
-        spdlog::warn("gb28181 track config changed stream {}", stream_name_);
-        fatal_codec_change_ = true;
         return false;
     }
     current = *track;
@@ -365,6 +372,8 @@ bool gb28181_rtp_receiver::try_start_recording()
         return false;
     }
     recording_ = true;
+    video_track_.reset();
+    audio_track_.reset();
     spdlog::info("gb28181 stream started {}", stream_name_);
     return true;
 }

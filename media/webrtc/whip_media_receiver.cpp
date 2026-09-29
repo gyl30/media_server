@@ -309,16 +309,18 @@ bool whip_media_receiver::update_video_track(const avpacket_t& packet)
     {
         return false;
     }
+    if (published_)
+    {
+        const auto fixed = std::ranges::find_if(media_stream_->tracks(), [](const media_track& value) { return value.id == video_track_id; });
+        return fixed != media_stream_->tracks().end() && fixed->codec == track->codec && fixed->clock_rate == track->clock_rate &&
+               fixed->channel_count == track->channel_count && fixed->codec_config == track->codec_config;
+    }
 
     const bool changed = !video_track_ || video_track_->clock_rate != track->clock_rate || video_track_->channel_count != track->channel_count ||
                          video_track_->codec_config != track->codec_config;
     if (!changed)
     {
         return true;
-    }
-    if (published_)
-    {
-        return false;
     }
     video_track_ = std::move(*track);
     avpkt2bs_destroy(&bitstream_);
@@ -344,6 +346,8 @@ bool whip_media_receiver::publish_stream()
         return false;
     }
     published_ = true;
+    video_track_.reset();
+    audio_track_.reset();
     return true;
 }
 
