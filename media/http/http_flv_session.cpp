@@ -25,8 +25,9 @@ http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_str
           {
               if (writer_ != nullptr)
               {
-                  flv_writer_input(writer_, type, data.data(), data.size(), timestamp);
+                  return flv_writer_input(writer_, type, data.data(), data.size(), timestamp);
               }
+              return -1;
           })
 {
 }
@@ -135,7 +136,10 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         {
             waiting_video_track_ = track.id;
         }
-        muxer_.on_track(track);
+        if (!muxer_.on_track(track))
+        {
+            return;
+        }
     }
     enqueue(std::move(output_buffer_));
     media_stream->add_sink(shared_from_this());
@@ -254,7 +258,11 @@ void http_flv_session::on_frame(const media_frame& entry)
         waiting_video_track_.reset();
     }
     output_buffer_.clear();
-    muxer_.on_frame(entry);
+    if (!muxer_.on_frame(entry))
+    {
+        safe_shutdown();
+        return;
+    }
     if (!output_buffer_.empty())
     {
         enqueue(std::move(output_buffer_));
@@ -266,7 +274,7 @@ int http_flv_session::writer_callback(void* param, const flv_vec_t* vectors, int
     auto* self = static_cast<http_flv_session*>(param);
     if (self->closed_ || vectors == nullptr || count <= 0)
     {
-        return 0;
+        return -1;
     }
 
     std::size_t bytes = 0;

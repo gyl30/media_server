@@ -281,16 +281,17 @@ int rtmp_session::on_play(std::string app, std::string stream)
         {
             if (self->rtmp_context_ == nullptr)
             {
-                return;
+                return -1;
             }
             if (type == FLV_TYPE_VIDEO)
             {
-                static_cast<void>(rtmp_server_send_video(self->rtmp_context_, data.data(), data.size(), timestamp));
+                return rtmp_server_send_video(self->rtmp_context_, data.data(), data.size(), timestamp);
             }
-            else if (type == FLV_TYPE_AUDIO)
+            if (type == FLV_TYPE_AUDIO)
             {
-                static_cast<void>(rtmp_server_send_audio(self->rtmp_context_, data.data(), data.size(), timestamp));
+                return rtmp_server_send_audio(self->rtmp_context_, data.data(), data.size(), timestamp);
             }
+            return 0;
         },
         [self]() { self->shutdown(); });
     boost::asio::post(worker_.io(), [self]()

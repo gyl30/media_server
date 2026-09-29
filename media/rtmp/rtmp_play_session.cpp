@@ -25,7 +25,12 @@ void rtmp_play_session::startup()
     }
     for (const auto& track : stream_->tracks())
     {
-        muxer_.on_track(track);
+        if (!muxer_.on_track(track))
+        {
+            shutdown();
+            end_handler_();
+            return;
+        }
         if (track.kind == media_kind::video)
         {
             waiting_video_track_ = track.id;
@@ -66,7 +71,11 @@ void rtmp_play_session::on_frame(const media_frame& frame)
         waiting_video_track_.reset();
     }
 
-    muxer_.on_frame(frame);
+    if (!muxer_.on_frame(frame))
+    {
+        shutdown();
+        end_handler_();
+    }
 }
 
 void rtmp_play_session::on_end()

@@ -17,19 +17,19 @@ namespace media_server
 class flv_muxer final
 {
    public:
-    using packet_handler = std::function<void(int, std::span<const std::uint8_t>, std::uint32_t)>;
+    using packet_handler = std::function<int(int, std::span<const std::uint8_t>, std::uint32_t)>;
 
     explicit flv_muxer(packet_handler handler);
 
    public:
     void shutdown();
-    void on_track(const media_track& track);
-    void on_frame(const media_frame& frame);
+    [[nodiscard]] bool on_track(const media_track& track);
+    [[nodiscard]] bool on_frame(const media_frame& frame);
 
    private:
     static int on_packet(void* param, int type, const void* data, std::size_t bytes, std::uint32_t timestamp);
 
-    void prime_video_config(const media_track& track, std::uint32_t timestamp);
+    [[nodiscard]] bool write_track_config(const media_track& track, std::uint32_t timestamp);
 
    private:
     packet_handler packet_handler_;
