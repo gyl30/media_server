@@ -86,7 +86,6 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_dtls(std::span<const std::uint8_t> packet);
     bool startup_media();
-    bool start_media_read();
     void send_rtp(std::span<const std::uint8_t> packet);
     void send_rtcp(std::span<const std::uint8_t> packet);
     void send_udp(std::vector<std::uint8_t> packet);
@@ -124,8 +123,6 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
     webrtc_answer answer_;
-    std::uint16_t local_port_{};
-    bool media_started_{};
     bool started_{};
 };
 

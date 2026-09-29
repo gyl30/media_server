@@ -222,7 +222,7 @@ void whip_media_receiver::shutdown()
     video_ssrc_.reset();
     audio_ssrc_.reset();
     published_ = false;
-    rtcp_synchronized_ = false;
+    rtcp_sync_.reset();
 }
 
 int whip_media_receiver::packet_callback(void* param, avpacket_t* packet)
@@ -359,17 +359,15 @@ bool whip_media_receiver::apply_sender_report(rtsp_demuxer_t* demuxer)
     }
 
     const auto ntp = (static_cast<std::uint64_t>(ntp_msw) << 32U) | ntp_lsw;
-    if (!rtcp_synchronized_)
+    if (!rtcp_sync_)
     {
-        rtcp_sync_ntp_ = ntp;
-        rtcp_sync_pts_ = pts;
-        rtcp_synchronized_ = true;
+        rtcp_sync_ = rtcp_sync{.ntp = ntp, .pts = pts};
     }
     else
     {
         constexpr std::int64_t ntp_fraction = std::int64_t{1} << 32U;
-        const auto delta = std::bit_cast<std::int64_t>(ntp - rtcp_sync_ntp_);
-        pts = rtcp_sync_pts_ + (delta / ntp_fraction) * 1'000 + (delta % ntp_fraction) * 1'000 / ntp_fraction;
+        const auto delta = std::bit_cast<std::int64_t>(ntp - rtcp_sync_->ntp);
+        pts = rtcp_sync_->pts + (delta / ntp_fraction) * 1'000 + (delta % ntp_fraction) * 1'000 / ntp_fraction;
     }
     return rtsp_demuxer_set_timestamp(demuxer, rtp_timestamp, pts) == 0;
 }

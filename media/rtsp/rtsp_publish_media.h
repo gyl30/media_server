@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <optional>
 
 #include "media/core/media_stream.h"
 
@@ -66,10 +67,13 @@ class rtsp_publish_media final
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> media_stream_;
     avpkt2bs_t bitstream_{};
-    std::uint64_t rtcp_sync_ntp_{};
-    std::int64_t rtcp_sync_pts_{};
+    struct rtcp_sync
+    {
+        std::uint64_t ntp{};
+        std::int64_t pts{};
+    };
+    std::optional<rtcp_sync> rtcp_sync_;
     bool recording_{};
-    bool rtcp_synchronized_{};
     bool protocol_error_{};
     bool closed_{};
 };

@@ -37,15 +37,12 @@ whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worke
 
 std::shared_ptr<media_stream> whep_audio_egress::stream() const noexcept { return output_; }
 
-whep_audio_egress::end_reason whep_audio_egress::reason() const noexcept { return reason_.load(std::memory_order_acquire); }
-
 bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_audio_settings settings)
 {
     std::vector<media_track> output_tracks;
     output_tracks.reserve(tracks.size());
     for (const auto& track : tracks)
     {
-        source_tracks_.emplace(track.id, track);
         auto output_track = track;
         if (track.codec == codec_id::aac)
         {
@@ -90,7 +87,7 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_aud
         return false;
     }
     const auto self = shared_from_this();
-    shutdown_subscription_ = worker_.subscribe_shutdown([self]() { self->finish(end_reason::worker_stopped); });
+    shutdown_subscription_ = worker_.subscribe_shutdown([self]() { self->finish(); });
     if (!shutdown_subscription_)
     {
         return false;
@@ -99,39 +96,9 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_aud
     return true;
 }
 
-bool whep_audio_egress::matches(const std::vector<media_track>& tracks) const
+void whep_audio_egress::finish()
 {
-    const auto prepared_tracks = output_->tracks();
-    if (reason() != end_reason::none || tracks.size() != source_tracks_.size() || prepared_tracks.size() != tracks.size())
-    {
-        return false;
-    }
-    return std::ranges::all_of(tracks,
-                               [this, &prepared_tracks](const media_track& track)
-                               {
-                                   const auto it = source_tracks_.find(track.id);
-                                   if (it == source_tracks_.end())
-                                   {
-                                       return false;
-                                   }
-                                   if (track.codec == codec_id::aac)
-                                   {
-                                       return it->second.kind == track.kind && it->second.codec == track.codec &&
-                                              it->second.clock_rate == track.clock_rate && it->second.channel_count == track.channel_count &&
-                                              it->second.codec_config == track.codec_config;
-                                   }
-                                   const auto prepared = std::ranges::find_if(prepared_tracks,
-                                                                              [&track](const media_track& value) { return value.id == track.id; });
-                                   return prepared != prepared_tracks.end() && prepared->kind == track.kind && prepared->codec == track.codec &&
-                                          prepared->clock_rate == track.clock_rate && prepared->channel_count == track.channel_count &&
-                                          prepared->codec_config == track.codec_config;
-                               });
-}
-
-void whep_audio_egress::finish(end_reason reason)
-{
-    auto expected = end_reason::none;
-    if (!reason_.compare_exchange_strong(expected, reason, std::memory_order_acq_rel))
+    if (finished_.exchange(true, std::memory_order_acq_rel))
     {
         return;
     }
@@ -147,12 +114,7 @@ void whep_audio_egress::finish(end_reason reason)
 
 void whep_audio_egress::on_frame(const media_frame& frame)
 {
-    if (reason() != end_reason::none)
-    {
-        return;
-    }
-    const auto track = source_tracks_.find(frame.track);
-    if (track == source_tracks_.end())
+    if (finished_.load(std::memory_order_acquire))
     {
         return;
     }
@@ -167,7 +129,7 @@ void whep_audio_egress::on_frame(const media_frame& frame)
     if (!transcoder->second->transcode(frame, encoded))
     {
         spdlog::error("whep shared audio transcode failed track {}", frame.track);
-        finish(end_reason::transcode_failed);
+        finish();
         return;
     }
     for (auto& encoded_frame : encoded)
@@ -178,7 +140,7 @@ void whep_audio_egress::on_frame(const media_frame& frame)
     }
 }
 
-void whep_audio_egress::on_end() { finish(end_reason::source_ended); }
+void whep_audio_egress::on_end() { finish(); }
 
 std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings)
@@ -187,13 +149,12 @@ std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     {
         return {};
     }
-    const auto tracks = source->tracks();
     const egress_key key{source.get(), settings.channels, settings.bitrate, settings.max_playback_rate};
     std::scoped_lock lock(egress_mutex);
     std::erase_if(egresses, [](const auto& entry) { return entry.second.expired(); });
     if (const auto it = egresses.find(key); it != egresses.end())
     {
-        if (auto existing = it->second.lock(); existing && existing->viewers_ != 0 && existing->matches(tracks))
+        if (auto existing = it->second.lock(); existing && existing->viewers_ != 0 && !existing->finished_.load(std::memory_order_acquire))
         {
             ++existing->viewers_;
             return existing;
@@ -201,9 +162,9 @@ std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     }
 
     auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, worker));
-    if (!created->startup(tracks, settings))
+    if (!created->startup(source->tracks(), settings))
     {
-        created->finish(whep_audio_egress::end_reason::transcode_failed);
+        created->finish();
         return {};
     }
     created->viewers_ = 1;
@@ -225,7 +186,7 @@ void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress)
             return;
         }
     }
-    if (released->reason() != whep_audio_egress::end_reason::none)
+    if (released->finished_.load(std::memory_order_acquire))
     {
         return;
     }
@@ -235,7 +196,7 @@ void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress)
                       {
                           if (const auto self = weak.lock())
                           {
-                              self->finish(whep_audio_egress::end_reason::unused);
+                              self->finish();
                           }
                       });
 }

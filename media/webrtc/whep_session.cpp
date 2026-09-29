@@ -94,12 +94,11 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
         return whep_session_startup_error::internal_error;
     }
 
-    local_port_ = local_port_reservation_;
     auto answer = make_webrtc_answer(offer,
                                      source_tracks,
                                      webrtc_answer_config{
                                          .address = advertised_address_,
-                                         .port = local_port_,
+                                         .port = local_port_reservation_,
                                          .stream_id = id_,
                                          .ice_ufrag = ice_ufrag_,
                                          .ice_pwd = ice_pwd_,
@@ -170,7 +169,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     }
     stream_->add_sink(shared_from_this());
 
-    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_);
+    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_reservation_);
     spdlog::debug(
         "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
         id_,
@@ -214,7 +213,6 @@ void whep_session::safe_shutdown()
         packetizer_.reset();
     }
     negotiated_tracks_.clear();
-    media_started_ = false;
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
     certificate_.reset();
@@ -225,7 +223,6 @@ void whep_session::safe_shutdown()
     dtls_.reset();
     answer_ = {};
     udp_transport_.shutdown();
-    local_port_ = 0;
     if (local_port_reservation_ != 0)
     {
         media_port_pool::instance().release(local_port_reservation_);
@@ -239,7 +236,7 @@ const std::string& whep_session::id() const noexcept { return id_; }
 
 const std::string& whep_session::answer_sdp() const noexcept { return answer_.sdp; }
 
-std::uint16_t whep_session::local_port() const noexcept { return local_port_; }
+std::uint16_t whep_session::local_port() const noexcept { return local_port_reservation_; }
 
 bool whep_session::ice_connected() const noexcept { return remote_endpoint_.has_value(); }
 
@@ -249,7 +246,7 @@ bool whep_session::srtp_started() const noexcept { return srtp_ != nullptr; }
 
 void whep_session::on_frame(const media_frame& frame)
 {
-    if (!started_ || !media_started_ || !packetizer_)
+    if (!started_ || !packetizer_)
     {
         return;
     }
@@ -531,34 +528,20 @@ bool whep_session::startup_media()
         return false;
     }
 
-    srtp_ = std::move(srtp);
-    packetizer_ = std::move(packetizer);
-    if (!media_started_ && !start_media_read())
-    {
-        return false;
-    }
-
-    establishment_timer_.cancel();
-    spdlog::info("webrtc srtp started session {}", id_);
-    spdlog::debug("webrtc srtp profile session {} {}", id_, dtls_->srtp_keying_material()->profile);
-    return true;
-}
-
-bool whep_session::start_media_read()
-{
-    if (!packetizer_ || media_started_)
-    {
-        return false;
-    }
-
     for (const auto& [id, track] : negotiated_tracks_)
     {
-        if (!packetizer_->on_track(track))
+        if (!packetizer->on_track(track))
         {
             return false;
         }
     }
-    media_started_ = true;
+
+    srtp_ = std::move(srtp);
+    packetizer_ = std::move(packetizer);
+
+    establishment_timer_.cancel();
+    spdlog::info("webrtc srtp started session {}", id_);
+    spdlog::debug("webrtc srtp profile session {} {}", id_, dtls_->srtp_keying_material()->profile);
     return true;
 }
 

@@ -110,7 +110,6 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
     webrtc_answer answer_;
-    std::uint16_t local_port_{};
     bool started_{};
 };
 

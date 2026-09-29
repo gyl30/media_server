@@ -93,11 +93,10 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer)
         return whip_session_startup_error::internal_error;
     }
 
-    local_port_ = local_port_reservation_;
     auto answer = make_whip_answer(offer,
                                    webrtc_answer_config{
                                        .address = advertised_address_,
-                                       .port = local_port_,
+                                       .port = local_port_reservation_,
                                        .stream_id = {},
                                        .ice_ufrag = ice_ufrag_,
                                        .ice_pwd = ice_pwd_,
@@ -137,7 +136,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer)
     started_ = true;
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
-    spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_name_, advertised_address_.to_string(), local_port_);
+    spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_name_, advertised_address_.to_string(), local_port_reservation_);
     startup_establishment_timeout();
     return whip_session_startup_error::none;
 }
@@ -174,7 +173,6 @@ void whip_session::safe_shutdown()
     certificate_.reset();
     answer_ = {};
     udp_transport_.shutdown();
-    local_port_ = 0;
     if (local_port_reservation_ != 0)
     {
         media_port_pool::instance().release(local_port_reservation_);
@@ -190,7 +188,7 @@ const std::string& whip_session::stream_name() const noexcept { return stream_na
 
 const std::string& whip_session::answer_sdp() const noexcept { return answer_.sdp; }
 
-std::uint16_t whip_session::local_port() const noexcept { return local_port_; }
+std::uint16_t whip_session::local_port() const noexcept { return local_port_reservation_; }
 
 bool whip_session::ice_connected() const noexcept { return remote_endpoint_.has_value(); }
 
