@@ -517,7 +517,7 @@ bool whep_session::startup_media()
             .audio_payload_type = answer_.audio_payload_type.value_or(-1),
             .opus_channel_count = answer_.audio_channel_count.value_or(1),
             .opus_max_playback_rate = answer_.audio_max_playback_rate.value_or(48'000),
-            .prepared_opus = audio_egress_ != nullptr,
+            .opus_playback_rate_prepared = audio_egress_ != nullptr,
             .video_mid = answer_.video_mid.value_or(""),
             .audio_mid = answer_.audio_mid.value_or(""),
             .video_mid_extension_id = answer_.video_mid_extension_id.value_or(-1),

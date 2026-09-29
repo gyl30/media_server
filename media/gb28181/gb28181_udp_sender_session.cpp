@@ -45,12 +45,6 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
 {
 }
 
-std::optional<media_port_pool::port_pair> gb28181_udp_sender_session::prepare_udp_transports(boost::asio::ip::address bind_address)
-{
-    boost::system::error_code network_error;
-    return media_port_pool::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address, network_error);
-}
-
 void gb28181_udp_sender_session::shutdown_udp_transports()
 {
     rtp_transport_.shutdown();
@@ -70,7 +64,8 @@ bool gb28181_udp_sender_session::startup()
         return false;
     }
 
-    auto local_ports = prepare_udp_transports(bind_address_);
+    boost::system::error_code network_error;
+    auto local_ports = media_port_pool::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address_, network_error);
     if (!local_ports)
     {
         return false;
@@ -246,9 +241,9 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
         worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp_write(yield); });
     }
 
-    if (rtcp_sender_ != nullptr && !rtcp_started_)
+    if (rtcp_sender_ != nullptr && !rtcp_reporting_started_)
     {
-        rtcp_started_ = true;
+        rtcp_reporting_started_ = true;
         schedule_rtcp();
     }
 }
@@ -277,7 +272,7 @@ void gb28181_udp_sender_session::safe_shutdown()
         rtp_destroy(rtcp_sender_);
         rtcp_sender_ = nullptr;
     }
-    rtcp_started_ = false;
+    rtcp_reporting_started_ = false;
     if (stream_)
     {
         spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream_->name(), sender_id_);

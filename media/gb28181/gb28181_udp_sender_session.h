@@ -43,7 +43,6 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
     void shutdown();
 
    private:
-    [[nodiscard]] std::optional<media_port_pool::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
     void shutdown_udp_transports();
     void run_rtp_write(boost::asio::yield_context yield);
     void schedule_rtcp();
@@ -71,7 +70,7 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
     std::shared_ptr<gb28181_rtp_sender> sender_;
     void* rtcp_sender_{};
     bool rtcp_enabled_{};
-    bool rtcp_started_{};
+    bool rtcp_reporting_started_{};
     bool closed_{};
     worker_context::shutdown_subscription shutdown_subscription_;
 };

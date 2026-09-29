@@ -39,7 +39,6 @@ class gb28181_udp_receiver_session final : public session, public std::enable_sh
     [[nodiscard]] std::optional<media_port_pool::port_pair> local_ports() const noexcept;
 
    private:
-    [[nodiscard]] std::optional<media_port_pool::port_pair> prepare_udp_transports(boost::asio::ip::address bind_address);
     void run_rtp(boost::asio::yield_context yield);
     void run_rtcp(boost::asio::yield_context yield);
     void schedule_rtcp();

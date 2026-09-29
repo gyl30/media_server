@@ -22,7 +22,7 @@ struct webrtc_packetizer_config
     int audio_payload_type{-1};
     int opus_channel_count{1};
     int opus_max_playback_rate{48'000};
-    bool prepared_opus{};
+    bool opus_playback_rate_prepared{};
     std::string video_mid{};
     std::string audio_mid{};
     int video_mid_extension_id{-1};

@@ -33,12 +33,6 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
 {
 }
 
-std::optional<media_port_pool::port_pair> gb28181_udp_receiver_session::prepare_udp_transports(boost::asio::ip::address bind_address)
-{
-    boost::system::error_code network_error;
-    return media_port_pool::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address, network_error);
-}
-
 bool gb28181_udp_receiver_session::startup()
 {
     if (closed_ || config_.mode != gb28181_transport::udp || local_ports_ || bind_address_.is_unspecified() || !receiver_.startup())
@@ -46,7 +40,8 @@ bool gb28181_udp_receiver_session::startup()
         return false;
     }
 
-    auto local_ports = prepare_udp_transports(bind_address_);
+    boost::system::error_code network_error;
+    auto local_ports = media_port_pool::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address_, network_error);
     if (!local_ports)
     {
         receiver_.shutdown();

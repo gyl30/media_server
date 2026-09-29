@@ -282,7 +282,8 @@ bool webrtc_packetizer::add_audio_track(const media_track& track)
 
     if (track.codec == codec_id::opus &&
         (track.clock_rate != opus_sample_rate || (track.channel_count != 1 && track.channel_count != 2) ||
-         config_.opus_channel_count != track.channel_count || (!config_.prepared_opus && config_.opus_max_playback_rate != 48'000) ||
+         config_.opus_channel_count != track.channel_count ||
+         (!config_.opus_playback_rate_prepared && config_.opus_max_playback_rate != 48'000) ||
          !track.codec_config.empty()))
     {
         return false;
