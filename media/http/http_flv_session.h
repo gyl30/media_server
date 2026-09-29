@@ -45,7 +45,7 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
                             boost::asio::yield_context& yield,
                             std::string_view allow = {});
     void enqueue(std::vector<std::uint8_t> data);
-    void run_write(std::vector<std::uint8_t> data, boost::asio::yield_context yield);
+    void run_write(boost::asio::yield_context yield);
     static int writer_callback(void* param, const flv_vec_t* vectors, int count);
 
    private:
@@ -56,15 +56,14 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
     boost::beast::tcp_stream stream_;
     request_type request_;
     bool closed_{};
-    std::deque<std::vector<std::uint8_t>> pending_output_;
-    std::size_t pending_output_bytes_{};
-    bool write_in_progress_{};
+    std::deque<std::vector<std::uint8_t>> output_queue_;
+    std::size_t queued_output_bytes_{};
     std::optional<track_id> waiting_video_track_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
     flv_muxer muxer_;
     std::shared_ptr<media_stream> source_;
-    static constexpr std::size_t max_pending_output_bytes_ = 4U * 1024U * 1024U;
+    static constexpr std::size_t max_queued_output_bytes_ = 4U * 1024U * 1024U;
 
    public:
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }

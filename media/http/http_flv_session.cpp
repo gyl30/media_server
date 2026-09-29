@@ -186,52 +186,47 @@ void http_flv_session::enqueue(std::vector<std::uint8_t> data)
     {
         return;
     }
-    if (write_in_progress_)
+    if (queued_output_bytes_ > max_queued_output_bytes_ || data.size() > max_queued_output_bytes_ - queued_output_bytes_)
     {
-        if (pending_output_bytes_ > max_pending_output_bytes_ || data.size() > max_pending_output_bytes_ - pending_output_bytes_)
-        {
-            shutdown();
-            return;
-        }
-        pending_output_bytes_ += data.size();
-        pending_output_.push_back(std::move(data));
+        shutdown();
         return;
     }
 
-    write_in_progress_ = true;
+    const bool start_writer = output_queue_.empty();
+    queued_output_bytes_ += data.size();
+    output_queue_.push_back(std::move(data));
+    if (!start_writer)
+    {
+        return;
+    }
+
     const auto self = shared_from_this();
-    worker_.spawn([self, data = std::move(data)](boost::asio::yield_context yield) mutable { self->run_write(std::move(data), yield); });
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
 }
 
-void http_flv_session::run_write(std::vector<std::uint8_t> data, boost::asio::yield_context yield)
+void http_flv_session::run_write(boost::asio::yield_context yield)
 {
-    for (;;)
+    while (!output_queue_.empty())
     {
-        const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(data));
-        boost::system::error_code error;
-        boost::asio::async_write(stream_, chunk, yield[error]);
-        if (error)
-        {
-            write_in_progress_ = false;
-            shutdown();
-            return;
-        }
         if (closed_)
         {
-            write_in_progress_ = false;
+            output_queue_.clear();
+            queued_output_bytes_ = 0;
+            return;
+        }
+        const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(output_queue_.front()));
+        boost::system::error_code error;
+        boost::asio::async_write(stream_, chunk, yield[error]);
+        if (error || closed_)
+        {
+            output_queue_.clear();
+            queued_output_bytes_ = 0;
             shutdown();
             return;
         }
 
-        if (pending_output_.empty())
-        {
-            write_in_progress_ = false;
-            return;
-        }
-
-        data = std::move(pending_output_.front());
-        pending_output_.pop_front();
-        pending_output_bytes_ -= data.size();
+        queued_output_bytes_ -= output_queue_.front().size();
+        output_queue_.pop_front();
     }
 }
 
@@ -322,9 +317,6 @@ void http_flv_session::safe_shutdown()
     }
     waiting_video_track_.reset();
     output_buffer_.clear();
-    pending_output_.clear();
-    pending_output_bytes_ = 0;
-    write_in_progress_ = false;
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);
