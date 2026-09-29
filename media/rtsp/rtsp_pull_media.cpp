@@ -93,13 +93,16 @@ bool rtsp_pull_media::input_packet(std::uint8_t channel, std::span<const std::ui
 
     if (!rtcp && media_stream_->tracks().empty())
     {
-        static_cast<void>(try_initialize_tracks());
+        if (try_publish_stream() < 0)
+        {
+            return false;
+        }
     }
     if (rtsp_demuxer_input(demuxers_[media], data.data(), static_cast<int>(data.size())) < 0)
     {
         return false;
     }
-    return !fatal_;
+    return true;
 }
 
 int rtsp_pull_media::set_rtp_info(std::size_t media, std::uint16_t sequence, std::uint32_t timestamp)
@@ -157,12 +160,12 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
     }
 
     // avpkt2bs 会缓存首次解析的编解码配置；ready 后配置变化结束当前 source generation。
-    const bool config_changed = validate_track_from_packet(*packet);
-    if (fatal_)
+    const auto track_result = update_track_from_packet(*packet);
+    if (track_result < 0)
     {
         return -1;
     }
-    if (config_changed)
+    if (track_result > 0)
     {
         avpkt2bs_destroy(&bitstream_);
         avpkt2bs_create(&bitstream_);
@@ -199,13 +202,13 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
     return 0;
 }
 
-bool rtsp_pull_media::validate_track_from_packet(const avpacket_t& packet)
+int rtsp_pull_media::update_track_from_packet(const avpacket_t& packet)
 {
     const auto& input = *packet.stream;
     auto track = media_track_from_avstream_config(input, video_track_id, audio_track_id);
     if (!track)
     {
-        return false;
+        return 0;
     }
 
     if (!media_stream_->tracks().empty())
@@ -215,9 +218,9 @@ bool rtsp_pull_media::validate_track_from_packet(const avpacket_t& packet)
             fixed->channel_count != track->channel_count || fixed->codec_config != track->codec_config)
         {
             spdlog::warn("rtsp pull track config changed {} {}", to_string(track->kind), to_string(track->codec));
-            fatal_ = true;
+            return -1;
         }
-        return false;
+        return 0;
     }
 
     bool changed = false;
@@ -228,14 +231,18 @@ bool rtsp_pull_media::validate_track_from_packet(const avpacket_t& packet)
                   pending->codec_config != track->codec_config;
     }
     pending = *track;
-    return try_initialize_tracks() || changed;
+    if (try_publish_stream() < 0)
+    {
+        return -1;
+    }
+    return changed ? 1 : 0;
 }
 
-bool rtsp_pull_media::try_initialize_tracks()
+int rtsp_pull_media::try_publish_stream()
 {
     if (!media_stream_->tracks().empty() || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
     {
-        return false;
+        return 0;
     }
 
     std::vector<media_track> tracks;
@@ -246,18 +253,17 @@ bool rtsp_pull_media::try_initialize_tracks()
     }
     if (!media_stream_->set_tracks(std::move(tracks)))
     {
-        return false;
+        return -1;
     }
     if (!stream_registry::instance().add(media_stream_))
     {
         spdlog::warn("rtsp pull duplicate stream {}", media_stream_name_);
-        fatal_ = true;
-        return true;
+        return -1;
     }
     initial_video_track_.reset();
     initial_audio_track_.reset();
     spdlog::info("rtsp pull tracks ready audio {}", expected_audio_);
-    return true;
+    return 0;
 }
 
 }    // namespace media_server

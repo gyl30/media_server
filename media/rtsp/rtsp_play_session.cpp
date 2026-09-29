@@ -118,6 +118,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
     if (mux_result < 0)
     {
         spdlog::error("rtsp play mux failed result {}", mux_result);
+        shutdown_handler_();
     }
 }
 

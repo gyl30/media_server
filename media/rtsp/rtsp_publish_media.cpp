@@ -130,10 +130,10 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
         }
         else if (result < 0)
         {
-            protocol_error_ = true;
+            return false;
         }
     }
-    return !protocol_error_;
+    return true;
 }
 
 int rtsp_publish_media::generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
@@ -177,8 +177,6 @@ const std::string& rtsp_publish_media::media_stream_name() const noexcept { retu
 
 bool rtsp_publish_media::recording() const noexcept { return recording_; }
 
-bool rtsp_publish_media::protocol_error() const noexcept { return protocol_error_; }
-
 int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet)
 {
     return static_cast<rtsp_publish_media*>(param)->on_demuxed_packet(packet);
@@ -211,7 +209,6 @@ int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
     if (state == descriptions_.end())
     {
         spdlog::warn("rtsp publish raw codec change {}", to_string(codec));
-        protocol_error_ = true;
         return -1;
     }
 
@@ -258,14 +255,12 @@ bool rtsp_publish_media::validate_track_from_packet(const avpacket_t& packet)
                                     [track](const rtsp_publish_track_description& value) { return value.track.id == track->id; });
     if (state == descriptions_.end())
     {
-        protocol_error_ = true;
         return false;
     }
     if (state->track.codec != track->codec || state->track.clock_rate != track->clock_rate || state->track.channel_count != track->channel_count ||
         state->track.codec_config != track->codec_config)
     {
         spdlog::warn("rtsp publish track config changed {}", to_string(track->codec));
-        protocol_error_ = true;
         return false;
     }
     return true;
