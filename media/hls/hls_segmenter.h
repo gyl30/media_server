@@ -58,7 +58,6 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
     void discard_segment();
     void finish_segment(std::int64_t end_pts_ns);
     [[nodiscard]] int add_track_to_muxer(const media_track& track);
-    void process_track(const media_track& track);
     void process_frame(const media_frame& frame);
     void finish();
 

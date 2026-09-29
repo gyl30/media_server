@@ -86,7 +86,6 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     write_handler write_handler_;
     std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
-    std::shared_ptr<media_stream> source_generation_;
     std::map<track_id, track_state> track_states_;
     rtsp_muxer_t* muxer_{};
     std::string session_id_;

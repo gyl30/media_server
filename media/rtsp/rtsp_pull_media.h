@@ -65,7 +65,6 @@ class rtsp_pull_media final
     std::optional<media_track> initial_video_track_;
     std::optional<media_track> initial_audio_track_;
     bool expected_audio_{};
-    bool tracks_initialized_{};
     bool fatal_{};
     bool closed_{};
 };

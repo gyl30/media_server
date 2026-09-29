@@ -173,7 +173,6 @@ void rtsp_play_session::safe_shutdown()
         spdlog::debug("rtsp play shutdown {}", stream_->name());
         stream_.reset();
     }
-    source_generation_.reset();
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
@@ -404,25 +403,9 @@ int rtsp_play_session::presentation_status() const
     {
         return 503;
     }
-    if (current_stream.get() != (source_generation_ ? source_generation_ : stream_).get())
+    if (current_stream.get() != stream_.get())
     {
         return 455;
-    }
-    if (source_generation_)
-    {
-        std::size_t supported_source_tracks = 0;
-        for (const auto& track : source_generation_->tracks())
-        {
-            if (!rtsp_play_track_supported(track))
-            {
-                continue;
-            }
-            ++supported_source_tracks;
-        }
-        if (supported_source_tracks != track_states_.size())
-        {
-            return 455;
-        }
     }
 
     const auto current = stream_->tracks();
@@ -468,7 +451,6 @@ int rtsp_play_session::prepare_presentation()
 {
     track_states_.clear();
     stream_.reset();
-    source_generation_.reset();
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);

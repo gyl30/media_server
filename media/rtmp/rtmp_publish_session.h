@@ -71,7 +71,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     std::optional<media_track> initial_video_track_;
     std::optional<media_track> initial_audio_track_;
     std::optional<bool> expected_audio_;
-    bool tracks_initialized_{};
     bool closed_{};
 };
 

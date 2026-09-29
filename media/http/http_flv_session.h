@@ -44,8 +44,8 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
                             std::string body,
                             boost::asio::yield_context& yield,
                             std::string_view allow = {});
-    void enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap);
-    void run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield);
+    void enqueue(std::vector<std::uint8_t> data);
+    void run_write(std::vector<std::uint8_t> data, boost::asio::yield_context yield);
     static int writer_callback(void* param, const flv_vec_t* vectors, int count);
 
    private:
@@ -65,7 +65,6 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
     void* writer_ = nullptr;
     flv_muxer muxer_;
     std::shared_ptr<media_stream> source_;
-    std::uint64_t generation_{};
     bool waiting_for_key_frame_{};
     static constexpr std::size_t max_pending_output_bytes_ = 4U * 1024U * 1024U;
 

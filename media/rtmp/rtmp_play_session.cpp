@@ -71,11 +71,10 @@ void rtmp_play_session::on_frame(const media_frame& frame)
 
 void rtmp_play_session::on_end()
 {
-    if (closed_ || source_ended_)
+    if (closed_)
     {
         return;
     }
-    source_ended_ = true;
     end_handler_();
 }
 

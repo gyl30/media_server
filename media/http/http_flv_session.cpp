@@ -134,8 +134,7 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         tracks_.emplace(track.id, track);
         muxer_.on_track(track);
     }
-    ++generation_;
-    enqueue(generation_, std::move(output_buffer_), true);
+    enqueue(std::move(output_buffer_));
     media_stream->add_sink(shared_from_this());
 
     std::array<std::uint8_t, 1> read_buffer{};
@@ -178,9 +177,8 @@ void http_flv_session::send_text_response(
     boost::beast::http::async_write(stream_, response, yield[error]);
 }
 
-void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_t> data, bool bootstrap)
+void http_flv_session::enqueue(std::vector<std::uint8_t> data)
 {
-    (void)bootstrap;
     if (data.empty())
     {
         return;
@@ -199,13 +197,11 @@ void http_flv_session::enqueue(std::uint64_t generation, std::vector<std::uint8_
 
     write_in_progress_ = true;
     const auto self = shared_from_this();
-    worker_.spawn(
-        [self, generation, data = std::move(data)](boost::asio::yield_context yield) mutable { self->run_write(generation, std::move(data), yield); });
+    worker_.spawn([self, data = std::move(data)](boost::asio::yield_context yield) mutable { self->run_write(std::move(data), yield); });
 }
 
-void http_flv_session::run_write(std::uint64_t generation, std::vector<std::uint8_t> data, boost::asio::yield_context yield)
+void http_flv_session::run_write(std::vector<std::uint8_t> data, boost::asio::yield_context yield)
 {
-    static_cast<void>(generation);
     for (;;)
     {
         const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(data));
@@ -268,7 +264,7 @@ void http_flv_session::on_frame(const media_frame& entry)
     muxer_.on_frame(entry);
     if (!output_buffer_.empty())
     {
-        enqueue(generation_, std::move(output_buffer_), false);
+        enqueue(std::move(output_buffer_));
     }
 }
 

@@ -31,24 +31,6 @@ hls_segmenter::hls_segmenter(hls_config config)
     recreate_muxer();
 }
 
-void hls_segmenter::process_track(const media_track& track)
-{
-    std::scoped_lock lock(mutex_);
-    if (ended_at_.has_value() || tracks_.contains(track.id))
-    {
-        return;
-    }
-    tracks_.emplace(track.id, track);
-    if (!current_segment_.empty())
-    {
-        finish_segment(segment_max_pts_ns_);
-    }
-    recreate_muxer();
-    segment_start_pts_ns_.reset();
-    segment_max_pts_ns_ = 0;
-    waiting_for_key_frame_ = true;
-}
-
 void hls_segmenter::process_frame(const media_frame& frame)
 {
     std::scoped_lock lock(mutex_);
@@ -135,9 +117,18 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
     {
         return false;
     }
-    for (const auto& track : source->tracks())
     {
-        process_track(track);
+        std::scoped_lock lock(mutex_);
+        for (const auto& track : source->tracks())
+        {
+            tracks_.emplace(track.id, track);
+            const auto stream_id = add_track_to_muxer(track);
+            if (stream_id < 0)
+            {
+                return false;
+            }
+            stream_ids_.insert_or_assign(track.id, stream_id);
+        }
     }
     source_ = source;
     source->add_sink(shared_from_this());

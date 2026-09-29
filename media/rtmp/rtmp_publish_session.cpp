@@ -53,7 +53,7 @@ bool rtmp_publish_session::startup()
     initial_tracks_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || self->tracks_initialized_)
+            if (error || self->closed_ || !self->stream_->tracks().empty())
             {
                 return;
             }
@@ -191,7 +191,7 @@ int rtmp_publish_session::handle_video_config(int codec, std::span<const std::ui
         .channel_count = 0,
         .codec_config = std::move(config),
     };
-    if (!tracks_initialized_)
+    if (stream_->tracks().empty())
     {
         initial_video_track_ = std::move(track);
         try_initialize_tracks();
@@ -235,7 +235,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
             .channel_count = config->channel_count,
             .codec_config = {data.begin(), data.end()},
         };
-        if (!tracks_initialized_)
+        if (stream_->tracks().empty())
         {
             initial_audio_track_ = std::move(track);
             try_initialize_tracks();
@@ -264,7 +264,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
         .channel_count = static_cast<std::uint16_t>(opus_head_channels(&head)),
         .codec_config = {},
     };
-    if (!tracks_initialized_)
+        if (stream_->tracks().empty())
     {
         initial_audio_track_ = std::move(track);
         try_initialize_tracks();
@@ -286,7 +286,7 @@ int rtmp_publish_session::initialize_g711_track(int codec)
         return -1;
     }
     const auto audio_codec = codec == FLV_AUDIO_G711A ? codec_id::g711a : codec_id::g711u;
-    if (!tracks_initialized_)
+    if (stream_->tracks().empty())
     {
         if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
         {
@@ -334,7 +334,7 @@ int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t>
         spdlog::warn("rtmp publish raw codec change {} {}", to_string(fixed->codec), to_string(incoming_codec));
         return -1;
     }
-    if (!tracks_initialized_)
+    if (stream_->tracks().empty())
     {
         return 0;
     }
@@ -386,7 +386,7 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
 
 void rtmp_publish_session::try_initialize_tracks()
 {
-    if (!shutdown_handler_ || tracks_initialized_ || !expected_audio_.has_value() || !initial_video_track_ ||
+    if (!shutdown_handler_ || !stream_->tracks().empty() || !expected_audio_.has_value() || !initial_video_track_ ||
         (*expected_audio_ && !initial_audio_track_))
     {
         return;
@@ -407,8 +407,7 @@ void rtmp_publish_session::try_initialize_tracks()
     {
         tracks.push_back(*initial_audio_track_);
     }
-    tracks_initialized_ = stream_->set_tracks(std::move(tracks));
-    if (!tracks_initialized_)
+    if (!stream_->set_tracks(std::move(tracks)))
     {
         return;
     }

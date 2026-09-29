@@ -41,7 +41,6 @@ class rtmp_play_session final : public media_sink, public std::enable_shared_fro
     end_handler end_handler_;
     bool waiting_for_key_frame_{true};
     bool closed_{};
-    bool source_ended_{};
 };
 
 }    // namespace media_server

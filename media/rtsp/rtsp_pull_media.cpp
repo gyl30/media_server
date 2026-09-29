@@ -90,7 +90,7 @@ bool rtsp_pull_media::input_packet(std::uint8_t channel, std::span<const std::ui
         return true;
     }
 
-    if (!rtcp && !tracks_initialized_)
+    if (!rtcp && media_stream_->tracks().empty())
     {
         static_cast<void>(try_initialize_tracks());
     }
@@ -119,7 +119,7 @@ int rtsp_pull_media::generate_rtcp(std::size_t media, std::span<std::uint8_t> bu
     return rtsp_demuxer_rtcp(demuxers_[media], buffer.data(), static_cast<int>(buffer.size()));
 }
 
-bool rtsp_pull_media::tracks_initialized() const noexcept { return tracks_initialized_; }
+bool rtsp_pull_media::tracks_initialized() const noexcept { return media_stream_ && !media_stream_->tracks().empty(); }
 
 void rtsp_pull_media::shutdown()
 {
@@ -207,7 +207,7 @@ bool rtsp_pull_media::validate_track_from_packet(const avpacket_t& packet)
         return false;
     }
 
-    if (tracks_initialized_)
+    if (!media_stream_->tracks().empty())
     {
         const auto& fixed = track->kind == media_kind::video ? initial_video_track_ : initial_audio_track_;
         if (!fixed || fixed->codec != track->codec || fixed->clock_rate != track->clock_rate || fixed->channel_count != track->channel_count ||
@@ -232,7 +232,7 @@ bool rtsp_pull_media::validate_track_from_packet(const avpacket_t& packet)
 
 bool rtsp_pull_media::try_initialize_tracks()
 {
-    if (tracks_initialized_ || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
+    if (!media_stream_->tracks().empty() || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
     {
         return false;
     }
@@ -243,8 +243,7 @@ bool rtsp_pull_media::try_initialize_tracks()
     {
         tracks.push_back(std::move(*initial_audio_track_));
     }
-    tracks_initialized_ = media_stream_->set_tracks(std::move(tracks));
-    if (!tracks_initialized_)
+    if (!media_stream_->set_tracks(std::move(tracks)))
     {
         return false;
     }
