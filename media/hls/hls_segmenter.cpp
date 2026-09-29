@@ -123,7 +123,7 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
         {
             tracks_.emplace(track.id, track);
             const auto stream_id = add_track_to_muxer(track);
-            if (stream_id < 0)
+            if (stream_id <= 0)
             {
                 return false;
             }

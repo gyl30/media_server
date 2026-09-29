@@ -41,7 +41,7 @@ std::optional<media_port_pool::port_pair> gb28181_udp_receiver_session::prepare_
 
 bool gb28181_udp_receiver_session::startup()
 {
-    if (started_ || closed_ || config_.mode != gb28181_transport::udp || local_ports_ || bind_address_.is_unspecified() || !receiver_.startup())
+    if (closed_ || config_.mode != gb28181_transport::udp || local_ports_ || bind_address_.is_unspecified() || !receiver_.startup())
     {
         return false;
     }
@@ -53,7 +53,6 @@ bool gb28181_udp_receiver_session::startup()
         return false;
     }
     local_ports_ = *local_ports;
-    started_ = true;
 
     const auto self = shared_from_this();
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp(yield); });
@@ -220,7 +219,6 @@ void gb28181_udp_receiver_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    started_ = false;
     session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     rtcp_timer_.cancel();
     rtp_transport_.shutdown();

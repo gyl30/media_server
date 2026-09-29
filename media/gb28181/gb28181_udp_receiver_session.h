@@ -59,7 +59,6 @@ class gb28181_udp_receiver_session final : public session, public std::enable_sh
     std::chrono::milliseconds rtcp_interval_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
-    bool started_{};
     bool closed_{};
 };
 
