@@ -127,9 +127,28 @@ void hls_http_session::handle_request()
         send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", false);
         return;
     }
-    const auto segmenter = viewer->segmenter();
+    std::optional<std::uint64_t> segment_sequence;
+    if (file != "index.m3u8")
+    {
+        if (!file.ends_with(".ts"))
+        {
+            send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", false);
+            return;
+        }
+        const std::string_view number(file.data(), file.size() - 3U);
+        std::uint64_t sequence{};
+        const auto [pointer, parse_error] = std::from_chars(number.data(), number.data() + number.size(), sequence);
+        if (parse_error != std::errc{} || pointer != number.data() + number.size())
+        {
+            send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", false);
+            return;
+        }
+        segment_sequence = sequence;
+    }
 
-    if (file == "index.m3u8")
+    viewer->refresh();
+    const auto segmenter = viewer->segmenter();
+    if (!segment_sequence)
     {
         if (!segmenter)
         {
@@ -141,30 +160,13 @@ void hls_http_session::handle_request()
         return;
     }
 
-    const bool transport_stream = file.ends_with(".ts");
-    if (!transport_stream)
-    {
-        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", false);
-        return;
-    }
-
-    const auto suffix_size = 3U;
-    const std::string_view number(file.data(), file.size() - suffix_size);
-    std::uint64_t sequence = 0;
-    const auto [pointer, parse_error] = std::from_chars(number.data(), number.data() + number.size(), sequence);
-    if (parse_error != std::errc{} || pointer != number.data() + number.size())
-    {
-        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", false);
-        return;
-    }
-
-    const auto segment = segmenter ? segmenter->segment_buffer(sequence) : std::shared_ptr<const std::vector<std::uint8_t>>{};
+    const auto segment = segmenter ? segmenter->segment_buffer(*segment_sequence) : std::shared_ptr<const std::vector<std::uint8_t>>{};
     if (!segment)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "segment not found\n", false);
         return;
     }
-    send_binary_response(boost::beast::http::status::ok, "video/mp2t", segment, request_.keep_alive(), viewer);
+    send_binary_response(boost::beast::http::status::ok, "video/mp2t", segment, request_.keep_alive());
 }
 
 void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewer, std::shared_ptr<hls_segmenter> segmenter)
@@ -176,7 +178,7 @@ void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewe
     if (segmenter->segment_count() != 0U)
     {
         const auto playlist = segmenter->playlist(".", "session=" + viewer->secret());
-        send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", playlist, request_.keep_alive(), {}, viewer);
+        send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", playlist, request_.keep_alive());
         return;
     }
     if (std::chrono::steady_clock::now() >= playlist_deadline_)
@@ -216,8 +218,7 @@ void hls_http_session::send_text_response(boost::beast::http::status status,
                                           std::string_view content_type,
                                           std::string body,
                                           bool keep_alive,
-                                          std::string_view allow,
-                                          std::shared_ptr<hls_play_session> viewer)
+                                          std::string_view allow)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
@@ -238,22 +239,20 @@ void hls_http_session::send_text_response(boost::beast::http::status status,
         boost::beast::http::async_write_header(
             stream_,
             *serializer,
-            [self, response, serializer, keep_alive, viewer = std::move(viewer)](const boost::system::error_code& error, std::size_t)
-            { self->response_completed(error, keep_alive, std::move(viewer)); });
+            [self, response, serializer, keep_alive](const boost::system::error_code& error, std::size_t)
+            { self->response_completed(error, keep_alive); });
         return;
     }
     boost::beast::http::async_write(
         stream_,
         *response,
-        [self, response, keep_alive, viewer = std::move(viewer)](const boost::system::error_code& error, std::size_t)
-        { self->response_completed(error, keep_alive, std::move(viewer)); });
+        [self, response, keep_alive](const boost::system::error_code& error, std::size_t) { self->response_completed(error, keep_alive); });
 }
 
 void hls_http_session::send_binary_response(boost::beast::http::status status,
                                             std::string_view content_type,
                                             std::shared_ptr<const std::vector<std::uint8_t>> body,
-                                            bool keep_alive,
-                                            std::shared_ptr<hls_play_session> viewer)
+                                            bool keep_alive)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::buffer_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
@@ -269,18 +268,12 @@ void hls_http_session::send_binary_response(boost::beast::http::status status,
     boost::beast::http::async_write(
         stream_,
         *response,
-        [self, response, body = std::move(body), keep_alive, viewer = std::move(viewer)](const boost::system::error_code& error, std::size_t)
-        { self->response_completed(error, keep_alive, std::move(viewer)); });
+        [self, response, body = std::move(body), keep_alive](const boost::system::error_code& error, std::size_t)
+        { self->response_completed(error, keep_alive); });
 }
 
-void hls_http_session::response_completed(const boost::system::error_code& error,
-                                          bool keep_alive,
-                                          std::shared_ptr<hls_play_session> viewer)
+void hls_http_session::response_completed(const boost::system::error_code& error, bool keep_alive)
 {
-    if (!error && viewer)
-    {
-        viewer->refresh();
-    }
     if (error || closed_ || !keep_alive)
     {
         shutdown();

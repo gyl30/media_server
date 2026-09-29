@@ -38,16 +38,12 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
                             std::string_view content_type,
                             std::string body,
                             bool keep_alive,
-                            std::string_view allow = {},
-                            std::shared_ptr<hls_play_session> viewer = {});
+                            std::string_view allow = {});
     void send_binary_response(boost::beast::http::status status,
                               std::string_view content_type,
                               std::shared_ptr<const std::vector<std::uint8_t>> body,
-                              bool keep_alive,
-                              std::shared_ptr<hls_play_session> viewer);
-    void response_completed(const boost::system::error_code& error,
-                            bool keep_alive,
-                            std::shared_ptr<hls_play_session> viewer = {});
+                              bool keep_alive);
+    void response_completed(const boost::system::error_code& error, bool keep_alive);
     void read_request();
 
    private:

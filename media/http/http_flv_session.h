@@ -56,7 +56,6 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
     boost::beast::tcp_stream stream_;
     request_type request_;
     bool closed_{};
-    std::string stream_name_;
     std::deque<std::vector<std::uint8_t>> pending_output_;
     std::size_t pending_output_bytes_{};
     bool write_in_progress_{};
