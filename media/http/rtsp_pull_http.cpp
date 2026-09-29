@@ -237,7 +237,7 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = session_registry::instance().take_receiver_session_as<rtsp_pull_session>(identity->stream_name, identity->stream_id);
+    auto session = session_registry::instance().take_receiver_session(identity->stream_name, identity->stream_id);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");

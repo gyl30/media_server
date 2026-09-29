@@ -4,6 +4,7 @@
 #include <map>
 #include <mutex>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -24,27 +25,7 @@ class session_registry final
     [[nodiscard]] static session_registry& instance();
 
     bool add_receiver_session(std::string stream_name, std::string stream_id, std::shared_ptr<session> session);
-    template <typename Session>
-    [[nodiscard]] std::shared_ptr<Session> take_receiver_session_as(std::string_view stream_name, std::string_view expected_stream_id)
-    {
-        std::scoped_lock lock(mutex_);
-        const auto iterator = sessions_.find(stream_name);
-        if (iterator == sessions_.end())
-        {
-            return {};
-        }
-        auto session = std::dynamic_pointer_cast<Session>(iterator->second.receiver_session.value);
-        if (!session || iterator->second.receiver_session.stream_id != expected_stream_id)
-        {
-            return {};
-        }
-        iterator->second.receiver_session = {};
-        if (empty(iterator->second))
-        {
-            sessions_.erase(iterator);
-        }
-        return session;
-    }
+    [[nodiscard]] std::shared_ptr<session> take_receiver_session(std::string_view stream_name, std::string_view expected_stream_id);
     void remove_receiver_session(std::string_view stream_name, const session& expected);
 
     bool add_sender_session(std::string stream_name, std::string sender_id, std::string stream_id, std::shared_ptr<session> session);
@@ -63,7 +44,7 @@ class session_registry final
 
     struct session_entry
     {
-        registered_session receiver_session;
+        std::optional<registered_session> receiver;
         std::map<std::string, registered_session, std::less<>> sender_sessions;
     };
 

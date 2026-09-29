@@ -220,12 +220,7 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    std::shared_ptr<session> session =
-        session_registry::instance().take_receiver_session_as<gb28181_udp_receiver_session>(identity->stream_name, identity->stream_id);
-    if (!session)
-    {
-        session = session_registry::instance().take_receiver_session_as<gb28181_tcp_receiver_session>(identity->stream_name, identity->stream_id);
-    }
+    auto session = session_registry::instance().take_receiver_session(identity->stream_name, identity->stream_id);
     if (!session)
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");

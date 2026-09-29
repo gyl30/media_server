@@ -19,23 +19,40 @@ bool session_registry::add_receiver_session(std::string stream_name, std::string
         return false;
     }
     const auto iterator = sessions_.try_emplace(std::move(stream_name)).first;
-    if (iterator->second.receiver_session.value)
+    if (iterator->second.receiver)
     {
         return false;
     }
-    iterator->second.receiver_session = {.stream_id = std::move(stream_id), .value = std::move(session)};
+    iterator->second.receiver = registered_session{.stream_id = std::move(stream_id), .value = std::move(session)};
     return true;
+}
+
+std::shared_ptr<session> session_registry::take_receiver_session(std::string_view stream_name, std::string_view expected_stream_id)
+{
+    std::scoped_lock lock(mutex_);
+    const auto iterator = sessions_.find(stream_name);
+    if (iterator == sessions_.end() || !iterator->second.receiver || iterator->second.receiver->stream_id != expected_stream_id)
+    {
+        return {};
+    }
+    auto value = std::move(iterator->second.receiver->value);
+    iterator->second.receiver.reset();
+    if (empty(iterator->second))
+    {
+        sessions_.erase(iterator);
+    }
+    return value;
 }
 
 void session_registry::remove_receiver_session(std::string_view stream_name, const session& expected)
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = sessions_.find(stream_name);
-    if (iterator == sessions_.end() || iterator->second.receiver_session.value.get() != &expected)
+    if (iterator == sessions_.end() || !iterator->second.receiver || iterator->second.receiver->value.get() != &expected)
     {
         return;
     }
-    iterator->second.receiver_session = {};
+    iterator->second.receiver.reset();
     if (empty(iterator->second))
     {
         sessions_.erase(iterator);
@@ -113,9 +130,9 @@ void session_registry::shutdown_all()
     }
     for (const auto& [stream_name, entry] : detached)
     {
-        if (entry.receiver_session.value)
+        if (entry.receiver)
         {
-            entry.receiver_session.value->shutdown();
+            entry.receiver->value->shutdown();
         }
         for (const auto& [sender_id, session] : entry.sender_sessions)
         {
@@ -126,7 +143,7 @@ void session_registry::shutdown_all()
 
 bool session_registry::empty(const session_entry& entry)
 {
-    return !entry.receiver_session.value && entry.sender_sessions.empty();
+    return !entry.receiver && entry.sender_sessions.empty();
 }
 
 }    // namespace media_server
