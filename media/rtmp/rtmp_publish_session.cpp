@@ -115,7 +115,11 @@ int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uin
 
 int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
 {
-    if (closed_ || !shutdown_handler_ || data.empty())
+    if (closed_ || !shutdown_handler_)
+    {
+        return -1;
+    }
+    if (data.empty())
     {
         return 0;
     }
@@ -155,8 +159,7 @@ int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
     }
 
     expected_audio_ = audio;
-    try_initialize_tracks();
-    return 0;
+    return try_publish_stream();
 }
 
 int rtmp_publish_session::demux_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags)
@@ -194,8 +197,7 @@ int rtmp_publish_session::handle_video_config(int codec, std::span<const std::ui
             return -1;
         }
         initial_video_track_ = std::move(track);
-        try_initialize_tracks();
-        return 0;
+        return try_publish_stream();
     }
     const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == video_track_id; });
     if (fixed == stream_->tracks().end() || fixed->codec != track.codec || fixed->clock_rate != track.clock_rate ||
@@ -238,8 +240,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
                 return -1;
             }
             initial_audio_track_ = std::move(track);
-            try_initialize_tracks();
-            return 0;
+            return try_publish_stream();
         }
         const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
         if (fixed == stream_->tracks().end() || fixed->codec != track.codec || fixed->clock_rate != track.clock_rate ||
@@ -273,8 +274,7 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
             return -1;
         }
         initial_audio_track_ = std::move(track);
-        try_initialize_tracks();
-        return 0;
+        return try_publish_stream();
     }
     const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
     if (fixed == stream_->tracks().end() || fixed->codec != track.codec || fixed->clock_rate != track.clock_rate ||
@@ -308,8 +308,7 @@ int rtmp_publish_session::initialize_g711_track(int codec)
             .channel_count = 1,
             .codec_config = {},
         };
-        try_initialize_tracks();
-        return 0;
+        return try_publish_stream();
     }
     const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
     return fixed != stream_->tracks().end() && fixed->codec == audio_codec ? 0 : -1;
@@ -398,21 +397,17 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
     return publish_media(codec, data, pts, dts, flags);
 }
 
-void rtmp_publish_session::try_initialize_tracks()
+int rtmp_publish_session::try_publish_stream()
 {
     if (!shutdown_handler_ || !stream_->tracks().empty() || !expected_audio_.has_value() || !initial_video_track_ ||
         (*expected_audio_ && !initial_audio_track_))
     {
-        return;
+        return 0;
     }
 
     if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
     {
-        if (auto handler = std::move(shutdown_handler_))
-        {
-            handler();
-        }
-        return;
+        return -1;
     }
 
     std::vector<media_track> tracks;
@@ -423,21 +418,18 @@ void rtmp_publish_session::try_initialize_tracks()
     }
     if (!stream_->set_tracks(std::move(tracks)))
     {
-        return;
+        return -1;
     }
     if (!stream_registry::instance().add(stream_))
     {
-        if (auto handler = std::move(shutdown_handler_))
-        {
-            spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
-            handler();
-        }
-        return;
+        spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
+        return -1;
     }
     initial_video_track_.reset();
     initial_audio_track_.reset();
     initial_tracks_timer_.cancel();
     spdlog::info("rtmp publish tracks ready audio {}", *expected_audio_);
+    return 0;
 }
 
 }    // namespace media_server

@@ -53,7 +53,7 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     int publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
 
    private:
-    void try_initialize_tracks();
+    int try_publish_stream();
 
    private:
     void safe_shutdown();
