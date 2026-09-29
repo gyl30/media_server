@@ -167,11 +167,10 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
             negotiated_tracks_.push_back(track);
             if (negotiated_video)
             {
-                video_track_ = track.id;
+                waiting_video_track_ = track.id;
             }
         }
     }
-    waiting_for_key_frame_ = video_track_.has_value();
     stream_->add_sink(shared_from_this());
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_reservation_);
@@ -218,8 +217,7 @@ void whep_session::safe_shutdown()
         packetizer_.reset();
     }
     negotiated_tracks_.clear();
-    video_track_.reset();
-    waiting_for_key_frame_ = false;
+    waiting_video_track_.reset();
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
     certificate_.reset();
@@ -249,13 +247,13 @@ void whep_session::on_frame(const media_frame& frame)
     {
         return;
     }
-    if (waiting_for_key_frame_)
+    if (waiting_video_track_)
     {
-        if (frame.track != *video_track_ || !frame.key_frame)
+        if (frame.track != *waiting_video_track_ || !frame.key_frame)
         {
             return;
         }
-        waiting_for_key_frame_ = false;
+        waiting_video_track_.reset();
     }
     if (!packetizer_->on_frame(frame))
     {

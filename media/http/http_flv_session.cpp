@@ -133,11 +133,10 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     {
         if (track.kind == media_kind::video)
         {
-            video_track_ = track.id;
+            waiting_video_track_ = track.id;
         }
         muxer_.on_track(track);
     }
-    waiting_for_key_frame_ = video_track_.has_value();
     enqueue(std::move(output_buffer_));
     media_stream->add_sink(shared_from_this());
 
@@ -251,13 +250,13 @@ void http_flv_session::on_frame(const media_frame& entry)
     {
         return;
     }
-    if (waiting_for_key_frame_)
+    if (waiting_video_track_)
     {
-        if (entry.track != *video_track_ || !entry.key_frame)
+        if (entry.track != *waiting_video_track_ || !entry.key_frame)
         {
             return;
         }
-        waiting_for_key_frame_ = false;
+        waiting_video_track_.reset();
     }
     output_buffer_.clear();
     muxer_.on_frame(entry);
@@ -321,8 +320,7 @@ void http_flv_session::safe_shutdown()
         flv_writer_destroy(writer_);
         writer_ = nullptr;
     }
-    video_track_.reset();
-    waiting_for_key_frame_ = false;
+    waiting_video_track_.reset();
     output_buffer_.clear();
     pending_output_.clear();
     pending_output_bytes_ = 0;

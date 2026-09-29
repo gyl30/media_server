@@ -28,10 +28,9 @@ void rtmp_play_session::startup()
         muxer_.on_track(track);
         if (track.kind == media_kind::video)
         {
-            video_track_ = track.id;
+            waiting_video_track_ = track.id;
         }
     }
-    waiting_for_key_frame_ = video_track_.has_value();
     stream_->add_sink(shared_from_this());
 }
 
@@ -47,8 +46,7 @@ void rtmp_play_session::shutdown()
         stream_->remove_sink(this);
         stream_.reset();
     }
-    video_track_.reset();
-    waiting_for_key_frame_ = false;
+    waiting_video_track_.reset();
     muxer_.shutdown();
 }
 
@@ -59,13 +57,13 @@ void rtmp_play_session::on_frame(const media_frame& frame)
         return;
     }
 
-    if (waiting_for_key_frame_)
+    if (waiting_video_track_)
     {
-        if (frame.track != *video_track_ || !frame.key_frame)
+        if (frame.track != *waiting_video_track_ || !frame.key_frame)
         {
             return;
         }
-        waiting_for_key_frame_ = false;
+        waiting_video_track_.reset();
     }
 
     muxer_.on_frame(frame);

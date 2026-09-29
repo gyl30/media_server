@@ -60,12 +60,11 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
     std::deque<std::vector<std::uint8_t>> pending_output_;
     std::size_t pending_output_bytes_{};
     bool write_in_progress_{};
-    std::optional<track_id> video_track_;
+    std::optional<track_id> waiting_video_track_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
     flv_muxer muxer_;
     std::shared_ptr<media_stream> source_;
-    bool waiting_for_key_frame_{};
     static constexpr std::size_t max_pending_output_bytes_ = 4U * 1024U * 1024U;
 
    public:

@@ -101,7 +101,7 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::shared_ptr<dtls_certificate> certificate_;
     whep_session_timeouts timeouts_;
     std::vector<media_track> negotiated_tracks_;
-    std::optional<track_id> video_track_;
+    std::optional<track_id> waiting_video_track_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<webrtc_packetizer> packetizer_;
@@ -119,7 +119,6 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
     webrtc_answer answer_;
-    bool waiting_for_key_frame_{};
     bool started_{};
 };
 

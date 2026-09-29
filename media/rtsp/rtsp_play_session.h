@@ -87,11 +87,10 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
     std::map<track_id, track_state> track_states_;
-    std::optional<track_id> video_track_;
+    std::optional<track_id> waiting_video_track_;
     rtsp_muxer_t* muxer_{};
     std::string session_id_;
     bool playing_{};
-    bool waiting_for_key_frame_{};
     bool closed_{};
 };
 

@@ -44,7 +44,7 @@ bool gb28181_rtp_sender::startup()
     {
         if (track.kind == media_kind::video)
         {
-            video_track_ = track.id;
+            waiting_video_track_ = track.id;
             break;
         }
     }
@@ -98,8 +98,8 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
         return;
     }
 
-    const bool starts_media = waiting_for_key_frame_;
-    if (starts_media && (frame.track != video_track_ || !frame.key_frame))
+    const bool starts_media = waiting_video_track_.has_value();
+    if (starts_media && (frame.track != *waiting_video_track_ || !frame.key_frame))
     {
         return;
     }
@@ -126,7 +126,7 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
     }
     if (starts_media)
     {
-        waiting_for_key_frame_ = false;
+        waiting_video_track_.reset();
     }
 }
 
@@ -146,7 +146,7 @@ void gb28181_rtp_sender::safe_shutdown()
     }
     packet_handler_ = {};
     end_handler_ = {};
-    waiting_for_key_frame_ = true;
+    waiting_video_track_.reset();
     stream_.reset();
     ps_output_.reset();
     if (packetizer_)

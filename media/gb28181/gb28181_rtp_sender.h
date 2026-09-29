@@ -60,8 +60,7 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
     std::array<std::uint8_t, 2048> packet_buffer_{};
     std::uint32_t timestamp_base_{};
     std::optional<std::uint32_t> first_media_timestamp_;
-    track_id video_track_{};
-    bool waiting_for_key_frame_{true};
+    std::optional<track_id> waiting_video_track_;
     std::atomic_bool shutdown_requested_{};
 };
 

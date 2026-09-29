@@ -67,13 +67,13 @@ void rtsp_play_session::on_frame(const media_frame& entry)
         return;
     }
 
-    if (waiting_for_key_frame_)
+    if (waiting_video_track_)
     {
-        if (entry.track != *video_track_ || !entry.key_frame)
+        if (entry.track != *waiting_video_track_ || !entry.key_frame)
         {
             return;
         }
-        waiting_for_key_frame_ = false;
+        waiting_video_track_.reset();
     }
 
     const auto iterator = track_states_.find(entry.track);
@@ -177,8 +177,7 @@ void rtsp_play_session::safe_shutdown()
     {
         stream_->remove_sink(this);
     }
-    video_track_.reset();
-    waiting_for_key_frame_ = false;
+    waiting_video_track_.reset();
     if (stream_)
     {
         spdlog::debug("rtsp play shutdown {}", stream_->name());
@@ -371,16 +370,15 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
         return result;
     }
     playing_ = true;
-    video_track_.reset();
+    waiting_video_track_.reset();
     for (const auto& [id, state] : track_states_)
     {
         if (state.kind == media_kind::video && state.rtp_channel >= 0)
         {
-            video_track_ = id;
+            waiting_video_track_ = id;
             break;
         }
     }
-    waiting_for_key_frame_ = video_track_.has_value();
     stream_->add_sink(shared_from_this());
     return 0;
 }
@@ -470,7 +468,7 @@ bool rtsp_play_session::channels_available(track_id id, int rtp_channel, int rtc
 int rtsp_play_session::prepare_presentation()
 {
     track_states_.clear();
-    video_track_.reset();
+    waiting_video_track_.reset();
     stream_.reset();
     if (muxer_ != nullptr)
     {
