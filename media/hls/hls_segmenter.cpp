@@ -297,7 +297,7 @@ void hls_segmenter::discard_segment()
     std::vector<std::uint8_t>().swap(current_segment_);
     segment_start_pts_ns_.reset();
     segment_max_pts_ns_ = 0;
-    waiting_for_key_frame_ = true;
+    waiting_for_key_frame_ = std::ranges::any_of(tracks_, [](const auto& item) { return item.second.kind == media_kind::video; });
 }
 
 int hls_segmenter::add_track_to_muxer(void* muxer, const media_track& track)

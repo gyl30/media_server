@@ -5,6 +5,7 @@
 #include <string>
 #include <cstdint>
 #include <cstddef>
+#include <optional>
 #include <functional>
 #include <string_view>
 
@@ -39,7 +40,8 @@ class rtmp_play_session final : public media_sink, public std::enable_shared_fro
     std::shared_ptr<media_stream> stream_;
     flv_muxer muxer_;
     end_handler end_handler_;
-    bool waiting_for_key_frame_{true};
+    std::optional<track_id> video_track_;
+    bool waiting_for_key_frame_{};
     bool closed_{};
 };
 

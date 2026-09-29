@@ -1,5 +1,4 @@
 #include <utility>
-#include <algorithm>
 
 #include "media/net/worker_context.h"
 #include "media/rtmp/rtmp_play_session.h"
@@ -27,8 +26,12 @@ void rtmp_play_session::startup()
     for (const auto& track : stream_->tracks())
     {
         muxer_.on_track(track);
+        if (track.kind == media_kind::video)
+        {
+            video_track_ = track.id;
+        }
     }
-    waiting_for_key_frame_ = true;
+    waiting_for_key_frame_ = video_track_.has_value();
     stream_->add_sink(shared_from_this());
 }
 
@@ -44,6 +47,7 @@ void rtmp_play_session::shutdown()
         stream_->remove_sink(this);
         stream_.reset();
     }
+    video_track_.reset();
     waiting_for_key_frame_ = false;
     muxer_.shutdown();
 }
@@ -57,9 +61,7 @@ void rtmp_play_session::on_frame(const media_frame& frame)
 
     if (waiting_for_key_frame_)
     {
-        const auto track = std::find_if(stream_->tracks().begin(), stream_->tracks().end(), [&](const media_track& value)
-                                        { return value.id == frame.track; });
-        if (track == stream_->tracks().end() || track->kind != media_kind::video || !frame.key_frame)
+        if (frame.track != *video_track_ || !frame.key_frame)
         {
             return;
         }

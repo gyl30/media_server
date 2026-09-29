@@ -2,8 +2,8 @@
 #define MEDIA_HTTP_HTTP_FLV_SESSION_H
 
 #include <memory>
-#include <map>
 #include <deque>
+#include <optional>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -60,7 +60,7 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
     std::deque<std::vector<std::uint8_t>> pending_output_;
     std::size_t pending_output_bytes_{};
     bool write_in_progress_{};
-    std::map<track_id, media_track> tracks_;
+    std::optional<track_id> video_track_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
     flv_muxer muxer_;
