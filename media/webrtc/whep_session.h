@@ -1,7 +1,6 @@
 #ifndef MEDIA_WEBRTC_WHEP_SESSION_H
 #define MEDIA_WEBRTC_WHEP_SESSION_H
 
-#include <map>
 #include <span>
 #include <deque>
 #include <chrono>
@@ -105,7 +104,8 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     boost::asio::ip::address advertised_address_;
     std::shared_ptr<dtls_certificate> certificate_;
     whep_session_timeouts timeouts_;
-    std::map<track_id, media_track> negotiated_tracks_;
+    std::vector<media_track> negotiated_tracks_;
+    std::optional<track_id> video_track_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<webrtc_packetizer> packetizer_;
@@ -123,6 +123,7 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
     webrtc_answer answer_;
+    bool waiting_for_key_frame_{};
     bool started_{};
 };
 

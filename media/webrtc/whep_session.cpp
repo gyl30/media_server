@@ -164,9 +164,14 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
                                       track.codec == (audio_egress_ ? codec_id::opus : *answer_.audio_codec);
         if (negotiated_video || negotiated_audio)
         {
-            negotiated_tracks_.emplace(track.id, track);
+            negotiated_tracks_.push_back(track);
+            if (negotiated_video)
+            {
+                video_track_ = track.id;
+            }
         }
     }
+    waiting_for_key_frame_ = video_track_.has_value();
     stream_->add_sink(shared_from_this());
 
     spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_reservation_);
@@ -213,6 +218,8 @@ void whep_session::safe_shutdown()
         packetizer_.reset();
     }
     negotiated_tracks_.clear();
+    video_track_.reset();
+    waiting_for_key_frame_ = false;
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
     certificate_.reset();
@@ -250,10 +257,13 @@ void whep_session::on_frame(const media_frame& frame)
     {
         return;
     }
-    const auto expected = negotiated_tracks_.find(frame.track);
-    if (expected == negotiated_tracks_.end())
+    if (waiting_for_key_frame_)
     {
-        return;
+        if (frame.track != *video_track_ || !frame.key_frame)
+        {
+            return;
+        }
+        waiting_for_key_frame_ = false;
     }
     if (!packetizer_->on_frame(frame))
     {
@@ -528,7 +538,7 @@ bool whep_session::startup_media()
         return false;
     }
 
-    for (const auto& [id, track] : negotiated_tracks_)
+    for (const auto& track : negotiated_tracks_)
     {
         if (!packetizer->on_track(track))
         {
@@ -538,6 +548,7 @@ bool whep_session::startup_media()
 
     srtp_ = std::move(srtp);
     packetizer_ = std::move(packetizer);
+    negotiated_tracks_.clear();
 
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
