@@ -14,7 +14,8 @@ static const uint8_t s_mpeg2_packet_start[] =  {0x00, 0x00, 0x01, 0xBA};
 
 static int rtp_decode_ps(void* p, const void* packet, int bytes)
 {
-    struct rtp_packet_t pkt;
+	int r;
+	struct rtp_packet_t pkt;
     struct rtp_payload_helper_t *helper;
 
     helper = (struct rtp_payload_helper_t *)p;
@@ -45,16 +46,24 @@ static int rtp_decode_ps(void* p, const void* packet, int bytes)
 //        helper->timestamp = pkt.rtp.timestamp;
 //    }
 //    else
-    {
-        rtp_payload_check(helper, &pkt);
-    }
+	{
+		r = rtp_payload_check(helper, &pkt);
+		if (r < 0)
+			return r;
+	}
     
     // ignore RTP M bit
-    if (pkt.payloadlen > sizeof(s_mpeg2_packet_start)  && 0 == memcmp(s_mpeg2_packet_start, pkt.payload, sizeof(s_mpeg2_packet_start)))
-        rtp_payload_onframe(helper); // new frame/access start
+	if (pkt.payloadlen > sizeof(s_mpeg2_packet_start)  && 0 == memcmp(s_mpeg2_packet_start, pkt.payload, sizeof(s_mpeg2_packet_start)))
+	{
+		r = rtp_payload_onframe(helper); // new frame/access start
+		if (r < 0)
+			return r;
+	}
 
-    rtp_payload_write(helper, &pkt);
-    return helper->lost ? 0 : 1; // packet handled
+	r = rtp_payload_write(helper, &pkt);
+	if (r < 0)
+		return r;
+	return helper->lost ? 0 : 1; // packet handled
 }
 
 struct rtp_payload_decode_t *rtp_ps_decode(void)

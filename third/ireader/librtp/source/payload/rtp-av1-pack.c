@@ -336,6 +336,8 @@ static int rtp_av1_pack_input_obu(void* pack, const void* data, int bytes, uint3
 		packer->aggregation |= OBU_SEQUENCE_HEADER == obu_type ? AV1_AGGREGATION_HEADER_N : 0;
 		r = rtp_av1_pack_obu(packer, raw + i, (size_t)len);
 	}
+	if (0 != r)
+		return r;
 
 	// The RTP header Marker bit MUST be set equal to 0 if the packet is not the last 
 	// packet of the temporal unit, it SHOULD be set equal to 1 otherwise.

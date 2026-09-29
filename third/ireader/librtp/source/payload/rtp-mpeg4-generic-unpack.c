@@ -12,7 +12,7 @@
 
 static int rtp_decode_mpeg4_generic(void* p, const void* packet, int bytes)
 {
-	int i, size;
+	int i, r, size;
 	int au_size;
 	int au_numbers;
 	int au_header_length;
@@ -24,7 +24,9 @@ static int rtp_decode_mpeg4_generic(void* p, const void* packet, int bytes)
 	if (!helper || 0 != rtp_packet_deserialize(&pkt, packet, bytes) || pkt.payloadlen < 4)
 		return -EINVAL;
 
-	rtp_payload_check(helper, &pkt);
+	r = rtp_payload_check(helper, &pkt);
+	if (r < 0)
+		return r;
 
 	// save payload
 	ptr = (const uint8_t *)pkt.payload;
@@ -67,14 +69,18 @@ static int rtp_decode_mpeg4_generic(void* p, const void* packet, int bytes)
 		// TODO: add ADTS/ASC ???
 		pkt.payload = pau;
 		pkt.payloadlen = size;
-		rtp_payload_write(helper, &pkt);
+		r = rtp_payload_write(helper, &pkt);
+		if (r < 0)
+			return r;
 
 		ptr += au_size;
 		pau += size;
 
 		if (au_numbers > 1 || pkt.rtp.m)
 		{
-			rtp_payload_onframe(helper);
+			r = rtp_payload_onframe(helper);
+			if (r < 0)
+				return r;
 		}
 	}
 

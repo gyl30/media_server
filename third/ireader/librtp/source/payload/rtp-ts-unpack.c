@@ -11,6 +11,7 @@
 
 static int rtp_decode_ts(void* p, const void* packet, int bytes)
 {
+	int r;
 	struct rtp_packet_t pkt;
 	struct rtp_payload_helper_t *helper;
 
@@ -18,7 +19,9 @@ static int rtp_decode_ts(void* p, const void* packet, int bytes)
 	if (!helper || 0 != rtp_packet_deserialize(&pkt, packet, bytes))
 		return -EINVAL;
 
-    rtp_payload_check(helper, &pkt);
+	r = rtp_payload_check(helper, &pkt);
+	if (r < 0)
+		return r;
     
 	// 2.1 RTP header usage(p4)
 	// M bit: Set to 1 whenever the timestamp is discontinuous. (such as 
@@ -33,11 +36,15 @@ static int rtp_decode_ts(void* p, const void* packet, int bytes)
 		// new frame start
         //helper->size = 0; // discard previous packets
 		helper->lost = 1; // notify source changed
-        rtp_payload_onframe(helper); // clear previous source data
-	}    
-    
-	rtp_payload_write(helper, &pkt);
-    return helper->lost ? 0 : 1; // packet handled
+		r = rtp_payload_onframe(helper); // clear previous source data
+		if (r < 0)
+			return r;
+	}
+
+	r = rtp_payload_write(helper, &pkt);
+	if (r < 0)
+		return r;
+	return helper->lost ? 0 : 1; // packet handled
 }
 
 struct rtp_payload_decode_t *rtp_ts_decode()

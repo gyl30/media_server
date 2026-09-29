@@ -38,6 +38,7 @@
 */
 static int rtp_decode_vp9(void* p, const void* packet, int bytes)
 {
+	int r;
 	uint8_t pictureid_present;
 	uint8_t inter_picture_predicted_layer_frame;
 	uint8_t layer_indices_preset;
@@ -54,7 +55,9 @@ static int rtp_decode_vp9(void* p, const void* packet, int bytes)
 	if (!helper || 0 != rtp_packet_deserialize(&pkt, packet, bytes) || pkt.payloadlen < 1)
 		return -EINVAL;
 
-	rtp_payload_check(helper, &pkt);
+	r = rtp_payload_check(helper, &pkt);
+	if (r < 0)
+		return r;
 
 	ptr = (const uint8_t *)pkt.payload;
 	pend = ptr + pkt.payloadlen;
@@ -190,16 +193,22 @@ static int rtp_decode_vp9(void* p, const void* packet, int bytes)
 	if (start_of_layer_frame)
 	{
 		// new frame begin
-		rtp_payload_onframe(helper);
+		r = rtp_payload_onframe(helper);
+		if (r < 0)
+			return r;
 	}
 
 	pkt.payload = ptr;
 	pkt.payloadlen = (int)(pend - ptr);
-	rtp_payload_write(helper, &pkt);
+	r = rtp_payload_write(helper, &pkt);
+	if (r < 0)
+		return r;
 
 	if (pkt.rtp.m)
 	{
-		rtp_payload_onframe(helper);
+		r = rtp_payload_onframe(helper);
+		if (r < 0)
+			return r;
 	}
 
 	return 1; // packet handled

@@ -11,6 +11,7 @@
 
 static int rtp_decode_mp4v_es(void* p, const void* packet, int bytes)
 {
+	int r;
 	struct rtp_packet_t pkt;
 	struct rtp_payload_helper_t *helper;
 
@@ -18,14 +19,17 @@ static int rtp_decode_mp4v_es(void* p, const void* packet, int bytes)
 	if (!helper || 0 != rtp_packet_deserialize(&pkt, packet, bytes))
 		return -EINVAL;
 
-	rtp_payload_check(helper, &pkt);
+	r = rtp_payload_check(helper, &pkt);
+	if (r < 0)
+		return r;
 
 	// save payload
 	assert(pkt.payloadlen > 0);
 	if (!helper->lost && pkt.payload && pkt.payloadlen > 0)
 	{
-		if (0 != rtp_payload_write(helper, &pkt))
-			return -ENOMEM;
+		r = rtp_payload_write(helper, &pkt);
+		if (r < 0)
+			return r;
 	}
 
 	// 5.1. Use of RTP Header Fields for MPEG-4 Visual (p9)
@@ -34,7 +38,9 @@ static int rtp_decode_mp4v_es(void* p, const void* packet, int bytes)
 	// in the same RTP packet, the marker bit is set to 1.
 	if (pkt.rtp.m)
 	{
-		rtp_payload_onframe(helper);
+		r = rtp_payload_onframe(helper);
+		if (r < 0)
+			return r;
 	}
 
 	return helper->lost ? 0 : 1; // packet handled

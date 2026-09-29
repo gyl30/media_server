@@ -34,7 +34,8 @@ void rtp_payload_helper_destroy(void* p)
 
 int rtp_payload_check(struct rtp_payload_helper_t* helper, const struct rtp_packet_t* pkt)
 {
-    int lost; // next frame lost packet flags
+	int r;
+	int lost; // next frame lost packet flags
     
 	// first packet only
 	if (-1 == helper->__flags)
@@ -45,7 +46,8 @@ int rtp_payload_check(struct rtp_payload_helper_t* helper, const struct rtp_pack
 		helper->timestamp = pkt->rtp.timestamp + 1; // flag for new frame
 	}
     
-    lost = 0;
+	r = 0;
+	lost = 0;
 	// check sequence number
 	if ((uint16_t)pkt->rtp.seq != (uint16_t)(helper->seq + 1))
 	{
@@ -59,8 +61,8 @@ int rtp_payload_check(struct rtp_payload_helper_t* helper, const struct rtp_pack
 
 	// check timestamp
 	if (pkt->rtp.timestamp != helper->timestamp)
-    {
-        rtp_payload_onframe(helper);
+	{
+		r = rtp_payload_onframe(helper);
         
         // lost:
         // 0 - packet lost before timestamp change
@@ -71,7 +73,7 @@ int rtp_payload_check(struct rtp_payload_helper_t* helper, const struct rtp_pack
     
 	helper->timestamp = pkt->rtp.timestamp;
 
-	return 0;
+	return r;
 }
 
 int rtp_payload_write(struct rtp_payload_helper_t* helper, const struct rtp_packet_t* pkt)

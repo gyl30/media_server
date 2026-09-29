@@ -282,7 +282,7 @@ int rtp_av1_unpack_onframe(struct rtp_decode_av1_t* unpacker)
 */
 static int rtp_av1_unpack_input(void* p, const void* packet, int bytes)
 {
-	int lost;
+	int lost, r;
 	int64_t size;
 	uint8_t z, y, w, n, i;
 	const uint8_t *ptr, *pend;
@@ -294,6 +294,7 @@ static int rtp_av1_unpack_input(void* p, const void* packet, int bytes)
 		return -EINVAL;
 
 	lost = 0;
+	r = 0;
 	if (-1 == unpacker->flags)
 	{
 		unpacker->flags = 0;
@@ -310,7 +311,7 @@ static int rtp_av1_unpack_input(void* p, const void* packet, int bytes)
 	// check timestamp
 	if (pkt.rtp.timestamp != unpacker->timestamp)
 	{
-		rtp_av1_unpack_onframe(unpacker);
+		r = rtp_av1_unpack_onframe(unpacker);
 
 		// lost:
 		// 0 - packet lost before timestamp change
@@ -320,6 +321,8 @@ static int rtp_av1_unpack_input(void* p, const void* packet, int bytes)
 	}
 	unpacker->seq = (uint16_t)pkt.rtp.seq;
 	unpacker->timestamp = pkt.rtp.timestamp;
+	if (r < 0)
+		return r;
 
 	ptr = (const uint8_t *)pkt.payload;
 	pend = ptr + pkt.payloadlen;
@@ -341,7 +344,9 @@ static int rtp_av1_unpack_input(void* p, const void* packet, int bytes)
 	assert(!n || 0 == z);
 	if (0 == z && 1 == n) {
 		// new video codec sequence
-		rtp_av1_unpack_onframe(unpacker);
+		r = rtp_av1_unpack_onframe(unpacker);
+		if (r < 0)
+			return r;
 	}
 
 	for (i = 1, ptr++; ptr < pend; ptr += size, i++)
@@ -365,7 +370,9 @@ static int rtp_av1_unpack_input(void* p, const void* packet, int bytes)
 			return -1; // invalid packet
 		}
 
-		rtp_av1_unpack_obu_append(unpacker, ptr, (int)size, (1 != i || 0 == z) ? 1 : 0);
+		r = rtp_av1_unpack_obu_append(unpacker, ptr, (int)size, (1 != i || 0 == z) ? 1 : 0);
+		if (r < 0)
+			return r;
 	}
 
 	// The RTP header Marker bit MUST be set equal to 0 
@@ -373,7 +380,9 @@ static int rtp_av1_unpack_input(void* p, const void* packet, int bytes)
 	// it SHOULD be set equal to 1 otherwise.
 	if (pkt.rtp.m)
 	{
-		rtp_av1_unpack_onframe(unpacker);
+		r = rtp_av1_unpack_onframe(unpacker);
+		if (r < 0)
+			return r;
 	}
 
 	return 1; // packet handled

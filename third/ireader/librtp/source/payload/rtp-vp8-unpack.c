@@ -38,6 +38,7 @@
 */
 static int rtp_decode_vp8(void* p, const void* packet, int bytes)
 {
+	int r;
 	uint8_t extended_control_bits;
 	uint8_t start_of_vp8_partition;
 	//uint8_t PID;
@@ -49,7 +50,9 @@ static int rtp_decode_vp8(void* p, const void* packet, int bytes)
 	if (!helper || 0 != rtp_packet_deserialize(&pkt, packet, bytes) || pkt.payloadlen < 1)
 		return -EINVAL;
 
-	rtp_payload_check(helper, &pkt);
+	r = rtp_payload_check(helper, &pkt);
+	if (r < 0)
+		return r;
 
 	ptr = (const uint8_t *)pkt.payload;
 	pend = ptr + pkt.payloadlen;
@@ -143,16 +146,22 @@ static int rtp_decode_vp8(void* p, const void* packet, int bytes)
 		//keyframe = ptr[0] & 0x01; // PID == 0
 
 		// new frame begin
-		rtp_payload_onframe(helper);
+		r = rtp_payload_onframe(helper);
+		if (r < 0)
+			return r;
 	}
 
 	pkt.payload = ptr;
 	pkt.payloadlen = (int)(pend - ptr);
-	rtp_payload_write(helper, &pkt);
+	r = rtp_payload_write(helper, &pkt);
+	if (r < 0)
+		return r;
 
 	if (pkt.rtp.m)
 	{
-		rtp_payload_onframe(helper);
+		r = rtp_payload_onframe(helper);
+		if (r < 0)
+			return r;
 	}
 
 	return 1; // packet handled

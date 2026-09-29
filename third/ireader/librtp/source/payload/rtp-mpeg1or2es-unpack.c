@@ -13,7 +13,7 @@
 
 static int rtp_decode_mpeg2es(void* p, const void* packet, int bytes)
 {
-	int n;
+	int n, r;
 	struct rtp_packet_t pkt;
 	struct rtp_payload_helper_t *helper;
 
@@ -27,7 +27,9 @@ static int rtp_decode_mpeg2es(void* p, const void* packet, int bytes)
 		return -EINVAL;
 	}
 
-	rtp_payload_check(helper, &pkt);
+	r = rtp_payload_check(helper, &pkt);
+	if (r < 0)
+		return r;
 
 	// save payload
 	if (!helper->lost)
@@ -41,7 +43,9 @@ static int rtp_decode_mpeg2es(void* p, const void* packet, int bytes)
 		{
 			pkt.payload = (uint8_t*)pkt.payload + n;
 			pkt.payloadlen -= n;
-			rtp_payload_write(helper, &pkt);
+			r = rtp_payload_write(helper, &pkt);
+			if (r < 0)
+				return r;
 		}
 	}
 
@@ -49,7 +53,9 @@ static int rtp_decode_mpeg2es(void* p, const void* packet, int bytes)
 	//        For audio, set to 1 on first packet of a "talk-spurt," 0 otherwise.
 	if (pkt.rtp.m && RTP_PAYLOAD_MPV == pkt.rtp.pt)
 	{
-		rtp_payload_onframe(helper);
+		r = rtp_payload_onframe(helper);
+		if (r < 0)
+			return r;
 	}
 
 	return helper->lost ? 0 : 1; // packet handled

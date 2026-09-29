@@ -13,7 +13,7 @@
 
 static int rtp_decode_mp4a_latm(void* p, const void* packet, int bytes)
 {
-	int len;
+	int len, r;
 	const uint8_t *ptr, *pend;
 	struct rtp_packet_t pkt;
 	struct rtp_payload_helper_t *helper;
@@ -22,7 +22,9 @@ static int rtp_decode_mp4a_latm(void* p, const void* packet, int bytes)
 	if (!helper || 0 != rtp_packet_deserialize(&pkt, packet, bytes) || pkt.payloadlen < 4)
 		return -EINVAL;
 
-	rtp_payload_check(helper, &pkt);
+	r = rtp_payload_check(helper, &pkt);
+	if (r < 0)
+		return r;
 
 	// save payload
 	if (0 == helper->size)
@@ -55,11 +57,15 @@ static int rtp_decode_mp4a_latm(void* p, const void* packet, int bytes)
 			// TODO: add ADTS/ASC ???
 			pkt.payload = ptr;
 			pkt.payloadlen = len;
-			rtp_payload_write(helper, &pkt);
+			r = rtp_payload_write(helper, &pkt);
+			if (r < 0)
+				return r;
 
 			if (ptr + len < pend || pkt.rtp.m)
 			{
-				rtp_payload_onframe(helper);
+				r = rtp_payload_onframe(helper);
+				if (r < 0)
+					return r;
 			}
 		}
 	}
@@ -71,10 +77,14 @@ static int rtp_decode_mp4a_latm(void* p, const void* packet, int bytes)
 		// of the RTP packet containing it does not exceed the size of the Path
 		// MTU, this will be no problem.If it cannot, the audioMuxElement
 		// SHALL be fragmented and spread across multiple packets.
-		rtp_payload_write(helper, &pkt);
+		r = rtp_payload_write(helper, &pkt);
+		if (r < 0)
+			return r;
 		if (pkt.rtp.m)
 		{
-			rtp_payload_onframe(helper);
+			r = rtp_payload_onframe(helper);
+			if (r < 0)
+				return r;
 		}
 	}
 
