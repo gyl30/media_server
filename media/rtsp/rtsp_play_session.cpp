@@ -93,6 +93,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
                           to_string(state.codec),
                           entry.pts_ns,
                           entry.dts_ns);
+            shutdown_handler_();
             return;
         }
 
@@ -105,6 +106,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
                           to_string(state.codec),
                           entry.payload->size(),
                           payload_capacity);
+            shutdown_handler_();
             return;
         }
     }
