@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -209,9 +210,9 @@ bool rtsp_pull_media::validate_track_from_packet(const avpacket_t& packet)
 
     if (!media_stream_->tracks().empty())
     {
-        const auto& fixed = track->kind == media_kind::video ? initial_video_track_ : initial_audio_track_;
-        if (!fixed || fixed->codec != track->codec || fixed->clock_rate != track->clock_rate || fixed->channel_count != track->channel_count ||
-            fixed->codec_config != track->codec_config)
+        const auto fixed = std::ranges::find_if(media_stream_->tracks(), [&track](const media_track& value) { return value.id == track->id; });
+        if (fixed == media_stream_->tracks().end() || fixed->codec != track->codec || fixed->clock_rate != track->clock_rate ||
+            fixed->channel_count != track->channel_count || fixed->codec_config != track->codec_config)
         {
             spdlog::warn("rtsp pull track config changed {} {}", to_string(track->kind), to_string(track->codec));
             fatal_ = true;
@@ -238,10 +239,10 @@ bool rtsp_pull_media::try_initialize_tracks()
     }
 
     std::vector<media_track> tracks;
-    tracks.push_back(std::move(*initial_video_track_));
+    tracks.push_back(*initial_video_track_);
     if (expected_audio_)
     {
-        tracks.push_back(std::move(*initial_audio_track_));
+        tracks.push_back(*initial_audio_track_);
     }
     if (!media_stream_->set_tracks(std::move(tracks)))
     {
@@ -253,6 +254,8 @@ bool rtsp_pull_media::try_initialize_tracks()
         fatal_ = true;
         return true;
     }
+    initial_video_track_.reset();
+    initial_audio_track_.reset();
     spdlog::info("rtsp pull tracks ready audio {}", expected_audio_);
     return true;
 }
