@@ -148,7 +148,7 @@ void rtsp_pull_session::schedule_establishment_timeout()
     startup_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || self->media_started_)
+            if (error || self->closed_ || self->received_rtp_)
             {
                 return;
             }
@@ -192,7 +192,7 @@ void rtsp_pull_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || !self->media_started_ || !self->transport_)
+            if (error || self->closed_ || !self->received_rtp_ || !self->transport_)
             {
                 return;
             }
@@ -227,7 +227,7 @@ void rtsp_pull_session::safe_shutdown()
     closed_ = true;
     write_queue_.stop();
     started_ = false;
-    media_started_ = false;
+    received_rtp_ = false;
     session_registry::instance().remove_receiver_session(stream_name_, *this);
     if (media_)
     {
@@ -254,7 +254,7 @@ int rtsp_pull_session::send_callback(void* param, const char*, const void* reque
     {
         return -1;
     }
-    if (!self->media_started_)
+    if (!self->received_rtp_)
     {
         self->record_establishment_progress();
     }
@@ -539,7 +539,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
 
     if (!rtcp)
     {
-        if (!media_started_)
+        if (!received_rtp_)
         {
             const auto now = std::chrono::steady_clock::now();
             if (now >= last_establishment_progress_ + establishment_timeout_)
@@ -548,18 +548,18 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
                 shutdown();
                 return;
             }
-            media_started_ = true;
+            received_rtp_ = true;
             startup_timer_.cancel();
             schedule_keepalive();
             schedule_rtcp();
-            if (!media_->tracks_initialized())
+            if (!media_->has_tracks())
             {
                 startup_timer_.expires_after(initial_tracks_timeout_);
                 const auto self = shared_from_this();
                 startup_timer_.async_wait(
                     [self](const boost::system::error_code& error)
                     {
-                        if (error || self->closed_ || !self->media_ || self->media_->tracks_initialized())
+                        if (error || self->closed_ || !self->media_ || self->media_->has_tracks())
                         {
                             return;
                         }
@@ -568,7 +568,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
                     });
             }
         }
-        else if (!media_->tracks_initialized() && std::chrono::steady_clock::now() >= startup_timer_.expiry())
+        else if (!media_->has_tracks() && std::chrono::steady_clock::now() >= startup_timer_.expiry())
         {
             shutdown();
             return;
@@ -580,7 +580,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
         shutdown();
         return;
     }
-    if (!rtcp && media_->tracks_initialized())
+    if (!rtcp && media_->has_tracks())
     {
         startup_timer_.cancel();
     }

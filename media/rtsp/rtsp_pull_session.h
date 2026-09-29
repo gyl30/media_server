@@ -108,7 +108,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     std::chrono::seconds keepalive_interval_{30};
     std::size_t media_count_{};
     bool started_{};
-    bool media_started_{};
+    bool received_rtp_{};
     bool closed_{};
 };
 
