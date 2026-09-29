@@ -190,7 +190,10 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
 
 void whep_session::shutdown()
 {
-    started_ = false;
+    if (shutdown_requested_.exchange(true, std::memory_order_acq_rel))
+    {
+        return;
+    }
     if (stream_)
     {
         stream_->remove_sink(this);
@@ -205,6 +208,7 @@ void whep_session::safe_shutdown()
     {
         return;
     }
+    started_ = false;
     if (dtls_)
     {
         dtls_->shutdown();
@@ -243,7 +247,7 @@ const std::string& whep_session::answer_sdp() const noexcept { return answer_.sd
 
 void whep_session::on_frame(const media_frame& frame)
 {
-    if (!started_ || !packetizer_)
+    if (shutdown_requested_.load(std::memory_order_acquire) || !started_ || !packetizer_)
     {
         return;
     }
