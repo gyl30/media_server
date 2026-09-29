@@ -335,7 +335,21 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
     }
     if (path != stream_->name())
     {
-        return rtsp_server_reply_play(server, 404, nullptr, nullptr, nullptr);
+        std::size_t setup_track_count{};
+        bool setup_track_path{};
+        for (const auto& [id, state] : track_states_)
+        {
+            if (state.rtp_channel < 0)
+            {
+                continue;
+            }
+            ++setup_track_count;
+            setup_track_path = setup_track_path || path == stream_->name() + "/trackID=" + std::to_string(id);
+        }
+        if (setup_track_count != 1 || !setup_track_path)
+        {
+            return rtsp_server_reply_play(server, 404, nullptr, nullptr, nullptr);
+        }
     }
     if (session != session_id_)
     {

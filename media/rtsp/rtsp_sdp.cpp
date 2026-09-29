@@ -10,6 +10,7 @@
 extern "C"
 {
 #include "base64.h"
+#include "mpeg4-aac.h"
 #include "sdp-a-fmtp.h"
 #include "rtp-profile.h"
 }
@@ -171,6 +172,17 @@ std::optional<media_track> rtsp_sdp_track_from_format(
                 base16_decode(config.data(), encoded.data(), encoded.size());
                 if (const auto aac = parse_aac_asc(config))
                 {
+                    mpeg4_aac_t parsed{};
+                    std::array<std::uint8_t, 64> normalized{};
+                    const auto normalized_bytes =
+                        mpeg4_aac_audio_specific_config_load(config.data(), config.size(), &parsed) < 0
+                            ? -1
+                            : mpeg4_aac_audio_specific_config_save(&parsed, normalized.data(), normalized.size());
+                    if (normalized_bytes <= 0)
+                    {
+                        return std::nullopt;
+                    }
+                    config.assign(normalized.begin(), normalized.begin() + normalized_bytes);
                     return media_track{.id = id,
                                        .kind = media_kind::audio,
                                        .codec = codec_id::aac,
