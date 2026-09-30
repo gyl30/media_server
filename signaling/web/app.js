@@ -24,7 +24,6 @@ const elements = {
   previewPanel: document.querySelector(".preview-panel"),
   previewPlaceholder: byID("preview-placeholder"),
   previewState: byID("preview-state"),
-  previewStreamID: byID("preview-stream-id"),
   previewTarget: byID("preview-target"),
   previewVideo: byID("preview-video"),
   refresh: byID("refresh-button"),
@@ -485,7 +484,7 @@ async function startPreview(target, label) {
       showStatus("Preview started", "success");
     }
   } catch (error) {
-    renderPreviewState({ state: "failed", target: label, streamID: "", error: errorCode(error) });
+    renderPreviewState({ state: "failed", target: label, error: errorCode(error) });
     showStatus(`Preview failed: ${errorCode(error)}`, "danger", 0);
   }
 }
@@ -501,7 +500,6 @@ function renderPreviewState(update) {
   const label = labels[update.state] || update.state;
   elements.previewState.replaceChildren(badge(label, toneForState(update.state)));
   elements.previewTarget.textContent = update.target || "None";
-  elements.previewStreamID.textContent = update.streamID || "-";
   elements.stopPreview.disabled = !update.canStop;
   elements.previewPlaceholder.hidden = update.state === "streaming";
   elements.previewError.textContent = update.error || "";

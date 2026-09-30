@@ -20,11 +20,6 @@ type previewTarget struct {
 	channelID string
 }
 
-type previewStartResponse struct {
-	StreamID string `json:"stream_id"`
-	WHEPURL  string `json:"whep_url"`
-}
-
 func (s *infrastructureServer) handlePreviewStart(writer http.ResponseWriter, request *http.Request) {
 	var command previewStartRequest
 	if !decodeJSON(writer, request, &command) {
@@ -37,7 +32,6 @@ func (s *infrastructureServer) handlePreviewStart(writer http.ResponseWriter, re
 		return
 	}
 
-	var streamID string
 	var streamName string
 	if target.sourceID != "" {
 		if _, err := s.sources.get(request.Context(), target.sourceID); err != nil {
@@ -49,22 +43,18 @@ func (s *infrastructureServer) handlePreviewStart(writer http.ResponseWriter, re
 			writeHTTPError(writer, http.StatusConflict, "not_running")
 			return
 		}
-		streamID, streamName = session.streamID, session.streamName
+		streamName = session.streamName
 	} else {
-		if s.live == nil {
-			writeHTTPError(writer, http.StatusConflict, "not_running")
-			return
-		}
 		live, ok := s.live.live(target.deviceID, target.channelID)
 		if !ok || live.state == liveStopping {
 			writeHTTPError(writer, http.StatusConflict, "not_running")
 			return
 		}
-		streamID, streamName = live.streamID, live.streamName
+		streamName = live.streamName
 	}
 
-	writeJSON(writer, http.StatusCreated, previewStartResponse{
-		StreamID: streamID, WHEPURL: makeWHEPURL(streamName, s.mediaServer),
+	writeJSON(writer, http.StatusCreated, map[string]string{
+		"whep_url": makeWHEPURL(streamName, s.media.server),
 	})
 }
 

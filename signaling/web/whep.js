@@ -112,7 +112,6 @@ export class WHEPPreview {
       canStop: Boolean(session && this.current === session),
       state,
       target: session ? session.label : "",
-      streamID: session ? session.streamID : "",
       error,
     });
   }
@@ -139,7 +138,6 @@ export class WHEPPreview {
       peer: null,
       resourceURL: "",
       streaming: false,
-      streamID: "",
       whepURL: "",
     };
     this.current = session;
@@ -149,7 +147,6 @@ export class WHEPPreview {
       if (!this.isCurrent(session)) {
         return null;
       }
-      session.streamID = preview.stream_id;
       session.whepURL = preview.whep_url;
       session.peer = new RTCPeerConnection();
       session.peer.addTransceiver("video", { direction: "recvonly" });
@@ -198,7 +195,7 @@ export class WHEPPreview {
       if (session.peer.connectionState === "connected") {
         this.markStreaming(session);
       }
-      return { streamID: session.streamID, whepURL: session.whepURL };
+      return true;
     } catch (error) {
       if (session.resourceURL) {
         try {
