@@ -57,7 +57,6 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
     std::unique_ptr<tcp_yield_transport> transport_;
     tcp_write_queue write_queue_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
-    bool closed_{};
 };
 
 }    // namespace media_server

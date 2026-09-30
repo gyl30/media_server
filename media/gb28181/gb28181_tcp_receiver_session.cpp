@@ -66,10 +66,6 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port}, yield[error]);
     }
 
-    if (closed_)
-    {
-        return;
-    }
     if (yield.cancelled() != boost::asio::cancellation_type::none)
     {
         shutdown();
@@ -82,6 +78,10 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
             spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_name(), error.message());
         }
         shutdown();
+        return;
+    }
+    if (!socket_.is_open())
+    {
         return;
     }
 
@@ -148,11 +148,6 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
 
 void gb28181_tcp_receiver_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)
     {

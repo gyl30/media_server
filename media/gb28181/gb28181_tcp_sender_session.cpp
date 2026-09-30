@@ -65,10 +65,6 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port}, yield[error]);
     }
 
-    if (closed_)
-    {
-        return;
-    }
     if (yield.cancelled() != boost::asio::cancellation_type::none)
     {
         shutdown();
@@ -81,6 +77,10 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
             spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_->name(), sender_id_, error.message());
         }
         shutdown();
+        return;
+    }
+    if (!socket_.is_open())
+    {
         return;
     }
 
@@ -124,7 +124,7 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_ || write_queue_.stopped() || write_queue_.empty())
+        if (write_queue_.stopped() || write_queue_.empty())
         {
             return;
         }
@@ -145,7 +145,7 @@ void gb28181_tcp_sender_session::run_write(boost::asio::yield_context yield)
 
 void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (closed_ || !transport_)
+    if (!transport_ || write_queue_.stopped())
     {
         return;
     }
@@ -181,11 +181,6 @@ void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 
 void gb28181_tcp_sender_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     write_queue_.stop();
     if (stream_)
     {
