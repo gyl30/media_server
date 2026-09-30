@@ -264,7 +264,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     auto publish = std::make_shared<rtsp_publish_session>(
         self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
     publish->set_shutdown_handler([owner]() { owner->shutdown(); });
-    const auto status = publish->prepare_announce(server, uri != nullptr ? uri : "", sdp, length);
+    const auto status = publish->on_announce(server, uri != nullptr ? uri : "", sdp, length);
     if (status != 200)
     {
         publish->shutdown();
@@ -272,12 +272,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     }
 
     self->publish_session_ = publish;
-    const auto reply_result = publish->accept_announce(server);
-    if (reply_result != 0)
-    {
-        self->shutdown();
-    }
-    return reply_result;
+    return rtsp_server_reply_announce(server, 200);
 }
 
 int rtsp_server_connection::record_callback(

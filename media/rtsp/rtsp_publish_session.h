@@ -44,8 +44,7 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     int on_setup(
         rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
-    int prepare_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length);
-    int accept_announce(rtsp_server_t* server);
+    int on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length);
     int on_record(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
 
    private:

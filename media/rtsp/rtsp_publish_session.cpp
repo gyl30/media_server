@@ -53,7 +53,7 @@ bool rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const 
     return tcp_session_->on_interleaved(channel, data);
 }
 
-int rtsp_publish_session::prepare_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
+int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
     if (!descriptions_.empty() || !session_id_.empty() || sdp == nullptr || length <= 0)
     {
@@ -145,18 +145,8 @@ int rtsp_publish_session::prepare_announce(rtsp_server_t* server, std::string_vi
 
     stream_name_ = target->stream_name;
     descriptions_ = std::move(descriptions);
-    return 200;
-}
-
-int rtsp_publish_session::accept_announce(rtsp_server_t* server)
-{
-    if (descriptions_.empty() || !session_id_.empty())
-    {
-        return rtsp_server_reply_announce(server, 455);
-    }
-
     session_id_ = std::to_string(random_u32());
-    return rtsp_server_reply_announce(server, 200);
+    return 200;
 }
 
 int rtsp_publish_session::on_setup(
