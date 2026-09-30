@@ -66,10 +66,6 @@ void rtmp_session::startup()
 
 void rtmp_session::run(boost::asio::yield_context yield)
 {
-    if (closed_)
-    {
-        return;
-    }
     rtmp_server_handler_t handler{};
     handler.send = &rtmp_session::send_callback;
     handler.ondelete_stream = &rtmp_session::delete_stream_callback;
@@ -157,19 +153,19 @@ int rtmp_session::publish_callback(void* param, const char* app, const char* str
 int rtmp_session::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    return !self->closed_ && self->publish_ ? self->publish_->on_video(data, bytes, timestamp) : -1;
+    return self->publish_ ? self->publish_->on_video(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    return !self->closed_ && self->publish_ ? self->publish_->on_audio(data, bytes, timestamp) : -1;
+    return self->publish_ ? self->publish_->on_audio(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    if (self->closed_ || !self->publish_)
+    if (!self->publish_)
     {
         return 0;
     }
@@ -187,7 +183,7 @@ int rtmp_session::duration_callback(void*, const char*, const char*, double* dur
 
 void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
 {
-    if (closed_ || data->empty())
+    if (data->empty())
     {
         return;
     }
@@ -214,7 +210,7 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_ || write_queue_.stopped())
+        if (write_queue_.stopped())
         {
             return;
         }
@@ -245,10 +241,6 @@ int rtmp_session::on_delete_stream(std::uint32_t stream_id)
 
 int rtmp_session::on_play(std::string app, std::string stream)
 {
-    if (closed_)
-    {
-        return -1;
-    }
     if (publish_ || play_)
     {
         return -1;
@@ -290,7 +282,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
         [self]() { self->shutdown(); });
     boost::asio::post(worker_.io(), [self]()
                       {
-                          if (!self->closed_ && self->play_)
+                          if (self->play_)
                           {
                               self->play_->startup();
                           }
@@ -301,10 +293,6 @@ int rtmp_session::on_play(std::string app, std::string stream)
 
 int rtmp_session::on_publish(std::string app, std::string stream)
 {
-    if (closed_)
-    {
-        return -1;
-    }
     if (publish_ || play_)
     {
         return -1;
@@ -338,11 +326,6 @@ void rtmp_session::shutdown()
 
 void rtmp_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     write_queue_.stop();
     rtmp_context_ = nullptr;
     if (publish_)
