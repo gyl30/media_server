@@ -95,8 +95,6 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};
     std::size_t media_count_{};
-    bool received_rtp_{};
-    bool closed_{};
 };
 
 }    // namespace media_server

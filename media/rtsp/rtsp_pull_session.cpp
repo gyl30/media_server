@@ -132,7 +132,7 @@ void rtsp_pull_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || self->closed_ || !self->received_rtp_ || !self->transport_)
+            if (error || !self->transport_ || !self->media_)
             {
                 return;
             }
@@ -160,13 +160,7 @@ void rtsp_pull_session::schedule_rtcp()
 
 void rtsp_pull_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     write_queue_.stop();
-    received_rtp_ = false;
     session_registry::instance().remove_receiver_session(stream_name_, *this);
     if (media_)
     {
@@ -187,7 +181,7 @@ void rtsp_pull_session::safe_shutdown()
 int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
 {
     auto* self = static_cast<rtsp_pull_session*>(param);
-    if (self->closed_ || !self->transport_)
+    if (!self->transport_ || self->write_queue_.stopped())
     {
         return -1;
     }
@@ -274,10 +268,6 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
 {
     boost::system::error_code error;
     const auto endpoints = resolver_.async_resolve(host, std::to_string(port), yield[error]);
-    if (closed_)
-    {
-        return;
-    }
     if (yield.cancelled() != boost::asio::cancellation_type::none)
     {
         shutdown();
@@ -290,10 +280,6 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     }
 
     boost::asio::async_connect(connect_socket_, endpoints, yield[error]);
-    if (closed_)
-    {
-        return;
-    }
     if (yield.cancelled() != boost::asio::cancellation_type::none)
     {
         shutdown();
@@ -350,15 +336,12 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
 
     client_ = nullptr;
     rtsp_client_destroy(client);
-    if (!closed_)
-    {
-        shutdown();
-    }
+    shutdown();
 }
 
 void rtsp_pull_session::write(std::span<const std::uint8_t> data)
 {
-    if (closed_ || !transport_ || data.empty())
+    if (!transport_ || data.empty())
     {
         return;
     }
@@ -385,7 +368,7 @@ void rtsp_pull_session::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_ || write_queue_.stopped() || write_queue_.empty())
+        if (write_queue_.stopped() || write_queue_.empty())
         {
             return;
         }
@@ -450,12 +433,17 @@ int rtsp_pull_session::on_setup()
     media_count_ = static_cast<std::size_t>(media_count);
 
     std::uint64_t npt{};
-    return rtsp_client_play(client_, &npt, nullptr);
+    const auto result = rtsp_client_play(client_, &npt, nullptr);
+    if (result == 0)
+    {
+        schedule_rtcp();
+    }
+    return result;
 }
 
 void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
-    if (closed_)
+    if (!media_)
     {
         return;
     }
@@ -464,12 +452,6 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
     if (media >= media_count_ || data == nullptr || bytes < (rtcp ? 4U : 12U))
     {
         return;
-    }
-
-    if (!rtcp && !received_rtp_)
-    {
-        received_rtp_ = true;
-        schedule_rtcp();
     }
 
     if (!media_->input_packet(channel, std::span{static_cast<const std::uint8_t*>(data), bytes}))
