@@ -94,7 +94,12 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
     }
 
     spdlog::info("gb28181 tcp session started stream {}", receiver_.stream_name());
+    run_read(yield);
+}
 
+void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
+{
+    boost::system::error_code error;
     std::vector<std::uint8_t> buffer(64 * 1024);
     std::vector<std::uint8_t> input_buffer;
     input_buffer.reserve(buffer.size());

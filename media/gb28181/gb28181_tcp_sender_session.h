@@ -40,6 +40,7 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
 
    private:
     void run(boost::asio::yield_context yield);
+    void run_read(boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void send_packet(std::vector<std::uint8_t> packet);
 

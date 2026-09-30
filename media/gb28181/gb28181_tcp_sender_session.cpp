@@ -100,7 +100,13 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     }
 
     spdlog::info("gb28181 tcp sender started stream {} sender {}", stream_->name(), sender_id_);
+    run_read(yield);
+    shutdown();
+}
 
+void gb28181_tcp_sender_session::run_read(boost::asio::yield_context yield)
+{
+    boost::system::error_code error;
     std::vector<std::uint8_t> buffer(64 * 1024);
     for (;;)
     {
@@ -110,8 +116,6 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
             break;
         }
     }
-
-    shutdown();
 }
 
 void gb28181_tcp_sender_session::shutdown()
