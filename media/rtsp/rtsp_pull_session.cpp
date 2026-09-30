@@ -313,30 +313,30 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     client_ = client;
 
     spdlog::info("rtsp pull connected stream {}", stream_name_);
-    bool stop = rtsp_client_describe(client_) != 0;
-    if (stop)
-    {
-        shutdown();
-    }
-    std::vector<std::uint8_t> buffer(64 * 1024);
-    while (!stop)
-    {
-        const auto bytes = transport_->read(buffer, yield, error);
-        if (error)
-        {
-            shutdown();
-            break;
-        }
-        if (rtsp_client_input(client_, buffer.data(), bytes) != 0)
-        {
-            shutdown();
-            break;
-        }
-    }
+    run_read(client, yield);
 
     client_ = nullptr;
     rtsp_client_destroy(client);
     shutdown();
+}
+
+void rtsp_pull_session::run_read(rtsp_client_t* client, boost::asio::yield_context yield)
+{
+    if (rtsp_client_describe(client) != 0)
+    {
+        return;
+    }
+
+    boost::system::error_code error;
+    std::vector<std::uint8_t> buffer(64 * 1024);
+    for (;;)
+    {
+        const auto bytes = transport_->read(buffer, yield, error);
+        if (error || rtsp_client_input(client, buffer.data(), bytes) != 0)
+        {
+            return;
+        }
+    }
 }
 
 void rtsp_pull_session::write(std::span<const std::uint8_t> data)

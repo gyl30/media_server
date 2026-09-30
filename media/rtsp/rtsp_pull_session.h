@@ -69,6 +69,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
    private:
     [[nodiscard]] static std::optional<parsed_url> parse_url(std::string_view url);
     void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
+    void run_read(rtsp_client_t* client, boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
     void schedule_rtcp();
