@@ -53,11 +53,6 @@ void rtmp_publish_session::shutdown()
 
 void rtmp_publish_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     shutdown_handler_ = {};
     if (stream_)
     {
@@ -74,7 +69,7 @@ void rtmp_publish_session::safe_shutdown()
 
 int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
-    if (closed_ || !shutdown_handler_ || demuxer_ == nullptr)
+    if (!shutdown_handler_ || demuxer_ == nullptr)
     {
         return -1;
     }
@@ -83,7 +78,7 @@ int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uin
 
 int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
-    if (closed_ || !shutdown_handler_ || demuxer_ == nullptr)
+    if (!shutdown_handler_ || demuxer_ == nullptr)
     {
         return -1;
     }
@@ -92,7 +87,7 @@ int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uin
 
 int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
 {
-    if (closed_ || !shutdown_handler_)
+    if (!shutdown_handler_)
     {
         return -1;
     }
