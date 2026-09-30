@@ -190,11 +190,13 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
         return std::nullopt;
     }
 
-    gb28181_transport_config config;
-    config.mode = *transport;
-    config.payload_type = *payload_type;
-    config.ssrc = *ssrc;
-
+    gb28181_receiver_config config{
+        .stream_id = std::move(*stream_id),
+        .stream_name = std::move(*stream_name),
+        .transport = *transport,
+        .payload_type = *payload_type,
+        .ssrc = *ssrc,
+    };
     switch (*transport)
     {
         case gb28181_transport::udp:
@@ -237,7 +239,7 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
         }
     }
 
-    return gb28181_receiver_config{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name), .transport = std::move(config)};
+    return config;
 }
 
 std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body)
@@ -259,10 +261,14 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
         return std::nullopt;
     }
 
-    gb28181_transport_config config;
-    config.mode = *transport;
-    config.payload_type = *payload_type;
-    config.ssrc = *ssrc;
+    gb28181_sender_config config{
+        .stream_id = std::move(*stream_id),
+        .stream_name = std::move(*stream_name),
+        .sender_id = std::move(*sender_id),
+        .transport = *transport,
+        .payload_type = *payload_type,
+        .ssrc = *ssrc,
+    };
     switch (*transport)
     {
         case gb28181_transport::udp:
@@ -328,10 +334,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
         }
     }
 
-    return gb28181_sender_config{.stream_id = std::move(*stream_id),
-                                 .stream_name = std::move(*stream_name),
-                                 .sender_id = std::move(*sender_id),
-                                 .transport = std::move(config)};
+    return config;
 }
 
 std::optional<gb28181_receiver_identity> parse_gb28181_receiver_delete(std::string_view body)

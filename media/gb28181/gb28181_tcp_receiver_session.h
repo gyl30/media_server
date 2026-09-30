@@ -4,14 +4,14 @@
 #include <memory>
 #include <string>
 #include <cstdint>
-#include <string_view>
+#include <optional>
 
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/address.hpp>
 
 #include "media/net/tcp_listener.h"
 #include "media/core/session_registry.h"
-#include "media/gb28181/gb28181_types.h"
 #include "media/net/tcp_transport.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
 
@@ -22,17 +22,15 @@ class worker_context;
 class gb28181_tcp_receiver_session final : public session, public std::enable_shared_from_this<gb28181_tcp_receiver_session>
 {
    public:
-    gb28181_tcp_receiver_session(worker_context& worker,
-                                 std::string stream_name,
-                                 gb28181_transport_config config,
-                                 boost::asio::ip::address bind_address);
+    gb28181_tcp_receiver_session(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t ssrc);
 
    public:
-    void startup();
+    void startup(boost::asio::ip::tcp::endpoint remote_endpoint);
+    void startup(boost::asio::ip::address bind_address, std::uint16_t listen_port);
     void shutdown();
 
    private:
-    void run(boost::asio::yield_context yield);
+    void run(std::optional<boost::asio::ip::tcp::endpoint> remote_endpoint, boost::asio::yield_context yield);
     void run_read(boost::asio::yield_context yield);
 
    private:
@@ -40,8 +38,6 @@ class gb28181_tcp_receiver_session final : public session, public std::enable_sh
 
    private:
     worker_context& worker_;
-    gb28181_transport_config config_;
-    boost::asio::ip::address bind_address_;
     gb28181_rtp_receiver receiver_;
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;

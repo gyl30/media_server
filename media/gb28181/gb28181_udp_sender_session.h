@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 #include <boost/asio/spawn.hpp>
@@ -15,7 +16,6 @@
 #include "media/net/media_port_pool.h"
 #include "media/core/media_stream.h"
 #include "media/core/session_registry.h"
-#include "media/gb28181/gb28181_types.h"
 #include "media/net/udp_yield_transport.h"
 #include "media/net/worker_context.h"
 
@@ -29,11 +29,12 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
    public:
     gb28181_udp_sender_session(worker_context& worker,
                                std::shared_ptr<media_stream> stream,
-                               const gb28181_transport_config& config,
-                               std::string sender_id);
+                               std::string sender_id,
+                               boost::asio::ip::udp::endpoint remote_rtp_endpoint,
+                               std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint);
 
    public:
-    [[nodiscard]] bool startup(boost::asio::ip::address bind_address);
+    [[nodiscard]] bool startup(boost::asio::ip::address bind_address, std::uint8_t payload_type, std::uint32_t ssrc);
     void shutdown();
 
    private:
@@ -50,8 +51,6 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
     std::shared_ptr<media_stream> stream_;
     std::string sender_id_;
     boost::asio::ip::udp::endpoint remote_rtp_endpoint_;
-    std::uint8_t payload_type_{};
-    std::uint32_t ssrc_{};
     std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
     udp_yield_transport rtp_transport_;
     udp_yield_transport rtcp_transport_;

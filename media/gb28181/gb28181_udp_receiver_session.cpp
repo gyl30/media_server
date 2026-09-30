@@ -21,8 +21,9 @@ constexpr auto rtcp_interval = std::chrono::seconds{1};
 
 gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worker,
                                                            std::string stream_name,
-                                                           const gb28181_transport_config& config)
-    : worker_(worker), receiver_(worker_, std::move(stream_name), config.payload_type, config.ssrc),
+                                                           std::uint8_t payload_type,
+                                                           std::uint32_t ssrc)
+    : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc),
       rtp_transport_(worker_.io()),
       rtcp_transport_(worker_.io()),
       rtcp_timer_(worker_.io())

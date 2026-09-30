@@ -1,4 +1,3 @@
-#include <span>
 #include <array>
 #include <chrono>
 #include <utility>
@@ -27,22 +26,18 @@ constexpr std::size_t max_write_queue_bytes = 1024U * 1024U;
 
 gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
                                                        std::shared_ptr<media_stream> stream,
-                                                       const gb28181_transport_config& config,
-                                                       std::string sender_id)
+                                                       std::string sender_id,
+                                                       boost::asio::ip::udp::endpoint remote_rtp_endpoint,
+                                                       std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint)
     : worker_(worker),
       stream_(std::move(stream)),
       sender_id_(std::move(sender_id)),
-      remote_rtp_endpoint_(config.remote_address, config.remote_rtp_port),
-      payload_type_(config.payload_type),
-      ssrc_(config.ssrc),
+      remote_rtp_endpoint_(std::move(remote_rtp_endpoint)),
+      remote_rtcp_endpoint_(std::move(remote_rtcp_endpoint)),
       rtp_transport_(worker_.io()),
       rtcp_transport_(worker_.io()),
       rtcp_timer_(worker_.io())
 {
-    if (config.remote_rtcp_port != 0)
-    {
-        remote_rtcp_endpoint_.emplace(config.remote_address, config.remote_rtcp_port);
-    }
 }
 
 void gb28181_udp_sender_session::shutdown_udp_transports()
@@ -56,7 +51,7 @@ void gb28181_udp_sender_session::shutdown_udp_transports()
     }
 }
 
-bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address)
+bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, std::uint8_t payload_type, std::uint32_t ssrc)
 {
     boost::system::error_code network_error;
     auto local_ports = media_port_pool::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address, network_error);
@@ -75,7 +70,7 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address)
     if (remote_rtcp_endpoint_)
     {
         rtp_event_t handler{};
-        rtcp_sender_ = rtp_create(&handler, nullptr, ssrc_, 0, 90'000, 2 * 1024 * 1024, 1);
+        rtcp_sender_ = rtp_create(&handler, nullptr, ssrc, 0, 90'000, 2 * 1024 * 1024, 1);
         if (rtcp_sender_ == nullptr)
         {
             shutdown_subscription_.reset();
@@ -86,13 +81,8 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address)
 
     const auto self = shared_from_this();
     sender_ = std::make_shared<gb28181_rtp_sender>(
-        worker_,
-        stream_,
-        payload_type_,
-        ssrc_,
-        [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); },
-        [self]() { self->shutdown(); });
-    if (!sender_->startup())
+        worker_, stream_, [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); }, [self]() { self->shutdown(); });
+    if (!sender_->startup(payload_type, ssrc))
     {
         sender_->shutdown();
         sender_.reset();
@@ -128,7 +118,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (!stream_ || !local_ports_ || write_queue_.empty())
+        if (!stream_ || write_queue_.empty())
         {
             return;
         }
@@ -136,7 +126,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
         const auto& data = write_queue_.front();
         boost::system::error_code error;
         rtp_transport_.write(data, remote_rtp_endpoint_, yield, error);
-        if (!stream_ || !sender_ || error == boost::asio::error::operation_aborted)
+        if (!stream_ || error == boost::asio::error::operation_aborted)
         {
             return;
         }
@@ -154,7 +144,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 
 void gb28181_udp_sender_session::schedule_rtcp()
 {
-    if (!stream_ || !sender_ || rtcp_sender_ == nullptr)
+    if (!stream_ || rtcp_sender_ == nullptr)
     {
         return;
     }
@@ -164,7 +154,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || !self->stream_ || !self->sender_ || self->rtcp_sender_ == nullptr)
+            if (error || !self->stream_ || self->rtcp_sender_ == nullptr)
             {
                 return;
             }
@@ -188,7 +178,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
                     boost::system::error_code write_error;
                     self->rtcp_transport_.write(
                         packet, *self->remote_rtcp_endpoint_, yield, write_error);
-                    if (!self->stream_ || !self->sender_ || write_error == boost::asio::error::operation_aborted)
+                    if (!self->stream_ || write_error == boost::asio::error::operation_aborted)
                     {
                         return;
                     }
@@ -205,10 +195,6 @@ void gb28181_udp_sender_session::schedule_rtcp()
 
 void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (!stream_ || !sender_ || !local_ports_)
-    {
-        return;
-    }
     if (packet.size() > max_write_queue_bytes || queued_write_bytes_ > max_write_queue_bytes - packet.size())
     {
         spdlog::warn("gb28181 udp write queue full stream {} sender {} queued {} limit {} dropped {}",

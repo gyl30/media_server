@@ -6,44 +6,42 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
-#include <boost/asio/detached.hpp>
 
 #include "media/net/worker_context.h"
-#include "media/core/stream_registry.h"
 #include "media/gb28181/gb28181_tcp_receiver_session.h"
 
 namespace media_server
 {
 gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worker,
                                                            std::string stream_name,
-                                                           gb28181_transport_config config,
-                                                           boost::asio::ip::address bind_address)
-    : worker_(worker),
-      config_(std::move(config)),
-      bind_address_(std::move(bind_address)),
-      receiver_(worker_, std::move(stream_name), config_.payload_type, config_.ssrc),
-      socket_(worker_.io())
+                                                           std::uint8_t payload_type,
+                                                           std::uint32_t ssrc)
+    : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc), socket_(worker_.io())
 {
 }
 
-void gb28181_tcp_receiver_session::startup()
+void gb28181_tcp_receiver_session::startup(boost::asio::ip::tcp::endpoint remote_endpoint)
 {
-    if (config_.mode == gb28181_transport::tcp_passive)
+    const auto self = shared_from_this();
+    worker_.spawn([self, remote_endpoint = std::move(remote_endpoint)](boost::asio::yield_context yield) mutable
+                  { self->run(std::move(remote_endpoint), yield); });
+}
+
+void gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address, std::uint16_t listen_port)
+{
+    listener_ = std::make_unique<tcp_listener>(worker_.io(), listen_port, std::move(bind_address));
+    boost::system::error_code error;
+    listener_->startup(error);
+    if (error)
     {
-        listener_ = std::make_unique<tcp_listener>(worker_.io(), config_.listen_port, bind_address_);
-        boost::system::error_code error;
-        listener_->startup(error);
-        if (error)
-        {
-            spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_name(), error.message());
-            listener_.reset();
-            shutdown();
-            return;
-        }
+        spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_name(), error.message());
+        listener_.reset();
+        shutdown();
+        return;
     }
 
     const auto self = shared_from_this();
-    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(std::nullopt, yield); });
 }
 
 void gb28181_tcp_receiver_session::shutdown()
@@ -52,18 +50,17 @@ void gb28181_tcp_receiver_session::shutdown()
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
+void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpoint> remote_endpoint, boost::asio::yield_context yield)
 {
     boost::system::error_code error;
-    if (config_.mode == gb28181_transport::tcp_passive)
+    if (remote_endpoint)
     {
-        listener_->accept(socket_, yield, error);
-        listener_->shutdown();
-        listener_.reset();
+        socket_.async_connect(*remote_endpoint, yield[error]);
     }
     else
     {
-        socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port}, yield[error]);
+        listener_->accept(socket_, yield, error);
+        listener_.reset();
     }
 
     if (yield.cancelled() != boost::asio::cancellation_type::none)
@@ -78,10 +75,6 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
             spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_name(), error.message());
         }
         shutdown();
-        return;
-    }
-    if (!socket_.is_open())
-    {
         return;
     }
 
@@ -108,11 +101,6 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
         const auto read_bytes = transport_->read(buffer, yield, error);
         if (error)
         {
-            if (yield.cancelled() != boost::asio::cancellation_type::none)
-            {
-                shutdown();
-                return;
-            }
             shutdown();
             return;
         }
@@ -130,8 +118,7 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
             if (packet_bytes != 0U)
             {
                 const std::span packet{input_buffer.data() + offset, packet_bytes};
-                const auto result = receiver_.receive_rtp(packet);
-                if (result == gb28181_rtp_receive_result::fatal)
+                if (receiver_.receive_rtp(packet) == gb28181_rtp_receive_result::fatal)
                 {
                     shutdown();
                     return;

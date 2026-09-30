@@ -74,11 +74,6 @@ gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string s
 
 bool gb28181_rtp_receiver::startup()
 {
-    if (stream_name_.empty())
-    {
-        return false;
-    }
-
     stream_ = std::make_shared<media_stream>(stream_name_, worker_);
     avpkt2bs_create(&bitstream_);
     demuxer_ = rtsp_demuxer_create(0, 500, &gb28181_rtp_receiver::packet_callback, this);
@@ -94,10 +89,6 @@ bool gb28181_rtp_receiver::startup()
 
 gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std::uint8_t> data)
 {
-    if (demuxer_ == nullptr)
-    {
-        return gb28181_rtp_receive_result::fatal;
-    }
     if (data.size() < 12)
     {
         return gb28181_rtp_receive_result::ignored;
@@ -116,7 +107,7 @@ gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std
 
 int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
 {
-    if (demuxer_ == nullptr || data.size() < 4)
+    if (data.size() < 4)
     {
         return -1;
     }
@@ -125,10 +116,6 @@ int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
 
 int gb28181_rtp_receiver::generate_rtcp(std::span<std::uint8_t> buffer)
 {
-    if (demuxer_ == nullptr)
-    {
-        return 0;
-    }
     return rtsp_demuxer_rtcp(demuxer_, buffer.data(), static_cast<int>(buffer.size()));
 }
 
@@ -239,7 +226,7 @@ bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
 
 int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || !stream_)
+    if (packet == nullptr || packet->stream == nullptr)
     {
         return -1;
     }

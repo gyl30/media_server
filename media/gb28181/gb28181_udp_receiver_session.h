@@ -12,7 +12,6 @@
 
 #include "media/net/media_port_pool.h"
 #include "media/core/session_registry.h"
-#include "media/gb28181/gb28181_types.h"
 #include "media/net/udp_yield_transport.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
 
@@ -23,7 +22,7 @@ class worker_context;
 class gb28181_udp_receiver_session final : public session, public std::enable_shared_from_this<gb28181_udp_receiver_session>
 {
    public:
-    gb28181_udp_receiver_session(worker_context& worker, std::string stream_name, const gb28181_transport_config& config);
+    gb28181_udp_receiver_session(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t ssrc);
 
    public:
     [[nodiscard]] std::optional<std::uint16_t> startup(boost::asio::ip::address bind_address);

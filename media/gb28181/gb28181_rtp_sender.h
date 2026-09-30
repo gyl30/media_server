@@ -22,16 +22,11 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
 
     gb28181_rtp_sender(worker_context& worker,
                        std::shared_ptr<media_stream> stream,
-                       std::uint8_t payload_type,
-                       std::uint32_t ssrc,
                        packet_handler on_packet,
                        end_handler handle_source_end);
 
    public:
-    [[nodiscard]] static bool supported_tracks(const std::vector<media_track>& tracks);
-
-   public:
-    [[nodiscard]] bool startup();
+    [[nodiscard]] bool startup(std::uint8_t payload_type, std::uint32_t ssrc);
     void shutdown();
 
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
@@ -43,23 +38,19 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
     static void free_packet(void* param, void* packet);
     static int packet_callback(void* param, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
-    [[nodiscard]] bool create_packetizer();
-
    private:
     void safe_shutdown();
 
    private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
-    std::uint8_t payload_type_{};
-    std::uint32_t ssrc_{};
     packet_handler packet_handler_;
     end_handler end_handler_;
     std::shared_ptr<mpeg_ps_output> ps_output_;
     void* packetizer_{};
     std::array<std::uint8_t, 2048> packet_buffer_{};
     std::uint32_t timestamp_base_{};
-    std::optional<std::uint32_t> first_media_timestamp_;
+    std::uint32_t first_media_timestamp_{};
     std::optional<track_id> waiting_video_track_;
     std::atomic_bool shutdown_requested_{};
 };

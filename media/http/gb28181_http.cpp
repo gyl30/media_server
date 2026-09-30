@@ -11,7 +11,7 @@
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/core/session_registry.h"
-#include "media/gb28181/gb28181_rtp_sender.h"
+#include "media/ps/mpeg_ps_output.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
 #include "media/gb28181/gb28181_tcp_receiver_session.h"
@@ -87,14 +87,14 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
 
-    if (config.transport.mode == gb28181_transport::udp)
+    if (config.transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, config.transport);
+        auto session = std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, config.payload_type, config.ssrc);
         if (!session_registry::instance().add_receiver_session(stream_name, config.stream_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
-        const auto local_rtp_port = session->startup(bind_address);
+        const auto local_rtp_port = session->startup(std::move(bind_address));
         if (!local_rtp_port)
         {
             session_registry::instance().remove_receiver_session(stream_name, *session);
@@ -106,16 +106,20 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
         body["rtp_port"] = *local_rtp_port;
         return make_json_response(request, boost::beast::http::status::created, std::move(body));
     }
+
+    auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, stream_name, config.payload_type, config.ssrc);
+    if (!session_registry::instance().add_receiver_session(stream_name, config.stream_id, session))
+    {
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+    if (config.transport == gb28181_transport::tcp_active)
+    {
+        session->startup(boost::asio::ip::tcp::endpoint{std::move(config.remote_address), config.remote_port});
+    }
     else
     {
-        auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, stream_name, config.transport, bind_address);
-        if (!session_registry::instance().add_receiver_session(stream_name, config.stream_id, session))
-        {
-            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
-        }
-        session->startup();
+        session->startup(std::move(bind_address), config.listen_port);
     }
-
     return make_empty_response(request, boost::beast::http::status::created);
 }
 
@@ -127,36 +131,50 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
     const auto stream_name = config.stream_name;
     const auto sender_id = config.sender_id;
     auto stream = stream_registry::instance().find(stream_name);
-    if (!stream || !gb28181_rtp_sender::supported_tracks(stream->tracks()))
+    if (!stream || !mpeg_ps_output::supported_tracks(stream->tracks()))
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
 
-    if (config.transport.mode == gb28181_transport::udp)
+    if (config.transport == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_sender_session>(worker, stream, config.transport, sender_id);
+        std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint;
+        if (config.remote_rtcp_port != 0)
+        {
+            remote_rtcp_endpoint.emplace(config.remote_address, config.remote_rtcp_port);
+        }
+        auto session = std::make_shared<gb28181_udp_sender_session>(
+            worker,
+            stream,
+            sender_id,
+            boost::asio::ip::udp::endpoint{config.remote_address, config.remote_rtp_port},
+            std::move(remote_rtcp_endpoint));
         if (!session_registry::instance().add_sender_session(stream_name, sender_id, config.stream_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
-        if (!session->startup(std::move(bind_address)))
+        if (!session->startup(std::move(bind_address), config.payload_type, config.ssrc))
         {
             session_registry::instance().remove_sender_session(stream_name, sender_id, *session);
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
+        return make_empty_response(request, boost::beast::http::status::created);
+    }
+
+    auto session = std::make_shared<gb28181_tcp_sender_session>(worker, stream, sender_id);
+    if (!session_registry::instance().add_sender_session(stream_name, sender_id, config.stream_id, session))
+    {
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+    if (config.transport == gb28181_transport::tcp_active)
+    {
+        session->startup(boost::asio::ip::tcp::endpoint{std::move(config.remote_address), config.remote_port}, config.payload_type, config.ssrc);
     }
     else
     {
-        auto session =
-            std::make_shared<gb28181_tcp_sender_session>(worker, stream, sender_id, config.transport, std::move(bind_address));
-        if (!session_registry::instance().add_sender_session(stream_name, sender_id, config.stream_id, session))
-        {
-            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
-        }
-        session->startup();
+        session->startup(std::move(bind_address), config.listen_port, config.payload_type, config.ssrc);
     }
-
     return make_empty_response(request, boost::beast::http::status::created);
 }
 

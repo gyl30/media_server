@@ -86,8 +86,6 @@ int main(int argc, char** argv)
         auto sender = std::make_shared<gb28181_rtp_sender>(
             worker,
             source,
-            96,
-            ssrc,
             [&, i, ssrc](std::vector<std::uint8_t> packet)
             {
                 rtp_packet_t decoded{};
@@ -127,7 +125,7 @@ int main(int argc, char** argv)
         on_worker(worker,
                   [&]()
                   {
-                      if (!sender->startup())
+                      if (!sender->startup(96, ssrc))
                       {
                           ++failures;
                       }
