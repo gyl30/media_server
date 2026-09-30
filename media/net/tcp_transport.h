@@ -25,7 +25,7 @@ class tcp_transport final : public std::enable_shared_from_this<tcp_transport>
 
    public:
     void set_write_callback(write_callback callback);
-    std::size_t read(std::span<std::uint8_t> buffer, boost::asio::yield_context& yield, boost::system::error_code& error);
+    std::size_t read(std::span<std::uint8_t> data, boost::asio::yield_context& yield, boost::system::error_code& error);
     void write(std::span<const std::uint8_t> data);
     void write(std::vector<std::uint8_t> data);
 

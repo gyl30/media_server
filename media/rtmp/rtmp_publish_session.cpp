@@ -345,7 +345,7 @@ int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t>
 
 int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
 {
-    if (closed_ || !stream_)
+    if (!stream_)
     {
         return -1;
     }

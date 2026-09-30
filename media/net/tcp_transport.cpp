@@ -18,9 +18,9 @@ tcp_transport::tcp_transport(boost::asio::ip::tcp::socket socket) : socket_(std:
 
 void tcp_transport::set_write_callback(write_callback callback) { write_callback_ = std::move(callback); }
 
-std::size_t tcp_transport::read(std::span<std::uint8_t> buffer, boost::asio::yield_context& yield, boost::system::error_code& error)
+std::size_t tcp_transport::read(std::span<std::uint8_t> data, boost::asio::yield_context& yield, boost::system::error_code& error)
 {
-    return socket_.async_read_some(boost::asio::buffer(buffer), yield[error]);
+    return socket_.async_read_some(boost::asio::buffer(data), yield[error]);
 }
 
 void tcp_transport::write(std::span<const std::uint8_t> data)

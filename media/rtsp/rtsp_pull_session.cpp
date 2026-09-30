@@ -291,9 +291,9 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     transport_ = std::make_shared<tcp_transport>(std::move(connect_socket_));
     const auto self = shared_from_this();
     transport_->set_write_callback(
-        [weak = std::weak_ptr<rtsp_pull_session>(self)](boost::system::error_code error, std::size_t)
+        [weak = std::weak_ptr<rtsp_pull_session>(self)](boost::system::error_code write_error, std::size_t)
         {
-            if (error)
+            if (write_error)
             {
                 if (const auto owner = weak.lock())
                 {
