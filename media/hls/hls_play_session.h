@@ -25,8 +25,6 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
     [[nodiscard]] const std::string& secret() const noexcept { return secret_; }
     [[nodiscard]] const std::shared_ptr<hls_segmenter>& segmenter() const noexcept { return segmenter_; }
 
-    void refresh();
-
    private:
     hls_play_session(
         worker_context& worker, std::string stream_name, std::string secret, std::shared_ptr<hls_segmenter> segmenter);

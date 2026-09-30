@@ -33,8 +33,8 @@ void hls_segmenter::on_frame(const media_frame& frame)
     {
         return;
     }
-    const auto track_iterator = tracks_.find(frame.track);
-    const auto& track = track_iterator->second;
+    const auto& state = tracks_.find(frame.track)->second;
+    const auto& track = state.track;
     if (waiting_for_key_frame_)
     {
         if (track.kind != media_kind::video || !frame.key_frame)
@@ -59,17 +59,15 @@ void hls_segmenter::on_frame(const media_frame& frame)
             spdlog::error("hls ts muxer recreation failed");
             mpeg_ts_destroy(muxer_);
             muxer_ = nullptr;
-            stream_ids_.clear();
             ended_at_ = std::chrono::steady_clock::now();
             return;
         }
         segment_start_pts_ns_ = frame.pts_ns;
         segment_max_pts_ns_ = frame.pts_ns;
     }
-    const auto stream_iterator = stream_ids_.find(frame.track);
     const auto flags = frame.key_frame ? 1 : 0;
     const auto result = mpeg_ts_write(
-        muxer_, stream_iterator->second, flags, ns_to_90khz(frame.pts_ns), ns_to_90khz(frame.dts_ns), frame.payload->data(), frame.payload->size());
+        muxer_, state.stream_id, flags, ns_to_90khz(frame.pts_ns), ns_to_90khz(frame.dts_ns), frame.payload->data(), frame.payload->size());
     if (result != 0)
     {
         if (result != -ENOBUFS)
@@ -95,17 +93,16 @@ void hls_segmenter::finish()
     }
     mpeg_ts_destroy(muxer_);
     muxer_ = nullptr;
-    stream_ids_.clear();
     ended_at_ = std::chrono::steady_clock::now();
 }
 
 bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
 {
-    std::map<track_id, media_track> tracks;
+    std::map<track_id, track_state> tracks;
     bool has_video = false;
     for (const auto& track : source->tracks())
     {
-        tracks.emplace(track.id, track);
+        tracks.emplace(track.id, track_state{.track = track});
         has_video = has_video || track.kind == media_kind::video;
     }
     std::scoped_lock lock(mutex_);
@@ -168,10 +165,10 @@ std::shared_ptr<const std::vector<std::uint8_t>> hls_segmenter::segment_buffer(s
     return iterator == segments_.end() ? std::shared_ptr<const std::vector<std::uint8_t>>{} : iterator->data;
 }
 
-std::size_t hls_segmenter::segment_count() const
+bool hls_segmenter::has_segments() const
 {
     std::scoped_lock lock(mutex_);
-    return segments_.size();
+    return !segments_.empty();
 }
 
 std::optional<std::chrono::steady_clock::time_point> hls_segmenter::ended_at() const
@@ -196,7 +193,7 @@ int hls_segmenter::ts_write(void* param, const void* packet, std::size_t bytes)
     return 0;
 }
 
-bool hls_segmenter::recreate_muxer(const std::map<track_id, media_track>& tracks)
+bool hls_segmenter::recreate_muxer(std::map<track_id, track_state>& tracks)
 {
     const mpeg_ts_func_t functions{
         .alloc = &hls_segmenter::ts_alloc,
@@ -208,23 +205,21 @@ bool hls_segmenter::recreate_muxer(const std::map<track_id, media_track>& tracks
     {
         return false;
     }
-    std::map<track_id, int> stream_ids;
-    for (const auto& [id, track] : tracks)
+    for (auto& item : tracks)
     {
-        const auto stream_id = add_track_to_muxer(muxer, track);
-        if (stream_id <= 0)
+        auto& state = item.second;
+        state.stream_id = add_track_to_muxer(muxer, state.track);
+        if (state.stream_id <= 0)
         {
             mpeg_ts_destroy(muxer);
             return false;
         }
-        stream_ids.emplace(id, stream_id);
     }
     if (muxer_ != nullptr)
     {
         mpeg_ts_destroy(muxer_);
     }
     muxer_ = muxer;
-    stream_ids_ = std::move(stream_ids);
     return true;
 }
 
@@ -263,13 +258,12 @@ void hls_segmenter::discard_segment()
         spdlog::error("hls ts muxer recreation failed");
         mpeg_ts_destroy(muxer_);
         muxer_ = nullptr;
-        stream_ids_.clear();
         ended_at_ = std::chrono::steady_clock::now();
     }
     std::vector<std::uint8_t>().swap(current_segment_);
     segment_start_pts_ns_.reset();
     segment_max_pts_ns_ = 0;
-    waiting_for_key_frame_ = std::ranges::any_of(tracks_, [](const auto& item) { return item.second.kind == media_kind::video; });
+    waiting_for_key_frame_ = std::ranges::any_of(tracks_, [](const auto& item) { return item.second.track.kind == media_kind::video; });
 }
 
 int hls_segmenter::add_track_to_muxer(void* muxer, const media_track& track)

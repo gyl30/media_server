@@ -30,10 +30,16 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
 
     [[nodiscard]] std::string playlist(std::string_view base_path, std::string_view query = {}) const;
     [[nodiscard]] std::shared_ptr<const std::vector<std::uint8_t>> segment_buffer(std::uint64_t sequence) const;
-    [[nodiscard]] std::size_t segment_count() const;
+    [[nodiscard]] bool has_segments() const;
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ended_at() const;
 
    private:
+    struct track_state
+    {
+        media_track track;
+        int stream_id{};
+    };
+
     struct segment
     {
         std::uint64_t sequence{};
@@ -44,7 +50,7 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
     static void* ts_alloc(void* param, std::size_t bytes);
     static void ts_free(void* param, void* packet);
     static int ts_write(void* param, const void* packet, std::size_t bytes);
-    [[nodiscard]] bool recreate_muxer(const std::map<track_id, media_track>& tracks);
+    [[nodiscard]] bool recreate_muxer(std::map<track_id, track_state>& tracks);
     void discard_segment();
     void finish_segment(std::int64_t end_pts_ns);
     [[nodiscard]] static int add_track_to_muxer(void* muxer, const media_track& track);
@@ -52,8 +58,7 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
 
    private:
     mutable std::mutex mutex_;
-    std::map<track_id, media_track> tracks_;
-    std::map<track_id, int> stream_ids_;
+    std::map<track_id, track_state> tracks_;
     std::deque<segment> segments_;
     std::vector<std::uint8_t> current_segment_;
     void* muxer_{};

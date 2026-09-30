@@ -113,12 +113,6 @@ void hls_http_session::handle_request()
         send_text_response(boost::beast::http::status::forbidden, "text/plain", "hls session required\n", false);
         return;
     }
-    const auto viewer = hls_play_session::find(*secret, stream_name);
-    if (!viewer)
-    {
-        send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", false);
-        return;
-    }
     std::optional<std::uint64_t> segment_sequence;
     if (file != "index.m3u8")
     {
@@ -138,21 +132,21 @@ void hls_http_session::handle_request()
         segment_sequence = sequence;
     }
 
-    viewer->refresh();
+    const auto viewer = hls_play_session::find(*secret, stream_name);
+    if (!viewer)
+    {
+        send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", false);
+        return;
+    }
     const auto segmenter = viewer->segmenter();
     if (!segment_sequence)
     {
-        if (!segmenter)
-        {
-            send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", false);
-            return;
-        }
         playlist_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         wait_for_playlist(viewer, segmenter);
         return;
     }
 
-    const auto segment = segmenter ? segmenter->segment_buffer(*segment_sequence) : std::shared_ptr<const std::vector<std::uint8_t>>{};
+    const auto segment = segmenter->segment_buffer(*segment_sequence);
     if (!segment)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "segment not found\n", false);
@@ -167,7 +161,7 @@ void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewe
     {
         return;
     }
-    if (segmenter->segment_count() != 0U)
+    if (segmenter->has_segments())
     {
         const auto playlist = segmenter->playlist(".", "session=" + viewer->secret());
         send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", playlist, request_.keep_alive());

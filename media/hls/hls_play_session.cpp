@@ -68,6 +68,7 @@ std::shared_ptr<hls_play_session> hls_play_session::find(std::string_view secret
     {
         return {};
     }
+    iterator->second->last_activity_ = std::chrono::steady_clock::now();
     return iterator->second;
 }
 
@@ -79,17 +80,6 @@ hls_play_session::hls_play_session(
       last_activity_(std::chrono::steady_clock::now()),
       timer_(worker.io())
 {
-}
-
-void hls_play_session::refresh()
-{
-    auto& current = sessions();
-    std::scoped_lock lock(current.mutex);
-    const auto iterator = current.by_secret.find(secret_);
-    if (iterator != current.by_secret.end() && iterator->second.get() == this)
-    {
-        last_activity_ = std::chrono::steady_clock::now();
-    }
 }
 
 void hls_play_session::wait_for_inactivity()
@@ -138,7 +128,6 @@ void hls_play_session::safe_shutdown()
         std::scoped_lock lock(current.mutex);
         current.by_secret.erase(secret_);
     }
-    shutdown_subscription_.reset();
     timer_.cancel();
 }
 
