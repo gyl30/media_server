@@ -1,7 +1,6 @@
 #ifndef MEDIA_GB28181_GB28181_TCP_RECEIVER_SESSION_H
 #define MEDIA_GB28181_GB28181_TCP_RECEIVER_SESSION_H
 
-#include <chrono>
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -26,8 +25,7 @@ class gb28181_tcp_receiver_session final : public session, public std::enable_sh
     gb28181_tcp_receiver_session(worker_context& worker,
                                  std::string stream_name,
                                  gb28181_transport_config config,
-                                 boost::asio::ip::address bind_address,
-                                 std::chrono::milliseconds establishment_timeout);
+                                 boost::asio::ip::address bind_address);
 
    public:
     void startup();
@@ -44,7 +42,6 @@ class gb28181_tcp_receiver_session final : public session, public std::enable_sh
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
     gb28181_rtp_receiver receiver_;
-    std::chrono::milliseconds establishment_timeout_{};
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::unique_ptr<tcp_yield_transport> transport_;

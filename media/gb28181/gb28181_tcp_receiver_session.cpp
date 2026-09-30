@@ -7,7 +7,6 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/cancel_after.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -18,13 +17,11 @@ namespace media_server
 gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worker,
                                                            std::string stream_name,
                                                            gb28181_transport_config config,
-                                                           boost::asio::ip::address bind_address,
-                                                           std::chrono::milliseconds establishment_timeout)
+                                                           boost::asio::ip::address bind_address)
     : worker_(worker),
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
       receiver_(worker_, std::move(stream_name), config_.payload_type, config_.ssrc),
-      establishment_timeout_(establishment_timeout),
       socket_(worker_.io())
 {
 }
@@ -60,18 +57,13 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
     boost::system::error_code error;
     if (config_.mode == gb28181_transport::tcp_passive)
     {
-        listener_->accept(socket_, establishment_timeout_, yield, error);
+        listener_->accept(socket_, yield, error);
         listener_->shutdown();
         listener_.reset();
     }
     else
     {
-        socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port},
-                              boost::asio::cancel_after(establishment_timeout_, yield[error]));
-        if (error == boost::asio::error::operation_aborted && yield.cancelled() == boost::asio::cancellation_type::none && socket_.is_open())
-        {
-            error = boost::asio::error::timed_out;
-        }
+        socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port}, yield[error]);
     }
 
     if (closed_)

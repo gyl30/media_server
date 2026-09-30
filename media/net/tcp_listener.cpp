@@ -1,7 +1,6 @@
 #include <utility>
 
 #include <boost/asio/error.hpp>
-#include <boost/asio/cancel_after.hpp>
 
 #include "media/net/tcp_listener.h"
 
@@ -9,7 +8,7 @@ namespace media_server
 {
 
 tcp_listener::tcp_listener(boost::asio::io_context& io, std::uint16_t port, boost::asio::ip::address bind_address)
-    : timer_(io), acceptor_(io), port_(port), bind_address_(std::move(bind_address))
+    : acceptor_(io), port_(port), bind_address_(std::move(bind_address))
 {
 }
 
@@ -44,21 +43,10 @@ void tcp_listener::startup(boost::system::error_code& error)
 }
 
 void tcp_listener::accept(boost::asio::ip::tcp::socket& socket,
-                          std::chrono::milliseconds timeout,
                           boost::asio::yield_context& yield,
                           boost::system::error_code& error)
 {
     error.clear();
-    if (timeout > std::chrono::milliseconds::zero())
-    {
-        acceptor_.async_accept(socket, boost::asio::cancel_after(timer_, timeout, yield[error]));
-        if (error == boost::asio::error::operation_aborted && yield.cancelled() == boost::asio::cancellation_type::none && acceptor_.is_open())
-        {
-            error = boost::asio::error::timed_out;
-        }
-        return;
-    }
-
     acceptor_.async_accept(socket, yield[error]);
 }
 

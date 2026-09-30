@@ -1,4 +1,3 @@
-#include <chrono>
 #include <limits>
 #include <vector>
 #include <utility>
@@ -8,7 +7,6 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/asio/cancel_after.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -22,14 +20,12 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
                                                        std::string sender_id,
                                                        gb28181_transport_config config,
                                                        boost::asio::ip::address bind_address,
-                                                       std::chrono::milliseconds establishment_timeout,
                                                        std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_(std::move(stream)),
       sender_id_(std::move(sender_id)),
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
-      establishment_timeout_(establishment_timeout),
       socket_(worker_.io()),
       write_queue_(max_write_queue_bytes)
 {
@@ -60,18 +56,13 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
     boost::system::error_code error;
     if (config_.mode == gb28181_transport::tcp_passive)
     {
-        listener_->accept(socket_, establishment_timeout_, yield, error);
+        listener_->accept(socket_, yield, error);
         listener_->shutdown();
         listener_.reset();
     }
     else
     {
-        socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port},
-                              boost::asio::cancel_after(establishment_timeout_, yield[error]));
-        if (error == boost::asio::error::operation_aborted && yield.cancelled() == boost::asio::cancellation_type::none && socket_.is_open())
-        {
-            error = boost::asio::error::timed_out;
-        }
+        socket_.async_connect(boost::asio::ip::tcp::endpoint{config_.remote_address, config_.remote_port}, yield[error]);
     }
 
     if (closed_)

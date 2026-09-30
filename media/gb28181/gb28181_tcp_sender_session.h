@@ -1,7 +1,6 @@
 #ifndef MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 #define MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,7 +32,6 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
                                std::string sender_id,
                                gb28181_transport_config config,
                                boost::asio::ip::address bind_address,
-                               std::chrono::milliseconds establishment_timeout,
                                std::size_t max_write_queue_bytes = 1024U * 1024U);
 
    public:
@@ -54,7 +52,6 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
     std::string sender_id_;
     gb28181_transport_config config_;
     boost::asio::ip::address bind_address_;
-    std::chrono::milliseconds establishment_timeout_{};
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::unique_ptr<tcp_yield_transport> transport_;
