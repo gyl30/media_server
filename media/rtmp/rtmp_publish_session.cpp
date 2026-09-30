@@ -153,7 +153,15 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
     {
         return -1;
     }
-    const auto audio_codec = codec == FLV_AUDIO_ASC ? codec_id::aac : codec_id::opus;
+
+    media_track track{
+        .id = audio_track_id,
+        .kind = media_kind::audio,
+        .codec = codec == FLV_AUDIO_ASC ? codec_id::aac : codec_id::opus,
+        .clock_rate = 0,
+        .channel_count = 0,
+        .codec_config = {},
+    };
     if (codec == FLV_AUDIO_ASC)
     {
         const auto config = parse_aac_asc(data);
@@ -161,64 +169,37 @@ int rtmp_publish_session::handle_audio_config(int codec, std::span<const std::ui
         {
             return -1;
         }
-
-        media_track track{
-            .id = audio_track_id,
-            .kind = media_kind::audio,
-            .codec = codec_id::aac,
-            .clock_rate = config->sample_rate,
-            .channel_count = config->channel_count,
-            .codec_config = {data.begin(), data.end()},
-        };
-        if (stream_->tracks().empty())
+        track.clock_rate = config->sample_rate;
+        track.channel_count = config->channel_count;
+        track.codec_config.assign(data.begin(), data.end());
+    }
+    else
+    {
+        opus_head_t head{};
+        if (opus_head_load(data.data(), data.size(), &head) < 0 || (opus_head_channels(&head) != 1 && opus_head_channels(&head) != 2))
         {
-            if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
-            {
-                spdlog::warn("rtmp publish audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
-                return -1;
-            }
-            initial_audio_track_ = std::move(track);
-            return register_stream_if_ready();
-        }
-        const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
-        if (fixed == stream_->tracks().end() || fixed->codec != track.codec || fixed->clock_rate != track.clock_rate ||
-            fixed->channel_count != track.channel_count || fixed->codec_config != track.codec_config)
-        {
-            spdlog::warn("rtmp publish audio config changed aac sample_rate {} channels {}", config->sample_rate, config->channel_count);
             return -1;
         }
-        return 0;
+        track.clock_rate = 48'000;
+        track.channel_count = static_cast<std::uint16_t>(opus_head_channels(&head));
     }
 
-    opus_head_t head{};
-    if (opus_head_load(data.data(), data.size(), &head) < 0 || (opus_head_channels(&head) != 1 && opus_head_channels(&head) != 2))
-    {
-        return -1;
-    }
-
-    media_track track{
-        .id = audio_track_id,
-        .kind = media_kind::audio,
-        .codec = codec_id::opus,
-        .clock_rate = 48'000,
-        .channel_count = static_cast<std::uint16_t>(opus_head_channels(&head)),
-        .codec_config = {},
-    };
     if (stream_->tracks().empty())
     {
-        if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
+        if (initial_audio_track_ && initial_audio_track_->codec != track.codec)
         {
-            spdlog::warn("rtmp publish audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
+            spdlog::warn("rtmp publish audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(track.codec));
             return -1;
         }
         initial_audio_track_ = std::move(track);
         return register_stream_if_ready();
     }
+
     const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
     if (fixed == stream_->tracks().end() || fixed->codec != track.codec || fixed->clock_rate != track.clock_rate ||
         fixed->channel_count != track.channel_count || fixed->codec_config != track.codec_config)
     {
-        spdlog::warn("rtmp publish audio config changed opus");
+        spdlog::warn("rtmp publish audio config changed {}", to_string(track.codec));
         return -1;
     }
     return 0;
@@ -231,25 +212,25 @@ int rtmp_publish_session::initialize_g711_track(int codec)
         return -1;
     }
     const auto audio_codec = codec == FLV_AUDIO_G711A ? codec_id::g711a : codec_id::g711u;
-    if (stream_->tracks().empty())
+    if (initial_audio_track_)
     {
-        if (initial_audio_track_ && initial_audio_track_->codec != audio_codec)
+        if (initial_audio_track_->codec != audio_codec)
         {
             spdlog::warn("rtmp publish audio codec change {} {}", to_string(initial_audio_track_->codec), to_string(audio_codec));
             return -1;
         }
-        initial_audio_track_ = media_track{
-            .id = audio_track_id,
-            .kind = media_kind::audio,
-            .codec = audio_codec,
-            .clock_rate = 8'000,
-            .channel_count = 1,
-            .codec_config = {},
-        };
-        return register_stream_if_ready();
+        return 0;
     }
-    const auto fixed = std::ranges::find_if(stream_->tracks(), [](const media_track& value) { return value.id == audio_track_id; });
-    return fixed != stream_->tracks().end() && fixed->codec == audio_codec ? 0 : -1;
+
+    initial_audio_track_ = media_track{
+        .id = audio_track_id,
+        .kind = media_kind::audio,
+        .codec = audio_codec,
+        .clock_rate = 8'000,
+        .channel_count = 1,
+        .codec_config = {},
+    };
+    return register_stream_if_ready();
 }
 
 int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
@@ -319,7 +300,7 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
     {
         return handle_audio_config(codec, data);
     }
-    if (codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U)
+    if ((codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U) && stream_->tracks().empty())
     {
         const auto result = initialize_g711_track(codec);
         if (result != 0)

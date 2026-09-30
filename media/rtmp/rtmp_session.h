@@ -50,8 +50,8 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     void run_read(rtmp_server_t* context, boost::asio::yield_context yield);
 
    private:
-    int on_play(std::string app, std::string stream);
-    int on_publish(std::string app, std::string stream);
+    int on_play(std::string_view app, std::string_view stream);
+    int on_publish(std::string_view app, std::string_view stream);
 
    private:
     void safe_shutdown();

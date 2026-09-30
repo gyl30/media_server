@@ -93,7 +93,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     auto* context = rtmp_server_create(this, &handler);
     if (context == nullptr)
     {
-        shutdown();
+        safe_shutdown();
         return;
     }
     rtmp_context_ = context;
@@ -116,13 +116,8 @@ void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context y
         {
             break;
         }
-        const auto input_result = bytes == 0 ? 0 : rtmp_server_input(context, buffer.data(), bytes);
-        if (input_result != 0)
+        if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
         {
-            if (input_result != RTMP_SERVER_INPUT_STOP)
-            {
-                shutdown();
-            }
             break;
         }
     }
@@ -147,11 +142,7 @@ int rtmp_session::send_callback(void* param, const void* header, std::size_t hea
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
-int rtmp_session::delete_stream_callback(void* param, std::uint32_t)
-{
-    static_cast<rtmp_session*>(param)->shutdown();
-    return RTMP_SERVER_INPUT_STOP;
-}
+int rtmp_session::delete_stream_callback(void*, std::uint32_t) { return RTMP_SERVER_INPUT_STOP; }
 
 int rtmp_session::play_callback(void* param, const char* app, const char* stream, double, double, std::uint8_t)
 {
@@ -195,7 +186,7 @@ int rtmp_session::duration_callback(void*, const char*, const char*, double* dur
     return 0;
 }
 
-int rtmp_session::on_play(std::string app, std::string stream)
+int rtmp_session::on_play(std::string_view app, std::string_view stream)
 {
     if (publish_ || play_)
     {
@@ -241,7 +232,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     return 0;
 }
 
-int rtmp_session::on_publish(std::string app, std::string stream)
+int rtmp_session::on_publish(std::string_view app, std::string_view stream)
 {
     if (publish_ || play_)
     {
@@ -279,7 +270,7 @@ void rtmp_session::safe_shutdown()
         publish_->shutdown();
         publish_.reset();
     }
-    if (play_)
+    else if (play_)
     {
         play_->shutdown();
         play_.reset();
