@@ -34,8 +34,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
                       std::string stream_name,
                       std::string url,
                       std::string username = {},
-                      std::string password = {},
-                      std::size_t max_write_queue_bytes = 1024U * 1024U);
+                      std::string password = {});
     ~rtsp_pull_session();
 
    public:
@@ -88,7 +87,6 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket connect_socket_;
     boost::asio::steady_timer rtcp_timer_;
-    std::size_t max_write_queue_bytes_;
     std::shared_ptr<tcp_transport> transport_;
     std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};

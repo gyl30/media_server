@@ -29,9 +29,7 @@ class rtsp_play_session;
 class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
 {
    public:
-    rtsp_server_connection(worker_context& worker,
-                           boost::asio::ip::tcp::socket socket,
-                           std::size_t max_write_queue_bytes = 1024U * 1024U);
+    rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket);
 
    public:
     void startup();

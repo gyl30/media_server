@@ -27,9 +27,7 @@ class rtmp_play_session;
 class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 {
    public:
-    rtmp_session(worker_context& worker,
-                 boost::asio::ip::tcp::socket socket,
-                 std::size_t max_write_queue_bytes = 1024U * 1024U);
+    rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket);
 
    public:
     void startup();

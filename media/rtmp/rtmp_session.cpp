@@ -53,8 +53,8 @@ std::optional<std::string> parse_rtmp_target(std::string_view app, std::string_v
     return stream_name;
 }
 
-rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket, std::size_t max_write_queue_bytes)
-    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket), max_write_queue_bytes))
+rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket)
+    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket)))
 {
 }
 

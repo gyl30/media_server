@@ -19,15 +19,13 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker,
                                                        std::shared_ptr<media_stream> stream,
                                                        std::string sender_id,
                                                        gb28181_transport_config config,
-                                                       boost::asio::ip::address bind_address,
-                                                       std::size_t max_write_queue_bytes)
+                                                       boost::asio::ip::address bind_address)
     : worker_(worker),
       stream_(std::move(stream)),
       sender_id_(std::move(sender_id)),
       config_(std::move(config)),
       bind_address_(std::move(bind_address)),
-      socket_(worker_.io()),
-      max_write_queue_bytes_(max_write_queue_bytes)
+      socket_(worker_.io())
 {
 }
 
@@ -84,7 +82,7 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
         return;
     }
 
-    transport_ = std::make_shared<tcp_transport>(std::move(socket_), max_write_queue_bytes_);
+    transport_ = std::make_shared<tcp_transport>(std::move(socket_));
     const auto self = shared_from_this();
     transport_->set_write_callback(
         [weak = std::weak_ptr<gb28181_tcp_sender_session>(self)](boost::system::error_code error, std::size_t)

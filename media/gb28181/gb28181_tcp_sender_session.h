@@ -30,8 +30,7 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
                                std::shared_ptr<media_stream> stream,
                                std::string sender_id,
                                gb28181_transport_config config,
-                               boost::asio::ip::address bind_address,
-                               std::size_t max_write_queue_bytes = 1024U * 1024U);
+                               boost::asio::ip::address bind_address);
 
    public:
     void startup();
@@ -53,7 +52,6 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
     boost::asio::ip::address bind_address_;
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
-    std::size_t max_write_queue_bytes_;
     std::shared_ptr<tcp_transport> transport_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
 };

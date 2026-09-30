@@ -25,11 +25,8 @@ namespace
 constexpr std::size_t rtsp_read_buffer_bytes = 64U * 1024U;
 }    // namespace
 
-rtsp_server_connection::rtsp_server_connection(worker_context& worker,
-                                               boost::asio::ip::tcp::socket socket,
-                                               std::size_t max_write_queue_bytes)
-    : worker_(worker),
-      transport_(std::make_shared<tcp_transport>(std::move(socket), max_write_queue_bytes))
+rtsp_server_connection::rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket)
+    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket)))
 {
 }
 

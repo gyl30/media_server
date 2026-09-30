@@ -86,8 +86,7 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
                                      std::string stream_name,
                                      std::string url,
                                      std::string username,
-                                     std::string password,
-                                     std::size_t max_write_queue_bytes)
+                                     std::string password)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
       url_(std::move(url)),
@@ -95,8 +94,7 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
       password_(std::move(password)),
       resolver_(worker_.io()),
       connect_socket_(worker_.io()),
-      rtcp_timer_(worker_.io()),
-      max_write_queue_bytes_(max_write_queue_bytes)
+      rtcp_timer_(worker_.io())
 {
 }
 
@@ -290,7 +288,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
         return;
     }
 
-    transport_ = std::make_shared<tcp_transport>(std::move(connect_socket_), max_write_queue_bytes_);
+    transport_ = std::make_shared<tcp_transport>(std::move(connect_socket_));
     const auto self = shared_from_this();
     transport_->set_write_callback(
         [weak = std::weak_ptr<rtsp_pull_session>(self)](boost::system::error_code error, std::size_t)

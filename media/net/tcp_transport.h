@@ -21,7 +21,7 @@ class tcp_transport final : public std::enable_shared_from_this<tcp_transport>
    public:
     using write_callback = std::function<void(boost::system::error_code, std::size_t)>;
 
-    explicit tcp_transport(boost::asio::ip::tcp::socket socket, std::size_t max_write_queue_bytes = 1024U * 1024U);
+    explicit tcp_transport(boost::asio::ip::tcp::socket socket);
 
    public:
     void set_write_callback(write_callback callback);
@@ -44,7 +44,6 @@ class tcp_transport final : public std::enable_shared_from_this<tcp_transport>
 
    private:
     boost::asio::ip::tcp::socket socket_;
-    std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
     std::deque<buffer> write_queue_;
     write_callback write_callback_;

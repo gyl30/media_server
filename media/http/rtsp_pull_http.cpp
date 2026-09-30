@@ -190,8 +190,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
                                                        stream_name,
                                                        std::move(config.url),
                                                        std::move(config.username),
-                                                       std::move(config.password),
-                                                       1024U * 1024U);
+                                                       std::move(config.password));
     if (!session_registry::instance().add_receiver_session(stream_name, std::move(config.stream_id), session))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");

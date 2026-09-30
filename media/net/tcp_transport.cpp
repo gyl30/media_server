@@ -9,11 +9,12 @@
 
 namespace media_server
 {
-
-tcp_transport::tcp_transport(boost::asio::ip::tcp::socket socket, std::size_t max_write_queue_bytes)
-    : socket_(std::move(socket)), max_write_queue_bytes_(max_write_queue_bytes)
+namespace
 {
-}
+constexpr std::size_t write_high_water_mark = 1024U * 1024U;
+}    // namespace
+
+tcp_transport::tcp_transport(boost::asio::ip::tcp::socket socket) : socket_(std::move(socket)) {}
 
 void tcp_transport::set_write_callback(write_callback callback) { write_callback_ = std::move(callback); }
 
@@ -87,7 +88,7 @@ void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
     {
         queued_write_bytes_ -= write_queue_.front()->size();
         write_queue_.pop_front();
-        if (queued_write_bytes_ > max_write_queue_bytes_)
+        if (queued_write_bytes_ > write_high_water_mark)
         {
             error = boost::asio::error::no_buffer_space;
         }
