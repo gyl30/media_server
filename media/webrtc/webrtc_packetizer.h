@@ -45,14 +45,14 @@ class webrtc_packetizer final
     [[nodiscard]] bool valid() const noexcept;
 
    private:
-    static int on_packet(void* param, int pid, const void* data, int bytes, std::uint32_t timestamp, int flags);
+    static int on_packet(void* param, int payload_index, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
    private:
     struct track_state
     {
         codec_id codec{};
-        int media_id{-1};
-        int payload_id{-1};
+        int media_index{-1};
+        int payload_index{-1};
         std::size_t rtp_extension_bytes{};
         bool waiting_key_frame{};
     };
@@ -60,9 +60,9 @@ class webrtc_packetizer final
     bool add_h264_track(const media_track& track);
     bool add_h265_track(const media_track& track);
     bool add_audio_track(const media_track& track);
-    bool configure_rtcp(int payload_id);
+    bool configure_rtcp(int payload_index);
     void remove_track(track_id id);
-    [[nodiscard]] bool emit_rtcp(int payload_id);
+    [[nodiscard]] bool emit_rtcp(int payload_index);
     bool input_video(track_state& state, const media_frame& frame);
     bool input_audio(track_state& state, const media_frame& frame);
 

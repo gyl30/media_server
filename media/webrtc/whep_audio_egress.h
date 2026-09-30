@@ -24,7 +24,7 @@ struct whep_audio_settings
 class whep_audio_egress final : public media_sink, public std::enable_shared_from_this<whep_audio_egress>
 {
    public:
-    [[nodiscard]] std::shared_ptr<media_stream> stream() const noexcept;
+    [[nodiscard]] std::shared_ptr<media_stream> output_stream() const noexcept;
 
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
     void on_frame(const media_frame& frame) override;
@@ -41,7 +41,7 @@ class whep_audio_egress final : public media_sink, public std::enable_shared_fro
 
     worker_context& worker_;
     std::shared_ptr<media_stream> source_;
-    std::shared_ptr<media_stream> output_;
+    std::shared_ptr<media_stream> output_stream_;
     std::map<track_id, std::unique_ptr<audio_transcoder>> transcoders_;
     std::atomic_bool finished_{};
     std::size_t viewers_{};

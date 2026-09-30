@@ -77,7 +77,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
     }
 
     const auto iterator = track_states_.find(entry.track);
-    if (iterator == track_states_.end() || !entry.payload || iterator->second.rtp_channel < 0 || iterator->second.media_id < 0)
+    if (iterator == track_states_.end() || !entry.payload || iterator->second.rtp_channel < 0 || iterator->second.media_index < 0)
     {
         return;
     }
@@ -113,7 +113,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
         }
     }
     const auto mux_result = rtsp_muxer_input(muxer_,
-                                             state.media_id,
+                                             state.media_index,
                                              ns_to_milliseconds(entry.pts_ns),
                                              ns_to_milliseconds(entry.dts_ns),
                                              entry.payload->data(),
@@ -135,9 +135,9 @@ void rtsp_play_session::on_end()
     }
 }
 
-int rtsp_play_session::muxer_packet_callback(void* param, int pid, const void* data, int bytes, std::uint32_t, int)
+int rtsp_play_session::muxer_packet_callback(void* param, int payload_index, const void* data, int bytes, std::uint32_t, int)
 {
-    return static_cast<rtsp_play_session*>(param)->on_muxer_packet(pid, data, bytes);
+    return static_cast<rtsp_play_session*>(param)->on_muxer_packet(payload_index, data, bytes);
 }
 
 bool rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
@@ -400,14 +400,16 @@ int rtsp_play_session::on_teardown(rtsp_server_t* server, std::string_view, std:
     return result == 0 ? -1 : result;
 }
 
-int rtsp_play_session::on_muxer_packet(int pid, const void* data, int bytes)
+int rtsp_play_session::on_muxer_packet(int payload_index, const void* data, int bytes)
 {
     if (data == nullptr || bytes <= 0)
     {
         return 0;
     }
 
-    auto iterator = std::find_if(track_states_.begin(), track_states_.end(), [pid](const auto& item) { return item.second.payload_index == pid; });
+    auto iterator = std::find_if(track_states_.begin(),
+                                 track_states_.end(),
+                                 [payload_index](const auto& item) { return item.second.payload_index == payload_index; });
     if (iterator == track_states_.end() || iterator->second.rtp_channel < 0)
     {
         return 0;
@@ -416,7 +418,7 @@ int rtsp_play_session::on_muxer_packet(int pid, const void* data, int bytes)
     write_interleaved(static_cast<std::uint8_t>(iterator->second.rtp_channel), data, static_cast<std::size_t>(bytes));
 
     std::array<std::uint8_t, 1500> rtcp{};
-    const auto rtcp_bytes = rtsp_muxer_rtcp(muxer_, pid, rtcp.data(), static_cast<int>(rtcp.size()));
+    const auto rtcp_bytes = rtsp_muxer_rtcp(muxer_, payload_index, rtcp.data(), static_cast<int>(rtcp.size()));
     if (rtcp_bytes > 0)
     {
         write_interleaved(static_cast<std::uint8_t>(iterator->second.rtcp_channel), rtcp.data(), static_cast<std::size_t>(rtcp_bytes));
@@ -575,8 +577,8 @@ int rtsp_play_session::prepare_presentation()
         {
             return 415;
         }
-        state.media_id = rtsp_muxer_add_media(prepared_muxer, state.payload_index, rtp_codec, extra.data(), static_cast<int>(extra.size()));
-        if (state.media_id < 0)
+        state.media_index = rtsp_muxer_add_media(prepared_muxer, state.payload_index, rtp_codec, extra.data(), static_cast<int>(extra.size()));
+        if (state.media_index < 0)
         {
             return 415;
         }

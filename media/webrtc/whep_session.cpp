@@ -148,7 +148,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
             shutdown();
             return whep_session_startup_error::internal_error;
         }
-        stream_ = audio_egress_->stream();
+        stream_ = audio_egress_->output_stream();
     }
 
     answer_ = std::move(*answer);

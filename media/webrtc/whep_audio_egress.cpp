@@ -31,11 +31,11 @@ std::map<egress_key, std::weak_ptr<whep_audio_egress>> egresses;
 }    // namespace
 
 whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker)
-    : worker_(worker), source_(std::move(source)), output_(std::make_shared<media_stream>(source_->name(), worker))
+    : worker_(worker), source_(std::move(source)), output_stream_(std::make_shared<media_stream>(source_->name(), worker))
 {
 }
 
-std::shared_ptr<media_stream> whep_audio_egress::stream() const noexcept { return output_; }
+std::shared_ptr<media_stream> whep_audio_egress::output_stream() const noexcept { return output_stream_; }
 
 bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_audio_settings settings)
 {
@@ -82,7 +82,7 @@ bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_aud
         }
         output_tracks.push_back(std::move(output_track));
     }
-    if (!output_->set_tracks(std::move(output_tracks)))
+    if (!output_stream_->set_tracks(std::move(output_tracks)))
     {
         return false;
     }
@@ -106,7 +106,7 @@ void whep_audio_egress::finish()
     {
         source_->remove_sink(this);
     }
-    output_->end();
+    output_stream_->end();
     transcoders_.clear();
     source_.reset();
     shutdown_subscription_.reset();
@@ -121,7 +121,7 @@ void whep_audio_egress::on_frame(const media_frame& frame)
     const auto transcoder = transcoders_.find(frame.track);
     if (transcoder == transcoders_.end())
     {
-        output_->publish(frame);
+        output_stream_->publish(frame);
         return;
     }
 
@@ -136,7 +136,7 @@ void whep_audio_egress::on_frame(const media_frame& frame)
     {
         encoded_frame.pts_ns = ns_to_milliseconds(encoded_frame.pts_ns) * 1'000'000;
         encoded_frame.dts_ns = encoded_frame.pts_ns;
-        output_->publish(std::move(encoded_frame));
+        output_stream_->publish(std::move(encoded_frame));
     }
 }
 
