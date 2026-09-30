@@ -40,10 +40,7 @@ void http_flv_session::startup()
 
 void http_flv_session::run(boost::asio::yield_context yield)
 {
-    if (!closed_)
-    {
-        handle_request(yield);
-    }
+    handle_request(yield);
     shutdown();
 }
 
