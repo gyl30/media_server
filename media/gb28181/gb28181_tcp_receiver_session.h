@@ -30,7 +30,7 @@ class gb28181_tcp_receiver_session final : public session, public std::enable_sh
                                  std::chrono::milliseconds establishment_timeout);
 
    public:
-    [[nodiscard]] bool startup();
+    void startup();
     void shutdown();
 
    private:
@@ -48,7 +48,6 @@ class gb28181_tcp_receiver_session final : public session, public std::enable_sh
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::unique_ptr<tcp_yield_transport> transport_;
-    bool started_{};
     bool closed_{};
 };
 

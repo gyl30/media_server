@@ -110,27 +110,22 @@ rtsp_pull_session::~rtsp_pull_session() = default;
 
 bool rtsp_pull_session::valid_url(std::string_view url) { return parse_url(url).has_value(); }
 
-bool rtsp_pull_session::startup()
+void rtsp_pull_session::startup()
 {
-    if (closed_ || started_)
-    {
-        return false;
-    }
     const auto parsed = parse_url(url_);
     if (!parsed)
     {
-        return false;
+        shutdown();
+        return;
     }
 
     url_ = parsed->request_url;
-    started_ = true;
 
     record_establishment_progress();
     schedule_establishment_timeout();
 
     const auto self = shared_from_this();
     worker_.spawn([self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); });
-    return true;
 }
 
 void rtsp_pull_session::shutdown()
@@ -226,7 +221,6 @@ void rtsp_pull_session::safe_shutdown()
     }
     closed_ = true;
     write_queue_.stop();
-    started_ = false;
     received_rtp_ = false;
     session_registry::instance().remove_receiver_session(stream_name_, *this);
     if (media_)

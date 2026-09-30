@@ -199,12 +199,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
     }
-    if (!session->startup())
-    {
-        session_registry::instance().remove_receiver_session(stream_name, *session);
-        session->shutdown();
-        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
-    }
+    session->startup();
     return make_empty_response(request, boost::beast::http::status::created);
 }
 

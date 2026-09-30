@@ -124,12 +124,7 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
-        if (!session->startup())
-        {
-            session_registry::instance().remove_receiver_session(stream_name, *session);
-            session->shutdown();
-            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
-        }
+        session->startup();
     }
 
     return make_empty_response(request, boost::beast::http::status::created);
@@ -177,12 +172,7 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
-        if (!session->startup())
-        {
-            session_registry::instance().remove_sender_session(stream_name, sender_id, *session);
-            session->shutdown();
-            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
-        }
+        session->startup();
     }
 
     return make_empty_response(request, boost::beast::http::status::created);

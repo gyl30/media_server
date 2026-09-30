@@ -29,12 +29,8 @@ gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worke
 {
 }
 
-bool gb28181_tcp_receiver_session::startup()
+void gb28181_tcp_receiver_session::startup()
 {
-    if (started_ || closed_)
-    {
-        return false;
-    }
     if (config_.mode == gb28181_transport::tcp_passive)
     {
         listener_ = std::make_unique<tcp_listener>(worker_.io(), config_.listen_port, bind_address_);
@@ -44,14 +40,13 @@ bool gb28181_tcp_receiver_session::startup()
         {
             spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_name(), error.message());
             listener_.reset();
-            return false;
+            shutdown();
+            return;
         }
     }
 
-    started_ = true;
     const auto self = shared_from_this();
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
-    return true;
 }
 
 void gb28181_tcp_receiver_session::shutdown()
@@ -166,7 +161,6 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         return;
     }
     closed_ = true;
-    started_ = false;
     session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)
     {

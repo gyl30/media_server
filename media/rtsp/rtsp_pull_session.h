@@ -46,7 +46,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     [[nodiscard]] static bool valid_url(std::string_view url);
 
    public:
-    bool startup();
+    void startup();
     void shutdown();
 
    public:
@@ -107,7 +107,6 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     std::chrono::steady_clock::time_point last_establishment_progress_{};
     std::chrono::seconds keepalive_interval_{30};
     std::size_t media_count_{};
-    bool started_{};
     bool received_rtp_{};
     bool closed_{};
 };
