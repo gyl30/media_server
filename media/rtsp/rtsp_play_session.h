@@ -91,7 +91,6 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     rtsp_muxer_t* muxer_{};
     std::string session_id_;
     bool playing_{};
-    bool closed_{};
 };
 
 }    // namespace media_server

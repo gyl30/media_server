@@ -62,7 +62,7 @@ rtsp_play_session::rtsp_play_session(worker_context& worker,
 
 void rtsp_play_session::on_frame(const media_frame& entry)
 {
-    if (closed_ || !playing_)
+    if (!playing_)
     {
         return;
     }
@@ -129,7 +129,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
 
 void rtsp_play_session::on_end()
 {
-    if (!closed_)
+    if (playing_ && shutdown_handler_)
     {
         shutdown_handler_();
     }
@@ -168,11 +168,7 @@ bool rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std
 
 void rtsp_play_session::shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
+    playing_ = false;
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
