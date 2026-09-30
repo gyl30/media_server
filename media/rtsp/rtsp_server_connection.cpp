@@ -150,22 +150,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
 void rtsp_server_connection::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(),
-                      [self]()
-                      {
-                          self->write_queue_.stop();
-                          if (self->publish_session_)
-                          {
-                              self->publish_session_->shutdown();
-                              self->publish_session_.reset();
-                          }
-                          if (self->play_session_)
-                          {
-                              self->play_session_->shutdown();
-                              self->play_session_.reset();
-                          }
-                          self->transport_.shutdown();
-                      });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 int rtsp_server_connection::send_callback(void* param, const void* data, std::size_t bytes)
@@ -404,6 +389,22 @@ bool rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
                                                         [owner](std::vector<std::uint8_t> data) { owner->write(std::move(data)); });
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
     return true;
+}
+
+void rtsp_server_connection::safe_shutdown()
+{
+    write_queue_.stop();
+    if (publish_session_)
+    {
+        publish_session_->shutdown();
+        publish_session_.reset();
+    }
+    if (play_session_)
+    {
+        play_session_->shutdown();
+        play_session_.reset();
+    }
+    transport_.shutdown();
 }
 
 }    // namespace media_server

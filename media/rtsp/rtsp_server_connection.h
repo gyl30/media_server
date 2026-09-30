@@ -63,6 +63,9 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void write(tcp_write_queue::buffer data);
 
    private:
+    void safe_shutdown();
+
+   private:
     worker_context& worker_;
     tcp_yield_transport transport_;
     tcp_write_queue write_queue_;
