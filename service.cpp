@@ -49,7 +49,7 @@ bool start_tcp_listener(worker_pool& workers,
             {
                 auto& worker = workers.next();
                 boost::asio::ip::tcp::socket socket(worker.io());
-                listener->accept(socket, {}, yield, accept_error);
+                listener->accept(socket, yield, accept_error);
                 if (accept_error)
                 {
                     return;
