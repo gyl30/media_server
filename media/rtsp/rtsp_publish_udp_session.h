@@ -1,7 +1,6 @@
 #ifndef MEDIA_RTSP_RTSP_PUBLISH_UDP_SESSION_H
 #define MEDIA_RTSP_RTSP_PUBLISH_UDP_SESSION_H
 
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,8 +34,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     rtsp_publish_udp_session(worker_context& worker,
                              boost::asio::ip::address bind_address,
                              std::string stream_name,
-                             std::vector<rtsp_publish_track_description> descriptions,
-                             std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
+                             std::vector<rtsp_publish_track_description> descriptions);
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
@@ -72,7 +70,6 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     rtsp_publish_media media_;
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;
-    std::chrono::milliseconds rtcp_interval_;
 };
 
 }    // namespace media_server

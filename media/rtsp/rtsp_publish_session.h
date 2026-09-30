@@ -2,7 +2,6 @@
 #define MEDIA_RTSP_RTSP_PUBLISH_SESSION_H
 
 #include <span>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,8 +30,7 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
    public:
     rtsp_publish_session(worker_context& worker,
                          boost::asio::ip::address bind_address,
-                         std::function<void(std::span<const std::uint8_t>)> write,
-                         std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{1'000});
+                         std::function<void(std::span<const std::uint8_t>)> write);
 
    public:
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
@@ -64,7 +62,6 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
    private:
     worker_context& worker_;
     boost::asio::ip::address bind_address_;
-    std::chrono::milliseconds rtcp_interval_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void()> shutdown_handler_;
     std::unique_ptr<rtsp_publish_media> tcp_media_;

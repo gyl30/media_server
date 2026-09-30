@@ -23,14 +23,12 @@ namespace media_server
 rtsp_publish_udp_session::rtsp_publish_udp_session(worker_context& worker,
                                                    boost::asio::ip::address bind_address,
                                                    std::string stream_name,
-                                                   std::vector<rtsp_publish_track_description> descriptions,
-                                                   std::chrono::milliseconds rtcp_interval)
+                                                   std::vector<rtsp_publish_track_description> descriptions)
     : worker_(worker),
       bind_address_(std::move(bind_address)),
       media_(worker_, std::move(stream_name), std::move(descriptions)),
       track_states_(media_.descriptions().size()),
-      rtcp_timer_(worker_.io()),
-      rtcp_interval_(rtcp_interval)
+      rtcp_timer_(worker_.io())
 {
 }
 
@@ -205,7 +203,7 @@ void rtsp_publish_udp_session::schedule_rtcp()
         return;
     }
 
-    rtcp_timer_.expires_after(rtcp_interval_);
+    rtcp_timer_.expires_after(std::chrono::seconds(1));
     const auto self = shared_from_this();
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
