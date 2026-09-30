@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -41,6 +42,11 @@ type mediaServerHTTPRejection struct {
 
 func (e *mediaServerHTTPRejection) Error() string {
 	return fmt.Sprintf("media server rejected request: status=%d code=%s", e.status, e.code)
+}
+
+func isMediaServerNotFound(err error) bool {
+	var rejection *mediaServerHTTPRejection
+	return errors.As(err, &rejection) && rejection.status == http.StatusNotFound
 }
 
 type mediaServerHTTPClient struct {

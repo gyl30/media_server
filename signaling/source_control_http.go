@@ -167,11 +167,6 @@ func (s *infrastructureServer) writeSourceSessionError(writer http.ResponseWrite
 	writeHTTPError(writer, http.StatusBadGateway, "source_"+operation+"_failed")
 }
 
-func isMediaServerNotFound(err error) bool {
-	var rejection *mediaServerHTTPRejection
-	return errors.As(err, &rejection) && rejection.status == http.StatusNotFound
-}
-
 func makeSourceRTSPPullRequest(source rtspSource, streamID string) rtspPullCreateRequest {
 	command := rtspPullCreateRequest{
 		StreamID: streamID, SourceID: source.sourceID, StreamName: source.streamName, URL: source.url,

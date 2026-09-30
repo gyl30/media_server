@@ -213,7 +213,7 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
     auto session = session_registry::instance().take_receiver_session(identity->stream_name, identity->stream_id);
     if (!session)
     {
-        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
     session->shutdown();
 
@@ -253,7 +253,7 @@ gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& 
     auto session = session_registry::instance().take_sender_session(identity->stream_name, identity->sender_id, identity->stream_id);
     if (!session)
     {
-        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
     session->shutdown();
 

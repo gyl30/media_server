@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"mime"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -377,14 +376,9 @@ func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
 	cleanupContext, cancel := s.media.timeoutContext()
 	deleteErr := s.media.deleteReceiver(cleanupContext, session.streamID, session.streamName)
 	cancel()
-	mediaStopped := deleteErr == nil
-	if deleteErr != nil {
-		var rejection *mediaServerHTTPRejection
-		mediaStopped = session.rtpPort != 0 && errors.As(deleteErr, &rejection) &&
-			rejection.status == http.StatusInternalServerError && rejection.code == "operation_failed"
-		if !mediaStopped {
-			result = errors.Join(result, deleteErr)
-		}
+	mediaStopped := deleteErr == nil || isMediaServerNotFound(deleteErr)
+	if !mediaStopped {
+		result = errors.Join(result, deleteErr)
 	}
 	s.mu.Lock()
 	if !mediaStopped {
