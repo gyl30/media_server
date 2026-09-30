@@ -124,8 +124,6 @@ int rtsp_pull_media::generate_rtcp(std::size_t media, std::span<std::uint8_t> bu
     return rtsp_demuxer_rtcp(demuxers_[media], buffer.data(), static_cast<int>(buffer.size()));
 }
 
-bool rtsp_pull_media::has_tracks() const noexcept { return media_stream_ && !media_stream_->tracks().empty(); }
-
 void rtsp_pull_media::shutdown()
 {
     if (media_stream_)

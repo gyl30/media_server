@@ -44,7 +44,6 @@ class rtsp_pull_media final
     [[nodiscard]] bool input_packet(std::uint8_t channel, std::span<const std::uint8_t> data);
     int set_rtp_info(std::size_t media, std::uint16_t sequence, std::uint32_t timestamp);
     int generate_rtcp(std::size_t media, std::span<std::uint8_t> buffer);
-    [[nodiscard]] bool has_tracks() const noexcept;
     void shutdown();
 
    private:
