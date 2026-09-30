@@ -33,7 +33,7 @@ rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_strea
 
 bool rtsp_pull_media::startup()
 {
-    if (media_stream_ || descriptions_.empty())
+    if (descriptions_.empty())
     {
         return false;
     }

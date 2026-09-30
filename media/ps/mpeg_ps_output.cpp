@@ -125,7 +125,7 @@ bool mpeg_ps_output::supported_tracks(const std::vector<media_track>& tracks)
 
 bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
 {
-    if (muxer_ || !source || !supported_tracks(source->tracks()))
+    if (!source || !supported_tracks(source->tracks()))
     {
         return false;
     }

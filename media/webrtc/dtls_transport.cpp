@@ -121,7 +121,7 @@ dtls_transport::dtls_transport(std::shared_ptr<dtls_certificate> certificate, st
 
 bool dtls_transport::startup()
 {
-    if (ssl_ || !certificate_ || !send_handler_ || !valid_sha256_fingerprint(remote_fingerprint_))
+    if (!certificate_ || !send_handler_ || !valid_sha256_fingerprint(remote_fingerprint_))
     {
         spdlog::debug("webrtc dtls startup rejected invalid state or fingerprint");
         return false;

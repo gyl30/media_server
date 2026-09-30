@@ -99,9 +99,9 @@ srtp_transport::~srtp_transport() = default;
 
 bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
 {
-    if (context_ || !initialize_srtp())
+    if (!initialize_srtp())
     {
-        spdlog::debug("webrtc srtp startup rejected or library init failed");
+        spdlog::debug("webrtc srtp library init failed");
         return false;
     }
 

@@ -120,7 +120,7 @@ void hls_segmenter::finish()
 
 bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
 {
-    if (!source || source_)
+    if (!source)
     {
         return false;
     }

@@ -44,7 +44,7 @@ whip_media_receiver::whip_media_receiver(worker_context& worker, std::string str
 
 bool whip_media_receiver::startup()
 {
-    if (media_stream_ || stream_name_.empty() || (config_.video_codec != codec_id::h264 && config_.video_codec != codec_id::h265) ||
+    if (stream_name_.empty() || (config_.video_codec != codec_id::h264 && config_.video_codec != codec_id::h265) ||
         !rtcp_mux_payload_type_allowed(config_.video_payload_type) ||
         (config_.audio_payload_type >= 0 &&
          (!rtcp_mux_payload_type_allowed(config_.audio_payload_type) || config_.audio_payload_type == config_.video_payload_type ||

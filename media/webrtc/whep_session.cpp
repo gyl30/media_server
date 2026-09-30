@@ -63,7 +63,7 @@ whep_session::whep_session(worker_context& worker,
 
 whep_session_startup_error whep_session::startup(webrtc_offer offer)
 {
-    if (started_ || !stream_ || !certificate_)
+    if (!stream_ || !certificate_)
     {
         spdlog::error("webrtc whep startup rejected invalid state");
         return whep_session_startup_error::internal_error;

@@ -36,7 +36,7 @@ rtsp_publish_media::rtsp_publish_media(worker_context& worker,
 
 bool rtsp_publish_media::startup(const std::string& rtcp_cname)
 {
-    if (media_stream_ || descriptions_.empty())
+    if (descriptions_.empty())
     {
         return false;
     }

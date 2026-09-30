@@ -63,7 +63,7 @@ whip_session::whip_session(worker_context& worker,
 
 whip_session_startup_error whip_session::startup(webrtc_offer offer)
 {
-    if (started_ || stream_name_.empty() || !certificate_)
+    if (stream_name_.empty() || !certificate_)
     {
         spdlog::error("webrtc whip startup rejected invalid state");
         return whip_session_startup_error::internal_error;

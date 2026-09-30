@@ -35,8 +35,7 @@ bool gb28181_rtp_sender::supported_tracks(const std::vector<media_track>& tracks
 
 bool gb28181_rtp_sender::startup()
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || !stream_ || packetizer_ || !packet_handler_ ||
-        !supported_tracks(stream_->tracks()) || !create_packetizer())
+    if (!stream_ || !packet_handler_ || !supported_tracks(stream_->tracks()) || !create_packetizer())
     {
         return false;
     }

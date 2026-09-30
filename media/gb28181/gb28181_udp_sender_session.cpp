@@ -58,7 +58,7 @@ void gb28181_udp_sender_session::shutdown_udp_transports()
 
 bool gb28181_udp_sender_session::startup()
 {
-    if (closed_ || local_ports_ || sender_ || !stream_ || config_.mode != gb28181_transport::udp || config_.remote_address.is_unspecified() ||
+    if (!stream_ || config_.mode != gb28181_transport::udp || config_.remote_address.is_unspecified() ||
         bind_address_.is_unspecified())
     {
         return false;

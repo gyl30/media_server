@@ -74,7 +74,7 @@ gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string s
 
 bool gb28181_rtp_receiver::startup()
 {
-    if (demuxer_ != nullptr || stream_name_.empty())
+    if (stream_name_.empty())
     {
         return false;
     }

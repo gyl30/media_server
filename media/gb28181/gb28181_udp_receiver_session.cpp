@@ -35,7 +35,7 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
 
 bool gb28181_udp_receiver_session::startup()
 {
-    if (closed_ || config_.mode != gb28181_transport::udp || local_ports_ || bind_address_.is_unspecified() || !receiver_.startup())
+    if (config_.mode != gb28181_transport::udp || bind_address_.is_unspecified() || !receiver_.startup())
     {
         return false;
     }
