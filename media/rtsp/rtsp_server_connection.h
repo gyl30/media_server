@@ -61,7 +61,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     [[nodiscard]] bool admit_play(std::string_view uri, bool track_uri);
     void write(std::span<const std::uint8_t> data);
     void write(std::vector<std::uint8_t> data);
-    void write(tcp_write_queue::buffer data);
 
    private:
     void safe_shutdown();

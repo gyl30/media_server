@@ -311,22 +311,17 @@ int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* s
 
 void rtsp_server_connection::write(std::span<const std::uint8_t> data)
 {
-    write(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
+    write(std::vector<std::uint8_t>(data.begin(), data.end()));
 }
 
 void rtsp_server_connection::write(std::vector<std::uint8_t> data)
 {
-    write(std::make_shared<std::vector<std::uint8_t>>(std::move(data)));
-}
-
-void rtsp_server_connection::write(tcp_write_queue::buffer data)
-{
-    if (data->empty())
+    if (data.empty())
     {
         return;
     }
 
-    const auto result = write_queue_.enqueue(std::move(data));
+    const auto result = write_queue_.enqueue(std::make_shared<std::vector<std::uint8_t>>(std::move(data)));
     if (result == tcp_write_enqueue_result::overflow)
     {
         shutdown();
@@ -347,11 +342,7 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (write_queue_.stopped())
-        {
-            return;
-        }
-        if (write_queue_.empty())
+        if (write_queue_.stopped() || write_queue_.empty())
         {
             return;
         }
