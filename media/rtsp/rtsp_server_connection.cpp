@@ -150,7 +150,22 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
 void rtsp_server_connection::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(),
+                      [self]()
+                      {
+                          self->write_queue_.stop();
+                          if (self->publish_session_)
+                          {
+                              self->publish_session_->shutdown();
+                              self->publish_session_.reset();
+                          }
+                          if (self->play_session_)
+                          {
+                              self->play_session_->shutdown();
+                              self->play_session_.reset();
+                          }
+                          self->transport_.shutdown();
+                      });
 }
 
 int rtsp_server_connection::send_callback(void* param, const void* data, std::size_t bytes)
@@ -163,10 +178,6 @@ int rtsp_server_connection::send_callback(void* param, const void* data, std::si
 void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return;
-    }
     if (self->publish_session_)
     {
         if (!self->publish_session_->on_interleaved(channel, std::span(static_cast<const std::uint8_t*>(data), bytes)))
@@ -189,10 +200,6 @@ void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t chan
 int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server, const char* uri)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return -1;
-    }
     if (self->publish_session_)
     {
         return rtsp_server_reply_describe(server, 501, "");
@@ -210,10 +217,6 @@ int rtsp_server_connection::setup_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const rtsp_header_transport_t transports[], std::size_t count)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return -1;
-    }
     if (self->publish_session_)
     {
         return self->publish_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
@@ -231,10 +234,6 @@ int rtsp_server_connection::play_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return -1;
-    }
     if (self->play_session_)
     {
         return self->play_session_->on_play(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
@@ -249,10 +248,6 @@ int rtsp_server_connection::play_callback(
 int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server, const char* uri, const char* session)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return -1;
-    }
     if (self->publish_session_)
     {
         return self->publish_session_->on_teardown(server, uri != nullptr ? uri : "", session != nullptr ? session : "");
@@ -267,10 +262,6 @@ int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server
 int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server, const char* uri, const char* sdp, int length)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return -1;
-    }
     if (self->play_session_)
     {
         return rtsp_server_reply_announce(server, 501);
@@ -303,10 +294,6 @@ int rtsp_server_connection::record_callback(
     void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return -1;
-    }
     if (self->publish_session_)
     {
         return self->publish_session_->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
@@ -318,23 +305,14 @@ int rtsp_server_connection::record_callback(
     return -1;
 }
 
-int rtsp_server_connection::options_callback(void* param, rtsp_server_t* server, const char*)
+int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*)
 {
-    auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return -1;
-    }
     return rtsp_server_reply_options(server, 200);
 }
 
 int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->closed_)
-    {
-        return -1;
-    }
     if (!self->publish_session_ && !self->play_session_ && (bytes != 0 || (session != nullptr && session[0] != '\0')))
     {
         return -1;
@@ -354,7 +332,7 @@ void rtsp_server_connection::write(std::vector<std::uint8_t> data)
 
 void rtsp_server_connection::write(tcp_write_queue::buffer data)
 {
-    if (closed_ || data->empty())
+    if (data->empty())
     {
         return;
     }
@@ -380,7 +358,7 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
 {
     for (;;)
     {
-        if (closed_ || write_queue_.stopped())
+        if (write_queue_.stopped())
         {
             return;
         }
@@ -426,27 +404,6 @@ bool rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
                                                         [owner](std::vector<std::uint8_t> data) { owner->write(std::move(data)); });
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
     return true;
-}
-
-void rtsp_server_connection::safe_shutdown()
-{
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
-    write_queue_.stop();
-    if (publish_session_)
-    {
-        publish_session_->shutdown();
-        publish_session_.reset();
-    }
-    if (play_session_)
-    {
-        play_session_->shutdown();
-        play_session_.reset();
-    }
-    transport_.shutdown();
 }
 
 }    // namespace media_server

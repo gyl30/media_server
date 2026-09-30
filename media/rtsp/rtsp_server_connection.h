@@ -63,17 +63,12 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void write(tcp_write_queue::buffer data);
 
    private:
-   private:
-    void safe_shutdown();
-
-   private:
     worker_context& worker_;
     tcp_yield_transport transport_;
     tcp_write_queue write_queue_;
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;
-    bool closed_{};
 };
 
 }    // namespace media_server
