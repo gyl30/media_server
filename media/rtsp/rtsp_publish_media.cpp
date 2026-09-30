@@ -36,7 +36,7 @@ rtsp_publish_media::rtsp_publish_media(worker_context& worker,
 
 bool rtsp_publish_media::startup(const std::string& rtcp_cname)
 {
-    if (closed_ || media_stream_ || descriptions_.empty())
+    if (media_stream_ || descriptions_.empty())
     {
         return false;
     }
@@ -75,7 +75,7 @@ bool rtsp_publish_media::startup(const std::string& rtcp_cname)
 
 bool rtsp_publish_media::start_recording()
 {
-    if (closed_ || recording_ || !media_stream_)
+    if (recording_ || !media_stream_)
     {
         return false;
     }
@@ -97,9 +97,13 @@ bool rtsp_publish_media::start_recording()
 
 bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const std::uint8_t> data)
 {
-    if (closed_ || !recording_ || track_index >= demuxers_.size() || data.size() < 4)
+    if (!media_stream_)
     {
-        return !closed_;
+        return false;
+    }
+    if (!recording_ || track_index >= demuxers_.size() || data.size() < 4)
+    {
+        return true;
     }
     auto* demuxer = demuxers_[track_index];
     if (demuxer != nullptr)
@@ -138,7 +142,7 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
 
 int rtsp_publish_media::generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
 {
-    if (closed_ || !recording_ || track_index >= demuxers_.size() || demuxers_[track_index] == nullptr)
+    if (!recording_ || track_index >= demuxers_.size() || demuxers_[track_index] == nullptr)
     {
         return 0;
     }
@@ -147,11 +151,6 @@ int rtsp_publish_media::generate_rtcp(std::size_t track_index, std::span<std::ui
 
 void rtsp_publish_media::shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     if (media_stream_)
     {
         stream_registry::instance().remove(*media_stream_);
@@ -184,7 +183,7 @@ int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet)
 
 int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || !recording_ || closed_ || !media_stream_)
+    if (packet == nullptr || packet->stream == nullptr || !recording_ || !media_stream_)
     {
         return -1;
     }

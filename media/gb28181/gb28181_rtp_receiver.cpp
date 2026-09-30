@@ -74,7 +74,7 @@ gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string s
 
 bool gb28181_rtp_receiver::startup()
 {
-    if (closed_ || demuxer_ != nullptr || stream_name_.empty())
+    if (demuxer_ != nullptr || stream_name_.empty())
     {
         return false;
     }
@@ -94,11 +94,11 @@ bool gb28181_rtp_receiver::startup()
 
 gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std::uint8_t> data)
 {
-    if (closed_)
+    if (demuxer_ == nullptr)
     {
         return gb28181_rtp_receive_result::fatal;
     }
-    if (demuxer_ == nullptr || data.size() < 12)
+    if (data.size() < 12)
     {
         return gb28181_rtp_receive_result::ignored;
     }
@@ -116,7 +116,7 @@ gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std
 
 int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
 {
-    if (closed_ || demuxer_ == nullptr || data.size() < 4)
+    if (demuxer_ == nullptr || data.size() < 4)
     {
         return -1;
     }
@@ -125,7 +125,7 @@ int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
 
 int gb28181_rtp_receiver::generate_rtcp(std::span<std::uint8_t> buffer)
 {
-    if (closed_ || demuxer_ == nullptr)
+    if (demuxer_ == nullptr)
     {
         return 0;
     }
@@ -134,11 +134,6 @@ int gb28181_rtp_receiver::generate_rtcp(std::span<std::uint8_t> buffer)
 
 void gb28181_rtp_receiver::shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     if (stream_)
     {
         stream_registry::instance().remove(*stream_);
@@ -167,10 +162,6 @@ void gb28181_rtp_receiver::stream_callback(void* param, int, int codecid, const 
 
 void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
 {
-    if (closed_)
-    {
-        return;
-    }
     const auto codec = codec_from_ps(codecid);
     if (!codec)
     {
@@ -248,7 +239,7 @@ bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
 
 int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || closed_)
+    if (packet == nullptr || packet->stream == nullptr || !stream_)
     {
         return -1;
     }

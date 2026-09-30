@@ -69,7 +69,6 @@ class whip_media_receiver final
         std::int64_t pts{};
     };
     std::optional<rtcp_sync> rtcp_sync_;
-    bool closed_{};
 };
 
 }    // namespace media_server

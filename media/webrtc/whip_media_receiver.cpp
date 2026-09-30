@@ -44,7 +44,7 @@ whip_media_receiver::whip_media_receiver(worker_context& worker, std::string str
 
 bool whip_media_receiver::startup()
 {
-    if (closed_ || media_stream_ || stream_name_.empty() || (config_.video_codec != codec_id::h264 && config_.video_codec != codec_id::h265) ||
+    if (media_stream_ || stream_name_.empty() || (config_.video_codec != codec_id::h264 && config_.video_codec != codec_id::h265) ||
         !rtcp_mux_payload_type_allowed(config_.video_payload_type) ||
         (config_.audio_payload_type >= 0 &&
          (!rtcp_mux_payload_type_allowed(config_.audio_payload_type) || config_.audio_payload_type == config_.video_payload_type ||
@@ -117,7 +117,7 @@ bool whip_media_receiver::startup()
 
 bool whip_media_receiver::input_rtp(std::span<const std::uint8_t> packet)
 {
-    if (closed_ || !media_stream_ || packet.size() < 12U || (packet[0] >> 6U) != 2U)
+    if (!media_stream_ || packet.size() < 12U || (packet[0] >> 6U) != 2U)
     {
         return false;
     }
@@ -154,7 +154,7 @@ bool whip_media_receiver::input_rtp(std::span<const std::uint8_t> packet)
 
 bool whip_media_receiver::input_rtcp(std::span<const std::uint8_t> packet)
 {
-    if (closed_ || !media_stream_ || packet.size() < 8U || (packet[0] >> 6U) != 2U)
+    if (!media_stream_ || packet.size() < 8U || (packet[0] >> 6U) != 2U)
     {
         return false;
     }
@@ -194,11 +194,6 @@ bool whip_media_receiver::input_rtcp(std::span<const std::uint8_t> packet)
 
 void whip_media_receiver::shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     if (media_stream_)
     {
         stream_registry::instance().remove(*media_stream_);
@@ -231,7 +226,7 @@ int whip_media_receiver::packet_callback(void* param, avpacket_t* packet)
 
 int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || closed_ || !media_stream_)
+    if (packet == nullptr || packet->stream == nullptr || !media_stream_)
     {
         return -1;
     }

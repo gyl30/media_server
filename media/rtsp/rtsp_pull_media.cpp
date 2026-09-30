@@ -33,7 +33,7 @@ rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_strea
 
 bool rtsp_pull_media::startup()
 {
-    if (closed_ || media_stream_ || descriptions_.empty())
+    if (media_stream_ || descriptions_.empty())
     {
         return false;
     }
@@ -79,7 +79,7 @@ bool rtsp_pull_media::startup()
 
 bool rtsp_pull_media::input_packet(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
-    if (closed_ || !media_stream_)
+    if (!media_stream_)
     {
         return false;
     }
@@ -107,7 +107,7 @@ bool rtsp_pull_media::input_packet(std::uint8_t channel, std::span<const std::ui
 
 int rtsp_pull_media::set_rtp_info(std::size_t media, std::uint16_t sequence, std::uint32_t timestamp)
 {
-    if (closed_ || media >= demuxers_.size() || demuxers_[media] == nullptr)
+    if (media >= demuxers_.size() || demuxers_[media] == nullptr)
     {
         return -1;
     }
@@ -116,7 +116,7 @@ int rtsp_pull_media::set_rtp_info(std::size_t media, std::uint16_t sequence, std
 
 int rtsp_pull_media::generate_rtcp(std::size_t media, std::span<std::uint8_t> buffer)
 {
-    if (closed_ || media >= demuxers_.size() || demuxers_[media] == nullptr)
+    if (media >= demuxers_.size() || demuxers_[media] == nullptr)
     {
         return 0;
     }
@@ -127,11 +127,6 @@ bool rtsp_pull_media::has_tracks() const noexcept { return media_stream_ && !med
 
 void rtsp_pull_media::shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     if (media_stream_)
     {
         stream_registry::instance().remove(*media_stream_);
@@ -154,7 +149,7 @@ int rtsp_pull_media::packet_callback(void* param, avpacket_t* packet) { return s
 
 int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || closed_ || !media_stream_)
+    if (packet == nullptr || packet->stream == nullptr || !media_stream_)
     {
         return -1;
     }

@@ -73,7 +73,6 @@ class rtsp_publish_media final
     };
     std::optional<rtcp_sync> rtcp_sync_;
     bool recording_{};
-    bool closed_{};
 };
 
 }    // namespace media_server
