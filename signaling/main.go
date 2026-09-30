@@ -23,15 +23,15 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		return err
 	}
 	defer server.close()
-	infrastructure := newInfrastructureServer(cfg, sources, logger)
 	ssrcs, err := newSSRCAllocator(cfg.sipDomain)
 	if err != nil {
 		return err
 	}
-	live := newLiveService(server, cfg.mediaServer, infrastructure.media, ssrcs, logger)
+	media := newMediaServerHTTPClient(cfg.mediaServer, cfg.mediaRequestTimeout)
+	live := newLiveService(server, media, ssrcs, logger)
 	live.inviteTimeout = cfg.inviteTimeout
 	live.byeTimeout = cfg.byeTimeout
-	infrastructure.live = live
+	infrastructure := newInfrastructureServer(cfg.httpListen, sources, live, media, logger)
 	server.onDeviceOffline = func(deviceID string) { live.deviceOffline(context.Background(), deviceID) }
 	logger.Info("SIP UDP listening", "address", cfg.sipListen)
 	logger.Info("internal HTTP listening", "address", cfg.httpListen)

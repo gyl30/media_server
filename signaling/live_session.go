@@ -26,6 +26,8 @@ var (
 
 type liveState string
 
+const livePayloadType uint8 = 96
+
 const (
 	livePreparing      liveState = "preparing"
 	liveInviting       liveState = "inviting"
@@ -43,7 +45,7 @@ type liveSession struct {
 	key         liveKey
 	streamName  string
 	streamID    string
-	endpoint    gb28181ReceiverEndpoint
+	rtpPort     uint16
 	ssrc        uint32
 	state       liveState
 	dialog      *sipgo.DialogClientSession
@@ -63,33 +65,28 @@ type liveView struct {
 }
 
 type liveService struct {
-	mu             sync.Mutex
-	sessions       map[liveKey]*liveSession
-	sip            *sipServer
-	mediaServer    mediaServer
-	media          *mediaServerHTTPClient
-	ssrcs          *ssrcAllocator
-	logger         *slog.Logger
-	inviteTimeout  time.Duration
-	byeTimeout     time.Duration
-	cleanupTimeout time.Duration
+	mu            sync.Mutex
+	sessions      map[liveKey]*liveSession
+	sip           *sipServer
+	media         *mediaServerHTTPClient
+	ssrcs         *ssrcAllocator
+	logger        *slog.Logger
+	inviteTimeout time.Duration
+	byeTimeout    time.Duration
 }
 
 func newLiveService(sipServer *sipServer,
-	mediaServer mediaServer,
 	media *mediaServerHTTPClient,
 	ssrcs *ssrcAllocator,
 	logger *slog.Logger) *liveService {
 	service := &liveService{
-		sessions:       make(map[liveKey]*liveSession),
-		sip:            sipServer,
-		mediaServer:    mediaServer,
-		media:          media,
-		ssrcs:          ssrcs,
-		logger:         logger,
-		inviteTimeout:  10 * time.Second,
-		byeTimeout:     3 * time.Second,
-		cleanupTimeout: 3 * time.Second,
+		sessions:      make(map[liveKey]*liveSession),
+		sip:           sipServer,
+		media:         media,
+		ssrcs:         ssrcs,
+		logger:        logger,
+		inviteTimeout: 10 * time.Second,
+		byeTimeout:    3 * time.Second,
 	}
 	sipServer.server.OnBye(service.handleRemoteBye)
 	return service
@@ -134,16 +131,16 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		s.remove(session)
 		return liveView{}, errChannelUnavailable
 	}
-	endpoint, err := s.media.createUDPReceiver(operationContext, s.mediaServer, gb28181ReceiverRequest{
-		streamID: session.streamID, streamName: session.streamName, payloadType: 96, ssrc: ssrc,
+	rtpPort, err := s.media.createUDPReceiver(operationContext, gb28181ReceiverRequest{
+		streamID: session.streamID, streamName: session.streamName, payloadType: livePayloadType, ssrc: ssrc,
 	})
 	if err != nil {
 		var rejection *mediaServerHTTPRejection
 		ambiguousCreate := !errors.As(err, &rejection)
 		cleanupConfirmed := !ambiguousCreate
 		if ambiguousCreate {
-			cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
-			cleanupErr := s.media.deleteReceiver(cleanupContext, s.mediaServer, session.streamID, session.streamName)
+			cleanupContext, cleanupCancel := s.media.timeoutContext()
+			cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID, session.streamName)
 			cleanupCancel()
 			cleanupConfirmed = cleanupErr == nil
 			if !cleanupConfirmed {
@@ -163,7 +160,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		return view, err
 	}
 	s.mu.Lock()
-	session.endpoint = endpoint
+	session.rtpPort = rtpPort
 	if session.state != livePreparing {
 		s.mu.Unlock()
 		return s.finishFailedStart(session, context.Canceled, false)
@@ -172,7 +169,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	s.mu.Unlock()
 
 	sdpBody, err := buildLiveUDPSDP(liveSDPParameters{
-		channelID: channelID, mediaIP: endpoint.address, rtpPort: endpoint.rtpPort, payloadType: endpoint.payloadType, ssrc: endpoint.ssrc,
+		channelID: channelID, mediaIP: s.media.server.mediaIP, rtpPort: rtpPort, payloadType: livePayloadType, ssrc: ssrc,
 	})
 	if err != nil {
 		return s.finishFailedStart(session, err, false)
@@ -224,7 +221,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	if contentType != nil {
 		mediaType, _, _ = mime.ParseMediaType(contentType.Value())
 	}
-	if !strings.EqualFold(mediaType, "application/sdp") || validateLiveUDPAnswer(dialog.InviteResponse.Body(), endpoint.payloadType, endpoint.ssrc) != nil {
+	if !strings.EqualFold(mediaType, "application/sdp") || validateLiveUDPAnswer(dialog.InviteResponse.Body(), livePayloadType, ssrc) != nil {
 		ackContext, ackCancel := context.WithTimeout(context.Background(), s.byeTimeout)
 		_ = dialog.Ack(ackContext)
 		_ = dialog.Bye(ackContext)
@@ -279,11 +276,6 @@ func (s *liveService) stopLive(ctx context.Context, deviceID, channelID, expecte
 		s.mu.Unlock()
 		return errLiveChanged
 	}
-	return s.stopSessionLocked(ctx, session)
-}
-
-func (s *liveService) stopSession(ctx context.Context, session *liveSession) error {
-	s.mu.Lock()
 	return s.stopSessionLocked(ctx, session)
 }
 
@@ -362,7 +354,8 @@ func (s *liveService) stopMatching(ctx context.Context, matches func(*liveSessio
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if err := s.stopSession(ctx, session); err != nil {
+			s.mu.Lock()
+			if err := s.stopSessionLocked(ctx, session); err != nil {
 				s.logger.Warn("live cleanup failed", "stream_name", session.streamName, "error", err)
 			}
 		}()
@@ -381,13 +374,13 @@ func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
 	} else if session.dialog != nil {
 		_ = session.dialog.Close()
 	}
-	cleanupContext, cancel := context.WithTimeout(context.Background(), s.cleanupTimeout)
-	deleteErr := s.media.deleteReceiver(cleanupContext, s.mediaServer, session.streamID, session.streamName)
+	cleanupContext, cancel := s.media.timeoutContext()
+	deleteErr := s.media.deleteReceiver(cleanupContext, session.streamID, session.streamName)
 	cancel()
 	mediaStopped := deleteErr == nil
 	if deleteErr != nil {
 		var rejection *mediaServerHTTPRejection
-		mediaStopped = session.endpoint.rtpPort != 0 && errors.As(deleteErr, &rejection) &&
+		mediaStopped = session.rtpPort != 0 && errors.As(deleteErr, &rejection) &&
 			rejection.status == http.StatusInternalServerError && rejection.code == "operation_failed"
 		if !mediaStopped {
 			result = errors.Join(result, deleteErr)
@@ -470,6 +463,6 @@ func makeLiveView(session *liveSession) liveView {
 	}
 	return liveView{
 		streamID: session.streamID, streamName: session.streamName, state: state,
-		ssrc: session.ssrc, rtpPort: session.endpoint.rtpPort,
+		ssrc: session.ssrc, rtpPort: session.rtpPort,
 	}
 }

@@ -33,13 +33,13 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 	}
 
 	command := makeSourceRTSPPullRequest(source, session.streamID)
-	if err := s.media.createRTSPPull(request.Context(), s.mediaServer, command); err != nil {
+	if err := s.media.createRTSPPull(request.Context(), command); err != nil {
 		var rejection *mediaServerHTTPRejection
 		ambiguousCreate := !errors.As(err, &rejection)
 		cleanupConfirmed := !ambiguousCreate
 		if ambiguousCreate {
-			cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
-			cleanupErr := s.media.deleteRTSPPull(cleanupContext, s.mediaServer, session.streamID, session.streamName)
+			cleanupContext, cancel := s.media.timeoutContext()
+			cleanupErr := s.media.deleteRTSPPull(cleanupContext, session.streamID, session.streamName)
 			cancel()
 			cleanupConfirmed = cleanupErr == nil || isMediaServerNotFound(cleanupErr)
 			if !cleanupConfirmed {
@@ -55,8 +55,8 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		return
 	}
 	if !s.finishRTSPPull(session) {
-		cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
-		cleanupErr := s.media.deleteRTSPPull(cleanupContext, s.mediaServer, session.streamID, session.streamName)
+		cleanupContext, cancel := s.media.timeoutContext()
+		cleanupErr := s.media.deleteRTSPPull(cleanupContext, session.streamID, session.streamName)
 		cancel()
 		if cleanupErr != nil && !isMediaServerNotFound(cleanupErr) {
 			s.logger.Warn("orphan rtsp pull cleanup failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
@@ -72,8 +72,8 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 			return
 		}
 		if s.removeRTSPPull(session) {
-			cleanupContext, cancel := context.WithTimeout(context.Background(), s.cfg.mediaRequestTimeout)
-			cleanupErr := s.media.deleteRTSPPull(cleanupContext, s.mediaServer, session.streamID, session.streamName)
+			cleanupContext, cancel := s.media.timeoutContext()
+			cleanupErr := s.media.deleteRTSPPull(cleanupContext, session.streamID, session.streamName)
 			cancel()
 			if cleanupErr != nil && !isMediaServerNotFound(cleanupErr) {
 				s.logger.Warn("deleted source rtsp pull cleanup failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
@@ -132,7 +132,7 @@ func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string) 
 				return ctx.Err()
 			}
 		}
-		deleteErr := s.media.deleteRTSPPull(ctx, s.mediaServer, session.streamID, session.streamName)
+		deleteErr := s.media.deleteRTSPPull(ctx, session.streamID, session.streamName)
 		if isMediaServerNotFound(deleteErr) {
 			deleteErr = nil
 		}

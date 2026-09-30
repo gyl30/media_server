@@ -15,11 +15,10 @@ import (
 )
 
 type infrastructureServer struct {
-	cfg                 config
+	httpListen          string
 	logger              *slog.Logger
 	live                *liveService
 	media               *mediaServerHTTPClient
-	mediaServer         mediaServer
 	sources             *sourceStore
 	rtspPullMu          sync.Mutex
 	rtspPulls           map[string]rtspPullSession
@@ -29,9 +28,15 @@ type infrastructureServer struct {
 	sourceControlClosed bool
 }
 
-func newInfrastructureServer(cfg config, sources *sourceStore, logger *slog.Logger) *infrastructureServer {
+func newInfrastructureServer(
+	httpListen string,
+	sources *sourceStore,
+	live *liveService,
+	media *mediaServerHTTPClient,
+	logger *slog.Logger,
+) *infrastructureServer {
 	return &infrastructureServer{
-		cfg: cfg, logger: logger, media: newMediaServerHTTPClient(cfg.mediaRequestTimeout), mediaServer: cfg.mediaServer,
+		httpListen: httpListen, logger: logger, live: live, media: media,
 		sources: sources, rtspPulls: make(map[string]rtspPullSession),
 	}
 }
@@ -45,14 +50,12 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /api/sources/{source_id}/start", s.handleSourceStart)
 	routes.HandleFunc("POST /api/sources/{source_id}/stop", s.handleSourceStop)
 	routes.HandleFunc("POST /api/preview/start", s.handlePreviewStart)
-	if s.live != nil {
-		routes.HandleFunc("POST /internal/live/start", s.handleLiveStart)
-		routes.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
-		routes.HandleFunc("GET /api/devices", s.handleDeviceList)
-		routes.HandleFunc("GET /api/devices/{device_id}/channels", s.handleChannelList)
-		routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
-		routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
-	}
+	routes.HandleFunc("POST /internal/live/start", s.handleLiveStart)
+	routes.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
+	routes.HandleFunc("GET /api/devices", s.handleDeviceList)
+	routes.HandleFunc("GET /api/devices/{device_id}/channels", s.handleChannelList)
+	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
+	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
 
 	web := embeddedWebHandler()
 	routes.Handle("GET /{$}", web)
@@ -61,7 +64,7 @@ func (s *infrastructureServer) handler() http.Handler {
 }
 
 func (s *infrastructureServer) serve(ctx context.Context) error {
-	listener, err := net.Listen("tcp", s.cfg.httpListen)
+	listener, err := net.Listen("tcp", s.httpListen)
 	if err != nil {
 		return err
 	}
