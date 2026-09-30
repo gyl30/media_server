@@ -1,4 +1,3 @@
-#include <chrono>
 #include <string>
 #include <vector>
 #include <cstdlib>
@@ -28,13 +27,10 @@ constexpr std::size_t rtsp_read_buffer_bytes = 64U * 1024U;
 
 rtsp_server_connection::rtsp_server_connection(worker_context& worker,
                                                boost::asio::ip::tcp::socket socket,
-                                               std::chrono::milliseconds inactivity_timeout,
                                                std::size_t max_write_queue_bytes)
     : worker_(worker),
       transport_(std::move(socket)),
-      write_queue_(max_write_queue_bytes),
-      inactivity_timer_(worker_.io()),
-      inactivity_timeout_(inactivity_timeout)
+      write_queue_(max_write_queue_bytes)
 {
 }
 
@@ -85,9 +81,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     }
     boost::scope::scope_exit destroy_context([rtsp_context]() { rtsp_server_destroy(rtsp_context); });
     local_address_ = local.address();
-    record_control_activity();
-    schedule_inactivity_timeout();
-
     rtp_over_rtsp_t interleaved{};
     interleaved.onrtp = &rtsp_server_connection::interleaved_callback;
     interleaved.param = this;
@@ -210,7 +203,6 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     {
         return -1;
     }
-    self->record_control_activity();
     if (self->publish_session_)
     {
         return rtsp_server_reply_describe(server, 501, "");
@@ -245,7 +237,6 @@ int rtsp_server_connection::setup_callback(
     {
         return -1;
     }
-    self->record_control_activity();
     if (self->publish_session_)
     {
         return self->publish_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
@@ -280,7 +271,6 @@ int rtsp_server_connection::play_callback(
     {
         return -1;
     }
-    self->record_control_activity();
     if (self->play_session_)
     {
         return self->play_session_->on_play(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
@@ -299,7 +289,6 @@ int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server
     {
         return -1;
     }
-    self->record_control_activity();
     if (self->publish_session_)
     {
         return self->publish_session_->on_teardown(server, uri != nullptr ? uri : "", session != nullptr ? session : "");
@@ -318,7 +307,6 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     {
         return -1;
     }
-    self->record_control_activity();
     if (self->play_session_)
     {
         return rtsp_server_reply_announce(server, 501);
@@ -355,7 +343,6 @@ int rtsp_server_connection::record_callback(
     {
         return -1;
     }
-    self->record_control_activity();
     if (self->publish_session_)
     {
         return self->publish_session_->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
@@ -374,7 +361,6 @@ int rtsp_server_connection::options_callback(void* param, rtsp_server_t* server,
     {
         return -1;
     }
-    self->record_control_activity();
     return rtsp_server_reply_options(server, 200);
 }
 
@@ -385,7 +371,6 @@ int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* s
     {
         return -1;
     }
-    self->record_control_activity();
     if (!self->publish_session_ && !self->play_session_ && (bytes != 0 || (session != nullptr && session[0] != '\0')))
     {
         return -1;
@@ -498,28 +483,6 @@ int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
     return 200;
 }
 
-void rtsp_server_connection::record_control_activity() { last_control_activity_ = std::chrono::steady_clock::now(); }
-
-void rtsp_server_connection::schedule_inactivity_timeout()
-{
-    inactivity_timer_.expires_at(last_control_activity_ + inactivity_timeout_);
-    const auto self = shared_from_this();
-    inactivity_timer_.async_wait(
-        [self](const boost::system::error_code& error)
-        {
-            if (error || self->closed_)
-            {
-                return;
-            }
-            if (std::chrono::steady_clock::now() < self->last_control_activity_ + self->inactivity_timeout_)
-            {
-                self->schedule_inactivity_timeout();
-                return;
-            }
-            self->shutdown();
-        });
-}
-
 void rtsp_server_connection::safe_shutdown()
 {
     if (closed_)
@@ -528,7 +491,6 @@ void rtsp_server_connection::safe_shutdown()
     }
     closed_ = true;
     write_queue_.stop();
-    inactivity_timer_.cancel();
     if (publish_session_)
     {
         publish_session_->shutdown();

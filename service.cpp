@@ -100,7 +100,7 @@ void service::run_server()
             config_.rtsp_port,
             [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
             {
-                auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket), std::chrono::milliseconds{60'000}, 1024U * 1024U);
+                auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket), 1024U * 1024U);
                 connection->startup();
             },
             network_error))

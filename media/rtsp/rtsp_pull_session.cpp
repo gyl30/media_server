@@ -87,8 +87,6 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
                                      std::string url,
                                      std::string username,
                                      std::string password,
-                                     std::chrono::milliseconds establishment_timeout,
-                                     std::chrono::milliseconds initial_tracks_timeout,
                                      std::size_t max_write_queue_bytes)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
@@ -97,12 +95,8 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
       password_(std::move(password)),
       resolver_(worker_.io()),
       connect_socket_(worker_.io()),
-      startup_timer_(worker_.io()),
-      keepalive_timer_(worker_.io()),
       rtcp_timer_(worker_.io()),
-      write_queue_(max_write_queue_bytes),
-      establishment_timeout_(establishment_timeout),
-      initial_tracks_timeout_(initial_tracks_timeout)
+      write_queue_(max_write_queue_bytes)
 {
 }
 
@@ -121,9 +115,6 @@ void rtsp_pull_session::startup()
 
     url_ = parsed->request_url;
 
-    record_establishment_progress();
-    schedule_establishment_timeout();
-
     const auto self = shared_from_this();
     worker_.spawn([self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); });
 }
@@ -132,52 +123,6 @@ void rtsp_pull_session::shutdown()
 {
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
-}
-
-void rtsp_pull_session::record_establishment_progress() { last_establishment_progress_ = std::chrono::steady_clock::now(); }
-
-void rtsp_pull_session::schedule_establishment_timeout()
-{
-    startup_timer_.expires_at(last_establishment_progress_ + establishment_timeout_);
-    const auto self = shared_from_this();
-    startup_timer_.async_wait(
-        [self](const boost::system::error_code& error)
-        {
-            if (error || self->closed_ || self->received_rtp_)
-            {
-                return;
-            }
-
-            const auto deadline = self->last_establishment_progress_ + self->establishment_timeout_;
-            if (std::chrono::steady_clock::now() < deadline)
-            {
-                self->schedule_establishment_timeout();
-                return;
-            }
-
-            spdlog::warn("rtsp pull establishment timeout stream {}", self->stream_name_);
-            self->shutdown();
-        });
-}
-
-void rtsp_pull_session::schedule_keepalive()
-{
-    keepalive_timer_.expires_after(keepalive_interval_);
-    const auto self = shared_from_this();
-    keepalive_timer_.async_wait(
-        [self](const boost::system::error_code& error)
-        {
-            if (error || self->closed_ || self->client_ == nullptr)
-            {
-                return;
-            }
-            if (rtsp_client_options(self->client_, nullptr) != 0)
-            {
-                self->shutdown();
-                return;
-            }
-            self->schedule_keepalive();
-        });
 }
 
 void rtsp_pull_session::schedule_rtcp()
@@ -228,8 +173,6 @@ void rtsp_pull_session::safe_shutdown()
         media_->shutdown();
         media_.reset();
     }
-    startup_timer_.cancel();
-    keepalive_timer_.cancel();
     rtcp_timer_.cancel();
     resolver_.cancel();
     boost::system::error_code error;
@@ -247,10 +190,6 @@ int rtsp_pull_session::send_callback(void* param, const char*, const void* reque
     if (self->closed_ || !self->transport_)
     {
         return -1;
-    }
-    if (!self->received_rtp_)
-    {
-        self->record_establishment_progress();
     }
     self->write(std::span{static_cast<const std::uint8_t*>(request), bytes});
     return static_cast<int>(bytes);
@@ -279,9 +218,9 @@ int rtsp_pull_session::describe_callback(void* param, const char* sdp, int lengt
     return static_cast<rtsp_pull_session*>(param)->on_describe(sdp, length);
 }
 
-int rtsp_pull_session::setup_callback(void* param, int timeout, std::int64_t duration)
+int rtsp_pull_session::setup_callback(void* param, int, std::int64_t)
 {
-    return static_cast<rtsp_pull_session*>(param)->on_setup(timeout, duration);
+    return static_cast<rtsp_pull_session*>(param)->on_setup();
 }
 
 int rtsp_pull_session::play_callback(
@@ -350,7 +289,6 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
         return;
     }
 
-    record_establishment_progress();
     boost::asio::async_connect(connect_socket_, endpoints, yield[error]);
     if (closed_)
     {
@@ -467,11 +405,8 @@ int rtsp_pull_session::on_describe(const char* sdp, int length)
     return rtsp_client_setup(client_, sdp, length);
 }
 
-int rtsp_pull_session::on_setup(int timeout, std::int64_t)
+int rtsp_pull_session::on_setup()
 {
-    const auto keepalive_seconds = timeout > 0 ? std::max(timeout / 2, 1) : 30;
-    keepalive_interval_ = std::chrono::seconds(keepalive_seconds);
-
     const auto media_count = rtsp_client_media_count(client_);
     if (media_count < 0 || static_cast<std::size_t>(media_count) > max_media_count)
     {
@@ -531,52 +466,16 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
         return;
     }
 
-    if (!rtcp)
+    if (!rtcp && !received_rtp_)
     {
-        if (!received_rtp_)
-        {
-            const auto now = std::chrono::steady_clock::now();
-            if (now >= last_establishment_progress_ + establishment_timeout_)
-            {
-                spdlog::warn("rtsp pull establishment timeout stream {}", stream_name_);
-                shutdown();
-                return;
-            }
-            received_rtp_ = true;
-            startup_timer_.cancel();
-            schedule_keepalive();
-            schedule_rtcp();
-            if (!media_->has_tracks())
-            {
-                startup_timer_.expires_after(initial_tracks_timeout_);
-                const auto self = shared_from_this();
-                startup_timer_.async_wait(
-                    [self](const boost::system::error_code& error)
-                    {
-                        if (error || self->closed_ || !self->media_ || self->media_->has_tracks())
-                        {
-                            return;
-                        }
-                        spdlog::warn("rtsp pull initial tracks timeout stream {}", self->stream_name_);
-                        self->shutdown();
-                    });
-            }
-        }
-        else if (!media_->has_tracks() && std::chrono::steady_clock::now() >= startup_timer_.expiry())
-        {
-            shutdown();
-            return;
-        }
+        received_rtp_ = true;
+        schedule_rtcp();
     }
 
     if (!media_->input_packet(channel, std::span{static_cast<const std::uint8_t*>(data), bytes}))
     {
         shutdown();
         return;
-    }
-    if (!rtcp && media_->has_tracks())
-    {
-        startup_timer_.cancel();
     }
 }
 

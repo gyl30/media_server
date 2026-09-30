@@ -1,4 +1,3 @@
-#include <chrono>
 #include <memory>
 #include <string>
 #include <utility>
@@ -192,8 +191,6 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
                                                        std::move(config.url),
                                                        std::move(config.username),
                                                        std::move(config.password),
-                                                       std::chrono::milliseconds{15'000},
-                                                       std::chrono::milliseconds{15'000},
                                                        1024U * 1024U);
     if (!session_registry::instance().add_receiver_session(stream_name, std::move(config.stream_id), session))
     {

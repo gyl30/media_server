@@ -2,7 +2,6 @@
 #define MEDIA_RTSP_RTSP_SERVER_CONNECTION_H
 
 #include <span>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,7 +11,6 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/address.hpp>
-#include <boost/asio/steady_timer.hpp>
 
 #include "media/net/tcp_write_queue.h"
 #include "media/net/tcp_yield_transport.h"
@@ -34,7 +32,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
    public:
     rtsp_server_connection(worker_context& worker,
                            boost::asio::ip::tcp::socket socket,
-                           std::chrono::milliseconds inactivity_timeout = std::chrono::milliseconds{60'000},
                            std::size_t max_write_queue_bytes = 1024U * 1024U);
 
    public:
@@ -66,9 +63,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void write(tcp_write_queue::buffer data);
 
    private:
-    void record_control_activity();
-    void schedule_inactivity_timeout();
-
    private:
     void safe_shutdown();
 
@@ -76,9 +70,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     worker_context& worker_;
     tcp_yield_transport transport_;
     tcp_write_queue write_queue_;
-    boost::asio::steady_timer inactivity_timer_;
-    std::chrono::milliseconds inactivity_timeout_;
-    std::chrono::steady_clock::time_point last_control_activity_{};
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;

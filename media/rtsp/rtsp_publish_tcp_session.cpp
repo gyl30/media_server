@@ -78,7 +78,6 @@ int rtsp_publish_tcp_session::on_setup(rtsp_server_t* server,
     auto& state = track_states_[track_index];
     state.rtp_channel = transport.interleaved1;
     state.rtcp_channel = transport.interleaved2;
-    rtsp_server_set_session_timeout(server, 60);
     const auto response =
         "RTP/AVP/TCP;unicast;interleaved=" + std::to_string(state.rtp_channel) + "-" + std::to_string(state.rtcp_channel) + ";mode=record";
     return rtsp_server_reply_setup(server, 200, session_id.c_str(), response.c_str());

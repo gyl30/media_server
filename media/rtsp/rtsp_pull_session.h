@@ -2,7 +2,6 @@
 #define MEDIA_RTSP_RTSP_PULL_SESSION_H
 
 #include <span>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,8 +36,6 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
                       std::string url,
                       std::string username = {},
                       std::string password = {},
-                      std::chrono::milliseconds establishment_timeout = std::chrono::milliseconds{15'000},
-                      std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                       std::size_t max_write_queue_bytes = 1024U * 1024U);
     ~rtsp_pull_session();
 
@@ -62,7 +59,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     static int send_callback(void* param, const char* uri, const void* request, std::size_t bytes);
     static int rtp_port_callback(void* param, int media, const char* source, unsigned short port[2], char* ip, int length);
     static int describe_callback(void* param, const char* sdp, int length);
-    static int setup_callback(void* param, int timeout, std::int64_t duration);
+    static int setup_callback(void* param, int, std::int64_t);
     static int play_callback(
         void* param, int media, const std::uint64_t* begin, const std::uint64_t* end, const double* scale, const rtsp_rtp_info_t* info, int count);
     static int pause_callback(void* param);
@@ -74,14 +71,11 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::span<const std::uint8_t> data);
-    void record_establishment_progress();
-    void schedule_establishment_timeout();
-    void schedule_keepalive();
     void schedule_rtcp();
 
    private:
     int on_describe(const char* sdp, int length);
-    int on_setup(int timeout, std::int64_t duration);
+    int on_setup();
     void on_rtp(std::uint8_t channel, const void* data, std::uint16_t bytes);
 
    private:
@@ -95,17 +89,11 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     std::string password_;
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket connect_socket_;
-    boost::asio::steady_timer startup_timer_;
-    boost::asio::steady_timer keepalive_timer_;
     boost::asio::steady_timer rtcp_timer_;
     std::unique_ptr<tcp_yield_transport> transport_;
     tcp_write_queue write_queue_;
     std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};
-    std::chrono::milliseconds establishment_timeout_;
-    std::chrono::milliseconds initial_tracks_timeout_;
-    std::chrono::steady_clock::time_point last_establishment_progress_{};
-    std::chrono::seconds keepalive_interval_{30};
     std::size_t media_count_{};
     bool received_rtp_{};
     bool closed_{};
