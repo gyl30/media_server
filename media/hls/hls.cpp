@@ -3,7 +3,6 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <algorithm>
 
 #include <boost/asio/steady_timer.hpp>
 
@@ -36,22 +35,15 @@ state& runtime()
     return value;
 }
 
-std::chrono::steady_clock::duration ended_retention()
-{
-    const hls_config config;
-    const auto window_size = std::max<std::size_t>(config.window_size, 1U);
-    const auto seconds = std::max(config.target_duration_seconds, 0.001) * static_cast<double>(window_size);
-    return std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
-}
+constexpr auto ended_retention = std::chrono::duration<double>(target_duration_seconds * static_cast<double>(segment_window_size));
 
 void remove_expired_segmenters(std::chrono::steady_clock::time_point now)
 {
-    const auto retention = ended_retention();
     std::erase_if(runtime().segmenters,
-                  [now, retention](const auto& item)
+                  [now](const auto& item)
                   {
                       const auto ended_at = item.second.segmenter->ended_at();
-                      return ended_at && now - *ended_at >= retention;
+                      return ended_at && now - *ended_at >= ended_retention;
                   });
 }
 

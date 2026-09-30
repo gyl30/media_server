@@ -27,17 +27,6 @@ hls_play_sessions& sessions()
     return value;
 }
 
-void remove_session(std::string_view secret, const hls_play_session* expected)
-{
-    auto& current = sessions();
-    std::scoped_lock lock(current.mutex);
-    const auto iterator = current.by_secret.find(secret);
-    if (iterator != current.by_secret.end() && iterator->second.get() == expected)
-    {
-        current.by_secret.erase(iterator);
-    }
-}
-
 }    // namespace
 
 std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worker,
@@ -72,18 +61,14 @@ std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worke
 
 std::shared_ptr<hls_play_session> hls_play_session::find(std::string_view secret, std::string_view stream_name)
 {
-    std::shared_ptr<hls_play_session> session;
+    auto& current = sessions();
+    std::scoped_lock lock(current.mutex);
+    const auto iterator = current.by_secret.find(secret);
+    if (iterator == current.by_secret.end() || iterator->second->stream_name_ != stream_name)
     {
-        auto& current = sessions();
-        std::scoped_lock lock(current.mutex);
-        const auto iterator = current.by_secret.find(secret);
-        if (iterator == current.by_secret.end())
-        {
-            return {};
-        }
-        session = iterator->second;
+        return {};
     }
-    return session->matches(stream_name) ? session : std::shared_ptr<hls_play_session>{};
+    return iterator->second;
 }
 
 hls_play_session::hls_play_session(
@@ -98,19 +83,21 @@ hls_play_session::hls_play_session(
 
 void hls_play_session::refresh()
 {
-    std::scoped_lock lock(mutex_);
-    if (expired_)
+    auto& current = sessions();
+    std::scoped_lock lock(current.mutex);
+    const auto iterator = current.by_secret.find(secret_);
+    if (iterator != current.by_secret.end() && iterator->second.get() == this)
     {
-        return;
+        last_activity_ = std::chrono::steady_clock::now();
     }
-    last_activity_ = std::chrono::steady_clock::now();
 }
 
 void hls_play_session::wait_for_inactivity()
 {
     std::chrono::steady_clock::time_point deadline;
     {
-        std::scoped_lock lock(mutex_);
+        auto& current = sessions();
+        std::scoped_lock lock(current.mutex);
         deadline = last_activity_ + inactivity_timeout;
     }
     timer_.expires_at(deadline);
@@ -127,14 +114,11 @@ void hls_play_session::handle_inactivity(const boost::system::error_code& error)
 
     bool expired = false;
     {
-        std::scoped_lock lock(mutex_);
-        if (expired_)
+        auto& current = sessions();
+        std::scoped_lock lock(current.mutex);
+        if (std::chrono::steady_clock::now() >= last_activity_ + inactivity_timeout)
         {
-            return;
-        }
-        if (const auto now = std::chrono::steady_clock::now(); now >= last_activity_ + inactivity_timeout)
-        {
-            expired_ = true;
+            current.by_secret.erase(secret_);
             expired = true;
         }
     }
@@ -145,28 +129,17 @@ void hls_play_session::handle_inactivity(const boost::system::error_code& error)
     }
 
     shutdown_subscription_.reset();
-    remove_session(secret_, this);
 }
 
 void hls_play_session::safe_shutdown()
 {
     {
-        std::scoped_lock lock(mutex_);
-        if (expired_)
-        {
-            return;
-        }
-        expired_ = true;
+        auto& current = sessions();
+        std::scoped_lock lock(current.mutex);
+        current.by_secret.erase(secret_);
     }
     shutdown_subscription_.reset();
     timer_.cancel();
-    remove_session(secret_, this);
-}
-
-bool hls_play_session::matches(std::string_view stream_name) const
-{
-    std::scoped_lock lock(mutex_);
-    return !expired_ && stream_name_ == stream_name;
 }
 
 }    // namespace media_server

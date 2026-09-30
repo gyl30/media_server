@@ -1,7 +1,6 @@
 #ifndef MEDIA_HLS_HLS_PLAY_SESSION_H
 #define MEDIA_HLS_HLS_PLAY_SESSION_H
 
-#include <mutex>
 #include <memory>
 #include <string>
 #include <chrono>
@@ -35,18 +34,15 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
     void wait_for_inactivity();
     void handle_inactivity(const boost::system::error_code& error);
     void safe_shutdown();
-    [[nodiscard]] bool matches(std::string_view stream_name) const;
 
    private:
     static constexpr auto inactivity_timeout = std::chrono::seconds{30};
 
    private:
-    mutable std::mutex mutex_;
     std::string stream_name_;
     std::string secret_;
     std::shared_ptr<hls_segmenter> segmenter_;
     std::chrono::steady_clock::time_point last_activity_;
-    bool expired_{};
     worker_context::shutdown_subscription shutdown_subscription_;
     boost::asio::steady_timer timer_;
 };

@@ -17,26 +17,10 @@
 namespace media_server
 {
 
-struct hls_config
-{
-    double target_duration_seconds{2.0};
-    std::size_t window_size{6};
-};
-
-struct hls_segment
-{
-    std::uint64_t sequence{};
-    double duration{};
-    std::shared_ptr<const std::vector<std::uint8_t>> data;
-};
-
 class media_stream;
 
 class hls_segmenter final : public media_sink, public std::enable_shared_from_this<hls_segmenter>
 {
-   public:
-    explicit hls_segmenter(hls_config config = {});
-
    public:
     bool startup(const std::shared_ptr<media_stream>& source);
     void shutdown();
@@ -50,6 +34,13 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ended_at() const;
 
    private:
+    struct segment
+    {
+        std::uint64_t sequence{};
+        double duration{};
+        std::shared_ptr<const std::vector<std::uint8_t>> data;
+    };
+
     static void* ts_alloc(void* param, std::size_t bytes);
     static void ts_free(void* param, void* packet);
     static int ts_write(void* param, const void* packet, std::size_t bytes);
@@ -61,11 +52,9 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
 
    private:
     mutable std::mutex mutex_;
-    double target_duration_seconds_{};
-    std::size_t window_size_{};
     std::map<track_id, media_track> tracks_;
     std::map<track_id, int> stream_ids_;
-    std::deque<hls_segment> segments_;
+    std::deque<segment> segments_;
     std::vector<std::uint8_t> current_segment_;
     void* muxer_{};
     std::uint64_t next_sequence_{};

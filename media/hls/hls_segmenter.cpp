@@ -7,6 +7,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
@@ -25,23 +26,14 @@ namespace
 constexpr std::size_t max_segment_bytes = 16U * 1024U * 1024U;
 }
 
-hls_segmenter::hls_segmenter(hls_config config)
-    : target_duration_seconds_(config.target_duration_seconds), window_size_(config.window_size)
-{
-}
-
 void hls_segmenter::on_frame(const media_frame& frame)
 {
     std::scoped_lock lock(mutex_);
-    if (ended_at_.has_value() || !frame.payload)
+    if (ended_at_.has_value())
     {
         return;
     }
     const auto track_iterator = tracks_.find(frame.track);
-    if (track_iterator == tracks_.end())
-    {
-        return;
-    }
     const auto& track = track_iterator->second;
     if (waiting_for_key_frame_)
     {
@@ -51,17 +43,13 @@ void hls_segmenter::on_frame(const media_frame& frame)
         }
         waiting_for_key_frame_ = false;
     }
-    if (muxer_ == nullptr)
-    {
-        return;
-    }
     if (!segment_start_pts_ns_)
     {
         segment_start_pts_ns_ = frame.pts_ns;
         segment_max_pts_ns_ = frame.pts_ns;
     }
     const auto elapsed_ns = frame.pts_ns - *segment_start_pts_ns_;
-    const auto target_ns = static_cast<std::int64_t>(target_duration_seconds_ * 1'000'000'000.0);
+    const auto target_ns = static_cast<std::int64_t>(hls::target_duration_seconds * 1'000'000'000.0);
     const bool segment_boundary = track.kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns;
     if (segment_boundary && !current_segment_.empty())
     {
@@ -79,10 +67,6 @@ void hls_segmenter::on_frame(const media_frame& frame)
         segment_max_pts_ns_ = frame.pts_ns;
     }
     const auto stream_iterator = stream_ids_.find(frame.track);
-    if (stream_iterator == stream_ids_.end())
-    {
-        return;
-    }
     const auto flags = frame.key_frame ? 1 : 0;
     const auto result = mpeg_ts_write(
         muxer_, stream_iterator->second, flags, ns_to_90khz(frame.pts_ns), ns_to_90khz(frame.dts_ns), frame.payload->data(), frame.payload->size());
@@ -109,21 +93,14 @@ void hls_segmenter::finish()
     {
         finish_segment(segment_max_pts_ns_);
     }
-    if (muxer_ != nullptr)
-    {
-        mpeg_ts_destroy(muxer_);
-        muxer_ = nullptr;
-        stream_ids_.clear();
-    }
+    mpeg_ts_destroy(muxer_);
+    muxer_ = nullptr;
+    stream_ids_.clear();
     ended_at_ = std::chrono::steady_clock::now();
 }
 
 bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
 {
-    if (!source)
-    {
-        return false;
-    }
     std::map<track_id, media_track> tracks;
     bool has_video = false;
     for (const auto& track : source->tracks())
@@ -149,11 +126,8 @@ void hls_segmenter::on_end() { finish(); }
 
 void hls_segmenter::shutdown()
 {
-    if (source_)
-    {
-        source_->remove_sink(this);
-        source_.reset();
-    }
+    source_->remove_sink(this);
+    source_.reset();
     finish();
 }
 
@@ -162,7 +136,7 @@ std::string hls_segmenter::playlist(std::string_view base_path, std::string_view
     std::scoped_lock lock(mutex_);
     std::ostringstream output;
     output << "#EXTM3U\n#EXT-X-VERSION:3\n";
-    double maximum_duration = target_duration_seconds_;
+    double maximum_duration = hls::target_duration_seconds;
     for (const auto& item : segments_)
     {
         maximum_duration = std::max(maximum_duration, item.duration);
@@ -190,7 +164,7 @@ std::string hls_segmenter::playlist(std::string_view base_path, std::string_view
 std::shared_ptr<const std::vector<std::uint8_t>> hls_segmenter::segment_buffer(std::uint64_t sequence) const
 {
     std::scoped_lock lock(mutex_);
-    const auto iterator = std::find_if(segments_.begin(), segments_.end(), [sequence](const hls_segment& item) { return item.sequence == sequence; });
+    const auto iterator = std::find_if(segments_.begin(), segments_.end(), [sequence](const segment& item) { return item.sequence == sequence; });
     return iterator == segments_.end() ? std::shared_ptr<const std::vector<std::uint8_t>>{} : iterator->data;
 }
 
@@ -260,22 +234,22 @@ void hls_segmenter::finish_segment(std::int64_t end_pts_ns)
     {
         return;
     }
-    double duration = target_duration_seconds_;
+    double duration = hls::target_duration_seconds;
     if (segment_start_pts_ns_ && end_pts_ns >= *segment_start_pts_ns_)
     {
         duration = static_cast<double>(end_pts_ns - *segment_start_pts_ns_) / 1'000'000'000.0;
     }
     if (duration <= 0.0)
     {
-        duration = target_duration_seconds_;
+        duration = hls::target_duration_seconds;
     }
-    segments_.push_back(hls_segment{
+    segments_.push_back(segment{
         .sequence = next_sequence_++,
         .duration = duration,
         .data = std::make_shared<const std::vector<std::uint8_t>>(std::move(current_segment_)),
     });
     current_segment_.clear();
-    while (segments_.size() > window_size_)
+    while (segments_.size() > hls::segment_window_size)
     {
         segments_.pop_front();
     }
