@@ -1,15 +1,17 @@
+#include <array>
+#include <chrono>
 #include <random>
 #include <string>
 #include <utility>
 #include <algorithm>
 
 #include <boost/asio/post.hpp>
+#include <spdlog/spdlog.h>
 
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_publish_session.h"
-#include "media/rtsp/rtsp_publish_tcp_session.h"
 #include "media/rtsp/rtsp_publish_udp_session.h"
 
 extern "C"
@@ -40,17 +42,33 @@ rtsp_publish_session::rtsp_publish_session(worker_context& worker,
                                            boost::asio::ip::address bind_address,
                                            std::function<void(std::span<const std::uint8_t>)> write,
                                            std::chrono::milliseconds rtcp_interval)
-    : worker_(worker), bind_address_(std::move(bind_address)), rtcp_interval_(rtcp_interval), write_handler_(std::move(write))
+    : worker_(worker),
+      bind_address_(std::move(bind_address)),
+      rtcp_interval_(rtcp_interval),
+      write_handler_(std::move(write)),
+      tcp_rtcp_timer_(worker_.io())
 {
 }
 
 bool rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data)
 {
-    if (!tcp_session_)
+    if (!tcp_media_)
     {
         return false;
     }
-    return tcp_session_->on_interleaved(channel, data);
+    if (data.empty())
+    {
+        return true;
+    }
+    for (std::size_t index = 0; index < tcp_track_states_.size(); ++index)
+    {
+        const auto& state = tcp_track_states_[index];
+        if (state.rtp_channel == channel || state.rtcp_channel == channel)
+        {
+            return tcp_media_->input_packet(index, data);
+        }
+    }
+    return true;
 }
 
 bool rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
@@ -173,7 +191,7 @@ int rtsp_publish_session::on_setup(
         const bool valid_interleaved = transports[index].interleaved1 >= 0 && transports[index].interleaved2 >= 0 &&
                                        transports[index].interleaved1 <= 255 && transports[index].interleaved2 <= 255 &&
                                        transports[index].interleaved1 != transports[index].interleaved2;
-        const bool family_matches = (tcp && !udp_session_) || (udp && !tcp_session_);
+        const bool family_matches = (tcp && !udp_session_) || (udp && !tcp_media_);
         if (family_matches && transports[index].multicast == 0 && (transports[index].mode == 0 || transports[index].mode == RTSP_TRANSPORT_RECORD) &&
             (!tcp || valid_interleaved))
         {
@@ -190,9 +208,9 @@ int rtsp_publish_session::on_setup(
         return rtsp_server_reply_setup(server, 461, nullptr, nullptr);
     }
 
-    if (tcp_session_)
+    if (tcp_media_)
     {
-        return tcp_session_->on_setup(server, track_index, *selected, session_id_);
+        return on_tcp_setup(server, track_index, *selected);
     }
     if (udp_session_)
     {
@@ -201,8 +219,14 @@ int rtsp_publish_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        tcp_session_ = std::make_shared<rtsp_publish_tcp_session>(worker_, stream_name_, descriptions_, std::move(write_handler_));
-        return tcp_session_->startup(server, track_index, *selected, session_id_);
+        auto media = std::make_unique<rtsp_publish_media>(worker_, stream_name_, descriptions_);
+        if (!media->startup(session_id_))
+        {
+            return -1;
+        }
+        tcp_media_ = std::move(media);
+        tcp_track_states_.resize(descriptions_.size());
+        return on_tcp_setup(server, track_index, *selected);
     }
 
     udp_session_ = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_, rtcp_interval_);
@@ -228,9 +252,9 @@ int rtsp_publish_session::on_record(rtsp_server_t* server, std::string_view, std
         spdlog::debug("rtsp publish record session mismatch");
         return -1;
     }
-    if (tcp_session_)
+    if (tcp_media_)
     {
-        return tcp_session_->on_record(server);
+        return on_tcp_record(server);
     }
     if (udp_session_)
     {
@@ -238,6 +262,85 @@ int rtsp_publish_session::on_record(rtsp_server_t* server, std::string_view, std
     }
     spdlog::debug("rtsp publish record before setup");
     return -1;
+}
+
+int rtsp_publish_session::on_tcp_setup(
+    rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport)
+{
+    if (tcp_track_states_[track_index].rtp_channel >= 0)
+    {
+        spdlog::debug("rtsp publish tcp track already setup {}", track_index);
+        return -1;
+    }
+
+    for (const auto& state : tcp_track_states_)
+    {
+        if (state.rtp_channel >= 0 && (state.rtp_channel == transport.interleaved1 || state.rtp_channel == transport.interleaved2 ||
+                                       state.rtcp_channel == transport.interleaved1 || state.rtcp_channel == transport.interleaved2))
+        {
+            return rtsp_server_reply_setup(server, 461, nullptr, nullptr);
+        }
+    }
+
+    auto& state = tcp_track_states_[track_index];
+    state.rtp_channel = transport.interleaved1;
+    state.rtcp_channel = transport.interleaved2;
+    const auto response =
+        "RTP/AVP/TCP;unicast;interleaved=" + std::to_string(state.rtp_channel) + "-" + std::to_string(state.rtcp_channel) + ";mode=record";
+    return rtsp_server_reply_setup(server, 200, session_id_.c_str(), response.c_str());
+}
+
+int rtsp_publish_session::on_tcp_record(rtsp_server_t* server)
+{
+    if (std::ranges::any_of(tcp_track_states_, [](const tcp_track_state& state) { return state.rtp_channel < 0; }))
+    {
+        spdlog::debug("rtsp publish tcp record before all tracks setup");
+        return -1;
+    }
+    if (!tcp_media_->start_recording())
+    {
+        spdlog::debug("rtsp publish tcp start recording failed");
+        return -1;
+    }
+    schedule_tcp_rtcp();
+    return rtsp_server_reply_record(server, 200, nullptr, nullptr);
+}
+
+void rtsp_publish_session::schedule_tcp_rtcp()
+{
+    if (!write_handler_ || !tcp_media_)
+    {
+        return;
+    }
+    tcp_rtcp_timer_.expires_after(std::chrono::seconds(1));
+    const auto self = shared_from_this();
+    tcp_rtcp_timer_.async_wait(
+        [self](const boost::system::error_code& error)
+        {
+            if (error || !self->write_handler_ || !self->tcp_media_)
+            {
+                return;
+            }
+
+            std::array<std::uint8_t, 1500> buffer{};
+            for (std::size_t index = 0; index < self->tcp_track_states_.size(); ++index)
+            {
+                const auto bytes = self->tcp_media_->generate_rtcp(index, buffer);
+                if (bytes <= 0)
+                {
+                    continue;
+                }
+
+                std::vector<std::uint8_t> packet(static_cast<std::size_t>(bytes) + 4U);
+                packet[0] = '$';
+                packet[1] = static_cast<std::uint8_t>(self->tcp_track_states_[index].rtcp_channel);
+                packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
+                packet[3] = static_cast<std::uint8_t>(bytes);
+                std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
+                self->write_handler_(packet);
+            }
+            self->schedule_tcp_rtcp();
+        });
 }
 
 int rtsp_publish_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
@@ -264,11 +367,14 @@ void rtsp_publish_session::shutdown()
 void rtsp_publish_session::safe_shutdown()
 {
     session_id_.clear();
-    if (tcp_session_)
+    tcp_rtcp_timer_.cancel();
+    if (tcp_media_)
     {
-        tcp_session_->safe_shutdown();
-        tcp_session_.reset();
+        spdlog::debug("rtsp publish tcp shutdown {}", tcp_media_->media_stream_name());
+        tcp_media_->shutdown();
+        tcp_media_.reset();
     }
+    tcp_track_states_.clear();
     if (udp_session_)
     {
         udp_session_->safe_shutdown();

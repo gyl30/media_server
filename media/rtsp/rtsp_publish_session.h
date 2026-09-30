@@ -11,6 +11,8 @@
 #include <functional>
 #include <string_view>
 
+#include <boost/asio/steady_timer.hpp>
+
 #include <boost/asio/ip/address.hpp>
 
 #include "media/rtsp/rtsp_publish_media.h"
@@ -22,7 +24,6 @@ namespace media_server
 {
 
 class worker_context;
-class rtsp_publish_tcp_session;
 class rtsp_publish_udp_session;
 
 class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publish_session>
@@ -48,6 +49,16 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     int on_record(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
 
    private:
+    struct tcp_track_state
+    {
+        int rtp_channel{-1};
+        int rtcp_channel{-1};
+    };
+
+   private:
+    int on_tcp_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport);
+    int on_tcp_record(rtsp_server_t* server);
+    void schedule_tcp_rtcp();
     void safe_shutdown();
 
    private:
@@ -56,7 +67,9 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     std::chrono::milliseconds rtcp_interval_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void()> shutdown_handler_;
-    std::shared_ptr<rtsp_publish_tcp_session> tcp_session_;
+    std::unique_ptr<rtsp_publish_media> tcp_media_;
+    std::vector<tcp_track_state> tcp_track_states_;
+    boost::asio::steady_timer tcp_rtcp_timer_;
     std::shared_ptr<rtsp_publish_udp_session> udp_session_;
     std::vector<rtsp_publish_track_description> descriptions_;
     std::string stream_name_;
