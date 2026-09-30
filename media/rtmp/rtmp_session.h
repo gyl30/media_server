@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <string>
-#include <vector>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -28,6 +27,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 {
    public:
     rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket);
+    ~rtmp_session();
 
    public:
     void startup();
@@ -50,7 +50,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     void run_read(rtmp_server_t* context, boost::asio::yield_context yield);
 
    private:
-    int on_delete_stream(std::uint32_t stream_id);
     int on_play(std::string app, std::string stream);
     int on_publish(std::string app, std::string stream);
 
@@ -61,7 +60,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     worker_context& worker_;
     std::shared_ptr<tcp_transport> transport_;
     rtmp_server_t* rtmp_context_{};
-    std::shared_ptr<rtmp_publish_session> publish_;
+    std::unique_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;
 };
 

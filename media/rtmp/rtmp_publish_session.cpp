@@ -35,24 +35,14 @@ rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string s
 bool rtmp_publish_session::startup()
 {
     demuxer_ = flv_demuxer_create(&rtmp_publish_session::demux_callback, this);
-    if (demuxer_ == nullptr)
-    {
-        return false;
-    }
-
-    return true;
+    return demuxer_ != nullptr;
 }
 
 void rtmp_publish_session::shutdown()
 {
     stream_registry::instance().remove(*stream_);
     stream_->end();
-    stream_.reset();
-    if (demuxer_ != nullptr)
-    {
-        flv_demuxer_destroy(demuxer_);
-        demuxer_ = nullptr;
-    }
+    flv_demuxer_destroy(demuxer_);
 }
 
 int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uint32_t timestamp)

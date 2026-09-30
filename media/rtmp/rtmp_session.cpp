@@ -57,6 +57,8 @@ rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket 
 {
 }
 
+rtmp_session::~rtmp_session() = default;
+
 void rtmp_session::startup()
 {
     const auto self = shared_from_this();
@@ -97,8 +99,8 @@ void rtmp_session::run(boost::asio::yield_context yield)
     rtmp_context_ = context;
     run_read(context, yield);
 
-    rtmp_context_ = nullptr;
     rtmp_server_destroy(context);
+    rtmp_context_ = nullptr;
     safe_shutdown();
     spdlog::debug("rtmp shutdown");
 }
@@ -145,9 +147,10 @@ int rtmp_session::send_callback(void* param, const void* header, std::size_t hea
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
-int rtmp_session::delete_stream_callback(void* param, std::uint32_t stream_id)
+int rtmp_session::delete_stream_callback(void* param, std::uint32_t)
 {
-    return static_cast<rtmp_session*>(param)->on_delete_stream(stream_id);
+    static_cast<rtmp_session*>(param)->shutdown();
+    return RTMP_SERVER_INPUT_STOP;
 }
 
 int rtmp_session::play_callback(void* param, const char* app, const char* stream, double, double, std::uint8_t)
@@ -188,22 +191,8 @@ int rtmp_session::script_callback(void* param, const void* data, std::size_t byt
 
 int rtmp_session::duration_callback(void*, const char*, const char*, double* duration)
 {
-    if (duration != nullptr)
-    {
-        *duration = 0.0;
-    }
+    *duration = 0.0;
     return 0;
-}
-
-int rtmp_session::on_delete_stream(std::uint32_t stream_id)
-{
-    if (stream_id == 0)
-    {
-        return 0;
-    }
-
-    shutdown();
-    return RTMP_SERVER_INPUT_STOP;
 }
 
 int rtmp_session::on_play(std::string app, std::string stream)
@@ -232,10 +221,6 @@ int rtmp_session::on_play(std::string app, std::string stream)
         std::move(media),
         [self](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
-            if (self->rtmp_context_ == nullptr)
-            {
-                return -1;
-            }
             if (type == FLV_TYPE_VIDEO)
             {
                 return rtmp_server_send_video(self->rtmp_context_, data.data(), data.size(), timestamp);
@@ -270,7 +255,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
         return -1;
     }
 
-    auto publish = std::make_shared<rtmp_publish_session>(worker_, *target);
+    auto publish = std::make_unique<rtmp_publish_session>(worker_, *target);
     if (!publish->startup())
     {
         return -1;
@@ -289,7 +274,6 @@ void rtmp_session::shutdown()
 
 void rtmp_session::safe_shutdown()
 {
-    rtmp_context_ = nullptr;
     if (publish_)
     {
         publish_->shutdown();
