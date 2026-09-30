@@ -26,26 +26,24 @@ constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
-rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_stream_name, std::vector<rtsp_pull_track_description> descriptions)
-    : worker_(worker), media_stream_name_(std::move(media_stream_name)), descriptions_(std::move(descriptions))
+rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_stream_name)
+    : worker_(worker), media_stream_name_(std::move(media_stream_name))
 {
 }
 
-bool rtsp_pull_media::startup()
+bool rtsp_pull_media::startup(std::vector<rtsp_pull_track_description> descriptions)
 {
-    if (descriptions_.empty())
+    if (descriptions.empty())
     {
         return false;
     }
 
-    auto descriptions = std::move(descriptions_);
     media_stream_ = std::make_shared<media_stream>(media_stream_name_, worker_);
     avpkt2bs_create(&bitstream_);
     demuxers_.resize(descriptions.size());
     for (std::size_t index = 0; index < descriptions.size(); ++index)
     {
         auto& description = descriptions[index];
-        expected_audio_ = expected_audio_ || description.kind == media_kind::audio;
         if (description.initial_track)
         {
             auto& pending = description.kind == media_kind::video ? initial_video_track_ : initial_audio_track_;
@@ -234,14 +232,15 @@ int rtsp_pull_media::update_track_from_packet(const avpacket_t& packet)
 
 int rtsp_pull_media::register_stream_if_ready()
 {
-    if (!media_stream_->tracks().empty() || !initial_video_track_ || (expected_audio_ && !initial_audio_track_))
+    const bool expected_audio = demuxers_.size() > 1;
+    if (!media_stream_->tracks().empty() || !initial_video_track_ || (expected_audio && !initial_audio_track_))
     {
         return 0;
     }
 
     std::vector<media_track> tracks;
     tracks.push_back(*initial_video_track_);
-    if (expected_audio_)
+    if (expected_audio)
     {
         tracks.push_back(*initial_audio_track_);
     }
@@ -256,7 +255,7 @@ int rtsp_pull_media::register_stream_if_ready()
     }
     initial_video_track_.reset();
     initial_audio_track_.reset();
-    spdlog::info("rtsp pull tracks ready audio {}", expected_audio_);
+    spdlog::info("rtsp pull tracks ready audio {}", expected_audio);
     return 0;
 }
 

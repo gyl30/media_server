@@ -95,7 +95,6 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     tcp_write_queue write_queue_;
     std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};
-    std::size_t media_count_{};
 };
 
 }    // namespace media_server

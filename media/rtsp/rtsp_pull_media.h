@@ -37,10 +37,10 @@ struct rtsp_pull_track_description
 class rtsp_pull_media final
 {
    public:
-    rtsp_pull_media(worker_context& worker, std::string media_stream_name, std::vector<rtsp_pull_track_description> descriptions);
+    rtsp_pull_media(worker_context& worker, std::string media_stream_name);
 
    public:
-    [[nodiscard]] bool startup();
+    [[nodiscard]] bool startup(std::vector<rtsp_pull_track_description> descriptions);
     [[nodiscard]] bool input_packet(std::uint8_t channel, std::span<const std::uint8_t> data);
     int set_rtp_info(std::size_t media, std::uint16_t sequence, std::uint32_t timestamp);
     int generate_rtcp(std::size_t media, std::span<std::uint8_t> buffer);
@@ -57,13 +57,11 @@ class rtsp_pull_media final
    private:
     worker_context& worker_;
     std::string media_stream_name_;
-    std::vector<rtsp_pull_track_description> descriptions_;
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> media_stream_;
     avpkt2bs_t bitstream_{};
     std::optional<media_track> initial_video_track_;
     std::optional<media_track> initial_audio_track_;
-    bool expected_audio_{};
 };
 
 }    // namespace media_server

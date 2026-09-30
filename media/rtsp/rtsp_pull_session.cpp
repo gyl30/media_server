@@ -138,7 +138,7 @@ void rtsp_pull_session::schedule_rtcp()
             }
 
             std::array<std::uint8_t, 1500> buffer{};
-            for (std::size_t media = 0; media < self->media_count_; ++media)
+            for (std::size_t media = 0; media < max_media_count; ++media)
             {
                 const auto bytes = self->media_->generate_rtcp(media, buffer);
                 if (bytes <= 0)
@@ -424,13 +424,12 @@ int rtsp_pull_session::on_setup()
         return -1;
     }
 
-    auto media = std::make_unique<rtsp_pull_media>(worker_, stream_name_, std::move(descriptions));
-    if (!media->startup())
+    auto media = std::make_unique<rtsp_pull_media>(worker_, stream_name_);
+    if (!media->startup(std::move(descriptions)))
     {
         return -1;
     }
     media_ = std::move(media);
-    media_count_ = static_cast<std::size_t>(media_count);
 
     std::uint64_t npt{};
     const auto result = rtsp_client_play(client_, &npt, nullptr);
@@ -447,9 +446,8 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
     {
         return;
     }
-    const auto media = static_cast<std::size_t>(channel / 2U);
     const bool rtcp = (channel % 2U) != 0U;
-    if (media >= media_count_ || data == nullptr || bytes < (rtcp ? 4U : 12U))
+    if (data == nullptr || bytes < (rtcp ? 4U : 12U))
     {
         return;
     }
