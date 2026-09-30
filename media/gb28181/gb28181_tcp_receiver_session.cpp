@@ -20,15 +20,28 @@ gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worke
 {
 }
 
-void gb28181_tcp_receiver_session::startup(boost::asio::ip::tcp::endpoint remote_endpoint)
+bool gb28181_tcp_receiver_session::startup(boost::asio::ip::tcp::endpoint remote_endpoint)
 {
+    if (!receiver_.startup())
+    {
+        spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
+        return false;
+    }
+
     const auto self = shared_from_this();
     worker_.spawn([self, remote_endpoint = std::move(remote_endpoint)](boost::asio::yield_context yield) mutable
                   { self->run(std::move(remote_endpoint), yield); });
+    return true;
 }
 
-void gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address, std::uint16_t listen_port)
+bool gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address, std::uint16_t listen_port)
 {
+    if (!receiver_.startup())
+    {
+        spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
+        return false;
+    }
+
     listener_ = std::make_unique<tcp_listener>(worker_.io(), listen_port, std::move(bind_address));
     boost::system::error_code error;
     listener_->startup(error);
@@ -36,12 +49,13 @@ void gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address
     {
         spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_name(), error.message());
         listener_.reset();
-        shutdown();
-        return;
+        receiver_.shutdown();
+        return false;
     }
 
     const auto self = shared_from_this();
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(std::nullopt, yield); });
+    return true;
 }
 
 void gb28181_tcp_receiver_session::shutdown()
@@ -79,13 +93,6 @@ void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpo
     }
 
     transport_ = std::make_shared<tcp_transport>(std::move(socket_));
-    if (!receiver_.startup())
-    {
-        spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
-        shutdown();
-        return;
-    }
-
     spdlog::info("gb28181 tcp session started stream {}", receiver_.stream_name());
     run_read(yield);
 }
@@ -145,14 +152,16 @@ void gb28181_tcp_receiver_session::safe_shutdown()
     {
         listener_->shutdown();
     }
-    boost::system::error_code error;
-    socket_.cancel(error);
-    socket_.close(error);
-    receiver_.shutdown();
     if (transport_)
     {
         transport_->shutdown();
     }
+    else
+    {
+        boost::system::error_code error;
+        socket_.close(error);
+    }
+    receiver_.shutdown();
     spdlog::debug("gb28181 tcp session shutdown {}", receiver_.stream_name());
 }
 

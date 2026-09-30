@@ -39,7 +39,7 @@ struct gb28181_sender_config
     boost::asio::ip::address remote_address{};
     std::uint16_t remote_port{};
     std::uint16_t remote_rtp_port{};
-    std::uint16_t remote_rtcp_port{};
+    std::optional<std::uint16_t> remote_rtcp_port{};
     std::uint16_t listen_port{};
     std::uint8_t payload_type{};
     std::uint32_t ssrc{};

@@ -37,7 +37,7 @@ class gb28181_rtp_receiver final
    public:
     [[nodiscard]] bool startup();
     [[nodiscard]] gb28181_rtp_receive_result receive_rtp(std::span<const std::uint8_t> data);
-    [[nodiscard]] int receive_rtcp(std::span<const std::uint8_t> data);
+    [[nodiscard]] bool receive_rtcp(std::span<const std::uint8_t> data);
     [[nodiscard]] int generate_rtcp(std::span<std::uint8_t> buffer);
     void shutdown();
 

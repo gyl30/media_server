@@ -296,7 +296,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
             }
             config.remote_address = std::move(*remote_address);
             config.remote_rtp_port = *remote_rtp_port;
-            config.remote_rtcp_port = remote_rtcp_port.value_or(0);
+            config.remote_rtcp_port = std::move(remote_rtcp_port);
             break;
         }
 

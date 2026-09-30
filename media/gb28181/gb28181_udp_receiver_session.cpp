@@ -116,7 +116,7 @@ void gb28181_udp_receiver_session::run_rtcp(boost::asio::yield_context yield)
             shutdown();
             return;
         }
-        if (receiver_.receive_rtcp(std::span{buffer.data(), bytes}) <= 0 || remote_rtcp_endpoint_ || !remote_rtp_endpoint_ ||
+        if (!receiver_.receive_rtcp(std::span{buffer.data(), bytes}) || remote_rtcp_endpoint_ || !remote_rtp_endpoint_ ||
             endpoint.address() != remote_rtp_endpoint_->address())
         {
             continue;

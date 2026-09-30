@@ -26,7 +26,7 @@ void gb28181_tcp_sender_session::startup(boost::asio::ip::tcp::endpoint remote_e
         { self->run(std::move(remote_endpoint), payload_type, ssrc, yield); });
 }
 
-void gb28181_tcp_sender_session::startup(boost::asio::ip::address bind_address,
+bool gb28181_tcp_sender_session::startup(boost::asio::ip::address bind_address,
                                          std::uint16_t listen_port,
                                          std::uint8_t payload_type,
                                          std::uint32_t ssrc)
@@ -38,12 +38,12 @@ void gb28181_tcp_sender_session::startup(boost::asio::ip::address bind_address,
     {
         spdlog::error("gb28181 tcp sender listener startup failed stream {} sender {} error {}", stream_->name(), sender_id_, error.message());
         listener_.reset();
-        shutdown();
-        return;
+        return false;
     }
 
     const auto self = shared_from_this();
     worker_.spawn([self, payload_type, ssrc](boost::asio::yield_context yield) { self->run(std::nullopt, payload_type, ssrc, yield); });
+    return true;
 }
 
 void gb28181_tcp_sender_session::run(std::optional<boost::asio::ip::tcp::endpoint> remote_endpoint,
@@ -145,17 +145,19 @@ void gb28181_tcp_sender_session::safe_shutdown()
     {
         listener_->shutdown();
     }
-    boost::system::error_code error;
-    socket_.cancel(error);
-    socket_.close(error);
+    if (transport_)
+    {
+        transport_->shutdown();
+    }
+    else
+    {
+        boost::system::error_code error;
+        socket_.close(error);
+    }
     if (sender_)
     {
         sender_->shutdown();
         sender_.reset();
-    }
-    if (transport_)
-    {
-        transport_->shutdown();
     }
     spdlog::debug("gb28181 tcp sender shutdown {} sender {}", stream->name(), sender_id_);
 }

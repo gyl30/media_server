@@ -112,13 +112,13 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
-    if (config.transport == gb28181_transport::tcp_active)
+    const bool started = config.transport == gb28181_transport::tcp_active
+        ? session->startup(boost::asio::ip::tcp::endpoint{std::move(config.remote_address), config.remote_port})
+        : session->startup(std::move(bind_address), config.listen_port);
+    if (!started)
     {
-        session->startup(boost::asio::ip::tcp::endpoint{std::move(config.remote_address), config.remote_port});
-    }
-    else
-    {
-        session->startup(std::move(bind_address), config.listen_port);
+        session_registry::instance().remove_receiver_session(stream_name, *session);
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
     return make_empty_response(request, boost::beast::http::status::created);
 }
@@ -139,9 +139,9 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
     if (config.transport == gb28181_transport::udp)
     {
         std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint;
-        if (config.remote_rtcp_port != 0)
+        if (config.remote_rtcp_port)
         {
-            remote_rtcp_endpoint.emplace(config.remote_address, config.remote_rtcp_port);
+            remote_rtcp_endpoint.emplace(config.remote_address, *config.remote_rtcp_port);
         }
         auto session = std::make_shared<gb28181_udp_sender_session>(
             worker,
@@ -171,9 +171,10 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
     {
         session->startup(boost::asio::ip::tcp::endpoint{std::move(config.remote_address), config.remote_port}, config.payload_type, config.ssrc);
     }
-    else
+    else if (!session->startup(std::move(bind_address), config.listen_port, config.payload_type, config.ssrc))
     {
-        session->startup(std::move(bind_address), config.listen_port, config.payload_type, config.ssrc);
+        session_registry::instance().remove_sender_session(stream_name, sender_id, *session);
+        return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
     return make_empty_response(request, boost::beast::http::status::created);
 }

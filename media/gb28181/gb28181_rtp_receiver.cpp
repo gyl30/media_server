@@ -105,13 +105,9 @@ gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std
     return result < 0 ? gb28181_rtp_receive_result::fatal : gb28181_rtp_receive_result::accepted;
 }
 
-int gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
+bool gb28181_rtp_receiver::receive_rtcp(std::span<const std::uint8_t> data)
 {
-    if (data.size() < 4)
-    {
-        return -1;
-    }
-    return rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size()));
+    return data.size() >= 4 && rtsp_demuxer_input(demuxer_, data.data(), static_cast<int>(data.size())) > 0;
 }
 
 int gb28181_rtp_receiver::generate_rtcp(std::span<std::uint8_t> buffer)

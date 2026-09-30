@@ -29,7 +29,7 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
 
    public:
     void startup(boost::asio::ip::tcp::endpoint remote_endpoint, std::uint8_t payload_type, std::uint32_t ssrc);
-    void startup(boost::asio::ip::address bind_address, std::uint16_t listen_port, std::uint8_t payload_type, std::uint32_t ssrc);
+    [[nodiscard]] bool startup(boost::asio::ip::address bind_address, std::uint16_t listen_port, std::uint8_t payload_type, std::uint32_t ssrc);
     void shutdown();
 
    private:

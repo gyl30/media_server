@@ -144,7 +144,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 
 void gb28181_udp_sender_session::schedule_rtcp()
 {
-    if (!stream_ || rtcp_sender_ == nullptr)
+    if (!stream_)
     {
         return;
     }
@@ -154,7 +154,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error || !self->stream_ || self->rtcp_sender_ == nullptr)
+            if (error || !self->stream_)
             {
                 return;
             }
@@ -205,7 +205,7 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
                      packet.size());
         return;
     }
-    if (rtcp_sender_ != nullptr && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
+    if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
     {
         sender_->shutdown();
         shutdown();
@@ -221,7 +221,7 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
         worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp_write(yield); });
     }
 
-    if (rtcp_sender_ != nullptr && !rtcp_reporting_started_)
+    if (remote_rtcp_endpoint_ && !rtcp_reporting_started_)
     {
         rtcp_reporting_started_ = true;
         schedule_rtcp();

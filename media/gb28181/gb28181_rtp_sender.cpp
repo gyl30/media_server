@@ -110,10 +110,7 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
     {
         spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
         shutdown();
-        if (end_handler_)
-        {
-            end_handler_();
-        }
+        end_handler_();
         return;
     }
     if (starts_media)
@@ -132,13 +129,8 @@ void gb28181_rtp_sender::on_end()
 
 void gb28181_rtp_sender::safe_shutdown()
 {
-    if (!stream_)
-    {
-        return;
-    }
     packet_handler_ = {};
     end_handler_ = {};
-    waiting_video_track_.reset();
     stream_.reset();
     ps_output_.reset();
     if (packetizer_)
