@@ -2,15 +2,12 @@
 #define MEDIA_RTMP_RTMP_PUBLISH_SESSION_H
 
 #include <span>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <functional>
-
-#include <boost/asio/steady_timer.hpp>
 
 #include "media/core/media_stream.h"
 #include "media/rtmp/rtmp_timestamp.h"
@@ -27,10 +24,7 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
    public:
     using shutdown_handler = std::function<void()>;
 
-    rtmp_publish_session(worker_context& worker,
-                         std::string stream_name,
-                         std::chrono::milliseconds initial_tracks_timeout,
-                         shutdown_handler on_shutdown);
+    rtmp_publish_session(worker_context& worker, std::string stream_name, shutdown_handler on_shutdown);
 
    public:
     bool startup();
@@ -60,8 +54,6 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
 
    private:
     worker_context& worker_;
-    boost::asio::steady_timer initial_tracks_timer_;
-    std::chrono::milliseconds initial_tracks_timeout_;
     std::shared_ptr<media_stream> stream_;
     shutdown_handler shutdown_handler_;
     flv_demuxer_t* demuxer_{};

@@ -29,15 +29,8 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 }    // namespace
 
-rtmp_publish_session::rtmp_publish_session(worker_context& worker,
-                                           std::string stream_name,
-                                           std::chrono::milliseconds initial_tracks_timeout,
-                                           shutdown_handler on_shutdown)
-    : worker_(worker),
-      initial_tracks_timer_(worker_.io()),
-      initial_tracks_timeout_(initial_tracks_timeout),
-      stream_(std::make_shared<media_stream>(std::move(stream_name), worker_)),
-      shutdown_handler_(std::move(on_shutdown))
+rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string stream_name, shutdown_handler on_shutdown)
+    : worker_(worker), stream_(std::make_shared<media_stream>(std::move(stream_name), worker_)), shutdown_handler_(std::move(on_shutdown))
 {
 }
 
@@ -49,21 +42,6 @@ bool rtmp_publish_session::startup()
         return false;
     }
 
-    initial_tracks_timer_.expires_after(initial_tracks_timeout_);
-    const auto self = shared_from_this();
-    initial_tracks_timer_.async_wait(
-        [self](const boost::system::error_code& error)
-        {
-            if (error || self->closed_ || !self->stream_->tracks().empty())
-            {
-                return;
-            }
-            if (auto handler = std::move(self->shutdown_handler_))
-            {
-                spdlog::warn("rtmp publish initial tracks timeout stream {}", self->stream_->name());
-                handler();
-            }
-        });
     return true;
 }
 
@@ -81,7 +59,6 @@ void rtmp_publish_session::safe_shutdown()
     }
     closed_ = true;
     shutdown_handler_ = {};
-    initial_tracks_timer_.cancel();
     if (stream_)
     {
         stream_registry::instance().remove(*stream_);
@@ -405,11 +382,6 @@ int rtmp_publish_session::register_stream_if_ready()
         return 0;
     }
 
-    if (std::chrono::steady_clock::now() >= initial_tracks_timer_.expiry())
-    {
-        return -1;
-    }
-
     std::vector<media_track> tracks;
     tracks.push_back(*initial_video_track_);
     if (*expected_audio_)
@@ -427,7 +399,6 @@ int rtmp_publish_session::register_stream_if_ready()
     }
     initial_video_track_.reset();
     initial_audio_track_.reset();
-    initial_tracks_timer_.cancel();
     spdlog::info("rtmp publish tracks ready audio {}", *expected_audio_);
     return 0;
 }

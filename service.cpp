@@ -86,7 +86,7 @@ void service::run_server()
             config_.rtmp_port,
             [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
             {
-                auto session = std::make_shared<rtmp_session>(worker, std::move(socket), std::chrono::milliseconds{15'000}, 1024U * 1024U);
+                auto session = std::make_shared<rtmp_session>(worker, std::move(socket), 1024U * 1024U);
                 session->startup();
             },
             network_error))

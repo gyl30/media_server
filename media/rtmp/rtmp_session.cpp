@@ -53,14 +53,8 @@ std::optional<std::string> parse_rtmp_target(std::string_view app, std::string_v
     return stream_name;
 }
 
-rtmp_session::rtmp_session(worker_context& worker,
-                           boost::asio::ip::tcp::socket socket,
-                           std::chrono::milliseconds initial_tracks_timeout,
-                           std::size_t max_write_queue_bytes)
-    : worker_(worker),
-      transport_(std::move(socket)),
-      write_queue_(max_write_queue_bytes),
-      initial_tracks_timeout_(initial_tracks_timeout)
+rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket, std::size_t max_write_queue_bytes)
+    : worker_(worker), transport_(std::move(socket)), write_queue_(max_write_queue_bytes)
 {
 }
 
@@ -324,7 +318,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     }
 
     const auto self = shared_from_this();
-    auto publish = std::make_shared<rtmp_publish_session>(worker_, *target, initial_tracks_timeout_, [self]() { self->shutdown(); });
+    auto publish = std::make_shared<rtmp_publish_session>(worker_, *target, [self]() { self->shutdown(); });
     if (!publish->startup())
     {
         publish->shutdown();

@@ -1,7 +1,6 @@
 #ifndef MEDIA_RTMP_RTMP_SESSION_H
 #define MEDIA_RTMP_RTMP_SESSION_H
 
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,7 +30,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
    public:
     rtmp_session(worker_context& worker,
                  boost::asio::ip::tcp::socket socket,
-                 std::chrono::milliseconds initial_tracks_timeout = std::chrono::milliseconds{15'000},
                  std::size_t max_write_queue_bytes = 1024U * 1024U);
 
    public:
@@ -67,7 +65,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     worker_context& worker_;
     tcp_yield_transport transport_;
     tcp_write_queue write_queue_;
-    std::chrono::milliseconds initial_tracks_timeout_;
     rtmp_server_t* rtmp_context_{};
     std::shared_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;
