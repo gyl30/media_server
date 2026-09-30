@@ -34,7 +34,6 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
 
    public:
     void startup();
-    void shutdown();
 
    private:
     void run(boost::asio::yield_context yield);
@@ -44,18 +43,17 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
                             std::string body,
                             boost::asio::yield_context& yield,
                             std::string_view allow = {});
-    void enqueue(std::vector<std::uint8_t> data);
+    [[nodiscard]] bool enqueue(std::vector<std::uint8_t> data);
     void run_write(boost::asio::yield_context yield);
     static int writer_callback(void* param, const flv_vec_t* vectors, int count);
 
    private:
-    void safe_shutdown();
+    void shutdown();
 
    private:
     worker_context& worker_;
     boost::beast::tcp_stream stream_;
     request_type request_;
-    bool closed_{};
     std::deque<std::vector<std::uint8_t>> output_queue_;
     std::size_t queued_output_bytes_{};
     std::optional<track_id> waiting_video_track_;

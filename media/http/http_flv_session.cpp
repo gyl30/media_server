@@ -4,7 +4,6 @@
 #include <algorithm>
 
 #include <boost/url/parse.hpp>
-#include <boost/asio/post.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
@@ -22,13 +21,7 @@ http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_str
       request_(std::move(request)),
       muxer_(
           [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
-          {
-              if (writer_ != nullptr)
-              {
-                  return flv_writer_input(writer_, type, data.data(), data.size(), timestamp);
-              }
-              return -1;
-          })
+          { return flv_writer_input(writer_, type, data.data(), data.size(), timestamp); })
 {
 }
 
@@ -104,17 +97,8 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         {
             return;
         }
-        if (closed_)
-        {
-            return;
-        }
     }
 
-    source_ = media_stream;
-    if (writer_ != nullptr)
-    {
-        return;
-    }
     bool has_audio = false;
     bool has_video = false;
     for (const auto& track : media_stream->tracks())
@@ -138,7 +122,11 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
             return;
         }
     }
-    enqueue(std::move(output_buffer_));
+    if (!enqueue(std::move(output_buffer_)))
+    {
+        return;
+    }
+    source_ = media_stream;
     media_stream->add_sink(shared_from_this());
 
     std::array<std::uint8_t, 1> read_buffer{};
@@ -147,10 +135,6 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         boost::system::error_code error;
         stream_.async_read_some(boost::asio::buffer(read_buffer), yield[error]);
         if (error)
-        {
-            return;
-        }
-        if (closed_)
         {
             return;
         }
@@ -181,44 +165,36 @@ void http_flv_session::send_text_response(
     boost::beast::http::async_write(stream_, response, yield[error]);
 }
 
-void http_flv_session::enqueue(std::vector<std::uint8_t> data)
+bool http_flv_session::enqueue(std::vector<std::uint8_t> data)
 {
     if (data.empty())
     {
-        return;
+        return true;
     }
     if (queued_output_bytes_ > max_queued_output_bytes_ || data.size() > max_queued_output_bytes_ - queued_output_bytes_)
     {
-        shutdown();
-        return;
+        return false;
     }
 
     const bool start_writer = output_queue_.empty();
     queued_output_bytes_ += data.size();
     output_queue_.push_back(std::move(data));
-    if (!start_writer)
+    if (start_writer)
     {
-        return;
+        const auto self = shared_from_this();
+        worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
     }
-
-    const auto self = shared_from_this();
-    worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
+    return true;
 }
 
 void http_flv_session::run_write(boost::asio::yield_context yield)
 {
     while (!output_queue_.empty())
     {
-        if (closed_)
-        {
-            output_queue_.clear();
-            queued_output_bytes_ = 0;
-            return;
-        }
         const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(output_queue_.front()));
         boost::system::error_code error;
         boost::asio::async_write(stream_, chunk, yield[error]);
-        if (error || closed_)
+        if (error)
         {
             output_queue_.clear();
             queued_output_bytes_ = 0;
@@ -233,16 +209,15 @@ void http_flv_session::run_write(boost::asio::yield_context yield)
 
 void http_flv_session::on_end()
 {
-    if (closed_)
+    if (source_)
     {
-        return;
+        shutdown();
     }
-    shutdown();
 }
 
 void http_flv_session::on_frame(const media_frame& entry)
 {
-    if (closed_)
+    if (!source_)
     {
         return;
     }
@@ -257,19 +232,19 @@ void http_flv_session::on_frame(const media_frame& entry)
     output_buffer_.clear();
     if (!muxer_.on_frame(entry))
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
-    if (!output_buffer_.empty())
+    if (!output_buffer_.empty() && !enqueue(std::move(output_buffer_)))
     {
-        enqueue(std::move(output_buffer_));
+        shutdown();
     }
 }
 
 int http_flv_session::writer_callback(void* param, const flv_vec_t* vectors, int count)
 {
     auto* self = static_cast<http_flv_session*>(param);
-    if (self->closed_ || vectors == nullptr || count <= 0)
+    if (vectors == nullptr || count <= 0)
     {
         return -1;
     }
@@ -298,17 +273,6 @@ int http_flv_session::writer_callback(void* param, const flv_vec_t* vectors, int
 
 void http_flv_session::shutdown()
 {
-    const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
-}
-
-void http_flv_session::safe_shutdown()
-{
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     if (source_)
     {
         source_->remove_sink(this);
