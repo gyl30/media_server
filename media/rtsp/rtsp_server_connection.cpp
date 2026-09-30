@@ -36,13 +36,16 @@ rtsp_server_connection::rtsp_server_connection(worker_context& worker,
 void rtsp_server_connection::startup()
 {
     const auto self = shared_from_this();
-    transport_->set_error_handler(
-        [weak = std::weak_ptr<rtsp_server_connection>(self)](boost::system::error_code error)
+    transport_->set_write_callback(
+        [weak = std::weak_ptr<rtsp_server_connection>(self)](boost::system::error_code error, std::size_t)
         {
-            if (const auto owner = weak.lock())
+            if (error)
             {
-                spdlog::debug("rtsp write failed: {}", error.message());
-                owner->shutdown();
+                if (const auto owner = weak.lock())
+                {
+                    spdlog::debug("rtsp write failed: {}", error.message());
+                    owner->shutdown();
+                }
             }
         });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });

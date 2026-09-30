@@ -86,12 +86,15 @@ void gb28181_tcp_sender_session::run(boost::asio::yield_context yield)
 
     transport_ = std::make_shared<tcp_transport>(std::move(socket_), max_write_queue_bytes_);
     const auto self = shared_from_this();
-    transport_->set_error_handler(
-        [weak = std::weak_ptr<gb28181_tcp_sender_session>(self)](boost::system::error_code)
+    transport_->set_write_callback(
+        [weak = std::weak_ptr<gb28181_tcp_sender_session>(self)](boost::system::error_code error, std::size_t)
         {
-            if (const auto owner = weak.lock())
+            if (error)
             {
-                owner->shutdown();
+                if (const auto owner = weak.lock())
+                {
+                    owner->shutdown();
+                }
             }
         });
     sender_ = std::make_shared<gb28181_rtp_sender>(

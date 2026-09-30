@@ -61,12 +61,15 @@ rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket 
 void rtmp_session::startup()
 {
     const auto self = shared_from_this();
-    transport_->set_error_handler(
-        [weak = std::weak_ptr<rtmp_session>(self)](boost::system::error_code)
+    transport_->set_write_callback(
+        [weak = std::weak_ptr<rtmp_session>(self)](boost::system::error_code error, std::size_t)
         {
-            if (const auto owner = weak.lock())
+            if (error)
             {
-                owner->shutdown();
+                if (const auto owner = weak.lock())
+                {
+                    owner->shutdown();
+                }
             }
         });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
