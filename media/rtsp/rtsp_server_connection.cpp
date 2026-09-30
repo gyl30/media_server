@@ -76,6 +76,11 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     }
     boost::scope::scope_exit destroy_context([rtsp_context]() { rtsp_server_destroy(rtsp_context); });
     local_address_ = local.address();
+    run_read(rtsp_context, yield);
+}
+
+void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_context yield)
+{
     rtp_over_rtsp_t interleaved{};
     interleaved.onrtp = &rtsp_server_connection::interleaved_callback;
     interleaved.param = this;
@@ -122,7 +127,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
             else
             {
                 auto remaining_bytes = remaining.size();
-                const auto result = rtsp_server_input(rtsp_context, remaining.data(), &remaining_bytes);
+                const auto result = rtsp_server_input(server, remaining.data(), &remaining_bytes);
                 rtsp_need_more_data = result > 0;
                 if (result < 0)
                 {

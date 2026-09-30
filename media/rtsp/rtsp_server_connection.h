@@ -54,6 +54,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
 
    private:
     void run(boost::asio::yield_context yield);
+    void run_read(rtsp_server_t* server, boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
 
    private:
