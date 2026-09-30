@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
 )
 
 type previewStartRequest struct {
@@ -38,19 +37,19 @@ func (s *infrastructureServer) handlePreviewStart(writer http.ResponseWriter, re
 		return
 	}
 
+	var streamID string
 	var streamName string
-	var server mediaServerInstance
 	if target.sourceID != "" {
 		if _, err := s.sources.get(request.Context(), target.sourceID); err != nil {
 			s.writeSourceError(writer, "preview", target.sourceID, err)
 			return
 		}
-		runtime, ok := s.rtspSourceRuntime(target.sourceID)
-		if !ok {
+		session, ok := s.rtspSourceSession(target.sourceID)
+		if !ok || session.starting || !session.createConfirmed || session.stopDone != nil {
 			writeHTTPError(writer, http.StatusConflict, "not_running")
 			return
 		}
-		streamName, server = runtime.streamName, runtime.server
+		streamID, streamName = session.streamID, session.streamName
 	} else {
 		if s.live == nil {
 			writeHTTPError(writer, http.StatusConflict, "not_running")
@@ -61,15 +60,12 @@ func (s *infrastructureServer) handlePreviewStart(writer http.ResponseWriter, re
 			writeHTTPError(writer, http.StatusConflict, "not_running")
 			return
 		}
-		streamName, server = live.streamName, live.server
-	}
-	if !s.registry.isOnline(server) {
-		writeHTTPError(writer, http.StatusServiceUnavailable, "no_media_server")
-		return
+		streamID, streamName = live.streamID, live.streamName
 	}
 
-	streamID := s.allocations.create(streamOperationPlay, "whep", streamName, server, time.Now())
-	writeJSON(writer, http.StatusCreated, previewStartResponse{StreamID: streamID, WHEPURL: makeWHEPURL(streamName, server)})
+	writeJSON(writer, http.StatusCreated, previewStartResponse{
+		StreamID: streamID, WHEPURL: makeWHEPURL(streamName, s.mediaServer),
+	})
 }
 
 func makePreviewTarget(command previewStartRequest) (previewTarget, bool) {
@@ -101,7 +97,7 @@ func makePreviewTarget(command previewStartRequest) (previewTarget, bool) {
 	return target, validDigits(target.deviceID, 20) && validDigits(target.channelID, 20)
 }
 
-func makeWHEPURL(streamName string, server mediaServerInstance) string {
+func makeWHEPURL(streamName string, server mediaServer) string {
 	path := "/play/whep/" + streamName
 	endpoint := url.URL{
 		Scheme:  "http",

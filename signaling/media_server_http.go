@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+type mediaServer struct {
+	controlURL string
+	mediaIP    string
+	httpPort   uint16
+}
+
 type gb28181ReceiverRequest struct {
 	streamID    string
 	streamName  string
@@ -54,7 +60,7 @@ func newMediaServerHTTPClient(timeout time.Duration) *mediaServerHTTPClient {
 
 func (c *mediaServerHTTPClient) createUDPReceiver(
 	ctx context.Context,
-	server mediaServerInstance,
+	server mediaServer,
 	receiver gb28181ReceiverRequest,
 ) (gb28181ReceiverEndpoint, error) {
 	requestBody := struct {
@@ -83,7 +89,7 @@ func (c *mediaServerHTTPClient) createUDPReceiver(
 	}, nil
 }
 
-func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, server mediaServerInstance, streamID, streamName string) error {
+func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, server mediaServer, streamID, streamName string) error {
 	requestBody := struct {
 		StreamID   string `json:"stream_id"`
 		StreamName string `json:"stream_name"`
@@ -91,11 +97,11 @@ func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, server media
 	return c.post(ctx, server.controlURL+"/gb28181/receiver/delete", requestBody, http.StatusNoContent, nil)
 }
 
-func (c *mediaServerHTTPClient) createRTSPPull(ctx context.Context, server mediaServerInstance, command rtspPullCreateRequest) error {
+func (c *mediaServerHTTPClient) createRTSPPull(ctx context.Context, server mediaServer, command rtspPullCreateRequest) error {
 	return c.post(ctx, server.controlURL+"/rtsp/pull/create", command, http.StatusCreated, nil)
 }
 
-func (c *mediaServerHTTPClient) deleteRTSPPull(ctx context.Context, server mediaServerInstance, streamID, streamName string) error {
+func (c *mediaServerHTTPClient) deleteRTSPPull(ctx context.Context, server mediaServer, streamID, streamName string) error {
 	requestBody := struct {
 		StreamID   string `json:"stream_id"`
 		StreamName string `json:"stream_name"`

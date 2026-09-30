@@ -16,10 +16,6 @@
       <span><strong>Media Control</strong><small>Control Plane</small></span>
     </a>
     <div class="header-actions">
-      <span id="event-status" class="connection-state is-pending" aria-live="polite">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span>SSE connecting</span>
-      </span>
       <button id="refresh-button" class="button secondary" type="button">
         <svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"></use></svg>
         Refresh
@@ -40,10 +36,6 @@
       <svg class="icon" aria-hidden="true"><use href="/icons.svg#activity"></use></svg>
       GB28181
     </button>
-    <button class="view-tab" id="tab-runtimes" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-runtimes" data-view="runtimes">
-      <svg class="icon" aria-hidden="true"><use href="/icons.svg#activity"></use></svg>
-      Runtimes
-    </button>
   </nav>
 
   <div id="global-status" class="global-status" role="status" aria-live="polite" hidden></div>
@@ -56,33 +48,9 @@
           <time id="last-updated">Not refreshed</time>
         </div>
         <div class="metric-grid" aria-label="System summary">
-          <article class="metric"><span>Media servers</span><strong id="metric-servers">0 / 0</strong><small>online / total</small></article>
           <article class="metric"><span>RTSP sources</span><strong id="metric-sources">0 / 0</strong><small>active / total</small></article>
           <article class="metric"><span>GB devices</span><strong id="metric-devices">0 / 0</strong><small>online / total</small></article>
-          <article class="metric"><span>Runtimes</span><strong id="metric-runtimes">0</strong><small>active now</small></article>
         </div>
-
-        <section class="data-section" aria-labelledby="media-servers-title">
-          <div class="subheading"><h2 id="media-servers-title">Media Servers</h2><span id="server-count" class="count-label">0 total</span></div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th scope="col">Server</th><th scope="col">Media address</th><th scope="col">Ports</th><th scope="col">Last seen</th><th scope="col">Status</th></tr></thead>
-              <tbody id="server-rows"></tbody>
-            </table>
-          </div>
-          <p id="server-empty" class="empty-state">No media servers registered.</p>
-        </section>
-
-        <section class="data-section" aria-labelledby="overview-runtimes-title">
-          <div class="subheading"><h2 id="overview-runtimes-title">Active Runtimes</h2><span id="active-runtime-count" class="count-label">0 active</span></div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th scope="col">Stream</th><th scope="col">Protocol</th><th scope="col">State</th><th scope="col">Server</th></tr></thead>
-              <tbody id="overview-runtime-rows"></tbody>
-            </table>
-          </div>
-          <p id="overview-runtime-empty" class="empty-state">No active runtimes.</p>
-        </section>
       </section>
 
       <section class="view" id="view-sources" role="tabpanel" aria-labelledby="tab-sources" hidden>
@@ -96,7 +64,7 @@
         <section class="data-section" aria-label="RTSP sources">
           <div class="table-wrap wide-table">
             <table>
-              <thead><tr><th scope="col">Stream</th><th scope="col">Endpoint</th><th scope="col">Desired</th><th scope="col">Observed</th><th scope="col">Server</th><th scope="col" class="actions-heading">Actions</th></tr></thead>
+              <thead><tr><th scope="col">Stream</th><th scope="col">Endpoint</th><th scope="col">Desired</th><th scope="col">Session</th><th scope="col" class="actions-heading">Actions</th></tr></thead>
               <tbody id="source-rows"></tbody>
             </table>
           </div>
@@ -125,21 +93,6 @@
         </div>
       </section>
 
-      <section class="view" id="view-runtimes" role="tabpanel" aria-labelledby="tab-runtimes" hidden>
-        <div class="section-heading">
-          <div><p class="eyebrow">Observed state</p><h1>Runtimes</h1></div>
-          <label class="field-inline" for="runtime-filter"><span>Show</span><select id="runtime-filter"><option value="active">Active</option><option value="stopped">Stopped</option><option value="all">All</option></select></label>
-        </div>
-        <section class="data-section" aria-label="Runtime state">
-          <div class="table-wrap runtime-table">
-            <table>
-              <thead><tr><th scope="col">Stream</th><th scope="col">Kind</th><th scope="col">Protocol</th><th scope="col">State</th><th scope="col">Server</th><th scope="col">End</th></tr></thead>
-              <tbody id="runtime-rows"></tbody>
-            </table>
-          </div>
-          <p id="runtime-empty" class="empty-state">No matching runtimes.</p>
-        </section>
-      </section>
     </div>
 
     <aside class="preview-panel" aria-labelledby="preview-title">

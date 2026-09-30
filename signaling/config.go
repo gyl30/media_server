@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -19,7 +21,7 @@ type config struct {
 	sipPassword         string
 	registerExpires     time.Duration
 	heartbeatTimeout    time.Duration
-	mediaServerTimeout  time.Duration
+	mediaServer         mediaServer
 	mediaRequestTimeout time.Duration
 	inviteTimeout       time.Duration
 	byeTimeout          time.Duration
@@ -27,6 +29,7 @@ type config struct {
 
 func parseConfig(args []string) (config, error) {
 	var cfg config
+	var mediaHTTPPort uint
 	flags := flag.NewFlagSet("signaling", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&cfg.database, "database", "signaling.db", "SQLite database path")
@@ -38,7 +41,9 @@ func parseConfig(args []string) (config, error) {
 	flags.StringVar(&cfg.sipPassword, "sip-password", "12345678", "shared GB28181 device password")
 	flags.DurationVar(&cfg.registerExpires, "register-expires", time.Hour, "default registration lifetime")
 	flags.DurationVar(&cfg.heartbeatTimeout, "heartbeat-timeout", 90*time.Second, "device heartbeat timeout")
-	flags.DurationVar(&cfg.mediaServerTimeout, "media-server-timeout", 15*time.Second, "media server heartbeat timeout")
+	flags.StringVar(&cfg.mediaServer.controlURL, "media-control-url", "http://127.0.0.1:8080", "media server control HTTP base URL")
+	flags.StringVar(&cfg.mediaServer.mediaIP, "media-ip", "127.0.0.1", "media server address advertised to clients and devices")
+	flags.UintVar(&mediaHTTPPort, "media-http-port", 8080, "media server HTTP port")
 	flags.DurationVar(&cfg.mediaRequestTimeout, "media-request-timeout", 3*time.Second, "media server HTTP request timeout")
 	flags.DurationVar(&cfg.inviteTimeout, "invite-timeout", 10*time.Second, "live INVITE timeout")
 	flags.DurationVar(&cfg.byeTimeout, "bye-timeout", 3*time.Second, "live BYE timeout")
@@ -78,9 +83,20 @@ func parseConfig(args []string) (config, error) {
 	if cfg.heartbeatTimeout <= 0 {
 		return config{}, fmt.Errorf("invalid heartbeat timeout")
 	}
-	if cfg.mediaServerTimeout <= 0 {
-		return config{}, fmt.Errorf("invalid media server timeout")
+	controlURL, err := url.Parse(cfg.mediaServer.controlURL)
+	if err != nil || controlURL.Scheme != "http" || controlURL.Host == "" || controlURL.User != nil ||
+		(controlURL.Path != "" && controlURL.Path != "/") || controlURL.RawQuery != "" || controlURL.Fragment != "" {
+		return config{}, fmt.Errorf("invalid media control URL")
 	}
+	cfg.mediaServer.controlURL = strings.TrimSuffix(cfg.mediaServer.controlURL, "/")
+	mediaIP := net.ParseIP(cfg.mediaServer.mediaIP)
+	if mediaIP == nil || mediaIP.IsUnspecified() {
+		return config{}, fmt.Errorf("invalid media IP")
+	}
+	if mediaHTTPPort == 0 || mediaHTTPPort > 65535 {
+		return config{}, fmt.Errorf("invalid media HTTP port")
+	}
+	cfg.mediaServer.httpPort = uint16(mediaHTTPPort)
 	if cfg.mediaRequestTimeout <= 0 || cfg.inviteTimeout <= 0 || cfg.byeTimeout <= 0 {
 		return config{}, fmt.Errorf("invalid live operation timeout")
 	}

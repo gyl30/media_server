@@ -44,9 +44,7 @@ function segment(value) {
 }
 
 export const api = {
-  mediaServers: (signal) => request("/api/media-servers", { signal }),
   sources: (signal) => request("/api/sources", { signal }),
-  runtimes: (signal) => request("/api/runtimes", { signal }),
   devices: (signal) => request("/api/devices", { signal }),
   channels: (deviceID, signal) => request(`/api/devices/${segment(deviceID)}/channels`, { signal }),
   createSource: (body) => request("/api/sources", { method: "POST", body }),

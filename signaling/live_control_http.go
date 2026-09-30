@@ -32,11 +32,6 @@ func (s *infrastructureServer) handleLiveStart(writer http.ResponseWriter, reque
 func (s *infrastructureServer) startLive(writer http.ResponseWriter, request *http.Request, deviceID, channelID string) (liveView, bool) {
 	view, err := s.live.startLive(request.Context(), deviceID, channelID)
 	if err != nil {
-		if view.mediaStopped {
-			_, stateErr := s.runtimes.acknowledgeSourceStopped(
-				view.server, view.streamID, view.streamName, "", "gb28181")
-			err = errors.Join(err, stateErr)
-		}
 		switch {
 		case errors.Is(err, errLiveExists):
 			writeHTTPError(writer, http.StatusConflict, "live_exists")
@@ -44,8 +39,6 @@ func (s *infrastructureServer) startLive(writer http.ResponseWriter, request *ht
 			writeHTTPError(writer, http.StatusConflict, "device_offline")
 		case errors.Is(err, errChannelUnavailable):
 			writeHTTPError(writer, http.StatusConflict, "channel_unavailable")
-		case errors.Is(err, errNoMediaServer):
-			writeHTTPError(writer, http.StatusServiceUnavailable, "no_media_server")
 		default:
 			s.logger.Error("live start failed", "device_id", deviceID, "channel_id", channelID, "error", err)
 			writeHTTPError(writer, http.StatusBadGateway, "live_start_failed")
@@ -67,12 +60,7 @@ func (s *infrastructureServer) handleLiveStop(writer http.ResponseWriter, reques
 }
 
 func (s *infrastructureServer) stopLive(writer http.ResponseWriter, request *http.Request, deviceID, channelID, streamID string) bool {
-	live, mediaStopped, err := s.live.stopLiveRuntime(request.Context(), deviceID, channelID, streamID)
-	if mediaStopped {
-		_, stateErr := s.runtimes.acknowledgeSourceStopped(
-			live.server, live.streamID, live.streamName, "", "gb28181")
-		err = errors.Join(err, stateErr)
-	}
+	err := s.live.stopLive(request.Context(), deviceID, channelID, streamID)
 	if err != nil {
 		switch {
 		case errors.Is(err, errLiveNotFound):

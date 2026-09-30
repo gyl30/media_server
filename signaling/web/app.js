@@ -3,7 +3,6 @@ import { WHEPPreview } from "/whep.js";
 
 const byID = (id) => document.getElementById(id);
 const elements = {
-  activeRuntimeCount: byID("active-runtime-count"),
   addSource: byID("add-source-button"),
   channelEmpty: byID("channel-empty"),
   channelRows: byID("channel-rows"),
@@ -17,15 +16,10 @@ const elements = {
   deviceCount: byID("device-count"),
   deviceEmpty: byID("device-empty"),
   deviceList: byID("device-list"),
-  eventStatus: byID("event-status"),
   globalStatus: byID("global-status"),
   lastUpdated: byID("last-updated"),
   metricDevices: byID("metric-devices"),
-  metricRuntimes: byID("metric-runtimes"),
-  metricServers: byID("metric-servers"),
   metricSources: byID("metric-sources"),
-  overviewRuntimeEmpty: byID("overview-runtime-empty"),
-  overviewRuntimeRows: byID("overview-runtime-rows"),
   previewError: byID("preview-error"),
   previewPanel: document.querySelector(".preview-panel"),
   previewPlaceholder: byID("preview-placeholder"),
@@ -34,14 +28,8 @@ const elements = {
   previewTarget: byID("preview-target"),
   previewVideo: byID("preview-video"),
   refresh: byID("refresh-button"),
-  runtimeEmpty: byID("runtime-empty"),
-  runtimeFilter: byID("runtime-filter"),
-  runtimeRows: byID("runtime-rows"),
   saveSource: byID("save-source-button"),
   selectedDevice: byID("selected-device"),
-  serverCount: byID("server-count"),
-  serverEmpty: byID("server-empty"),
-  serverRows: byID("server-rows"),
   sourceDialog: byID("source-dialog"),
   sourceDialogTitle: byID("source-dialog-title"),
   sourceEmpty: byID("source-empty"),
@@ -61,14 +49,10 @@ const state = {
   channelsDeviceID: "",
   channelEpoch: 0,
   devices: [],
-  eventSource: null,
   pending: new Set(),
   refreshController: null,
   refreshEpoch: 0,
-  refreshTimer: 0,
-  runtimes: new Map(),
   selectedDeviceID: "",
-  servers: [],
   sourceDialogTrigger: null,
   sources: [],
 };
@@ -150,28 +134,21 @@ function toneForState(value) {
     case "online":
     case "on":
     case "streaming":
+    case "created":
       return "success";
     case "running":
     case "starting":
     case "preparing":
     case "inviting":
     case "negotiating":
-    case "allocating":
       return "pending";
     case "failed":
     case "error":
+    case "unresolved":
       return "danger";
     default:
       return "neutral";
   }
-}
-
-function formatDate(value) {
-  if (!value) {
-    return "-";
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf()) ? "-" : date.toLocaleString();
 }
 
 function shortID(value) {
@@ -203,60 +180,15 @@ function errorCode(error) {
   return "network_error";
 }
 
-function setConnectionState(label, tone) {
-  elements.eventStatus.className = `connection-state ${tone}`;
-  elements.eventStatus.lastElementChild.textContent = label;
-}
-
 function renderMetrics() {
-  const activeRuntimes = [...state.runtimes.values()].filter((runtime) => runtime.state !== "stopped");
-  const activeSources = state.sources.filter((source) => source.observed && source.observed.state !== "stopped");
-  const onlineServers = state.servers.filter((server) => server.online);
+  const activeSources = state.sources.filter((source) => source.session);
   const onlineDevices = state.devices.filter((device) => device.online);
-  elements.metricServers.textContent = `${onlineServers.length} / ${state.servers.length}`;
   elements.metricSources.textContent = `${activeSources.length} / ${state.sources.length}`;
   elements.metricDevices.textContent = `${onlineDevices.length} / ${state.devices.length}`;
-  elements.metricRuntimes.textContent = String(activeRuntimes.length);
-  elements.activeRuntimeCount.textContent = `${activeRuntimes.length} active`;
-}
-
-function renderServers() {
-  elements.serverRows.replaceChildren();
-  for (const server of state.servers) {
-    const row = document.createElement("tr");
-    row.append(
-      textCell(server.server_id, server.instance_id, { secondaryCode: true }),
-      textCell(server.media_ip, `HTTP ${server.http_port}`, { code: true }),
-      textCell(`RTMP ${server.rtmp_port}`, `RTSP ${server.rtsp_port}`),
-      textCell(formatDate(server.last_seen)),
-      badgeCell(server.online ? "Online" : "Offline", server.online ? "success" : "neutral"),
-    );
-    elements.serverRows.append(row);
-  }
-  elements.serverEmpty.hidden = state.servers.length !== 0;
-  elements.serverRows.parentElement.hidden = state.servers.length === 0;
-  elements.serverCount.textContent = `${state.servers.length} total`;
-}
-
-function renderOverviewRuntimes() {
-  const active = [...state.runtimes.values()].filter((runtime) => runtime.state !== "stopped").slice(0, 8);
-  elements.overviewRuntimeRows.replaceChildren();
-  for (const runtime of active) {
-    const row = document.createElement("tr");
-    row.append(
-      textCell(runtime.stream_name, shortID(runtime.stream_id), { secondaryCode: true }),
-      textCell(runtime.protocol.toUpperCase(), runtimeKindLabel(runtime.kind)),
-      badgeCell(runtime.state, toneForState(runtime.state), runtime.stage || ""),
-      textCell(runtime.server_id, shortID(runtime.instance_id), { secondaryCode: true }),
-    );
-    elements.overviewRuntimeRows.append(row);
-  }
-  elements.overviewRuntimeEmpty.hidden = active.length !== 0;
-  elements.overviewRuntimeRows.parentElement.hidden = active.length === 0;
 }
 
 function sourceIsActive(source) {
-  return Boolean(source.observed && source.observed.state !== "stopped");
+  return Boolean(source.session);
 }
 
 function renderSources() {
@@ -265,22 +197,21 @@ function renderSources() {
     const row = document.createElement("tr");
     const active = sourceIsActive(source);
     const pending = state.pending.has(`source:${source.source_id}`);
-    const observed = source.observed;
+    const session = source.session;
     row.append(
       textCell(source.stream_name, source.username ? `user: ${source.username}` : "no credentials"),
       textCell(source.url, "", { code: true }),
       badgeCell(source.desired_state, toneForState(source.desired_state)),
-      observed
-        ? badgeCell(observed.state, toneForState(observed.state), observed.stage || observed.error || "")
+      session
+        ? badgeCell(session.state, toneForState(session.state), shortID(session.stream_id))
         : badgeCell("Absent", "neutral"),
-      observed ? textCell(observed.server_id, shortID(observed.instance_id), { secondaryCode: true }) : textCell("-"),
     );
     const actions = document.createElement("td");
     actions.className = "row-actions";
     const buttons = [];
     if (active) {
       buttons.push(actionButton("Stop", "stop", "square", "secondary", pending));
-      if (observed.state === "streaming") {
+      if (session.state === "created") {
         buttons.push(actionButton("Preview", "preview", "monitor-play", "secondary", pending));
       }
     } else {
@@ -360,53 +291,11 @@ function renderChannels() {
   elements.channelRows.parentElement.hidden = !hasDevice || channels.length === 0;
 }
 
-function runtimeDetail(runtime) {
-  if (runtime.state === "stopped") {
-    return "stopped";
-  }
-  return "-";
-}
-
-function runtimeKindLabel(value) {
-  return String(value).replaceAll("_", " ");
-}
-
-function renderRuntimes() {
-  const filter = elements.runtimeFilter.value;
-  const runtimes = [...state.runtimes.values()].filter((runtime) => {
-    if (filter === "active") {
-      return runtime.state !== "stopped";
-    }
-    if (filter === "stopped") {
-      return runtime.state === "stopped";
-    }
-    return true;
-  });
-  elements.runtimeRows.replaceChildren();
-  for (const runtime of runtimes) {
-    const row = document.createElement("tr");
-    row.append(
-      textCell(runtime.stream_name, runtime.stream_id, { secondaryCode: true }),
-      textCell(runtimeKindLabel(runtime.kind), runtime.source_id ? `source ${shortID(runtime.source_id)}` : ""),
-      textCell(runtime.protocol.toUpperCase()),
-      badgeCell(runtime.state, toneForState(runtime.state), runtime.stage || ""),
-      textCell(runtime.server_id, shortID(runtime.instance_id), { secondaryCode: true }),
-      textCell(runtimeDetail(runtime)),
-    );
-    elements.runtimeRows.append(row);
-  }
-  elements.runtimeEmpty.hidden = runtimes.length !== 0;
-  elements.runtimeRows.parentElement.hidden = runtimes.length === 0;
-}
-
 function renderAll() {
   renderMetrics();
-  renderServers();
-  renderOverviewRuntimes();
   renderSources();
   renderDevices();
   renderChannels();
-  renderRuntimes();
 }
 
 async function refreshChannels(deviceID = state.selectedDeviceID) {
@@ -444,18 +333,14 @@ async function refreshSnapshots(options = {}) {
   state.refreshController = controller;
   elements.refresh.disabled = true;
   try {
-    const [servers, sources, runtimes, devices] = await Promise.all([
-      api.mediaServers(controller.signal),
+    const [sources, devices] = await Promise.all([
       api.sources(controller.signal),
-      api.runtimes(controller.signal),
       api.devices(controller.signal),
     ]);
     if (epoch !== state.refreshEpoch) {
       return;
     }
-    state.servers = servers.media_servers || [];
     state.sources = sources.sources || [];
-    state.runtimes = new Map((runtimes.runtimes || []).map((runtime) => [runtime.stream_id, runtime]));
     state.devices = devices.devices || [];
     const previousDeviceID = state.selectedDeviceID;
     if (!state.devices.some((device) => device.device_id === state.selectedDeviceID)) {
@@ -483,16 +368,6 @@ async function refreshSnapshots(options = {}) {
       elements.refresh.disabled = false;
     }
   }
-}
-
-function scheduleSnapshotRefresh() {
-  if (state.refreshTimer) {
-    return;
-  }
-  state.refreshTimer = window.setTimeout(() => {
-    state.refreshTimer = 0;
-    void refreshSnapshots({ quiet: true });
-  }, 120);
 }
 
 async function runResourceAction(key, action, successMessage) {
@@ -617,7 +492,6 @@ async function startPreview(target, label) {
 
 function renderPreviewState(update) {
   const labels = {
-    allocating: "Allocating",
     failed: "Failed",
     idle: "Idle",
     negotiating: "Negotiating",
@@ -635,7 +509,7 @@ function renderPreviewState(update) {
 }
 
 function activateView(view, updateHash = true) {
-  const valid = ["overview", "sources", "devices", "runtimes"].includes(view) ? view : "overview";
+  const valid = ["overview", "sources", "devices"].includes(view) ? view : "overview";
   for (const tab of document.querySelectorAll(".view-tab")) {
     const selected = tab.dataset.view === valid;
     tab.classList.toggle("is-active", selected);
@@ -650,30 +524,6 @@ function activateView(view, updateHash = true) {
   if (updateHash && window.location.hash !== `#${valid}`) {
     history.replaceState(null, "", `#${valid}`);
   }
-}
-
-function connectEvents() {
-  const events = new EventSource("/api/events");
-  events.addEventListener("runtime", (message) => {
-    try {
-      const runtime = JSON.parse(message.data);
-      if (runtime && typeof runtime.stream_id === "string" && runtime.state === "stopped") {
-        void preview.stopIfStream(runtime.stream_id).catch((error) => {
-          renderPreviewState({ state: "failed", target: "", streamID: runtime.stream_id, error: errorCode(error) });
-        });
-      }
-    } catch {
-    }
-    scheduleSnapshotRefresh();
-  });
-  events.addEventListener("open", () => {
-    setConnectionState("SSE connected", "is-online");
-    void refreshSnapshots({ quiet: true });
-  });
-  events.addEventListener("error", () => {
-    setConnectionState("SSE reconnecting", "is-pending");
-  });
-  return events;
 }
 
 elements.refresh.addEventListener("click", () => void refreshSnapshots());
@@ -695,7 +545,6 @@ elements.sourceDialog.addEventListener("close", () => {
   }
   state.sourceDialogTrigger = null;
 });
-elements.runtimeFilter.addEventListener("change", renderRuntimes);
 
 const tabList = document.querySelector(".view-tabs");
 tabList.addEventListener("click", (event) => {
@@ -816,4 +665,3 @@ window.addEventListener("pagehide", () => preview.stopForPageHide());
 activateView(window.location.hash.slice(1) || "overview", false);
 renderPreviewState({ state: "idle", target: "", streamID: "", error: "" });
 await refreshSnapshots({ quiet: true });
-state.eventSource = connectEvents();

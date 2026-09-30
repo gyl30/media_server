@@ -74,10 +74,7 @@ async function postOffer(session, offer) {
   while (!session.cancelled) {
     const response = await fetch(session.whepURL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/sdp",
-        "X-Stream-ID": session.streamID,
-      },
+      headers: { "Content-Type": "application/sdp" },
       body: offer,
     });
     if (response.status === 409) {
@@ -146,14 +143,14 @@ export class WHEPPreview {
       whepURL: "",
     };
     this.current = session;
-    this.emit("allocating", session);
+    this.emit("preparing", session);
     try {
-      const allocation = await api.startPreview(target, session.controller.signal);
+      const preview = await api.startPreview(target, session.controller.signal);
       if (!this.isCurrent(session)) {
         return null;
       }
-      session.streamID = allocation.stream_id;
-      session.whepURL = allocation.whep_url;
+      session.streamID = preview.stream_id;
+      session.whepURL = preview.whep_url;
       session.peer = new RTCPeerConnection();
       session.peer.addTransceiver("video", { direction: "recvonly" });
       session.peer.addTransceiver("audio", { direction: "recvonly" });
@@ -264,13 +261,6 @@ export class WHEPPreview {
       void deleteResource(session.resourceURL, true).catch(() => {});
     }
     this.closeLocal(session);
-  }
-
-  stopIfStream(streamID) {
-    if (this.current && this.current.streamID === streamID) {
-      return this.stop();
-    }
-    return Promise.resolve();
   }
 
   closeLocal(session) {

@@ -26,12 +26,17 @@ type sourcePatchRequest struct {
 }
 
 type sourceResponse struct {
-	SourceID     string             `json:"source_id"`
-	StreamName   string             `json:"stream_name"`
-	URL          string             `json:"url"`
-	Username     string             `json:"username"`
-	DesiredState sourceDesiredState `json:"desired_state"`
-	Observed     *observedRuntime   `json:"observed,omitempty"`
+	SourceID     string                 `json:"source_id"`
+	StreamName   string                 `json:"stream_name"`
+	URL          string                 `json:"url"`
+	Username     string                 `json:"username"`
+	DesiredState sourceDesiredState     `json:"desired_state"`
+	Session      *sourceSessionResponse `json:"session,omitempty"`
+}
+
+type sourceSessionResponse struct {
+	StreamID string `json:"stream_id"`
+	State    string `json:"state"`
 }
 
 func (s *infrastructureServer) handleSourceList(writer http.ResponseWriter, request *http.Request) {
@@ -117,15 +122,11 @@ func (s *infrastructureServer) handleSourceDelete(writer http.ResponseWriter, re
 		return
 	}
 	if err := s.stopSource(request.Context(), sourceID); err != nil {
-		s.writeSourceRuntimeError(writer, "delete", sourceID, "", err)
+		s.writeSourceSessionError(writer, "delete", sourceID, "", err)
 		return
 	}
 	s.sourceOperationMu.Lock()
-	currentStreamID, hasCurrent := s.runtimes.sourceBinding(sourceID)
 	err := s.sources.deleteStopped(request.Context(), sourceID)
-	if err == nil && hasCurrent {
-		s.runtimes.unbindSource(sourceID, currentStreamID)
-	}
 	s.sourceOperationMu.Unlock()
 	if err != nil {
 		s.writeSourceError(writer, "delete", sourceID, err)
@@ -153,8 +154,16 @@ func (s *infrastructureServer) makeSourceResponse(source rtspSource) sourceRespo
 		SourceID: source.sourceID, StreamName: source.streamName, URL: source.url,
 		Username: source.username, DesiredState: source.desiredState,
 	}
-	if runtime, ok := s.runtimes.currentForSource(source.sourceID); ok {
-		response.Observed = &runtime
+	if session, ok := s.rtspSourceSession(source.sourceID); ok {
+		state := "created"
+		if session.starting {
+			state = "starting"
+		} else if session.stopDone != nil {
+			state = "stopping"
+		} else if !session.createConfirmed {
+			state = "unresolved"
+		}
+		response.Session = &sourceSessionResponse{StreamID: session.streamID, State: state}
 	}
 	return response
 }
@@ -172,4 +181,9 @@ func validRTSPSourceURL(value string) bool {
 	}
 	port, err := strconv.ParseUint(parsed.Port(), 10, 16)
 	return err == nil && port != 0
+}
+
+func validUUIDv4(value string) bool {
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.Version() == 4 && parsed.Variant() == uuid.RFC4122 && parsed.String() == value
 }
