@@ -273,8 +273,7 @@ int rtmp_session::on_publish(std::string app, std::string stream)
         return -1;
     }
 
-    const auto self = shared_from_this();
-    auto publish = std::make_shared<rtmp_publish_session>(worker_, *target, [self]() { self->shutdown(); });
+    auto publish = std::make_shared<rtmp_publish_session>(worker_, *target);
     if (!publish->startup())
     {
         publish->shutdown();

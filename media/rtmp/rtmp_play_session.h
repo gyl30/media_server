@@ -41,7 +41,6 @@ class rtmp_play_session final : public media_sink, public std::enable_shared_fro
     flv_muxer muxer_;
     end_handler end_handler_;
     std::optional<track_id> waiting_video_track_;
-    bool closed_{};
 };
 
 }    // namespace media_server

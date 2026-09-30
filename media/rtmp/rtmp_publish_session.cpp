@@ -5,10 +5,8 @@
 #include <string_view>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/post.hpp>
 
 #include "media/codec/codec_utils.h"
-#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/rtmp/rtmp_publish_session.h"
 
@@ -29,8 +27,8 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 }    // namespace
 
-rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string stream_name, shutdown_handler on_shutdown)
-    : worker_(worker), stream_(std::make_shared<media_stream>(std::move(stream_name), worker_)), shutdown_handler_(std::move(on_shutdown))
+rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string stream_name)
+    : stream_(std::make_shared<media_stream>(std::move(stream_name), worker))
 {
 }
 
@@ -47,19 +45,9 @@ bool rtmp_publish_session::startup()
 
 void rtmp_publish_session::shutdown()
 {
-    const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
-}
-
-void rtmp_publish_session::safe_shutdown()
-{
-    shutdown_handler_ = {};
-    if (stream_)
-    {
-        stream_registry::instance().remove(*stream_);
-        stream_->end();
-        stream_.reset();
-    }
+    stream_registry::instance().remove(*stream_);
+    stream_->end();
+    stream_.reset();
     if (demuxer_ != nullptr)
     {
         flv_demuxer_destroy(demuxer_);
@@ -69,28 +57,16 @@ void rtmp_publish_session::safe_shutdown()
 
 int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
-    if (!shutdown_handler_ || demuxer_ == nullptr)
-    {
-        return -1;
-    }
     return flv_demuxer_input(demuxer_, FLV_TYPE_VIDEO, data, bytes, timestamp);
 }
 
 int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
-    if (!shutdown_handler_ || demuxer_ == nullptr)
-    {
-        return -1;
-    }
     return flv_demuxer_input(demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp);
 }
 
 int rtmp_publish_session::on_script(std::span<const std::uint8_t> data)
 {
-    if (!shutdown_handler_)
-    {
-        return -1;
-    }
     if (data.empty())
     {
         return 0;
@@ -345,11 +321,6 @@ int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t>
 
 int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
 {
-    if (!stream_)
-    {
-        return -1;
-    }
-
     if (codec == FLV_VIDEO_AVCC || codec == FLV_VIDEO_HVCC)
     {
         return handle_video_config(codec, data);
@@ -371,7 +342,7 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
 
 int rtmp_publish_session::register_stream_if_ready()
 {
-    if (!shutdown_handler_ || !stream_->tracks().empty() || !expected_audio_.has_value() || !initial_video_track_ ||
+    if (!stream_->tracks().empty() || !expected_audio_.has_value() || !initial_video_track_ ||
         (*expected_audio_ && !initial_audio_track_))
     {
         return 0;

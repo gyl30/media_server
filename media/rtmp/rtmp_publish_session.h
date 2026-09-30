@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <functional>
 
 #include "media/core/media_stream.h"
 #include "media/rtmp/rtmp_timestamp.h"
@@ -19,18 +18,15 @@ namespace media_server
 
 class worker_context;
 
-class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publish_session>
+class rtmp_publish_session final
 {
    public:
-    using shutdown_handler = std::function<void()>;
-
-    rtmp_publish_session(worker_context& worker, std::string stream_name, shutdown_handler on_shutdown);
+    rtmp_publish_session(worker_context& worker, std::string stream_name);
 
    public:
     bool startup();
     void shutdown();
 
-   public:
    public:
     int on_video(const void* data, std::size_t bytes, std::uint32_t timestamp);
     int on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp);
@@ -50,12 +46,7 @@ class rtmp_publish_session final : public std::enable_shared_from_this<rtmp_publ
     int register_stream_if_ready();
 
    private:
-    void safe_shutdown();
-
-   private:
-    worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
-    shutdown_handler shutdown_handler_;
     flv_demuxer_t* demuxer_{};
     rtmp_timestamp_state timestamp_;
     std::optional<media_track> initial_video_track_;

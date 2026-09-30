@@ -19,10 +19,6 @@ rtmp_play_session::rtmp_play_session(worker_context& worker,
 
 void rtmp_play_session::startup()
 {
-    if (!stream_)
-    {
-        return;
-    }
     for (const auto& track : stream_->tracks())
     {
         if (!muxer_.on_track(track))
@@ -41,23 +37,19 @@ void rtmp_play_session::startup()
 
 void rtmp_play_session::shutdown()
 {
-    if (closed_)
+    if (!stream_)
     {
         return;
     }
-    closed_ = true;
-    if (stream_)
-    {
-        stream_->remove_sink(this);
-        stream_.reset();
-    }
+    stream_->remove_sink(this);
+    stream_.reset();
     waiting_video_track_.reset();
     muxer_.shutdown();
 }
 
 void rtmp_play_session::on_frame(const media_frame& frame)
 {
-    if (closed_)
+    if (!stream_)
     {
         return;
     }
@@ -80,7 +72,7 @@ void rtmp_play_session::on_frame(const media_frame& frame)
 
 void rtmp_play_session::on_end()
 {
-    if (closed_)
+    if (!stream_)
     {
         return;
     }
