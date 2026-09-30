@@ -74,18 +74,22 @@ type liveService struct {
 	byeTimeout    time.Duration
 }
 
-func newLiveService(sipServer *sipServer,
+func newLiveService(
+	sipServer *sipServer,
 	media *mediaServerHTTPClient,
 	ssrcs *ssrcAllocator,
-	logger *slog.Logger) *liveService {
+	inviteTimeout time.Duration,
+	byeTimeout time.Duration,
+	logger *slog.Logger,
+) *liveService {
 	service := &liveService{
 		sessions:      make(map[liveKey]*liveSession),
 		sip:           sipServer,
 		media:         media,
 		ssrcs:         ssrcs,
 		logger:        logger,
-		inviteTimeout: 10 * time.Second,
-		byeTimeout:    3 * time.Second,
+		inviteTimeout: inviteTimeout,
+		byeTimeout:    byeTimeout,
 	}
 	sipServer.server.OnBye(service.handleRemoteBye)
 	return service

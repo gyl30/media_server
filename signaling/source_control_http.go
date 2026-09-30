@@ -32,7 +32,13 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		return
 	}
 
-	command := makeSourceRTSPPullRequest(source, session.streamID)
+	command := rtspPullCreateRequest{
+		StreamID: session.streamID, SourceID: source.sourceID, StreamName: source.streamName, URL: source.url,
+	}
+	if source.username != "" {
+		command.Username = &source.username
+		command.Password = &source.password
+	}
 	if err := s.media.createRTSPPull(request.Context(), command); err != nil {
 		var rejection *mediaServerHTTPRejection
 		ambiguousCreate := !errors.As(err, &rejection)
@@ -165,15 +171,4 @@ func (s *infrastructureServer) writeSourceSessionError(writer http.ResponseWrite
 	s.logger.Error("source session operation failed", "operation", operation, "source_id", sourceID,
 		"stream_name", streamName, "error", err)
 	writeHTTPError(writer, http.StatusBadGateway, "source_"+operation+"_failed")
-}
-
-func makeSourceRTSPPullRequest(source rtspSource, streamID string) rtspPullCreateRequest {
-	command := rtspPullCreateRequest{
-		StreamID: streamID, SourceID: source.sourceID, StreamName: source.streamName, URL: source.url,
-	}
-	if source.username != "" {
-		command.Username = &source.username
-		command.Password = &source.password
-	}
-	return command
 }
