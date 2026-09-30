@@ -57,7 +57,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void run_write(boost::asio::yield_context yield);
 
    private:
-    [[nodiscard]] int admit_play(std::string_view uri, bool track_uri);
+    [[nodiscard]] bool admit_play(std::string_view uri, bool track_uri);
     void write(std::span<const std::uint8_t> data);
     void write(std::vector<std::uint8_t> data);
     void write(tcp_write_queue::buffer data);
@@ -73,8 +73,6 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;
-    bool close_next_write_{};
-    bool closing_after_write_{};
     bool closed_{};
 };
 

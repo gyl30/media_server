@@ -7,7 +7,7 @@ namespace media_server
 
 tcp_write_queue::tcp_write_queue(std::size_t max_bytes) : max_bytes_(max_bytes) {}
 
-tcp_write_enqueue_result tcp_write_queue::enqueue(buffer data, bool stop_after_write)
+tcp_write_enqueue_result tcp_write_queue::enqueue(buffer data)
 {
     if (stopped_)
     {
@@ -21,25 +21,25 @@ tcp_write_enqueue_result tcp_write_queue::enqueue(buffer data, bool stop_after_w
 
     const bool start_writer = entries_.empty();
     queued_bytes_ += data->size();
-    entries_.push_back({.data = std::move(data), .stop_after_write = stop_after_write});
+    entries_.push_back(std::move(data));
     return start_writer ? tcp_write_enqueue_result::start_writer : tcp_write_enqueue_result::queued;
 }
 
-tcp_write_result tcp_write_queue::write_one(tcp_yield_transport& transport, boost::asio::yield_context& yield)
+boost::system::error_code tcp_write_queue::write_one(tcp_yield_transport& transport, boost::asio::yield_context& yield)
 {
-    const auto queued_entry = entries_.front();
+    const auto queued_data = entries_.front();
     boost::system::error_code error;
-    transport.write(*queued_entry.data, yield, error);
+    transport.write(*queued_data, yield, error);
     if (error)
     {
         stopped_ = true;
     }
     else
     {
-        queued_bytes_ -= queued_entry.data->size();
+        queued_bytes_ -= queued_data->size();
         entries_.pop_front();
     }
-    return {.error = error, .stop_after_write = queued_entry.stop_after_write};
+    return error;
 }
 
 bool tcp_write_queue::empty() const noexcept { return entries_.empty(); }

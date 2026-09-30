@@ -20,12 +20,6 @@ enum class tcp_write_enqueue_result
     start_writer,
 };
 
-struct tcp_write_result
-{
-    boost::system::error_code error;
-    bool stop_after_write{};
-};
-
 class tcp_write_queue final
 {
    public:
@@ -34,8 +28,8 @@ class tcp_write_queue final
     explicit tcp_write_queue(std::size_t max_bytes);
 
    public:
-    [[nodiscard]] tcp_write_enqueue_result enqueue(buffer data, bool stop_after_write = false);
-    [[nodiscard]] tcp_write_result write_one(tcp_yield_transport& transport, boost::asio::yield_context& yield);
+    [[nodiscard]] tcp_write_enqueue_result enqueue(buffer data);
+    [[nodiscard]] boost::system::error_code write_one(tcp_yield_transport& transport, boost::asio::yield_context& yield);
     [[nodiscard]] bool empty() const noexcept;
     [[nodiscard]] bool stopped() const noexcept;
     [[nodiscard]] std::size_t queued_bytes() const noexcept;
@@ -43,16 +37,9 @@ class tcp_write_queue final
     void stop() noexcept;
 
    private:
-    struct entry
-    {
-        buffer data;
-        bool stop_after_write{};
-    };
-
-   private:
     std::size_t max_bytes_;
     std::size_t queued_bytes_{};
-    std::deque<entry> entries_;
+    std::deque<buffer> entries_;
     bool stopped_{};
 };
 

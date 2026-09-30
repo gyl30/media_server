@@ -42,11 +42,6 @@ void rtsp_server_connection::startup()
 
 void rtsp_server_connection::run(boost::asio::yield_context yield)
 {
-    if (closed_)
-    {
-        return;
-    }
-
     boost::system::error_code endpoint_error;
     const auto peer = transport_.remote_endpoint(endpoint_error);
     if (endpoint_error)
@@ -148,11 +143,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 return;
             }
             remaining = remaining.subspan(consumed);
-
-            if (closed_ || closing_after_write_)
-            {
-                return;
-            }
         }
     }
 }
@@ -207,24 +197,11 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     {
         return rtsp_server_reply_describe(server, 501, "");
     }
-    if (!self->play_session_)
+    if (!self->play_session_ && !self->admit_play(uri != nullptr ? uri : "", false))
     {
-        const auto status = self->admit_play(uri != nullptr ? uri : "", false);
-        if (status < 0)
-        {
-            return -1;
-        }
-        if (status != 200)
-        {
-            self->close_next_write_ = true;
-            const auto result = rtsp_server_reply_describe(server, status, "");
-            self->close_next_write_ = false;
-            if (!self->closing_after_write_)
-            {
-                self->shutdown();
-            }
-            return result;
-        }
+        spdlog::debug("rtsp describe invalid target: {}", uri != nullptr ? uri : "");
+        self->shutdown();
+        return -1;
     }
     return self->play_session_->on_describe(server, uri != nullptr ? uri : "");
 }
@@ -241,24 +218,11 @@ int rtsp_server_connection::setup_callback(
     {
         return self->publish_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
     }
-    if (!self->play_session_)
+    if (!self->play_session_ && !self->admit_play(uri != nullptr ? uri : "", true))
     {
-        const auto status = self->admit_play(uri != nullptr ? uri : "", true);
-        if (status < 0)
-        {
-            return -1;
-        }
-        if (status != 200)
-        {
-            self->close_next_write_ = true;
-            const auto result = rtsp_server_reply_setup(server, status, nullptr, nullptr);
-            self->close_next_write_ = false;
-            if (!self->closing_after_write_)
-            {
-                self->shutdown();
-            }
-            return result;
-        }
+        spdlog::debug("rtsp setup invalid target: {}", uri != nullptr ? uri : "");
+        self->shutdown();
+        return -1;
     }
     return self->play_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
 }
@@ -390,21 +354,12 @@ void rtsp_server_connection::write(std::vector<std::uint8_t> data)
 
 void rtsp_server_connection::write(tcp_write_queue::buffer data)
 {
-    if (closed_)
+    if (closed_ || data->empty())
     {
-        return;
-    }
-    const bool close_after_write = std::exchange(close_next_write_, false);
-    if (data->empty())
-    {
-        if (close_after_write)
-        {
-            shutdown();
-        }
         return;
     }
 
-    const auto result = write_queue_.enqueue(std::move(data), close_after_write);
+    const auto result = write_queue_.enqueue(std::move(data));
     if (result == tcp_write_enqueue_result::overflow)
     {
         shutdown();
@@ -413,11 +368,6 @@ void rtsp_server_connection::write(tcp_write_queue::buffer data)
     if (result == tcp_write_enqueue_result::stopped)
     {
         return;
-    }
-
-    if (close_after_write)
-    {
-        closing_after_write_ = true;
     }
     if (result == tcp_write_enqueue_result::start_writer)
     {
@@ -439,37 +389,32 @@ void rtsp_server_connection::run_write(boost::asio::yield_context yield)
             return;
         }
 
-        const auto result = write_queue_.write_one(transport_, yield);
-        if (result.error)
+        const auto error = write_queue_.write_one(transport_, yield);
+        if (error)
         {
             if (yield.cancelled() == boost::asio::cancellation_type::none)
             {
-                spdlog::debug("rtsp write failed: {}", result.error.message());
+                spdlog::debug("rtsp write failed: {}", error.message());
             }
-            shutdown();
-            return;
-        }
-        if (result.stop_after_write)
-        {
             shutdown();
             return;
         }
     }
 }
 
-int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
+bool rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
 {
     auto target = parse_rtsp_target(uri);
     if (!target)
     {
-        return 400;
+        return false;
     }
     if (track_uri)
     {
         const auto separator = target->stream_name.rfind('/');
         if (separator == std::string::npos || separator == 0)
         {
-            return 400;
+            return false;
         }
         target->stream_name.resize(separator);
     }
@@ -480,7 +425,7 @@ int rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
                                                         local_address_,
                                                         [owner](std::vector<std::uint8_t> data) { owner->write(std::move(data)); });
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
-    return 200;
+    return true;
 }
 
 void rtsp_server_connection::safe_shutdown()

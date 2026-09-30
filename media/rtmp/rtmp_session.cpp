@@ -229,8 +229,8 @@ void rtmp_session::run_write(boost::asio::yield_context yield)
             return;
         }
 
-        const auto result = write_queue_.write_one(transport_, yield);
-        if (result.error)
+        const auto error = write_queue_.write_one(transport_, yield);
+        if (error)
         {
             shutdown();
             return;
