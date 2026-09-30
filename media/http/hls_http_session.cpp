@@ -3,10 +3,7 @@
 #include <charconv>
 #include <optional>
 
-#include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
-#include <boost/asio/spawn.hpp>
-#include <boost/asio/detached.hpp>
 
 #include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
@@ -25,23 +22,18 @@ hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_str
 void hls_http_session::startup()
 {
     const auto self = shared_from_this();
-    boost::asio::post(
-        worker_.io(),
-        [self]()
-        {
-            self->shutdown_subscription_ = self->worker_.subscribe_shutdown([self]() { self->safe_shutdown(); });
-            if (!self->shutdown_subscription_)
-            {
-                self->safe_shutdown();
-                return;
-            }
-            self->handle_request();
-        });
+    shutdown_subscription_ = worker_.subscribe_shutdown([self]() { self->shutdown(); });
+    if (!shutdown_subscription_)
+    {
+        shutdown();
+        return;
+    }
+    handle_request();
 }
 
 void hls_http_session::handle_request()
 {
-    if (closed_)
+    if (!stream_.socket().is_open())
     {
         return;
     }
@@ -171,7 +163,7 @@ void hls_http_session::handle_request()
 
 void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewer, std::shared_ptr<hls_segmenter> segmenter)
 {
-    if (closed_)
+    if (!stream_.socket().is_open())
     {
         return;
     }
@@ -192,7 +184,7 @@ void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewe
     wait_timer_.async_wait(
         [self, viewer = std::move(viewer), segmenter = std::move(segmenter)](const boost::system::error_code& error) mutable
         {
-            if (error || self->closed_)
+            if (error)
             {
                 return;
             }
@@ -274,7 +266,7 @@ void hls_http_session::send_binary_response(boost::beast::http::status status,
 
 void hls_http_session::response_completed(const boost::system::error_code& error, bool keep_alive)
 {
-    if (error || closed_ || !keep_alive)
+    if (error || !stream_.socket().is_open() || !keep_alive)
     {
         shutdown();
         return;
@@ -284,7 +276,7 @@ void hls_http_session::response_completed(const boost::system::error_code& error
 
 void hls_http_session::read_request()
 {
-    if (closed_)
+    if (!stream_.socket().is_open())
     {
         return;
     }
@@ -300,17 +292,10 @@ void hls_http_session::read_request()
 
 void hls_http_session::shutdown()
 {
-    const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
-}
-
-void hls_http_session::safe_shutdown()
-{
-    if (closed_)
+    if (!stream_.socket().is_open())
     {
         return;
     }
-    closed_ = true;
     shutdown_subscription_.reset();
     boost::system::error_code error;
     wait_timer_.cancel();

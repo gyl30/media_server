@@ -28,7 +28,6 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
 
    public:
     void startup();
-    void shutdown();
 
    private:
     void handle_request();
@@ -47,14 +46,13 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
     void read_request();
 
    private:
-    void safe_shutdown();
+    void shutdown();
 
    private:
     worker_context& worker_;
     boost::beast::tcp_stream stream_;
     boost::beast::flat_buffer buffer_;
     request_type request_;
-    bool closed_{};
     worker_context::shutdown_subscription shutdown_subscription_;
     boost::asio::steady_timer wait_timer_;
     std::chrono::steady_clock::time_point playlist_deadline_;
