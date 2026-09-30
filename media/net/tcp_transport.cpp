@@ -39,22 +39,7 @@ void tcp_transport::write(std::vector<std::uint8_t> data)
     }
 
     const auto self = shared_from_this();
-    boost::asio::post(
-        socket_.get_executor(),
-        [self, data = std::move(data)]() mutable
-        {
-            if (self->stopped_)
-            {
-                return;
-            }
-
-            self->queued_write_bytes_ += data.size();
-            self->write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(std::move(data)));
-            if (self->write_queue_.size() == 1)
-            {
-                self->safe_write();
-            }
-        });
+    boost::asio::post(socket_.get_executor(), [self, data = std::move(data)]() mutable { self->safe_write(std::move(data)); });
 }
 
 boost::asio::ip::tcp::endpoint tcp_transport::local_endpoint(boost::system::error_code& error) const { return socket_.local_endpoint(error); }
@@ -63,24 +48,28 @@ boost::asio::ip::tcp::endpoint tcp_transport::remote_endpoint(boost::system::err
 
 void tcp_transport::shutdown()
 {
-    stopped_ = true;
-    write_queue_.clear();
-    queued_write_bytes_ = 0;
-    write_callback_ = {};
-
-    boost::system::error_code error;
-    socket_.cancel(error);
-    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
-    socket_.close(error);
+    const auto self = shared_from_this();
+    boost::asio::post(socket_.get_executor(), [self]() { self->safe_shutdown(); });
 }
 
-void tcp_transport::safe_write()
+void tcp_transport::safe_write(std::vector<std::uint8_t> data)
 {
-    if (write_queue_.empty())
+    if (stopped_)
     {
         return;
     }
 
+    const bool writing = !write_queue_.empty();
+    queued_write_bytes_ += data.size();
+    write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(std::move(data)));
+    if (!writing)
+    {
+        post_write();
+    }
+}
+
+void tcp_transport::post_write()
+{
     const auto data = write_queue_.front();
     const auto self = shared_from_this();
     boost::asio::async_write(
@@ -104,21 +93,31 @@ void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
         }
     }
 
-    if (error)
-    {
-        stopped_ = true;
-        write_queue_.clear();
-        queued_write_bytes_ = 0;
-    }
-
     if (write_callback_)
     {
         write_callback_(error, bytes);
     }
-    if (!error)
+    if (error)
     {
-        safe_write();
+        return;
     }
+    if (!write_queue_.empty())
+    {
+        post_write();
+    }
+}
+
+void tcp_transport::safe_shutdown()
+{
+    stopped_ = true;
+    write_queue_.clear();
+    queued_write_bytes_ = 0;
+    write_callback_ = {};
+
+    boost::system::error_code error;
+    socket_.cancel(error);
+    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
+    socket_.close(error);
 }
 
 }    // namespace media_server

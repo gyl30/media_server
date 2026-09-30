@@ -37,8 +37,10 @@ class tcp_transport final : public std::enable_shared_from_this<tcp_transport>
    private:
     using buffer = std::shared_ptr<std::vector<std::uint8_t>>;
 
-    void safe_write();
+    void safe_write(std::vector<std::uint8_t> data);
+    void post_write();
     void on_write(boost::system::error_code error, std::size_t bytes);
+    void safe_shutdown();
 
    private:
     boost::asio::ip::tcp::socket socket_;
