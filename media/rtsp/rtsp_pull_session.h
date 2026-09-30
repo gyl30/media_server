@@ -44,7 +44,6 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     void startup();
     void shutdown();
 
-   public:
    private:
     struct parsed_url
     {

@@ -54,7 +54,6 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     int on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double* scale);
     int on_teardown(rtsp_server_t* server, std::string_view uri, std::string_view session);
 
-   public:
    private:
     struct track_state
     {
