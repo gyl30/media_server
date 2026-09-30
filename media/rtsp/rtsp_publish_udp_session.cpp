@@ -250,11 +250,6 @@ void rtsp_publish_udp_session::run_rtcp_write(boost::asio::yield_context yield)
 
 void rtsp_publish_udp_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     rtcp_timer_.cancel();
     media_.shutdown();
     shutdown_handler_ = {};

@@ -73,7 +73,6 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;
     std::chrono::milliseconds rtcp_interval_;
-    bool closed_{};
 };
 
 }    // namespace media_server

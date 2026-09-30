@@ -56,7 +56,6 @@ class rtsp_publish_tcp_session final : public std::enable_shared_from_this<rtsp_
     rtsp_publish_media media_;
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;
-    bool closed_{};
 };
 
 }    // namespace media_server

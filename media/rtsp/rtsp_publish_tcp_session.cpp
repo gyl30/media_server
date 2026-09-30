@@ -104,12 +104,16 @@ int rtsp_publish_tcp_session::on_record(rtsp_server_t* server)
 
 void rtsp_publish_tcp_session::schedule_rtcp()
 {
+    if (!write_handler_)
+    {
+        return;
+    }
     rtcp_timer_.expires_after(std::chrono::seconds(1));
     const auto self = shared_from_this();
     rtcp_timer_.async_wait(
         [self](const boost::system::error_code& error)
         {
-            if (error)
+            if (error || !self->write_handler_)
             {
                 return;
             }
@@ -137,11 +141,6 @@ void rtsp_publish_tcp_session::schedule_rtcp()
 
 void rtsp_publish_tcp_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     rtcp_timer_.cancel();
     media_.shutdown();
     write_handler_ = {};

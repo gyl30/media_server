@@ -19,7 +19,7 @@ rtmp_play_session::rtmp_play_session(worker_context& worker,
 
 void rtmp_play_session::startup()
 {
-    if (closed_ || !stream_)
+    if (!stream_)
     {
         return;
     }

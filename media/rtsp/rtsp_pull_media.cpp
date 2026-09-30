@@ -38,12 +38,13 @@ bool rtsp_pull_media::startup()
         return false;
     }
 
+    auto descriptions = std::move(descriptions_);
     media_stream_ = std::make_shared<media_stream>(media_stream_name_, worker_);
     avpkt2bs_create(&bitstream_);
-    demuxers_.resize(descriptions_.size());
-    for (std::size_t index = 0; index < descriptions_.size(); ++index)
+    demuxers_.resize(descriptions.size());
+    for (std::size_t index = 0; index < descriptions.size(); ++index)
     {
-        auto& description = descriptions_[index];
+        auto& description = descriptions[index];
         expected_audio_ = expected_audio_ || description.kind == media_kind::audio;
         if (description.initial_track)
         {

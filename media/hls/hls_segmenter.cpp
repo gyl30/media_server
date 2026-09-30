@@ -30,7 +30,7 @@ hls_segmenter::hls_segmenter(hls_config config)
 {
 }
 
-void hls_segmenter::process_frame(const media_frame& frame)
+void hls_segmenter::on_frame(const media_frame& frame)
 {
     std::scoped_lock lock(mutex_);
     if (ended_at_.has_value() || !frame.payload)
@@ -144,8 +144,6 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
 }
 
 worker_context& hls_segmenter::worker() noexcept { return source_->worker(); }
-
-void hls_segmenter::on_frame(const media_frame& frame) { process_frame(frame); }
 
 void hls_segmenter::on_end() { finish(); }
 
