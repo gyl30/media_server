@@ -2,13 +2,11 @@
 #define MEDIA_GB28181_GB28181_UDP_SENDER_SESSION_H
 
 #include <deque>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 #include <cstddef>
 #include <optional>
-#include <string_view>
 
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -31,15 +29,11 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
    public:
     gb28181_udp_sender_session(worker_context& worker,
                                std::shared_ptr<media_stream> stream,
-                               gb28181_transport_config config,
-                               boost::asio::ip::address bind_address,
-                               std::string sender_id,
-                               bool rtcp_enabled,
-                               std::chrono::milliseconds rtcp_interval = std::chrono::milliseconds{25'000},
-                               std::size_t max_write_queue_bytes = 1024U * 1024U);
+                               const gb28181_transport_config& config,
+                               std::string sender_id);
 
    public:
-    [[nodiscard]] bool startup();
+    [[nodiscard]] bool startup(boost::asio::ip::address bind_address);
     void shutdown();
 
    private:
@@ -55,23 +49,19 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     std::string sender_id_;
-    gb28181_transport_config config_;
-    boost::asio::ip::address bind_address_;
     boost::asio::ip::udp::endpoint remote_rtp_endpoint_;
-    boost::asio::ip::udp::endpoint remote_rtcp_endpoint_;
+    std::uint8_t payload_type_{};
+    std::uint32_t ssrc_{};
+    std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
     udp_yield_transport rtp_transport_;
     udp_yield_transport rtcp_transport_;
     boost::asio::steady_timer rtcp_timer_;
-    std::chrono::milliseconds rtcp_interval_;
-    std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
-    std::deque<std::shared_ptr<std::vector<std::uint8_t>>> write_queue_;
+    std::deque<std::vector<std::uint8_t>> write_queue_;
     std::optional<media_port_pool::port_pair> local_ports_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
     void* rtcp_sender_{};
-    bool rtcp_enabled_{};
     bool rtcp_reporting_started_{};
-    bool closed_{};
     worker_context::shutdown_subscription shutdown_subscription_;
 };
 

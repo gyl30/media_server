@@ -195,7 +195,7 @@ async def create_sender(control, state, sender, port):
         "remote_address": state.args.host,
     }
     if state.args.transport == "udp":
-        body.update(remote_rtp_port=port, rtcp_enabled=False)
+        body.update(remote_rtp_port=port)
     else:
         body["remote_port"] = port
     status, response = await control.post("/gb28181/sender/create", body)

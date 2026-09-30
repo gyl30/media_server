@@ -169,20 +169,6 @@ std::optional<boost::asio::ip::address> required_address(const json_object& obje
     return address;
 }
 
-bool optional_bool(const json_object& object, std::string_view key, bool& result)
-{
-    const auto* value = object.if_contains(key);
-    if (value == nullptr)
-    {
-        return true;
-    }
-    if (!value->is_bool())
-    {
-        return false;
-    }
-    result = value->as_bool();
-    return true;
-}
 
 }    // namespace
 
@@ -277,8 +263,6 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
     config.mode = *transport;
     config.payload_type = *payload_type;
     config.ssrc = *ssrc;
-    bool rtcp_enabled = false;
-
     switch (*transport)
     {
         case gb28181_transport::udp:
@@ -292,8 +276,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
                                   "remote_rtp_port",
                                   "remote_rtcp_port",
                                   "payload_type",
-                                  "ssrc",
-                                  "rtcp_enabled"}))
+                                  "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -301,7 +284,6 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
             auto remote_rtp_port = required_port(*object, "remote_rtp_port");
             std::optional<std::uint16_t> remote_rtcp_port;
             if (!remote_address || !remote_rtp_port || !optional_port(*object, "remote_rtcp_port", remote_rtcp_port) ||
-                !optional_bool(*object, "rtcp_enabled", rtcp_enabled) || rtcp_enabled != remote_rtcp_port.has_value() ||
                 (remote_rtcp_port && *remote_rtcp_port == *remote_rtp_port))
             {
                 return std::nullopt;
@@ -349,8 +331,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
     return gb28181_sender_config{.stream_id = std::move(*stream_id),
                                  .stream_name = std::move(*stream_name),
                                  .sender_id = std::move(*sender_id),
-                                 .transport = std::move(config),
-                                 .rtcp_enabled = rtcp_enabled};
+                                 .transport = std::move(config)};
 }
 
 std::optional<gb28181_receiver_identity> parse_gb28181_receiver_delete(std::string_view body)

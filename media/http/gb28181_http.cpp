@@ -1,4 +1,3 @@
-#include <chrono>
 #include <memory>
 #include <string>
 #include <utility>
@@ -90,28 +89,21 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
 
     if (config.transport.mode == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_receiver_session>(
-            worker, stream_name, config.transport, bind_address, std::chrono::milliseconds{1'000});
+        auto session = std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, config.transport);
         if (!session_registry::instance().add_receiver_session(stream_name, config.stream_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
-        if (!session->startup())
+        const auto local_rtp_port = session->startup(bind_address);
+        if (!local_rtp_port)
         {
             session_registry::instance().remove_receiver_session(stream_name, *session);
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
 
-        const auto local_ports = session->local_ports();
-        if (!local_ports)
-        {
-            session_registry::instance().remove_receiver_session(stream_name, *session);
-            session->shutdown();
-            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
-        }
         boost::json::object body;
-        body["rtp_port"] = local_ports->first;
+        body["rtp_port"] = *local_rtp_port;
         return make_json_response(request, boost::beast::http::status::created, std::move(body));
     }
     else
@@ -142,19 +134,12 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
 
     if (config.transport.mode == gb28181_transport::udp)
     {
-        auto session = std::make_shared<gb28181_udp_sender_session>(worker,
-                                                                    stream,
-                                                                    config.transport,
-                                                                    std::move(bind_address),
-                                                                    sender_id,
-                                                                    config.rtcp_enabled,
-                                                                    std::chrono::milliseconds{25'000},
-                                                                    1024U * 1024U);
+        auto session = std::make_shared<gb28181_udp_sender_session>(worker, stream, config.transport, sender_id);
         if (!session_registry::instance().add_sender_session(stream_name, sender_id, config.stream_id, session))
         {
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
-        if (!session->startup())
+        if (!session->startup(std::move(bind_address)))
         {
             session_registry::instance().remove_sender_session(stream_name, sender_id, *session);
             session->shutdown();

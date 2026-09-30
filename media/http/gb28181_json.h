@@ -24,7 +24,6 @@ struct gb28181_sender_config
     std::string stream_name;
     std::string sender_id;
     gb28181_transport_config transport;
-    bool rtcp_enabled{};
 };
 
 struct gb28181_receiver_identity
