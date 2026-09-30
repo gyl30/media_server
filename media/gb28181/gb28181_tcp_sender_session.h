@@ -13,10 +13,9 @@
 
 #include "media/net/tcp_listener.h"
 #include "media/core/media_stream.h"
-#include "media/net/tcp_write_queue.h"
 #include "media/core/session_registry.h"
 #include "media/gb28181/gb28181_types.h"
-#include "media/net/tcp_yield_transport.h"
+#include "media/net/tcp_transport.h"
 
 namespace media_server
 {
@@ -41,7 +40,6 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
    private:
     void run(boost::asio::yield_context yield);
     void run_read(boost::asio::yield_context yield);
-    void run_write(boost::asio::yield_context yield);
     void send_packet(std::vector<std::uint8_t> packet);
 
    private:
@@ -55,8 +53,8 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
     boost::asio::ip::address bind_address_;
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
-    std::unique_ptr<tcp_yield_transport> transport_;
-    tcp_write_queue write_queue_;
+    std::size_t max_write_queue_bytes_;
+    std::shared_ptr<tcp_transport> transport_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
 };
 

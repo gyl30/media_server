@@ -85,7 +85,7 @@ void gb28181_tcp_receiver_session::run(boost::asio::yield_context yield)
         return;
     }
 
-    transport_ = std::make_unique<tcp_yield_transport>(std::move(socket_));
+    transport_ = std::make_shared<tcp_transport>(std::move(socket_));
     if (!receiver_.startup())
     {
         spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());

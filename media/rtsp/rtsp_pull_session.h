@@ -11,9 +11,8 @@
 
 #include <boost/asio.hpp>
 
-#include "media/net/tcp_write_queue.h"
 #include "media/core/session_registry.h"
-#include "media/net/tcp_yield_transport.h"
+#include "media/net/tcp_transport.h"
 
 extern "C"
 {
@@ -70,8 +69,6 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     [[nodiscard]] static std::optional<parsed_url> parse_url(std::string_view url);
     void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
     void run_read(rtsp_client_t* client, boost::asio::yield_context yield);
-    void run_write(boost::asio::yield_context yield);
-    void write(std::span<const std::uint8_t> data);
     void schedule_rtcp();
 
    private:
@@ -91,8 +88,8 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket connect_socket_;
     boost::asio::steady_timer rtcp_timer_;
-    std::unique_ptr<tcp_yield_transport> transport_;
-    tcp_write_queue write_queue_;
+    std::size_t max_write_queue_bytes_;
+    std::shared_ptr<tcp_transport> transport_;
     std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};
 };

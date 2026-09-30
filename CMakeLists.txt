@@ -226,8 +226,7 @@ add_library(media_core STATIC
     media/net/worker_context.cpp
     media/net/worker_pool.cpp
     media/net/media_port_pool.cpp
-    media/net/tcp_write_queue.cpp
-    media/net/tcp_yield_transport.cpp
+    media/net/tcp_transport.cpp
     media/net/udp_yield_transport.cpp
     media/net/tcp_listener.cpp
     media/flv/flv_muxer.cpp

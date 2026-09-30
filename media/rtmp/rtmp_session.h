@@ -11,8 +11,7 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
-#include "media/net/tcp_write_queue.h"
-#include "media/net/tcp_yield_transport.h"
+#include "media/net/tcp_transport.h"
 
 struct rtmp_server_t;
 
@@ -51,8 +50,6 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
    private:
     void run(boost::asio::yield_context yield);
     void run_read(rtmp_server_t* context, boost::asio::yield_context yield);
-    void run_write(boost::asio::yield_context yield);
-    void write(std::shared_ptr<std::vector<std::uint8_t>> data);
 
    private:
     int on_delete_stream(std::uint32_t stream_id);
@@ -64,8 +61,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 
    private:
     worker_context& worker_;
-    tcp_yield_transport transport_;
-    tcp_write_queue write_queue_;
+    std::shared_ptr<tcp_transport> transport_;
     rtmp_server_t* rtmp_context_{};
     std::shared_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;

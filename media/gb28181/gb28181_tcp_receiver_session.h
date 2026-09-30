@@ -12,7 +12,7 @@
 #include "media/net/tcp_listener.h"
 #include "media/core/session_registry.h"
 #include "media/gb28181/gb28181_types.h"
-#include "media/net/tcp_yield_transport.h"
+#include "media/net/tcp_transport.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
 
 namespace media_server
@@ -45,7 +45,7 @@ class gb28181_tcp_receiver_session final : public session, public std::enable_sh
     gb28181_rtp_receiver receiver_;
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
-    std::unique_ptr<tcp_yield_transport> transport_;
+    std::shared_ptr<tcp_transport> transport_;
 };
 
 }    // namespace media_server

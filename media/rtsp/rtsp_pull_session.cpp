@@ -96,7 +96,7 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
       resolver_(worker_.io()),
       connect_socket_(worker_.io()),
       rtcp_timer_(worker_.io()),
-      write_queue_(max_write_queue_bytes)
+      max_write_queue_bytes_(max_write_queue_bytes)
 {
 }
 
@@ -152,7 +152,7 @@ void rtsp_pull_session::schedule_rtcp()
                 packet[2] = static_cast<std::uint8_t>(bytes >> 8U);
                 packet[3] = static_cast<std::uint8_t>(bytes);
                 std::copy_n(buffer.begin(), bytes, packet.begin() + 4);
-                self->write(packet);
+                self->transport_->write(std::move(packet));
             }
             self->schedule_rtcp();
         });
@@ -160,7 +160,6 @@ void rtsp_pull_session::schedule_rtcp()
 
 void rtsp_pull_session::safe_shutdown()
 {
-    write_queue_.stop();
     session_registry::instance().remove_receiver_session(stream_name_, *this);
     if (media_)
     {
@@ -181,11 +180,11 @@ void rtsp_pull_session::safe_shutdown()
 int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
 {
     auto* self = static_cast<rtsp_pull_session*>(param);
-    if (!self->transport_ || self->write_queue_.stopped())
+    if (!self->transport_)
     {
         return -1;
     }
-    self->write(std::span{static_cast<const std::uint8_t*>(request), bytes});
+    self->transport_->write(std::span{static_cast<const std::uint8_t*>(request), bytes});
     return static_cast<int>(bytes);
 }
 
@@ -291,7 +290,16 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
         return;
     }
 
-    transport_ = std::make_unique<tcp_yield_transport>(std::move(connect_socket_));
+    transport_ = std::make_shared<tcp_transport>(std::move(connect_socket_), max_write_queue_bytes_);
+    const auto self = shared_from_this();
+    transport_->set_error_handler(
+        [weak = std::weak_ptr<rtsp_pull_session>(self)](boost::system::error_code)
+        {
+            if (const auto owner = weak.lock())
+            {
+                owner->shutdown();
+            }
+        });
 
     rtsp_client_handler_t handler{};
     handler.send = &rtsp_pull_session::send_callback;
@@ -334,49 +342,6 @@ void rtsp_pull_session::run_read(rtsp_client_t* client, boost::asio::yield_conte
         const auto bytes = transport_->read(buffer, yield, error);
         if (error || rtsp_client_input(client, buffer.data(), bytes) != 0)
         {
-            return;
-        }
-    }
-}
-
-void rtsp_pull_session::write(std::span<const std::uint8_t> data)
-{
-    if (!transport_ || data.empty())
-    {
-        return;
-    }
-
-    const auto result = write_queue_.enqueue(std::make_shared<std::vector<std::uint8_t>>(data.begin(), data.end()));
-    if (result == tcp_write_enqueue_result::overflow)
-    {
-        shutdown();
-        return;
-    }
-    if (result == tcp_write_enqueue_result::stopped)
-    {
-        return;
-    }
-
-    if (result == tcp_write_enqueue_result::start_writer)
-    {
-        const auto self = shared_from_this();
-        worker_.spawn([self](boost::asio::yield_context write_yield) { self->run_write(write_yield); });
-    }
-}
-
-void rtsp_pull_session::run_write(boost::asio::yield_context yield)
-{
-    for (;;)
-    {
-        if (write_queue_.stopped() || write_queue_.empty())
-        {
-            return;
-        }
-
-        const auto error = write_queue_.write_one(*transport_, yield);
-        if (error)
-        {
-            shutdown();
             return;
         }
     }

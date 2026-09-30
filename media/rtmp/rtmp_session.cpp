@@ -54,13 +54,21 @@ std::optional<std::string> parse_rtmp_target(std::string_view app, std::string_v
 }
 
 rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket, std::size_t max_write_queue_bytes)
-    : worker_(worker), transport_(std::move(socket)), write_queue_(max_write_queue_bytes)
+    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket), max_write_queue_bytes))
 {
 }
 
 void rtmp_session::startup()
 {
     const auto self = shared_from_this();
+    transport_->set_error_handler(
+        [weak = std::weak_ptr<rtmp_session>(self)](boost::system::error_code)
+        {
+            if (const auto owner = weak.lock())
+            {
+                owner->shutdown();
+            }
+        });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
@@ -99,7 +107,7 @@ void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context y
     for (;;)
     {
         boost::system::error_code error;
-        const auto bytes = transport_.read(buffer, yield, error);
+        const auto bytes = transport_->read(buffer, yield, error);
         if (error)
         {
             break;
@@ -119,19 +127,19 @@ void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context y
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    auto data = std::make_shared<std::vector<std::uint8_t>>();
-    data->reserve(header_bytes + payload_bytes);
+    std::vector<std::uint8_t> data;
+    data.reserve(header_bytes + payload_bytes);
     if (header_bytes != 0)
     {
         const auto* first = static_cast<const std::uint8_t*>(header);
-        data->insert(data->end(), first, first + header_bytes);
+        data.insert(data.end(), first, first + header_bytes);
     }
     if (payload_bytes != 0)
     {
         const auto* first = static_cast<const std::uint8_t*>(payload);
-        data->insert(data->end(), first, first + payload_bytes);
+        data.insert(data.end(), first, first + payload_bytes);
     }
-    self->write(std::move(data));
+    self->transport_->write(std::move(data));
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
@@ -183,53 +191,6 @@ int rtmp_session::duration_callback(void*, const char*, const char*, double* dur
         *duration = 0.0;
     }
     return 0;
-}
-
-void rtmp_session::write(std::shared_ptr<std::vector<std::uint8_t>> data)
-{
-    if (data->empty())
-    {
-        return;
-    }
-
-    const auto result = write_queue_.enqueue(std::move(data));
-    if (result == tcp_write_enqueue_result::overflow)
-    {
-        shutdown();
-        return;
-    }
-    if (result == tcp_write_enqueue_result::stopped)
-    {
-        return;
-    }
-
-    if (result == tcp_write_enqueue_result::start_writer)
-    {
-        const auto self = shared_from_this();
-        worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
-    }
-}
-
-void rtmp_session::run_write(boost::asio::yield_context yield)
-{
-    for (;;)
-    {
-        if (write_queue_.stopped())
-        {
-            return;
-        }
-        if (write_queue_.empty())
-        {
-            return;
-        }
-
-        const auto error = write_queue_.write_one(transport_, yield);
-        if (error)
-        {
-            shutdown();
-            return;
-        }
-    }
 }
 
 int rtmp_session::on_delete_stream(std::uint32_t stream_id)
@@ -330,7 +291,6 @@ void rtmp_session::shutdown()
 
 void rtmp_session::safe_shutdown()
 {
-    write_queue_.stop();
     rtmp_context_ = nullptr;
     if (publish_)
     {
@@ -342,7 +302,7 @@ void rtmp_session::safe_shutdown()
         play_->shutdown();
         play_.reset();
     }
-    transport_.shutdown();
+    transport_->shutdown();
 }
 
 }    // namespace media_server

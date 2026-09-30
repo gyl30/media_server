@@ -29,27 +29,35 @@ rtsp_server_connection::rtsp_server_connection(worker_context& worker,
                                                boost::asio::ip::tcp::socket socket,
                                                std::size_t max_write_queue_bytes)
     : worker_(worker),
-      transport_(std::move(socket)),
-      write_queue_(max_write_queue_bytes)
+      transport_(std::make_shared<tcp_transport>(std::move(socket), max_write_queue_bytes))
 {
 }
 
 void rtsp_server_connection::startup()
 {
     const auto self = shared_from_this();
+    transport_->set_error_handler(
+        [weak = std::weak_ptr<rtsp_server_connection>(self)](boost::system::error_code error)
+        {
+            if (const auto owner = weak.lock())
+            {
+                spdlog::debug("rtsp write failed: {}", error.message());
+                owner->shutdown();
+            }
+        });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
 void rtsp_server_connection::run(boost::asio::yield_context yield)
 {
     boost::system::error_code endpoint_error;
-    const auto peer = transport_.remote_endpoint(endpoint_error);
+    const auto peer = transport_->remote_endpoint(endpoint_error);
     if (endpoint_error)
     {
         shutdown();
         return;
     }
-    const auto local = transport_.local_endpoint(endpoint_error);
+    const auto local = transport_->local_endpoint(endpoint_error);
     if (endpoint_error)
     {
         shutdown();
@@ -98,7 +106,7 @@ void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_
     for (;;)
     {
         boost::system::error_code error;
-        const auto bytes = transport_.read(buffer, yield, error);
+        const auto bytes = transport_->read(buffer, yield, error);
         if (error)
         {
             if (yield.cancelled() == boost::asio::cancellation_type::none)
@@ -161,7 +169,7 @@ void rtsp_server_connection::shutdown()
 int rtsp_server_connection::send_callback(void* param, const void* data, std::size_t bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
-    self->write(std::span{static_cast<const std::uint8_t*>(data), bytes});
+    self->transport_->write(std::span{static_cast<const std::uint8_t*>(data), bytes});
     return 0;
 }
 
@@ -265,7 +273,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     }
     const auto owner = self->shared_from_this();
     auto publish = std::make_shared<rtsp_publish_session>(
-        self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
+        self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->transport_->write(data); });
     publish->set_shutdown_handler([owner]() { owner->shutdown(); });
     if (!publish->on_announce(server, uri != nullptr ? uri : "", sdp, length))
     {
@@ -309,57 +317,6 @@ int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* s
     return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);
 }
 
-void rtsp_server_connection::write(std::span<const std::uint8_t> data)
-{
-    write(std::vector<std::uint8_t>(data.begin(), data.end()));
-}
-
-void rtsp_server_connection::write(std::vector<std::uint8_t> data)
-{
-    if (data.empty())
-    {
-        return;
-    }
-
-    const auto result = write_queue_.enqueue(std::make_shared<std::vector<std::uint8_t>>(std::move(data)));
-    if (result == tcp_write_enqueue_result::overflow)
-    {
-        shutdown();
-        return;
-    }
-    if (result == tcp_write_enqueue_result::stopped)
-    {
-        return;
-    }
-    if (result == tcp_write_enqueue_result::start_writer)
-    {
-        const auto self = shared_from_this();
-        worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
-    }
-}
-
-void rtsp_server_connection::run_write(boost::asio::yield_context yield)
-{
-    for (;;)
-    {
-        if (write_queue_.stopped() || write_queue_.empty())
-        {
-            return;
-        }
-
-        const auto error = write_queue_.write_one(transport_, yield);
-        if (error)
-        {
-            if (yield.cancelled() == boost::asio::cancellation_type::none)
-            {
-                spdlog::debug("rtsp write failed: {}", error.message());
-            }
-            shutdown();
-            return;
-        }
-    }
-}
-
 bool rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
 {
     auto target = parse_rtsp_target(uri);
@@ -381,14 +338,13 @@ bool rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
     play_session_ = std::make_shared<rtsp_play_session>(worker_,
                                                         std::move(target->stream_name),
                                                         local_address_,
-                                                        [owner](std::vector<std::uint8_t> data) { owner->write(std::move(data)); });
+                                                        [owner](std::vector<std::uint8_t> data) { owner->transport_->write(std::move(data)); });
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
     return true;
 }
 
 void rtsp_server_connection::safe_shutdown()
 {
-    write_queue_.stop();
     if (publish_session_)
     {
         publish_session_->shutdown();
@@ -399,7 +355,7 @@ void rtsp_server_connection::safe_shutdown()
         play_session_->shutdown();
         play_session_.reset();
     }
-    transport_.shutdown();
+    transport_->shutdown();
 }
 
 }    // namespace media_server
