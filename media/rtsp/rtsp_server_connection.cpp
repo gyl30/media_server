@@ -267,10 +267,9 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     auto publish = std::make_shared<rtsp_publish_session>(
         self->worker_, self->local_address_, [owner](std::span<const std::uint8_t> data) { owner->write(data); });
     publish->set_shutdown_handler([owner]() { owner->shutdown(); });
-    const auto status = publish->on_announce(server, uri != nullptr ? uri : "", sdp, length);
-    if (status != 200)
+    if (!publish->on_announce(server, uri != nullptr ? uri : "", sdp, length))
     {
-        spdlog::debug("rtsp announce rejected status {}", status);
+        spdlog::debug("rtsp announce rejected");
         publish->shutdown();
         self->shutdown();
         return -1;

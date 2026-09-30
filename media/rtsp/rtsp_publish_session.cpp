@@ -53,28 +53,28 @@ bool rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const 
     return tcp_session_->on_interleaved(channel, data);
 }
 
-int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
+bool rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
-    if (!descriptions_.empty() || !session_id_.empty() || sdp == nullptr || length <= 0)
+    if (sdp == nullptr || length <= 0)
     {
-        return 455;
+        return false;
     }
 
     const auto target = parse_rtsp_target(uri);
     if (!target)
     {
-        return 400;
+        return false;
     }
 
     const auto count = rtsp_media_sdp(sdp, length, nullptr, 0);
     if (count <= 0)
     {
-        return 415;
+        return false;
     }
     std::vector<rtsp_media_t> media(static_cast<std::size_t>(count));
     if (rtsp_media_sdp(sdp, length, media.data(), count) != count)
     {
-        return 415;
+        return false;
     }
 
     const auto* content_base = rtsp_server_get_header(server, "Content-Base");
@@ -84,7 +84,7 @@ int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view ur
     {
         if (rtsp_media_set_url(&description, content_base, content_location, uri_value.c_str()) != 0)
         {
-            return 400;
+            return false;
         }
     }
 
@@ -126,7 +126,7 @@ int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view ur
         }
         if ((selected->track.kind == media_kind::video && video) || (selected->track.kind == media_kind::audio && audio) || descriptions.size() >= 2)
         {
-            return 415;
+            return false;
         }
         if (selected->track.kind == media_kind::video)
         {
@@ -140,21 +140,22 @@ int rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view ur
     }
     if (!video)
     {
-        return 415;
+        return false;
     }
 
     stream_name_ = target->stream_name;
     descriptions_ = std::move(descriptions);
     session_id_ = std::to_string(random_u32());
-    return 200;
+    return true;
 }
 
 int rtsp_publish_session::on_setup(
     rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count)
 {
-    if (session_id_.empty() || (!session.empty() && session != session_id_))
+    if (!session.empty() && session != session_id_)
     {
-        return rtsp_server_reply_setup(server, 454, nullptr, nullptr);
+        spdlog::debug("rtsp publish setup session mismatch");
+        return -1;
     }
 
     const auto description = std::ranges::find_if(descriptions_, [uri](const rtsp_publish_track_description& value) { return uri == value.uri; });
@@ -222,9 +223,10 @@ int rtsp_publish_session::on_setup(
 
 int rtsp_publish_session::on_record(rtsp_server_t* server, std::string_view, std::string_view session, const std::int64_t*, const double*)
 {
-    if (session_id_.empty() || session != session_id_)
+    if (session != session_id_)
     {
-        return rtsp_server_reply_record(server, 454, nullptr, nullptr);
+        spdlog::debug("rtsp publish record session mismatch");
+        return -1;
     }
     if (tcp_session_)
     {
@@ -234,14 +236,16 @@ int rtsp_publish_session::on_record(rtsp_server_t* server, std::string_view, std
     {
         return udp_session_->on_record(server);
     }
-    return rtsp_server_reply_record(server, 455, nullptr, nullptr);
+    spdlog::debug("rtsp publish record before setup");
+    return -1;
 }
 
 int rtsp_publish_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
 {
-    if (session_id_.empty() || session != session_id_)
+    if (session != session_id_)
     {
-        return rtsp_server_reply_teardown(server, 454);
+        spdlog::debug("rtsp publish teardown session mismatch");
+        return -1;
     }
     const auto result = rtsp_server_reply_teardown(server, 200);
     if (result == 0)
@@ -259,10 +263,7 @@ void rtsp_publish_session::shutdown()
 
 void rtsp_publish_session::safe_shutdown()
 {
-    if (!session_id_.empty())
-    {
-        session_id_.clear();
-    }
+    session_id_.clear();
     if (tcp_session_)
     {
         tcp_session_->safe_shutdown();

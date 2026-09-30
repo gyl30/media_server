@@ -119,7 +119,8 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     auto& state = track_states_[track_index];
     if (state.local_ports)
     {
-        return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
+        spdlog::debug("rtsp publish udp track already setup {}", track_index);
+        return -1;
     }
     boost::system::error_code address_error;
     const auto client_address = boost::asio::ip::make_address(rtsp_server_get_client(server, nullptr), address_error);
@@ -184,14 +185,17 @@ int rtsp_publish_udp_session::on_record(rtsp_server_t* server)
 {
     if (media_.recording())
     {
-        return rtsp_server_reply_record(server, 454, nullptr, nullptr);
+        spdlog::debug("rtsp publish udp record already started");
+        return -1;
     }
     if (std::ranges::any_of(track_states_, [](const track_state& state) { return !state.local_ports; }))
     {
-        return rtsp_server_reply_record(server, 455, nullptr, nullptr);
+        spdlog::debug("rtsp publish udp record before all tracks setup");
+        return -1;
     }
     if (!media_.start_recording())
     {
+        spdlog::debug("rtsp publish udp start recording failed");
         return -1;
     }
 

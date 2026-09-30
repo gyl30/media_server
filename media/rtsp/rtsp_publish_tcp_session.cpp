@@ -63,7 +63,8 @@ int rtsp_publish_tcp_session::on_setup(rtsp_server_t* server,
 {
     if (track_states_[track_index].rtp_channel >= 0)
     {
-        return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
+        spdlog::debug("rtsp publish tcp track already setup {}", track_index);
+        return -1;
     }
 
     for (const auto& state : track_states_)
@@ -87,14 +88,17 @@ int rtsp_publish_tcp_session::on_record(rtsp_server_t* server)
 {
     if (media_.recording())
     {
-        return rtsp_server_reply_record(server, 454, nullptr, nullptr);
+        spdlog::debug("rtsp publish tcp record already started");
+        return -1;
     }
     if (std::ranges::any_of(track_states_, [](const track_state& state) { return state.rtp_channel < 0; }))
     {
-        return rtsp_server_reply_record(server, 455, nullptr, nullptr);
+        spdlog::debug("rtsp publish tcp record before all tracks setup");
+        return -1;
     }
     if (!media_.start_recording())
     {
+        spdlog::debug("rtsp publish tcp start recording failed");
         return -1;
     }
     schedule_rtcp();
