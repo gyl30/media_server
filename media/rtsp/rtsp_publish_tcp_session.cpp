@@ -86,11 +86,6 @@ int rtsp_publish_tcp_session::on_setup(rtsp_server_t* server,
 
 int rtsp_publish_tcp_session::on_record(rtsp_server_t* server)
 {
-    if (media_.recording())
-    {
-        spdlog::debug("rtsp publish tcp record already started");
-        return -1;
-    }
     if (std::ranges::any_of(track_states_, [](const track_state& state) { return state.rtp_channel < 0; }))
     {
         spdlog::debug("rtsp publish tcp record before all tracks setup");

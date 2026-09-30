@@ -183,11 +183,6 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
 
 int rtsp_publish_udp_session::on_record(rtsp_server_t* server)
 {
-    if (media_.recording())
-    {
-        spdlog::debug("rtsp publish udp record already started");
-        return -1;
-    }
     if (std::ranges::any_of(track_states_, [](const track_state& state) { return !state.local_ports; }))
     {
         spdlog::debug("rtsp publish udp record before all tracks setup");

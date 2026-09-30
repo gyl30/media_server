@@ -75,7 +75,7 @@ bool rtsp_publish_media::startup(const std::string& rtcp_cname)
 
 bool rtsp_publish_media::start_recording()
 {
-    if (recording_ || !media_stream_)
+    if (!media_stream_ || !media_stream_->tracks().empty())
     {
         return false;
     }
@@ -87,11 +87,16 @@ bool rtsp_publish_media::start_recording()
         tracks.push_back(description.track);
     }
     std::ranges::sort(tracks, [](const media_track& left, const media_track& right) { return left.id < right.id; });
-    if (!media_stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(media_stream_))
+    if (!media_stream_->set_tracks(std::move(tracks)))
     {
         return false;
     }
-    recording_ = true;
+    if (!stream_registry::instance().add(media_stream_))
+    {
+        media_stream_->end();
+        media_stream_.reset();
+        return false;
+    }
     return true;
 }
 
@@ -101,7 +106,7 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
     {
         return false;
     }
-    if (!recording_ || track_index >= demuxers_.size() || data.size() < 4)
+    if (media_stream_->tracks().empty() || track_index >= demuxers_.size() || data.size() < 4)
     {
         return true;
     }
@@ -142,7 +147,7 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
 
 int rtsp_publish_media::generate_rtcp(std::size_t track_index, std::span<std::uint8_t> buffer)
 {
-    if (!recording_ || track_index >= demuxers_.size() || demuxers_[track_index] == nullptr)
+    if (!media_stream_ || media_stream_->tracks().empty() || track_index >= demuxers_.size() || demuxers_[track_index] == nullptr)
     {
         return 0;
     }
@@ -174,7 +179,6 @@ const std::vector<rtsp_publish_track_description>& rtsp_publish_media::descripti
 
 const std::string& rtsp_publish_media::media_stream_name() const noexcept { return media_stream_name_; }
 
-bool rtsp_publish_media::recording() const noexcept { return recording_; }
 
 int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet)
 {
@@ -183,7 +187,7 @@ int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet)
 
 int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || !recording_ || !media_stream_)
+    if (packet == nullptr || packet->stream == nullptr || !media_stream_ || media_stream_->tracks().empty())
     {
         return -1;
     }

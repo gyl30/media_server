@@ -50,7 +50,6 @@ class rtsp_publish_media final
    public:
     [[nodiscard]] const std::vector<rtsp_publish_track_description>& descriptions() const noexcept;
     [[nodiscard]] const std::string& media_stream_name() const noexcept;
-    [[nodiscard]] bool recording() const noexcept;
 
    private:
     static int packet_callback(void* param, avpacket_t* packet);
@@ -72,7 +71,6 @@ class rtsp_publish_media final
         std::int64_t pts{};
     };
     std::optional<rtcp_sync> rtcp_sync_;
-    bool recording_{};
 };
 
 }    // namespace media_server
