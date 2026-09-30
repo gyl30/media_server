@@ -85,7 +85,16 @@ void rtmp_session::run(boost::asio::yield_context yield)
         return;
     }
     rtmp_context_ = context;
+    run_read(context, yield);
 
+    rtmp_context_ = nullptr;
+    rtmp_server_destroy(context);
+    safe_shutdown();
+    spdlog::debug("rtmp shutdown");
+}
+
+void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context yield)
+{
     std::vector<std::uint8_t> buffer(64 * 1024);
     for (;;)
     {
@@ -105,11 +114,6 @@ void rtmp_session::run(boost::asio::yield_context yield)
             break;
         }
     }
-
-    rtmp_context_ = nullptr;
-    rtmp_server_destroy(context);
-    safe_shutdown();
-    spdlog::debug("rtmp shutdown");
 }
 
 int rtmp_session::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)

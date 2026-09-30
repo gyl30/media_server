@@ -50,6 +50,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 
    private:
     void run(boost::asio::yield_context yield);
+    void run_read(rtmp_server_t* context, boost::asio::yield_context yield);
     void run_write(boost::asio::yield_context yield);
     void write(std::shared_ptr<std::vector<std::uint8_t>> data);
 
