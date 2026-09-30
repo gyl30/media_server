@@ -17,15 +17,14 @@ rtmp_play_session::rtmp_play_session(worker_context& worker,
 {
 }
 
-void rtmp_play_session::startup()
+bool rtmp_play_session::startup()
 {
     for (const auto& track : stream_->tracks())
     {
         if (!muxer_.on_track(track))
         {
-            shutdown();
-            end_handler_();
-            return;
+            muxer_.shutdown();
+            return false;
         }
         if (track.kind == media_kind::video)
         {
@@ -33,6 +32,7 @@ void rtmp_play_session::startup()
         }
     }
     stream_->add_sink(shared_from_this());
+    return true;
 }
 
 void rtmp_play_session::shutdown()

@@ -4,7 +4,6 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
-#include <boost/asio/detached.hpp>
 
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
@@ -228,7 +227,7 @@ int rtmp_session::on_play(std::string app, std::string stream)
     }
 
     const auto self = shared_from_this();
-    play_ = std::make_shared<rtmp_play_session>(
+    auto play = std::make_shared<rtmp_play_session>(
         worker_,
         std::move(media),
         [self](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
@@ -248,13 +247,11 @@ int rtmp_session::on_play(std::string app, std::string stream)
             return 0;
         },
         [self]() { self->shutdown(); });
-    boost::asio::post(worker_.io(), [self]()
-                      {
-                          if (self->play_)
-                          {
-                              self->play_->startup();
-                          }
-                      });
+    if (!play->startup())
+    {
+        return -1;
+    }
+    play_ = std::move(play);
     spdlog::info("rtmp play {}", *target);
     return 0;
 }
@@ -276,7 +273,6 @@ int rtmp_session::on_publish(std::string app, std::string stream)
     auto publish = std::make_shared<rtmp_publish_session>(worker_, *target);
     if (!publish->startup())
     {
-        publish->shutdown();
         return -1;
     }
 

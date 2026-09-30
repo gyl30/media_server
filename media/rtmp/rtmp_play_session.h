@@ -2,12 +2,8 @@
 #define MEDIA_RTMP_RTMP_PLAY_SESSION_H
 
 #include <memory>
-#include <string>
-#include <cstdint>
-#include <cstddef>
 #include <optional>
 #include <functional>
-#include <string_view>
 
 #include "media/flv/flv_muxer.h"
 #include "media/core/media_sink.h"
@@ -28,7 +24,7 @@ class rtmp_play_session final : public media_sink, public std::enable_shared_fro
                       end_handler handle_source_end);
 
    public:
-    void startup();
+    [[nodiscard]] bool startup();
     void shutdown();
 
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
