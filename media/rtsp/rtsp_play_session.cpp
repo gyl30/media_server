@@ -202,7 +202,8 @@ int rtsp_play_session::on_describe(rtsp_server_t* server, std::string_view uri)
 {
     if (!session_id_.empty())
     {
-        return rtsp_server_reply_describe(server, 455, "");
+        spdlog::debug("rtsp play describe after setup");
+        return -1;
     }
     if (rtsp_path_from_uri(uri) != stream_name_)
     {
@@ -253,7 +254,8 @@ int rtsp_play_session::on_setup(
 {
     if (playing_)
     {
-        return rtsp_server_reply_setup(server, 455, nullptr, nullptr);
+        spdlog::debug("rtsp play setup after play");
+        return -1;
     }
     const auto path = rtsp_path_from_uri(uri);
     if (!stream_)
@@ -277,13 +279,15 @@ int rtsp_play_session::on_setup(
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
     const auto id = iterator->first;
-    if (const auto status = presentation_status(); status != 0)
+    if (!stream_current())
     {
-        return rtsp_server_reply_setup(server, status, nullptr, nullptr);
+        spdlog::debug("rtsp play setup source generation changed {}", stream_->name());
+        return -1;
     }
     if (!session_id_.empty() && session != session_id_)
     {
-        return rtsp_server_reply_setup(server, 454, nullptr, nullptr);
+        spdlog::debug("rtsp play setup session mismatch");
+        return -1;
     }
 
     const rtsp_header_transport_t* selected = nullptr;
@@ -310,14 +314,16 @@ int rtsp_play_session::on_setup(
         {
             return rtsp_server_reply_setup(server, 200, session_id_.c_str(), transport.c_str());
         }
-        return rtsp_server_reply_setup(server, 455, nullptr, nullptr);
+        spdlog::debug("rtsp play track setup conflict {}", id);
+        return -1;
     }
 
     if (session_id_.empty())
     {
         if (!session.empty())
         {
-            return rtsp_server_reply_setup(server, 454, nullptr, nullptr);
+            spdlog::debug("rtsp play initial setup with session");
+            return -1;
         }
         session_id_ = std::to_string(random_u32());
     }
@@ -329,15 +335,12 @@ int rtsp_play_session::on_setup(
 
 int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std::string_view session, const std::int64_t* npt, const double*)
 {
-    const auto path = rtsp_path_from_uri(uri);
     if (session_id_.empty())
     {
-        if (stream_ && path != stream_->name())
-        {
-            return rtsp_server_reply_play(server, 404, nullptr, nullptr, nullptr);
-        }
-        return rtsp_server_reply_play(server, 454, nullptr, nullptr, nullptr);
+        spdlog::debug("rtsp play before setup");
+        return -1;
     }
+    const auto path = rtsp_path_from_uri(uri);
     if (path != stream_->name())
     {
         std::size_t setup_track_count{};
@@ -358,11 +361,13 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
     }
     if (session != session_id_)
     {
-        return rtsp_server_reply_play(server, 454, nullptr, nullptr, nullptr);
+        spdlog::debug("rtsp play session mismatch");
+        return -1;
     }
-    if (const auto status = presentation_status(); status != 0)
+    if (!stream_current())
     {
-        return rtsp_server_reply_play(server, status, nullptr, nullptr, nullptr);
+        spdlog::debug("rtsp play source generation changed {}", stream_->name());
+        return -1;
     }
 
     if (playing_)
@@ -391,9 +396,10 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
 
 int rtsp_play_session::on_teardown(rtsp_server_t* server, std::string_view, std::string_view session)
 {
-    if (session_id_.empty() || session != session_id_)
+    if (session != session_id_)
     {
-        return rtsp_server_reply_teardown(server, 454);
+        spdlog::debug("rtsp play teardown session mismatch");
+        return -1;
     }
 
     const auto result = rtsp_server_reply_teardown(server, 200);
@@ -437,19 +443,10 @@ void rtsp_play_session::write_interleaved(std::uint8_t channel, const void* data
     write_handler_(std::move(packet));
 }
 
-int rtsp_play_session::presentation_status() const
+bool rtsp_play_session::stream_current() const
 {
     const auto current_stream = stream_registry::instance().find(stream_->name());
-    if (!current_stream)
-    {
-        return 503;
-    }
-    if (current_stream.get() != stream_.get())
-    {
-        return 455;
-    }
-
-    return 0;
+    return current_stream && current_stream.get() == stream_.get();
 }
 
 bool rtsp_play_session::channels_available(track_id id, int rtp_channel, int rtcp_channel) const

@@ -73,7 +73,7 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     [[nodiscard]] int prepare_presentation();
     int on_muxer_packet(int payload_index, const void* data, int bytes);
     void write_interleaved(std::uint8_t channel, const void* data, std::size_t bytes);
-    [[nodiscard]] int presentation_status() const;
+    [[nodiscard]] bool stream_current() const;
     [[nodiscard]] bool channels_available(track_id id, int rtp_channel, int rtcp_channel) const;
 
    private:
