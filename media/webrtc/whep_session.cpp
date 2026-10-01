@@ -186,11 +186,7 @@ void whep_session::safe_shutdown()
     }
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
-    if (packetizer_)
-    {
-        packetizer_->shutdown();
-        packetizer_.reset();
-    }
+    packetizer_.reset();
     waiting_video_track_.reset();
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
@@ -462,37 +458,23 @@ bool whep_session::startup_media()
 
     const auto self = shared_from_this();
     auto packetizer = std::make_unique<webrtc_packetizer>(
+        [self](std::span<const std::uint8_t> packet) { return self->send_rtp(packet); },
+        [self](std::span<const std::uint8_t> packet) { return self->send_rtcp(packet); });
+    if (!packetizer->startup(
+        stream_->tracks(),
         webrtc_packetizer_config{
             .video_codec = answer_.video_codec.value_or(codec_id::h264),
             .audio_codec = audio_egress_ ? codec_id::opus : answer_.audio_codec.value_or(codec_id::aac),
             .video_payload_type = answer_.video_payload_type.value_or(-1),
             .audio_payload_type = answer_.audio_payload_type.value_or(-1),
-            .opus_channel_count = answer_.audio_channel_count.value_or(1),
-            .opus_max_playback_rate = answer_.audio_max_playback_rate.value_or(48'000),
-            .opus_playback_rate_prepared = audio_egress_ != nullptr,
             .video_mid = answer_.video_mid.value_or(""),
             .audio_mid = answer_.audio_mid.value_or(""),
             .video_mid_extension_id = answer_.video_mid_extension_id.value_or(-1),
             .audio_mid_extension_id = answer_.audio_mid_extension_id.value_or(-1),
             .rtcp_cname = id_,
-        },
-        [self](std::span<const std::uint8_t> packet) { return self->send_rtp(packet); },
-        [self](std::span<const std::uint8_t> packet) { return self->send_rtcp(packet); });
-
-    if (!packetizer->valid())
+        }))
     {
         return false;
-    }
-
-    for (const auto& track : stream_->tracks())
-    {
-        const bool negotiated_video = answer_.video_codec && track.kind == media_kind::video && track.codec == *answer_.video_codec;
-        const bool negotiated_audio = answer_.audio_payload_type && answer_.audio_codec && track.kind == media_kind::audio &&
-                                      track.codec == (audio_egress_ ? codec_id::opus : *answer_.audio_codec);
-        if ((negotiated_video || negotiated_audio) && !packetizer->on_track(track))
-        {
-            return false;
-        }
     }
 
     srtp_ = std::move(srtp);

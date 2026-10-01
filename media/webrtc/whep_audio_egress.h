@@ -36,7 +36,7 @@ class whep_audio_egress final : public media_sink, public std::enable_shared_fro
     friend void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 
     whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker);
-    bool startup(const std::vector<media_track>& tracks, whep_audio_settings settings);
+    bool startup(whep_audio_settings settings);
     void finish();
 
     worker_context& worker_;

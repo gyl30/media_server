@@ -4,7 +4,7 @@
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
-#include <boost/asio/post.hpp>
+#include <boost/asio/dispatch.hpp>
 
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
@@ -37,8 +37,9 @@ whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worke
 
 std::shared_ptr<media_stream> whep_audio_egress::output_stream() const noexcept { return output_stream_; }
 
-bool whep_audio_egress::startup(const std::vector<media_track>& tracks, whep_audio_settings settings)
+bool whep_audio_egress::startup(whep_audio_settings settings)
 {
+    const auto& tracks = source_->tracks();
     std::vector<media_track> output_tracks;
     output_tracks.reserve(tracks.size());
     for (const auto& track : tracks)
@@ -102,10 +103,7 @@ void whep_audio_egress::finish()
     {
         return;
     }
-    if (source_)
-    {
-        source_->remove_sink(this);
-    }
+    source_->remove_sink(this);
     output_stream_->end();
     transcoders_.clear();
     source_.reset();
@@ -145,10 +143,6 @@ void whep_audio_egress::on_end() { finish(); }
 std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings)
 {
-    if (!source)
-    {
-        return {};
-    }
     const egress_key key{source.get(), settings.channels, settings.bitrate, settings.max_playback_rate};
     std::scoped_lock lock(egress_mutex);
     std::erase_if(egresses, [](const auto& entry) { return entry.second.expired(); });
@@ -162,7 +156,7 @@ std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
     }
 
     auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, worker));
-    if (!created->startup(source->tracks(), settings))
+    if (!created->startup(settings))
     {
         created->finish();
         return {};
@@ -191,7 +185,7 @@ void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress)
         return;
     }
     // worker 的 shutdown subscription 持有 processor，排队请求无需延长其终止后的生命。
-    boost::asio::post(released->worker_.io(),
+    boost::asio::dispatch(released->worker_.io(),
                       [weak = std::weak_ptr<whep_audio_egress>(released)]()
                       {
                           if (const auto self = weak.lock())

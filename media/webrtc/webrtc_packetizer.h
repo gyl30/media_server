@@ -20,9 +20,6 @@ struct webrtc_packetizer_config
     codec_id audio_codec{codec_id::opus};
     int video_payload_type{-1};
     int audio_payload_type{-1};
-    int opus_channel_count{1};
-    int opus_max_playback_rate{48'000};
-    bool opus_playback_rate_prepared{};
     std::string video_mid{};
     std::string audio_mid{};
     int video_mid_extension_id{-1};
@@ -35,14 +32,12 @@ class webrtc_packetizer final
    public:
     using packet_handler = std::function<int(std::span<const std::uint8_t>)>;
 
-    webrtc_packetizer(webrtc_packetizer_config config, packet_handler rtp_handler, packet_handler rtcp_handler = {});
+    webrtc_packetizer(packet_handler rtp_handler, packet_handler rtcp_handler);
+    ~webrtc_packetizer();
 
    public:
-    bool on_track(const media_track& track);
+    bool startup(std::span<const media_track> tracks, const webrtc_packetizer_config& config);
     bool on_frame(const media_frame& frame);
-    void shutdown();
-
-    [[nodiscard]] bool valid() const noexcept;
 
    private:
     static int on_packet(void* param, int payload_index, const void* data, int bytes, std::uint32_t timestamp, int flags);
@@ -53,21 +48,15 @@ class webrtc_packetizer final
         codec_id codec{};
         int media_index{-1};
         int payload_index{-1};
-        std::size_t rtp_extension_bytes{};
-        bool waiting_key_frame{};
+        std::string mid;
+        int mid_extension_id{};
     };
 
-    bool add_h264_track(const media_track& track);
-    bool add_h265_track(const media_track& track);
-    bool add_audio_track(const media_track& track);
-    bool configure_rtcp(int payload_index);
-    void remove_track(track_id id);
     [[nodiscard]] bool emit_rtcp(int payload_index);
     bool input_video(track_state& state, const media_frame& frame);
     bool input_audio(track_state& state, const media_frame& frame);
 
    private:
-    webrtc_packetizer_config config_;
     packet_handler rtp_handler_;
     packet_handler rtcp_handler_;
     rtsp_muxer_t* muxer_{};
