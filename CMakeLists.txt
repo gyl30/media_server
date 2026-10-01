@@ -311,6 +311,10 @@ if(MEDIA_SERVER_SANITIZER STREQUAL "none")
 endif()
 
 if(BUILD_TESTING)
+    add_executable(media_lifecycle_tests tests/media_lifecycle.cpp)
+    target_link_libraries(media_lifecycle_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME media_lifecycle COMMAND media_lifecycle_tests)
+    set_tests_properties(media_lifecycle PROPERTIES TIMEOUT 30)
     add_test(NAME media_server_help COMMAND media_server --help)
     foreach(invalid_case IN ITEMS threads port bind_address webrtc_address)
         if(invalid_case STREQUAL "threads")
@@ -322,8 +326,11 @@ if(BUILD_TESTING)
         else()
             set(invalid_arguments --webrtc-address invalid)
         endif()
-        add_test(NAME media_server_invalid_${invalid_case} COMMAND media_server ${invalid_arguments})
-        set_tests_properties(media_server_invalid_${invalid_case} PROPERTIES WILL_FAIL TRUE)
+        add_test(NAME media_server_invalid_${invalid_case}
+            COMMAND ${CMAKE_COMMAND}
+                "-DPROGRAM=$<TARGET_FILE:media_server>"
+                "-DARGUMENTS=${invalid_arguments}"
+                -P ${PROJECT_SOURCE_DIR}/tests/invalid_config.cmake)
     endforeach()
 endif()
 
