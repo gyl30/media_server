@@ -1,7 +1,5 @@
 #include <bit>
-#include <array>
 #include <utility>
-#include <algorithm>
 
 #include <spdlog/spdlog.h>
 
@@ -27,8 +25,6 @@ constexpr track_id audio_track_id = 2;
 constexpr std::uint32_t opus_sample_rate = 48'000;
 constexpr int audio_cutoff = 20'000;
 
-bool rtcp_mux_payload_type_allowed(int payload_type) { return payload_type >= 0 && payload_type <= 127 && (payload_type < 64 || payload_type > 95); }
-
 std::uint32_t read_u32(std::span<const std::uint8_t> packet, std::size_t offset)
 {
     return (static_cast<std::uint32_t>(packet[offset]) << 24U) | (static_cast<std::uint32_t>(packet[offset + 1U]) << 16U) |
@@ -37,70 +33,57 @@ std::uint32_t read_u32(std::span<const std::uint8_t> packet, std::size_t offset)
 
 }    // namespace
 
-whip_media_receiver::whip_media_receiver(worker_context& worker, std::string stream_name, whip_media_receiver_config config)
-    : worker_(worker), stream_name_(std::move(stream_name)), config_(config)
+whip_media_receiver::whip_media_receiver(worker_context& worker, std::string stream_name)
+    : media_stream_(std::make_shared<media_stream>(std::move(stream_name), worker))
 {
 }
 
-bool whip_media_receiver::startup()
+bool whip_media_receiver::startup(whip_media_receiver_config config)
 {
-    if (stream_name_.empty() || (config_.video_codec != codec_id::h264 && config_.video_codec != codec_id::h265) ||
-        !rtcp_mux_payload_type_allowed(config_.video_payload_type) ||
-        (config_.audio_payload_type >= 0 &&
-         (!rtcp_mux_payload_type_allowed(config_.audio_payload_type) || config_.audio_payload_type == config_.video_payload_type ||
-          (config_.audio_channel_count != 1 && config_.audio_channel_count != 2))))
-    {
-        return false;
-    }
-
-    media_stream_ = std::make_shared<media_stream>(stream_name_, worker_);
-    avpkt2bs_create(&bitstream_);
+    video_payload_type_ = config.video_payload_type;
+    audio_payload_type_ = config.audio_payload_type;
 
     video_demuxer_ = rtsp_demuxer_create(0, 500, &whip_media_receiver::packet_callback, this);
-    const auto* video_encoding = config_.video_codec == codec_id::h264 ? "H264" : "H265";
-    if (video_demuxer_ == nullptr || rtsp_demuxer_add_payload(video_demuxer_, 90'000, config_.video_payload_type, video_encoding, nullptr) != 0)
+    const auto* video_encoding = config.video_codec == codec_id::h264 ? "H264" : "H265";
+    if (video_demuxer_ == nullptr || rtsp_demuxer_add_payload(video_demuxer_, 90'000, video_payload_type_, video_encoding, nullptr) != 0)
     {
-        shutdown();
         return false;
     }
 
-    if (config_.audio_payload_type >= 0)
+    if (audio_payload_type_ >= 0)
     {
         audio_demuxer_ = rtsp_demuxer_create(1, 500, &whip_media_receiver::packet_callback, this);
         if (audio_demuxer_ == nullptr ||
-            rtsp_demuxer_add_payload(audio_demuxer_, static_cast<int>(opus_sample_rate), config_.audio_payload_type, "opus", nullptr) != 0)
+            rtsp_demuxer_add_payload(audio_demuxer_, static_cast<int>(opus_sample_rate), audio_payload_type_, "opus", nullptr) != 0)
         {
-            shutdown();
             return false;
         }
 
-        const auto bitrate = 64'000 * static_cast<int>(config_.audio_channel_count);
+        const auto bitrate = 64'000 * static_cast<int>(config.audio_channel_count);
         audio_transcoder_ = std::make_unique<audio_transcoder>();
         if (!audio_transcoder_->startup(audio_transcoder_config{
                 .input =
                     audio_transcoder_format{
                         .codec = codec_id::opus,
                         .sample_rate = opus_sample_rate,
-                        .channel_count = config_.audio_channel_count,
+                        .channel_count = config.audio_channel_count,
                     },
                 .output =
                     audio_transcoder_format{
                         .codec = codec_id::aac,
                         .sample_rate = opus_sample_rate,
-                        .channel_count = config_.audio_channel_count,
+                        .channel_count = config.audio_channel_count,
                     },
                 .input_codec_config = {},
                 .output_bit_rate = bitrate,
                 .output_cutoff = audio_cutoff,
             }))
         {
-            shutdown();
             return false;
         }
         const auto codec_config = audio_transcoder_->output_codec_config();
         if (codec_config.empty())
         {
-            shutdown();
             return false;
         }
         audio_track_ = media_track{
@@ -108,7 +91,7 @@ bool whip_media_receiver::startup()
             .kind = media_kind::audio,
             .codec = codec_id::aac,
             .clock_rate = opus_sample_rate,
-            .channel_count = config_.audio_channel_count,
+            .channel_count = config.audio_channel_count,
             .codec_config = std::vector<std::uint8_t>(codec_config.begin(), codec_config.end()),
         };
     }
@@ -117,7 +100,7 @@ bool whip_media_receiver::startup()
 
 bool whip_media_receiver::input_rtp(std::span<const std::uint8_t> packet)
 {
-    if (!media_stream_ || packet.size() < 12U || (packet[0] >> 6U) != 2U)
+    if (packet.size() < 12U || (packet[0] >> 6U) != 2U)
     {
         return false;
     }
@@ -126,12 +109,12 @@ bool whip_media_receiver::input_rtp(std::span<const std::uint8_t> packet)
     const auto ssrc = read_u32(packet, 8);
     rtsp_demuxer_t* demuxer{};
     std::optional<std::uint32_t>* expected_ssrc{};
-    if (payload_type == config_.video_payload_type)
+    if (payload_type == video_payload_type_)
     {
         demuxer = video_demuxer_;
         expected_ssrc = &video_ssrc_;
     }
-    else if (config_.audio_payload_type >= 0 && payload_type == config_.audio_payload_type)
+    else if (audio_payload_type_ >= 0 && payload_type == audio_payload_type_)
     {
         demuxer = audio_demuxer_;
         expected_ssrc = &audio_ssrc_;
@@ -141,7 +124,7 @@ bool whip_media_receiver::input_rtp(std::span<const std::uint8_t> packet)
         return false;
     }
 
-    if (demuxer == nullptr || expected_ssrc == nullptr || (*expected_ssrc && **expected_ssrc != ssrc))
+    if (*expected_ssrc && **expected_ssrc != ssrc)
     {
         return false;
     }
@@ -154,7 +137,7 @@ bool whip_media_receiver::input_rtp(std::span<const std::uint8_t> packet)
 
 bool whip_media_receiver::input_rtcp(std::span<const std::uint8_t> packet)
 {
-    if (!media_stream_ || packet.size() < 8U || (packet[0] >> 6U) != 2U)
+    if (packet.size() < 8U || (packet[0] >> 6U) != 2U)
     {
         return false;
     }
@@ -192,31 +175,13 @@ bool whip_media_receiver::input_rtcp(std::span<const std::uint8_t> packet)
     return result >= 0 && (result != RTCP_SR || apply_sender_report(demuxer));
 }
 
-void whip_media_receiver::shutdown()
+whip_media_receiver::~whip_media_receiver()
 {
-    if (media_stream_)
-    {
-        stream_registry::instance().remove(*media_stream_);
-        media_stream_->end();
-        media_stream_.reset();
-    }
-    if (video_demuxer_ != nullptr)
-    {
-        rtsp_demuxer_destroy(video_demuxer_);
-        video_demuxer_ = nullptr;
-    }
-    if (audio_demuxer_ != nullptr)
-    {
-        rtsp_demuxer_destroy(audio_demuxer_);
-        audio_demuxer_ = nullptr;
-    }
-    audio_transcoder_.reset();
+    stream_registry::instance().remove(*media_stream_);
+    media_stream_->end();
+    rtsp_demuxer_destroy(video_demuxer_);
+    rtsp_demuxer_destroy(audio_demuxer_);
     avpkt2bs_destroy(&bitstream_);
-    video_track_.reset();
-    audio_track_.reset();
-    video_ssrc_.reset();
-    audio_ssrc_.reset();
-    rtcp_sync_.reset();
 }
 
 int whip_media_receiver::packet_callback(void* param, avpacket_t* packet)
@@ -226,23 +191,36 @@ int whip_media_receiver::packet_callback(void* param, avpacket_t* packet)
 
 int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
 {
-    if (packet == nullptr || packet->stream == nullptr || !media_stream_)
-    {
-        return -1;
-    }
-
     const auto codecid = packet->stream->codecid;
-    const auto expected_video = config_.video_codec == codec_id::h264 ? AVCODEC_VIDEO_H264 : AVCODEC_VIDEO_H265;
     const bool video = codecid == AVCODEC_VIDEO_H264 || codecid == AVCODEC_VIDEO_H265;
-    if ((video && codecid != expected_video) || (!video && codecid != AVCODEC_AUDIO_OPUS))
+    if (video)
     {
-        spdlog::warn("whip input codec changed");
-        return -1;
-    }
-
-    if (video && !update_video_track(*packet))
-    {
-        return -1;
+        if (auto track = media_track_from_avstream_config(*packet->stream, video_track_id, audio_track_id))
+        {
+            const auto& tracks = media_stream_->tracks();
+            if (!tracks.empty())
+            {
+                if (tracks.front().codec_config != track->codec_config)
+                {
+                    spdlog::warn("whip input video config changed");
+                    return -1;
+                }
+            }
+            else
+            {
+                std::vector<media_track> fixed_tracks;
+                fixed_tracks.push_back(std::move(*track));
+                if (audio_track_)
+                {
+                    fixed_tracks.push_back(std::move(*audio_track_));
+                    audio_track_.reset();
+                }
+                if (!media_stream_->set_tracks(std::move(fixed_tracks)) || !stream_registry::instance().add(media_stream_))
+                {
+                    return -1;
+                }
+            }
+        }
     }
 
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
@@ -266,25 +244,7 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
 
     if (video)
     {
-        if (media_stream_->tracks().empty() && video_track_)
-        {
-            std::vector<media_track> tracks;
-            tracks.push_back(*video_track_);
-            if (audio_track_)
-            {
-                tracks.push_back(*audio_track_);
-            }
-            if (!media_stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(media_stream_))
-            {
-                return -1;
-            }
-            video_track_.reset();
-            audio_track_.reset();
-        }
-        if (!media_stream_->tracks().empty())
-        {
-            media_stream_->publish(frame);
-        }
+        media_stream_->publish(frame);
         return 0;
     }
 
@@ -293,44 +253,11 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
     {
         return -1;
     }
-    if (!media_stream_->tracks().empty())
+    for (auto& encoded : output)
     {
-        for (auto& encoded : output)
-        {
-            media_stream_->publish(std::move(encoded));
-        }
+        media_stream_->publish(std::move(encoded));
     }
     return 0;
-}
-
-bool whip_media_receiver::update_video_track(const avpacket_t& packet)
-{
-    auto track = media_track_from_avstream_config(*packet.stream, video_track_id, audio_track_id);
-    if (!track)
-    {
-        return true;
-    }
-    if (track->codec != config_.video_codec)
-    {
-        return false;
-    }
-    if (!media_stream_->tracks().empty())
-    {
-        const auto fixed = std::ranges::find_if(media_stream_->tracks(), [](const media_track& value) { return value.id == video_track_id; });
-        return fixed != media_stream_->tracks().end() && fixed->codec == track->codec && fixed->clock_rate == track->clock_rate &&
-               fixed->channel_count == track->channel_count && fixed->codec_config == track->codec_config;
-    }
-
-    const bool changed = !video_track_ || video_track_->clock_rate != track->clock_rate || video_track_->channel_count != track->channel_count ||
-                         video_track_->codec_config != track->codec_config;
-    if (!changed)
-    {
-        return true;
-    }
-    video_track_ = std::move(*track);
-    avpkt2bs_destroy(&bitstream_);
-    avpkt2bs_create(&bitstream_);
-    return true;
 }
 
 bool whip_media_receiver::apply_sender_report(rtsp_demuxer_t* demuxer)

@@ -34,32 +34,29 @@ struct whip_media_receiver_config
 class whip_media_receiver final
 {
    public:
-    whip_media_receiver(worker_context& worker, std::string stream_name, whip_media_receiver_config config);
+    whip_media_receiver(worker_context& worker, std::string stream_name);
+    ~whip_media_receiver();
 
    public:
-    [[nodiscard]] bool startup();
+    [[nodiscard]] bool startup(whip_media_receiver_config config);
     [[nodiscard]] bool input_rtp(std::span<const std::uint8_t> packet);
     [[nodiscard]] bool input_rtcp(std::span<const std::uint8_t> packet);
-    void shutdown();
 
    private:
     static int packet_callback(void* param, avpacket_t* packet);
 
    private:
     int on_demuxed_packet(avpacket_t* packet);
-    bool update_video_track(const avpacket_t& packet);
     bool apply_sender_report(rtsp_demuxer_t* demuxer);
 
    private:
-    worker_context& worker_;
-    std::string stream_name_;
-    whip_media_receiver_config config_;
     std::shared_ptr<media_stream> media_stream_;
+    int video_payload_type_{};
+    int audio_payload_type_{-1};
     rtsp_demuxer_t* video_demuxer_{};
     rtsp_demuxer_t* audio_demuxer_{};
     std::unique_ptr<audio_transcoder> audio_transcoder_;
     avpkt2bs_t bitstream_{};
-    std::optional<media_track> video_track_;
     std::optional<media_track> audio_track_;
     std::optional<std::uint32_t> video_ssrc_;
     std::optional<std::uint32_t> audio_ssrc_;

@@ -145,11 +145,7 @@ void whip_session::safe_shutdown()
     }
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
-    if (media_receiver_)
-    {
-        media_receiver_->shutdown();
-        media_receiver_.reset();
-    }
+    media_receiver_.reset();
     srtp_.reset();
     dtls_timer_.cancel();
     establishment_timer_.cancel();
@@ -381,16 +377,13 @@ bool whip_session::startup_media()
         return false;
     }
 
-    auto receiver =
-        std::make_unique<whip_media_receiver>(worker_,
-                                              stream_name_,
-                                              whip_media_receiver_config{
-                                                  .video_codec = *answer_.video_codec,
-                                                  .video_payload_type = *answer_.video_payload_type,
-                                                  .audio_payload_type = answer_.audio_payload_type.value_or(-1),
-                                                  .audio_channel_count = static_cast<std::uint16_t>(answer_.audio_channel_count.value_or(2)),
-                                              });
-    if (!receiver->startup())
+    auto receiver = std::make_unique<whip_media_receiver>(worker_, stream_name_);
+    if (!receiver->startup(whip_media_receiver_config{
+            .video_codec = *answer_.video_codec,
+            .video_payload_type = *answer_.video_payload_type,
+            .audio_payload_type = answer_.audio_payload_type.value_or(-1),
+            .audio_channel_count = static_cast<std::uint16_t>(answer_.audio_channel_count.value_or(2)),
+        }))
     {
         return false;
     }
