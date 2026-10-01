@@ -190,8 +190,8 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
     {
         return;
     }
-    const auto pts = ns_to_milliseconds(frame.pts_ns) * 90;
-    if (ps_muxer_input(muxer_.get(), id, frame.key_frame ? MPEG_FLAG_IDR_FRAME : 0, pts, ns_to_milliseconds(frame.dts_ns) * 90,
+    const auto pts = ns_to_90khz(frame.pts_ns);
+    if (ps_muxer_input(muxer_.get(), id, frame.key_frame ? MPEG_FLAG_IDR_FRAME : 0, pts, ns_to_90khz(frame.dts_ns),
                        frame.payload->data(), frame.payload->size()) < 0)
     {
         spdlog::error("mpeg ps muxer input failed stream {} track {}", source_->name(), frame.track);
