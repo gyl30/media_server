@@ -6,7 +6,7 @@
 
 #include <openssl/rand.h>
 #include <spdlog/spdlog.h>
-#include <boost/asio/post.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -108,11 +108,10 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer,
 
     remote_ice_ufrag_ = media->ice_ufrag;
     const auto self = shared_from_this();
-    dtls_ = std::make_unique<dtls_transport>(std::move(certificate),
-                                             media->fingerprint,
+    dtls_ = std::make_unique<dtls_transport>(media->fingerprint,
                                              [self](std::span<const std::uint8_t> packet)
                                              { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
-    if (!dtls_->startup())
+    if (!dtls_->startup(*certificate))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
         shutdown();
@@ -130,7 +129,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer,
 void whip_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+    boost::asio::dispatch(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void whip_session::safe_shutdown()
@@ -139,10 +138,7 @@ void whip_session::safe_shutdown()
     {
         return;
     }
-    if (dtls_)
-    {
-        dtls_->shutdown();
-    }
+    dtls_.reset();
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
     media_receiver_.reset();
@@ -150,7 +146,6 @@ void whip_session::safe_shutdown()
     dtls_timer_.cancel();
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
-    dtls_.reset();
     answer_ = {};
     udp_transport_.shutdown();
     if (local_port_reservation_ != 0)

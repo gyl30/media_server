@@ -6,7 +6,7 @@
 
 #include <openssl/rand.h>
 #include <spdlog/spdlog.h>
-#include <boost/asio/post.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -108,11 +108,10 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer,
     }
 
     remote_ice_ufrag_ = media->ice_ufrag;
-    dtls_ = std::make_unique<dtls_transport>(std::move(certificate),
-                                             media->fingerprint,
+    dtls_ = std::make_unique<dtls_transport>(media->fingerprint,
                                              [self](std::span<const std::uint8_t> packet)
                                              { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
-    if (!dtls_->startup())
+    if (!dtls_->startup(*certificate))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
         shutdown();
@@ -175,15 +174,12 @@ void whep_session::shutdown()
     }
     stream_->remove_sink(this);
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+    boost::asio::dispatch(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void whep_session::safe_shutdown()
 {
-    if (dtls_)
-    {
-        dtls_->shutdown();
-    }
+    dtls_.reset();
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
     packetizer_.reset();
@@ -194,7 +190,6 @@ void whep_session::safe_shutdown()
     dtls_timer_.cancel();
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
-    dtls_.reset();
     answer_ = {};
     udp_transport_.shutdown();
     media_port_pool::instance().release(local_port_reservation_);

@@ -114,37 +114,31 @@ std::optional<srtp_profile_size> profile_size(std::string_view profile)
 
 }    // namespace
 
-dtls_transport::dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_handler send)
-    : certificate_(std::move(certificate)), remote_fingerprint_(std::move(remote_fingerprint)), send_handler_(std::move(send))
+dtls_transport::dtls_transport(std::string remote_fingerprint, send_handler send)
+    : remote_fingerprint_(std::move(remote_fingerprint)), send_handler_(std::move(send))
 {
 }
 
-bool dtls_transport::startup()
+bool dtls_transport::startup(const dtls_certificate& certificate)
 {
-    if (!certificate_ || !send_handler_ || !valid_sha256_fingerprint(remote_fingerprint_))
-    {
-        spdlog::debug("webrtc dtls startup rejected invalid state or fingerprint");
-        return false;
-    }
-
-    context_.reset(SSL_CTX_new(DTLS_method()));
-    if (!context_ || SSL_CTX_set_min_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
-        SSL_CTX_set_max_proto_version(context_.get(), DTLS1_2_VERSION) != 1 ||
-        SSL_CTX_set_cipher_list(context_.get(), "ECDHE-ECDSA-AES128-GCM-SHA256") != 1 ||
-        SSL_CTX_set_tlsext_use_srtp(context_.get(), "SRTP_AEAD_AES_128_GCM:SRTP_AEAD_AES_256_GCM:SRTP_AES128_CM_SHA1_80") != 0 ||
-        SSL_CTX_use_certificate(context_.get(), certificate_->certificate()) != 1 ||
-        SSL_CTX_use_PrivateKey(context_.get(), certificate_->private_key()) != 1 || SSL_CTX_check_private_key(context_.get()) != 1)
+    ssl_context_ptr context(SSL_CTX_new(DTLS_method()));
+    if (!context || SSL_CTX_set_min_proto_version(context.get(), DTLS1_2_VERSION) != 1 ||
+        SSL_CTX_set_max_proto_version(context.get(), DTLS1_2_VERSION) != 1 ||
+        SSL_CTX_set_cipher_list(context.get(), "ECDHE-ECDSA-AES128-GCM-SHA256") != 1 ||
+        SSL_CTX_set_tlsext_use_srtp(context.get(), "SRTP_AEAD_AES_128_GCM:SRTP_AEAD_AES_256_GCM:SRTP_AES128_CM_SHA1_80") != 0 ||
+        SSL_CTX_use_certificate(context.get(), certificate.certificate()) != 1 ||
+        SSL_CTX_use_PrivateKey(context.get(), certificate.private_key()) != 1 || SSL_CTX_check_private_key(context.get()) != 1)
     {
         spdlog::debug("webrtc dtls context configure failed");
         reset();
         return false;
     }
 
-    SSL_CTX_set_read_ahead(context_.get(), 1);
-    SSL_CTX_set_session_cache_mode(context_.get(), SSL_SESS_CACHE_OFF);
-    SSL_CTX_set_verify(context_.get(), SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, accept_peer_certificate);
+    SSL_CTX_set_read_ahead(context.get(), 1);
+    SSL_CTX_set_session_cache_mode(context.get(), SSL_SESS_CACHE_OFF);
+    SSL_CTX_set_verify(context.get(), SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, accept_peer_certificate);
 
-    ssl_.reset(SSL_new(context_.get()));
+    ssl_.reset(SSL_new(context.get()));
     if (!ssl_)
     {
         reset();
@@ -185,9 +179,9 @@ bool dtls_transport::startup()
     return true;
 }
 
-void dtls_transport::shutdown()
+dtls_transport::~dtls_transport()
 {
-    if (ssl_ && connected() && (SSL_get_shutdown(ssl_.get()) & SSL_SENT_SHUTDOWN) == 0)
+    if (connected() && (SSL_get_shutdown(ssl_.get()) & SSL_SENT_SHUTDOWN) == 0)
     {
         const auto result = SSL_shutdown(ssl_.get());
         if (result >= 0 && !pump_outgoing())
@@ -195,23 +189,16 @@ void dtls_transport::shutdown()
             spdlog::debug("webrtc dtls shutdown output failed");
         }
     }
-    reset();
 }
 
 void dtls_transport::reset()
 {
     srtp_keying_material_.reset();
     ssl_.reset();
-    context_.reset();
 }
 
 bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
 {
-    if (!ssl_ || SSL_get_rbio(ssl_.get()) == nullptr || packet.empty() || packet.size() > static_cast<std::size_t>(INT_MAX))
-    {
-        return false;
-    }
-
     spdlog::trace("webrtc dtls datagram input size {} content_type {}", packet.size(), packet.front());
     const auto written = BIO_write(SSL_get_rbio(ssl_.get()), packet.data(), static_cast<int>(packet.size()));
     if (written != static_cast<int>(packet.size()))
@@ -255,11 +242,6 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
 
 bool dtls_transport::handle_timeout()
 {
-    if (!ssl_ || connected())
-    {
-        return true;
-    }
-
     if (DTLSv1_handle_timeout(ssl_.get()) < 0 || !pump_outgoing())
     {
         reset();
@@ -274,11 +256,6 @@ bool dtls_transport::valid_sha256_fingerprint(std::string_view fingerprint) { re
 
 std::optional<std::chrono::milliseconds> dtls_transport::timeout() const
 {
-    if (!ssl_ || connected())
-    {
-        return std::nullopt;
-    }
-
     timeval value{};
     if (DTLSv1_get_timeout(ssl_.get(), &value) != 1)
     {
@@ -320,7 +297,7 @@ bool dtls_transport::finish_handshake()
 bool dtls_transport::verify_peer_fingerprint() const
 {
     const auto expected = parse_sha256_fingerprint(remote_fingerprint_);
-    if (!expected || !ssl_)
+    if (!expected)
     {
         return false;
     }
@@ -343,11 +320,6 @@ bool dtls_transport::verify_peer_fingerprint() const
 
 std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_material() const
 {
-    if (!ssl_ || SSL_is_init_finished(ssl_.get()) == 0)
-    {
-        return std::nullopt;
-    }
-
     const auto* selected = SSL_get_selected_srtp_profile(ssl_.get());
     if (selected == nullptr || selected->name == nullptr)
     {
@@ -390,11 +362,6 @@ std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_mate
 bool dtls_transport::pump_outgoing()
 {
     auto* write_bio = SSL_get_wbio(ssl_.get());
-    if (write_bio == nullptr)
-    {
-        return false;
-    }
-
     while (BIO_ctrl_pending(write_bio) > 0)
     {
         const auto pending = BIO_ctrl_pending(write_bio);

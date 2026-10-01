@@ -32,11 +32,11 @@ class dtls_transport final
    public:
     using send_handler = std::function<void(std::span<const std::uint8_t>)>;
 
-    dtls_transport(std::shared_ptr<dtls_certificate> certificate, std::string remote_fingerprint, send_handler send);
+    dtls_transport(std::string remote_fingerprint, send_handler send);
+    ~dtls_transport();
 
    public:
-    bool startup();
-    void shutdown();
+    bool startup(const dtls_certificate& certificate);
     bool handle_datagram(std::span<const std::uint8_t> packet);
     bool handle_timeout();
 
@@ -68,10 +68,8 @@ class dtls_transport final
     bool pump_outgoing();
 
    private:
-    std::shared_ptr<dtls_certificate> certificate_;
     std::string remote_fingerprint_;
     send_handler send_handler_;
-    ssl_context_ptr context_;
     ssl_ptr ssl_;
     std::optional<dtls_srtp_keying_material> srtp_keying_material_;
 };

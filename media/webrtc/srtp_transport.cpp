@@ -1,4 +1,3 @@
-#include <mutex>
 #include <climits>
 #include <cstring>
 #include <utility>
@@ -13,14 +12,6 @@ namespace media_server
 {
 namespace
 {
-
-bool initialize_srtp()
-{
-    static std::once_flag flag;
-    static bool initialized = false;
-    std::call_once(flag, []() { initialized = srtp_init() == srtp_err_status_ok; });
-    return initialized;
-}
 
 bool set_crypto_policy(std::string_view profile, srtp_policy_t& policy)
 {
@@ -99,7 +90,8 @@ srtp_transport::~srtp_transport() = default;
 
 bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
 {
-    if (!initialize_srtp())
+    static const bool initialized = srtp_init() == srtp_err_status_ok;
+    if (!initialized)
     {
         spdlog::debug("webrtc srtp library init failed");
         return false;
