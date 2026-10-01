@@ -494,6 +494,7 @@ function renderPreviewState(update) {
     failed: "Failed",
     idle: "Idle",
     negotiating: "Negotiating",
+    preparing: "Preparing",
     stopping: "Stopping",
     streaming: "Streaming",
   };
@@ -661,5 +662,5 @@ window.addEventListener("hashchange", () => activateView(window.location.hash.sl
 window.addEventListener("pagehide", () => preview.stopForPageHide());
 
 activateView(window.location.hash.slice(1) || "overview", false);
-renderPreviewState({ state: "idle", target: "", streamID: "", error: "" });
+renderPreviewState({ state: "idle", target: "", error: "" });
 await refreshSnapshots({ quiet: true });

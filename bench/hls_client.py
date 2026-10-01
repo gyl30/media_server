@@ -3,7 +3,6 @@
 
 import argparse
 import asyncio
-import statistics
 import time
 from dataclasses import dataclass, field
 from typing import Optional

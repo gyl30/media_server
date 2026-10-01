@@ -5,13 +5,12 @@ import asyncio
 import json
 import os
 import platform
-import signal
 import statistics
 import subprocess
 import time
 from pathlib import Path
 
-from fanout_support import benchmark_head, proc_cpu, proc_snapshot, thread_rates
+from fanout_support import benchmark_head, proc_cpu, proc_snapshot, stop_process, thread_rates
 
 
 def loopback_packets():
@@ -158,16 +157,6 @@ async def measure(args, server, publishers):
         "server_thread_migrations_per_second": thread_migrations,
         "loopback_packets_per_second": (after_packets - before_packets) / elapsed,
     }
-
-
-def stop_process(process):
-    if process.poll() is None:
-        process.send_signal(signal.SIGTERM)
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
 
 
 def main():
