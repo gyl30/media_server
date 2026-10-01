@@ -103,11 +103,14 @@ func runSingle(ctx context.Context, cfg config, source *sharedMediaSource, logge
 	}
 	logger.Info("simulator live started", "stream_name", started.StreamName, "rtp", fmt.Sprintf("%s:%d", target.address, target.rtpPort), "ssrc", target.ssrc)
 
-	sender, err := startMediaSender(ctx, target, source, cfg.mediaBind, packetLoss{percent: cfg.packetLossPercent, seed: cfg.seed})
+	sender, err := startMediaEngine(ctx, source, cfg.mediaBind, 1, 1, 40, 64, packetLoss{percent: cfg.packetLossPercent, seed: cfg.seed})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = sender.stop() }()
+	if err := sender.add(0, target); err != nil {
+		return err
+	}
 	timer := time.NewTimer(cfg.liveDuration)
 	defer timer.Stop()
 	stopRequired := true
@@ -119,7 +122,7 @@ func runSingle(ctx context.Context, cfg config, source *sharedMediaSource, logge
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err := sender.error(); err != nil {
+		if err := sender.err; err != nil {
 			return fmt.Errorf("RTP sender ended before live duration: %w", err)
 		}
 		return fmt.Errorf("RTP sender ended before live duration")

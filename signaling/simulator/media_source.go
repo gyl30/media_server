@@ -14,7 +14,6 @@ type encodedAccessUnit struct {
 }
 
 type mediaUnit struct {
-	payload   []byte
 	fragments []rtpFragment
 	timestamp uint32
 	keyframe  bool
@@ -123,6 +122,6 @@ func (s *sharedMediaSource) next() (mediaUnit, error) {
 	}
 	s.frames++
 	return mediaUnit{
-		payload: payload, fragments: fragmentPSPayload(payload, maxRTPPayload), timestamp: uint32(timestampMillis * 90), keyframe: accessUnit.keyframe,
+		fragments: fragmentPSPayload(payload, maxRTPPayload), timestamp: uint32(timestampMillis * 90), keyframe: accessUnit.keyframe,
 	}, nil
 }

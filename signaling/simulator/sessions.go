@@ -14,7 +14,6 @@ const (
 )
 
 type sessionSlot struct {
-	destination netip.AddrPort
 	address     *net.UDPAddr
 	rtp         rtpSession
 	payloadType uint8
@@ -54,7 +53,6 @@ func (t *sessionTable) add(index int, destination netip.AddrPort, payloadType ui
 	}
 	worker, phase := assignMedia(index, t.workers, t.phases)
 	*slot = sessionSlot{
-		destination: destination,
 		address:     net.UDPAddrFromAddrPort(destination),
 		rtp:         rtpSession{ssrc: ssrc},
 		payloadType: payloadType,
