@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(media_server LANGUAGES C CXX)
 
+include(CTest)
+
 if(POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)
 endif()
@@ -306,6 +308,23 @@ target_link_libraries(media_server PRIVATE
 )
 if(MEDIA_SERVER_SANITIZER STREQUAL "none")
     target_link_libraries(media_server PRIVATE PkgConfig::JEMALLOC)
+endif()
+
+if(BUILD_TESTING)
+    add_test(NAME media_server_help COMMAND media_server --help)
+    foreach(invalid_case IN ITEMS threads port bind_address webrtc_address)
+        if(invalid_case STREQUAL "threads")
+            set(invalid_arguments --threads 0)
+        elseif(invalid_case STREQUAL "port")
+            set(invalid_arguments --rtmp-port 65536)
+        elseif(invalid_case STREQUAL "bind_address")
+            set(invalid_arguments --bind-address 0.0.0.0)
+        else()
+            set(invalid_arguments --webrtc-address invalid)
+        endif()
+        add_test(NAME media_server_invalid_${invalid_case} COMMAND media_server ${invalid_arguments})
+        set_tests_properties(media_server_invalid_${invalid_case} PROPERTIES WILL_FAIL TRUE)
+    endforeach()
 endif()
 
 option(MEDIA_SERVER_BUILD_BENCHMARKS "Build standalone performance clients" OFF)
