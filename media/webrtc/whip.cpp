@@ -114,16 +114,11 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(create_error::stream_conflict);
     }
 
-    switch (session->startup(std::move(*offer), advertised_address, std::move(certificate)))
+    auto answer_sdp = session->startup(std::move(*offer), advertised_address, std::move(certificate));
+    if (!answer_sdp)
     {
-        case whip_session_startup_error::none:
-            break;
-        case whip_session_startup_error::invalid_offer:
-            release_stream(stream_name);
-            return failed(create_error::invalid_offer);
-        case whip_session_startup_error::internal_error:
-            release_stream(stream_name);
-            return failed(create_error::internal_error);
+        release_stream(stream_name);
+        return failed(answer_sdp.error() == whip_session_startup_error::invalid_offer ? create_error::invalid_offer : create_error::internal_error);
     }
 
     const auto session_id = session->id();
@@ -146,7 +141,7 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
     }
 
     spdlog::info("whip session created {} stream {}", session_id, stream_name);
-    return {.error = create_error::none, .session_id = session_id, .answer_sdp = session->answer_sdp()};
+    return {.error = create_error::none, .session_id = session_id, .answer_sdp = std::move(*answer_sdp)};
 }
 
 bool remove(std::string_view session_id)

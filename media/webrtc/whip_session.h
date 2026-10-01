@@ -5,6 +5,7 @@
 #include <deque>
 #include <memory>
 #include <string>
+#include <expected>
 #include <vector>
 #include <cstdint>
 #include <optional>
@@ -26,7 +27,6 @@ class worker_context;
 
 enum class whip_session_startup_error
 {
-    none,
     invalid_offer,
     internal_error,
 };
@@ -37,14 +37,13 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     whip_session(worker_context& worker, std::string stream_name);
 
    public:
-    [[nodiscard]] whip_session_startup_error startup(webrtc_offer offer,
+    [[nodiscard]] std::expected<std::string, whip_session_startup_error> startup(webrtc_offer offer,
                                                       boost::asio::ip::address advertised_address,
                                                       std::shared_ptr<dtls_certificate> certificate);
     void shutdown();
 
    public:
     [[nodiscard]] const std::string& id() const noexcept;
-    [[nodiscard]] const std::string& answer_sdp() const noexcept;
 
    private:
     struct pending_datagram

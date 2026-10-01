@@ -57,7 +57,7 @@ whep_session::whep_session(worker_context& worker, std::shared_ptr<media_stream>
 {
 }
 
-whep_session_startup_error whep_session::startup(webrtc_offer offer,
+std::expected<std::string, whep_session_startup_error> whep_session::startup(webrtc_offer offer,
                                                  boost::asio::ip::address advertised_address,
                                                  std::shared_ptr<dtls_certificate> certificate)
 {
@@ -67,7 +67,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer,
     if (!reserved)
     {
         spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
-        return whep_session_startup_error::internal_error;
+        return std::unexpected(whep_session_startup_error::internal_error);
     }
     local_port_reservation_ = *reserved;
     const auto self = shared_from_this();
@@ -78,7 +78,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer,
     {
         spdlog::error("webrtc session identifiers create failed");
         shutdown();
-        return whep_session_startup_error::internal_error;
+        return std::unexpected(whep_session_startup_error::internal_error);
     }
 
     auto answer = make_webrtc_answer(offer,
@@ -95,7 +95,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer,
     {
         spdlog::debug("webrtc answer create failed session {}", id_);
         shutdown();
-        return whep_session_startup_error::invalid_offer;
+        return std::unexpected(whep_session_startup_error::invalid_offer);
     }
     const auto media = std::find_if(
         offer.media.begin(), offer.media.end(), [&answer](const webrtc_media_offer& value) { return value.mid == answer->transport_mid; });
@@ -104,7 +104,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer,
     {
         spdlog::debug("webrtc whep startup rejected invalid transport attributes");
         shutdown();
-        return whep_session_startup_error::invalid_offer;
+        return std::unexpected(whep_session_startup_error::invalid_offer);
     }
 
     remote_ice_ufrag_ = media->ice_ufrag;
@@ -115,7 +115,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer,
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
         shutdown();
-        return whep_session_startup_error::internal_error;
+        return std::unexpected(whep_session_startup_error::internal_error);
     }
 
     spdlog::debug("webrtc session {} remote fingerprint {}", id_, media->fingerprint);
@@ -132,11 +132,13 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer,
         if (!audio_egress_)
         {
             shutdown();
-            return whep_session_startup_error::internal_error;
+            return std::unexpected(whep_session_startup_error::internal_error);
         }
         stream_ = audio_egress_->output_stream();
     }
 
+    auto answer_sdp = std::move(answer->sdp);
+    answer->transport_mid.clear();
     answer_ = std::move(*answer);
 
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
@@ -163,7 +165,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer,
         answer_.audio_bitrate.value_or(0),
         answer_.audio_max_playback_rate.value_or(0));
     startup_establishment_timeout();
-    return whep_session_startup_error::none;
+    return answer_sdp;
 }
 
 void whep_session::shutdown()
@@ -199,8 +201,6 @@ void whep_session::safe_shutdown()
 }
 
 const std::string& whep_session::id() const noexcept { return id_; }
-
-const std::string& whep_session::answer_sdp() const noexcept { return answer_.sdp; }
 
 void whep_session::on_frame(const media_frame& frame)
 {
@@ -474,6 +474,7 @@ bool whep_session::startup_media()
 
     srtp_ = std::move(srtp);
     packetizer_ = std::move(packetizer);
+    answer_ = {};
 
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);

@@ -123,28 +123,17 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         spdlog::error("whep session id collision {}", session_id);
         return failed(create_error::internal_error);
     }
-    switch (session->startup(std::move(*offer), advertised_address, std::move(certificate)))
+    auto answer_sdp = session->startup(std::move(*offer), advertised_address, std::move(certificate));
+    if (!answer_sdp)
     {
-        case whep_session_startup_error::none:
-            break;
-        case whep_session_startup_error::invalid_offer:
-        {
-            auto& current = runtime();
-            std::scoped_lock lock(current.mutex);
-            release_session(current, *session);
-            return failed(create_error::invalid_offer);
-        }
-        case whep_session_startup_error::internal_error:
-        {
-            auto& current = runtime();
-            std::scoped_lock lock(current.mutex);
-            release_session(current, *session);
-            return failed(create_error::internal_error);
-        }
+        auto& current = runtime();
+        std::scoped_lock lock(current.mutex);
+        release_session(current, *session);
+        return failed(answer_sdp.error() == whep_session_startup_error::invalid_offer ? create_error::invalid_offer : create_error::internal_error);
     }
 
     spdlog::info("whep session created {} stream {}", session_id, stream_name);
-    return {.error = create_error::none, .session_id = session_id, .answer_sdp = session->answer_sdp()};
+    return {.error = create_error::none, .session_id = session_id, .answer_sdp = std::move(*answer_sdp)};
 }
 
 bool contains(std::string_view session_id)
@@ -152,12 +141,7 @@ bool contains(std::string_view session_id)
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
     cleanup_expired(current);
-    const auto iterator = current.sessions.find(session_id);
-    if (iterator == current.sessions.end())
-    {
-        return false;
-    }
-    return true;
+    return current.sessions.contains(session_id);
 }
 
 bool remove(std::string_view session_id)

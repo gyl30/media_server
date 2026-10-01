@@ -1,5 +1,4 @@
-#include <span>
-#include <vector>
+#include <iterator>
 #include <utility>
 
 #include "media/webrtc/whep.h"
@@ -17,8 +16,7 @@ whep_http_string_response make_string_response(const whep_http_request& request,
                                                boost::beast::http::status status,
                                                std::string_view content_type,
                                                std::string body,
-                                               std::string_view allow = {},
-                                               int retry_after_seconds = 0)
+                                               std::string_view allow = {})
 {
     whep_http_string_response response{status, request.version()};
     response.set(boost::beast::http::field::server, "media_server");
@@ -27,10 +25,6 @@ whep_http_string_response make_string_response(const whep_http_request& request,
     if (!allow.empty())
     {
         response.set(boost::beast::http::field::allow, allow);
-    }
-    if (retry_after_seconds > 0)
-    {
-        response.set(boost::beast::http::field::retry_after, std::to_string(retry_after_seconds));
     }
     response.keep_alive(false);
     response.body() = std::move(body);
@@ -51,12 +45,6 @@ whep_http_string_response make_empty_response(const whep_http_request& request, 
     response.keep_alive(false);
     response.prepare_payload();
     return response;
-}
-
-whep_http_string_response make_whep_error_response(
-    const whep_http_request& request, boost::beast::http::status status, std::string body, int retry_after_seconds = 0, std::string_view allow = {})
-{
-    return make_string_response(request, status, "text/plain", std::move(body), allow, retry_after_seconds);
 }
 
 whep_http_string_response handle_whep_options(const whep_http_request& request, bool session_resource)
@@ -97,8 +85,11 @@ whep_http_string_response handle_whep_post(
             return response;
         }
         case whep::create_error::stream_not_found:
-            return make_string_response(
-                request, boost::beast::http::status::conflict, "text/plain", "stream not found\n", {}, whep_retry_after_seconds);
+        {
+            auto response = make_string_response(request, boost::beast::http::status::conflict, "text/plain", "stream not found\n");
+            response.set(boost::beast::http::field::retry_after, std::to_string(whep_retry_after_seconds));
+            return response;
+        }
         case whep::create_error::invalid_offer:
             return make_string_response(request, boost::beast::http::status::bad_request, "text/plain", "invalid or unsupported sdp offer\n");
         case whep::create_error::internal_error:
@@ -123,21 +114,17 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
                                               const boost::urls::url_view& target,
                                               const config& application_config)
 {
-    std::vector<std::string> path;
-    for (const auto segment : target.segments())
+    const auto segments = target.segments();
+    if (segments.size() <= 2)
     {
-        path.emplace_back(segment);
+        return make_string_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n");
     }
-    if (path.size() < 2 || path[0] != "play" || path[1] != "whep")
-    {
-        return make_whep_error_response(request, boost::beast::http::status::not_found, "not found\n");
-    }
-    const auto segments = std::span<const std::string>(path).subspan(2);
-    const bool session_resource = segments.size() == 2 && segments[0] == "session";
-    const bool endpoint_resource = !segments.empty() && segments[0] != "session";
+    auto first = std::next(segments.begin(), 2);
+    const bool session_resource = segments.size() == 4 && *first == "session";
+    const bool endpoint_resource = *first != "session";
     if (!session_resource && !endpoint_resource)
     {
-        return make_whep_error_response(request, boost::beast::http::status::not_found, "not found\n");
+        return make_string_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n");
     }
 
     if (request.method() == boost::beast::http::verb::options)
@@ -148,7 +135,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
     {
         if (session_resource)
         {
-            return handle_whep_session_get(request, segments[1]);
+            return handle_whep_session_get(request, *std::next(first));
         }
         return make_empty_response(request, boost::beast::http::status::ok, "application/sdp");
     }
@@ -157,11 +144,12 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
         const auto content_type = request[boost::beast::http::field::content_type];
         if (!boost::beast::iequals(content_type, "application/sdp"))
         {
-            return make_whep_error_response(request, boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n");
+            return make_string_response(request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
         std::string stream_name;
-        for (const auto& segment : segments)
+        for (auto iterator = first; iterator != segments.end(); ++iterator)
         {
+            const auto segment = *iterator;
             if (!stream_name.empty())
             {
                 stream_name.push_back('/');
@@ -172,12 +160,12 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {
-        return handle_whep_delete(request, segments[1]);
+        return handle_whep_delete(request, *std::next(first));
     }
 
     const std::string_view allow = session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS";
     // 本实现只支持一次完整 SDP POST/answer，不支持 PATCH/Trickle ICE。
-    return make_whep_error_response(request, boost::beast::http::status::method_not_allowed, "method not allowed\n", 0, allow);
+    return make_string_response(request, boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", allow);
 }
 
 }    // namespace media_server

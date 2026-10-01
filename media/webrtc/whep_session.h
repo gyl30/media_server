@@ -6,6 +6,7 @@
 #include <deque>
 #include <memory>
 #include <string>
+#include <expected>
 #include <vector>
 #include <cstdint>
 #include <optional>
@@ -31,7 +32,6 @@ class whep_audio_egress;
 
 enum class whep_session_startup_error
 {
-    none,
     invalid_offer,
     internal_error,
 };
@@ -42,14 +42,13 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     whep_session(worker_context& worker, std::shared_ptr<media_stream> stream);
 
    public:
-    [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer,
+    [[nodiscard]] std::expected<std::string, whep_session_startup_error> startup(webrtc_offer offer,
                                                       boost::asio::ip::address advertised_address,
                                                       std::shared_ptr<dtls_certificate> certificate);
     void shutdown();
 
    public:
     [[nodiscard]] const std::string& id() const noexcept;
-    [[nodiscard]] const std::string& answer_sdp() const noexcept;
 
    public:
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }

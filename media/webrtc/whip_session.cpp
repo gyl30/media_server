@@ -57,7 +57,7 @@ whip_session::whip_session(worker_context& worker, std::string stream_name)
 {
 }
 
-whip_session_startup_error whip_session::startup(webrtc_offer offer,
+std::expected<std::string, whip_session_startup_error> whip_session::startup(webrtc_offer offer,
                                                  boost::asio::ip::address advertised_address,
                                                  std::shared_ptr<dtls_certificate> certificate)
 {
@@ -66,7 +66,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer,
     if (!reserved)
     {
         spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
-        return whip_session_startup_error::internal_error;
+        return std::unexpected(whip_session_startup_error::internal_error);
     }
     local_port_reservation_ = *reserved;
 
@@ -77,7 +77,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer,
     {
         spdlog::error("webrtc session identifiers create failed");
         shutdown();
-        return whip_session_startup_error::internal_error;
+        return std::unexpected(whip_session_startup_error::internal_error);
     }
 
     auto answer = make_whip_answer(offer,
@@ -93,7 +93,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer,
     {
         spdlog::debug("webrtc whip answer create failed session {}", id_);
         shutdown();
-        return whip_session_startup_error::invalid_offer;
+        return std::unexpected(whip_session_startup_error::invalid_offer);
     }
 
     const auto media = std::find_if(
@@ -103,7 +103,7 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer,
     {
         spdlog::debug("webrtc whip startup rejected invalid transport attributes");
         shutdown();
-        return whip_session_startup_error::invalid_offer;
+        return std::unexpected(whip_session_startup_error::invalid_offer);
     }
 
     remote_ice_ufrag_ = media->ice_ufrag;
@@ -115,15 +115,17 @@ whip_session_startup_error whip_session::startup(webrtc_offer offer,
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
         shutdown();
-        return whip_session_startup_error::internal_error;
+        return std::unexpected(whip_session_startup_error::internal_error);
     }
 
+    auto answer_sdp = std::move(answer->sdp);
+    answer->transport_mid.clear();
     answer_ = std::move(*answer);
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
     spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_name_, advertised_address.to_string(), local_port_reservation_);
     startup_establishment_timeout();
-    return whip_session_startup_error::none;
+    return answer_sdp;
 }
 
 void whip_session::shutdown()
@@ -158,8 +160,6 @@ void whip_session::safe_shutdown()
 }
 
 const std::string& whip_session::id() const noexcept { return id_; }
-
-const std::string& whip_session::answer_sdp() const noexcept { return answer_.sdp; }
 
 void whip_session::run_udp(boost::asio::yield_context yield)
 {
@@ -385,6 +385,7 @@ bool whip_session::startup_media()
 
     srtp_ = std::move(srtp);
     media_receiver_ = std::move(receiver);
+    answer_ = {};
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
     return true;

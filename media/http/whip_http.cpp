@@ -1,5 +1,4 @@
-#include <span>
-#include <vector>
+#include <iterator>
 #include <utility>
 
 #include "media/webrtc/whip.h"
@@ -39,14 +38,6 @@ whip_http_string_response make_empty_response(const whip_http_request& request, 
     return response;
 }
 
-whip_http_string_response make_error_response(const whip_http_request& request,
-                                              boost::beast::http::status status,
-                                              std::string body,
-                                              std::string_view allow = {})
-{
-    return make_string_response(request, status, "text/plain", std::move(body), allow);
-}
-
 whip_http_string_response handle_options(const whip_http_request& request, bool session_resource)
 {
     auto response = make_empty_response(request, boost::beast::http::status::ok);
@@ -75,13 +66,13 @@ whip_http_string_response handle_post(
             return response;
         }
         case whip::create_error::stream_conflict:
-            return make_error_response(request, boost::beast::http::status::conflict, "stream already exists\n");
+            return make_string_response(request, boost::beast::http::status::conflict, "text/plain", "stream already exists\n");
         case whip::create_error::invalid_offer:
-            return make_error_response(request, boost::beast::http::status::bad_request, "invalid or unsupported sdp offer\n");
+            return make_string_response(request, boost::beast::http::status::bad_request, "text/plain", "invalid or unsupported sdp offer\n");
         case whip::create_error::internal_error:
-            return make_error_response(request, boost::beast::http::status::internal_server_error, "whip session create failed\n");
+            return make_string_response(request, boost::beast::http::status::internal_server_error, "text/plain", "whip session create failed\n");
     }
-    return make_error_response(request, boost::beast::http::status::internal_server_error, "whip session create failed\n");
+    return make_string_response(request, boost::beast::http::status::internal_server_error, "text/plain", "whip session create failed\n");
 }
 
 whip_http_string_response handle_delete(const whip_http_request& request, std::string_view session_id)
@@ -100,22 +91,17 @@ whip_http_string_response handle_whip_request(const whip_http_request& request,
                                               const boost::urls::url_view& target,
                                               const config& application_config)
 {
-    std::vector<std::string> path;
-    for (const auto segment : target.segments())
+    const auto segments = target.segments();
+    if (segments.size() <= 2)
     {
-        path.emplace_back(segment);
+        return make_string_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n");
     }
-    if (path.size() < 2 || path[0] != "publish" || path[1] != "whip")
-    {
-        return make_error_response(request, boost::beast::http::status::not_found, "not found\n");
-    }
-
-    const auto segments = std::span<const std::string>(path).subspan(2);
-    const bool session_resource = segments.size() == 2 && segments[0] == "session";
-    const bool endpoint_resource = !segments.empty() && segments[0] != "session";
+    auto first = std::next(segments.begin(), 2);
+    const bool session_resource = segments.size() == 4 && *first == "session";
+    const bool endpoint_resource = *first != "session";
     if (!session_resource && !endpoint_resource)
     {
-        return make_error_response(request, boost::beast::http::status::not_found, "not found\n");
+        return make_string_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n");
     }
 
     if (request.method() == boost::beast::http::verb::options)
@@ -128,11 +114,12 @@ whip_http_string_response handle_whip_request(const whip_http_request& request,
         const auto content_type = request[boost::beast::http::field::content_type];
         if (!boost::beast::iequals(content_type, "application/sdp"))
         {
-            return make_error_response(request, boost::beast::http::status::unsupported_media_type, "content type must be application/sdp\n");
+            return make_string_response(request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
         std::string stream_name;
-        for (const auto& segment : segments)
+        for (auto iterator = first; iterator != segments.end(); ++iterator)
         {
+            const auto segment = *iterator;
             if (!stream_name.empty())
             {
                 stream_name.push_back('/');
@@ -144,11 +131,11 @@ whip_http_string_response handle_whip_request(const whip_http_request& request,
 
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {
-        return handle_delete(request, segments[1]);
+        return handle_delete(request, *std::next(first));
     }
 
     const std::string_view allow = session_resource ? "DELETE, OPTIONS" : "POST, OPTIONS";
-    return make_error_response(request, boost::beast::http::status::method_not_allowed, "method not allowed\n", allow);
+    return make_string_response(request, boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", allow);
 }
 
 }    // namespace media_server
