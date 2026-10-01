@@ -109,12 +109,7 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         }
     }
 
-    auto session = std::make_shared<whep_session>(worker,
-                                                  stream,
-                                                  advertised_address,
-                                                  std::move(certificate),
-                                                  whep_session_timeouts{},
-                                                  1024U * 1024U);
+    auto session = std::make_shared<whep_session>(worker, stream);
     const auto& session_id = session->id();
     bool session_id_collision = false;
     {
@@ -128,7 +123,7 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         spdlog::error("whep session id collision {}", session_id);
         return failed(create_error::internal_error);
     }
-    switch (session->startup(std::move(*offer)))
+    switch (session->startup(std::move(*offer), advertised_address, std::move(certificate)))
     {
         case whep_session_startup_error::none:
             break;

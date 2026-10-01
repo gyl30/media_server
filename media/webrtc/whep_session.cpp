@@ -1,5 +1,6 @@
 #include <vector>
 #include <cstddef>
+#include <chrono>
 #include <utility>
 #include <algorithm>
 
@@ -19,6 +20,10 @@ namespace media_server
 {
 namespace
 {
+
+constexpr auto establishment_timeout = std::chrono::seconds{15};
+constexpr auto ice_activity_timeout = std::chrono::seconds{30};
+constexpr std::size_t max_udp_write_queue_bytes = 1024U * 1024U;
 
 std::string random_hex(std::size_t byte_count)
 {
@@ -41,19 +46,10 @@ std::string random_hex(std::size_t byte_count)
 
 }    // namespace
 
-whep_session::whep_session(worker_context& worker,
-                           std::shared_ptr<media_stream> stream,
-                           boost::asio::ip::address advertised_address,
-                           std::shared_ptr<dtls_certificate> certificate,
-                           whep_session_timeouts timeouts,
-                           std::size_t max_write_queue_bytes)
+whep_session::whep_session(worker_context& worker, std::shared_ptr<media_stream> stream)
     : worker_(worker),
       stream_(std::move(stream)),
-      advertised_address_(std::move(advertised_address)),
-      certificate_(std::move(certificate)),
-      timeouts_(timeouts),
       udp_transport_(worker_.io()),
-      max_write_queue_bytes_(max_write_queue_bytes),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
       ice_activity_timer_(worker_.io()),
@@ -61,22 +57,13 @@ whep_session::whep_session(worker_context& worker,
 {
 }
 
-whep_session_startup_error whep_session::startup(webrtc_offer offer)
+whep_session_startup_error whep_session::startup(webrtc_offer offer,
+                                                 boost::asio::ip::address advertised_address,
+                                                 std::shared_ptr<dtls_certificate> certificate)
 {
-    if (!stream_ || !certificate_)
-    {
-        spdlog::error("webrtc whep startup rejected invalid state");
-        return whep_session_startup_error::internal_error;
-    }
     const auto source_tracks = stream_->tracks();
-
-    if (advertised_address_.is_unspecified())
-    {
-        spdlog::error("webrtc whep startup rejected unspecified local address");
-        return whep_session_startup_error::internal_error;
-    }
     boost::system::error_code udp_error;
-    const auto reserved = media_port_pool::instance().acquire_and_bind(udp_transport_, advertised_address_, udp_error);
+    const auto reserved = media_port_pool::instance().acquire_and_bind(udp_transport_, advertised_address, udp_error);
     if (!reserved)
     {
         spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
@@ -97,12 +84,12 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     auto answer = make_webrtc_answer(offer,
                                      source_tracks,
                                      webrtc_answer_config{
-                                         .address = advertised_address_,
+                                         .address = advertised_address,
                                          .port = local_port_reservation_,
                                          .stream_id = id_,
                                          .ice_ufrag = ice_ufrag_,
                                          .ice_pwd = ice_pwd_,
-                                         .fingerprint = certificate_->sha256_fingerprint(),
+                                         .fingerprint = certificate->sha256_fingerprint(),
                                      });
     if (!answer)
     {
@@ -121,7 +108,7 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     }
 
     remote_ice_ufrag_ = media->ice_ufrag;
-    dtls_ = std::make_unique<dtls_transport>(certificate_,
+    dtls_ = std::make_unique<dtls_transport>(std::move(certificate),
                                              media->fingerprint,
                                              [self](std::span<const std::uint8_t> packet)
                                              { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
@@ -152,28 +139,20 @@ whep_session_startup_error whep_session::startup(webrtc_offer offer)
     }
 
     answer_ = std::move(*answer);
-    started_ = true;
 
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
-    const auto initial_tracks = stream_->tracks();
-    for (const auto& track : initial_tracks)
+    for (const auto& track : stream_->tracks())
     {
-        const bool negotiated_video = answer_.video_codec && track.kind == media_kind::video && track.codec == *answer_.video_codec;
-        const bool negotiated_audio = answer_.audio_payload_type && answer_.audio_codec && track.kind == media_kind::audio &&
-                                      track.codec == (audio_egress_ ? codec_id::opus : *answer_.audio_codec);
-        if (negotiated_video || negotiated_audio)
+        if (answer_.video_codec && track.kind == media_kind::video && track.codec == *answer_.video_codec)
         {
-            negotiated_tracks_.push_back(track);
-            if (negotiated_video)
-            {
-                waiting_video_track_ = track.id;
-            }
+            waiting_video_track_ = track.id;
+            break;
         }
     }
     stream_->add_sink(shared_from_this());
 
-    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address_.to_string(), local_port_reservation_);
+    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address.to_string(), local_port_reservation_);
     spdlog::debug(
         "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
         id_,
@@ -194,21 +173,13 @@ void whep_session::shutdown()
     {
         return;
     }
-    if (stream_)
-    {
-        stream_->remove_sink(this);
-    }
+    stream_->remove_sink(this);
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void whep_session::safe_shutdown()
 {
-    if (!stream_ && !certificate_)
-    {
-        return;
-    }
-    started_ = false;
     if (dtls_)
     {
         dtls_->shutdown();
@@ -220,11 +191,9 @@ void whep_session::safe_shutdown()
         packetizer_->shutdown();
         packetizer_.reset();
     }
-    negotiated_tracks_.clear();
     waiting_video_track_.reset();
     stream_.reset();
     release_whep_audio_egress(audio_egress_);
-    certificate_.reset();
     srtp_.reset();
     dtls_timer_.cancel();
     establishment_timer_.cancel();
@@ -232,11 +201,8 @@ void whep_session::safe_shutdown()
     dtls_.reset();
     answer_ = {};
     udp_transport_.shutdown();
-    if (local_port_reservation_ != 0)
-    {
-        media_port_pool::instance().release(local_port_reservation_);
-        local_port_reservation_ = 0;
-    }
+    media_port_pool::instance().release(local_port_reservation_);
+    local_port_reservation_ = 0;
 
     spdlog::info("webrtc whep session shutdown {}", id_);
 }
@@ -247,7 +213,7 @@ const std::string& whep_session::answer_sdp() const noexcept { return answer_.sd
 
 void whep_session::on_frame(const media_frame& frame)
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || !started_ || !packetizer_)
+    if (shutdown_requested_.load(std::memory_order_acquire) || !packetizer_)
     {
         return;
     }
@@ -289,17 +255,12 @@ void whep_session::run_udp(boost::asio::yield_context yield)
         }
         handle_packet(std::span<const std::uint8_t>{buffer.data(), bytes}, endpoint);
     }
-    if (read_error == boost::asio::error::operation_aborted)
-    {
-        shutdown();
-        return;
-    }
     shutdown();
 }
 
 void whep_session::start_udp_write()
 {
-    if (!started_ || udp_write_queue_.empty())
+    if (shutdown_requested_.load(std::memory_order_acquire) || udp_write_queue_.empty())
     {
         return;
     }
@@ -307,14 +268,14 @@ void whep_session::start_udp_write()
     const auto& datagram = udp_write_queue_.front();
     // 队首在发送完成回调前保持存活，供异步 socket 使用其 packet buffer。
     const auto self = shared_from_this();
-    udp_transport_.async_write(std::span<const std::uint8_t>{datagram.packet->data(), datagram.packet->size()},
+    udp_transport_.async_write(std::span<const std::uint8_t>{datagram.packet.data(), datagram.packet.size()},
                                datagram.endpoint,
                                [self](boost::system::error_code error, std::size_t) { self->handle_udp_write(error); });
 }
 
 void whep_session::handle_udp_write(boost::system::error_code error)
 {
-    if (!started_)
+    if (shutdown_requested_.load(std::memory_order_acquire))
     {
         return;
     }
@@ -333,14 +294,14 @@ void whep_session::handle_udp_write(boost::system::error_code error)
         return;
     }
 
-    queued_write_bytes_ -= udp_write_queue_.front().packet->size();
+    queued_write_bytes_ -= udp_write_queue_.front().packet.size();
     udp_write_queue_.pop_front();
     start_udp_write();
 }
 
 void whep_session::handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
-    if (!started_ || packet.empty())
+    if (shutdown_requested_.load(std::memory_order_acquire) || packet.empty())
     {
         return;
     }
@@ -467,11 +428,6 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
 
 void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
 {
-    if (!dtls_)
-    {
-        return;
-    }
-
     const bool was_connected = dtls_->connected();
     if (!dtls_->handle_datagram(packet))
     {
@@ -497,13 +453,9 @@ void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
 
 bool whep_session::startup_media()
 {
-    if (!dtls_ || !dtls_->connected() || !dtls_->srtp_keying_material() || (!answer_.video_payload_type && !answer_.audio_payload_type))
-    {
-        return false;
-    }
-
+    const auto& keying_material = *dtls_->srtp_keying_material();
     auto srtp = std::make_unique<srtp_transport>();
-    if (!srtp->startup(*dtls_->srtp_keying_material()))
+    if (!srtp->startup(keying_material))
     {
         return false;
     }
@@ -532,9 +484,12 @@ bool whep_session::startup_media()
         return false;
     }
 
-    for (const auto& track : negotiated_tracks_)
+    for (const auto& track : stream_->tracks())
     {
-        if (!packetizer->on_track(track))
+        const bool negotiated_video = answer_.video_codec && track.kind == media_kind::video && track.codec == *answer_.video_codec;
+        const bool negotiated_audio = answer_.audio_payload_type && answer_.audio_codec && track.kind == media_kind::audio &&
+                                      track.codec == (audio_egress_ ? codec_id::opus : *answer_.audio_codec);
+        if ((negotiated_video || negotiated_audio) && !packetizer->on_track(track))
         {
             return false;
         }
@@ -542,21 +497,15 @@ bool whep_session::startup_media()
 
     srtp_ = std::move(srtp);
     packetizer_ = std::move(packetizer);
-    negotiated_tracks_.clear();
 
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
-    spdlog::debug("webrtc srtp profile session {} {}", id_, dtls_->srtp_keying_material()->profile);
+    spdlog::debug("webrtc srtp profile session {} {}", id_, keying_material.profile);
     return true;
 }
 
 int whep_session::send_rtp(std::span<const std::uint8_t> packet)
 {
-    if (!srtp_)
-    {
-        return -1;
-    }
-
     spdlog::trace("webrtc rtp protect session {} plain_size {}", id_, packet.size());
     auto protected_packet = srtp_->protect_rtp(packet);
     if (!protected_packet)
@@ -571,11 +520,6 @@ int whep_session::send_rtp(std::span<const std::uint8_t> packet)
 
 int whep_session::send_rtcp(std::span<const std::uint8_t> packet)
 {
-    if (!srtp_)
-    {
-        return -1;
-    }
-
     spdlog::trace("webrtc rtcp protect session {} plain_size {}", id_, packet.size());
     auto protected_packet = srtp_->protect_rtcp(packet);
     if (!protected_packet)
@@ -599,21 +543,21 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet)
 
 void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
 {
-    if (!started_ || local_port_reservation_ == 0 || packet.empty())
+    if (shutdown_requested_.load(std::memory_order_acquire) || packet.empty())
     {
         return;
     }
-    if (packet.size() > max_write_queue_bytes_ || queued_write_bytes_ > max_write_queue_bytes_ - packet.size())
+    if (packet.size() > max_udp_write_queue_bytes || queued_write_bytes_ > max_udp_write_queue_bytes - packet.size())
     {
         spdlog::warn(
-            "whep udp write queue full session {} queued {} limit {} dropped {}", id_, queued_write_bytes_, max_write_queue_bytes_, packet.size());
+            "whep udp write queue full session {} queued {} limit {} dropped {}", id_, queued_write_bytes_, max_udp_write_queue_bytes, packet.size());
         return;
     }
 
     const bool start_write = udp_write_queue_.empty();
     queued_write_bytes_ += packet.size();
     udp_write_queue_.push_back(pending_datagram{
-        .packet = std::make_shared<std::vector<std::uint8_t>>(std::move(packet)),
+        .packet = std::move(packet),
         .endpoint = std::move(endpoint),
     });
     if (start_write)
@@ -624,7 +568,7 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
 
 void whep_session::schedule_dtls_timeout()
 {
-    if (!started_ || !dtls_ || dtls_->connected())
+    if (shutdown_requested_.load(std::memory_order_acquire) || dtls_->connected())
     {
         return;
     }
@@ -650,7 +594,7 @@ void whep_session::schedule_dtls_timeout()
 
 void whep_session::handle_dtls_timeout()
 {
-    if (!started_ || !dtls_ || dtls_->connected())
+    if (shutdown_requested_.load(std::memory_order_acquire) || dtls_->connected())
     {
         return;
     }
@@ -667,17 +611,12 @@ void whep_session::handle_dtls_timeout()
 
 void whep_session::startup_establishment_timeout()
 {
-    if (!started_ || timeouts_.establishment.count() <= 0)
-    {
-        return;
-    }
-
-    establishment_timer_.expires_after(timeouts_.establishment);
+    establishment_timer_.expires_after(establishment_timeout);
     const auto self = shared_from_this();
     establishment_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || !self->started_ || self->srtp_)
+            if (error || self->shutdown_requested_.load(std::memory_order_acquire) || self->packetizer_)
             {
                 return;
             }
@@ -689,17 +628,12 @@ void whep_session::startup_establishment_timeout()
 
 void whep_session::refresh_ice_activity_timeout()
 {
-    if (!started_ || !remote_endpoint_.has_value() || timeouts_.ice_activity.count() <= 0)
-    {
-        return;
-    }
-
-    ice_activity_timer_.expires_after(timeouts_.ice_activity);
+    ice_activity_timer_.expires_after(ice_activity_timeout);
     const auto self = shared_from_this();
     ice_activity_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || !self->started_ || !self->remote_endpoint_.has_value())
+            if (error || self->shutdown_requested_.load(std::memory_order_acquire) || !self->remote_endpoint_.has_value())
             {
                 return;
             }

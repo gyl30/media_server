@@ -4,11 +4,9 @@
 #include <atomic>
 #include <span>
 #include <deque>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -31,12 +29,6 @@ namespace media_server
 class worker_context;
 class whep_audio_egress;
 
-struct whep_session_timeouts
-{
-    std::chrono::milliseconds establishment{15'000};
-    std::chrono::milliseconds ice_activity{30'000};
-};
-
 enum class whep_session_startup_error
 {
     none,
@@ -47,15 +39,12 @@ enum class whep_session_startup_error
 class whep_session final : public media_sink, public std::enable_shared_from_this<whep_session>
 {
    public:
-    whep_session(worker_context& worker,
-                 std::shared_ptr<media_stream> stream,
-                 boost::asio::ip::address advertised_address,
-                 std::shared_ptr<dtls_certificate> certificate,
-                 whep_session_timeouts timeouts = {},
-                 std::size_t max_write_queue_bytes = 1024U * 1024U);
+    whep_session(worker_context& worker, std::shared_ptr<media_stream> stream);
 
    public:
-    [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer);
+    [[nodiscard]] whep_session_startup_error startup(webrtc_offer offer,
+                                                      boost::asio::ip::address advertised_address,
+                                                      std::shared_ptr<dtls_certificate> certificate);
     void shutdown();
 
    public:
@@ -70,7 +59,7 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
    private:
     struct pending_datagram
     {
-        std::shared_ptr<std::vector<std::uint8_t>> packet;
+        std::vector<std::uint8_t> packet;
         boost::asio::ip::udp::endpoint endpoint;
     };
 
@@ -98,16 +87,11 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     std::shared_ptr<whep_audio_egress> audio_egress_;
-    boost::asio::ip::address advertised_address_;
-    std::shared_ptr<dtls_certificate> certificate_;
-    whep_session_timeouts timeouts_;
-    std::vector<media_track> negotiated_tracks_;
     std::optional<track_id> waiting_video_track_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<webrtc_packetizer> packetizer_;
     udp_yield_transport udp_transport_;
-    std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
     std::deque<pending_datagram> udp_write_queue_;
     boost::asio::steady_timer dtls_timer_;
@@ -120,7 +104,6 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
     webrtc_answer answer_;
-    bool started_{};
     std::atomic_bool shutdown_requested_{};
 };
 

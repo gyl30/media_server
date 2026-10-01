@@ -95,7 +95,7 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(create_error::internal_error);
     }
 
-    auto session = std::make_shared<whip_session>(worker, std::string(stream_name), advertised_address, std::move(certificate));
+    auto session = std::make_shared<whip_session>(worker, std::string(stream_name));
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
@@ -114,7 +114,7 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(create_error::stream_conflict);
     }
 
-    switch (session->startup(std::move(*offer)))
+    switch (session->startup(std::move(*offer), advertised_address, std::move(certificate)))
     {
         case whip_session_startup_error::none:
             break;

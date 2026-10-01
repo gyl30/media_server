@@ -3,11 +3,9 @@
 
 #include <span>
 #include <deque>
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -26,12 +24,6 @@ namespace media_server
 {
 class worker_context;
 
-struct whip_session_timeouts
-{
-    std::chrono::milliseconds establishment{15'000};
-    std::chrono::milliseconds ice_activity{30'000};
-};
-
 enum class whip_session_startup_error
 {
     none,
@@ -42,15 +34,12 @@ enum class whip_session_startup_error
 class whip_session final : public std::enable_shared_from_this<whip_session>
 {
    public:
-    whip_session(worker_context& worker,
-                 std::string stream_name,
-                 boost::asio::ip::address advertised_address,
-                 std::shared_ptr<dtls_certificate> certificate,
-                 whip_session_timeouts timeouts = {},
-                 std::size_t max_write_queue_bytes = 1024U * 1024U);
+    whip_session(worker_context& worker, std::string stream_name);
 
    public:
-    [[nodiscard]] whip_session_startup_error startup(webrtc_offer offer);
+    [[nodiscard]] whip_session_startup_error startup(webrtc_offer offer,
+                                                      boost::asio::ip::address advertised_address,
+                                                      std::shared_ptr<dtls_certificate> certificate);
     void shutdown();
 
    public:
@@ -60,7 +49,7 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
    private:
     struct pending_datagram
     {
-        std::shared_ptr<std::vector<std::uint8_t>> packet;
+        std::vector<std::uint8_t> packet;
         boost::asio::ip::udp::endpoint endpoint;
     };
 
@@ -85,14 +74,10 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
    private:
     worker_context& worker_;
     std::string stream_name_;
-    boost::asio::ip::address advertised_address_;
-    std::shared_ptr<dtls_certificate> certificate_;
-    whip_session_timeouts timeouts_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<whip_media_receiver> media_receiver_;
     udp_yield_transport udp_transport_;
-    std::size_t max_write_queue_bytes_;
     std::size_t queued_write_bytes_{};
     std::deque<pending_datagram> udp_write_queue_;
     boost::asio::steady_timer dtls_timer_;
@@ -105,7 +90,6 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
     webrtc_answer answer_;
-    bool started_{};
 };
 
 }    // namespace media_server
