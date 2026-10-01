@@ -1,7 +1,6 @@
 #include <chrono>
 #include <utility>
 
-#include <boost/asio/post.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/detached.hpp>
 
@@ -36,7 +35,7 @@ void http_session::run(boost::asio::yield_context yield)
 
     stream_.expires_after(std::chrono::seconds(30));
     boost::beast::http::async_read(stream_, buffer, request, yield[error]);
-    if (error || closed_)
+    if (error)
     {
         shutdown();
     }
@@ -51,7 +50,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     const auto parsed = boost::urls::parse_origin_form(request.target());
     if (!parsed)
     {
-        send_text_response(request, boost::beast::http::status::bad_request, "text/plain", "bad request target\n", yield);
+        send_text_response(request, boost::beast::http::status::bad_request, "bad request target\n", yield);
         return;
     }
 
@@ -59,7 +58,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     const std::string_view path(encoded_path.data(), encoded_path.size());
     if (path == "/")
     {
-        send_text_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
+        send_text_response(request, boost::beast::http::status::not_found, "not found\n", yield);
         return;
     }
     if (path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/"))
@@ -110,11 +109,11 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
 
     if (request.method() != boost::beast::http::verb::get)
     {
-        send_text_response(request, boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", yield, "GET");
+        send_text_response(request, boost::beast::http::status::method_not_allowed, "method not allowed\n", yield, "GET");
         return;
     }
 
-    send_text_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
+    send_text_response(request, boost::beast::http::status::not_found, "not found\n", yield);
 }
 
 void http_session::write_string_response(boost::beast::http::request<boost::beast::http::string_body>& request,
@@ -136,14 +135,13 @@ void http_session::write_string_response(boost::beast::http::request<boost::beas
 
 void http_session::send_text_response(boost::beast::http::request<boost::beast::http::string_body>& request,
                                       boost::beast::http::status status,
-                                      std::string_view content_type,
                                       std::string body,
                                       boost::asio::yield_context yield,
                                       std::string_view allow)
 {
     boost::beast::http::response<boost::beast::http::string_body> response(status, request.version());
     response.set(boost::beast::http::field::server, "media_server");
-    response.set(boost::beast::http::field::content_type, content_type);
+    response.set(boost::beast::http::field::content_type, "text/plain");
     if (!allow.empty())
     {
         response.set(boost::beast::http::field::allow, allow);
@@ -157,17 +155,6 @@ void http_session::send_text_response(boost::beast::http::request<boost::beast::
 
 void http_session::shutdown()
 {
-    const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
-}
-
-void http_session::safe_shutdown()
-{
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);
     stream_.socket().close(error);

@@ -22,7 +22,6 @@ class http_session final : public std::enable_shared_from_this<http_session>
 
    public:
     void startup();
-    void shutdown();
 
    private:
     void run(boost::asio::yield_context yield);
@@ -32,19 +31,17 @@ class http_session final : public std::enable_shared_from_this<http_session>
                                boost::asio::yield_context yield);
     void send_text_response(boost::beast::http::request<boost::beast::http::string_body>& request,
                             boost::beast::http::status status,
-                            std::string_view content_type,
                             std::string body,
                             boost::asio::yield_context yield,
                             std::string_view allow = {});
 
    private:
-    void safe_shutdown();
+    void shutdown();
 
    private:
     worker_context& worker_;
     boost::beast::tcp_stream stream_;
     const config& config_;
-    bool closed_{};
 };
 }    // namespace media_server
 

@@ -20,7 +20,7 @@ class service
     int run();
 
    private:
-    void run_server();
+    bool run_server();
     void stop();
 
    private:

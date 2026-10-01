@@ -74,7 +74,7 @@ void service::stop()
     workers_->request_stop();
 }
 
-void service::run_server()
+bool service::run_server()
 {
     boost::scope::scope_exit stop_on_startup_failure([this]() { stop(); });
 
@@ -84,7 +84,7 @@ void service::run_server()
             *workers_,
             bind_address,
             config_.rtmp_port,
-            [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
+            [](worker_context& worker, boost::asio::ip::tcp::socket socket)
             {
                 auto session = std::make_shared<rtmp_session>(worker, std::move(socket));
                 session->startup();
@@ -92,13 +92,13 @@ void service::run_server()
             network_error))
     {
         spdlog::error("rtmp listen failed port {} error {}", config_.rtmp_port, network_error.message());
-        return;
+        return false;
     }
     if (!start_tcp_listener(
             *workers_,
             bind_address,
             config_.rtsp_port,
-            [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
+            [](worker_context& worker, boost::asio::ip::tcp::socket socket)
             {
                 auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket));
                 connection->startup();
@@ -106,7 +106,7 @@ void service::run_server()
             network_error))
     {
         spdlog::error("rtsp listen failed port {} error {}", config_.rtsp_port, network_error.message());
-        return;
+        return false;
     }
     if (!start_tcp_listener(
             *workers_,
@@ -120,7 +120,7 @@ void service::run_server()
             network_error))
     {
         spdlog::error("http listen failed port {} error {}", config_.http_port, network_error.message());
-        return;
+        return false;
     }
     stop_on_startup_failure.set_active(false);
 
@@ -130,26 +130,12 @@ void service::run_server()
     spdlog::info("rtmp publish play path app/stream");
     spdlog::info("rtsp play path app/stream");
     spdlog::info("http flv path app/stream.flv");
-
+    return true;
 }
 
 int service::run()
 {
     configure_log_level();
-
-    boost::system::error_code address_error;
-    const auto bind_address = boost::asio::ip::make_address(config_.bind_address, address_error);
-    if (address_error || bind_address.is_unspecified())
-    {
-        spdlog::error("invalid bind address {}", config_.bind_address);
-        return 1;
-    }
-    const auto webrtc_address = boost::asio::ip::make_address(config_.webrtc_address, address_error);
-    if (address_error || webrtc_address.is_unspecified())
-    {
-        spdlog::error("invalid webrtc address {}", config_.webrtc_address);
-        return 1;
-    }
 
     workers_ = std::make_unique<worker_pool>(config_.threads);
     auto& control_worker = workers_->context(0);
@@ -167,11 +153,12 @@ int service::run()
             }
         });
 
-    control_worker.spawn([this](boost::asio::yield_context) { run_server(); });
+    int result = 0;
+    control_worker.spawn([this, &result](boost::asio::yield_context) { result = run_server() ? 0 : 1; });
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
     hls::shutdown();
-    return 0;
+    return result;
 }
 
 }    // namespace media_server
