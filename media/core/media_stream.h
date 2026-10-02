@@ -1,12 +1,12 @@
 #ifndef MEDIA_CORE_MEDIA_STREAM_H
 #define MEDIA_CORE_MEDIA_STREAM_H
 
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "media/core/media_sink.h"
+#include "media/core/worker_sink_dispatcher.h"
 
 namespace media_server
 {
@@ -31,16 +31,12 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     [[nodiscard]] std::shared_ptr<mpeg_ps_output> ps_output();
 
    private:
-    struct sink_group;
-
     void add_sink_owner(std::shared_ptr<media_sink> sink, worker_context& worker);
-    void remove_sink_owner(media_sink* sink);
-    void end_group(const std::shared_ptr<sink_group>& group);
 
     std::string name_;
     worker_context& worker_;
     std::vector<media_track> tracks_;
-    std::map<worker_context*, std::shared_ptr<sink_group>> sink_groups_;
+    worker_sink_dispatcher<media_frame, media_sink, &media_sink::on_frame> dispatcher_;
     std::weak_ptr<mpeg_ps_output> ps_output_;
     bool ended_{};
 };
