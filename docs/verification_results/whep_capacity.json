@@ -1,0 +1,526 @@
+{
+  "levels": [
+    {
+      "viewers": 100,
+      "returncode": 0,
+      "peak_rss_kib": 58920,
+      "stopping_reason": null,
+      "result": {
+        "config": {
+          "head": "8af98842f69d3e63a7e2d95b29f454d606992412",
+          "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+          "viewers": 100,
+          "sources": 1,
+          "workers": 6,
+          "client_threads": 8,
+          "ramp_per_second": 100,
+          "warmup_seconds": 5,
+          "duration_seconds": 20,
+          "kernel": "6.8.0-136-generic"
+        },
+        "established": {
+          "phase": "established",
+          "requested": 100,
+          "ready": 100,
+          "media_ready": 100,
+          "establishment_failures": 0,
+          "ramp_seconds": 1.46545,
+          "generator_cpu_seconds": 0.229331,
+          "generator_rss_kib": 17632,
+          "generator_pss_kib": 10012,
+          "generator_fds": 128
+        },
+        "measurement": {
+          "phase": "measurement",
+          "progressing": 100,
+          "runtime_failures": 0,
+          "duration_seconds": 20.0001,
+          "received_bytes": 2002660176,
+          "received_packets": 2127808,
+          "video_packets": 2026300,
+          "audio_packets": 99900,
+          "media_datagrams": 2127808,
+          "unprotect_failures": 0,
+          "bytes_per_viewer_second": 1001330.0,
+          "viewer_bytes_per_second_min": 1001320.0,
+          "viewer_bytes_per_second_p10": 1001320.0,
+          "viewer_bytes_per_second_p50": 1001330.0,
+          "viewer_bytes_per_second_p90": 1001330.0,
+          "viewer_bytes_per_second_max": 1001330.0,
+          "viewer_video_packets_min": 20263,
+          "viewer_audio_packets_min": 999,
+          "generator_cpu_cores": 0.275887,
+          "generator_rss_kib": 17756,
+          "generator_pss_kib": 10047,
+          "generator_fds": 128
+        },
+        "disconnect": {
+          "phase": "disconnect",
+          "stopped": 100,
+          "removed": 100,
+          "requested": 100
+        },
+        "client_exit": 0,
+        "server_cpu_cores": 0.36244565137128903,
+        "server_rss_kib_median": 58278.0,
+        "server_pss_kib_median": 46468.5,
+        "server_fd_median": 127.0,
+        "server_threads": 6,
+        "udp_tx_queue_bytes_max": 4608,
+        "udp_rx_queue_bytes_max": 0,
+        "udp_drops": 0,
+        "aggregate_gbit_per_second": 0.8010600650996745,
+        "first_media": {
+          "first_media_ms_p50": 505,
+          "p95": 954,
+          "p99": 993,
+          "max": 1003
+        },
+        "server_thread_cpu_cores": {
+          "3346774": 0.06848972998326427,
+          "3346775": 0.05749137918303204,
+          "3346776": 0.05799130421940624,
+          "3346777": 0.05649152911028366,
+          "3346778": 0.055491679037535276,
+          "3346779": 0.06549017976501913
+        },
+        "server_thread_context_switches_per_second": {
+          "3346774": 116.08259344608733,
+          "3346775": 61.690749488575264,
+          "3346776": 63.490479619522354,
+          "3346777": 64.24036717408364,
+          "3346778": 64.24036717408364,
+          "3346779": 49.59256360831982
+        },
+        "server_thread_migrations_per_second": {
+          "3346774": 30.995352255199887,
+          "3346775": 5.049242867379337,
+          "3346776": 5.049242867379337,
+          "3346777": 5.849122925578043,
+          "3346778": 5.599160407390947,
+          "3346779": 3.8494227800812766
+        },
+        "client_cpu_cores": 0.275887,
+        "queue_full_events": 0
+      }
+    },
+    {
+      "viewers": 250,
+      "returncode": 0,
+      "peak_rss_kib": 106668,
+      "stopping_reason": null,
+      "result": {
+        "config": {
+          "head": "8af98842f69d3e63a7e2d95b29f454d606992412",
+          "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+          "viewers": 250,
+          "sources": 1,
+          "workers": 6,
+          "client_threads": 8,
+          "ramp_per_second": 100,
+          "warmup_seconds": 5,
+          "duration_seconds": 20,
+          "kernel": "6.8.0-136-generic"
+        },
+        "established": {
+          "phase": "established",
+          "requested": 250,
+          "ready": 250,
+          "media_ready": 250,
+          "establishment_failures": 0,
+          "ramp_seconds": 3.50609,
+          "generator_cpu_seconds": 1.47047,
+          "generator_rss_kib": 26960,
+          "generator_pss_kib": 19394,
+          "generator_fds": 278
+        },
+        "measurement": {
+          "phase": "measurement",
+          "progressing": 250,
+          "runtime_failures": 0,
+          "duration_seconds": 20.0001,
+          "received_bytes": 5009549666,
+          "received_packets": 5321332,
+          "video_packets": 5067250,
+          "audio_packets": 250000,
+          "media_datagrams": 5321332,
+          "unprotect_failures": 0,
+          "bytes_per_viewer_second": 1001910.0,
+          "viewer_bytes_per_second_min": 1001900.0,
+          "viewer_bytes_per_second_p10": 1001900.0,
+          "viewer_bytes_per_second_p50": 1001910.0,
+          "viewer_bytes_per_second_p90": 1001910.0,
+          "viewer_bytes_per_second_max": 1001910.0,
+          "viewer_video_packets_min": 20269,
+          "viewer_audio_packets_min": 1000,
+          "generator_cpu_cores": 0.693213,
+          "generator_rss_kib": 27108,
+          "generator_pss_kib": 19483,
+          "generator_fds": 278
+        },
+        "disconnect": {
+          "phase": "disconnect",
+          "stopped": 250,
+          "removed": 250,
+          "requested": 250
+        },
+        "client_exit": 0,
+        "server_cpu_cores": 0.8659079909605701,
+        "server_rss_kib_median": 100144.0,
+        "server_pss_kib_median": 88856.0,
+        "server_fd_median": 277.0,
+        "server_threads": 6,
+        "udp_tx_queue_bytes_max": 6912,
+        "udp_rx_queue_bytes_max": 0,
+        "udp_drops": 0,
+        "aggregate_gbit_per_second": 2.0038098473507633,
+        "first_media": {
+          "first_media_ms_p50": 414,
+          "p95": 962,
+          "p99": 1013,
+          "max": 1045
+        },
+        "server_thread_cpu_cores": {
+          "3351806": 0.15048400997640393,
+          "3351807": 0.1424848599444356,
+          "3351808": 0.1444846474524277,
+          "3351809": 0.1394851786824475,
+          "3351810": 0.14048507243644354,
+          "3351811": 0.1474843287144158
+        },
+        "server_thread_context_switches_per_second": {
+          "3351806": 117.63750015763404,
+          "3351807": 71.64238747381623,
+          "3351808": 70.79247778291959,
+          "3351809": 79.69153219348435,
+          "3351810": 72.49229716471287,
+          "3351811": 64.59313650814416
+        },
+        "server_thread_migrations_per_second": {
+          "3351806": 21.697694461714057,
+          "3351807": 8.899054410564752,
+          "3351808": 8.549091596666138,
+          "3351809": 6.999256277972276,
+          "3351810": 7.999150031968315,
+          "3351811": 7.399213779570692
+        },
+        "client_cpu_cores": 0.693213,
+        "queue_full_events": 0
+      }
+    },
+    {
+      "viewers": 500,
+      "returncode": 0,
+      "peak_rss_kib": 201736,
+      "stopping_reason": null,
+      "result": {
+        "config": {
+          "head": "8af98842f69d3e63a7e2d95b29f454d606992412",
+          "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+          "viewers": 500,
+          "sources": 1,
+          "workers": 6,
+          "client_threads": 8,
+          "ramp_per_second": 100,
+          "warmup_seconds": 5,
+          "duration_seconds": 20,
+          "kernel": "6.8.0-136-generic"
+        },
+        "established": {
+          "phase": "established",
+          "requested": 500,
+          "ready": 500,
+          "media_ready": 500,
+          "establishment_failures": 0,
+          "ramp_seconds": 5.47068,
+          "generator_cpu_seconds": 4.08606,
+          "generator_rss_kib": 42564,
+          "generator_pss_kib": 34842,
+          "generator_fds": 528
+        },
+        "measurement": {
+          "phase": "measurement",
+          "progressing": 500,
+          "runtime_failures": 0,
+          "duration_seconds": 20.0001,
+          "received_bytes": 10031066144,
+          "received_packets": 10652171,
+          "video_packets": 10144000,
+          "audio_packets": 500000,
+          "media_datagrams": 10652171,
+          "unprotect_failures": 0,
+          "bytes_per_viewer_second": 1003100.0,
+          "viewer_bytes_per_second_min": 1003100.0,
+          "viewer_bytes_per_second_p10": 1003100.0,
+          "viewer_bytes_per_second_p50": 1003100.0,
+          "viewer_bytes_per_second_p90": 1003110.0,
+          "viewer_bytes_per_second_max": 1003110.0,
+          "viewer_video_packets_min": 20288,
+          "viewer_audio_packets_min": 1000,
+          "generator_cpu_cores": 1.40338,
+          "generator_rss_kib": 42788,
+          "generator_pss_kib": 35023,
+          "generator_fds": 528
+        },
+        "disconnect": {
+          "phase": "disconnect",
+          "stopped": 500,
+          "removed": 500,
+          "requested": 500
+        },
+        "client_exit": 0,
+        "server_cpu_cores": 1.7726321649227557,
+        "server_rss_kib_median": 188600.0,
+        "server_pss_kib_median": 178281.0,
+        "server_fd_median": 527.0,
+        "server_threads": 6,
+        "udp_tx_queue_bytes_max": 11520,
+        "udp_rx_queue_bytes_max": 960,
+        "udp_drops": 0,
+        "aggregate_gbit_per_second": 4.012406395568022,
+        "first_media": {
+          "first_media_ms_p50": 515,
+          "p95": 964,
+          "p99": 1015,
+          "max": 1055
+        },
+        "server_thread_cpu_cores": {
+          "3357392": 0.31243516725231874,
+          "3357393": 0.28794025013973695,
+          "3357394": 0.2894399389425481,
+          "3357395": 0.28794025013973695,
+          "3357396": 0.2944389016185851,
+          "3357397": 0.29943786429462227
+        },
+        "server_thread_context_switches_per_second": {
+          "3357392": 150.56875580223743,
+          "3357393": 84.48246922502699,
+          "3357394": 84.48246922502699,
+          "3357395": 95.93009375315195,
+          "3357396": 91.08109995739596,
+          "3357397": 69.48558119691569
+        },
+        "server_thread_migrations_per_second": {
+          "3357392": 47.44015579559208,
+          "3357393": 10.797759380240135,
+          "3357394": 10.797759380240135,
+          "3357395": 9.348060204189377,
+          "3357396": 10.44783199291754,
+          "3357397": 9.348060204189377
+        },
+        "client_cpu_cores": 1.40338,
+        "queue_full_events": 0
+      }
+    },
+    {
+      "viewers": 750,
+      "returncode": 0,
+      "peak_rss_kib": 289208,
+      "stopping_reason": null,
+      "result": {
+        "config": {
+          "head": "8af98842f69d3e63a7e2d95b29f454d606992412",
+          "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+          "viewers": 750,
+          "sources": 1,
+          "workers": 6,
+          "client_threads": 8,
+          "ramp_per_second": 100,
+          "warmup_seconds": 5,
+          "duration_seconds": 20,
+          "kernel": "6.8.0-136-generic"
+        },
+        "established": {
+          "phase": "established",
+          "requested": 750,
+          "ready": 750,
+          "media_ready": 750,
+          "establishment_failures": 0,
+          "ramp_seconds": 8.46928,
+          "generator_cpu_seconds": 10.1005,
+          "generator_rss_kib": 58040,
+          "generator_pss_kib": 50492,
+          "generator_fds": 778
+        },
+        "measurement": {
+          "phase": "measurement",
+          "progressing": 750,
+          "runtime_failures": 0,
+          "duration_seconds": 20.0001,
+          "received_bytes": 15046390494,
+          "received_packets": 15978967,
+          "video_packets": 15217500,
+          "audio_packets": 749250,
+          "media_datagrams": 15978967,
+          "unprotect_failures": 0,
+          "bytes_per_viewer_second": 1003090.0,
+          "viewer_bytes_per_second_min": 1003080.0,
+          "viewer_bytes_per_second_p10": 1003090.0,
+          "viewer_bytes_per_second_p50": 1003090.0,
+          "viewer_bytes_per_second_p90": 1003090.0,
+          "viewer_bytes_per_second_max": 1003100.0,
+          "viewer_video_packets_min": 20290,
+          "viewer_audio_packets_min": 999,
+          "generator_cpu_cores": 2.15344,
+          "generator_rss_kib": 58344,
+          "generator_pss_kib": 50691,
+          "generator_fds": 778
+        },
+        "disconnect": {
+          "phase": "disconnect",
+          "stopped": 750,
+          "removed": 750,
+          "requested": 750
+        },
+        "client_exit": 0,
+        "server_cpu_cores": 2.6804827231606803,
+        "server_rss_kib_median": 274206.0,
+        "server_pss_kib_median": 262665.5,
+        "server_fd_median": 777.0,
+        "server_threads": 6,
+        "udp_tx_queue_bytes_max": 5120,
+        "udp_rx_queue_bytes_max": 0,
+        "udp_drops": 0,
+        "aggregate_gbit_per_second": 6.018526104969475,
+        "first_media": {
+          "first_media_ms_p50": 483,
+          "p95": 967,
+          "p99": 1002,
+          "max": 1031
+        },
+        "server_thread_cpu_cores": {
+          "3363198": 0.4618247317174098,
+          "3363199": 0.4398330778261046,
+          "3363200": 0.45032909445604563,
+          "3363201": 0.44333175003608494,
+          "3363202": 0.4418323190889505,
+          "3363203": 0.44783004287748834
+        },
+        "server_thread_context_switches_per_second": {
+          "3363198": 145.09493465104336,
+          "3363199": 83.0684744712484,
+          "3363200": 92.8147756276223,
+          "3363201": 83.81818994481561,
+          "3363202": 85.51754501823466,
+          "3363203": 75.6213007671473
+        },
+        "server_thread_migrations_per_second": {
+          "3363198": 42.883725088045196,
+          "3363199": 10.496016629941131,
+          "3363200": 12.24535273493132,
+          "3363201": 8.996585682806684,
+          "3363202": 9.396433935375871,
+          "3363203": 7.747059893527978
+        },
+        "client_cpu_cores": 2.15344,
+        "queue_full_events": 0
+      }
+    },
+    {
+      "viewers": 1000,
+      "returncode": 0,
+      "peak_rss_kib": 394440,
+      "stopping_reason": null,
+      "result": {
+        "config": {
+          "head": "8af98842f69d3e63a7e2d95b29f454d606992412",
+          "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+          "viewers": 1000,
+          "sources": 1,
+          "workers": 6,
+          "client_threads": 8,
+          "ramp_per_second": 100,
+          "warmup_seconds": 5,
+          "duration_seconds": 20,
+          "kernel": "6.8.0-136-generic"
+        },
+        "established": {
+          "phase": "established",
+          "requested": 1000,
+          "ready": 1000,
+          "media_ready": 1000,
+          "establishment_failures": 0,
+          "ramp_seconds": 10.5445,
+          "generator_cpu_seconds": 15.6751,
+          "generator_rss_kib": 73568,
+          "generator_pss_kib": 65978,
+          "generator_fds": 1028
+        },
+        "measurement": {
+          "phase": "measurement",
+          "progressing": 1000,
+          "runtime_failures": 0,
+          "duration_seconds": 20.0001,
+          "received_bytes": 20033932796,
+          "received_packets": 21280716,
+          "video_packets": 20264464,
+          "audio_packets": 1000000,
+          "media_datagrams": 21280716,
+          "unprotect_failures": 0,
+          "bytes_per_viewer_second": 1001690.0,
+          "viewer_bytes_per_second_min": 1001690.0,
+          "viewer_bytes_per_second_p10": 1001690.0,
+          "viewer_bytes_per_second_p50": 1001690.0,
+          "viewer_bytes_per_second_p90": 1001700.0,
+          "viewer_bytes_per_second_max": 1001700.0,
+          "viewer_video_packets_min": 20264,
+          "viewer_audio_packets_min": 1000,
+          "generator_cpu_cores": 3.02686,
+          "generator_rss_kib": 73908,
+          "generator_pss_kib": 66259,
+          "generator_fds": 1028
+        },
+        "disconnect": {
+          "phase": "disconnect",
+          "stopped": 1000,
+          "removed": 1000,
+          "requested": 1000
+        },
+        "client_exit": 0,
+        "server_cpu_cores": 3.7600383628066525,
+        "server_rss_kib_median": 360404.0,
+        "server_pss_kib_median": 349107.0,
+        "server_fd_median": 1027.0,
+        "server_threads": 6,
+        "udp_tx_queue_bytes_max": 6912,
+        "udp_rx_queue_bytes_max": 960,
+        "udp_drops": 0,
+        "aggregate_gbit_per_second": 8.013533050734747,
+        "first_media": {
+          "first_media_ms_p50": 510,
+          "p95": 971,
+          "p99": 1017,
+          "max": 1058
+        },
+        "server_thread_cpu_cores": {
+          "3369721": 0.6521597638839288,
+          "3369722": 0.6201764497930695,
+          "3369723": 0.6216756676410786,
+          "3369724": 0.6216756676410784,
+          "3369725": 0.6186772319450604,
+          "3369726": 0.6251738426197662
+        },
+        "server_thread_context_switches_per_second": {
+          "3369721": 123.43560281941029,
+          "3369722": 78.40909345087236,
+          "3369723": 82.8567730666325,
+          "3369724": 81.20763343382256,
+          "3369725": 71.41274349349689,
+          "3369726": 67.26490744733856
+        },
+        "server_thread_migrations_per_second": {
+          "3369721": 48.67460613202657,
+          "3369722": 8.59551566191845,
+          "3369723": 8.395619948850578,
+          "3369724": 8.445593877117545,
+          "3369725": 9.844863868592643,
+          "3369726": 9.794889940325675
+        },
+        "client_cpu_cores": 3.02686,
+        "queue_full_events": 0
+      }
+    }
+  ],
+  "rss_guard_kib": 2097152,
+  "cpu_stop_cores": 5.4
+}
