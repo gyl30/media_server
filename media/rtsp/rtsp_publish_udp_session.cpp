@@ -129,8 +129,8 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
 
     state.rtp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport.rtp.u.client_port1);
     state.rtcp_endpoint = boost::asio::ip::udp::endpoint(client_address, transport.rtp.u.client_port2);
-    state.rtp_transport.emplace(worker_.io());
-    state.rtcp_transport.emplace(worker_.io());
+    state.rtp_transport = std::make_shared<udp_transport>(worker_.io());
+    state.rtcp_transport = std::make_shared<udp_transport>(worker_.io());
 
     boost::system::error_code network_error;
     const auto reserved = media_port_pool::instance().acquire_pair_and_bind(

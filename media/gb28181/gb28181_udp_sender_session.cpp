@@ -34,16 +34,16 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
       sender_id_(std::move(sender_id)),
       remote_rtp_endpoint_(std::move(remote_rtp_endpoint)),
       remote_rtcp_endpoint_(std::move(remote_rtcp_endpoint)),
-      rtp_transport_(worker_.io()),
-      rtcp_transport_(worker_.io()),
+      rtp_transport_(std::make_shared<udp_transport>(worker_.io())),
+      rtcp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_timer_(worker_.io())
 {
 }
 
 void gb28181_udp_sender_session::shutdown_udp_transports()
 {
-    rtp_transport_.shutdown();
-    rtcp_transport_.shutdown();
+    rtp_transport_->shutdown();
+    rtcp_transport_->shutdown();
     if (local_ports_)
     {
         media_port_pool::instance().release(*local_ports_);
@@ -54,7 +54,7 @@ void gb28181_udp_sender_session::shutdown_udp_transports()
 bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, std::uint8_t payload_type, std::uint32_t ssrc)
 {
     boost::system::error_code network_error;
-    auto local_ports = media_port_pool::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address, network_error);
+    auto local_ports = media_port_pool::instance().acquire_pair_and_bind(*rtp_transport_, *rtcp_transport_, bind_address, network_error);
     if (!local_ports)
     {
         return false;
@@ -125,7 +125,7 @@ void gb28181_udp_sender_session::run_rtp_write(boost::asio::yield_context yield)
 
         const auto& data = write_queue_.front();
         boost::system::error_code error;
-        rtp_transport_.write(data, remote_rtp_endpoint_, yield, error);
+        rtp_transport_->write(data, remote_rtp_endpoint_, yield, error);
         if (!stream_ || error == boost::asio::error::operation_aborted)
         {
             return;
@@ -176,7 +176,7 @@ void gb28181_udp_sender_session::schedule_rtcp()
                         return;
                     }
                     boost::system::error_code write_error;
-                    self->rtcp_transport_.write(
+                    self->rtcp_transport_->write(
                         packet, *self->remote_rtcp_endpoint_, yield, write_error);
                     if (!self->stream_ || write_error == boost::asio::error::operation_aborted)
                     {

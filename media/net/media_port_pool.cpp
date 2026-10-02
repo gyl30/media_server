@@ -7,7 +7,7 @@
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/net/media_port_pool.h"
-#include "media/net/udp_yield_transport.h"
+#include "media/net/udp_transport.h"
 
 namespace media_server
 {
@@ -96,7 +96,7 @@ std::optional<media_port_pool::port_pair> media_port_pool::reserve_pair()
     return std::nullopt;
 }
 
-std::optional<std::uint16_t> media_port_pool::acquire_and_bind(udp_yield_transport& transport,
+std::optional<std::uint16_t> media_port_pool::acquire_and_bind(udp_transport& transport,
                                                             const boost::asio::ip::address& bind_address,
                                                             boost::system::error_code& error)
 {
@@ -132,8 +132,8 @@ std::optional<std::uint16_t> media_port_pool::acquire_and_bind(udp_yield_transpo
     }
 }
 
-std::optional<media_port_pool::port_pair> media_port_pool::acquire_pair_and_bind(udp_yield_transport& rtp_transport,
-                                                                           udp_yield_transport& rtcp_transport,
+std::optional<media_port_pool::port_pair> media_port_pool::acquire_pair_and_bind(udp_transport& rtp_transport,
+                                                                           udp_transport& rtcp_transport,
                                                                            const boost::asio::ip::address& bind_address,
                                                                            boost::system::error_code& error)
 {

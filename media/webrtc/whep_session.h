@@ -21,7 +21,7 @@
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/webrtc/dtls_transport.h"
 #include "media/webrtc/srtp_transport.h"
-#include "media/net/udp_yield_transport.h"
+#include "media/net/udp_transport.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/webrtc_packetizer.h"
 
@@ -90,7 +90,7 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<webrtc_packetizer> packetizer_;
-    udp_yield_transport udp_transport_;
+    std::shared_ptr<udp_transport> udp_transport_;
     std::size_t queued_write_bytes_{};
     std::deque<pending_datagram> udp_write_queue_;
     boost::asio::steady_timer dtls_timer_;

@@ -50,7 +50,7 @@ bool is_rtcp(std::span<const std::uint8_t> packet) { return packet.size() >= 2U 
 whip_session::whip_session(worker_context& worker, std::string stream_name)
     : worker_(worker),
       stream_name_(std::move(stream_name)),
-      udp_transport_(worker_.io()),
+      udp_transport_(std::make_shared<udp_transport>(worker_.io())),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
       ice_activity_timer_(worker_.io())
@@ -62,7 +62,7 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
                                                  std::shared_ptr<dtls_certificate> certificate)
 {
     boost::system::error_code udp_error;
-    const auto reserved = media_port_pool::instance().acquire_and_bind(udp_transport_, advertised_address, udp_error);
+    const auto reserved = media_port_pool::instance().acquire_and_bind(*udp_transport_, advertised_address, udp_error);
     if (!reserved)
     {
         spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
@@ -149,7 +149,7 @@ void whip_session::safe_shutdown()
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
     answer_ = {};
-    udp_transport_.shutdown();
+    udp_transport_->shutdown();
     if (local_port_reservation_ != 0)
     {
         media_port_pool::instance().release(local_port_reservation_);
@@ -168,7 +168,7 @@ void whip_session::run_udp(boost::asio::yield_context yield)
     boost::system::error_code read_error;
     for (;;)
     {
-        const auto bytes = udp_transport_.read(buffer, endpoint, yield, read_error);
+        const auto bytes = udp_transport_->read(buffer, endpoint, yield, read_error);
         if (read_error)
         {
             if (read_error != boost::asio::error::operation_aborted)
@@ -193,7 +193,7 @@ void whip_session::run_udp_write(boost::asio::yield_context yield)
 
         const auto& datagram = udp_write_queue_.front();
         boost::system::error_code error;
-        udp_transport_.write(std::span<const std::uint8_t>{datagram.packet.data(), datagram.packet.size()}, datagram.endpoint, yield, error);
+        udp_transport_->write(std::span<const std::uint8_t>{datagram.packet.data(), datagram.packet.size()}, datagram.endpoint, yield, error);
         if (error)
         {
             if (error == boost::asio::error::operation_aborted)

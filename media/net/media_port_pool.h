@@ -13,7 +13,7 @@
 namespace media_server
 {
 
-class udp_yield_transport;
+class udp_transport;
 
 class media_port_pool final
 {
@@ -28,11 +28,11 @@ class media_port_pool final
     static void init(int start_port, int end_port);
     [[nodiscard]] static media_port_pool& instance();
 
-    [[nodiscard]] std::optional<std::uint16_t> acquire_and_bind(udp_yield_transport& transport,
+    [[nodiscard]] std::optional<std::uint16_t> acquire_and_bind(udp_transport& transport,
                                                                 const boost::asio::ip::address& bind_address,
                                                                 boost::system::error_code& error);
-    [[nodiscard]] std::optional<port_pair> acquire_pair_and_bind(udp_yield_transport& rtp_transport,
-                                                                 udp_yield_transport& rtcp_transport,
+    [[nodiscard]] std::optional<port_pair> acquire_pair_and_bind(udp_transport& rtp_transport,
+                                                                 udp_transport& rtcp_transport,
                                                                  const boost::asio::ip::address& bind_address,
                                                                  boost::system::error_code& error);
 

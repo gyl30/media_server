@@ -1,14 +1,14 @@
 #include <boost/asio/error.hpp>
 #include <boost/asio/buffer.hpp>
 
-#include "media/net/udp_yield_transport.h"
+#include "media/net/udp_transport.h"
 
 namespace media_server
 {
 
-udp_yield_transport::udp_yield_transport(boost::asio::io_context& owner) : socket_(owner) {}
+udp_transport::udp_transport(boost::asio::io_context& owner) : socket_(owner) {}
 
-void udp_yield_transport::startup(boost::asio::ip::address bind_address, std::uint16_t port, boost::system::error_code& error)
+void udp_transport::startup(boost::asio::ip::address bind_address, std::uint16_t port, boost::system::error_code& error)
 {
     error.clear();
     if (socket_.is_open())
@@ -35,7 +35,7 @@ void udp_yield_transport::startup(boost::asio::ip::address bind_address, std::ui
     }
 }
 
-void udp_yield_transport::connect(const boost::asio::ip::udp::endpoint& endpoint, boost::system::error_code& error)
+void udp_transport::connect(const boost::asio::ip::udp::endpoint& endpoint, boost::system::error_code& error)
 {
     error.clear();
     if (!socket_.is_open())
@@ -46,7 +46,7 @@ void udp_yield_transport::connect(const boost::asio::ip::udp::endpoint& endpoint
     socket_.connect(endpoint, error);
 }
 
-std::size_t udp_yield_transport::read(std::span<std::uint8_t> buffer,
+std::size_t udp_transport::read(std::span<std::uint8_t> buffer,
                                       boost::asio::ip::udp::endpoint& endpoint,
                                       boost::asio::yield_context& yield,
                                       boost::system::error_code& error)
@@ -54,7 +54,7 @@ std::size_t udp_yield_transport::read(std::span<std::uint8_t> buffer,
     return socket_.async_receive_from(boost::asio::buffer(buffer), endpoint, yield[error]);
 }
 
-std::size_t udp_yield_transport::write(std::span<const std::uint8_t> data,
+std::size_t udp_transport::write(std::span<const std::uint8_t> data,
                                        const boost::asio::ip::udp::endpoint& endpoint,
                                        boost::asio::yield_context& yield,
                                        boost::system::error_code& error)
@@ -62,9 +62,9 @@ std::size_t udp_yield_transport::write(std::span<const std::uint8_t> data,
     return socket_.async_send_to(boost::asio::buffer(data), endpoint, yield[error]);
 }
 
-boost::asio::ip::udp::endpoint udp_yield_transport::local_endpoint(boost::system::error_code& error) const { return socket_.local_endpoint(error); }
+boost::asio::ip::udp::endpoint udp_transport::local_endpoint(boost::system::error_code& error) const { return socket_.local_endpoint(error); }
 
-void udp_yield_transport::shutdown()
+void udp_transport::shutdown()
 {
     boost::system::error_code error;
     socket_.cancel(error);

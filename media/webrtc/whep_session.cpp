@@ -49,7 +49,7 @@ std::string random_hex(std::size_t byte_count)
 whep_session::whep_session(worker_context& worker, std::shared_ptr<media_stream> stream)
     : worker_(worker),
       stream_(std::move(stream)),
-      udp_transport_(worker_.io()),
+      udp_transport_(std::make_shared<udp_transport>(worker_.io())),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
       ice_activity_timer_(worker_.io()),
@@ -63,7 +63,7 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
 {
     const auto source_tracks = stream_->tracks();
     boost::system::error_code udp_error;
-    const auto reserved = media_port_pool::instance().acquire_and_bind(udp_transport_, advertised_address, udp_error);
+    const auto reserved = media_port_pool::instance().acquire_and_bind(*udp_transport_, advertised_address, udp_error);
     if (!reserved)
     {
         spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
@@ -193,7 +193,7 @@ void whep_session::safe_shutdown()
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
     answer_ = {};
-    udp_transport_.shutdown();
+    udp_transport_->shutdown();
     media_port_pool::instance().release(local_port_reservation_);
     local_port_reservation_ = 0;
 
@@ -235,7 +235,7 @@ void whep_session::run_udp(boost::asio::yield_context yield)
     boost::system::error_code read_error;
     for (;;)
     {
-        const auto bytes = udp_transport_.read(buffer, endpoint, yield, read_error);
+        const auto bytes = udp_transport_->read(buffer, endpoint, yield, read_error);
         if (read_error)
         {
             if (read_error != boost::asio::error::operation_aborted)
@@ -259,7 +259,7 @@ void whep_session::start_udp_write()
     const auto& datagram = udp_write_queue_.front();
     // 队首在发送完成回调前保持存活，供异步 socket 使用其 packet buffer。
     const auto self = shared_from_this();
-    udp_transport_.async_write(std::span<const std::uint8_t>{datagram.packet.data(), datagram.packet.size()},
+    udp_transport_->async_write(std::span<const std::uint8_t>{datagram.packet.data(), datagram.packet.size()},
                                datagram.endpoint,
                                [self](boost::system::error_code error, std::size_t) { self->handle_udp_write(error); });
 }

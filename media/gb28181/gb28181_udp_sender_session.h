@@ -16,7 +16,7 @@
 #include "media/net/media_port_pool.h"
 #include "media/core/media_stream.h"
 #include "media/core/session_registry.h"
-#include "media/net/udp_yield_transport.h"
+#include "media/net/udp_transport.h"
 #include "media/net/worker_context.h"
 
 namespace media_server
@@ -52,8 +52,8 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
     std::string sender_id_;
     boost::asio::ip::udp::endpoint remote_rtp_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
-    udp_yield_transport rtp_transport_;
-    udp_yield_transport rtcp_transport_;
+    std::shared_ptr<udp_transport> rtp_transport_;
+    std::shared_ptr<udp_transport> rtcp_transport_;
     boost::asio::steady_timer rtcp_timer_;
     std::size_t queued_write_bytes_{};
     std::deque<std::vector<std::uint8_t>> write_queue_;

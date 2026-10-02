@@ -16,7 +16,7 @@
 #include <boost/system/error_code.hpp>
 
 #include "media/net/media_port_pool.h"
-#include "media/net/udp_yield_transport.h"
+#include "media/net/udp_transport.h"
 #include "media/rtsp/rtsp_publish_media.h"
 
 struct rtsp_server_t;
@@ -44,8 +44,8 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
    private:
     struct track_state
     {
-        std::optional<udp_yield_transport> rtp_transport;
-        std::optional<udp_yield_transport> rtcp_transport;
+        std::shared_ptr<udp_transport> rtp_transport;
+        std::shared_ptr<udp_transport> rtcp_transport;
         boost::asio::ip::udp::endpoint rtp_endpoint;
         boost::asio::ip::udp::endpoint rtcp_endpoint;
         std::optional<media_port_pool::port_pair> local_ports;

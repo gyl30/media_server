@@ -24,8 +24,8 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
                                                            std::uint8_t payload_type,
                                                            std::uint32_t ssrc)
     : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc),
-      rtp_transport_(worker_.io()),
-      rtcp_transport_(worker_.io()),
+      rtp_transport_(std::make_shared<udp_transport>(worker_.io())),
+      rtcp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_timer_(worker_.io())
 {
 }
@@ -38,7 +38,7 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     }
 
     boost::system::error_code network_error;
-    auto local_ports = media_port_pool::instance().acquire_pair_and_bind(rtp_transport_, rtcp_transport_, bind_address, network_error);
+    auto local_ports = media_port_pool::instance().acquire_pair_and_bind(*rtp_transport_, *rtcp_transport_, bind_address, network_error);
     if (!local_ports)
     {
         receiver_.shutdown();
@@ -69,7 +69,7 @@ void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
     for (;;)
     {
         boost::asio::ip::udp::endpoint endpoint;
-        const auto bytes = rtp_transport_.read(buffer, endpoint, yield, error);
+        const auto bytes = rtp_transport_->read(buffer, endpoint, yield, error);
         if (!local_ports_)
         {
             return;
@@ -88,7 +88,7 @@ void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
         }
         if (result == gb28181_rtp_receive_result::accepted && !remote_rtp_endpoint_)
         {
-            rtp_transport_.connect(endpoint, error);
+            rtp_transport_->connect(endpoint, error);
             if (error)
             {
                 shutdown();
@@ -106,7 +106,7 @@ void gb28181_udp_receiver_session::run_rtcp(boost::asio::yield_context yield)
     for (;;)
     {
         boost::asio::ip::udp::endpoint endpoint;
-        const auto bytes = rtcp_transport_.read(buffer, endpoint, yield, error);
+        const auto bytes = rtcp_transport_->read(buffer, endpoint, yield, error);
         if (!local_ports_)
         {
             return;
@@ -122,7 +122,7 @@ void gb28181_udp_receiver_session::run_rtcp(boost::asio::yield_context yield)
             continue;
         }
 
-        rtcp_transport_.connect(endpoint, error);
+        rtcp_transport_->connect(endpoint, error);
         if (error)
         {
             shutdown();
@@ -177,7 +177,7 @@ void gb28181_udp_receiver_session::schedule_rtcp()
                         return;
                     }
                     boost::system::error_code write_error;
-                    self->rtcp_transport_.write(packet, target, yield, write_error);
+                    self->rtcp_transport_->write(packet, target, yield, write_error);
                     if (!self->local_ports_)
                     {
                         return;
@@ -202,8 +202,8 @@ void gb28181_udp_receiver_session::safe_shutdown()
     local_ports_.reset();
     session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     rtcp_timer_.cancel();
-    rtp_transport_.shutdown();
-    rtcp_transport_.shutdown();
+    rtp_transport_->shutdown();
+    rtcp_transport_->shutdown();
     receiver_.shutdown();
     media_port_pool::instance().release(local_ports);
     spdlog::debug("gb28181 udp session shutdown {}", receiver_.stream_name());

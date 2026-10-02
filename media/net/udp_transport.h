@@ -1,6 +1,7 @@
-#ifndef MEDIA_NET_UDP_YIELD_TRANSPORT_H
-#define MEDIA_NET_UDP_YIELD_TRANSPORT_H
+#ifndef MEDIA_NET_UDP_TRANSPORT_H
+#define MEDIA_NET_UDP_TRANSPORT_H
 
+#include <memory>
 #include <span>
 #include <cstddef>
 #include <cstdint>
@@ -16,10 +17,10 @@
 namespace media_server
 {
 
-class udp_yield_transport final
+class udp_transport final : public std::enable_shared_from_this<udp_transport>
 {
    public:
-    explicit udp_yield_transport(boost::asio::io_context& owner);
+    explicit udp_transport(boost::asio::io_context& owner);
 
    public:
     void startup(boost::asio::ip::address bind_address, std::uint16_t port, boost::system::error_code& error);
