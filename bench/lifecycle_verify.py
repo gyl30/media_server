@@ -111,7 +111,7 @@ class Run:
             command = [self.args.ffmpeg, "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", self.args.fixture,
                        "-c", "copy"]
             command += ["-f", "flv", f"rtmp://{self.host}:{self.rtmp_port}/{name}"] if protocol == "rtmp" else [
-                "-f", "rtsp", "-rtsp_transport", "tcp", f"rtsp://{self.host}:{self.rtsp_port}/{name}"]
+                "-f", "rtsp", "-rtsp_transport", self.args.rtsp_publish_transport, f"rtsp://{self.host}:{self.rtsp_port}/{name}"]
         environment = {**os.environ, "LD_PRELOAD": str(self.output / "reset_peer.so")} if reset else None
         process = self.launch(f"publish-{protocol}", command, env=environment)
         try:
@@ -490,6 +490,7 @@ def main():
     parser.add_argument("--generations", type=int, default=20)
     parser.add_argument("--inputs", nargs="+", choices=("rtmp", "rtsp", "whip", "gb"), default=["rtmp", "rtsp", "whip", "gb"])
     parser.add_argument("--gb-transport", choices=("udp", "tcp_sender_active", "tcp_sender_passive"), default="udp")
+    parser.add_argument("--rtsp-publish-transport", choices=("tcp", "udp"), default="tcp")
     parser.add_argument("--iterations", type=int, default=300)
     parser.add_argument("--batch", type=int, default=20)
     parser.add_argument("--duration", type=int, default=600)
