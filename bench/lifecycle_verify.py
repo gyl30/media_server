@@ -154,6 +154,15 @@ class Run:
                 expected = (204, 404) if path == "receiver" and transport != "udp" else (204,)
                 assert status in expected, (path, transport, status)
                 assert request(self.http_port, "POST", f"/gb28181/{path}/delete", body)[0] == 404
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with socket.create_connection((self.host, self.http_port), timeout=2) as probe:
+                    probe.sendall(f"GET /{name}.flv HTTP/1.1\r\nHost: localhost\r\n\r\n".encode())
+                    status = probe.recv(64)
+                if status.startswith(b"HTTP/1.1 404"):
+                    break
+                time.sleep(0.05)
+            assert status.startswith(b"HTTP/1.1 404"), "deleted GB receiver remains in source registry"
 
     def clients(self, name, count=1, duration=3, hls=True):
         common = ["--viewers", count, "--ramp-per-second", "100", "--warmup", "0", "--duration", duration]
