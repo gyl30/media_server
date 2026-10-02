@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <spdlog/spdlog.h>
+#include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/spawn.hpp>
 
@@ -47,6 +48,21 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     local_ports_ = *local_ports;
 
     const auto self = shared_from_this();
+    rtcp_transport_->set_write_callback(
+        [weak = weak_from_this()](boost::system::error_code error, std::size_t)
+        {
+            const auto locked = weak.lock();
+            if (!locked || !locked->local_ports_)
+            {
+                return;
+            }
+            if (error && error != boost::asio::error::no_buffer_space)
+            {
+                locked->shutdown();
+                return;
+            }
+            locked->schedule_rtcp();
+        });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp(yield); });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp(yield); });
     schedule_rtcp();
@@ -169,26 +185,7 @@ void gb28181_udp_receiver_session::schedule_rtcp()
             }
 
             std::vector<std::uint8_t> packet(buffer.begin(), buffer.begin() + bytes);
-            self->worker_.spawn(
-                [self, packet = std::move(packet), target = *target](boost::asio::yield_context yield)
-                {
-                    if (!self->local_ports_)
-                    {
-                        return;
-                    }
-                    boost::system::error_code write_error;
-                    self->rtcp_transport_->write(packet, target, yield, write_error);
-                    if (!self->local_ports_)
-                    {
-                        return;
-                    }
-                    if (write_error)
-                    {
-                        self->shutdown();
-                        return;
-                    }
-                    self->schedule_rtcp();
-                });
+            self->rtcp_transport_->write(std::move(packet), *target);
         });
 }
 

@@ -23,7 +23,6 @@ namespace
 
 constexpr auto establishment_timeout = std::chrono::seconds{15};
 constexpr auto ice_activity_timeout = std::chrono::seconds{30};
-constexpr std::size_t max_udp_write_queue_bytes = 1024U * 1024U;
 
 std::string random_hex(std::size_t byte_count)
 {
@@ -71,6 +70,25 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
     }
     local_port_reservation_ = *reserved;
     const auto self = shared_from_this();
+    udp_transport_->set_write_callback(
+        [weak = weak_from_this()](boost::system::error_code error, std::size_t)
+        {
+            const auto locked = weak.lock();
+            if (!locked || locked->shutdown_requested_.load(std::memory_order_acquire) || !error)
+            {
+                return;
+            }
+            if (error == boost::asio::error::no_buffer_space)
+            {
+                spdlog::warn("whep udp write queue full session {}", locked->id_);
+                return;
+            }
+            if (error != boost::asio::error::operation_aborted)
+            {
+                spdlog::debug("webrtc udp send failed session {} error {}", locked->id_, error.message());
+            }
+            locked->shutdown();
+        });
 
     ice_ufrag_ = random_hex(8);
     ice_pwd_ = random_hex(16);
@@ -247,47 +265,6 @@ void whep_session::run_udp(boost::asio::yield_context yield)
         handle_packet(std::span<const std::uint8_t>{buffer.data(), bytes}, endpoint);
     }
     shutdown();
-}
-
-void whep_session::start_udp_write()
-{
-    if (shutdown_requested_.load(std::memory_order_acquire) || udp_write_queue_.empty())
-    {
-        return;
-    }
-
-    const auto& datagram = udp_write_queue_.front();
-    // 队首在发送完成回调前保持存活，供异步 socket 使用其 packet buffer。
-    const auto self = shared_from_this();
-    udp_transport_->async_write(std::span<const std::uint8_t>{datagram.packet.data(), datagram.packet.size()},
-                               datagram.endpoint,
-                               [self](boost::system::error_code error, std::size_t) { self->handle_udp_write(error); });
-}
-
-void whep_session::handle_udp_write(boost::system::error_code error)
-{
-    if (shutdown_requested_.load(std::memory_order_acquire))
-    {
-        return;
-    }
-    if (error)
-    {
-        if (error != boost::asio::error::operation_aborted)
-        {
-            const auto& endpoint = udp_write_queue_.front().endpoint;
-            spdlog::debug("webrtc udp send failed session {} remote {} {} error {}",
-                          id_,
-                          endpoint.address().to_string(),
-                          endpoint.port(),
-                          error.message());
-        }
-        shutdown();
-        return;
-    }
-
-    queued_write_bytes_ -= udp_write_queue_.front().packet.size();
-    udp_write_queue_.pop_front();
-    start_udp_write();
 }
 
 void whep_session::handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
@@ -525,23 +502,7 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
     {
         return;
     }
-    if (packet.size() > max_udp_write_queue_bytes || queued_write_bytes_ > max_udp_write_queue_bytes - packet.size())
-    {
-        spdlog::warn(
-            "whep udp write queue full session {} queued {} limit {} dropped {}", id_, queued_write_bytes_, max_udp_write_queue_bytes, packet.size());
-        return;
-    }
-
-    const bool start_write = udp_write_queue_.empty();
-    queued_write_bytes_ += packet.size();
-    udp_write_queue_.push_back(pending_datagram{
-        .packet = std::move(packet),
-        .endpoint = std::move(endpoint),
-    });
-    if (start_write)
-    {
-        start_udp_write();
-    }
+    udp_transport_->write(std::move(packet), std::move(endpoint));
 }
 
 void whep_session::schedule_dtls_timeout()

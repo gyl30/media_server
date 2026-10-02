@@ -56,7 +56,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     void run_rtp(std::size_t track_index, boost::asio::yield_context yield);
     void run_rtcp(std::size_t track_index, boost::asio::yield_context yield);
     void schedule_rtcp();
-    void run_rtcp_write(boost::asio::yield_context yield);
+    void send_rtcp(std::size_t track_index);
     int on_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport, const std::string& session_id);
     int on_record(rtsp_server_t* server);
 

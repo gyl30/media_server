@@ -2,7 +2,6 @@
 #define MEDIA_WEBRTC_WHIP_SESSION_H
 
 #include <span>
-#include <deque>
 #include <memory>
 #include <string>
 #include <expected>
@@ -46,15 +45,7 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     [[nodiscard]] const std::string& id() const noexcept;
 
    private:
-    struct pending_datagram
-    {
-        std::vector<std::uint8_t> packet;
-        boost::asio::ip::udp::endpoint endpoint;
-    };
-
-   private:
     void run_udp(boost::asio::yield_context yield);
-    void run_udp_write(boost::asio::yield_context yield);
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_dtls(std::span<const std::uint8_t> packet);
@@ -77,8 +68,6 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<whip_media_receiver> media_receiver_;
     std::shared_ptr<udp_transport> udp_transport_;
-    std::size_t queued_write_bytes_{};
-    std::deque<pending_datagram> udp_write_queue_;
     boost::asio::steady_timer dtls_timer_;
     boost::asio::steady_timer establishment_timer_;
     boost::asio::steady_timer ice_activity_timer_;

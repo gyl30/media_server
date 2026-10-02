@@ -1,7 +1,10 @@
 #ifndef MEDIA_NET_UDP_TRANSPORT_H
 #define MEDIA_NET_UDP_TRANSPORT_H
 
+#include <deque>
+#include <functional>
 #include <memory>
+#include <vector>
 #include <span>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +23,8 @@ namespace media_server
 class udp_transport final : public std::enable_shared_from_this<udp_transport>
 {
    public:
+    using write_callback = std::function<void(boost::system::error_code, std::size_t)>;
+
     explicit udp_transport(boost::asio::io_context& owner);
 
    public:
@@ -29,20 +34,29 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
                      boost::asio::ip::udp::endpoint& endpoint,
                      boost::asio::yield_context& yield,
                      boost::system::error_code& error);
-    std::size_t write(std::span<const std::uint8_t> data,
-                      const boost::asio::ip::udp::endpoint& endpoint,
-                      boost::asio::yield_context& yield,
-                      boost::system::error_code& error);
-    template <typename Handler>
-    void async_write(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint, Handler&& handler)
-    {
-        socket_.async_send_to(boost::asio::buffer(data), endpoint, std::forward<Handler>(handler));
-    }
+    // 与 startup/connect/read 一样，写入和关闭由 owner executor 调用。
+    // 返回入队结果；callback 报告每个 datagram completion，overflow 同步报告 no_buffer_space。
+    void set_write_callback(write_callback callback);
+    bool write(std::span<const std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint);
+    bool write(std::vector<std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint);
     [[nodiscard]] boost::asio::ip::udp::endpoint local_endpoint(boost::system::error_code& error) const;
     void shutdown();
 
    private:
+    struct pending_datagram
+    {
+        std::vector<std::uint8_t> packet;
+        boost::asio::ip::udp::endpoint endpoint;
+    };
+
+    void start_write();
+    void on_write(const std::shared_ptr<pending_datagram>& datagram, boost::system::error_code error, std::size_t bytes);
+
     boost::asio::ip::udp::socket socket_;
+    std::deque<std::shared_ptr<pending_datagram>> write_queue_;
+    std::size_t queued_write_bytes_{};
+    write_callback write_callback_;
+    bool stopped_{};
 };
 
 }    // namespace media_server

@@ -3,7 +3,6 @@
 
 #include <atomic>
 #include <span>
-#include <deque>
 #include <memory>
 #include <string>
 #include <expected>
@@ -56,16 +55,7 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     void on_end() override;
 
    private:
-    struct pending_datagram
-    {
-        std::vector<std::uint8_t> packet;
-        boost::asio::ip::udp::endpoint endpoint;
-    };
-
-   private:
     void run_udp(boost::asio::yield_context yield);
-    void start_udp_write();
-    void handle_udp_write(boost::system::error_code error);
     void handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void handle_dtls(std::span<const std::uint8_t> packet);
@@ -91,8 +81,6 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<webrtc_packetizer> packetizer_;
     std::shared_ptr<udp_transport> udp_transport_;
-    std::size_t queued_write_bytes_{};
-    std::deque<pending_datagram> udp_write_queue_;
     boost::asio::steady_timer dtls_timer_;
     boost::asio::steady_timer establishment_timer_;
     boost::asio::steady_timer ice_activity_timer_;

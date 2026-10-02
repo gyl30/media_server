@@ -170,6 +170,24 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     cleanup.set_active(false);
 
     const auto self = shared_from_this();
+    state.rtcp_transport->set_write_callback(
+        [weak = weak_from_this(), track_index](boost::system::error_code error, std::size_t)
+        {
+            const auto locked = weak.lock();
+            if (!locked || !locked->track_states_[track_index].local_ports)
+            {
+                return;
+            }
+            if (error && error != boost::asio::error::no_buffer_space)
+            {
+                if (error != boost::asio::error::operation_aborted && locked->shutdown_handler_)
+                {
+                    locked->shutdown_handler_();
+                }
+                return;
+            }
+            locked->send_rtcp(track_index + 1U);
+        });
     worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtp(track_index, yield); });
     worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtcp(track_index, yield); });
 
@@ -213,15 +231,14 @@ void rtsp_publish_udp_session::schedule_rtcp()
                 return;
             }
 
-            self->worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp_write(yield); });
+            self->send_rtcp(0);
         });
 }
 
-void rtsp_publish_udp_session::run_rtcp_write(boost::asio::yield_context yield)
+void rtsp_publish_udp_session::send_rtcp(std::size_t track_index)
 {
-    boost::system::error_code error;
     std::array<std::uint8_t, 1500> buffer{};
-    for (std::size_t index = 0; index < track_states_.size(); ++index)
+    for (std::size_t index = track_index; index < track_states_.size(); ++index)
     {
         auto& state = track_states_[index];
         const auto bytes = media_.generate_rtcp(index, buffer);
@@ -230,15 +247,8 @@ void rtsp_publish_udp_session::run_rtcp_write(boost::asio::yield_context yield)
             continue;
         }
 
-        state.rtcp_transport->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint, yield, error);
-        if (error)
-        {
-            if (error != boost::asio::error::operation_aborted && shutdown_handler_)
-            {
-                shutdown_handler_();
-            }
-            return;
-        }
+        state.rtcp_transport->write(std::span<const std::uint8_t>{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint);
+        return;
     }
 
     schedule_rtcp();

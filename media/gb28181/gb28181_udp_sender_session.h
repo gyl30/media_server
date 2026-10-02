@@ -39,7 +39,7 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
 
    private:
     void shutdown_udp_transports();
-    void run_rtp_write(boost::asio::yield_context yield);
+    void start_rtp_write();
     void schedule_rtcp();
     void send_packet(std::vector<std::uint8_t> packet);
 
