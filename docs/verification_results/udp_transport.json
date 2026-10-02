@@ -1,0 +1,2522 @@
+{
+  "schema_version": 1,
+  "base_head": "c25092bf1ad1e22e253b8a37eba3ce532a287657",
+  "verified_code_head": "a8982d9e3900898569684294c7141efb503a0495",
+  "production_code_head": "f572de3f8929c10b01b48b4973785df4a2859d33",
+  "final_head_lookup_command": [
+    "git",
+    "log",
+    "-1",
+    "--format=%H",
+    "--",
+    "docs/udp_transport_verification.md"
+  ],
+  "commits_before_report": [
+    {
+      "sha": "52f0c95b892312933ac6424bc6004401a4816a56",
+      "message": "统一 UDP 传输命名与共享持有"
+    },
+    {
+      "sha": "1bd5b808cb4eaa56e30d4927f7a5582d45ca7060",
+      "message": "统一 UDP 串行异步写入并接入 WebRTC 与 RTCP"
+    },
+    {
+      "sha": "43440c8a413c5a55434f271750e171e2353c8896",
+      "message": "接入 GB28181 UDP 写队列并删除会话调度"
+    },
+    {
+      "sha": "44ea582dcea3c1647168e46785e4786549f6a437",
+      "message": "补充 UDP 写队列生命周期与会话策略测试"
+    },
+    {
+      "sha": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "message": "区分 UDP 入队拒绝与实际发送错误"
+    },
+    {
+      "sha": "a8982d9e3900898569684294c7141efb503a0495",
+      "message": "补充 RTSP UDP 发布与 GB RTCP 真实协议验证"
+    }
+  ],
+  "evidence_root": "/tmp/media_server_udp-c25092b",
+  "original_evidence_root_preserved": "/tmp/media_server_verify-728178f",
+  "fixture": {
+    "path": "/tmp/media_server_verify-728178f/h264-aac.flv",
+    "sha256": "446b462c4b408d997c17cd4bab82d3ca4e9bcda1f04c758471043518d62b800f",
+    "video": "H264 1280x720 30fps",
+    "audio": "AAC 44100Hz stereo 96kbit/s",
+    "duration_seconds": 10.023
+  },
+  "measurement_environment": {
+    "cpu": "Intel i7-13700KF,1socket,16cores,24logicalCPUs",
+    "ram_gib": 31,
+    "kernel": "6.8.0-136-generic",
+    "compiler": "GCC16.0.1 20260315 experimental",
+    "cmake": "3.31.10",
+    "Boost": "1.92.0",
+    "jemalloc": "5.3.0_0",
+    "OpenSSL": "3.0.2",
+    "libSRTP": "2.7.0",
+    "service_FFmpeg_libraries": "9.0.1",
+    "test_FFmpeg_CLI": "7.1.1"
+  },
+  "builds": {
+    "performance": {
+      "path": "/tmp/media_server_verify-728178f/build_perf",
+      "cxx_flags": "-O2 -g -DNDEBUG -std=c++23 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wimplicit-fallthrough -Werror=format-security -Werror -Wno-array-bounds -Wno-stringop-overflow -Wno-mismatched-new-delete -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fstack-protector-strong -fstack-clash-protection -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -ftrivial-auto-var-init=zero -fPIE -Wtrampolines -Wbidi-chars=any -fzero-init-padding-bits=all -fcf-protection=full",
+      "binary_sha256": "c98999c0241ef590d9632bfe1b85952613d0e84e5431482b8fa33d46ed2394ac"
+    },
+    "asan_ubsan": {
+      "path": "/tmp/media_server_verify-728178f/build_asan",
+      "cxx_flags": "-O2 -g -DNDEBUG -std=c++23 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wimplicit-fallthrough -Werror=format-security -Werror -Wno-array-bounds -Wno-stringop-overflow -Wno-mismatched-new-delete -U_FORTIFY_SOURCE -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -fno-optimize-sibling-calls -fno-common",
+      "binary_sha256": "647adbad4ff72076d4d3caaaf1b0bca36b150177a05a4517699ce0e93f7eb0c3"
+    },
+    "ubsan": {
+      "path": "/tmp/media_server_verify-728178f/build_ubsan",
+      "cxx_flags": "-O2 -g -DNDEBUG -std=c++23 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wimplicit-fallthrough -Werror=format-security -Werror -Wno-array-bounds -Wno-stringop-overflow -Wno-mismatched-new-delete -U_FORTIFY_SOURCE -O1 -g -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -fno-optimize-sibling-calls -fno-common",
+      "binary_sha256": "71b15df1105c16902f585b22117ceadc1c5e89a9f06d2bd606916a943e3a8c7f"
+    }
+  },
+  "client_binary_sha256": {
+    "whep_fanout": "cb77325f9ddf21c520df6bf83ac079a25864a2b8f5bcb0c6e598c76b1dc67aa0",
+    "rtmp_fanout": "46dc522502a9f901941b9f81bec1c7d99b95fc29ae6147f3a2f932297de230d8",
+    "rtsp_fanout": "6680027c68671e08e3ee79d9fb96ab972f11b47ff2d356379260cd98dfbd77d3"
+  },
+  "transport_contract": {
+    "executor": "All operations are called on the owner executor; sessions retain their existing worker dispatch/fencing.",
+    "write_admission": "bool; span is copied, vector is moved, endpoint is stored by value.",
+    "write_callback": "Actual send completion only; success/error + byte count. Queue admission rejection does not invoke completion.",
+    "high_water_bytes": 1048576,
+    "accounting_includes_in_flight": true,
+    "overflow": "Drop newest whole datagram, return false, preserve existing queue, sessions continue.",
+    "socket_error": "Fence/clear transport writer and report actual error once; session decides shutdown.",
+    "single_send_in_flight": "Only an empty-to-nonempty queue starts a send; completion pops its datagram and starts the next.",
+    "buffer_lifetime": "async_send_to handler captures self and shared_ptr<pending_datagram> independently of the queue.",
+    "shutdown": "stopped=true, clear queue/callback/byte count, cancel and close; stale completion fenced by state and datagram identity.",
+    "session_callbacks": "Weak session references; success does not lock the session.",
+    "read": "Existing async_receive_from via yield; unchanged."
+  },
+  "targeted_tests": {
+    "path": "tests/udp_transport.cpp",
+    "ctest_name": "udp_transport",
+    "status": "PASS",
+    "cases": {
+      "serialization_and_endpoint": {
+        "datagrams": 40,
+        "destinations": 2,
+        "connected_socket_alternates_destinations": true,
+        "span_caller_buffer_mutation": true,
+        "endpoint_caller_mutation": true,
+        "move_vector_ownership": true
+      },
+      "shutdown_in_flight": {
+        "iterations": 100,
+        "datagrams_per_iteration": 3,
+        "datagram_bytes": 60000,
+        "checks": [
+          "No pending second/third datagram sent after shutdown",
+          "No user callback after shutdown",
+          "No retained callback owner",
+          "Transport retained until completion then released",
+          "Repeated shutdown is safe"
+        ]
+      },
+      "overflow": {
+        "accepted_datagrams": 32,
+        "datagram_bytes": 32768,
+        "boundary_bytes": 1048576,
+        "rejected_newest_bytes": [
+          1,
+          1048577
+        ],
+        "resumed_datagram_bytes": 257,
+        "total_successful_completions": 33
+      },
+      "socket_error": {
+        "wire_error": "IPv4 UDP message_size with 65508 bytes",
+        "error_completions": 1,
+        "pending_packet_not_sent": true
+      },
+      "rebind": {
+        "old_completion_does_not_touch_new_queue": true,
+        "new_datagram_bytes": 17
+      },
+      "gb_sender_policy": {
+        "overflow_session_continues": true,
+        "subsequent_small_frame_delivered": true,
+        "destination_port_zero_real_socket_error_removes_session": true,
+        "shutdown_once": true,
+        "weak_session_released": true
+      }
+    },
+    "scope": "Public transport wire tests and actual GB UDP sender policy; other session policies checked in source and real protocol lifecycle, without injecting private state into each protocol."
+  },
+  "ctest": {
+    "normal": {
+      "passed": 8,
+      "failed": 0,
+      "log_path": "/tmp/media_server_udp-c25092b/stage6-ctest.log",
+      "log_sha256": "13d3c88a8199f62e806e840374f3e60e1733bc63aaa5a64ba58fec710d68ee06"
+    },
+    "performance_build": {
+      "passed": 8,
+      "failed": 0,
+      "log_path": "/tmp/media_server_udp-c25092b/perf-ctest.log",
+      "log_sha256": "b1a6bad269bab42f1a482c1fdeed8f8678e76502410e0983000e66dd370dd4c9"
+    },
+    "asan_ubsan": {
+      "passed": 8,
+      "failed": 0,
+      "log_path": "/tmp/media_server_udp-c25092b/asan-ctest.log",
+      "log_sha256": "28eb59c694894c082bae7665d86f487d5a2c74fc51cb3e25f6d9fa8ded183785"
+    },
+    "ubsan": {
+      "passed": 8,
+      "failed": 0,
+      "log_path": "/tmp/media_server_udp-c25092b/ubsan-ctest.log",
+      "log_sha256": "ee4d30862328cdced5f7b3256b77822989b4088831b76f897cc4d86199e85fc8"
+    },
+    "final_report_stage": {
+      "passed": 8,
+      "failed": 0,
+      "log_path": "/tmp/media_server_udp-c25092b/final-ctest.log",
+      "log_sha256": "13d3c88a8199f62e806e840374f3e60e1733bc63aaa5a64ba58fec710d68ee06"
+    }
+  },
+  "sanitizers": {
+    "asan_options": "detect_leaks=1:halt_on_error=1",
+    "ubsan_options": "halt_on_error=1:print_stacktrace=1",
+    "asan_configuration": "MEDIA_SERVER_SANITIZER=address; address,undefined; O1; static Boost 1.92 ucontext with ASan; existing CMake guard passed.",
+    "ubsan_configuration": "MEDIA_SERVER_SANITIZER=undefined; O1; normal Boost 1.92.",
+    "server_instrumented_clients_normal": true,
+    "third_party_prebuilt_libraries_not_all_instrumented": true,
+    "standard_warning": "ASan makecontext/swapcontext support warning remains visible; no ASan/LSan/UBSan diagnostics in successful acceptance runs."
+  },
+  "protocol_suites": [
+    {
+      "name": "normal-smoke-rtsp-udp",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "smoke",
+      "result_path": "/tmp/media_server_udp-c25092b/normal-smoke-rtsp-udp/result.json",
+      "result_sha256": "cfb624de3adc0334e292bc10a83e1d909e9a86d92a6cbeda458bd7c2bd413827",
+      "commands_path": "/tmp/media_server_udp-c25092b/normal-smoke-rtsp-udp/commands.json",
+      "command_count": 63,
+      "server_command": [
+        "/home/gyl/example/media_server/build/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "22930",
+        "--rtsp-port",
+        "22931",
+        "--http-port",
+        "22932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 282,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [
+        {
+          "path": "result.rtsp.single.resources.udp_drops",
+          "drops": 67
+        },
+        {
+          "path": "result.rtsp.multiple.resources.udp_drops",
+          "drops": 67
+        },
+        {
+          "path": "result.rtsp.udp.resources.udp_drops",
+          "drops": 67
+        },
+        {
+          "path": "result.rtsp.tcp_sender_active.resources.udp_drops",
+          "drops": 67
+        },
+        {
+          "path": "result.rtsp.tcp_sender_passive.resources.udp_drops",
+          "drops": 67
+        }
+      ],
+      "config": {
+        "build_dir": "/home/gyl/example/media_server/build",
+        "client_dir": "/home/gyl/example/media_server/build",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "udp"
+      },
+      "effective_workload": {
+        "inputs": [
+          "rtmp",
+          "rtsp",
+          "whip"
+        ],
+        "viewers_single": 1,
+        "viewers_multiple": 4,
+        "outputs": [
+          "rtmp",
+          "rtsp",
+          "whep",
+          "hls",
+          "http-flv"
+        ],
+        "gb_relay_transports": [
+          "udp",
+          "tcp_sender_active",
+          "tcp_sender_passive"
+        ],
+        "independent_ffmpeg_decode_inputs": [
+          "rtmp",
+          "rtsp"
+        ],
+        "independent_ffmpeg_decode_outputs": [
+          "rtmp",
+          "rtsp",
+          "http-flv",
+          "hls"
+        ]
+      }
+    },
+    {
+      "name": "normal-smoke",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "smoke",
+      "result_path": "/tmp/media_server_udp-c25092b/normal-smoke/result.json",
+      "result_sha256": "a6abffab4cfebbd9a7ce4549b78de67e5d6db9481364cc622e8a2e3dba6b7806",
+      "commands_path": "/tmp/media_server_udp-c25092b/normal-smoke/commands.json",
+      "command_count": 63,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_perf/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "29930",
+        "--rtsp-port",
+        "29931",
+        "--http-port",
+        "29932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 282,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "tcp"
+      },
+      "effective_workload": {
+        "inputs": [
+          "rtmp",
+          "rtsp",
+          "whip"
+        ],
+        "viewers_single": 1,
+        "viewers_multiple": 4,
+        "outputs": [
+          "rtmp",
+          "rtsp",
+          "whep",
+          "hls",
+          "http-flv"
+        ],
+        "gb_relay_transports": [
+          "udp",
+          "tcp_sender_active",
+          "tcp_sender_passive"
+        ],
+        "independent_ffmpeg_decode_inputs": [
+          "rtmp",
+          "rtsp"
+        ],
+        "independent_ffmpeg_decode_outputs": [
+          "rtmp",
+          "rtsp",
+          "http-flv",
+          "hls"
+        ]
+      }
+    },
+    {
+      "name": "normal-replacement",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "replacement",
+      "result_path": "/tmp/media_server_udp-c25092b/normal-replacement/result.json",
+      "result_sha256": "5c62c521fbb0226026a0a7aceddbb9eda9a155e42c23861e5da0dae15f1ea6d3",
+      "commands_path": "/tmp/media_server_udp-c25092b/normal-replacement/commands.json",
+      "command_count": 302,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_perf/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "23930",
+        "--rtsp-port",
+        "23931",
+        "--http-port",
+        "23932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 1280,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "tcp"
+      },
+      "generations": {
+        "rtmp": 20,
+        "rtsp": 20,
+        "whip": 20,
+        "gb": 20
+      },
+      "generation_total": 80
+    },
+    {
+      "name": "normal-replacement-rtsp-udp",
+      "status": "PASS",
+      "head_recorded": "a8982d9e3900898569684294c7141efb503a0495",
+      "suite": "replacement",
+      "result_path": "/tmp/media_server_udp-c25092b/normal-replacement-rtsp-udp/result.json",
+      "result_sha256": "62385d5b9cf0b2cd9e66f75bca4190ab233c95eda35be7a07d90cbe65cc33501",
+      "commands_path": "/tmp/media_server_udp-c25092b/normal-replacement-rtsp-udp/commands.json",
+      "command_count": 81,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_perf/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "30930",
+        "--rtsp-port",
+        "30931",
+        "--http-port",
+        "30932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 320,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [
+        {
+          "path": "result.rtsp[10].resources.udp_drops",
+          "drops": 176
+        }
+      ],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "udp"
+      },
+      "generations": {
+        "rtsp": 20
+      },
+      "generation_total": 20
+    },
+    {
+      "name": "normal-replacement-gb-tcp",
+      "status": "PASS",
+      "head_recorded": "a8982d9e3900898569684294c7141efb503a0495",
+      "suite": "replacement",
+      "result_path": "/tmp/media_server_udp-c25092b/normal-replacement-gb-tcp/result.json",
+      "result_sha256": "902690a00e7e9f8e422e1409795e7fa300288b44464696fc4c268633074ed328",
+      "commands_path": "/tmp/media_server_udp-c25092b/normal-replacement-gb-tcp/commands.json",
+      "command_count": 62,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_perf/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "31930",
+        "--rtsp-port",
+        "31931",
+        "--http-port",
+        "31932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 320,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "tcp_sender_active",
+        "rtsp_publish_transport": "tcp"
+      },
+      "generations": {
+        "gb": 20
+      },
+      "generation_total": 20
+    },
+    {
+      "name": "normal-churn",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "churn",
+      "result_path": "/tmp/media_server_udp-c25092b/normal-churn/result.json",
+      "result_sha256": "c767e86ddd695bad2119ee046636170ad0fde5edde0136412373723c768f8b62",
+      "commands_path": "/tmp/media_server_udp-c25092b/normal-churn/commands.json",
+      "command_count": 77,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_perf/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "24930",
+        "--rtsp-port",
+        "24931",
+        "--http-port",
+        "24932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 375,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "tcp"
+      },
+      "iterations_per_protocol": 300,
+      "batch": 20,
+      "protocols": [
+        "rtmp",
+        "rtsp",
+        "http-flv",
+        "hls",
+        "whep",
+        "whip",
+        "gb_udp_pairs"
+      ],
+      "resources": {
+        "idle": {
+          "cpu": 0.0,
+          "rss_kib": 18492,
+          "vmsize_kib": 187720,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 6635,
+          "fd": 26,
+          "time": 5125114.183682533,
+          "VmSize": 187720,
+          "VmHWM": 18492,
+          "loopback_tx_bytes": 19704640761478
+        },
+        "after_publish": {
+          "cpu": 36.15,
+          "rss_kib": 67836,
+          "vmsize_kib": 402760,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 50119,
+          "fd": 26,
+          "time": 5125526.550303725,
+          "VmSize": 402760,
+          "VmHWM": 93320,
+          "loopback_tx_bytes": 19715917624583
+        },
+        "settled": {
+          "cpu": 36.15,
+          "rss_kib": 67836,
+          "vmsize_kib": 402760,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 50119,
+          "fd": 26,
+          "time": 5125526.551489605,
+          "VmSize": 402760,
+          "VmHWM": 93320,
+          "loopback_tx_bytes": 19715917624583
+        }
+      },
+      "expired_hls_sessions": 300,
+      "expired_hls_status": 403
+    },
+    {
+      "name": "normal-disconnect-rtsp-udp",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "disconnect",
+      "result_path": "/tmp/media_server_udp-c25092b/normal-disconnect-rtsp-udp/result.json",
+      "result_sha256": "0433d77d36607eedb42c3d6e50a76f9378720888f2e76d41b15e092d2211a99b",
+      "commands_path": "/tmp/media_server_udp-c25092b/normal-disconnect-rtsp-udp/commands.json",
+      "command_count": 19,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_perf/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "25930",
+        "--rtsp-port",
+        "25931",
+        "--http-port",
+        "25932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 48,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [
+        {
+          "path": "result.cases[1].media.resources.udp_drops",
+          "drops": 10
+        }
+      ],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "udp"
+      },
+      "cases": [
+        {
+          "publisher_reset": "rtmp"
+        },
+        {
+          "publisher_reset": "rtsp"
+        },
+        {
+          "viewer_tcp_reset": "rtmp",
+          "real_frames": true
+        },
+        {
+          "viewer_tcp_reset": "rtsp",
+          "real_frames": true
+        },
+        {
+          "gb_udp_peer_disappeared": "PASS",
+          "receiver_delete_status": 204,
+          "ports_released": [
+            "49156",
+            "49157"
+          ]
+        },
+        {
+          "viewer_reset_port": 25932
+        },
+        {
+          "viewer_reset_port": 25930
+        },
+        {
+          "rtsp_setup_without_play": "PASS"
+        },
+        {
+          "webrtc": "whep",
+          "case": "established",
+          "port": 49175
+        },
+        {
+          "webrtc": "whep",
+          "case": "dtls_timeout",
+          "port": 49176
+        },
+        {
+          "webrtc": "whip",
+          "case": "established",
+          "port": 49177
+        },
+        {
+          "webrtc": "whip",
+          "case": "dtls_timeout",
+          "port": 49178
+        }
+      ],
+      "resources": {
+        "before": {
+          "cpu": 0.0,
+          "rss_kib": 18472,
+          "vmsize_kib": 187720,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 5759,
+          "fd": 26,
+          "time": 5125115.361322165,
+          "VmSize": 187720,
+          "VmHWM": 18472,
+          "loopback_tx_bytes": 19704679517365
+        },
+        "after": {
+          "cpu": 0.76,
+          "rss_kib": 37892,
+          "vmsize_kib": 214344,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 18355,
+          "fd": 27,
+          "time": 5125164.551993356,
+          "VmSize": 214344,
+          "VmHWM": 38632,
+          "loopback_tx_bytes": 19708947745257
+        },
+        "active_idle": {
+          "cpu": 0.24,
+          "rss_kib": 37824,
+          "vmsize_kib": 208712,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 18239,
+          "fd": 27,
+          "time": 5125123.210034475,
+          "VmSize": 208712,
+          "VmHWM": 37824,
+          "loopback_tx_bytes": 19705228670760
+        },
+        "settled": {
+          "cpu": 0.83,
+          "rss_kib": 38908,
+          "vmsize_kib": 214344,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 19276,
+          "fd": 27,
+          "time": 5125167.813989484,
+          "VmSize": 214344,
+          "VmHWM": 38908,
+          "loopback_tx_bytes": 19709230071421
+        }
+      }
+    },
+    {
+      "name": "normal-gb-rtcp-final",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "gb-rtcp",
+      "result_path": "/tmp/media_server_udp-c25092b/normal-gb-rtcp-final/result.json",
+      "result_sha256": "dc722984d328202d2ea9e814b0482acb2c159a3f9a751c9cb4d5c349d1c4e342",
+      "commands_path": "/tmp/media_server_udp-c25092b/normal-gb-rtcp-final/commands.json",
+      "command_count": 5,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_perf/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "26930",
+        "--rtsp-port",
+        "26931",
+        "--http-port",
+        "26932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 16,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "rtcp": {
+        "sender_reports": 1,
+        "receiver_reports": 2
+      },
+      "observation_seconds": 33,
+      "sender_rtcp_interval_seconds": 25
+    },
+    {
+      "name": "asan-smoke",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "smoke",
+      "result_path": "/tmp/media_server_udp-c25092b/asan-smoke/result.json",
+      "result_sha256": "91341a6e14143996e5ae899215ed6a37988149de891e24f0b30383725f166421",
+      "commands_path": "/tmp/media_server_udp-c25092b/asan-smoke/commands.json",
+      "command_count": 63,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_asan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "27930",
+        "--rtsp-port",
+        "27931",
+        "--http-port",
+        "27932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 282,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 1,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_asan",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "tcp"
+      },
+      "effective_workload": {
+        "inputs": [
+          "rtmp",
+          "rtsp",
+          "whip"
+        ],
+        "viewers_single": 1,
+        "viewers_multiple": 4,
+        "outputs": [
+          "rtmp",
+          "rtsp",
+          "whep",
+          "hls",
+          "http-flv"
+        ],
+        "gb_relay_transports": [
+          "udp",
+          "tcp_sender_active",
+          "tcp_sender_passive"
+        ],
+        "independent_ffmpeg_decode_inputs": [
+          "rtmp",
+          "rtsp"
+        ],
+        "independent_ffmpeg_decode_outputs": [
+          "rtmp",
+          "rtsp",
+          "http-flv",
+          "hls"
+        ]
+      }
+    },
+    {
+      "name": "asan-replacement",
+      "status": "PASS",
+      "head_recorded": "a8982d9e3900898569684294c7141efb503a0495",
+      "suite": "replacement",
+      "result_path": "/tmp/media_server_udp-c25092b/asan-replacement/result.json",
+      "result_sha256": "4792e3b4122d2891b0dcfddf57b1373d81077ccb1f50f720a1234acffd9fd8fc",
+      "commands_path": "/tmp/media_server_udp-c25092b/asan-replacement/commands.json",
+      "command_count": 302,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_asan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "32930",
+        "--rtsp-port",
+        "32931",
+        "--http-port",
+        "32932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 1280,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 1,
+      "nonzero_kernel_udp_drop_samples": [
+        {
+          "path": "result.rtsp[0].resources.udp_drops",
+          "drops": 188
+        },
+        {
+          "path": "result.rtsp[1].resources.udp_drops",
+          "drops": 179
+        },
+        {
+          "path": "result.rtsp[2].resources.udp_drops",
+          "drops": 168
+        },
+        {
+          "path": "result.rtsp[3].resources.udp_drops",
+          "drops": 170
+        },
+        {
+          "path": "result.rtsp[4].resources.udp_drops",
+          "drops": 153
+        },
+        {
+          "path": "result.rtsp[5].resources.udp_drops",
+          "drops": 154
+        },
+        {
+          "path": "result.rtsp[6].resources.udp_drops",
+          "drops": 153
+        },
+        {
+          "path": "result.rtsp[7].resources.udp_drops",
+          "drops": 148
+        },
+        {
+          "path": "result.rtsp[8].resources.udp_drops",
+          "drops": 172
+        },
+        {
+          "path": "result.rtsp[9].resources.udp_drops",
+          "drops": 172
+        },
+        {
+          "path": "result.rtsp[10].resources.udp_drops",
+          "drops": 172
+        },
+        {
+          "path": "result.rtsp[11].resources.udp_drops",
+          "drops": 153
+        },
+        {
+          "path": "result.rtsp[12].resources.udp_drops",
+          "drops": 160
+        },
+        {
+          "path": "result.rtsp[13].resources.udp_drops",
+          "drops": 2
+        },
+        {
+          "path": "result.rtsp[14].resources.udp_drops",
+          "drops": 150
+        },
+        {
+          "path": "result.rtsp[15].resources.udp_drops",
+          "drops": 216
+        },
+        {
+          "path": "result.rtsp[16].resources.udp_drops",
+          "drops": 35
+        },
+        {
+          "path": "result.rtsp[17].resources.udp_drops",
+          "drops": 159
+        },
+        {
+          "path": "result.rtsp[18].resources.udp_drops",
+          "drops": 159
+        },
+        {
+          "path": "result.rtsp[19].resources.udp_drops",
+          "drops": 152
+        }
+      ],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_asan",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "udp"
+      },
+      "generations": {
+        "rtmp": 20,
+        "rtsp": 20,
+        "whip": 20,
+        "gb": 20
+      },
+      "generation_total": 80
+    },
+    {
+      "name": "asan-churn",
+      "status": "PASS",
+      "head_recorded": "a8982d9e3900898569684294c7141efb503a0495",
+      "suite": "churn",
+      "result_path": "/tmp/media_server_udp-c25092b/asan-churn/result.json",
+      "result_sha256": "1d6a325c3d5eabac550b431b753f8be89d53aebb378a396adce9dcd865aaaf43",
+      "commands_path": "/tmp/media_server_udp-c25092b/asan-churn/commands.json",
+      "command_count": 77,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_asan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "19930",
+        "--rtsp-port",
+        "19931",
+        "--http-port",
+        "19932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 375,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 1,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_asan",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "tcp"
+      },
+      "iterations_per_protocol": 300,
+      "batch": 20,
+      "protocols": [
+        "rtmp",
+        "rtsp",
+        "http-flv",
+        "hls",
+        "whep",
+        "whip",
+        "gb_udp_pairs"
+      ],
+      "resources": {
+        "idle": {
+          "cpu": 0.02,
+          "rss_kib": 136604,
+          "vmsize_kib": 21475241020,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 90799,
+          "fd": 26,
+          "time": 5125649.065744123,
+          "VmSize": 21475241020,
+          "VmHWM": 136604,
+          "loopback_tx_bytes": 19718281346523
+        },
+        "after_publish": {
+          "cpu": 103.6,
+          "rss_kib": 7547268,
+          "vmsize_kib": 21589272992,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 7534782,
+          "fd": 26,
+          "time": 5126061.496090051,
+          "VmSize": 21589272992,
+          "VmHWM": 7547268,
+          "loopback_tx_bytes": 19739555382984
+        },
+        "settled": {
+          "cpu": 103.6,
+          "rss_kib": 7547268,
+          "vmsize_kib": 21589272992,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 7534803,
+          "fd": 26,
+          "time": 5126061.608553025,
+          "VmSize": 21589272992,
+          "VmHWM": 7547268,
+          "loopback_tx_bytes": 19739555669258
+        }
+      },
+      "expired_hls_sessions": 300,
+      "expired_hls_status": 403
+    },
+    {
+      "name": "asan-disconnect-rtsp-udp",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "disconnect",
+      "result_path": "/tmp/media_server_udp-c25092b/asan-disconnect-rtsp-udp/result.json",
+      "result_sha256": "fd8ec375fe49c9b254b301926629162df50adc4c57ba4a4e3a939c6c3d81546f",
+      "commands_path": "/tmp/media_server_udp-c25092b/asan-disconnect-rtsp-udp/commands.json",
+      "command_count": 19,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_asan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "28930",
+        "--rtsp-port",
+        "28931",
+        "--http-port",
+        "28932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 48,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 1,
+      "nonzero_kernel_udp_drop_samples": [
+        {
+          "path": "result.cases[1].media.resources.udp_drops",
+          "drops": 74
+        }
+      ],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_asan",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "udp"
+      },
+      "cases": [
+        {
+          "publisher_reset": "rtmp"
+        },
+        {
+          "publisher_reset": "rtsp"
+        },
+        {
+          "viewer_tcp_reset": "rtmp",
+          "real_frames": true
+        },
+        {
+          "viewer_tcp_reset": "rtsp",
+          "real_frames": true
+        },
+        {
+          "gb_udp_peer_disappeared": "PASS",
+          "receiver_delete_status": 204,
+          "ports_released": [
+            "49156",
+            "49157"
+          ]
+        },
+        {
+          "viewer_reset_port": 28932
+        },
+        {
+          "viewer_reset_port": 28930
+        },
+        {
+          "rtsp_setup_without_play": "PASS"
+        },
+        {
+          "webrtc": "whep",
+          "case": "established",
+          "port": 49157
+        },
+        {
+          "webrtc": "whep",
+          "case": "dtls_timeout",
+          "port": 49158
+        },
+        {
+          "webrtc": "whip",
+          "case": "established",
+          "port": 49159
+        },
+        {
+          "webrtc": "whip",
+          "case": "dtls_timeout",
+          "port": 49160
+        }
+      ],
+      "resources": {
+        "before": {
+          "cpu": 0.03,
+          "rss_kib": 136228,
+          "vmsize_kib": 21475241020,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 99668,
+          "fd": 26,
+          "time": 5125383.806574116,
+          "VmSize": 21475241020,
+          "VmHWM": 136228,
+          "loopback_tx_bytes": 19713034806053
+        },
+        "after": {
+          "cpu": 1.39,
+          "rss_kib": 563884,
+          "vmsize_kib": 21476366576,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 519489,
+          "fd": 27,
+          "time": 5125433.010251629,
+          "VmSize": 21476366576,
+          "VmHWM": 566436,
+          "loopback_tx_bytes": 19714125950189
+        },
+        "active_idle": {
+          "cpu": 0.39,
+          "rss_kib": 320588,
+          "vmsize_kib": 21475833036,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 277140,
+          "fd": 27,
+          "time": 5125391.719479715,
+          "VmSize": 21475833036,
+          "VmHWM": 320588,
+          "loopback_tx_bytes": 19713271589087
+        },
+        "settled": {
+          "cpu": 1.55,
+          "rss_kib": 574664,
+          "vmsize_kib": 21476643384,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 530159,
+          "fd": 27,
+          "time": 5125436.341561113,
+          "VmSize": 21476643384,
+          "VmHWM": 581860,
+          "loopback_tx_bytes": 19714211918661
+        }
+      }
+    },
+    {
+      "name": "asan-gb-rtcp",
+      "status": "PASS",
+      "head_recorded": "a8982d9e3900898569684294c7141efb503a0495",
+      "suite": "gb-rtcp",
+      "result_path": "/tmp/media_server_udp-c25092b/asan-gb-rtcp/result.json",
+      "result_sha256": "7413fed3bc14971057256315449dc7396d4bba5db052c74d62e34dc849c67f93",
+      "commands_path": "/tmp/media_server_udp-c25092b/asan-gb-rtcp/commands.json",
+      "command_count": 5,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_asan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "21930",
+        "--rtsp-port",
+        "21931",
+        "--http-port",
+        "21932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 16,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 1,
+      "nonzero_kernel_udp_drop_samples": [],
+      "rtcp": {
+        "sender_reports": 1,
+        "receiver_reports": 2
+      },
+      "observation_seconds": 33,
+      "sender_rtcp_interval_seconds": 25
+    },
+    {
+      "name": "ubsan-smoke-rtsp-udp",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "smoke",
+      "result_path": "/tmp/media_server_udp-c25092b/ubsan-smoke-rtsp-udp/result.json",
+      "result_sha256": "fcfd169f263a03e53d99d6986f2073587f952b530c50503b1ad0caaca35c503f",
+      "commands_path": "/tmp/media_server_udp-c25092b/ubsan-smoke-rtsp-udp/commands.json",
+      "command_count": 63,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_ubsan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "33930",
+        "--rtsp-port",
+        "33931",
+        "--http-port",
+        "33932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 282,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_ubsan",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "udp"
+      },
+      "effective_workload": {
+        "inputs": [
+          "rtmp",
+          "rtsp",
+          "whip"
+        ],
+        "viewers_single": 1,
+        "viewers_multiple": 4,
+        "outputs": [
+          "rtmp",
+          "rtsp",
+          "whep",
+          "hls",
+          "http-flv"
+        ],
+        "gb_relay_transports": [
+          "udp",
+          "tcp_sender_active",
+          "tcp_sender_passive"
+        ],
+        "independent_ffmpeg_decode_inputs": [
+          "rtmp",
+          "rtsp"
+        ],
+        "independent_ffmpeg_decode_outputs": [
+          "rtmp",
+          "rtsp",
+          "http-flv",
+          "hls"
+        ]
+      }
+    },
+    {
+      "name": "ubsan-replacement",
+      "status": "PASS",
+      "head_recorded": "a8982d9e3900898569684294c7141efb503a0495",
+      "suite": "replacement",
+      "result_path": "/tmp/media_server_udp-c25092b/ubsan-replacement/result.json",
+      "result_sha256": "be9fb055d4fa28f9f3c50b46e54a186a5a08d95b5353af75e4f0cdb0275622d5",
+      "commands_path": "/tmp/media_server_udp-c25092b/ubsan-replacement/commands.json",
+      "command_count": 302,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_ubsan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "20930",
+        "--rtsp-port",
+        "20931",
+        "--http-port",
+        "20932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 1280,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [
+        {
+          "path": "result.rtsp[7].resources.udp_drops",
+          "drops": 60
+        },
+        {
+          "path": "result.rtsp[15].resources.udp_drops",
+          "drops": 57
+        },
+        {
+          "path": "result.rtsp[19].resources.udp_drops",
+          "drops": 54
+        }
+      ],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_ubsan",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "udp"
+      },
+      "generations": {
+        "rtmp": 20,
+        "rtsp": 20,
+        "whip": 20,
+        "gb": 20
+      },
+      "generation_total": 80
+    },
+    {
+      "name": "ubsan-churn",
+      "status": "PASS",
+      "head_recorded": "a8982d9e3900898569684294c7141efb503a0495",
+      "suite": "churn",
+      "result_path": "/tmp/media_server_udp-c25092b/ubsan-churn/result.json",
+      "result_sha256": "869e534cd117470fb75193276c21ac94a2d0a289f9b95d1e774806527ae8830f",
+      "commands_path": "/tmp/media_server_udp-c25092b/ubsan-churn/commands.json",
+      "command_count": 77,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_ubsan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "23940",
+        "--rtsp-port",
+        "23941",
+        "--http-port",
+        "23942",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 375,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_ubsan",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "tcp"
+      },
+      "iterations_per_protocol": 300,
+      "batch": 20,
+      "protocols": [
+        "rtmp",
+        "rtsp",
+        "http-flv",
+        "hls",
+        "whep",
+        "whip",
+        "gb_udp_pairs"
+      ],
+      "resources": {
+        "idle": {
+          "cpu": 0.0,
+          "rss_kib": 40848,
+          "vmsize_kib": 396836,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 19345,
+          "fd": 26,
+          "time": 5125649.069147568,
+          "VmSize": 396836,
+          "VmHWM": 40848,
+          "loopback_tx_bytes": 19718281385676
+        },
+        "after_publish": {
+          "cpu": 48.06,
+          "rss_kib": 195412,
+          "vmsize_kib": 570248,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 170265,
+          "fd": 26,
+          "time": 5126061.389318267,
+          "VmSize": 570248,
+          "VmHWM": 195628,
+          "loopback_tx_bytes": 19739554791265
+        },
+        "settled": {
+          "cpu": 48.06,
+          "rss_kib": 195412,
+          "vmsize_kib": 570248,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 170265,
+          "fd": 26,
+          "time": 5126061.391239132,
+          "VmSize": 570248,
+          "VmHWM": 195628,
+          "loopback_tx_bytes": 19739554791265
+        }
+      },
+      "expired_hls_sessions": 300,
+      "expired_hls_status": 403
+    },
+    {
+      "name": "ubsan-disconnect-rtsp-udp",
+      "status": "PASS",
+      "head_recorded": "f572de3f8929c10b01b48b4973785df4a2859d33",
+      "suite": "disconnect",
+      "result_path": "/tmp/media_server_udp-c25092b/ubsan-disconnect-rtsp-udp/result.json",
+      "result_sha256": "1a0d62bf8b6dc484b08c72961feece521af0fb94260fb43937c5d19dec001938",
+      "commands_path": "/tmp/media_server_udp-c25092b/ubsan-disconnect-rtsp-udp/commands.json",
+      "command_count": 19,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_ubsan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "34930",
+        "--rtsp-port",
+        "34931",
+        "--http-port",
+        "34932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 48,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "config": {
+        "build_dir": "/tmp/media_server_verify-728178f/build_ubsan",
+        "client_dir": "/tmp/media_server_verify-728178f/build_perf",
+        "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+        "ffmpeg": "/home/gyl/bin/ffmpeg",
+        "gb_transport": "udp",
+        "rtsp_publish_transport": "udp"
+      },
+      "cases": [
+        {
+          "publisher_reset": "rtmp"
+        },
+        {
+          "publisher_reset": "rtsp"
+        },
+        {
+          "viewer_tcp_reset": "rtmp",
+          "real_frames": true
+        },
+        {
+          "viewer_tcp_reset": "rtsp",
+          "real_frames": true
+        },
+        {
+          "gb_udp_peer_disappeared": "PASS",
+          "receiver_delete_status": 204,
+          "ports_released": [
+            "49168",
+            "49169"
+          ]
+        },
+        {
+          "viewer_reset_port": 34932
+        },
+        {
+          "viewer_reset_port": 34930
+        },
+        {
+          "rtsp_setup_without_play": "PASS"
+        },
+        {
+          "webrtc": "whep",
+          "case": "established",
+          "port": 49164
+        },
+        {
+          "webrtc": "whep",
+          "case": "dtls_timeout",
+          "port": 49165
+        },
+        {
+          "webrtc": "whip",
+          "case": "established",
+          "port": 49166
+        },
+        {
+          "webrtc": "whip",
+          "case": "dtls_timeout",
+          "port": 49167
+        }
+      ],
+      "resources": {
+        "before": {
+          "cpu": 0.01,
+          "rss_kib": 42168,
+          "vmsize_kib": 396836,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 22392,
+          "fd": 26,
+          "time": 5125538.776511275,
+          "VmSize": 396836,
+          "VmHWM": 42168,
+          "loopback_tx_bytes": 19715965337483
+        },
+        "after": {
+          "cpu": 0.76,
+          "rss_kib": 62368,
+          "vmsize_kib": 531500,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 35797,
+          "fd": 27,
+          "time": 5125587.967108447,
+          "VmSize": 531500,
+          "VmHWM": 62368,
+          "loopback_tx_bytes": 19717314913949
+        },
+        "active_idle": {
+          "cpu": 0.2,
+          "rss_kib": 58464,
+          "vmsize_kib": 530100,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 32090,
+          "fd": 27,
+          "time": 5125546.624278105,
+          "VmSize": 530100,
+          "VmHWM": 58464,
+          "loopback_tx_bytes": 19716168573641
+        },
+        "settled": {
+          "cpu": 0.85,
+          "rss_kib": 62952,
+          "vmsize_kib": 531500,
+          "thread_count": 6,
+          "udp_tx_queue_bytes": 0,
+          "udp_rx_queue_bytes": 0,
+          "udp_drops": 0,
+          "pss_kib": 36359,
+          "fd": 27,
+          "time": 5125591.265552165,
+          "VmSize": 531500,
+          "VmHWM": 62952,
+          "loopback_tx_bytes": 19717369045892
+        }
+      }
+    },
+    {
+      "name": "ubsan-gb-rtcp",
+      "status": "PASS",
+      "head_recorded": "a8982d9e3900898569684294c7141efb503a0495",
+      "suite": "gb-rtcp",
+      "result_path": "/tmp/media_server_udp-c25092b/ubsan-gb-rtcp/result.json",
+      "result_sha256": "442deef0fe4c4b6405df547c62de175ab9ce7766867bd98445ebdbb66a279a2b",
+      "commands_path": "/tmp/media_server_udp-c25092b/ubsan-gb-rtcp/commands.json",
+      "command_count": 5,
+      "server_command": [
+        "/tmp/media_server_verify-728178f/build_ubsan/media_server",
+        "--threads",
+        "6",
+        "--rtmp-port",
+        "22930",
+        "--rtsp-port",
+        "22931",
+        "--http-port",
+        "22932",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1"
+      ],
+      "zero_failure_checks": 16,
+      "server_queue_full_events": 0,
+      "sanitizer_errors": [],
+      "standard_makecontext_warning_count": 0,
+      "nonzero_kernel_udp_drop_samples": [],
+      "rtcp": {
+        "sender_reports": 1,
+        "receiver_reports": 2
+      },
+      "observation_seconds": 33,
+      "sender_rtcp_interval_seconds": 25
+    }
+  ],
+  "capacity": {
+    "levels": [
+      {
+        "viewers": 100,
+        "returncode": 0,
+        "peak_rss_kib": 61612,
+        "stopping_reason": null,
+        "result": {
+          "config": {
+            "head": "a8982d9e3900898569684294c7141efb503a0495",
+            "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+            "viewers": 100,
+            "sources": 1,
+            "workers": 6,
+            "client_threads": 8,
+            "ramp_per_second": 100,
+            "warmup_seconds": 5,
+            "duration_seconds": 20,
+            "kernel": "6.8.0-136-generic"
+          },
+          "established": {
+            "phase": "established",
+            "requested": 100,
+            "ready": 100,
+            "media_ready": 100,
+            "establishment_failures": 0,
+            "ramp_seconds": 1.4681,
+            "generator_cpu_seconds": 0.251002,
+            "generator_rss_kib": 17548,
+            "generator_pss_kib": 9926,
+            "generator_fds": 128
+          },
+          "measurement": {
+            "phase": "measurement",
+            "progressing": 100,
+            "runtime_failures": 0,
+            "duration_seconds": 20.0001,
+            "received_bytes": 2002660104,
+            "received_packets": 2127807,
+            "video_packets": 2026300,
+            "audio_packets": 99900,
+            "media_datagrams": 2127807,
+            "unprotect_failures": 0,
+            "bytes_per_viewer_second": 1001320.0,
+            "viewer_bytes_per_second_min": 1001320.0,
+            "viewer_bytes_per_second_p10": 1001320.0,
+            "viewer_bytes_per_second_p50": 1001320.0,
+            "viewer_bytes_per_second_p90": 1001330.0,
+            "viewer_bytes_per_second_max": 1001330.0,
+            "viewer_video_packets_min": 20263,
+            "viewer_audio_packets_min": 999,
+            "generator_cpu_cores": 0.281447,
+            "generator_rss_kib": 17672,
+            "generator_pss_kib": 9947,
+            "generator_fds": 128
+          },
+          "disconnect": {
+            "phase": "disconnect",
+            "stopped": 100,
+            "removed": 100,
+            "requested": 100
+          },
+          "client_exit": 0,
+          "server_cpu_cores": 0.36696317112483556,
+          "server_rss_kib_median": 58802.0,
+          "server_pss_kib_median": 47380.0,
+          "server_fd_median": 127.0,
+          "server_threads": 6,
+          "udp_tx_queue_bytes_max": 0,
+          "udp_rx_queue_bytes_max": 0,
+          "udp_drops": 0,
+          "aggregate_gbit_per_second": 0.8010600362998185,
+          "first_media": {
+            "first_media_ms_p50": 505,
+            "p95": 955,
+            "p99": 994,
+            "max": 1005
+          },
+          "server_thread_cpu_cores": {
+            "1209316": 0.06699327647238142,
+            "1209317": 0.05999397893049084,
+            "1209318": 0.056994279983966285,
+            "1209319": 0.05849412945722856,
+            "1209320": 0.056494330159545525,
+            "1209321": 0.0684931259456437
+          },
+          "server_thread_context_switches_per_second": {
+            "1209316": 119.4880080365609,
+            "1209317": 62.79369794724707,
+            "1209318": 62.34374310526839,
+            "1209319": 67.14326141970766,
+            "1209320": 65.54342198156124,
+            "1209321": 52.79470145883193
+          },
+          "server_thread_migrations_per_second": {
+            "1209316": 28.597129956867295,
+            "1209317": 7.8492122434058835,
+            "1209318": 4.499548419786812,
+            "1209319": 5.649433015954553,
+            "1209320": 4.949503261765494,
+            "1209321": 3.849613648039828
+          },
+          "client_cpu_cores": 0.281447,
+          "queue_full_events": 0
+        }
+      },
+      {
+        "viewers": 500,
+        "returncode": 0,
+        "peak_rss_kib": 200292,
+        "stopping_reason": null,
+        "result": {
+          "config": {
+            "head": "a8982d9e3900898569684294c7141efb503a0495",
+            "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+            "viewers": 500,
+            "sources": 1,
+            "workers": 6,
+            "client_threads": 8,
+            "ramp_per_second": 100,
+            "warmup_seconds": 5,
+            "duration_seconds": 20,
+            "kernel": "6.8.0-136-generic"
+          },
+          "established": {
+            "phase": "established",
+            "requested": 500,
+            "ready": 500,
+            "media_ready": 500,
+            "establishment_failures": 0,
+            "ramp_seconds": 5.47172,
+            "generator_cpu_seconds": 4.11951,
+            "generator_rss_kib": 42448,
+            "generator_pss_kib": 34806,
+            "generator_fds": 528
+          },
+          "measurement": {
+            "phase": "measurement",
+            "progressing": 500,
+            "runtime_failures": 0,
+            "duration_seconds": 20.0001,
+            "received_bytes": 10031063780,
+            "received_packets": 10652140,
+            "video_packets": 10144000,
+            "audio_packets": 500000,
+            "media_datagrams": 10652140,
+            "unprotect_failures": 0,
+            "bytes_per_viewer_second": 1003100.0,
+            "viewer_bytes_per_second_min": 1003100.0,
+            "viewer_bytes_per_second_p10": 1003100.0,
+            "viewer_bytes_per_second_p50": 1003100.0,
+            "viewer_bytes_per_second_p90": 1003110.0,
+            "viewer_bytes_per_second_max": 1003110.0,
+            "viewer_video_packets_min": 20288,
+            "viewer_audio_packets_min": 1000,
+            "generator_cpu_cores": 1.41571,
+            "generator_rss_kib": 42676,
+            "generator_pss_kib": 34986,
+            "generator_fds": 528
+          },
+          "disconnect": {
+            "phase": "disconnect",
+            "stopped": 500,
+            "removed": 500,
+            "requested": 500
+          },
+          "client_exit": 0,
+          "server_cpu_cores": 1.797118099662973,
+          "server_rss_kib_median": 189342.0,
+          "server_pss_kib_median": 177918.0,
+          "server_fd_median": 527.0,
+          "server_threads": 6,
+          "udp_tx_queue_bytes_max": 6912,
+          "udp_rx_queue_bytes_max": 960,
+          "udp_drops": 0,
+          "aggregate_gbit_per_second": 4.01240544997275,
+          "first_media": {
+            "first_media_ms_p50": 510,
+            "p95": 964,
+            "p99": 1003,
+            "max": 1022
+          },
+          "server_thread_cpu_cores": {
+            "1214433": 0.30943424302959116,
+            "1214434": 0.29493732372772025,
+            "1214435": 0.2954372174967503,
+            "1214436": 0.29493732372772014,
+            "1214437": 0.2994363676489905,
+            "1214438": 0.30193583649414074
+          },
+          "server_thread_context_switches_per_second": {
+            "1214433": 147.2187149793451,
+            "1214434": 91.8304853708173,
+            "1214435": 81.98257812092562,
+            "1214436": 96.07958240757259,
+            "1214437": 89.23103777186111,
+            "1214438": 87.83133521857702
+          },
+          "server_thread_migrations_per_second": {
+            "1214433": 29.343764242063013,
+            "1214434": 9.997875380600686,
+            "1214435": 10.597747903436726,
+            "1214436": 11.047652295563758,
+            "1214437": 8.648162204219593,
+            "1214438": 6.6985765050024595
+          },
+          "client_cpu_cores": 1.41571,
+          "queue_full_events": 0
+        }
+      },
+      {
+        "viewers": 1000,
+        "returncode": 0,
+        "peak_rss_kib": 403644,
+        "stopping_reason": null,
+        "result": {
+          "config": {
+            "head": "a8982d9e3900898569684294c7141efb503a0495",
+            "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+            "viewers": 1000,
+            "sources": 1,
+            "workers": 6,
+            "client_threads": 8,
+            "ramp_per_second": 100,
+            "warmup_seconds": 5,
+            "duration_seconds": 20,
+            "kernel": "6.8.0-136-generic"
+          },
+          "established": {
+            "phase": "established",
+            "requested": 1000,
+            "ready": 1000,
+            "media_ready": 1000,
+            "establishment_failures": 0,
+            "ramp_seconds": 10.5515,
+            "generator_cpu_seconds": 15.9559,
+            "generator_rss_kib": 73500,
+            "generator_pss_kib": 65799,
+            "generator_fds": 1028
+          },
+          "measurement": {
+            "phase": "measurement",
+            "progressing": 1000,
+            "runtime_failures": 0,
+            "duration_seconds": 20.0001,
+            "received_bytes": 20036565256,
+            "received_packets": 21284421,
+            "video_packets": 20268132,
+            "audio_packets": 1000000,
+            "media_datagrams": 21284421,
+            "unprotect_failures": 0,
+            "bytes_per_viewer_second": 1001830.0,
+            "viewer_bytes_per_second_min": 1001670.0,
+            "viewer_bytes_per_second_p10": 1001690.0,
+            "viewer_bytes_per_second_p50": 1001850.0,
+            "viewer_bytes_per_second_p90": 1001860.0,
+            "viewer_bytes_per_second_max": 1001910.0,
+            "viewer_video_packets_min": 20265,
+            "viewer_audio_packets_min": 1000,
+            "generator_cpu_cores": 3.08191,
+            "generator_rss_kib": 73848,
+            "generator_pss_kib": 66062,
+            "generator_fds": 1028
+          },
+          "disconnect": {
+            "phase": "disconnect",
+            "stopped": 1000,
+            "removed": 1000,
+            "requested": 1000
+          },
+          "client_exit": 0,
+          "server_cpu_cores": 3.8183889253313543,
+          "server_rss_kib_median": 373044.0,
+          "server_pss_kib_median": 361336.0,
+          "server_fd_median": 1027.0,
+          "server_threads": 6,
+          "udp_tx_queue_bytes_max": 11520,
+          "udp_rx_queue_bytes_max": 960,
+          "udp_drops": 0,
+          "aggregate_gbit_per_second": 8.014586029469852,
+          "first_media": {
+            "first_media_ms_p50": 511,
+            "p95": 974,
+            "p99": 1015,
+            "max": 1057
+          },
+          "server_thread_cpu_cores": {
+            "1220412": 0.6626336493900506,
+            "1220413": 0.6341493974931932,
+            "1220414": 0.6256540942958848,
+            "1220415": 0.6296518840357948,
+            "1220416": 0.6296518840357948,
+            "1220417": 0.6336496737757045
+          },
+          "server_thread_context_switches_per_second": {
+            "1220412": 115.23628925290019,
+            "1220413": 81.3050488354157,
+            "1220414": 70.61096128115697,
+            "1220415": 76.35778403227732,
+            "1220416": 70.5609889094081,
+            "1220417": 65.56375173452084
+          },
+          "server_thread_migrations_per_second": {
+            "1220412": 38.32880913138528,
+            "1220413": 11.743507360985058,
+            "1220414": 8.845109799550448,
+            "1220415": 9.24488877354143,
+            "1220416": 6.5463806991023095,
+            "1220417": 9.44477826053692
+          },
+          "client_cpu_cores": 3.08191,
+          "queue_full_events": 0
+        }
+      }
+    ],
+    "rss_guard_kib": 2097152,
+    "cpu_stop_cores": 5.4
+  },
+  "performance": {
+    "same_conditions": true,
+    "summary": {
+      "head": "a8982d9e3900898569684294c7141efb503a0495",
+      "fixture_sha256": "446b462c4b408d997c17cd4bab82d3ca4e9bcda1f04c758471043518d62b800f",
+      "warmup_seconds": 10,
+      "duration_seconds": 30,
+      "runs": 3,
+      "workloads": {
+        "whep-1000": {
+          "runs": [
+            {
+              "cpu_cores": 3.778922892545236,
+              "rss_kib": 372968.0,
+              "mbit_per_second": 8032.322644257853,
+              "first_media_ms_p50": 501,
+              "failures": 0
+            },
+            {
+              "cpu_cores": 3.847460955131595,
+              "rss_kib": 371022.0,
+              "mbit_per_second": 8033.869399635334,
+              "first_media_ms_p50": 509,
+              "failures": 0
+            },
+            {
+              "cpu_cores": 3.877841103072776,
+              "rss_kib": 380640.0,
+              "mbit_per_second": 8031.152968156773,
+              "first_media_ms_p50": 496,
+              "failures": 0
+            }
+          ],
+          "median": {
+            "cpu_cores": 3.847460955131595,
+            "rss_kib": 372968.0,
+            "mbit_per_second": 8032.322644257853,
+            "first_media_ms_p50": 501,
+            "failures": 0
+          }
+        }
+      }
+    },
+    "baseline_recorded_by_base_head": {
+      "path": "docs/verification_results/performance_baseline.json",
+      "measured_source_head": "8af98842f69d3e63a7e2d95b29f454d606992412",
+      "workload": "whep-1000",
+      "warmup_seconds": 10,
+      "duration_seconds": 30,
+      "runs": 3,
+      "workload_data": {
+        "runs": [
+          {
+            "cpu_cores": 3.7601661165879943,
+            "rss_kib": 379504.0,
+            "mbit_per_second": 8035.852485291716,
+            "first_media_ms_p50": 502,
+            "failures": 0
+          },
+          {
+            "cpu_cores": 3.758315512754244,
+            "rss_kib": 366344.0,
+            "mbit_per_second": 8027.526103446322,
+            "first_media_ms_p50": 507,
+            "failures": 0
+          },
+          {
+            "cpu_cores": 3.8117830864867326,
+            "rss_kib": 382132.0,
+            "mbit_per_second": 8023.529892500358,
+            "first_media_ms_p50": 502,
+            "failures": 0
+          }
+        ],
+        "median": {
+          "cpu_cores": 3.7601661165879943,
+          "rss_kib": 379504.0,
+          "mbit_per_second": 8027.526103446322,
+          "first_media_ms_p50": 502,
+          "failures": 0
+        }
+      }
+    },
+    "comparison": {
+      "cpu_cores": {
+        "baseline": 3.7601661165879943,
+        "current": 3.847460955131595,
+        "delta": 0.08729483854360076,
+        "delta_percent": 2.321568671088725
+      },
+      "rss_kib": {
+        "baseline": 379504.0,
+        "current": 372968.0,
+        "delta": -6536.0,
+        "delta_percent": -1.7222479868459928
+      },
+      "mbit_per_second": {
+        "baseline": 8027.526103446322,
+        "current": 8032.322644257853,
+        "delta": 4.796540811531486,
+        "delta_percent": 0.05975117053149681
+      },
+      "first_media_ms_p50": {
+        "baseline": 502,
+        "current": 501,
+        "delta": -1,
+        "delta_percent": -0.19920318725099584
+      },
+      "failures": {
+        "baseline": 0,
+        "current": 0
+      }
+    },
+    "run_evidence": [
+      {
+        "path": "/tmp/media_server_udp-c25092b/performance-baseline/whep-1000/1/result.json",
+        "sha256": "574b5fa6cf92e3042dfd3e1140a1320f4c7830142e87cdae94804978c88836d3",
+        "result": {
+          "config": {
+            "head": "a8982d9e3900898569684294c7141efb503a0495",
+            "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+            "viewers": 1000,
+            "sources": 1,
+            "workers": 6,
+            "client_threads": 8,
+            "ramp_per_second": 100,
+            "warmup_seconds": 10,
+            "duration_seconds": 30,
+            "kernel": "6.8.0-136-generic"
+          },
+          "established": {
+            "phase": "established",
+            "requested": 1000,
+            "ready": 1000,
+            "media_ready": 1000,
+            "establishment_failures": 0,
+            "ramp_seconds": 10.5349,
+            "generator_cpu_seconds": 15.7466,
+            "generator_rss_kib": 73668,
+            "generator_pss_kib": 66033,
+            "generator_fds": 1028
+          },
+          "measurement": {
+            "phase": "measurement",
+            "progressing": 1000,
+            "runtime_failures": 0,
+            "duration_seconds": 30.0001,
+            "received_bytes": 30121310320,
+            "received_packets": 31983510,
+            "video_packets": 30458068,
+            "audio_packets": 1501000,
+            "media_datagrams": 31983507,
+            "unprotect_failures": 0,
+            "bytes_per_viewer_second": 1004040.0,
+            "viewer_bytes_per_second_min": 1003990.0,
+            "viewer_bytes_per_second_p10": 1003990.0,
+            "viewer_bytes_per_second_p50": 1003990.0,
+            "viewer_bytes_per_second_p90": 1004230.0,
+            "viewer_bytes_per_second_max": 1004240.0,
+            "viewer_video_packets_min": 30456,
+            "viewer_audio_packets_min": 1501,
+            "generator_cpu_cores": 3.0749,
+            "generator_rss_kib": 74012,
+            "generator_pss_kib": 66317,
+            "generator_fds": 1028
+          },
+          "disconnect": {
+            "phase": "disconnect",
+            "stopped": 1000,
+            "removed": 1000,
+            "requested": 1000
+          },
+          "client_exit": 0,
+          "server_cpu_cores": 3.778922892545236,
+          "server_rss_kib_median": 372968.0,
+          "server_pss_kib_median": 361786.0,
+          "server_fd_median": 1027.0,
+          "server_threads": 6,
+          "udp_tx_queue_bytes_max": 6912,
+          "udp_rx_queue_bytes_max": 960,
+          "udp_drops": 0,
+          "aggregate_gbit_per_second": 8.032322644257853,
+          "first_media": {
+            "first_media_ms_p50": 501,
+            "p95": 971,
+            "p99": 1019,
+            "max": 1058
+          },
+          "server_thread_cpu_cores": {
+            "1242300": 0.6490338383599118,
+            "1242301": 0.6257112671662806,
+            "1242302": 0.6287098834626045,
+            "1242303": 0.6220462916929956,
+            "1242304": 0.6243785488123588,
+            "1242305": 0.6317084997589286
+          },
+          "server_thread_context_switches_per_second": {
+            "1242300": 123.04322202582928,
+            "1242301": 79.86314735876327,
+            "1242302": 79.82982939991523,
+            "1242303": 80.69609632996439,
+            "1242304": 76.39807963856663,
+            "1242305": 68.53504135042806
+          },
+          "server_thread_migrations_per_second": {
+            "1242300": 43.94638772057103,
+            "1242301": 11.094880296398903,
+            "1242302": 10.99492641985477,
+            "1242303": 10.695064790222366,
+            "1242304": 11.69460355566371,
+            "1242305": 10.428521119438008
+          },
+          "client_cpu_cores": 3.0749,
+          "queue_full_events": 0
+        }
+      },
+      {
+        "path": "/tmp/media_server_udp-c25092b/performance-baseline/whep-1000/2/result.json",
+        "sha256": "a96081f859f18737cdddcbb6004cf9a1c380cdddd53f2bc4ba8c35e956cad43d",
+        "result": {
+          "config": {
+            "head": "a8982d9e3900898569684294c7141efb503a0495",
+            "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+            "viewers": 1000,
+            "sources": 1,
+            "workers": 6,
+            "client_threads": 8,
+            "ramp_per_second": 100,
+            "warmup_seconds": 10,
+            "duration_seconds": 30,
+            "kernel": "6.8.0-136-generic"
+          },
+          "established": {
+            "phase": "established",
+            "requested": 1000,
+            "ready": 1000,
+            "media_ready": 1000,
+            "establishment_failures": 0,
+            "ramp_seconds": 10.53,
+            "generator_cpu_seconds": 15.7426,
+            "generator_rss_kib": 73568,
+            "generator_pss_kib": 65976,
+            "generator_fds": 1028
+          },
+          "measurement": {
+            "phase": "measurement",
+            "progressing": 1000,
+            "runtime_failures": 0,
+            "duration_seconds": 30.0001,
+            "received_bytes": 30127110672,
+            "received_packets": 31990487,
+            "video_packets": 30465048,
+            "audio_packets": 1501000,
+            "media_datagrams": 31990487,
+            "unprotect_failures": 0,
+            "bytes_per_viewer_second": 1004240.0,
+            "viewer_bytes_per_second_min": 1004230.0,
+            "viewer_bytes_per_second_p10": 1004230.0,
+            "viewer_bytes_per_second_p50": 1004230.0,
+            "viewer_bytes_per_second_p90": 1004240.0,
+            "viewer_bytes_per_second_max": 1004240.0,
+            "viewer_video_packets_min": 30465,
+            "viewer_audio_packets_min": 1501,
+            "generator_cpu_cores": 3.08718,
+            "generator_rss_kib": 73928,
+            "generator_pss_kib": 66206,
+            "generator_fds": 1028
+          },
+          "disconnect": {
+            "phase": "disconnect",
+            "stopped": 1000,
+            "removed": 1000,
+            "requested": 1000
+          },
+          "client_exit": 0,
+          "server_cpu_cores": 3.847460955131595,
+          "server_rss_kib_median": 371022.0,
+          "server_pss_kib_median": 359527.5,
+          "server_fd_median": 1027.0,
+          "server_threads": 6,
+          "udp_tx_queue_bytes_max": 6912,
+          "udp_rx_queue_bytes_max": 960,
+          "udp_drops": 0,
+          "aggregate_gbit_per_second": 8.033869399635334,
+          "first_media": {
+            "first_media_ms_p50": 509,
+            "p95": 972,
+            "p99": 1018,
+            "max": 1061
+          },
+          "server_thread_cpu_cores": {
+            "1252005": 0.6587935482673795,
+            "1252006": 0.6374668982475958,
+            "1252007": 0.6301358623032952,
+            "1252008": 0.6461308498181328,
+            "1252009": 0.6314687779295317,
+            "1252010": 0.6474637654443693
+          },
+          "server_thread_context_switches_per_second": {
+            "1252005": 124.76090261573438,
+            "1252006": 79.47509421435002,
+            "1252007": 80.77468694993058,
+            "1252008": 90.70490836539236,
+            "1252009": 84.6734651566723,
+            "1252010": 86.77280726799474
+          },
+          "server_thread_migrations_per_second": {
+            "1252005": 39.720885661847056,
+            "1252006": 10.230127431364972,
+            "1252007": 7.630941960203838,
+            "1252008": 10.19680454070906,
+            "1252009": 8.630628679881198,
+            "1252010": 9.497023836934908
+          },
+          "client_cpu_cores": 3.08718,
+          "queue_full_events": 0
+        }
+      },
+      {
+        "path": "/tmp/media_server_udp-c25092b/performance-baseline/whep-1000/3/result.json",
+        "sha256": "07aa34be06ddb87c1d22f1eae133e74d90365f95d8c5051dd13cfb4898a32058",
+        "result": {
+          "config": {
+            "head": "a8982d9e3900898569684294c7141efb503a0495",
+            "fixture": "/tmp/media_server_verify-728178f/h264-aac.flv",
+            "viewers": 1000,
+            "sources": 1,
+            "workers": 6,
+            "client_threads": 8,
+            "ramp_per_second": 100,
+            "warmup_seconds": 10,
+            "duration_seconds": 30,
+            "kernel": "6.8.0-136-generic"
+          },
+          "established": {
+            "phase": "established",
+            "requested": 1000,
+            "ready": 1000,
+            "media_ready": 1000,
+            "establishment_failures": 0,
+            "ramp_seconds": 10.5391,
+            "generator_cpu_seconds": 15.877,
+            "generator_rss_kib": 73656,
+            "generator_pss_kib": 66013,
+            "generator_fds": 1028
+          },
+          "measurement": {
+            "phase": "measurement",
+            "progressing": 1000,
+            "runtime_failures": 0,
+            "duration_seconds": 30.0001,
+            "received_bytes": 30116924020,
+            "received_packets": 31978406,
+            "video_packets": 30452995,
+            "audio_packets": 1501000,
+            "media_datagrams": 31978406,
+            "unprotect_failures": 0,
+            "bytes_per_viewer_second": 1003900.0,
+            "viewer_bytes_per_second_min": 1003860.0,
+            "viewer_bytes_per_second_p10": 1003860.0,
+            "viewer_bytes_per_second_p50": 1003870.0,
+            "viewer_bytes_per_second_p90": 1003990.0,
+            "viewer_bytes_per_second_max": 1004000.0,
+            "viewer_video_packets_min": 30451,
+            "viewer_audio_packets_min": 1501,
+            "generator_cpu_cores": 3.09048,
+            "generator_rss_kib": 73996,
+            "generator_pss_kib": 66264,
+            "generator_fds": 1028
+          },
+          "disconnect": {
+            "phase": "disconnect",
+            "stopped": 1000,
+            "removed": 1000,
+            "requested": 1000
+          },
+          "client_exit": 0,
+          "server_cpu_cores": 3.877841103072776,
+          "server_rss_kib_median": 380640.0,
+          "server_pss_kib_median": 369576.0,
+          "server_fd_median": 1027.0,
+          "server_threads": 6,
+          "udp_tx_queue_bytes_max": 27648,
+          "udp_rx_queue_bytes_max": 960,
+          "udp_drops": 0,
+          "aggregate_gbit_per_second": 8.031152968156773,
+          "first_media": {
+            "first_media_ms_p50": 496,
+            "p95": 971,
+            "p99": 1023,
+            "max": 1058
+          },
+          "server_thread_cpu_cores": {
+            "1261530": 0.6690758665552616,
+            "1261531": 0.6450850984317662,
+            "1261532": 0.6440854830932872,
+            "1261533": 0.6377545859495871,
+            "1261534": 0.6440854830932872,
+            "1261535": 0.6404202268521976
+          },
+          "server_thread_context_switches_per_second": {
+            "1261530": 122.91936612163148,
+            "1261531": 85.0672653045609,
+            "1261532": 78.96961173983915,
+            "1261533": 84.2342525224951,
+            "1261534": 87.89950876358468,
+            "1261535": 75.80416316798906
+          },
+          "server_thread_migrations_per_second": {
+            "1261530": 38.75175462170166,
+            "1261531": 11.99538406174772,
+            "1261532": 12.228627640726147,
+            "1261533": 11.695499460204026,
+            "1261534": 10.096114918637664,
+            "1261535": 9.596307249398174
+          },
+          "client_cpu_cores": 3.09048,
+          "queue_full_events": 0
+        }
+      }
+    ],
+    "interpretation": "CPU median +2.3216%, RSS -1.7222%, throughput +0.0598%, dual-track first-media p50 -1ms. No unacceptable degradation observed in this workload; 3 x 30s does not establish all workload or long-term performance."
+  },
+  "structure_check_before_report": [
+    {
+      "command": [
+        "rg",
+        "udp_yield_transport",
+        "."
+      ],
+      "returncode": 1,
+      "output": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rg",
+        "udp_write_queue_",
+        "media"
+      ],
+      "returncode": 1,
+      "output": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rg",
+        "queued_write_bytes_",
+        "media"
+      ],
+      "returncode": 0,
+      "output": "media/net/udp_transport.h:    std::size_t queued_write_bytes_{};\nmedia/net/udp_transport.cpp:    if (data.size() > write_high_water_mark || queued_write_bytes_ > write_high_water_mark - data.size())\nmedia/net/udp_transport.cpp:    queued_write_bytes_ += data.size();\nmedia/net/udp_transport.cpp:        queued_write_bytes_ = 0;\nmedia/net/udp_transport.cpp:    queued_write_bytes_ -= datagram->packet.size();\nmedia/net/udp_transport.cpp:    queued_write_bytes_ = 0;\nmedia/net/tcp_transport.h:    std::size_t queued_write_bytes_{};\nmedia/net/tcp_transport.cpp:    queued_write_bytes_ += data.size();\nmedia/net/tcp_transport.cpp:        queued_write_bytes_ -= write_queue_.front()->size();\nmedia/net/tcp_transport.cpp:        if (queued_write_bytes_ > write_high_water_mark)\nmedia/net/tcp_transport.cpp:    queued_write_bytes_ = 0;\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rg",
+        "run_udp_write",
+        "media"
+      ],
+      "returncode": 1,
+      "output": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rg",
+        "async_send_to",
+        "media"
+      ],
+      "returncode": 0,
+      "output": "media/net/udp_transport.cpp:    socket_.async_send_to(boost::asio::buffer(datagram->packet), datagram->endpoint,\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rg",
+        "udp_write_queue_|write_queue_|queued_write_bytes_|run_.*write|async_send_to|async_write",
+        "media"
+      ],
+      "returncode": 0,
+      "output": "media/http/hls_http_session.cpp:    boost::beast::http::async_write(\nmedia/http/hls_http_session.cpp:        boost::beast::http::async_write_header(\nmedia/http/hls_http_session.cpp:    boost::beast::http::async_write(\nmedia/http/hls_http_session.cpp:    boost::beast::http::async_write(\nmedia/net/udp_transport.cpp:    if (data.size() > write_high_water_mark || queued_write_bytes_ > write_high_water_mark - data.size())\nmedia/net/udp_transport.cpp:    const bool start = write_queue_.empty();\nmedia/net/udp_transport.cpp:    queued_write_bytes_ += data.size();\nmedia/net/udp_transport.cpp:    write_queue_.push_back(std::make_shared<pending_datagram>(pending_datagram{std::move(data), std::move(endpoint)}));\nmedia/net/udp_transport.cpp:    const auto datagram = write_queue_.front();\nmedia/net/udp_transport.cpp:    socket_.async_send_to(boost::asio::buffer(datagram->packet), datagram->endpoint,\nmedia/net/udp_transport.cpp:    if (stopped_ || write_queue_.empty() || write_queue_.front() != datagram)\nmedia/net/udp_transport.cpp:        write_queue_.clear();\nmedia/net/udp_transport.cpp:        queued_write_bytes_ = 0;\nmedia/net/udp_transport.cpp:    if (stopped_ || write_queue_.empty() || write_queue_.front() != datagram)\nmedia/net/udp_transport.cpp:    queued_write_bytes_ -= datagram->packet.size();\nmedia/net/udp_transport.cpp:    write_queue_.pop_front();\nmedia/net/udp_transport.cpp:    if (!write_queue_.empty())\nmedia/net/udp_transport.cpp:    write_queue_.clear();\nmedia/net/udp_transport.cpp:    queued_write_bytes_ = 0;\nmedia/http/http_session.cpp:        boost::beast::http::async_write_header(stream_, serializer, yield[error]);\nmedia/http/http_session.cpp:        boost::beast::http::async_write(stream_, response, yield[error]);\nmedia/net/tcp_transport.h:    std::size_t queued_write_bytes_{};\nmedia/net/tcp_transport.h:    std::deque<buffer> write_queue_;\nmedia/http/http_flv_session.h:    void run_write(boost::asio::yield_context yield);\nmedia/net/tcp_transport.cpp:    const bool writing = !write_queue_.empty();\nmedia/net/tcp_transport.cpp:    queued_write_bytes_ += data.size();\nmedia/net/tcp_transport.cpp:    write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(std::move(data)));\nmedia/net/tcp_transport.cpp:    const auto data = write_queue_.front();\nmedia/net/tcp_transport.cpp:    boost::asio::async_write(\nmedia/net/tcp_transport.cpp:        queued_write_bytes_ -= write_queue_.front()->size();\nmedia/net/tcp_transport.cpp:        write_queue_.pop_front();\nmedia/net/tcp_transport.cpp:        if (queued_write_bytes_ > write_high_water_mark)\nmedia/net/tcp_transport.cpp:    if (!write_queue_.empty())\nmedia/net/tcp_transport.cpp:    write_queue_.clear();\nmedia/net/tcp_transport.cpp:    queued_write_bytes_ = 0;\nmedia/net/udp_transport.h:    std::deque<std::shared_ptr<pending_datagram>> write_queue_;\nmedia/net/udp_transport.h:    std::size_t queued_write_bytes_{};\nmedia/http/http_flv_session.cpp:        boost::beast::http::async_write_header(stream_, serializer, yield[error]);\nmedia/http/http_flv_session.cpp:        boost::beast::http::async_write_header(stream_, serializer, yield[error]);\nmedia/http/http_flv_session.cpp:    boost::beast::http::async_write(stream_, response, yield[error]);\nmedia/http/http_flv_session.cpp:        worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });\nmedia/http/http_flv_session.cpp:void http_flv_session::run_write(boost::asio::yield_context yield)\nmedia/http/http_flv_session.cpp:        boost::asio::async_write(stream_, chunk, yield[error]);\n",
+      "stderr": ""
+    }
+  ],
+  "observations": {
+    "rtsp_udp_input_kernel_drops": "Some RTSP UDP input suite snapshots contain kernel socket receive drops (all samples recorded above). These are not transport write queue drops. Media checks passed. No matched old-code RTSP UDP run was made, so no regression attribution is claimed.",
+    "old_gb_buffer_lifetime": "Old GB sender yield write referenced queue-owned packet buffers that shutdown could clear. Refactor removes this ownership-contract risk; no old-code ASan UAF reproduction is claimed.",
+    "migration_error_policy": "The implementation initially used no_buffer_space for overflow callbacks; admission bool now separates overflow from identical real socket errors. Fixed before final regression.",
+    "known_failed_attempts_retained": [
+      {
+        "log": "stage2-build.log",
+        "reason": "Wshadow variable name, corrected in stage2-build-fixed.log"
+      },
+      {
+        "log": "udp-targeted-first.log",
+        "reason": "Initial policy fixture used unsupported PS audio-only input; replaced by supported single H264 video fixture"
+      },
+      {
+        "log": "normal-gb-rtcp.log",
+        "reason": "Python 3.10 lacks loop.sock_recvfrom; corrected helper uses select plus asyncio.to_thread; final run is normal-gb-rtcp-final"
+      }
+    ]
+  },
+  "delivery_checks": [
+    "Final report commit pushed",
+    "git status --short --untracked-files=all is empty",
+    "HEAD equals fetched origin/main",
+    "No task-owned protocol servers remain"
+  ],
+  "final_git_evidence_path": "/tmp/media_server_udp-c25092b/final-git.json",
+  "final_build": {
+    "status": "PASS",
+    "command": [
+      "cmake",
+      "--build",
+      "build",
+      "-j12"
+    ],
+    "log_path": "/tmp/media_server_udp-c25092b/final-build.log",
+    "log_sha256": "338c28c9216e6c13b1e3a78f286157f19e67fe1097a851a92bd9f5f6630383b7"
+  }
+}
