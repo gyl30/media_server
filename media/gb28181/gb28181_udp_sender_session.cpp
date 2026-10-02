@@ -21,7 +21,6 @@ namespace media_server
 namespace
 {
 constexpr auto rtcp_interval = std::chrono::seconds{25};
-constexpr std::size_t max_write_queue_bytes = 1024U * 1024U;
 }    // namespace
 
 gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
@@ -84,7 +83,7 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
         {
             const auto locked = weak.lock();
-            if (!locked || !locked->stream_ || error == boost::asio::error::operation_aborted)
+            if (!locked || !locked->stream_ || !error || error == boost::asio::error::operation_aborted)
             {
                 return;
             }
@@ -99,9 +98,6 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
                 locked->shutdown();
                 return;
             }
-            locked->queued_write_bytes_ -= locked->write_queue_.front().size();
-            locked->write_queue_.pop_front();
-            locked->start_rtp_write();
         });
     rtcp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
@@ -153,14 +149,6 @@ void gb28181_udp_sender_session::shutdown()
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void gb28181_udp_sender_session::start_rtp_write()
-{
-    if (stream_ && !write_queue_.empty())
-    {
-        rtp_transport_->write(std::span<const std::uint8_t>{write_queue_.front()}, remote_rtp_endpoint_);
-    }
-}
-
 void gb28181_udp_sender_session::schedule_rtcp()
 {
     if (!stream_)
@@ -193,14 +181,8 @@ void gb28181_udp_sender_session::schedule_rtcp()
 
 void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
-    if (packet.size() > max_write_queue_bytes || queued_write_bytes_ > max_write_queue_bytes - packet.size())
+    if (!rtp_transport_->write(std::span<const std::uint8_t>{packet}, remote_rtp_endpoint_))
     {
-        spdlog::warn("gb28181 udp write queue full stream {} sender {} queued {} limit {} dropped {}",
-                     stream_->name(),
-                     sender_id_,
-                     queued_write_bytes_,
-                     max_write_queue_bytes,
-                     packet.size());
         return;
     }
     if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
@@ -208,14 +190,6 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
         sender_->shutdown();
         shutdown();
         return;
-    }
-
-    const bool start_write = write_queue_.empty();
-    queued_write_bytes_ += packet.size();
-    write_queue_.push_back(std::move(packet));
-    if (start_write)
-    {
-        start_rtp_write();
     }
 
     if (remote_rtcp_endpoint_ && !rtcp_reporting_started_)
@@ -246,8 +220,6 @@ void gb28181_udp_sender_session::safe_shutdown()
         rtp_destroy(rtcp_sender_);
         rtcp_sender_ = nullptr;
     }
-    write_queue_.clear();
-    queued_write_bytes_ = 0;
     spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream->name(), sender_id_);
 }
 

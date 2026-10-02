@@ -1,7 +1,6 @@
 #ifndef MEDIA_GB28181_GB28181_UDP_SENDER_SESSION_H
 #define MEDIA_GB28181_GB28181_UDP_SENDER_SESSION_H
 
-#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,7 +38,6 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
 
    private:
     void shutdown_udp_transports();
-    void start_rtp_write();
     void schedule_rtcp();
     void send_packet(std::vector<std::uint8_t> packet);
 
@@ -55,8 +53,6 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
     std::shared_ptr<udp_transport> rtp_transport_;
     std::shared_ptr<udp_transport> rtcp_transport_;
     boost::asio::steady_timer rtcp_timer_;
-    std::size_t queued_write_bytes_{};
-    std::deque<std::vector<std::uint8_t>> write_queue_;
     std::optional<media_port_pool::port_pair> local_ports_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
     void* rtcp_sender_{};
