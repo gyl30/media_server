@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "media/core/media_sink.h"
+#include "media/core/worker_sink_dispatcher.h"
 
 struct ps_muxer_t;
 
@@ -50,14 +51,10 @@ class mpeg_ps_output final : public media_sink, public std::enable_shared_from_t
     void remove_sink(mpeg_ps_sink* sink);
 
    private:
-    struct sink_group;
     static void* allocate_packet(void* param, std::size_t bytes);
     static void free_packet(void* param, void* packet);
     static int write_packet(void* param, int stream, void* packet, std::size_t bytes);
     void add_sink_owner(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker);
-    void remove_sink_owner(mpeg_ps_sink* sink);
-    void publish(mpeg_ps_frame frame);
-    void end_sinks();
     void finish();
 
     worker_context& worker_;
@@ -66,7 +63,7 @@ class mpeg_ps_output final : public media_sink, public std::enable_shared_from_t
     std::map<track_id, std::pair<media_kind, int>> mux_tracks_;
     std::shared_ptr<std::vector<std::uint8_t>> packet_;
     bool waiting_for_key_frame_{true};
-    std::map<worker_context*, std::shared_ptr<sink_group>> sink_groups_;
+    worker_sink_dispatcher<mpeg_ps_frame, mpeg_ps_sink, &mpeg_ps_sink::on_ps_frame> dispatcher_;
 };
 
 }    // namespace media_server
