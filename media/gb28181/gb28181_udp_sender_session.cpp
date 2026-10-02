@@ -82,22 +82,17 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
     rtp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
         {
+            if (!error)
+            {
+                return;
+            }
             const auto locked = weak.lock();
-            if (!locked || !locked->stream_ || !error || error == boost::asio::error::operation_aborted)
+            if (!locked || !locked->stream_ || error == boost::asio::error::operation_aborted)
             {
                 return;
             }
-            if (error == boost::asio::error::no_buffer_space)
-            {
-                spdlog::warn("gb28181 udp write queue full stream {} sender {}", locked->stream_->name(), locked->sender_id_);
-                return;
-            }
-            if (error)
-            {
-                locked->sender_->shutdown();
-                locked->shutdown();
-                return;
-            }
+            locked->sender_->shutdown();
+            locked->shutdown();
         });
     rtcp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
@@ -107,7 +102,7 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
             {
                 return;
             }
-            if (error && error != boost::asio::error::no_buffer_space)
+            if (error)
             {
                 locked->sender_->shutdown();
                 locked->shutdown();
@@ -175,7 +170,10 @@ void gb28181_udp_sender_session::schedule_rtcp()
             }
 
             std::vector<std::uint8_t> packet(buffer.begin(), buffer.begin() + bytes);
-            self->rtcp_transport_->write(std::move(packet), *self->remote_rtcp_endpoint_);
+            if (!self->rtcp_transport_->write(std::move(packet), *self->remote_rtcp_endpoint_))
+            {
+                self->schedule_rtcp();
+            }
         });
 }
 
@@ -183,6 +181,7 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
     if (!rtp_transport_->write(std::span<const std::uint8_t>{packet}, remote_rtp_endpoint_))
     {
+        spdlog::warn("gb28181 udp write queue full stream {} sender {}", stream_->name(), sender_id_);
         return;
     }
     if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)

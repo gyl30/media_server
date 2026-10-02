@@ -56,7 +56,7 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
             {
                 return;
             }
-            if (error && error != boost::asio::error::no_buffer_space)
+            if (error)
             {
                 locked->shutdown();
                 return;
@@ -185,7 +185,10 @@ void gb28181_udp_receiver_session::schedule_rtcp()
             }
 
             std::vector<std::uint8_t> packet(buffer.begin(), buffer.begin() + bytes);
-            self->rtcp_transport_->write(std::move(packet), *target);
+            if (!self->rtcp_transport_->write(std::move(packet), *target))
+            {
+                self->schedule_rtcp();
+            }
         });
 }
 

@@ -35,7 +35,7 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
                      boost::asio::yield_context& yield,
                      boost::system::error_code& error);
     // 与 startup/connect/read 一样，写入和关闭由 owner executor 调用。
-    // 返回入队结果；callback 报告每个 datagram completion，overflow 同步报告 no_buffer_space。
+    // 返回入队结果；overflow 丢弃新包并返回 false，callback 只报告实际发送的 completion。
     void set_write_callback(write_callback callback);
     bool write(std::span<const std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint);
     bool write(std::vector<std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint);
@@ -55,7 +55,7 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
     boost::asio::ip::udp::socket socket_;
     std::deque<std::shared_ptr<pending_datagram>> write_queue_;
     std::size_t queued_write_bytes_{};
-    write_callback write_callback_;
+    std::shared_ptr<write_callback> write_callback_;
     bool stopped_{};
 };
 

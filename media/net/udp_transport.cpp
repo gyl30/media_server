@@ -62,7 +62,10 @@ std::size_t udp_transport::read(std::span<std::uint8_t> buffer,
     return socket_.async_receive_from(boost::asio::buffer(buffer), endpoint, yield[error]);
 }
 
-void udp_transport::set_write_callback(write_callback callback) { write_callback_ = std::move(callback); }
+void udp_transport::set_write_callback(write_callback callback)
+{
+    write_callback_ = callback ? std::make_shared<write_callback>(std::move(callback)) : nullptr;
+}
 
 bool udp_transport::write(std::span<const std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint)
 {
@@ -77,11 +80,6 @@ bool udp_transport::write(std::vector<std::uint8_t> data, boost::asio::ip::udp::
     }
     if (data.size() > write_high_water_mark || queued_write_bytes_ > write_high_water_mark - data.size())
     {
-        const auto callback = write_callback_;
-        if (callback)
-        {
-            callback(boost::asio::error::no_buffer_space, 0);
-        }
         return false;
     }
 
@@ -121,7 +119,7 @@ void udp_transport::on_write(const std::shared_ptr<pending_datagram>& datagram, 
     }
     if (callback)
     {
-        callback(error, bytes);
+        (*callback)(error, bytes);
     }
     if (stopped_ || write_queue_.empty() || write_queue_.front() != datagram)
     {

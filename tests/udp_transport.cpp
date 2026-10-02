@@ -180,16 +180,10 @@ void overflow_and_reentrant_write()
     auto receiver = bound(io);
     const auto endpoint = address(receiver);
     std::size_t completed{};
-    std::size_t overflows{};
+    std::size_t rejections{};
     std::size_t received{};
     sender->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
                               {
-                                  if (error == boost::asio::error::no_buffer_space)
-                                  {
-                                      require(bytes == 0, "overflow reported sent bytes");
-                                      ++overflows;
-                                      return;
-                                  }
                                   require(!error && bytes == (completed < 32 ? 32'768U : 257U), "overflow damaged existing queue");
                                   ++completed;
                                   if (completed == 32)
@@ -224,11 +218,13 @@ void overflow_and_reentrant_write()
                               require(sender->write(std::vector<std::uint8_t>(32'768, sequence), endpoint), "1 MiB inclusive limit changed");
                           }
                           require(!sender->write(std::vector<std::uint8_t>{0xff}, endpoint), "overflow newest accepted");
+                          ++rejections;
                           require(!sender->write(std::vector<std::uint8_t>(1'048'577, 0xff), endpoint), "oversized queue item accepted");
-                          require(overflows == 2 && completed == 0, "overflow not reported at admission");
+                          ++rejections;
+                          require(rejections == 2 && completed == 0, "overflow triggered send completion");
                       });
     drain(io);
-    require(completed == 33 && received == 33 && overflows == 2, "overflow recovery failed");
+    require(completed == 33 && received == 33 && rejections == 2, "overflow recovery failed");
 }
 
 void socket_error_and_rebind_fencing()

@@ -73,14 +73,13 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
     udp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
         {
-            const auto locked = weak.lock();
-            if (!locked || locked->shutdown_requested_.load(std::memory_order_acquire) || !error)
+            if (!error)
             {
                 return;
             }
-            if (error == boost::asio::error::no_buffer_space)
+            const auto locked = weak.lock();
+            if (!locked || locked->shutdown_requested_.load(std::memory_order_acquire))
             {
-                spdlog::warn("whep udp write queue full session {}", locked->id_);
                 return;
             }
             if (error != boost::asio::error::operation_aborted)
@@ -502,7 +501,10 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
     {
         return;
     }
-    udp_transport_->write(std::move(packet), std::move(endpoint));
+    if (!udp_transport_->write(std::move(packet), std::move(endpoint)))
+    {
+        spdlog::warn("whep udp write queue full session {}", id_);
+    }
 }
 
 void whep_session::schedule_dtls_timeout()

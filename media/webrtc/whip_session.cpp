@@ -110,14 +110,13 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
     udp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
         {
-            const auto locked = weak.lock();
-            if (!locked || locked->local_port_reservation_ == 0 || !error)
+            if (!error)
             {
                 return;
             }
-            if (error == boost::asio::error::no_buffer_space)
+            const auto locked = weak.lock();
+            if (!locked || locked->local_port_reservation_ == 0)
             {
-                spdlog::warn("whip udp write queue full session {}", locked->id_);
                 return;
             }
             if (error != boost::asio::error::operation_aborted)
@@ -387,7 +386,10 @@ void whip_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
     {
         return;
     }
-    udp_transport_->write(std::move(packet), std::move(endpoint));
+    if (!udp_transport_->write(std::move(packet), std::move(endpoint)))
+    {
+        spdlog::warn("whip udp write queue full session {}", id_);
+    }
 }
 
 void whip_session::schedule_dtls_timeout()

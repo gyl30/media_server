@@ -178,7 +178,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
             {
                 return;
             }
-            if (error && error != boost::asio::error::no_buffer_space)
+            if (error)
             {
                 if (error != boost::asio::error::operation_aborted && locked->shutdown_handler_)
                 {
@@ -247,8 +247,10 @@ void rtsp_publish_udp_session::send_rtcp(std::size_t track_index)
             continue;
         }
 
-        state.rtcp_transport->write(std::span<const std::uint8_t>{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint);
-        return;
+        if (state.rtcp_transport->write(std::span<const std::uint8_t>{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint))
+        {
+            return;
+        }
     }
 
     schedule_rtcp();
