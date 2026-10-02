@@ -223,13 +223,18 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
             return 0;
         },
         [self]() { self->shutdown(); });
+    // The muxer emits codec config immediately; Play.Start must precede it.
+    if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0)
+    {
+        return -1;
+    }
     if (!play->startup())
     {
         return -1;
     }
     play_ = std::move(play);
     spdlog::info("rtmp play {}", *target);
-    return 0;
+    return RTMP_SERVER_ASYNC_START;
 }
 
 int rtmp_session::on_publish(std::string_view app, std::string_view stream)
