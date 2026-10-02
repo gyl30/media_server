@@ -10,6 +10,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import aiohttp
+
 from fanout_support import benchmark_head, proc_cpu, proc_snapshot, stop_process, thread_rates
 
 
@@ -25,24 +27,33 @@ def percentile(values, fraction):
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
-async def viewer(index, source_count, host, port, window, ready):
+async def viewer(index, source_count, host, port, window, ready, stream_name=None):
     received = 0
     error = None
     established = False
-    writer = None
+    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=5, sock_read=3))
+    started = time.monotonic()
+    first_media_ms = None
     try:
-        reader, writer = await asyncio.open_connection(host, port)
         source = index % source_count
-        request = f"GET /live/perf{source}.flv HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-        writer.write(request.encode())
-        await writer.drain()
-        header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
-        if not header.startswith(b"HTTP/1.1 200"):
-            raise RuntimeError(header.split(b"\r\n", 1)[0].decode(errors="replace"))
-        first = await asyncio.wait_for(reader.read(1), 10)
-        if not first:
-            raise RuntimeError("media stream ended before first byte")
+        name = stream_name or f"live/perf{source}"
+        response = await session.get(f"http://{host}:{port}/{name}.flv", headers={"Connection": "close"})
+        if response.status != 200:
+            raise RuntimeError(f"HTTP status={response.status}")
+        reader = response.content
+        flv_header = await asyncio.wait_for(reader.readexactly(13), 3)
+        if not flv_header.startswith(b"FLV"):
+            raise RuntimeError("invalid FLV header")
+        while True:
+            tag = await asyncio.wait_for(reader.readexactly(11), 3)
+            size = int.from_bytes(tag[1:4], "big")
+            body = await asyncio.wait_for(reader.readexactly(size + 4), 3)
+            if tag[0] == 8 and size > 1 and (body[0] >> 4 != 10 or body[1] == 1):
+                break
+            if tag[0] == 9 and size > 1 and ((body[0] & 0x80 and body[0] & 0x0f in (1, 3)) or body[1] == 1):
+                break
         established = True
+        first_media_ms = (time.monotonic() - started) * 1000
         ready.set()
         while True:
             data = await asyncio.wait_for(reader.read(65536), 3)
@@ -55,17 +66,12 @@ async def viewer(index, source_count, host, port, window, ready):
                 break
     except asyncio.CancelledError:
         pass
-    except (OSError, RuntimeError, asyncio.TimeoutError, asyncio.IncompleteReadError) as caught:
+    except (OSError, RuntimeError, asyncio.TimeoutError, asyncio.IncompleteReadError, aiohttp.ClientError) as caught:
         error = str(caught)
         ready.set()
     finally:
-        if writer is not None:
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except (OSError, asyncio.CancelledError):
-                pass
-    return {"bytes": received, "error": error, "established": established}
+        await session.close()
+    return {"bytes": received, "error": error, "established": established, "first_media_ms": first_media_ms}
 
 
 async def wait_for_listener(host, port):
@@ -138,6 +144,8 @@ async def measure(args, server, publishers):
         "ready": sum(result["established"] for result in results),
         "progressing": sum(value > 0 for value in rates),
         "errors": [result["error"] for result in results if result["error"]],
+        "first_media_ms_p50": statistics.median(result["first_media_ms"] for result in results if result["established"])
+        if any(result["established"] for result in results) else None,
         "aggregate_gbit_per_second": sum(rates) * 8 / 1e9,
         "viewer_bytes_per_second": {
             "min": min(rates),

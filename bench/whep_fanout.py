@@ -91,6 +91,13 @@ def main():
                 "server_rss_kib_median": statistics.median(sample["rss_kib"] for sample in samples),
                 "server_pss_kib_median": statistics.median(sample["pss_kib"] for sample in samples),
                 "server_fd_median": statistics.median(sample["fd"] for sample in samples),
+                "server_threads": after_server["thread_count"],
+                "udp_tx_queue_bytes_max": max(sample["udp_tx_queue_bytes"] for sample in samples),
+                "udp_rx_queue_bytes_max": max(sample["udp_rx_queue_bytes"] for sample in samples),
+                "udp_drops": max(sample["udp_drops"] for sample in [before_server, *samples, after_server]) - before_server["udp_drops"],
+                "aggregate_gbit_per_second": measurement["received_bytes"] * 8 / (1e9 * measurement["duration_seconds"]),
+                "first_media": parse_phase(next(line for line in client_log_path.read_text().splitlines()
+                                                if line.startswith("first_media_ms_p50="))),
                 "server_thread_cpu_cores": thread_rates(before_server, after_server, "cpu", elapsed),
                 "server_thread_context_switches_per_second": thread_rates(before_server, after_server, "context_switches", elapsed),
                 "server_thread_migrations_per_second": thread_rates(before_server, after_server, "migrations", elapsed),
@@ -99,7 +106,11 @@ def main():
             }
             (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
             print(json.dumps(result, indent=2))
-            if client.returncode != 0 or established["media_ready"] != args.viewers or measurement["progressing"] != args.viewers:
+            if (client.returncode != 0 or established["ready"] != args.viewers or established["media_ready"] != args.viewers
+                    or established["establishment_failures"] != 0 or measurement["progressing"] != args.viewers
+                    or measurement["runtime_failures"] != 0 or measurement["unprotect_failures"] != 0
+                    or disconnect["stopped"] != args.viewers or disconnect["removed"] != args.viewers
+                    or result["queue_full_events"] != 0 or result["udp_drops"] != 0):
                 raise SystemExit(1)
         finally:
             stop_process(client)

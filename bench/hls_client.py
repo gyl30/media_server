@@ -266,6 +266,7 @@ async def run_viewer(state: State, index: int) -> None:
         if status != 307 or "location" not in headers:
             raise RuntimeError(f"redirect status={status}")
         playlist_url = urljoin(play_url, headers["location"])
+        print(f"phase=session viewer={index} playlist={playlist_url}", flush=True)
         init_url, segment_url, poll_seconds, playlist_bytes = await request_playlist(client, playlist_url)
         playlist_bytes_received += playlist_bytes
         if init_url:

@@ -60,6 +60,7 @@ struct shared_results
     std::mutex mutex;
     std::condition_variable changed;
     std::vector<std::string> errors;
+    std::vector<std::uint64_t> first_media_milliseconds;
 
     void add_error(std::string value)
     {
@@ -176,9 +177,10 @@ class play_session final : public std::enable_shared_from_this<play_session>
                  std::shared_ptr<media_server::bench::webrtc_client_peer> peer,
                  std::string resource_url,
                  std::size_t index,
-                 std::uint8_t video_payload_type)
+                 std::uint8_t video_payload_type,
+                 clock_type::time_point started)
         : results_(std::move(results)), peer_(std::move(peer)), resource_url_(std::move(resource_url)), index_(index),
-          video_payload_type_(video_payload_type)
+          video_payload_type_(video_payload_type), started_(started)
     {
     }
 
@@ -258,7 +260,12 @@ class play_session final : public std::enable_shared_from_this<play_session>
         if (!media_ready_ && video_packets_.load() != 0U && audio_packets_.load() != 0U)
         {
             media_ready_ = true;
-            ++results_->media_ready;
+            {
+                std::lock_guard lock(results_->mutex);
+                results_->first_media_milliseconds.push_back(static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(clock_type::now() - started_).count()));
+                ++results_->media_ready;
+            }
             results_->changed.notify_all();
         }
     }
@@ -283,6 +290,7 @@ class play_session final : public std::enable_shared_from_this<play_session>
     std::string resource_url_;
     std::size_t index_{};
     std::uint8_t video_payload_type_{};
+    clock_type::time_point started_;
     std::atomic_uint64_t video_packets_{};
     std::atomic_uint64_t audio_packets_{};
     std::atomic_uint64_t received_bytes_{};
@@ -399,6 +407,7 @@ int main(int argc, char** argv)
         const auto ramp_interval = std::chrono::nanoseconds{1'000'000'000LL / static_cast<std::int64_t>(config.ramp_per_second)};
         for (std::size_t index = 0; index < config.viewers; ++index)
         {
+            const auto started = clock_type::now();
             auto& shard = *shards[index % shards.size()];
             auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context);
             media_server::bench::webrtc_http_response response;
@@ -423,7 +432,7 @@ int main(int argc, char** argv)
             }
             else
             {
-                auto session = std::make_shared<play_session>(results, peer, response.location, index, 102U);
+                auto session = std::make_shared<play_session>(results, peer, response.location, index, 102U, started);
                 sessions.push_back(session);
                 ++results->ready;
                 boost::asio::post(shard.io, [session]() { session->start(); });
@@ -442,6 +451,19 @@ int main(int argc, char** argv)
         }
 
         const auto established = sample_process();
+        std::vector<std::uint64_t> latencies;
+        {
+            std::lock_guard lock(results->mutex);
+            latencies = results->first_media_milliseconds;
+        }
+        std::sort(latencies.begin(), latencies.end());
+        if (!latencies.empty())
+        {
+            std::cout << "first_media_ms_p50=" << latencies[(latencies.size() - 1U) / 2U]
+                      << " p95=" << latencies[(latencies.size() - 1U) * 95U / 100U]
+                      << " p99=" << latencies[(latencies.size() - 1U) * 99U / 100U]
+                      << " max=" << latencies.back() << '\n';
+        }
         std::cout << "phase=established requested=" << config.viewers << " ready=" << results->ready.load()
                   << " media_ready=" << results->media_ready.load()
                   << " establishment_failures=" << results->establishment_failures.load()

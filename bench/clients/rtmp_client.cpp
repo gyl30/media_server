@@ -13,6 +13,8 @@
 extern "C"
 {
 #include "rtmp-client.h"
+#include "flv-header.h"
+#include "flv-proto.h"
 }
 
 namespace media_server::bench
@@ -136,16 +138,34 @@ int rtmp_client::send_callback(void* param, const void* header, std::size_t head
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
-int rtmp_client::video_callback(void* param, const void*, std::size_t bytes, std::uint32_t)
+int rtmp_client::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
 {
+    flv_video_tag_header_t header{};
+    if (flv_video_tag_header_read(&header, static_cast<const std::uint8_t*>(data), bytes) < 0)
+    {
+        return -1;
+    }
+    if (header.avpacket != FLV_AVPACKET)
+    {
+        return 0;
+    }
     auto* self = static_cast<rtmp_client*>(param);
     self->received_bytes_ += bytes;
     ++self->received_messages_;
     return 0;
 }
 
-int rtmp_client::audio_callback(void* param, const void*, std::size_t bytes, std::uint32_t)
+int rtmp_client::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
 {
+    flv_audio_tag_header_t header{};
+    if (flv_audio_tag_header_read(&header, static_cast<const std::uint8_t*>(data), bytes) < 0)
+    {
+        return -1;
+    }
+    if (header.avpacket != FLV_AVPACKET)
+    {
+        return 0;
+    }
     auto* self = static_cast<rtmp_client*>(param);
     self->received_audio_bytes_ += bytes;
     ++self->received_audio_messages_;

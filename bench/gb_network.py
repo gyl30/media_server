@@ -40,13 +40,13 @@ def create_pair(args, index):
         sender.update(transport="udp", remote_address=args.host, remote_rtp_port=ports["rtp_port"])
         post(args.host, args.http_port, "/gb28181/sender/create", sender)
     elif args.transport == "tcp_sender_active":
-        port = 31000 + index
+        port = args.tcp_port_base + index
         receiver.update(transport="tcp_passive", listen_port=port)
         sender.update(transport="tcp_active", remote_address=args.host, remote_port=port)
         post(args.host, args.http_port, "/gb28181/receiver/create", receiver)
         post(args.host, args.http_port, "/gb28181/sender/create", sender)
     else:
-        port = 31000 + index
+        port = args.tcp_port_base + index
         sender.update(transport="tcp_passive", listen_port=port)
         receiver.update(transport="tcp_active", remote_address=args.host, remote_port=port)
         post(args.host, args.http_port, "/gb28181/sender/create", sender)
@@ -153,6 +153,7 @@ def main():
     parser.add_argument("--rtmp-port", type=int, default=11935)
     parser.add_argument("--rtsp-port", type=int, default=18554)
     parser.add_argument("--http-port", type=int, default=18080)
+    parser.add_argument("--tcp-port-base", type=int, default=31000)
     args = parser.parse_args()
     if min(args.pairs, args.workers, args.duration) < 1 or args.warmup < 0 or args.pairs > 1000:
         parser.error("pairs, workers and duration must be positive; pairs at most 1000")

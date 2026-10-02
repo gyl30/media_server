@@ -21,7 +21,7 @@ def proc_status(pid, tid=None):
     values = {}
     for line in path.read_text().splitlines():
         key, _, value = line.partition(":")
-        if key in {"VmRSS", "voluntary_ctxt_switches", "nonvoluntary_ctxt_switches"}:
+        if key in {"VmRSS", "VmSize", "Threads", "voluntary_ctxt_switches", "nonvoluntary_ctxt_switches"}:
             values[key] = int(value.split()[0])
     return values
 
@@ -49,9 +49,32 @@ def proc_snapshot(pid):
         if line.startswith("Pss:"):
             pss_kib = int(line.split()[1])
             break
+    sockets = set()
+    for fd in Path(f"/proc/{pid}/fd").iterdir():
+        try:
+            target = fd.readlink().name
+            if target.startswith("socket:["):
+                sockets.add(target[8:-1])
+        except FileNotFoundError:
+            pass
+    udp_tx_queue = udp_rx_queue = udp_drops = 0
+    for family in ("udp", "udp6"):
+        for line in Path(f"/proc/{pid}/net/{family}").read_text().splitlines()[1:]:
+            fields = line.split()
+            if fields[9] in sockets:
+                tx, rx = fields[4].split(":")
+                udp_tx_queue += int(tx, 16)
+                udp_rx_queue += int(rx, 16)
+                udp_drops += int(fields[-1])
+    status = proc_status(pid)
     return {
         "cpu": proc_cpu(pid),
-        "rss_kib": proc_status(pid)["VmRSS"],
+        "rss_kib": status["VmRSS"],
+        "vmsize_kib": status["VmSize"],
+        "thread_count": status["Threads"],
+        "udp_tx_queue_bytes": udp_tx_queue,
+        "udp_rx_queue_bytes": udp_rx_queue,
+        "udp_drops": udp_drops,
         "pss_kib": pss_kib,
         "fd": len(list(Path(f"/proc/{pid}/fd").iterdir())),
         "threads": tasks,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import asyncio
 import json
 import platform
 import socket
@@ -10,6 +11,7 @@ import time
 from pathlib import Path
 
 from fanout_support import benchmark_head, proc_snapshot, stop_process, thread_rates, wait_for_listener
+from http_flv_fanout import viewer
 
 
 def source_ready(host, port, name):
@@ -64,18 +66,28 @@ def main():
         publisher = None
         try:
             wait_for_listener(args.host, args.rtmp_port)
+            progress_path = args.output / "publisher-progress.log"
+            publish_started = time.monotonic()
             publisher = subprocess.Popen(
-                [str(args.ffmpeg_bin), "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
+                [str(args.ffmpeg_bin), "-hide_banner", "-loglevel", "error", "-progress", str(progress_path), "-stream_loop", "-1", "-re", "-i", str(args.fixture),
                  "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", format_name, output],
                 stdout=publisher_log, stderr=subprocess.STDOUT,
             )
             wait_for_sources(args.host, args.http_port, names, publisher)
+            probe_started = time.monotonic()
+            probe = asyncio.run(viewer(0, args.sources, args.host, args.http_port,
+                                      {"start": float("inf"), "end": float("-inf")}, asyncio.Event()))
+            if not probe["established"] or probe["error"]:
+                raise RuntimeError(f"publisher did not produce media: {probe}")
+            publish_first_media_ms = (probe_started - publish_started) * 1000 + probe["first_media_ms"]
             time.sleep(args.warmup)
             before_server = proc_snapshot(server.pid)
             before_publisher = proc_snapshot(publisher.pid)
             server_samples = []
             publisher_samples = []
             started = time.monotonic()
+            bytes_before = [int(line.split("=", 1)[1]) for line in progress_path.read_text().splitlines()
+                            if line.startswith("total_size=") and line.split("=", 1)[1].isdigit()]
             while time.monotonic() - started < args.duration:
                 time.sleep(min(1, max(0, args.duration - (time.monotonic() - started))))
                 server_samples.append(proc_snapshot(server.pid))
@@ -84,6 +96,8 @@ def main():
             after_server = proc_snapshot(server.pid)
             after_publisher = proc_snapshot(publisher.pid)
             source_status = {name: source_ready(args.host, args.http_port, name) for name in names}
+            bytes_after = [int(line.split("=", 1)[1]) for line in progress_path.read_text().splitlines()
+                           if line.startswith("total_size=") and line.split("=", 1)[1].isdigit()]
             result = {
                 "config": {
                     "head": benchmark_head(),
@@ -92,6 +106,8 @@ def main():
                 },
                 "sources_readable": source_status,
                 "publisher_alive": publisher.poll() is None,
+                "publish_first_media_ms": publish_first_media_ms,
+                "published_bytes_per_second": (bytes_after[-1] - bytes_before[-1]) / elapsed if bytes_before and bytes_after else None,
                 "server_cpu_cores": (after_server["cpu"] - before_server["cpu"]) / elapsed,
                 "server_rss_kib_median": statistics.median(sample["rss_kib"] for sample in server_samples),
                 "server_pss_kib_median": statistics.median(sample["pss_kib"] for sample in server_samples),
