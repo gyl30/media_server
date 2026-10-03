@@ -1,14 +1,16 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"time"
 )
 
 type deviceResponse struct {
 	DeviceID string    `json:"device_id"`
+	Name     string    `json:"name"`
 	Online   bool      `json:"online"`
-	LastSeen time.Time `json:"last_seen"`
+	LastSeen time.Time `json:"last_seen,omitzero"`
 }
 
 type channelResponse struct {
@@ -30,16 +32,66 @@ type liveStopRequest struct {
 	StreamID string `json:"stream_id"`
 }
 
-func (s *infrastructureServer) handleDeviceList(writer http.ResponseWriter, _ *http.Request) {
-	now := s.live.sip.now()
-	devices := s.live.sip.devices.snapshot(now)
+func (s *infrastructureServer) handleDeviceList(writer http.ResponseWriter, request *http.Request) {
+	devices, err := s.live.sip.deviceStore.list(request.Context())
+	if err != nil {
+		s.writeDeviceError(writer, err)
+		return
+	}
 	response := make([]deviceResponse, 0, len(devices))
 	for _, device := range devices {
-		response = append(response, deviceResponse{
-			DeviceID: device.id, Online: device.online, LastSeen: device.lastHeartbeat,
-		})
+		response = append(response, s.deviceResponse(device))
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"devices": response})
+}
+
+func (s *infrastructureServer) deviceResponse(device gbDevice) deviceResponse {
+	response := deviceResponse{DeviceID: device.deviceID, Name: device.name}
+	if registration, ok := s.live.sip.devices.get(device.deviceID); ok {
+		response.Online = registration.online && s.live.sip.now().Before(registration.expiresAt)
+		response.LastSeen = registration.lastHeartbeat
+	}
+	return response
+}
+
+func (s *infrastructureServer) handleDeviceCreate(writer http.ResponseWriter, request *http.Request) {
+	var command struct {
+		DeviceID string `json:"device_id"`
+		Name     string `json:"name"`
+	}
+	if !decodeJSON(writer, request, &command) {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	device := gbDevice{deviceID: command.DeviceID, name: command.Name}
+	if err := s.live.sip.deviceStore.create(request.Context(), device); err != nil {
+		s.writeDeviceError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, s.deviceResponse(device))
+}
+
+func (s *infrastructureServer) handleDeviceGet(writer http.ResponseWriter, request *http.Request) {
+	device, err := s.live.sip.deviceStore.get(request.Context(), request.PathValue("device_id"))
+	if err != nil {
+		s.writeDeviceError(writer, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, s.deviceResponse(device))
+}
+
+func (s *infrastructureServer) writeDeviceError(writer http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errDeviceNotFound):
+		writeHTTPError(writer, http.StatusNotFound, "device_not_found")
+	case errors.Is(err, errDeviceExists):
+		writeHTTPError(writer, http.StatusConflict, "device_exists")
+	case errors.Is(err, errInvalidDevice):
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+	default:
+		s.logger.Error("device store failed", "error", err)
+		writeHTTPError(writer, http.StatusInternalServerError, "device_store_failed")
+	}
 }
 
 func (s *infrastructureServer) handleChannelList(writer http.ResponseWriter, request *http.Request) {
@@ -48,8 +100,8 @@ func (s *infrastructureServer) handleChannelList(writer http.ResponseWriter, req
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if _, ok := s.live.sip.devices.get(deviceID); !ok {
-		writeHTTPError(writer, http.StatusNotFound, "device_not_found")
+	if _, err := s.live.sip.deviceStore.get(request.Context(), deviceID); err != nil {
+		s.writeDeviceError(writer, err)
 		return
 	}
 	channels := s.live.sip.channels.list(deviceID)

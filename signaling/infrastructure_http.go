@@ -53,6 +53,8 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /internal/live/start", s.handleLiveStart)
 	routes.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
 	routes.HandleFunc("GET /api/devices", s.handleDeviceList)
+	routes.HandleFunc("POST /api/devices", s.handleDeviceCreate)
+	routes.HandleFunc("GET /api/devices/{device_id}", s.handleDeviceGet)
 	routes.HandleFunc("GET /api/devices/{device_id}/channels", s.handleChannelList)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)

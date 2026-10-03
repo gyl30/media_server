@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -19,6 +20,16 @@ func (s *sipServer) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
 	registration, err := parseRegistration(req, s.cfg)
 	if err != nil {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
+		return
+	}
+	exists, err := s.deviceStore.exists(context.Background(), registration.deviceID)
+	if err != nil {
+		s.logger.Error("REGISTER allowlist lookup failed", "error", err)
+		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "Internal Server Error", nil))
+		return
+	}
+	if !exists {
+		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusForbidden, "Forbidden", nil))
 		return
 	}
 	authorization := req.GetHeader("Authorization")

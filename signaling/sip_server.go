@@ -21,6 +21,7 @@ type sipServer struct {
 	now             func() time.Time
 	auth            *digestAuthenticator
 	devices         *deviceRegistry
+	deviceStore     *deviceStore
 	channels        *channelRegistry
 	sweepInterval   time.Duration
 	onDeviceOffline func(string)
@@ -30,7 +31,7 @@ type sipServer struct {
 	catalogSN       atomic.Uint32
 }
 
-func newSIPServer(cfg config, logger *slog.Logger) (*sipServer, error) {
+func newSIPServer(cfg config, devices *deviceStore, logger *slog.Logger) (*sipServer, error) {
 	ua, err := sipgo.NewUA(
 		sipgo.WithUserAgent("media-server-signaling"),
 	)
@@ -67,6 +68,7 @@ func newSIPServer(cfg config, logger *slog.Logger) (*sipServer, error) {
 		now:           time.Now,
 		auth:          newDigestAuthenticator(cfg.sipDomain, cfg.sipPassword),
 		devices:       newDeviceRegistry(),
+		deviceStore:   devices,
 		channels:      newChannelRegistry(),
 		sweepInterval: time.Second,
 		advertiseHost: advertiseHost,

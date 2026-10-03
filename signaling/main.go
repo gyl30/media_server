@@ -18,7 +18,11 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		return err
 	}
 	defer sources.close()
-	server, err := newSIPServer(cfg, logger)
+	devices, err := newDeviceStore(ctx, sources.db)
+	if err != nil {
+		return err
+	}
+	server, err := newSIPServer(cfg, devices, logger)
 	if err != nil {
 		return err
 	}
