@@ -56,6 +56,10 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /api/devices", s.handleDeviceCreate)
 	routes.HandleFunc("GET /api/devices/{device_id}", s.handleDeviceGet)
 	routes.HandleFunc("GET /api/devices/{device_id}/channels", s.handleChannelList)
+	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/play", s.handleChannelPlay)
+	routes.HandleFunc("POST /play/whep/{play_id}", s.handlePlayWHEP)
+	routes.HandleFunc("OPTIONS /play/whep/{play_id}", s.handlePlayWHEP)
+	routes.HandleFunc("DELETE /api/lives/{live_id}", s.handleLiveDelete)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
 
@@ -78,7 +82,17 @@ func (s *infrastructureServer) serve(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		<-serveContext.Done()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+	sweep:
+		for {
+			select {
+			case <-serveContext.Done():
+				break sweep
+			case now := <-ticker.C:
+				s.live.expirePlayTickets(now)
+			}
+		}
 		shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := server.Shutdown(shutdownContext); err != nil {
 			_ = server.Close()

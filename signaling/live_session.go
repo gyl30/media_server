@@ -16,11 +16,12 @@ import (
 )
 
 var (
-	errLiveExists         = errors.New("live session already exists")
-	errLiveNotFound       = errors.New("live session does not exist")
-	errLiveChanged        = errors.New("live session generation changed")
-	errDeviceOffline      = errors.New("device is offline")
-	errChannelUnavailable = errors.New("channel is unavailable")
+	errLiveStopping    = errors.New("live session is stopping")
+	errLiveNotFound    = errors.New("live session does not exist")
+	errLiveChanged     = errors.New("live session generation changed")
+	errDeviceOffline   = errors.New("device is offline")
+	errChannelNotFound = errors.New("channel not found")
+	errChannelOffline  = errors.New("channel is offline")
 )
 
 type liveState string
@@ -53,6 +54,7 @@ type liveSession struct {
 	established chan struct{}
 	done        chan struct{}
 	cleanupErr  error
+	offers      sync.WaitGroup
 }
 
 type liveView struct {
@@ -66,6 +68,7 @@ type liveView struct {
 type liveService struct {
 	mu            sync.Mutex
 	sessions      map[liveKey]*liveSession
+	tickets       map[string]playTicket
 	sip           *sipServer
 	media         *mediaServerHTTPClient
 	ssrcs         *ssrcAllocator
@@ -84,6 +87,7 @@ func newLiveService(
 ) *liveService {
 	service := &liveService{
 		sessions:      make(map[liveKey]*liveSession),
+		tickets:       make(map[string]playTicket),
 		sip:           sipServer,
 		media:         media,
 		ssrcs:         ssrcs,
@@ -96,30 +100,50 @@ func newLiveService(
 }
 
 func (s *liveService) startLive(ctx context.Context, deviceID, channelID string) (liveView, error) {
+	if _, err := s.sip.deviceStore.get(ctx, deviceID); err != nil {
+		return liveView{}, err
+	}
 	device, ok := s.sip.devices.getOnline(deviceID, s.sip.now())
 	if !ok {
 		return liveView{}, errDeviceOffline
 	}
 	channel, ok := s.sip.channels.get(deviceID, channelID)
-	if !ok || channel.status != "ON" {
-		return liveView{}, errChannelUnavailable
+	if !ok {
+		return liveView{}, errChannelNotFound
+	}
+	if channel.status != "ON" {
+		return liveView{}, errChannelOffline
+	}
+	key := liveKey{deviceID: deviceID, channelID: channelID}
+	s.mu.Lock()
+	if existing, exists := s.sessions[key]; exists {
+		if existing.state == liveStopping || existing.state == liveCleanupPending {
+			s.mu.Unlock()
+			return liveView{}, errLiveStopping
+		}
+		established := existing.established
+		s.mu.Unlock()
+		select {
+		case <-established:
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.sessions[key] != existing || existing.state != liveStreaming {
+				return liveView{}, errLiveChanged
+			}
+			return makeLiveView(existing), nil
+		case <-ctx.Done():
+			return liveView{}, ctx.Err()
+		}
 	}
 	ssrc, err := s.ssrcs.acquire()
 	if err != nil {
+		s.mu.Unlock()
 		return liveView{}, err
 	}
-	key := liveKey{deviceID: deviceID, channelID: channelID}
 	operationContext, cancel := context.WithCancel(ctx)
 	session := &liveSession{
 		key: key, streamID: uuid.NewString(), streamName: "gb/" + deviceID + "/" + channelID, ssrc: ssrc,
 		state: livePreparing, cancel: cancel, established: make(chan struct{}), done: make(chan struct{}),
-	}
-	s.mu.Lock()
-	if _, exists := s.sessions[key]; exists {
-		s.mu.Unlock()
-		cancel()
-		s.ssrcs.release(ssrc)
-		return liveView{}, errLiveExists
 	}
 	s.sessions[key] = session
 	s.mu.Unlock()
@@ -132,7 +156,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	}
 	if !channelOnline || channel.status != "ON" {
 		s.remove(session)
-		return liveView{}, errChannelUnavailable
+		return liveView{}, errChannelOffline
 	}
 	rtpPort, err := s.media.createUDPReceiver(operationContext, gb28181ReceiverRequest{
 		streamID: session.streamID, streamName: session.streamName, payloadType: livePayloadType, ssrc: ssrc,
@@ -282,12 +306,24 @@ func (s *liveService) stopLive(ctx context.Context, deviceID, channelID, expecte
 	return s.stopSessionLocked(ctx, session)
 }
 
+func (s *liveService) stopLiveID(ctx context.Context, liveID string) error {
+	s.mu.Lock()
+	for _, session := range s.sessions {
+		if session.streamID == liveID {
+			return s.stopSessionLocked(ctx, session)
+		}
+	}
+	s.mu.Unlock()
+	return errLiveNotFound
+}
+
 func (s *liveService) stopSessionLocked(ctx context.Context, session *liveSession) error {
 	current, ok := s.sessions[session.key]
 	if !ok || current != session {
 		s.mu.Unlock()
 		return nil
 	}
+	s.invalidateLiveTicketsLocked(session.streamID)
 	if session.state == liveCleanupPending {
 		session.state = liveStopping
 		session.cleanupErr = nil
@@ -367,6 +403,8 @@ func (s *liveService) stopMatching(ctx context.Context, matches func(*liveSessio
 }
 
 func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
+	// Finish offers against this source before deleting it or allowing a new generation.
+	session.offers.Wait()
 	var result error
 	if sendBye && session.dialog != nil {
 		byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
@@ -407,6 +445,7 @@ func markCleanupPendingLocked(session *liveSession, err error) {
 func (s *liveService) remove(session *liveSession) {
 	s.mu.Lock()
 	if current, ok := s.sessions[session.key]; ok && current == session {
+		s.invalidateLiveTicketsLocked(session.streamID)
 		delete(s.sessions, session.key)
 		session.cancel()
 		s.ssrcs.release(session.ssrc)
@@ -443,6 +482,7 @@ func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.Serv
 		return
 	}
 	session.state = liveStopping
+	s.invalidateLiveTicketsLocked(session.streamID)
 	s.mu.Unlock()
 	if err := session.dialog.ReadBye(request, transaction); err != nil {
 		s.logger.Warn("remote BYE failed", "device_id", session.key.deviceID, "channel_id", session.key.channelID, "error", err)
