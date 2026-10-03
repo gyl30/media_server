@@ -52,13 +52,10 @@ export const api = {
   deleteSource: (sourceID) => request(`/api/sources/${segment(sourceID)}`, { method: "DELETE" }),
   startSource: (sourceID) => request(`/api/sources/${segment(sourceID)}/start`, { method: "POST" }),
   stopSource: (sourceID) => request(`/api/sources/${segment(sourceID)}/stop`, { method: "POST" }),
-  startChannel: (deviceID, channelID) => request(
-    `/api/devices/${segment(deviceID)}/channels/${segment(channelID)}/start`,
-    { method: "POST" },
+  playChannel: (deviceID, channelID, signal) => request(
+    `/api/devices/${segment(deviceID)}/channels/${segment(channelID)}/play`,
+    { method: "POST", signal },
   ),
-  stopChannel: (deviceID, channelID, streamID) => request(
-    `/api/devices/${segment(deviceID)}/channels/${segment(channelID)}/stop`,
-    { method: "POST", body: { stream_id: streamID } },
-  ),
+  stopLive: (liveID) => request(`/api/lives/${segment(liveID)}`, { method: "DELETE" }),
   startPreview: (body, signal) => request("/api/preview/start", { method: "POST", body, signal }),
 };

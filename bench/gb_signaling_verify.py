@@ -101,7 +101,7 @@ def main():
     def counters(sim):
         lines = [line for line in sim.log_path.read_text().splitlines() if "simulator summary" in line]
         assert lines, sim.log_path.read_text()
-        return {key: int(value) for key, value in re.findall(r"(\w+)=(\d+)", lines[-1])}
+        return {key: int(value) for key, value in re.findall(r"(\w+)=(\d+)(?=\s|$)", lines[-1])}
 
     def ended(live_id, resources):
         for resource in resources:
@@ -197,10 +197,23 @@ def main():
                 assert count["invite"] == 1 and count["ack"] == 1 and count["live_active"] == 1 and count["rtp_packets"] > 0, count
                 result["single_upstream_counters"] = count
                 mark("three Chrome decoders progress from one INVITE/RTP source; concurrent ticket consume 201/404")
+                page.evaluate("""async target => {
+                    const {WHEPPreview} = await import('/whep.js');
+                    const video = document.createElement('video');
+                    video.muted = true; video.autoplay = true;
+                    document.body.append(video);
+                    window.preview = new WHEPPreview(video, update => {window.previewState = update.state;});
+                    await preview.start(target, 'E2E camera');
+                }""", {"device_id": device, "channel_id": channel})
+                eventually(lambda: page.evaluate("""async () => preview.current && previewState === 'streaming' &&
+                    [...(await preview.current.peer.getStats()).values()].some(item => item.framesDecoded > 0)"""))
+                page.evaluate("async () => preview.stop()")
+                assert counters(simulator)["invite"] == 1
+                mark("embedded Web GB player uses play ticket and leaves shared upstream running after viewer stop")
                 expired = api("POST", play_path, expected=201)
                 page.wait_for_timeout(31000)
                 consume(expired)
-                assert channels()[0]["live"]["stream_id"] == live_id
+                assert channels()[0]["live"]["live_id"] == live_id
                 count = counters(simulator)
                 assert count["invite"] == 1 and count["catalog"] == 1 and count["register_refresh"] > 0, count
                 fresh = api("POST", play_path, expected=201)

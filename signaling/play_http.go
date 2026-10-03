@@ -19,8 +19,25 @@ func (s *infrastructureServer) handleChannelPlay(writer http.ResponseWriter, req
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	view, ok := s.startLive(writer, request, deviceID, channelID)
-	if !ok {
+	view, err := s.live.startLive(request.Context(), deviceID, channelID)
+	if err != nil {
+		switch {
+		case errors.Is(err, errDeviceNotFound):
+			writeHTTPError(writer, http.StatusNotFound, "device_not_found")
+		case errors.Is(err, errLiveStopping), errors.Is(err, errLiveChanged):
+			writeHTTPError(writer, http.StatusConflict, "live_stopping")
+		case errors.Is(err, errDeviceOffline):
+			writeHTTPError(writer, http.StatusConflict, "device_offline")
+		case errors.Is(err, errDeviceStopping):
+			writeHTTPError(writer, http.StatusConflict, "device_stopping")
+		case errors.Is(err, errChannelNotFound):
+			writeHTTPError(writer, http.StatusNotFound, "channel_not_found")
+		case errors.Is(err, errChannelOffline):
+			writeHTTPError(writer, http.StatusConflict, "channel_offline")
+		default:
+			s.logger.Error("live start failed", "device_id", deviceID, "channel_id", channelID, "error", err)
+			writeHTTPError(writer, http.StatusBadGateway, "live_start_failed")
+		}
 		return
 	}
 	ticket, err := s.live.newPlayTicket(deviceID, channelID, view.streamID)

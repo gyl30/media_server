@@ -305,21 +305,6 @@ func (s *liveService) live(deviceID, channelID string) (liveView, bool) {
 	return makeLiveView(session), true
 }
 
-func (s *liveService) stopLive(ctx context.Context, deviceID, channelID, expectedStreamID string) error {
-	key := liveKey{deviceID: deviceID, channelID: channelID}
-	s.mu.Lock()
-	session, ok := s.sessions[key]
-	if !ok {
-		s.mu.Unlock()
-		return errLiveNotFound
-	}
-	if expectedStreamID != "" && session.streamID != expectedStreamID {
-		s.mu.Unlock()
-		return errLiveChanged
-	}
-	return s.stopSessionLocked(ctx, session)
-}
-
 func (s *liveService) stopLiveID(ctx context.Context, liveID string) error {
 	s.mu.Lock()
 	for _, session := range s.sessions {

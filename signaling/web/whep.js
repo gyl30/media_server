@@ -70,14 +70,14 @@ async function deleteResource(resourceURL, keepalive = false) {
   }
 }
 
-async function postOffer(session, offer) {
+async function postOffer(session, offer, retryNotReady) {
   while (!session.cancelled) {
     const response = await fetch(session.whepURL, {
       method: "POST",
       headers: { "Content-Type": "application/sdp" },
       body: offer,
     });
-    if (response.status === 409) {
+    if (response.status === 409 && retryNotReady) {
       await response.text();
       const seconds = Number.parseInt(response.headers.get("Retry-After") || "1", 10);
       const delay = Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 5) : 1;
@@ -143,7 +143,9 @@ export class WHEPPreview {
     this.current = session;
     this.emit("preparing", session);
     try {
-      const preview = await api.startPreview(target, session.controller.signal);
+      const preview = target.source_id
+        ? await api.startPreview(target, session.controller.signal)
+        : await api.playChannel(target.device_id, target.channel_id, session.controller.signal);
       if (!this.isCurrent(session)) {
         return null;
       }
@@ -179,7 +181,7 @@ export class WHEPPreview {
         return null;
       }
       this.emit("negotiating", session);
-      const result = await postOffer(session, session.peer.localDescription.sdp);
+      const result = await postOffer(session, session.peer.localDescription.sdp, Boolean(target.source_id));
       session.resourceURL = result.resourceURL;
       if (!this.isCurrent(session)) {
         await deleteResource(session.resourceURL);

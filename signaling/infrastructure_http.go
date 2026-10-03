@@ -50,8 +50,6 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /api/sources/{source_id}/start", s.handleSourceStart)
 	routes.HandleFunc("POST /api/sources/{source_id}/stop", s.handleSourceStop)
 	routes.HandleFunc("POST /api/preview/start", s.handlePreviewStart)
-	routes.HandleFunc("POST /internal/live/start", s.handleLiveStart)
-	routes.HandleFunc("POST /internal/live/stop", s.handleLiveStop)
 	routes.HandleFunc("GET /api/devices", s.handleDeviceList)
 	routes.HandleFunc("POST /api/devices", s.handleDeviceCreate)
 	routes.HandleFunc("GET /api/devices/{device_id}", s.handleDeviceGet)
@@ -61,8 +59,6 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /play/whep/{play_id}", s.handlePlayWHEP)
 	routes.HandleFunc("OPTIONS /play/whep/{play_id}", s.handlePlayWHEP)
 	routes.HandleFunc("DELETE /api/lives/{live_id}", s.handleLiveDelete)
-	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/start", s.handleChannelLiveStart)
-	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/stop", s.handleChannelLiveStop)
 
 	web := embeddedWebHandler()
 	routes.Handle("GET /{$}", web)

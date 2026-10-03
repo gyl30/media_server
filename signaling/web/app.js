@@ -263,19 +263,15 @@ function renderChannels() {
     row.append(
       textCell(channel.name || "Unnamed channel", channel.channel_id, { secondaryCode: true }),
       badgeCell(channel.status, channel.status === "ON" ? "success" : "neutral", channel.parent_id || ""),
-      live ? badgeCell(live.state, toneForState(live.state), shortID(live.stream_id)) : badgeCell("Idle", "neutral"),
+      live ? badgeCell(live.state, toneForState(live.state), shortID(live.live_id)) : badgeCell("Idle", "neutral"),
     );
     const actions = document.createElement("td");
     actions.className = "row-actions";
     const buttons = [];
     if (live) {
       buttons.push(actionButton("Stop", "stop", "square", "secondary", pending || live.state === "stopping"));
-      if (live.state === "streaming") {
-        buttons.push(actionButton("Preview", "preview", "monitor-play", "secondary", pending));
-      }
-    } else {
-      buttons.push(actionButton("Start", "start", "play", "primary", pending || !device || !device.online || channel.status !== "ON"));
     }
+    buttons.push(actionButton("Play", "play", "play", "primary", pending || !device || !device.online || channel.status !== "ON" || Boolean(live && live.state !== "streaming")));
     for (const button of buttons) {
       button.dataset.deviceId = channel.device_id;
       button.dataset.channelId = channel.channel_id;
@@ -635,15 +631,12 @@ elements.channelRows.addEventListener("click", async (event) => {
   }
   const key = `channel:${deviceID}:${channelID}`;
   switch (button.dataset.action) {
-    case "start":
-      await runResourceAction(key, () => api.startChannel(deviceID, channelID), "Channel started");
-      break;
     case "stop":
       if (channel.live) {
-        await runResourceAction(key, () => api.stopChannel(deviceID, channelID, channel.live.stream_id), "Channel stopped");
+        await runResourceAction(key, () => api.stopLive(channel.live.live_id), "Channel stopped");
       }
       break;
-    case "preview":
+    case "play":
       await startPreview({ device_id: deviceID, channel_id: channelID }, channel.name || channelID);
       break;
   }
