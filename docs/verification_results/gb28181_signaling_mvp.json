@@ -1,0 +1,372 @@
+{
+  "base_head": "f0c61cd5d6137234ea4b604b48f60ebb2cc3c20a",
+  "code_head": "1740fec5f20172c7cd098150e596e934ca2722be",
+  "final_head_locator": "git log -1 --format=%H -- docs/gb28181_signaling_mvp.md",
+  "status": "PASS",
+  "cpp_production_changes": [],
+  "tests": {
+    "go_test": "PASS",
+    "go_vet": "PASS",
+    "go_race": "PASS",
+    "go_top_level_tests": 17,
+    "cmake_build": "PASS",
+    "ctest": {
+      "passed": 14,
+      "total": 14
+    },
+    "asan_ubsan": {
+      "status": "NOT_RUN",
+      "reason": "本轮未修改 C++ 生产代码"
+    }
+  },
+  "e2e": {
+    "head": "d13e984d505312117ed5ed868fd95e262de32cf9",
+    "status": "PASS",
+    "checks": [
+      "device persisted and visible while offline",
+      "REGISTER allowlist and automatic Catalog",
+      "eight concurrent play requests share one live",
+      "three Chrome decoders progress from one INVITE/RTP source; concurrent ticket consume 201/404",
+      "embedded Web GB player uses play ticket and leaves shared upstream running after viewer stop",
+      "30 second expiration keeps live; refresh does not repeat Catalog; fresh ticket plays",
+      "live stop invalidates tickets and ends existing media viewers",
+      "Expires:0 stops live and clears tickets/channels while retaining device",
+      "re-registration synchronizes Catalog and starts a new generation",
+      "signaling restart restores only device; REGISTER/Catalog recovers runtime",
+      "unavailable receiver creation leaves no live and permits a later play",
+      "proxy failure consumes ticket even after media recovers",
+      "deleting playing device stops upstream/viewer, invalidates ticket and removes persistent device",
+      "deleted device REGISTER is rejected with 403"
+    ],
+    "viewer_stats": {
+      "before": [
+        {
+          "framesDecoded": 52,
+          "bytesReceived": 214680,
+          "codec": "video/H264",
+          "connected": true,
+          "dtls": true
+        },
+        {
+          "framesDecoded": 27,
+          "bytesReceived": 117313,
+          "codec": "video/H264",
+          "connected": true,
+          "dtls": true
+        },
+        {
+          "framesDecoded": 2,
+          "bytesReceived": 13787,
+          "codec": "video/H264",
+          "connected": true,
+          "dtls": true
+        }
+      ],
+      "after": [
+        {
+          "framesDecoded": 123,
+          "bytesReceived": 476045,
+          "codec": "video/H264",
+          "connected": true,
+          "dtls": true
+        },
+        {
+          "framesDecoded": 98,
+          "bytesReceived": 378678,
+          "codec": "video/H264",
+          "connected": true,
+          "dtls": true
+        },
+        {
+          "framesDecoded": 73,
+          "bytesReceived": 275152,
+          "codec": "video/H264",
+          "connected": true,
+          "dtls": true
+        }
+      ]
+    },
+    "browser_version": "153.0.8010.52",
+    "single_upstream_counters": {
+      "devices": 1,
+      "registered": 1,
+      "register_refresh": 1,
+      "register_fail": 0,
+      "catalog": 1,
+      "heartbeat_ok": 8,
+      "heartbeat_fail": 0,
+      "invite": 1,
+      "ack": 1,
+      "bye": 0,
+      "live_active": 1,
+      "rtp_packets": 465,
+      "rtp_bytes": 557828,
+      "rtp_dropped": 0,
+      "send_errors": 0,
+      "phase_drops": 0,
+      "goroutines": 14,
+      "heap_bytes": 1403368,
+      "gc": 1
+    },
+    "delete_device_counters": {
+      "devices": 1,
+      "registered": 1,
+      "register_refresh": 1,
+      "register_fail": 0,
+      "catalog": 2,
+      "heartbeat_ok": 6,
+      "heartbeat_fail": 2,
+      "invite": 3,
+      "ack": 3,
+      "bye": 3,
+      "live_active": 0,
+      "rtp_packets": 212,
+      "rtp_bytes": 261059,
+      "rtp_dropped": 0,
+      "send_errors": 0,
+      "phase_drops": 0,
+      "goroutines": 14,
+      "heap_bytes": 1661432,
+      "gc": 1
+    },
+    "duration_seconds": 52.826373970136046,
+    "process_returncodes": {
+      "media-1.log": 0,
+      "signaling-1.log": 0,
+      "simulator-1.log": 0,
+      "simulator-2.log": 0,
+      "signaling-2.log": 0,
+      "media-2.log": 0,
+      "media-3.log": 0,
+      "simulator-rejected.log": 1
+    }
+  },
+  "e2e_worktree_note": "E2E 在 d13e984 加最终1740fec改动的工作区构建运行，随后提交未继续修改生产代码",
+  "e2e_commands": [
+    {
+      "label": "media-1",
+      "command": [
+        "/home/gyl/example/media_server/build/media_server",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1",
+        "--rtmp-port",
+        "43120",
+        "--rtsp-port",
+        "43121",
+        "--http-port",
+        "43122",
+        "--threads",
+        "6"
+      ]
+    },
+    {
+      "label": "signaling-1",
+      "command": [
+        "/tmp/media_server_gb_mvp-f0c61cd/signaling",
+        "--database",
+        "/tmp/media_server_gb_mvp-f0c61cd/e2e-final/devices.db",
+        "--sip-listen",
+        "127.0.0.1:43124",
+        "--sip-advertise",
+        "127.0.0.1:43124",
+        "--http-listen",
+        "127.0.0.1:43123",
+        "--media-control-url",
+        "http://127.0.0.1:43122",
+        "--media-http-port",
+        "43122",
+        "--heartbeat-timeout",
+        "20s"
+      ]
+    },
+    {
+      "label": "simulator-1",
+      "command": [
+        "/tmp/media_server_gb_mvp-f0c61cd/simulator",
+        "--platform-sip",
+        "127.0.0.1:43124",
+        "--listen",
+        "127.0.0.1:43125",
+        "--media-file",
+        "/tmp/media_server_gb_mvp-f0c61cd/e2e-final/fixture.h264",
+        "--duration",
+        "5m",
+        "--register-expires",
+        "12s",
+        "--heartbeat",
+        "1s",
+        "--control-workers",
+        "2",
+        "--media-workers",
+        "1"
+      ]
+    },
+    {
+      "label": "simulator-2",
+      "command": [
+        "/tmp/media_server_gb_mvp-f0c61cd/simulator",
+        "--platform-sip",
+        "127.0.0.1:43124",
+        "--listen",
+        "127.0.0.1:43125",
+        "--media-file",
+        "/tmp/media_server_gb_mvp-f0c61cd/e2e-final/fixture.h264",
+        "--duration",
+        "5m",
+        "--register-expires",
+        "12s",
+        "--heartbeat",
+        "1s",
+        "--control-workers",
+        "2",
+        "--media-workers",
+        "1"
+      ]
+    },
+    {
+      "label": "signaling-2",
+      "command": [
+        "/tmp/media_server_gb_mvp-f0c61cd/signaling",
+        "--database",
+        "/tmp/media_server_gb_mvp-f0c61cd/e2e-final/devices.db",
+        "--sip-listen",
+        "127.0.0.1:43124",
+        "--sip-advertise",
+        "127.0.0.1:43124",
+        "--http-listen",
+        "127.0.0.1:43123",
+        "--media-control-url",
+        "http://127.0.0.1:43122",
+        "--media-http-port",
+        "43122",
+        "--heartbeat-timeout",
+        "20s"
+      ]
+    },
+    {
+      "label": "media-2",
+      "command": [
+        "/home/gyl/example/media_server/build/media_server",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1",
+        "--rtmp-port",
+        "43120",
+        "--rtsp-port",
+        "43121",
+        "--http-port",
+        "43122",
+        "--threads",
+        "6"
+      ]
+    },
+    {
+      "label": "media-3",
+      "command": [
+        "/home/gyl/example/media_server/build/media_server",
+        "--bind-address",
+        "127.0.0.1",
+        "--webrtc-address",
+        "127.0.0.1",
+        "--rtmp-port",
+        "43120",
+        "--rtsp-port",
+        "43121",
+        "--http-port",
+        "43122",
+        "--threads",
+        "6"
+      ]
+    },
+    {
+      "label": "simulator-rejected",
+      "command": [
+        "/tmp/media_server_gb_mvp-f0c61cd/simulator",
+        "--platform-sip",
+        "127.0.0.1:43124",
+        "--listen",
+        "127.0.0.1:43125",
+        "--media-file",
+        "/tmp/media_server_gb_mvp-f0c61cd/e2e-final/fixture.h264",
+        "--duration",
+        "5m",
+        "--register-expires",
+        "12s",
+        "--heartbeat",
+        "1s",
+        "--control-workers",
+        "2",
+        "--media-workers",
+        "1"
+      ]
+    }
+  ],
+  "evidence_directory": "/tmp/media_server_gb_mvp-f0c61cd",
+  "log_sha256": {
+    "stage1-go-race.log": "55beed844a7f9df7a62514d8db0d52c1eff26e1a24d598e2640ba3bf8312dff7",
+    "stage1-go-vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stage1-build.log": "9696aaed78777c0d54cd38596ca08938a9f5a350033e238ec7642d00431c2586",
+    "stage1-ctest.log": "7133d7a6c3c6671393c08a2588f1ed9e7a9259a1b1e84dccd95dcb1ca03d8476",
+    "stage2-go-test.log": "4dabc9b76b7781cef81084d5aa88003009929475b671f3640a2f3a0d4308d845",
+    "stage2-go-vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stage2-go-race.log": "aa0fd5cf5b061e4473401e57103186f119e5d899dee63b78109e23057d3e98d7",
+    "stage2-build.log": "9590942294285a95fcee510a4c956bb6d6e66bc78146d876564a72c88eefa3f2",
+    "stage2-ctest.log": "99138d294f7342e87097f85d0e9ed35b3c79f364851c261439c32783ad413728",
+    "stage3-go-test.log": "29748034ca07012562297b0e2e1da0623f305dc2b63fc2f2c76ca799e4290f49",
+    "stage3-go-vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stage3-go-race.log": "dbc05dbfcfecc6001f7c790f2ce367f0c22548f621478f31fda9c9086dde7d73",
+    "stage3-build.log": "3428dc38e877d734478a0e86c568fa2a872c062581eae137f73c9f4377e0d17c",
+    "stage3-ctest.log": "54347ee0ca44228cbc27e56dede55a74748342fe78a3662077746d7ab75c116c",
+    "stage4-go-race-fixed.log": "86c07056b34696c8ebbfd0d54a9ccda52db5a3b7c8747e13c9f3e932fb041954",
+    "stage4-go-vet-fixed.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stage4-ctest-isolated.log": "4f3e08459c4d1ecd89cc6e0fe05f79d1105686f0775af27d6a0398fee6346ac5",
+    "stage5-go-test.log": "29e84be4b1866bedbb17d8919da130b560651397b67c43a4ce22e490136df374",
+    "stage5-go-vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stage5-go-race.log": "bb48028d6f7564f18dc9eb33ceb0bf28103aa8ee6962c63c6c93e53b804109d9",
+    "stage5-build.log": "56a4542ad9a3c2747a921ef7aa8c76c0caab7cac4b18dea0e59f83e15b898df2",
+    "stage5-ctest.log": "15f4db5858021f9adeaba90cd19f754a9b982254634ef02f5d48676b7b0cdc01"
+  },
+  "concurrency": {
+    "parallel_live_requests": 8,
+    "parallel_api_play_requests": 8,
+    "parallel_ticket_consumers": 2,
+    "device_delete_fence": true,
+    "other_device_progress_during_delete": true,
+    "in_flight_offer_generation_fence": true
+  },
+  "rollback_fix": "receiver/create TCP dial failure now releases live/SSRC; ambiguous delivered requests retain compensation",
+  "retired_routes": [
+    "/internal/live/start",
+    "/internal/live/stop",
+    "/api/devices/{id}/channels/{channel}/start",
+    "/api/devices/{id}/channels/{channel}/stop",
+    "GB target of /api/preview/start"
+  ],
+  "boundaries": [
+    "GB live only UDP",
+    "single platform-wide SIP password",
+    "channels runtime only",
+    "play tickets runtime only",
+    "one-time URL WHEP only",
+    "no automatic idle stop",
+    "no viewer registry/refcount",
+    "no live/ticket restart recovery",
+    "own-product simulator E2E only; no vendor interoperability claim"
+  ],
+  "loc": {
+    "production_added": 722,
+    "production_deleted": 960,
+    "production_net": -238,
+    "tests_and_e2e_added": 1286
+  },
+  "retained_failures": [
+    "stage4-go-vet.log: atomic-containing value copied; corrected",
+    "e2e-1: async wait harness; corrected",
+    "stage4-ctest.log: shared default media-port conflict with simultaneous E2E; isolated14/14PASS",
+    "stage5-legacy-green.log: invoked outside Go module; corrected",
+    "stage3-delete-red.log: blocked test handler teardown; SIGQUIT retained and harness corrected"
+  ]
+}
