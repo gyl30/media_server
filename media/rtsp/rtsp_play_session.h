@@ -59,10 +59,17 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     {
         media_kind kind{};
         codec_id codec{};
+        int clock_rate{};
         int payload_index{-1};
         int media_index{-1};
         int rtp_channel{-1};
         int rtcp_channel{-1};
+    };
+
+    struct rtcp_sync
+    {
+        std::uint64_t ntp;
+        std::int64_t pts;
     };
 
    private:
@@ -87,6 +94,7 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     std::shared_ptr<media_stream> stream_;
     std::map<track_id, track_state> track_states_;
     std::optional<track_id> waiting_video_track_;
+    std::optional<rtcp_sync> rtcp_sync_;
     rtsp_muxer_t* muxer_{};
     std::string session_id_;
     bool playing_{};

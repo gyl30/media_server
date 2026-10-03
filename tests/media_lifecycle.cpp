@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cmath>
 #include <future>
 #include <iostream>
 #include <memory>
@@ -9,6 +10,8 @@
 #include <vector>
 
 #include <boost/asio/post.hpp>
+#include <boost/endian/conversion.hpp>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
@@ -18,7 +21,13 @@
 #include "media/net/worker_context.h"
 #include "media/ps/mpeg_ps_output.h"
 #include "media/rtmp/rtmp_timestamp.h"
+#include "media/rtsp/rtsp_play_session.h"
 #include "media/webrtc/whep_audio_egress.h"
+
+extern "C"
+{
+#include "rtsp-server.h"
+}
 
 namespace
 {
@@ -121,6 +130,81 @@ struct recording_sink final : media_sink
     }
     void on_end() override { ended.set_value(std::move(frames)); }
 };
+
+void rtsp_sender_clock(workers& context)
+{
+    std::string reply;
+    rtsp_handler_t handler{};
+    handler.close = [](void*) { return 0; };
+    handler.send = [](void* param, const void* data, std::size_t bytes)
+    {
+        static_cast<std::string*>(param)->assign(static_cast<const char*>(data), bytes);
+        return 0;
+    };
+    std::unique_ptr<rtsp_server_t, decltype(&rtsp_server_destroy)> server(
+        rtsp_server_create("127.0.0.1", 8554, &handler, nullptr, &reply), &rtsp_server_destroy);
+    require(server != nullptr, "RTSP server creation failed");
+    auto source = std::make_shared<media_stream>("verify/sender-clock", context.source);
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> reports;
+    auto player = std::make_shared<rtsp_play_session>(context.source,
+        source->name(), boost::asio::ip::make_address("127.0.0.1"),
+        [&](std::vector<std::uint8_t> packet)
+        {
+            if (packet[1] == 1)
+            {
+                require(packet.size() >= 32 && packet[5] == 200, "missing RTCP sender report");
+                reports.emplace_back(boost::endian::load_big_u64(packet.data() + 12),
+                                     boost::endian::load_big_u32(packet.data() + 20));
+            }
+        });
+    boost::scope::scope_exit cleanup([&]()
+    {
+        on(context.source, [&]()
+        {
+            player->shutdown();
+            stream_registry::instance().remove(*source);
+            source->end();
+        });
+        on(context.source, []() {});
+    });
+    on(context.source, [&]()
+    {
+        require(source->set_tracks({{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a,
+                                     .clock_rate = 8'000, .channel_count = 1, .codec_config = {}}}), "RTSP clock tracks failed");
+        require(stream_registry::instance().add(source), "RTSP clock registration failed");
+        rtsp_header_transport_t transport{};
+        require(rtsp_header_transport("RTP/AVP/TCP;unicast;interleaved=0-1", &transport) == 0, "RTSP transport parse failed");
+        require(player->on_setup(server.get(), "rtsp://127.0.0.1/verify/sender-clock/trackID=1", {}, &transport, 1) == 0,
+                "RTSP clock SETUP failed");
+        const auto begin = reply.find("Session: ");
+        require(begin != std::string::npos, "RTSP SETUP omitted session");
+        const auto end = reply.find_first_of(";\r\n", begin + 9);
+        const auto session = reply.substr(begin + 9, end - begin - 9);
+        require(player->on_play(server.get(), "rtsp://127.0.0.1/verify/sender-clock", session, nullptr, nullptr) == 0,
+                "RTSP clock PLAY failed");
+    });
+    auto payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5);
+    for (int frame = 0; frame < 3; ++frame)
+    {
+        if (frame != 0)
+        {
+            std::this_thread::sleep_for(4s);
+        }
+        on(context.source, [&]()
+        {
+            const auto pts = milliseconds_to_ns(frame * 20);
+            source->publish({.track = 1, .dts_ns = pts, .pts_ns = pts, .payload = payload});
+        });
+    }
+    require(reports.size() == 3, "RTSP clock test did not span three report intervals");
+    for (const auto& [ntp, rtp] : reports)
+    {
+        const auto ntp_ticks = static_cast<long double>(ntp - reports.front().first) * 8'000 / (std::uint64_t{1} << 32);
+        const auto rtp_ticks = static_cast<std::uint32_t>(rtp - reports.front().second);
+        require(std::abs(ntp_ticks - rtp_ticks) < 2, "RTCP sender clock followed packet arrival instead of media timeline");
+    }
+    std::cout << "RTSP sender reports retain clock mapping across delayed media bursts: PASS\n";
+}
 
 void ordered_generations_and_churn(workers& context)
 {
@@ -261,6 +345,7 @@ int main()
     {
         timestamp_boundaries();
         workers context;
+        rtsp_sender_clock(context);
         ordered_generations_and_churn(context);
         derived_generation_lifetimes(context);
         return 0;

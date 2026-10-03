@@ -1,4 +1,5 @@
 #include <memory>
+#include <bit>
 #include <random>
 #include <vector>
 #include <cstring>
@@ -8,6 +9,7 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
+#include <boost/endian/conversion.hpp>
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
@@ -124,6 +126,38 @@ void rtsp_play_session::on_frame(const media_frame& entry)
         spdlog::error("rtsp play mux failed result {}", mux_result);
         shutdown();
         shutdown_handler_();
+        return;
+    }
+
+    std::array<std::uint8_t, 1500> rtcp{};
+    const auto rtcp_bytes = rtsp_muxer_rtcp(muxer_, state.payload_index, rtcp.data(), static_cast<int>(rtcp.size()));
+    if (rtcp_bytes > 0)
+    {
+        std::uint16_t sequence{};
+        std::uint32_t timestamp{};
+        const char* sdp{};
+        int sdp_bytes{};
+        if (rtsp_muxer_getinfo(muxer_, state.payload_index, &sequence, &timestamp, &sdp, &sdp_bytes) < 0)
+        {
+            shutdown();
+            shutdown_handler_();
+            return;
+        }
+        const auto ntp = boost::endian::load_big_u64(rtcp.data() + 8);
+        const auto pts = ns_to_milliseconds(entry.pts_ns);
+        if (!rtcp_sync_)
+        {
+            rtcp_sync_ = rtcp_sync{.ntp = ntp, .pts = pts};
+        }
+        constexpr std::int64_t ntp_fraction = std::int64_t{1} << 32U;
+        const auto elapsed = std::bit_cast<std::int64_t>(ntp - rtcp_sync_->ntp);
+        const auto elapsed_ticks = (elapsed / ntp_fraction) * state.clock_rate +
+                                   (elapsed % ntp_fraction) * state.clock_rate / ntp_fraction;
+        // Relate SR wall time to the shared presentation timeline, not packet arrival jitter.
+        timestamp += static_cast<std::uint32_t>(rtcp_sync_->pts * state.clock_rate / 1'000 + elapsed_ticks -
+                                                pts * state.clock_rate / 1'000);
+        boost::endian::store_big_u32(rtcp.data() + 16, timestamp);
+        write_interleaved(static_cast<std::uint8_t>(state.rtcp_channel), rtcp.data(), static_cast<std::size_t>(rtcp_bytes));
     }
 }
 
@@ -419,12 +453,6 @@ int rtsp_play_session::on_muxer_packet(int payload_index, const void* data, int 
 
     write_interleaved(static_cast<std::uint8_t>(iterator->second.rtp_channel), data, static_cast<std::size_t>(bytes));
 
-    std::array<std::uint8_t, 1500> rtcp{};
-    const auto rtcp_bytes = rtsp_muxer_rtcp(muxer_, payload_index, rtcp.data(), static_cast<int>(rtcp.size()));
-    if (rtcp_bytes > 0)
-    {
-        write_interleaved(static_cast<std::uint8_t>(iterator->second.rtcp_channel), rtcp.data(), static_cast<std::size_t>(rtcp_bytes));
-    }
     return 0;
 }
 
@@ -564,6 +592,7 @@ int rtsp_play_session::prepare_presentation()
         track_state state;
         state.kind = track.kind;
         state.codec = track.codec;
+        state.clock_rate = frequency;
         state.payload_index = rtsp_muxer_add_payload(
             prepared_muxer, "RTP/AVP", frequency, payload_type, encoding, 0, random_u32(), 0, extra.data(), static_cast<int>(extra.size()));
         if (state.payload_index < 0)

@@ -164,3 +164,29 @@ WHEP 100 / 250 / 500 / 750 / 1000 viewers 五级全部通过；最高级服务 C
 解析器现在只接受对应 filter 前缀后紧跟 `n / pts / pts_time` 的完整帧记录。用实际新表达式重读两份 HTTP-FLV 失败日志后，音视频回退均为 0；重跑 40 秒解码输出 1,200 帧、音视频持续推进、回退均为 0，全量 CTest 10/10 PASS。破碎日志不作为完整帧记录，因此日志计数不是精确解码帧数；后者仍取 FFmpeg progress。
 
 同一修正仍保留 RTSP 播放的真实音频回退：RTSP UDP 输入的 60 秒记录有 8 次，连续素材 RTMP 输入的 40 秒记录有 2 次。这些结果尚未通过，不能将解析修正当成媒体问题已解决。原始 RED/GREEN、抓包、命令与构建结果保存在 `/tmp/media_server_product_current-2a70363-dD0La6`。
+
+## RTSP Sender Report 的媒体时钟映射
+
+随后独立复现确认：连续 90 秒 FFmpeg 生成素材、RTMP 输入、RTSP TCP 播放 40 秒仍有 2 次音频 PTS 回退，与 RTSP 输入端无关。抓包中的 4,344 个视频 RTP 包和 1,903 个音频 RTP 包均无时间戳回退；音频 SR 的 RTP/NTP 对应关系却反复跳动约 21 ms。原 600 秒 RTSP UDP 输入测试出现 67 次音频 PTS 回退，不能记为稳定通过。
+
+根因是依赖库每包用实际发送时间重置 RTP/NTP 关联，再据此生成 SR；成批到达和调度抖动被当成媒体时钟变化。RTSP 还在 packet callback 内、当前包统计更新前生成报告。仅把报告移到 mux input 返回后，40 秒实验仍有 3 次回退，因此该单独改动被撤回，没有当作修复提交。
+
+修复保留依赖库的 RTCP 调度、计数和 SDES，在封装完成后，将 SR 的发送 NTP 按会话共享的 PTS/NTP 基准转换到对应轨道的 RTP 时钟。一个可选基准及轨道 clock rate 用来表达真实的跨音视频时钟关联；不修改媒体 PTS/DTS，不钳制回退，不改变 RTP payload、队列、fanout、关键帧或第三方代码。这符合 [RFC 3550 §5.1、§6.4.1](https://www.rfc-editor.org/rfc/rfc3550.html#section-6.4.1) 对共享参考时钟与 RTP 时间戳关联的要求。
+
+新增 `media_lifecycle` 定向回归通过公开 SETUP/PLAY 和 sink 投递路径发送刻意延迟的 G711 媒体，在三个真实 SR 周期验证对应关系。将修复前 `291de64` 的 RTSP 实现编译链接到该测试，断言稳定失败；候选修复通过。此音频-only 组件测试不代表公共发布接口新增 audio-only 产品能力。
+
+| 验证 | 实际结果 |
+| --- | --- |
+| RTMP → RTSP，连续 H264+AAC 40 秒 | 1,200 解码帧，音视频 PTS 回退 0 |
+| RTSP UDP → RTSP，原循环素材 60 秒 | 1,794 解码帧，音视频 PTS 回退 0 |
+| RTSP UDP → RTSP，原循环素材 600 秒 | 17,945 解码帧；17,947 条视频、25,840 条音频完整时间戳记录，回退均 0 |
+| 600 秒时间线末点 | 视频 600.028 s，音频 600.000023 s；差 27.977 ms |
+| 600 秒服务资源 | RSS 21,892–23,352 KiB；四段 median 23,186 / 23,168 / 23,204 / 23,188 KiB；VmSize 198,472–201,032 KiB；FD 31–32；6 threads；UDP drops 0 |
+| 普通 / UBSan / ASan CTest | 各 10/10 PASS，包含新增时钟回归 |
+| 普通 / UBSan / ASan 真实多协议 smoke | 全部 PASS；每种构建覆盖 RTMP、RTSP、WHIP 输入及五类播放输出、GB UDP/TCP active/passive 中继 |
+| 普通 / UBSan / ASan RTSP pull | connected、tracks ready、双轨 FFmpeg 解码推进；invalid URL 400、create 201、错误 identity delete 404、delete 204、重复 delete 404 |
+| H265+AAC / H265+G711U → RTSP | 各 8 秒、160 解码帧，音视频 PTS 回退均 0 |
+| 本修复后的换源回归 | RTMP / RTSP / WHIP / GB UDP 各 3 代，旧 viewer 结束、HLS generation 隔离及 ENDLIST/retention 断言通过 |
+| Sanitizer 运行日志 | ASan 与 UBSan 各检查 66 份 smoke/pull 日志，报告均为 0 |
+
+600 秒检查后半段与独立端口上的回归并行，服务自身平均 CPU 约 0.0046 cores；这是时间戳和稳定性观察，不是新性能基线。RelWithDebInfo 为 `-O2 -g -DNDEBUG -Werror`，二进制包含 debug info、未 stripped。ASan 使用既有 Boost 1.92 静态 ucontext/ASan 依赖，未绕过 guard。Go test/vet 通过（两个包无测试文件）。证据根目录仍为 `/tmp/media_server_product_current-2a70363-dD0La6`，对应 `rtcp-test-{red,green}.log`、`rtcp-clock-*`、`rtcp-*-ctest.log`、`rtcp-smoke-*`、`rtcp-pull-*`；保留全部先前失败记录。
