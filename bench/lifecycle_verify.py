@@ -307,23 +307,34 @@ class Run:
 
     def soak(self):
         started = time.monotonic()
-        result = {"samples": [], "generations": 0, "waves": []}
+        result = {"samples": [], "generations": 0, "waves": [], "gb_waves": [], "measurements": [], "idle": self.idle}
         while time.monotonic() - started < self.args.duration:
-            with self.publisher("rtmp"):
+            with self.publisher("rtmp"), self.pair(self.args.gb_transport) as relay_name:
                 result["generations"] += 1
                 clients = self.clients("live/perf0", 4, 25)
                 async def monitor():
                     async def samples():
                         deadline = time.monotonic() + 25
                         while time.monotonic() < deadline:
-                            result["samples"].append(snapshot(self.server.pid))
+                            sample = snapshot(self.server.pid)
+                            assert sample["rss_kib"] < 2 * 1024 * 1024, sample
+                            if result["samples"]:
+                                previous = result["samples"][-1]
+                                assert (sample["cpu"] - previous["cpu"]) / (sample["time"] - previous["time"]) < 5.4, sample
+                            result["samples"].append(sample)
                             await asyncio.sleep(1)
-                    received, _ = await asyncio.gather(http_wave(self.http_port, "live/perf0", 4, 25), samples())
-                    return received
-                result["waves"].append(asyncio.run(monitor()))
-                result["measurements"] = self.finish(clients, 4)
+                    received, gb_received, _ = await asyncio.gather(
+                        http_wave(self.http_port, "live/perf0", 4, 25),
+                        http_wave(self.http_port, relay_name, 1, 25), samples())
+                    return received, gb_received
+                received, gb_received = asyncio.run(monitor())
+                result["waves"].append(received)
+                result["gb_waves"].append(gb_received)
+                result["measurements"].append(self.finish(clients, 4))
                 result["samples"].append(snapshot(self.server.pid))
-                print(f"soak seconds={time.monotonic() - started:.1f} generation={result['generations']} PASS", flush=True)
+            result["settled"] = snapshot(self.server.pid)
+            (self.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+            print(f"soak seconds={time.monotonic() - started:.1f} generation={result['generations']} PASS", flush=True)
         result["duration_seconds"] = time.monotonic() - started
         return result
 

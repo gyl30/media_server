@@ -10,12 +10,14 @@
 
 #include <boost/asio/post.hpp>
 
+#include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
 #include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
 #include "media/net/worker_context.h"
 #include "media/ps/mpeg_ps_output.h"
+#include "media/rtmp/rtmp_timestamp.h"
 #include "media/webrtc/whep_audio_egress.h"
 
 namespace
@@ -29,6 +31,31 @@ void require(bool condition, const char* message)
     {
         throw std::runtime_error(message);
     }
+}
+
+void timestamp_boundaries()
+{
+    constexpr std::int64_t cycle = std::int64_t{1} << 32;
+    rtmp_timestamp_state state;
+    require(unwrap_rtmp_timestamp(0xfffffff0U, state) == cycle - 16, "initial RTMP timestamp changed");
+    require(unwrap_rtmp_timestamp(10, state) == cycle + 10, "RTMP wrap broke the timeline");
+    require(unwrap_rtmp_timestamp(10, state) == cycle + 10, "duplicate RTMP timestamp advanced");
+    require(unwrap_rtmp_timestamp(8, state) == cycle + 8, "small RTMP timestamp correction became a wrap");
+    require(unwrap_rtmp_timestamp(42, state) == cycle + 42, "RTMP timeline did not continue after wrap");
+    require(rtmp_timestamp_delta(0, 0xffffffffU) == 1, "RTMP forward wrap delta incorrect");
+    require(rtmp_timestamp_delta(0xffffffffU, 0) == -1, "RTMP reverse wrap delta incorrect");
+    rtmp_timestamp_state replacement;
+    require(unwrap_rtmp_timestamp(0, replacement) == 0, "new generation retained an RTMP timeline");
+    require(milliseconds_to_ns(cycle + 27) == 4'294'967'323'000'000, "unwrapped RTMP nanoseconds truncated");
+    require(ns_to_flv_milliseconds(4'294'967'323'000'000) == 27, "FLV wire timestamp did not wrap");
+    require(ns_to_milliseconds(1'234'567) == 1, "millisecond truncation changed");
+    require(ns_to_milliseconds(-1'234'567) == -1, "negative millisecond truncation changed");
+    require(ns_to_90khz(1'234'567) == 111, "sub-millisecond precision lost in 90 kHz conversion");
+    require(ns_to_90khz(-1'234'567) == -111, "negative 90 kHz truncation changed");
+    require(ns_to_90khz(999'999'999) == 89'999, "90 kHz second boundary rounded up");
+    require(ns_to_90khz(1'000'000'000) == 90'000, "90 kHz second boundary incorrect");
+    require(ns_to_90khz(2'592'000'123'456'789) == 233'280'011'111, "long-running 90 kHz conversion overflowed");
+    std::cout << "RTMP wrap/replacement and ms/90 kHz timestamp boundaries: PASS\n";
 }
 
 template <typename Function>
@@ -232,6 +259,7 @@ int main()
 {
     try
     {
+        timestamp_boundaries();
         workers context;
         ordered_generations_and_churn(context);
         derived_generation_lifetimes(context);
