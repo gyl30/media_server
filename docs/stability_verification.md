@@ -193,6 +193,8 @@ WHEP 100 / 250 / 500 / 750 / 1000 viewers 五级全部通过；最高级服务 C
 
 ### 浏览器验证日志的同类误判
 
+本阶段完整产品/codec 矩阵、真实客户端结果与已知验证边界见 [产品能力与真实互操作验证](product_support_verification.md)。
+
 继续检查发现 `browser_webrtc_verify.py` 的 WHIP 下游解码统计也保留了旧的宽松正则。执行脚本中的实际表达式解析先前保存的交错日志，会把音频行归给视频并误报 4 次 PTS 回退；仅接受紧随 filter 前缀的完整 `n / pts / pts_time` 记录后为 0。修复仅影响测试解析，不修改媒体实现，也不跳过真实回退。
 
 普通构建与 CTest 10/10 通过。Chrome 153.0.8010.52 真实 WHIP H264/Opus 发布、下游 FFmpeg H264/AAC 解码 30 秒通过：600 视频帧，视频/音频 PTS 回退均 0，DELETE 204 后重复 DELETE 404。该浏览器 fixture 仍由发布端 pause/resume 产生一次自然关键帧，没有添加服务端关键帧请求。证据为上述目录的 `browser-parser-red.json`、`browser-parser-ctest.log`、`browser-whip-parser-green/result.json`。
