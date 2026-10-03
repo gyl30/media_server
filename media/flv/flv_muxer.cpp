@@ -48,6 +48,10 @@ bool flv_muxer::on_track(const media_track& track)
         return true;
     }
 
+    if (track.codec == codec_id::h265)
+    {
+        flv_muxer_set_enhanced_rtmp(muxer_, 1);
+    }
     tracks_.emplace(track.id, track);
     return write_track_config(track, 0);
 }

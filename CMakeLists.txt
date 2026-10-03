@@ -330,6 +330,10 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/rtmp_decode.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
         set_tests_properties(rtmp_decode PROPERTIES TIMEOUT 60)
+        add_test(NAME rtmp_hevc_decode
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/rtmp_decode.py
+                $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} h265)
+        set_tests_properties(rtmp_hevc_decode PROPERTIES TIMEOUT 60)
     endif()
     add_test(NAME media_server_help COMMAND media_server --help)
     foreach(invalid_case IN ITEMS threads port bind_address webrtc_address)
