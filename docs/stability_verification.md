@@ -190,3 +190,9 @@ WHEP 100 / 250 / 500 / 750 / 1000 viewers 五级全部通过；最高级服务 C
 | Sanitizer 运行日志 | ASan 与 UBSan 各检查 66 份 smoke/pull 日志，报告均为 0 |
 
 600 秒检查后半段与独立端口上的回归并行，服务自身平均 CPU 约 0.0046 cores；这是时间戳和稳定性观察，不是新性能基线。RelWithDebInfo 为 `-O2 -g -DNDEBUG -Werror`，二进制包含 debug info、未 stripped。ASan 使用既有 Boost 1.92 静态 ucontext/ASan 依赖，未绕过 guard。Go test/vet 通过（两个包无测试文件）。证据根目录仍为 `/tmp/media_server_product_current-2a70363-dD0La6`，对应 `rtcp-test-{red,green}.log`、`rtcp-clock-*`、`rtcp-*-ctest.log`、`rtcp-smoke-*`、`rtcp-pull-*`；保留全部先前失败记录。
+
+### 浏览器验证日志的同类误判
+
+继续检查发现 `browser_webrtc_verify.py` 的 WHIP 下游解码统计也保留了旧的宽松正则。执行脚本中的实际表达式解析先前保存的交错日志，会把音频行归给视频并误报 4 次 PTS 回退；仅接受紧随 filter 前缀的完整 `n / pts / pts_time` 记录后为 0。修复仅影响测试解析，不修改媒体实现，也不跳过真实回退。
+
+普通构建与 CTest 10/10 通过。Chrome 153.0.8010.52 真实 WHIP H264/Opus 发布、下游 FFmpeg H264/AAC 解码 30 秒通过：600 视频帧，视频/音频 PTS 回退均 0，DELETE 204 后重复 DELETE 404。该浏览器 fixture 仍由发布端 pause/resume 产生一次自然关键帧，没有添加服务端关键帧请求。证据为上述目录的 `browser-parser-red.json`、`browser-parser-ctest.log`、`browser-whip-parser-green/result.json`。
