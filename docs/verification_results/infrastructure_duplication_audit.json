@@ -1,6 +1,6 @@
 {
-  "base_head": "acee8da2481924618955afeb4d8538e4d72c5385",
-  "audit_mode": "只读设计审计；仅新增本报告及 JSON；未执行构建、CTest、sanitizer、服务或性能测试",
+  "base_head": "30c09f4394c47c8155d9b52606ec5554a6e09e7c",
+  "audit_mode": "只读增量设计复核；仅更新两份审计文档；未新执行构建、CTest、sanitizer、服务或性能测试",
   "scope": [
     "media/core",
     "media/net",
@@ -21,6 +21,8 @@
     "third/ireader（相关 API 实现只读核对）"
   ],
   "history_reviewed": [
+    "30c09f4 修复 H265 RTMP 与 HTTP-FLV 互操作",
+    "9200b00 记录基础设施重复设计审计",
     "acee8da 记录 WebRTC 传输只读设计审计",
     "90cdd7f 记录媒体分发重构验证结果",
     "d2f91f6 等待 GB 测试源异步关闭完成",
@@ -70,7 +72,15 @@
     "e353f7c 删除 RTSP 发布 RTCP 周期状态",
     "a69d4f0 删除 RTSP 拉流媒体冗余状态",
     "d96b81a 拆分 RTSP 拉流读取循环",
-    "7e13b3c 合并 RTSP TCP 发布会话"
+    "7e13b3c 合并 RTSP TCP 发布会话",
+    "3d4b1c8 删除 RTSP 发布录制状态",
+    "042c984 删除 RTSP 播放关闭状态",
+    "9123d45 删除 RTSP 拉流冗余状态",
+    "abe0b37 收口 RTSP 播放状态错误",
+    "64ef205 收口 RTSP 发布状态错误",
+    "aa5b41c 收口 RTSP 连接状态错误",
+    "61e98dd 合并 RTSP 发布 ANNOUNCE 阶段",
+    "080e4a1 删除 RTSP 拉流冗余轨道查询"
   ],
   "foundational_documents_sha256": {
     "AGENTS.md": "5b4c04bf07ba1ddc556d870b0a5e0acbec6cf8c3c31e3567bf377557e48cade8",
@@ -409,7 +419,7 @@
       },
       "deletions": "每组小 switch 预计净删 5–15 行，0 个 ownership/scheduling 字段消失；通用时间转换已集中 codec_utils，无再次抽取收益。",
       "correctness_risks": "把 codec mapping 与支持承诺混为一体，误扩大 Opus/G711 支持；改变整数时间截断或 wrap 语义。",
-      "test_protection": "tests/rtmp_decode.py:16/34 检查 H264/AAC 解码；tests/media_lifecycle.cpp:177 检查派生 track；未覆盖各 enum/unknown/G711/时间边界。",
+      "test_protection": "tests/rtmp_decode.py:43/48 检查 H264/H265 与 AAC 解码；tests/media_lifecycle.cpp:177 检查派生 track；未覆盖各 enum/unknown/G711/时间边界。",
       "decision": "保持现状"
     },
     {
@@ -581,10 +591,11 @@
       "area": "CTest 注册",
       "evidence": [
         "CMakeLists.txt:313",
-        "CMakeLists.txt:326"
+        "CMakeLists.txt:326",
+        "CMakeLists.txt:333"
       ],
-      "covered": "BUILD_TESTING 下 FFmpeg 可发现时 9 个：worker_sink_fanout、udp_transport、media_lifecycle、rtmp_decode、help、4 个 invalid 参数；无 FFmpeg 为 8 个。",
-      "gap": "本轮只读注册/断言，未执行；不能宣称本轮 9/9。"
+      "covered": "当前 BUILD_TESTING 下 FFmpeg 可发现时 10 个：worker_sink_fanout、udp_transport、media_lifecycle、rtmp_decode、rtmp_hevc_decode、help、4 个 invalid 参数；无 FFmpeg 仍为 8 个。首次审计基线有 FFmpeg 时为 9 个。",
+      "gap": "本次只读注册/断言，未执行；不能宣称本次 10/10。"
     },
     {
       "area": "UDP",
@@ -636,23 +647,34 @@
     {
       "area": "TCP / HTTP / HLS",
       "evidence": [
-        "tests/rtmp_decode.py:34",
+        "tests/rtmp_decode.py:43",
         "bench/http_flv_fanout.py:30",
         "bench/lifecycle_verify.py:266",
         "bench/lifecycle_verify.py:330"
       ],
-      "covered": "FFmpeg RTMP H264/AAC 可解码、FLV header/tag/read、HLS replacement/lease expiry、TCP 异常断开与回收。",
+      "covered": "FFmpeg RTMP H264/H265 与 AAC 解码断言、FLV header/tag/read、HLS replacement/lease expiry、TCP 异常断开与回收。",
       "gap": "没有 TCP transport 串行 queue/overflow/in-flight 专项；FLV chunk 精确编码/慢 reader、HLS segment window/ENOBUFS/在途 body 缺定向断言。"
     },
     {
       "area": "codec glue / transcoder / timers",
       "evidence": [
         "tests/media_lifecycle.cpp:199",
-        "tests/rtmp_decode.py:16",
+        "tests/rtmp_decode.py:18",
         "tests/udp_transport.cpp:272"
       ],
-      "covered": "Opus track metadata、H264/AAC FFmpeg 解码、GB sender timer/error lifecycle。",
-      "gap": "没有 avpkt2bs malformed/reset/view、AAC→Opus 实际编码内容/采样率/声道/flush、codec enum/时间边界、各 timer cancel 竞态专项。测试缺口不等价于生产 bug 或抽象需求。"
+      "covered": "Opus track metadata、H264/H265 与 AAC FFmpeg 解码断言、GB sender timer/error lifecycle。",
+      "gap": "没有 avpkt2bs malformed/reset/view、AAC→Opus 实际编码内容/采样率/声道/flush、codec enum/时间 wrap 边界、各 timer cancel 竞态专项。测试缺口不等价于生产 bug 或抽象需求。"
+    },
+    {
+      "area": "新增 codec 互操作工具（未执行）",
+      "evidence": [
+        "bench/codec_interop_verify.py:57",
+        "bench/codec_interop_verify.py:64",
+        "bench/codec_interop_verify.py:82",
+        "bench/codec_interop_verify.py:87"
+      ],
+      "covered": "独立 FFmpeg 检查实际帧数/codec/解码 PTS 单调性；复用 Run 与 GB pair，不新增生产基础设施",
+      "gap": "未注册 CTest，本次未执行。GB 分支经 sender→网络→receiver relay→RTSP 解码，不是独立 GB 设备/SIP 平台互操作证明；不能把脚本能力当成全部 codec 组合通过。"
     }
   ],
   "new_duplicate_algorithm_found": false,
@@ -675,8 +697,115 @@
       "git diff --check",
       "git diff --cached --check",
       "protected tracked file SHA256 equality",
-      "only two audit documents staged"
+      "only two audit documents staged",
+      "original uncommitted file SHA256 equality"
     ],
-    "git_checks": "提交后 fetch/status/HEAD 与 origin/main 核对；结果由最终回报给出，不把提交后的自身 SHA 写进本文件产生循环提交。"
-  }
+    "git_checks": "提交后 fetch；隔离 audit worktree status 为空，HEAD==origin/main；原 main 在不影响既有文件的前提下快进文档提交，其三项未提交测试工具改动保留并核对 hash。最终结果见交付回报。"
+  },
+  "prior_audit": {
+    "base_head": "acee8da2481924618955afeb4d8538e4d72c5385",
+    "report_commit": "9200b0008d065e5bb922e11a8980af0e0e5c365c",
+    "approach": "保留完整既有候选分析；本次只读增量复核，不重复冻结 WebRTC 设计审计"
+  },
+  "baseline_check": {
+    "audit_worktree": "/tmp/media_server_infrastructure_audit-30c09f4",
+    "audit_worktree_initial_clean": true,
+    "initial_head_equals_origin_main": true,
+    "original_worktree": "/home/gyl/example/media_server",
+    "original_worktree_initial_clean": false,
+    "original_worktree_initial_status": [
+      " M bench/codec_interop_verify.py",
+      " M bench/lifecycle_verify.py",
+      "?? bench/browser_webrtc_verify.py"
+    ],
+    "preserved_existing_changes": [
+      "bench/codec_interop_verify.py",
+      "bench/lifecycle_verify.py",
+      "bench/browser_webrtc_verify.py"
+    ],
+    "limitation": "原工作区 clean 前置条件不满足；在干净隔离 worktree 审计，不覆盖或提交其既有改动"
+  },
+  "incremental_review": {
+    "prior_audit_base": "acee8da2481924618955afeb4d8538e4d72c5385",
+    "current_base": "30c09f4394c47c8155d9b52606ec5554a6e09e7c",
+    "production_and_cmake_changed_files": [
+      "CMakeLists.txt",
+      "media/flv/flv_muxer.cpp"
+    ],
+    "search_comparison": {
+      "containers": {
+        "unchanged_matching_content": true,
+        "old_matched_lines": 27,
+        "current_matched_lines": 27
+      },
+      "async_operations": {
+        "unchanged_matching_content": true,
+        "old_matched_lines": 98,
+        "current_matched_lines": 98
+      },
+      "synchronization": {
+        "unchanged_matching_content": true,
+        "old_matched_lines": 66,
+        "current_matched_lines": 66
+      },
+      "termination": {
+        "unchanged_matching_content": true,
+        "old_matched_lines": 523,
+        "current_matched_lines": 523
+      },
+      "ownership": {
+        "unchanged_matching_content": true,
+        "old_matched_lines": 172,
+        "current_matched_lines": 172
+      },
+      "timers": {
+        "unchanged_matching_content": true,
+        "old_matched_lines": 23,
+        "current_matched_lines": 23
+      },
+      "state": {
+        "unchanged_matching_content": true,
+        "old_matched_lines": 90,
+        "current_matched_lines": 90
+      }
+    },
+    "changed_paths_since_prior_report": [
+      "CMakeLists.txt",
+      "bench/codec_interop_verify.py",
+      "media/flv/flv_muxer.cpp",
+      "tests/rtmp_decode.py"
+    ],
+    "finding": "唯一生产增量为 flv_muxer 的四行 H265 Enhanced RTMP 调用；没有新增 queue/scheduling/ownership primitive，原分类不变",
+    "search_summary": {
+      "containers": {
+        "matched_lines": 27,
+        "files": 21
+      },
+      "async_operations": {
+        "matched_lines": 98,
+        "files": 43
+      },
+      "synchronization": {
+        "matched_lines": 66,
+        "files": 19
+      },
+      "termination": {
+        "matched_lines": 523,
+        "files": 86
+      },
+      "ownership": {
+        "matched_lines": 172,
+        "files": 57
+      },
+      "timers": {
+        "matched_lines": 23,
+        "files": 10
+      },
+      "state": {
+        "matched_lines": 90,
+        "files": 19
+      }
+    }
+  },
+  "correctness_history_note": "30c09f4 已修复 H265 RTMP/HTTP-FLV 互操作；它在本次基线中，不是本次新发现。correctness_findings 为空只表示本次未确认新问题。"
 }

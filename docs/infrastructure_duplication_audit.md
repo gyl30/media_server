@@ -1,18 +1,22 @@
 # 基础设施重复设计只读审计
 
-BASE_HEAD: `acee8da2481924618955afeb4d8538e4d72c5385`
+BASE_HEAD: `30c09f4394c47c8155d9b52606ec5554a6e09e7c`
+
+首次审计基线：`acee8da2481924618955afeb4d8538e4d72c5385`；完整报告已由 `9200b00` 提交。本次复核远端更新，保留原有候选分析，不重复冻结的 WebRTC 协议审计。
 
 结论：**没有达到“值得实现”门槛的新候选，当前架构级主动精简基本完成。** 当前 transport、fanout、registry、共享派生输出的边界合理；未发现第二套需要下沉的通用 socket writer、worker-group drain 或 reservation rollback。没有确认的 correctness finding，也没有明显过度抽象。
 
 发现四处调用 avpkt2bs 的小型 handle/payload glue，但 framing/realloc 算法已经集中在依赖中；进一步封装净收益很小。不能把它归类为与过去 TCP/UDP queue 或 worker fanout 相当的完整基础设施重复。
 
-本轮只读源码、调用链、历史和测试断言；只新增本文件及对应 JSON。**没有执行构建、CTest、ASan/UBSan、真实协议套件或性能测试。** 下文历史验证仅引用冻结文档，不作为本轮运行结果。没有修改生产、测试、CMake 或修复疑似 bug。
+本次只读源码、调用链、历史和测试断言；只更新本文件及对应 JSON。**没有执行构建、CTest、ASan/UBSan、真实协议套件或性能测试。** 下文历史验证仅引用冻结文档，不作为本轮运行结果。没有修改生产、测试、CMake 或修复疑似 bug。
 
 ## 基线、历史与范围
 
-开始时执行 git fetch origin、完整 status、HEAD/origin/main 和最近 20 个提交核对；工作区干净，HEAD 等于 origin/main。实际基线与用户给出的 acee8da 一致。进一步读取最近 50 个提交，完整列表在 JSON 的 history_reviewed 中。
+首次审计从干净的 acee8da 开始，完整阅读最近 50 个提交。本次执行 fetch、status、HEAD/远端和最近 60 个提交检查，实际远端已更新到 30c09f4，完整列表在 JSON 的 history_reviewed 中。
 
-主线程完整读取 AGENTS.md、stability_verification.md、udp_transport_verification.md、worker_sink_dispatcher_verification.md、webrtc_transport_audit.md、performance_baseline.md；沿用 codebase-design 的接口、ownership 与净收益判断。五个单轮只读检索分别覆盖 HTTP/HLS、core ownership、codec glue、协议残留和测试保护，主线程审查 net/service/dispatcher，并抽查影响结论的 key paths。
+主工作区 HEAD 等于 origin/main，但已有 bench/codec_interop_verify.py、bench/lifecycle_verify.py 的未提交改动及未跟踪 bench/browser_webrtc_verify.py。未覆盖、回退、暂存或提交这些改动。本次在 `/tmp/media_server_infrastructure_audit-30c09f4` 的干净 detached worktree 中审计：开始时 HEAD 等于 origin/main，status 为空。原工作区的 clean 前置条件未满足，以隔离工作区建立权威源码基线；不能把隔离工作区干净表述为原工作区干净。
+
+主线程完整读取 AGENTS.md、stability_verification.md、udp_transport_verification.md、worker_sink_dispatcher_verification.md、webrtc_transport_audit.md、performance_baseline.md；沿用 codebase-design 的接口、ownership 与净收益判断。首次审计的五个单轮只读检索分别覆盖 HTTP/HLS、core ownership、codec glue、协议残留和测试保护，主线程审查 net/service/dispatcher，并抽查影响结论的 key paths。本次主线程重核 transport、dispatcher 及唯一生产增量；一个单轮只读代理独立核验增量与测试元数据。代理结果经过 CMake 和实际 git 对象核对，不直接当作结论。
 
 冻结历史：98f2e23/179f181/f569568/8a08234 收口 TCP；52f0c95/1bd5b80/43440c8/f572de3 收口 UDP；9abc847/68c45e0/80b5295/d2f91f6/90cdd7f 完成 fanout 与验证；acee8da 记录 WebRTC 不提取结论。还恢复之前 HLS/HTTP/RTMP/GB/DTLS 时序精简与共享 source/派生输出的稳定性和性能输入。没有重新设计这些业务架构。
 
@@ -29,6 +33,16 @@ BASE_HEAD: `acee8da2481924618955afeb4d8538e4d72c5385`
 - **state**：pending_/queued_/drain_/writing_/stopped_/ended_/finished_/started_：核对事实来源；没有仅因字段同名列候选。
 
 搜索只是入口；结论基于 caller、thread/worker、ownership、失败/终止路径、buffer 与 callback lifetime 及测试断言。单次 post、协议 parser 残包、mux packet、RTCP 生成和普通 map/timer 不构成新的基础设施候选。
+
+## 当前基线增量复核
+
+acee8da 至 30c09f4 的生产增量只有 `media/flv/flv_muxer.cpp:51` 的四行 H265 Enhanced RTMP 调用。另有 CMake 增加 `rtmp_hevc_decode`、原 FFmpeg 测试扩展 H265 参数及新增独立 codec 互操作工具。这些是已提交的协议互操作修复和测试，发生在本次只读复核之前，不是本审计实施的修改。
+
+- transport、dispatcher、registry、port pool、worker、共享派生输出实现与首次审计基线逐文件一致。生产增量未增加 queue、mutex、post、completion、terminal state 或资源 ownership。
+- 重新执行七类搜索，按文件和匹配内容比较、忽略变动行号，内容均一致：containers 27 行/21 文件，async operations 98/43，synchronization 66/19，termination 523/86，ownership 172/57，timers 23/10，state 90/19。搜索计数仅证明入口未变化，否定性结论同时依赖完整生产 diff 和原调用链分析。
+- `async_send_to` 仍只在 udp_transport 内；`drain_queued`、`pending_end`、`max_pending_frames`、`snapshot_sinks` 仍只在 worker_sink_dispatcher 内。HTTP-FLV 的应用 chunk queue 和 HLS retention 不归并到 socket writer。
+- H265 互操作修复没有引入新的基础设施算法，也没有提供推翻 WebRTC 不提取结论的新证据。K1–K12、F1–F2 的职责、收益估算和分类保持原结论。
+- 本次复核未新启动构建或协议测试。当前新增测试的注册/断言只能说明保护范围，不能据此声称运行通过。
 
 ## 已完成且边界合理的基础设施
 
@@ -164,7 +178,7 @@ TCP/UDP 各只有一个 write_callback 类型（每对象一个注册回调）�
 - **6. 新增抽象成本**：callbacks=0；virtual=0；config=0；policy=0–1（允许 codec 的调用方规则必须保留）；new_state=0
 - **7. 可删除内容/净代码**：每组小 switch 预计净删 5–15 行，0 个 ownership/scheduling 字段消失；通用时间转换已集中 codec_utils，无再次抽取收益。
 - **8. Correctness 风险**：把 codec mapping 与支持承诺混为一体，误扩大 Opus/G711 支持；改变整数时间截断或 wrap 语义。
-- **9. 测试保护**：tests/rtmp_decode.py:16/34 检查 H264/AAC 解码；tests/media_lifecycle.cpp:177 检查派生 track；未覆盖各 enum/unknown/G711/时间边界。
+- **9. 测试保护**：tests/rtmp_decode.py:43/48 检查 H264/H265 与 AAC 解码；tests/media_lifecycle.cpp:177 检查派生 track；未覆盖各 enum/unknown/G711/时间边界。
 - **10. 最终结论**：保持现状
 
 ### K10: avpkt2bs C handle / payload copy glue
@@ -241,7 +255,7 @@ TCP/UDP 各只有一个 write_callback 类型（每对象一个注册回调）�
 
 ## Correctness findings 与排除的线索
 
-**确认的问题：无。** 这是本轮证据范围内的结论，不是“所有路径绝无缺陷”的证明。未修复或隐去任何已确认的生产问题。
+**确认的问题：无。** 这是本轮证据范围内的结论，不是“所有路径绝无缺陷”的证明。本次没有修复生产问题。此前 30c09f4 已修复 H265 RTMP/HTTP-FLV 互操作，属于基线历史，不记作本次新发现；“无”不否认历史上存在并已修复的问题。
 
 - **WHIP 未调用 avpkt2bs_create**：bitstream_{} 对 POD 成员/union 初始状态清零；create 仅 memset，destroy 仅 free 非空 ptr。没有未初始化资源/不成对创建缺陷，不能用此线索推动 wrapper。 证据：`media/webrtc/whip_media_receiver.h:59`、`third/ireader/avbsf/src/avpkt2bs.c:9`、`third/ireader/avbsf/src/avpkt2bs.c:15`。
 - **HLS shutdown source_ 重复清空 / HTTP-FLV shutdown 未清 queue**：HLS replacement shutdown 后立即移除 entry，global shutdown 后 clear；on_end/finish 不清 source，未找到当前生产路径二次 shutdown 的证据。FLV 当前 queue front 供 yield async_write 使用，保留到 completion/error 清理满足 buffer lifetime；提前清 queue 才危险。均不记为 confirmed bug。 证据：`media/hls/hls.cpp:92`、`media/hls/hls.cpp:105`、`media/hls/hls_segmenter.cpp:83`、`media/hls/hls_segmenter.cpp:124`、`media/http/http_flv_session.cpp:190`、`media/http/http_flv_session.cpp:274`。
@@ -250,11 +264,11 @@ TCP/UDP 各只有一个 write_callback 类型（每对象一个注册回调）�
 
 ### CTest 注册
 
-BUILD_TESTING 下 FFmpeg 可发现时 9 个：worker_sink_fanout、udp_transport、media_lifecycle、rtmp_decode、help、4 个 invalid 参数；无 FFmpeg 为 8 个。
+当前 BUILD_TESTING 下 FFmpeg 可发现时 10 个：worker_sink_fanout、udp_transport、media_lifecycle、rtmp_decode、rtmp_hevc_decode、help、4 个 invalid 参数；无 FFmpeg 仍为 8 个。首次审计基线可发现 FFmpeg 时为 9 个，历史验证数量不改写。
 
-缺口/限制：本轮只读注册/断言，未执行；不能宣称本轮 9/9。
+缺口/限制：本轮只读注册/断言，未执行；不能宣称本轮 10/10。
 
-证据：`CMakeLists.txt:313`、`CMakeLists.txt:326`。
+证据：`CMakeLists.txt:313`、`CMakeLists.txt:326`、`CMakeLists.txt:333`。
 
 ### UDP
 
@@ -290,21 +304,27 @@ canonical/PS 两种模板，同 worker inline、多 target/多 sink、单 drain/
 
 ### TCP / HTTP / HLS
 
-FFmpeg RTMP H264/AAC 可解码、FLV header/tag/read、HLS replacement/lease expiry、TCP 异常断开与回收。
+FFmpeg RTMP H264/H265 与 AAC 解码断言、FLV header/tag/read、HLS replacement/lease expiry、TCP 异常断开与回收。
 
 缺口/限制：没有 TCP transport 串行 queue/overflow/in-flight 专项；FLV chunk 精确编码/慢 reader、HLS segment window/ENOBUFS/在途 body 缺定向断言。
 
-证据：`tests/rtmp_decode.py:34`、`bench/http_flv_fanout.py:30`、`bench/lifecycle_verify.py:266`、`bench/lifecycle_verify.py:330`。
+证据：`tests/rtmp_decode.py:43`、`bench/http_flv_fanout.py:30`、`bench/lifecycle_verify.py:266`、`bench/lifecycle_verify.py:330`。
 
 ### codec glue / transcoder / timers
 
-Opus track metadata、H264/AAC FFmpeg 解码、GB sender timer/error lifecycle。
+Opus track metadata、H264/H265 与 AAC FFmpeg 解码断言、GB sender timer/error lifecycle。
 
-缺口/限制：没有 avpkt2bs malformed/reset/view、AAC→Opus 实际编码内容/采样率/声道/flush、codec enum/时间边界、各 timer cancel 竞态专项。测试缺口不等价于生产 bug 或抽象需求。
+缺口/限制：没有 avpkt2bs malformed/reset/view、AAC→Opus 实际编码内容/采样率/声道/flush、codec enum/时间 wrap 边界、各 timer cancel 竞态专项。测试缺口不等价于生产 bug 或抽象需求。
 
-证据：`tests/media_lifecycle.cpp:199`、`tests/rtmp_decode.py:16`、`tests/udp_transport.cpp:272`。
+证据：`tests/media_lifecycle.cpp:199`、`tests/rtmp_decode.py:18`、`tests/udp_transport.cpp:272`。
 
-历史结果见 [稳定性验证](stability_verification.md)、[UDP 验证](udp_transport_verification.md)、[fanout 验证](worker_sink_dispatcher_verification.md) 与 [性能基线](performance_baseline.md)。fanout 文档记录普通/ASan/UBSan 18 套真实协议回归及 WHEP 100/500/1000；也保留首轮 GB 测试源异步删除问题和容量竞争失败/复测。它们是既有验证，**本轮没有再次声称 9/9、sanitizer PASS 或零丢包。**
+### 新增 codec 互操作工具的证据边界（未执行）
+
+`bench/codec_interop_verify.py:57` 复用现有 Run 和 GB pair；`:64` 开始逐输出调用独立 FFmpeg，`:82` 检查解码后的 PTS，`:87` 同时要求退出码、实际帧数、codec 和时间戳断言。它是未注册到 CTest 的独立验证工具，没有新增生产 scheduler 或资源 allocator。
+
+GB 分支经过服务器 sender→真实网络→receiver relay，再由 FFmpeg 经 RTSP 播放解码；这不是独立 GB 设备/SIP 平台互操作证明。脚本能力不等于所有 codec/输出组合已执行通过。本次不读取主工作区未提交版本来替代已提交基线，也不将既有产品测试运行归入本审计。
+
+历史结果见 [稳定性验证](stability_verification.md)、[UDP 验证](udp_transport_verification.md)、[fanout 验证](worker_sink_dispatcher_verification.md) 与 [性能基线](performance_baseline.md)。fanout 文档记录普通/ASan/UBSan 18 套真实协议回归及 WHEP 100/500/1000；也保留首轮 GB 测试源异步删除问题和容量竞争失败/复测。它们是既有验证，**本次没有再次声称 CTest、sanitizer PASS 或零丢包。**
 
 测试缺口本身不证明抽象失败，不自动产生生产改造任务。未来实际修改 TCP、codec glue 或 lease 边界时，再围绕对应公共行为补测试。
 
@@ -314,11 +334,11 @@ Opus track metadata、H264/AAC FFmpeg 解码、GB sender timer/error lifecycle�
 
 当前已有同职责的完整算法均由基础设施持有；剩余相似写法没有同时满足净状态下降、唯一事实来源、低 callback/policy 成本和行为不变的门槛。无需为了 DRY 增加 generic queue、session base、registry 模板、timer framework、媒体 pipeline、GOP/history/reader。
 
-本轮仅提交以下两份文档，提交信息为“记录基础设施重复设计审计”：
+本次仅更新并提交以下两份文档，提交信息为“记录基础设施重复设计审计”：
 
 - `docs/infrastructure_duplication_audit.md`
 - `docs/verification_results/infrastructure_duplication_audit.json`
 
-提交前校验 JSON、证据路径/行号、protected tracked 文件 SHA256 与 git diff/cached diff；提交后 fetch/status/HEAD 对 origin/main。最终提交 SHA、clean/远端同步结论在交付回报中给出，避免把文档自身 SHA 写回而产生循环提交。
+提交前校验 JSON、证据路径/行号、protected tracked 文件 SHA256 与 git diff/cached diff；提交后 fetch/status/HEAD 对 origin/main。隔离工作区按 clean/远端同步验收；原工作区三项既有测试工具改动单独核对内容未变，保留其 dirty 状态。最终提交 SHA、clean/远端同步结论在交付回报中给出，避免把文档自身 SHA 写回而产生循环提交。
 
-审计临时证据：`/tmp/media_server_infrastructure-acee8da`（baseline/history/foundation hashes、protected-files manifest 与最终 git 检查）。JSON 是本报告的结构化结果，不代表新增运行时验证。
+首次审计临时证据：`/tmp/media_server_infrastructure-acee8da`。本次证据：`/tmp/media_server_infrastructure_audit-30c09f4-evidence`（baseline/history、七类搜索及与原基线比较、protected-files manifest、原工作区改动 hash 与最终 git 检查）。JSON 是本报告的结构化结果，不代表新增运行时验证。
