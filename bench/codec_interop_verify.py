@@ -94,7 +94,7 @@ def main():
                     video_codec = "hevc" if args.video_codec == "h265" else "h264"
                     timestamps = {}
                     for kind, marker in (("video", "showinfo"), ("audio", "ashowinfo")):
-                        pts = [float(x) for x in re.findall(r"\[Parsed_" + marker + r"_[^\]]*\].*?pts_time:([\d.eE+-]+)", text)]
+                        pts = [float(x) for x in re.findall(r"\[Parsed_" + marker + r"_[^\]]*\]\s+n:\s*\d+\s+pts:\s*-?\d+\s+pts_time:([\d.eE+-]+)", text)]
                         if pts:
                             timestamps[kind] = {"count": len(pts), "first": pts[0], "last": pts[-1], "non_monotonic": sum(b < a for a, b in zip(pts, pts[1:]))}
                     passed = (not timed_out and not pressure and code == 0 and max(frames, default=0) > 0 and "Video: " + video_codec in text

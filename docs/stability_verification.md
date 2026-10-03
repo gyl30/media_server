@@ -156,3 +156,11 @@ WHEP 100 / 250 / 500 / 750 / 1000 viewers 五级全部通过；最高级服务 C
 最终交付时核对 `git status --porcelain=v1` 为空，`git fetch origin` 后本地 HEAD 与实际 `origin/main` 一致；FINAL_HEAD 为本文件所属的最终报告提交，完整 SHA 见交付答复，避免在文件内自引用提交 hash。
 
 建议下一阶段：保留当前代码和 fixture 为新基线；在具备 TSan fiber hooks 的独立依赖环境补可靠竞态验证，并按实际业务码率选择更长时段的运行观测。上述建议不属于本轮继续实施范围。
+
+## 产品互操作时间戳检查：日志交错边界
+
+在 `2a70363` 上使用 FFmpeg 生成的连续 90 秒 H264+AAC 素材，RTSP TCP 输入、HTTP-FLV 解码 40 秒：旧 `codec_interop_verify.py` 误报 4 次视频 PTS 回退。原始日志显示 `showinfo` 的颜色/校验和续行与 `ashowinfo` 交错，宽泛匹配把音频 PTS 归入视频；不是这条媒体链路的时间戳错误。
+
+解析器现在只接受对应 filter 前缀后紧跟 `n / pts / pts_time` 的完整帧记录。用实际新表达式重读两份 HTTP-FLV 失败日志后，音视频回退均为 0；重跑 40 秒解码输出 1,200 帧、音视频持续推进、回退均为 0，全量 CTest 10/10 PASS。破碎日志不作为完整帧记录，因此日志计数不是精确解码帧数；后者仍取 FFmpeg progress。
+
+同一修正仍保留 RTSP 播放的真实音频回退：RTSP UDP 输入的 60 秒记录有 8 次，连续素材 RTMP 输入的 40 秒记录有 2 次。这些结果尚未通过，不能将解析修正当成媒体问题已解决。原始 RED/GREEN、抓包、命令与构建结果保存在 `/tmp/media_server_product_current-2a70363-dD0La6`。
