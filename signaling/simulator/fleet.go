@@ -60,7 +60,6 @@ type simulatedFleet struct {
 	cfg           config
 	logger        *slog.Logger
 	identities    identitySet
-	control       controlClient
 	media         *mediaEngine
 	endpoints     []fleetEndpoint
 	states        []fleetDeviceState
@@ -89,11 +88,10 @@ func newSimulatedFleet(ctx context.Context, cfg config, source *sharedMediaSourc
 		cfg:           cfg,
 		logger:        logger,
 		identities:    identities,
-		control:       newControlClient(cfg.controlURL),
 		media:         media,
 		endpoints:     make([]fleetEndpoint, cfg.sipEndpoints),
 		states:        make([]fleetDeviceState, cfg.devices),
-		dialogs:       make(map[string]int, cfg.liveCount),
+		dialogs:       make(map[string]int, cfg.devices),
 		catalogJobs:   make(chan catalogWork, cfg.controlWorkers*4),
 		heartbeats:    make(chan int, cfg.controlWorkers*4),
 		registrations: make(chan int, cfg.controlWorkers*4),
@@ -214,11 +212,11 @@ func (f *simulatedFleet) registerAll(ctx context.Context) error {
 	return runIndices(ctx, f.cfg.devices, f.cfg.controlWorkers, f.cfg.registerRate, func(index int) error {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		return f.register(requestContext, index, false)
+		return f.register(requestContext, index, f.cfg.registerExpiry)
 	})
 }
 
-func (f *simulatedFleet) register(ctx context.Context, index int, refresh bool) error {
+func (f *simulatedFleet) register(ctx context.Context, index int, expiry time.Duration) error {
 	endpoint := &f.endpoints[index%len(f.endpoints)]
 	deviceID := f.identities.deviceID(index)
 	host, portText, err := net.SplitHostPort(endpoint.listenAddr)
@@ -239,13 +237,16 @@ func (f *simulatedFleet) register(ctx context.Context, index int, refresh bool) 
 	request.AppendHeader(&sip.FromHeader{Address: sip.Uri{Scheme: "sip", User: deviceID, Host: f.cfg.domain}, Params: fromParams})
 	request.AppendHeader(&sip.ToHeader{Address: sip.Uri{Scheme: "sip", User: deviceID, Host: f.cfg.domain}})
 	request.AppendHeader(&sip.ContactHeader{Address: sip.Uri{Scheme: "sip", User: deviceID, Host: host, Port: port}})
-	expires := sip.ExpiresHeader(uint32(f.cfg.registerExpiry / time.Second))
+	expires := sip.ExpiresHeader(uint32(expiry / time.Second))
 	request.AppendHeader(&expires)
 	request.SetTransport("UDP")
 	request.SetDestination(f.cfg.platformSIP)
 	challenge, err := endpoint.client.Do(ctx, request)
 	if err != nil {
 		return err
+	}
+	if challenge.StatusCode == sip.StatusForbidden && expiry == 0 {
+		return nil
 	}
 	if challenge.StatusCode != sip.StatusUnauthorized {
 		return fmt.Errorf("device %d REGISTER challenge status %d", index, challenge.StatusCode)
@@ -259,10 +260,14 @@ func (f *simulatedFleet) register(ctx context.Context, index int, refresh bool) 
 	}
 	f.mutex.Lock()
 	state := &f.states[index]
-	state.registered = true
+	refresh := state.registered
+	state.registered = expiry != 0
 	state.refreshPending = false
 	state.refreshAt = time.Now().Add(f.cfg.registerExpiry / 2)
 	f.mutex.Unlock()
+	if expiry == 0 {
+		return nil
+	}
 	if refresh {
 		f.counters.registerRefresh.Add(1)
 	} else {
@@ -307,9 +312,9 @@ func (f *simulatedFleet) runCatalogWorker(ctx context.Context) {
 			f.mutex.Lock()
 			if !f.states[work.device].cataloged {
 				f.states[work.device].cataloged = true
-				f.counters.catalogResponses.Add(1)
 			}
 			f.mutex.Unlock()
+			f.counters.catalogResponses.Add(1)
 		}
 	}
 }
@@ -337,7 +342,6 @@ func (f *simulatedFleet) initialKeepalives(ctx context.Context) error {
 }
 
 func (f *simulatedFleet) runHeartbeatScheduler(ctx context.Context) {
-	defer f.done.Done()
 	period := max(1, int(f.cfg.heartbeat/time.Second))
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -406,7 +410,7 @@ func (f *simulatedFleet) runDeviceWorker(ctx context.Context) {
 			return
 		case index := <-f.registrations:
 			requestContext, cancel := context.WithTimeout(ctx, 5*time.Second)
-			err := f.register(requestContext, index, true)
+			err := f.register(requestContext, index, f.cfg.registerExpiry)
 			cancel()
 			if err != nil {
 				f.mutex.Lock()
@@ -594,54 +598,20 @@ func (f *simulatedFleet) removeDialog(index int, dialogID string) {
 	}
 }
 
-func (f *simulatedFleet) startLive(ctx context.Context) error {
-	return runIndices(ctx, f.cfg.liveCount, f.cfg.controlWorkers, f.cfg.startRate, func(index int) error {
-		requestContext, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-		response, err := f.control.startLive(requestContext, f.identities.deviceID(index), f.identities.channelID(index))
-		if err != nil {
-			return fmt.Errorf("device %d start live: %w", index, err)
-		}
-		return f.waitStreaming(requestContext, index, response)
-	})
-}
-
-func (f *simulatedFleet) waitStreaming(ctx context.Context, index int, response liveStartResponse) error {
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-	for {
-		f.mutex.Lock()
-		streaming := f.states[index].streaming
-		target := f.states[index].target
-		f.mutex.Unlock()
-		if streaming {
-			if target.ssrc == response.SSRC && target.rtpPort == response.RTPPort {
-				return nil
-			}
-			return fmt.Errorf("device %d live response does not match established dialog", index)
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("device %d ACK wait: %w", index, ctx.Err())
-		case <-ticker.C:
-		}
-	}
-}
-
-func (f *simulatedFleet) stopLive(ctx context.Context) error {
-	return runIndices(ctx, f.cfg.liveCount, f.cfg.controlWorkers, 0, func(index int) error {
-		if err := f.control.stopLive(ctx, f.identities.deviceID(index), f.identities.channelID(index)); err != nil {
-			return fmt.Errorf("device %d stop live: %w", index, err)
-		}
-		return nil
-	})
-}
-
 func (f *simulatedFleet) waitCatalog(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if f.counters.catalogResponses.Load() == uint64(f.cfg.devices) {
+		f.mutex.Lock()
+		ready := true
+		for index := range f.states {
+			if !f.states[index].cataloged {
+				ready = false
+				break
+			}
+		}
+		f.mutex.Unlock()
+		if ready {
 			return nil
 		}
 		select {
@@ -719,11 +689,24 @@ func (f *simulatedFleet) close() {
 }
 
 func runFleet(ctx context.Context, cfg config, source *sharedMediaSource, logger *slog.Logger) error {
-	fleet, err := newSimulatedFleet(ctx, cfg, source, logger)
+	fleet, err := newSimulatedFleet(context.WithoutCancel(ctx), cfg, source, logger)
 	if err != nil {
 		return err
 	}
-	defer fleet.close()
+	defer func() {
+		unregisterContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := runIndices(unregisterContext, cfg.devices, cfg.controlWorkers, cfg.registerRate, func(index int) error {
+			requestContext, stop := context.WithTimeout(unregisterContext, 3*time.Second)
+			defer stop()
+			return fleet.register(requestContext, index, 0)
+		})
+		cancel()
+		if err != nil {
+			logger.Warn("simulator unregister failed", "error", err)
+		}
+		fleet.report()
+		fleet.close()
+	}()
 	if err := fleet.registerAll(ctx); err != nil {
 		return err
 	}
@@ -736,35 +719,22 @@ func runFleet(ctx context.Context, cfg config, source *sharedMediaSource, logger
 	if err := fleet.initialKeepalives(ctx); err != nil {
 		return err
 	}
-	fleet.done.Add(1)
-	go fleet.runHeartbeatScheduler(fleet.ctx)
-	if err := fleet.startLive(ctx); err != nil {
-		return err
-	}
+	fleet.done.Go(func() { fleet.runHeartbeatScheduler(fleet.ctx) })
 	fleet.report()
 	reportTicker := time.NewTicker(time.Second)
 	defer reportTicker.Stop()
-	liveTimer := time.NewTimer(cfg.liveDuration)
-	defer liveTimer.Stop()
-waitLoop:
+	timer := time.NewTimer(cfg.duration)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		case err := <-fleet.errors:
 			return err
 		case <-reportTicker.C:
 			fleet.report()
-		case <-liveTimer.C:
-			break waitLoop
+		case <-timer.C:
+			return nil
 		}
 	}
-	stopContext, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	err = fleet.stopLive(stopContext)
-	stopCancel()
-	if err != nil {
-		return err
-	}
-	fleet.report()
-	return nil
 }

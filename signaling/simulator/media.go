@@ -32,7 +32,7 @@ func prepareMediaFixture(ctx context.Context, cfg config) (mediaFixture, error) 
 		return mediaFixture{}, err
 	}
 	cleanup := func() { _ = os.Remove(path) }
-	duration := cfg.liveDuration + 5*time.Second
+	duration := cfg.duration + 5*time.Second
 	bitrate := "1100k"
 	bufferSize := "2200k"
 	if cfg.mediaProfile == "high" {

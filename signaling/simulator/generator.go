@@ -13,11 +13,11 @@ func runGenerator(ctx context.Context, cfg config, source *sharedMediaSource, lo
 	if err != nil {
 		return err
 	}
-	engine, err := startMediaEngine(ctx, source, cfg.mediaBind, cfg.liveCount, cfg.mediaWorkers, cfg.phaseBuckets, cfg.batchSize, packetLoss{percent: cfg.packetLossPercent, seed: cfg.seed})
+	engine, err := startMediaEngine(ctx, source, cfg.mediaBind, cfg.devices, cfg.mediaWorkers, cfg.phaseBuckets, cfg.batchSize, packetLoss{percent: cfg.packetLossPercent, seed: cfg.seed})
 	if err != nil {
 		return err
 	}
-	for index := range cfg.liveCount {
+	for index := range cfg.devices {
 		if err := engine.add(index, mediaTarget{
 			address: sink.Addr().String(), rtpPort: sink.Port(), payloadType: 96, ssrc: uint32(200_000_001 + index),
 		}); err != nil {
@@ -29,19 +29,19 @@ func runGenerator(ctx context.Context, cfg config, source *sharedMediaSource, lo
 	started := time.Now()
 	reportTicker := time.NewTicker(time.Second)
 	defer reportTicker.Stop()
-	timer := time.NewTimer(cfg.liveDuration)
+	timer := time.NewTimer(cfg.duration)
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			_ = engine.stop()
-			logGeneratorSummary(logger, engine, cfg.liveCount, sink, time.Since(started))
+			logGeneratorSummary(logger, engine, cfg.devices, sink, time.Since(started))
 			return ctx.Err()
 		case <-reportTicker.C:
-			logGeneratorSummary(logger, engine, cfg.liveCount, sink, time.Since(started))
+			logGeneratorSummary(logger, engine, cfg.devices, sink, time.Since(started))
 		case <-timer.C:
 			err := engine.stop()
-			logGeneratorSummary(logger, engine, cfg.liveCount, sink, time.Since(started))
+			logGeneratorSummary(logger, engine, cfg.devices, sink, time.Since(started))
 			return err
 		}
 	}

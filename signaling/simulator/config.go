@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"net/url"
 	"time"
 )
 
 type config struct {
 	platformSIP       string
-	controlURL        string
 	listen            string
 	platformID        string
 	domain            string
@@ -25,16 +23,14 @@ type config struct {
 	ffmpeg            string
 	registerExpiry    time.Duration
 	heartbeat         time.Duration
-	liveDuration      time.Duration
+	duration          time.Duration
 	devices           int
-	liveCount         int
 	sipEndpoints      int
 	controlWorkers    int
 	mediaWorkers      int
 	phaseBuckets      int
 	batchSize         int
 	registerRate      int
-	startRate         int
 	packetLossPercent int
 	seed              uint64
 }
@@ -43,7 +39,6 @@ func parseConfig(args []string) (config, error) {
 	var cfg config
 	flags := flag.NewFlagSet("gb28181-simulator", flag.ContinueOnError)
 	flags.StringVar(&cfg.platformSIP, "platform-sip", "127.0.0.1:5060", "GB28181 platform SIP UDP address")
-	flags.StringVar(&cfg.controlURL, "control-url", "http://127.0.0.1:9090", "signaling internal HTTP base URL")
 	flags.StringVar(&cfg.listen, "listen", "127.0.0.1:5062", "simulated device SIP UDP listen address")
 	flags.StringVar(&cfg.platformID, "platform-id", "34020000002000000001", "GB28181 platform ID")
 	flags.StringVar(&cfg.domain, "domain", "3402000000", "GB28181 SIP domain and Digest realm")
@@ -57,16 +52,14 @@ func parseConfig(args []string) (config, error) {
 	flags.StringVar(&cfg.ffmpeg, "ffmpeg", "ffmpeg", "FFmpeg executable used to generate a temporary H264 fixture")
 	flags.DurationVar(&cfg.registerExpiry, "register-expires", 120*time.Second, "REGISTER lifetime")
 	flags.DurationVar(&cfg.heartbeat, "heartbeat", 30*time.Second, "Keepalive interval")
-	flags.DurationVar(&cfg.liveDuration, "live-duration", 8*time.Second, "live duration")
+	flags.DurationVar(&cfg.duration, "duration", 8*time.Second, "simulator runtime")
 	flags.IntVar(&cfg.devices, "devices", 1, "number of logical GB28181 devices")
-	flags.IntVar(&cfg.liveCount, "live-count", 1, "number of live channels to start")
 	flags.IntVar(&cfg.sipEndpoints, "sip-endpoints", 1, "shared SIP UDP endpoint shards")
-	flags.IntVar(&cfg.controlWorkers, "control-workers", 16, "fixed SIP and HTTP control workers")
+	flags.IntVar(&cfg.controlWorkers, "control-workers", 16, "fixed SIP control workers")
 	flags.IntVar(&cfg.mediaWorkers, "media-workers", 16, "fixed RTP UDP workers and sockets")
 	flags.IntVar(&cfg.phaseBuckets, "phase-buckets", 40, "RTP send phases per source frame")
 	flags.IntVar(&cfg.batchSize, "batch-size", 64, "UDP sendmmsg batch size")
 	flags.IntVar(&cfg.registerRate, "register-rate", 200, "maximum REGISTER transactions per second; zero sends a burst")
-	flags.IntVar(&cfg.startRate, "start-rate", 0, "maximum live starts per second; zero sends a burst")
 	flags.IntVar(&cfg.packetLossPercent, "packet-loss-percent", 0, "deterministic RTP packet loss percentage")
 	flags.Uint64Var(&cfg.seed, "seed", 1, "deterministic fault injection seed")
 	if err := flags.Parse(args); err != nil {
@@ -82,10 +75,6 @@ func parseConfig(args []string) (config, error) {
 	if err != nil || listen.Addr().IsUnspecified() {
 		return config{}, fmt.Errorf("invalid device SIP listen address")
 	}
-	controlURL, err := url.Parse(cfg.controlURL)
-	if err != nil || controlURL.Scheme != "http" || controlURL.Host == "" || controlURL.User != nil || (controlURL.Path != "" && controlURL.Path != "/") || controlURL.RawQuery != "" || controlURL.Fragment != "" {
-		return config{}, fmt.Errorf("invalid signaling control URL")
-	}
 	if !validDigits(cfg.platformID, 20) || !validDigits(cfg.deviceID, 20) || !validDigits(cfg.channelID, 20) || !validDigits(cfg.domain, 10) {
 		return config{}, fmt.Errorf("invalid GB28181 identity")
 	}
@@ -97,7 +86,7 @@ func parseConfig(args []string) (config, error) {
 	}
 	if cfg.mediaSink != "" {
 		sink, err := netip.ParseAddrPort(cfg.mediaSink)
-		if err != nil || !sink.Addr().Is4() || sink.Port() == 0 || cfg.liveCount == 0 {
+		if err != nil || !sink.Addr().Is4() || sink.Port() == 0 {
 			return config{}, fmt.Errorf("invalid media sink")
 		}
 	}
@@ -107,13 +96,13 @@ func parseConfig(args []string) (config, error) {
 	if cfg.registerExpiry <= 0 || cfg.registerExpiry%time.Second != 0 {
 		return config{}, fmt.Errorf("invalid registration lifetime")
 	}
-	if cfg.heartbeat <= 0 || cfg.heartbeat%time.Second != 0 || cfg.liveDuration <= 0 {
+	if cfg.heartbeat <= 0 || cfg.heartbeat%time.Second != 0 || cfg.duration <= 0 {
 		return config{}, fmt.Errorf("invalid simulator duration")
 	}
-	if cfg.devices <= 0 || cfg.devices > 20_000 || cfg.liveCount < 0 || cfg.liveCount > cfg.devices {
+	if cfg.devices <= 0 || cfg.devices > 20_000 {
 		return config{}, fmt.Errorf("invalid simulator scale")
 	}
-	if cfg.sipEndpoints <= 0 || cfg.sipEndpoints > cfg.devices || cfg.controlWorkers <= 0 || cfg.mediaWorkers <= 0 || cfg.phaseBuckets <= 0 || cfg.phaseBuckets > 40 || cfg.batchSize <= 0 || cfg.batchSize > 128 || cfg.registerRate < 0 || cfg.startRate < 0 {
+	if cfg.sipEndpoints <= 0 || cfg.sipEndpoints > cfg.devices || cfg.controlWorkers <= 0 || cfg.mediaWorkers <= 0 || cfg.phaseBuckets <= 0 || cfg.phaseBuckets > 40 || cfg.batchSize <= 0 || cfg.batchSize > 128 || cfg.registerRate < 0 {
 		return config{}, fmt.Errorf("invalid simulator worker configuration")
 	}
 	if cfg.packetLossPercent < 0 || cfg.packetLossPercent > 100 {
