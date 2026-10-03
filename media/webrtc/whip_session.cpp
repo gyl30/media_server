@@ -60,14 +60,22 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
                                                  boost::asio::ip::address advertised_address,
                                                  std::shared_ptr<dtls_certificate> certificate)
 {
-    boost::system::error_code udp_error;
-    const auto reserved = media_port_pool::instance().acquire_and_bind(*udp_transport_, advertised_address, udp_error);
+    const auto reserved = media_port_pool::instance().acquire();
     if (!reserved)
     {
-        spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
+        spdlog::error("webrtc udp socket startup failed: no available media port");
         return std::unexpected(whip_session_startup_error::internal_error);
     }
-    local_port_reservation_ = *reserved;
+    boost::system::error_code udp_error;
+    udp_transport_->startup(advertised_address, *reserved, udp_error);
+    if (udp_error)
+    {
+        udp_transport_->shutdown();
+        media_port_pool::instance().release(*reserved);
+        spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
+        return std::unexpected(whip_session_startup_error::internal_error);
+    }
+    local_port_ = *reserved;
 
     id_ = random_hex(16);
     ice_ufrag_ = random_hex(8);
@@ -82,7 +90,7 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
     auto answer = make_whip_answer(offer,
                                    webrtc_answer_config{
                                        .address = advertised_address,
-                                       .port = local_port_reservation_,
+                                       .port = local_port_,
                                        .stream_id = {},
                                        .ice_ufrag = ice_ufrag_,
                                        .ice_pwd = ice_pwd_,
@@ -115,7 +123,7 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
                 return;
             }
             const auto locked = weak.lock();
-            if (!locked || locked->local_port_reservation_ == 0)
+            if (!locked || locked->local_port_ == 0)
             {
                 return;
             }
@@ -140,7 +148,7 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
     answer_ = std::move(*answer);
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
-    spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_name_, advertised_address.to_string(), local_port_reservation_);
+    spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_name_, advertised_address.to_string(), local_port_);
     startup_establishment_timeout();
     return answer_sdp;
 }
@@ -153,7 +161,7 @@ void whip_session::shutdown()
 
 void whip_session::safe_shutdown()
 {
-    if (local_port_reservation_ == 0)
+    if (local_port_ == 0)
     {
         return;
     }
@@ -167,10 +175,10 @@ void whip_session::safe_shutdown()
     ice_activity_timer_.cancel();
     answer_ = {};
     udp_transport_->shutdown();
-    if (local_port_reservation_ != 0)
+    if (local_port_ != 0)
     {
-        media_port_pool::instance().release(local_port_reservation_);
-        local_port_reservation_ = 0;
+        media_port_pool::instance().release(local_port_);
+        local_port_ = 0;
     }
 
     spdlog::info("webrtc whip session shutdown {}", id_);
@@ -201,7 +209,7 @@ void whip_session::run_udp(boost::asio::yield_context yield)
 
 void whip_session::handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
-    if (local_port_reservation_ == 0 || packet.empty())
+    if (local_port_ == 0 || packet.empty())
     {
         return;
     }
@@ -382,7 +390,7 @@ void whip_session::send_udp(std::vector<std::uint8_t> packet)
 
 void whip_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
 {
-    if (local_port_reservation_ == 0 || packet.empty())
+    if (local_port_ == 0 || packet.empty())
     {
         return;
     }
@@ -394,7 +402,7 @@ void whip_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
 
 void whip_session::schedule_dtls_timeout()
 {
-    if (local_port_reservation_ == 0 || dtls_->connected())
+    if (local_port_ == 0 || dtls_->connected())
     {
         return;
     }
@@ -419,7 +427,7 @@ void whip_session::schedule_dtls_timeout()
 
 void whip_session::handle_dtls_timeout()
 {
-    if (local_port_reservation_ == 0 || dtls_->connected())
+    if (local_port_ == 0 || dtls_->connected())
     {
         return;
     }
@@ -440,7 +448,7 @@ void whip_session::startup_establishment_timeout()
     establishment_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || self->local_port_reservation_ == 0 || self->media_receiver_)
+            if (error || self->local_port_ == 0 || self->media_receiver_)
             {
                 return;
             }
@@ -457,7 +465,7 @@ void whip_session::refresh_ice_activity_timeout()
     ice_activity_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || self->local_port_reservation_ == 0 || !self->remote_endpoint_.has_value())
+            if (error || self->local_port_ == 0 || !self->remote_endpoint_.has_value())
             {
                 return;
             }

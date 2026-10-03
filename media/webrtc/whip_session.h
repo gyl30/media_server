@@ -72,7 +72,7 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     boost::asio::steady_timer establishment_timer_;
     boost::asio::steady_timer ice_activity_timer_;
     std::optional<boost::asio::ip::udp::endpoint> remote_endpoint_;
-    std::uint16_t local_port_reservation_{};
+    std::uint16_t local_port_{};
     std::string id_;
     std::string ice_ufrag_;
     std::string ice_pwd_;

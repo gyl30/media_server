@@ -1,13 +1,9 @@
 #include <limits>
-#include <vector>
 #include <exception>
 #include <stdexcept>
-
-#include <boost/asio/error.hpp>
-#include <boost/scope/scope_exit.hpp>
+#include <algorithm>
 
 #include "media/net/media_port_pool.h"
-#include "media/net/udp_transport.h"
 
 namespace media_server
 {
@@ -38,155 +34,42 @@ media_port_pool::media_port_pool(int start_port, int end_port)
     {
         throw std::invalid_argument("invalid media port range");
     }
-    start_port_ = static_cast<std::uint16_t>(start_port);
-    end_port_ = static_cast<std::uint16_t>(end_port);
-    next_port_ = start_port_;
-    next_pair_port_ = start_port_;
-    if ((next_pair_port_ & 1U) != 0U)
+    start_port += start_port % 2;
+    if (start_port + 1 > end_port)
     {
-        ++next_pair_port_;
+        throw std::invalid_argument("media port range has no complete allocation");
+    }
+    const auto count = static_cast<std::size_t>((end_port - start_port + 1) / 2);
+    available_ports_.reserve(count);
+    used_ports_.reserve(count);
+    for (int port = (end_port - 1) & ~1; port >= start_port; port -= 2)
+    {
+        available_ports_.push_back(static_cast<std::uint16_t>(port));
     }
 }
 
-std::optional<std::uint16_t> media_port_pool::reserve()
+std::optional<std::uint16_t> media_port_pool::acquire()
 {
     std::scoped_lock lock(mutex_);
-    const auto candidate_count = static_cast<std::uint32_t>(end_port_) - start_port_ + 1U;
-    for (std::uint32_t index = 0; index < candidate_count; ++index)
-    {
-        const auto port = next_port_;
-        next_port_ = port == end_port_ ? start_port_ : port + 1U;
-        const auto value = static_cast<std::uint16_t>(port);
-        if (reserved_.insert(value).second)
-        {
-            return value;
-        }
-    }
-    return std::nullopt;
-}
-
-std::optional<media_port_pool::port_pair> media_port_pool::reserve_pair()
-{
-    std::scoped_lock lock(mutex_);
-    std::uint32_t first_candidate = start_port_;
-    if ((first_candidate & 1U) != 0U)
-    {
-        ++first_candidate;
-    }
-    if (first_candidate + 1U > end_port_)
+    if (available_ports_.empty())
     {
         return std::nullopt;
     }
-    const auto last_candidate = (static_cast<std::uint32_t>(end_port_) - 1U) & ~1U;
-    const auto candidate_count = (last_candidate - first_candidate) / 2U + 1U;
-    for (std::uint32_t index = 0; index < candidate_count; ++index)
-    {
-        const auto first = next_pair_port_;
-        next_pair_port_ = first == last_candidate ? first_candidate : first + 2U;
-        const auto rtp = static_cast<std::uint16_t>(first);
-        const auto rtcp = static_cast<std::uint16_t>(first + 1U);
-        if (reserved_.contains(rtp) || reserved_.contains(rtcp))
-        {
-            continue;
-        }
-        reserved_.insert(rtp);
-        reserved_.insert(rtcp);
-        return port_pair{.first = rtp, .second = rtcp};
-    }
-    return std::nullopt;
-}
-
-std::optional<std::uint16_t> media_port_pool::acquire_and_bind(udp_transport& transport,
-                                                            const boost::asio::ip::address& bind_address,
-                                                            boost::system::error_code& error)
-{
-    std::vector<std::uint16_t> failed_reservations;
-    boost::scope::scope_exit release_failed(
-        [&]()
-        {
-            for (const auto port : failed_reservations)
-            {
-                release(port);
-            }
-        });
-
-    error.clear();
-    for (;;)
-    {
-        const auto reserved = reserve();
-        if (!reserved)
-        {
-            error.clear();
-            return std::nullopt;
-        }
-        transport.startup(bind_address, *reserved, error);
-        if (!error)
-        {
-            return reserved;
-        }
-        failed_reservations.push_back(*reserved);
-        if (error != boost::asio::error::address_in_use)
-        {
-            return std::nullopt;
-        }
-    }
-}
-
-std::optional<media_port_pool::port_pair> media_port_pool::acquire_pair_and_bind(udp_transport& rtp_transport,
-                                                                           udp_transport& rtcp_transport,
-                                                                           const boost::asio::ip::address& bind_address,
-                                                                           boost::system::error_code& error)
-{
-    std::vector<port_pair> failed_reservations;
-    boost::scope::scope_exit release_failed(
-        [&]()
-        {
-            for (const auto pair : failed_reservations)
-            {
-                release(pair);
-            }
-        });
-
-    error.clear();
-    for (;;)
-    {
-        const auto reserved = reserve_pair();
-        if (!reserved)
-        {
-            error.clear();
-            return std::nullopt;
-        }
-        rtp_transport.startup(bind_address, reserved->first, error);
-        if (!error)
-        {
-            rtcp_transport.startup(bind_address, reserved->second, error);
-        }
-        if (!error)
-        {
-            return reserved;
-        }
-
-        rtp_transport.shutdown();
-        rtcp_transport.shutdown();
-        failed_reservations.push_back(*reserved);
-        if (error != boost::asio::error::address_in_use)
-        {
-            return std::nullopt;
-        }
-    }
+    const auto port = available_ports_.back();
+    available_ports_.pop_back();
+    used_ports_.push_back(port);
+    return port;
 }
 
 void media_port_pool::release(std::uint16_t port)
 {
     std::scoped_lock lock(mutex_);
-    reserved_.erase(port);
-}
-
-void media_port_pool::release(port_pair pair)
-{
-    std::scoped_lock lock(mutex_);
-    reserved_.erase(pair.first);
-    reserved_.erase(pair.second);
+    const auto found = std::ranges::find(used_ports_, port);
+    if (found != used_ports_.end())
+    {
+        used_ports_.erase(found);
+        available_ports_.push_back(port);
+    }
 }
 
 }    // namespace media_server

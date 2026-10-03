@@ -9,6 +9,7 @@
 #include <boost/asio/detached.hpp>
 #include <boost/scope/scope_exit.hpp>
 
+#include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_publish_udp_session.h"
 
@@ -115,7 +116,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
                                        const std::string& session_id)
 {
     auto& state = track_states_[track_index];
-    if (state.local_ports)
+    if (state.local_port)
     {
         spdlog::debug("rtsp publish udp track already setup {}", track_index);
         return -1;
@@ -132,9 +133,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     state.rtp_transport = std::make_shared<udp_transport>(worker_.io());
     state.rtcp_transport = std::make_shared<udp_transport>(worker_.io());
 
-    boost::system::error_code network_error;
-    const auto reserved = media_port_pool::instance().acquire_pair_and_bind(
-        *state.rtp_transport, *state.rtcp_transport, bind_address_, network_error);
+    const auto reserved = media_port_pool::instance().acquire();
     if (!reserved)
     {
         state.rtp_transport.reset();
@@ -143,7 +142,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
         state.rtcp_endpoint = {};
         return -1;
     }
-    const auto local_ports = *reserved;
+    const auto local_port = *reserved;
 
     boost::scope::scope_exit cleanup(
         [&]()
@@ -154,10 +153,19 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
             state.rtcp_transport.reset();
             state.rtp_endpoint = {};
             state.rtcp_endpoint = {};
-            media_port_pool::instance().release(local_ports);
+            media_port_pool::instance().release(local_port);
         });
 
-    state.rtp_transport->connect(state.rtp_endpoint, network_error);
+    boost::system::error_code network_error;
+    state.rtp_transport->startup(bind_address_, local_port, network_error);
+    if (!network_error)
+    {
+        state.rtcp_transport->startup(bind_address_, static_cast<std::uint16_t>(local_port + 1U), network_error);
+    }
+    if (!network_error)
+    {
+        state.rtp_transport->connect(state.rtp_endpoint, network_error);
+    }
     if (!network_error)
     {
         state.rtcp_transport->connect(state.rtcp_endpoint, network_error);
@@ -166,7 +174,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     {
         return -1;
     }
-    state.local_ports = local_ports;
+    state.local_port = local_port;
     cleanup.set_active(false);
 
     const auto self = shared_from_this();
@@ -174,7 +182,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
         [weak = weak_from_this(), track_index](boost::system::error_code error, std::size_t)
         {
             const auto locked = weak.lock();
-            if (!locked || !locked->track_states_[track_index].local_ports)
+            if (!locked || !locked->track_states_[track_index].local_port)
             {
                 return;
             }
@@ -192,14 +200,14 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtcp(track_index, yield); });
 
     const auto response = "RTP/AVP;unicast;client_port=" + std::to_string(transport.rtp.u.client_port1) + "-" +
-                          std::to_string(transport.rtp.u.client_port2) + ";server_port=" + std::to_string(local_ports.first) + "-" +
-                          std::to_string(local_ports.second) + ";mode=record";
+                          std::to_string(transport.rtp.u.client_port2) + ";server_port=" + std::to_string(local_port) + "-" +
+                          std::to_string(local_port + 1U) + ";mode=record";
     return rtsp_server_reply_setup(server, 200, session_id.c_str(), response.c_str());
 }
 
 int rtsp_publish_udp_session::on_record(rtsp_server_t* server)
 {
-    if (std::ranges::any_of(track_states_, [](const track_state& state) { return !state.local_ports; }))
+    if (std::ranges::any_of(track_states_, [](const track_state& state) { return !state.local_port; }))
     {
         spdlog::debug("rtsp publish udp record before all tracks setup");
         return -1;
@@ -216,7 +224,7 @@ int rtsp_publish_udp_session::on_record(rtsp_server_t* server)
 
 void rtsp_publish_udp_session::schedule_rtcp()
 {
-    if (std::ranges::any_of(track_states_, [](const track_state& state) { return !state.local_ports; }))
+    if (std::ranges::any_of(track_states_, [](const track_state& state) { return !state.local_port; }))
     {
         return;
     }
@@ -271,10 +279,10 @@ void rtsp_publish_udp_session::safe_shutdown()
         {
             state.rtcp_transport->shutdown();
         }
-        if (state.local_ports)
+        if (state.local_port)
         {
-            media_port_pool::instance().release(*state.local_ports);
-            state.local_ports.reset();
+            media_port_pool::instance().release(*state.local_port);
+            state.local_port.reset();
         }
     }
     spdlog::debug("rtsp publish udp shutdown {}", media_.media_stream_name());

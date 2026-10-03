@@ -16,6 +16,7 @@
 #include <spdlog/sinks/ostream_sink.h>
 
 #include "media/net/udp_transport.h"
+#include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
 

@@ -11,6 +11,7 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
 
+#include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
@@ -61,14 +62,22 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
                                                  std::shared_ptr<dtls_certificate> certificate)
 {
     const auto source_tracks = stream_->tracks();
-    boost::system::error_code udp_error;
-    const auto reserved = media_port_pool::instance().acquire_and_bind(*udp_transport_, advertised_address, udp_error);
+    const auto reserved = media_port_pool::instance().acquire();
     if (!reserved)
     {
-        spdlog::error("webrtc udp socket startup failed error {}", udp_error ? udp_error.message() : "no available media port");
+        spdlog::error("webrtc udp socket startup failed: no available media port");
         return std::unexpected(whep_session_startup_error::internal_error);
     }
-    local_port_reservation_ = *reserved;
+    boost::system::error_code udp_error;
+    udp_transport_->startup(advertised_address, *reserved, udp_error);
+    if (udp_error)
+    {
+        udp_transport_->shutdown();
+        media_port_pool::instance().release(*reserved);
+        spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
+        return std::unexpected(whep_session_startup_error::internal_error);
+    }
+    local_port_ = *reserved;
     const auto self = shared_from_this();
     udp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
@@ -102,7 +111,7 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
                                      source_tracks,
                                      webrtc_answer_config{
                                          .address = advertised_address,
-                                         .port = local_port_reservation_,
+                                         .port = local_port_,
                                          .stream_id = id_,
                                          .ice_ufrag = ice_ufrag_,
                                          .ice_pwd = ice_pwd_,
@@ -170,7 +179,7 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
     }
     stream_->add_sink(shared_from_this());
 
-    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address.to_string(), local_port_reservation_);
+    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address.to_string(), local_port_);
     spdlog::debug(
         "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
         id_,
@@ -211,8 +220,8 @@ void whep_session::safe_shutdown()
     ice_activity_timer_.cancel();
     answer_ = {};
     udp_transport_->shutdown();
-    media_port_pool::instance().release(local_port_reservation_);
-    local_port_reservation_ = 0;
+    media_port_pool::instance().release(local_port_);
+    local_port_ = 0;
 
     spdlog::info("webrtc whep session shutdown {}", id_);
 }

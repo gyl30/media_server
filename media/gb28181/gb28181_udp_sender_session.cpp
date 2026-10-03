@@ -7,6 +7,7 @@
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
 
+#include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_rtp_sender.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
@@ -43,22 +44,31 @@ void gb28181_udp_sender_session::shutdown_udp_transports()
 {
     rtp_transport_->shutdown();
     rtcp_transport_->shutdown();
-    if (local_ports_)
+    if (local_port_)
     {
-        media_port_pool::instance().release(*local_ports_);
-        local_ports_.reset();
+        media_port_pool::instance().release(*local_port_);
+        local_port_.reset();
     }
 }
 
 bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, std::uint8_t payload_type, std::uint32_t ssrc)
 {
-    boost::system::error_code network_error;
-    auto local_ports = media_port_pool::instance().acquire_pair_and_bind(*rtp_transport_, *rtcp_transport_, bind_address, network_error);
-    if (!local_ports)
+    local_port_ = media_port_pool::instance().acquire();
+    if (!local_port_)
     {
         return false;
     }
-    local_ports_ = *local_ports;
+    boost::system::error_code network_error;
+    rtp_transport_->startup(bind_address, *local_port_, network_error);
+    if (!network_error)
+    {
+        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port_ + 1U), network_error);
+    }
+    if (network_error)
+    {
+        shutdown_udp_transports();
+        return false;
+    }
     shutdown_subscription_ = worker_.subscribe_shutdown([self = shared_from_this()]() { self->safe_shutdown(); });
     if (!shutdown_subscription_)
     {
@@ -128,8 +138,8 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
 
     spdlog::info("gb28181 udp sender started stream {} local_rtp_port {} local_rtcp_port {} remote_rtp {}:{} remote_rtcp {}:{} rtcp {}",
                  stream_->name(),
-                 local_ports_->first,
-                 local_ports_->second,
+                 *local_port_,
+                 *local_port_ + 1U,
                  remote_rtp_endpoint_.address().to_string(),
                  remote_rtp_endpoint_.port(),
                  remote_rtcp_endpoint_ ? remote_rtcp_endpoint_->address().to_string() : std::string{},
