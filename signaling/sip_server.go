@@ -12,23 +12,23 @@ import (
 )
 
 type sipServer struct {
-	ua              *sipgo.UserAgent
-	server          *sipgo.Server
-	client          *sipgo.Client
-	listen          string
-	cfg             config
-	logger          *slog.Logger
-	now             func() time.Time
-	auth            *digestAuthenticator
-	devices         *deviceRegistry
-	deviceStore     *deviceStore
-	channels        *channelRegistry
-	sweepInterval   time.Duration
-	onDeviceOffline func(string)
-	advertiseHost   string
-	advertisePort   int
-	catalogQueue    chan registeredDevice
-	catalogSN       atomic.Uint32
+	ua            *sipgo.UserAgent
+	server        *sipgo.Server
+	client        *sipgo.Client
+	listen        string
+	cfg           config
+	logger        *slog.Logger
+	now           func() time.Time
+	auth          *digestAuthenticator
+	devices       *deviceRegistry
+	deviceStore   *deviceStore
+	channels      *channelRegistry
+	sweepInterval time.Duration
+	live          *liveService
+	advertiseHost string
+	advertisePort int
+	catalogQueue  chan registeredDevice
+	catalogSN     atomic.Uint32
 }
 
 func newSIPServer(cfg config, devices *deviceStore, logger *slog.Logger) (*sipServer, error) {

@@ -22,27 +22,36 @@ func (s *sipServer) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
+	s.live.mu.Lock()
 	exists, err := s.deviceStore.exists(context.Background(), registration.deviceID)
 	if err != nil {
+		s.live.mu.Unlock()
 		s.logger.Error("REGISTER allowlist lookup failed", "error", err)
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "Internal Server Error", nil))
 		return
 	}
-	if !exists {
+	_, stopping := s.live.stoppingDevices[registration.deviceID]
+	if !exists || stopping {
+		s.live.mu.Unlock()
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusForbidden, "Forbidden", nil))
 		return
 	}
 	authorization := req.GetHeader("Authorization")
 	if authorization == nil || !s.auth.verify(registration.deviceID, req.Method.String(), req.Recipient.Addr(), authorization.Value()) {
+		s.live.mu.Unlock()
 		s.respondUnauthorized(req, tx, registration.deviceID)
 		return
 	}
 
 	now := s.now()
 	shouldQuery := false
+	var stopped []*liveSession
+	becameOffline := false
 	if registration.expires == 0 {
 		if s.devices.unregister(registration.deviceID) {
-			s.notifyDeviceOffline(registration.deviceID)
+			becameOffline = true
+			stopped = s.live.beginDeviceStopLocked(registration.deviceID)
+			s.channels.removeDevice(registration.deviceID)
 		}
 	} else {
 		shouldQuery = s.devices.register(registeredDevice{
@@ -54,6 +63,14 @@ func (s *sipServer) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
 			online:         true,
 		})
 	}
+	if shouldQuery {
+		device, _ := s.devices.get(registration.deviceID)
+		s.enqueueCatalog(device)
+	}
+	s.live.mu.Unlock()
+	if becameOffline {
+		s.live.finishDeviceOffline(registration.deviceID, stopped)
+	}
 
 	response := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 	response.AppendHeader(sip.NewHeader("Date", now.UTC().Format(http.TimeFormat)))
@@ -63,10 +80,6 @@ func (s *sipServer) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
 		response.AppendHeader(&sip.ContactHeader{Address: *registration.contact.Clone(), Params: params})
 	}
 	s.respond(tx, response)
-	if shouldQuery {
-		device, _ := s.devices.get(registration.deviceID)
-		s.enqueueCatalog(device)
-	}
 }
 
 func parseRegistration(req *sip.Request, cfg config) (registration, error) {

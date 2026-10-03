@@ -80,4 +80,6 @@ func TestRegisterAllowlistAndUnregister(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `"online":false`) {
 		t.Fatalf("not retained offline: %s", response.Body.String())
 	}
+	apiRequest(t, handler, "DELETE", "/api/devices/"+deviceID, "", http.StatusNoContent)
+	register(120, "", sip.StatusForbidden)
 }

@@ -21,6 +21,9 @@ func (s *liveService) newPlayTicket(deviceID, channelID, liveID string) (playTic
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := liveKey{deviceID: deviceID, channelID: channelID}
+	if _, stopping := s.stoppingDevices[deviceID]; stopping {
+		return playTicket{}, errDeviceStopping
+	}
 	session := s.sessions[key]
 	if session == nil || session.streamID != liveID || session.state != liveStreaming {
 		return playTicket{}, errLiveChanged
@@ -37,6 +40,9 @@ func (s *liveService) takePlayTicket(playID string) (playTicket, *liveSession, b
 	ticket, ok := s.tickets[playID]
 	delete(s.tickets, playID)
 	if !ok || !s.sip.now().Before(ticket.expiresAt) {
+		return playTicket{}, nil, false
+	}
+	if _, stopping := s.stoppingDevices[ticket.key.deviceID]; stopping {
 		return playTicket{}, nil, false
 	}
 	session := s.sessions[ticket.key]

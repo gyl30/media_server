@@ -39,6 +39,8 @@ func (s *infrastructureServer) startLive(writer http.ResponseWriter, request *ht
 			writeHTTPError(writer, http.StatusConflict, "live_stopping")
 		case errors.Is(err, errDeviceOffline):
 			writeHTTPError(writer, http.StatusConflict, "device_offline")
+		case errors.Is(err, errDeviceStopping):
+			writeHTTPError(writer, http.StatusConflict, "device_stopping")
 		case errors.Is(err, errChannelNotFound):
 			writeHTTPError(writer, http.StatusNotFound, "channel_not_found")
 		case errors.Is(err, errChannelOffline):

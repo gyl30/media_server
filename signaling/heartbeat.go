@@ -53,7 +53,11 @@ func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
-	if !s.devices.keepalive(message.DeviceID, req.Source(), s.now()) {
+	s.live.mu.Lock()
+	_, stopping := s.live.stoppingDevices[message.DeviceID]
+	accepted := !stopping && s.devices.keepalive(message.DeviceID, req.Source(), s.now())
+	s.live.mu.Unlock()
+	if !accepted {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusForbidden, "Forbidden", nil))
 		return
 	}
@@ -81,16 +85,20 @@ func decodeMANSCDP(body []byte, target any) error {
 }
 
 func (s *sipServer) expireDevices(now time.Time) {
+	s.live.mu.Lock()
 	s.auth.expire(now)
 	s.channels.expire(now)
+	offline := make(map[string][]*liveSession)
 	for _, deviceID := range s.devices.expire(now, s.cfg.heartbeatTimeout) {
-		s.notifyDeviceOffline(deviceID)
+		s.channels.removeDevice(deviceID)
+		if _, stopping := s.live.stoppingDevices[deviceID]; stopping {
+			continue
+		}
+		offline[deviceID] = s.live.beginDeviceStopLocked(deviceID)
 	}
-}
-
-func (s *sipServer) notifyDeviceOffline(deviceID string) {
-	if s.onDeviceOffline != nil {
-		s.onDeviceOffline(deviceID)
+	s.live.mu.Unlock()
+	for deviceID, sessions := range offline {
+		s.live.finishDeviceOffline(deviceID, sessions)
 	}
 }
 

@@ -55,11 +55,16 @@ func (s *sipServer) handleCatalog(req *sip.Request, tx sip.ServerTransaction) {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
-	if !s.devices.registeredSource(response.DeviceID, req.Source(), s.now()) {
+	s.live.mu.Lock()
+	_, stopping := s.live.stoppingDevices[response.DeviceID]
+	if stopping || !s.devices.registeredSource(response.DeviceID, req.Source(), s.now()) {
+		s.live.mu.Unlock()
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusForbidden, "Forbidden", nil))
 		return
 	}
-	if err := s.channels.apply(response); err != nil {
+	err := s.channels.apply(response)
+	s.live.mu.Unlock()
+	if err != nil {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
@@ -72,13 +77,17 @@ func (s *sipServer) runCatalogQueries(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case device := <-s.catalogQueue:
+			s.live.mu.Lock()
 			current, ok := s.devices.getOnline(device.id, s.now())
-			if !ok {
+			_, stopping := s.live.stoppingDevices[device.id]
+			if !ok || stopping {
+				s.live.mu.Unlock()
 				continue
 			}
 			device = current
 			sn := int(s.catalogSN.Add(1))
 			s.channels.beginQuery(device.id, sn)
+			s.live.mu.Unlock()
 			queryContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 			err := s.sendCatalogQuery(queryContext, device, sn)
 			cancel()

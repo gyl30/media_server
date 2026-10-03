@@ -17,7 +17,7 @@ import (
 )
 
 // The peer speaks SIP over UDP; the HTTP boundary stands in for the media server.
-func testLivePeer(t *testing.T, s *infrastructureServer, deviceID, channelID string) *atomic.Int32 {
+func testLivePeer(t *testing.T, s *infrastructureServer, deviceID, channelID string, byeStatus ...int) *atomic.Int32 {
 	t.Helper()
 	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -58,6 +58,10 @@ func testLivePeer(t *testing.T, s *infrastructureServer, deviceID, channelID str
 		}
 	})
 	server.OnBye(func(request *sip.Request, transaction sip.ServerTransaction) {
+		if len(byeStatus) != 0 {
+			_ = transaction.Respond(sip.NewResponseFromRequest(request, byeStatus[0], "Device unavailable", nil))
+			return
+		}
 		if err := dialogs.ReadBye(request, transaction); err != nil {
 			t.Error(err)
 		}

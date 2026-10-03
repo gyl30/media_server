@@ -85,7 +85,7 @@ func (r *deviceRegistry) keepalive(deviceID, remoteEndpoint string, now time.Tim
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	device, ok := r.devices[deviceID]
-	if !ok || device.remoteEndpoint != remoteEndpoint || !now.Before(device.expiresAt) {
+	if !ok || !device.online || device.remoteEndpoint != remoteEndpoint || !now.Before(device.expiresAt) {
 		return false
 	}
 	device.lastHeartbeat = now

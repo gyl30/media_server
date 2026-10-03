@@ -288,4 +288,21 @@ func TestPlayPreconditions(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "device_offline") {
 		t.Fatal(response.Body.String())
 	}
+	apiRequest(t, handler, "DELETE", "/api/devices/34020000001320000001", "", http.StatusNoContent)
+	testLivePeer(t, s, "34020000001320000001", "34020000001320000002")
+	response = apiRequest(t, handler, "POST", "/api/devices/34020000001320000001/channels/34020000001320000003/play", "", http.StatusNotFound)
+	if !strings.Contains(response.Body.String(), "channel_not_found") {
+		t.Fatal(response.Body.String())
+	}
+	s.live.sip.channels.beginQuery("34020000001320000001", 2)
+	catalog := catalogResponse{DeviceID: "34020000001320000001", SN: 2, SumNum: 1}
+	catalog.DeviceList.Num = 1
+	catalog.DeviceList.Items = []catalogChannel{{DeviceID: "34020000001320000002", Status: "OFF"}}
+	if err := s.live.sip.channels.apply(catalog); err != nil {
+		t.Fatal(err)
+	}
+	response = apiRequest(t, handler, "POST", path, "", http.StatusConflict)
+	if !strings.Contains(response.Body.String(), "channel_offline") {
+		t.Fatal(response.Body.String())
+	}
 }

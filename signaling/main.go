@@ -34,7 +34,6 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	media := newMediaServerHTTPClient(cfg.mediaServer, cfg.mediaRequestTimeout)
 	live := newLiveService(server, media, ssrcs, cfg.inviteTimeout, cfg.byeTimeout, logger)
 	infrastructure := newInfrastructureServer(cfg.httpListen, sources, live, media, logger)
-	server.onDeviceOffline = func(deviceID string) { live.deviceOffline(context.Background(), deviceID) }
 	logger.Info("SIP UDP listening", "address", cfg.sipListen)
 	logger.Info("internal HTTP listening", "address", cfg.httpListen)
 	runContext, cancel := context.WithCancel(ctx)

@@ -88,10 +88,26 @@ func (s *infrastructureServer) writeDeviceError(writer http.ResponseWriter, err 
 		writeHTTPError(writer, http.StatusConflict, "device_exists")
 	case errors.Is(err, errInvalidDevice):
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+	case errors.Is(err, errDeviceStopping):
+		writeHTTPError(writer, http.StatusConflict, "device_stopping")
 	default:
 		s.logger.Error("device store failed", "error", err)
 		writeHTTPError(writer, http.StatusInternalServerError, "device_store_failed")
 	}
+}
+
+func (s *infrastructureServer) handleDeviceDelete(writer http.ResponseWriter, request *http.Request) {
+	err := s.live.deleteDevice(request.Context(), request.PathValue("device_id"))
+	if errors.Is(err, errDeviceNotFound) || errors.Is(err, errDeviceStopping) {
+		s.writeDeviceError(writer, err)
+		return
+	}
+	if err != nil {
+		s.logger.Error("device delete failed", "device_id", request.PathValue("device_id"), "error", err)
+		writeHTTPError(writer, http.StatusBadGateway, "device_delete_failed")
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func (s *infrastructureServer) handleChannelList(writer http.ResponseWriter, request *http.Request) {
