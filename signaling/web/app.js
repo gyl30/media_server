@@ -321,6 +321,12 @@ async function refreshChannels(deviceID = state.selectedDeviceID) {
     if (epoch !== state.channelEpoch || state.selectedDeviceID !== deviceID) return;
     state.channels = payload.channels || [];
     state.channelsDeviceID = deviceID;
+    const session = preview.current;
+    const target = session?.target;
+    if (target?.device_id === deviceID && session.liveID && !state.pending.has(`channel:${deviceID}:${target.channel_id}`)) {
+      const channel = state.channels.find(item => item.channel_id === target.channel_id);
+      if (channel?.live?.live_id !== session.liveID) void preview.end(session);
+    }
     renderChannels();
   } catch (error) {
     if (error.name !== "AbortError" && epoch === state.channelEpoch && state.selectedDeviceID === deviceID) {
@@ -350,6 +356,10 @@ async function refreshSnapshots(options = {}) {
     const previousDevice = state.devices.find(item => item.device_id === state.selectedDeviceID);
     state.sources = sources.sources || [];
     state.devices = devices.devices || [];
+    const session = preview.current;
+    if (session?.target.device_id && !state.devices.some(device => device.device_id === session.target.device_id && device.online)) {
+      void preview.end(session);
+    }
     const currentDevice = state.devices.find(item => item.device_id === state.selectedDeviceID);
     if (currentDevice?.online && !previousDevice?.online) state.channelSyncUntil = Date.now() + 7500;
     const previousDeviceID = state.selectedDeviceID;
@@ -616,7 +626,10 @@ elements.sourceRows.addEventListener("click", async (event) => {
       await runResourceAction(key, () => api.startSource(source.source_id), "已开始取流");
       break;
     case "stop":
-      await runResourceAction(key, () => api.stopSource(source.source_id), "已停止取流");
+      await runResourceAction(key, async () => {
+        await api.stopSource(source.source_id);
+        if (preview.current?.target.source_id === source.source_id) await preview.end();
+      }, "已停止取流");
       break;
     case "preview":
       await runResourceAction(key, () => startPreview({ source_id: source.source_id }, source.stream_name), "播放器已连接");
@@ -626,7 +639,10 @@ elements.sourceRows.addEventListener("click", async (event) => {
       break;
     case "delete":
       if (await confirmAction("删除 RTSP 源", source.stream_name, "删除源")) {
-        await runResourceAction(key, () => api.deleteSource(source.source_id), "已删除源");
+        await runResourceAction(key, async () => {
+          await api.deleteSource(source.source_id);
+          if (!preview.current || preview.current.target.source_id === source.source_id) await preview.closeViewer();
+        }, "已删除源");
       }
       break;
   }
@@ -710,6 +726,7 @@ window.addEventListener("pagehide", () => preview.closeForPageHide());
 activateView(window.location.hash.slice(1) || "devices", false);
 renderPreviewState({ state: "idle", target: "", error: "" });
 function openDeviceDialog() {
+  if (elements.saveDevice.disabled) return;
   elements.deviceForm.reset();
   elements.deviceFormError.hidden = true;
   elements.deviceDialog.showModal();
@@ -720,6 +737,9 @@ elements.addDevice.addEventListener("click", openDeviceDialog);
 byID("empty-add-device-button").addEventListener("click", openDeviceDialog);
 for (const id of ["close-device-dialog", "cancel-device-dialog"]) byID(id).addEventListener("click", () => elements.deviceDialog.close());
 elements.deviceForm.noValidate = true;
+elements.deviceDialog.addEventListener("cancel", event => {
+  if (elements.saveDevice.disabled) event.preventDefault();
+});
 elements.deviceForm.addEventListener("submit", async event => {
   event.preventDefault();
   if (elements.saveDevice.disabled) return;
@@ -730,6 +750,7 @@ elements.deviceForm.addEventListener("submit", async event => {
     return;
   }
   elements.saveDevice.disabled = true;
+  for (const id of ["close-device-dialog", "cancel-device-dialog"]) byID(id).disabled = true;
   elements.deviceFormError.hidden = true;
   try {
     await api.createDevice(body);
@@ -741,6 +762,7 @@ elements.deviceForm.addEventListener("submit", async event => {
     elements.deviceFormError.hidden = false;
   } finally {
     elements.saveDevice.disabled = false;
+    for (const id of ["close-device-dialog", "cancel-device-dialog"]) byID(id).disabled = false;
   }
 });
 
@@ -761,7 +783,7 @@ elements.deleteDevice.addEventListener("click", async () => {
   await runResourceAction(`device:${deviceID}`, async () => {
     await api.deleteDevice(deviceID);
     if (state.selectedDeviceID === deviceID) state.selectedDeviceID = "";
-    await preview.closeViewer().catch(error => console.debug(error));
+    if (!preview.current || preview.current.target.device_id === deviceID) await preview.closeViewer();
   }, "已删除设备");
 });
 

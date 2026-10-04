@@ -197,17 +197,17 @@ export class WHEPPreview {
           break;
         } catch (error) {
           if (target.source_id || ![404, 409].includes(error.status) || attempt !== 0) throw error;
-          await waitForDelay(1000, session.controller.signal);
+          await waitForDelay(1500, session.controller.signal);
         }
       }
       if (!this.isCurrent(session)) {
-        await deleteResource(session.resourceURL);
+        await deleteResource(session.resourceURL, true);
         this.closeLocal(session);
         return null;
       }
       await session.peer.setRemoteDescription({ type: "answer", sdp: answer });
       if (!this.isCurrent(session)) {
-        await deleteResource(session.resourceURL);
+        await deleteResource(session.resourceURL, true);
         this.closeLocal(session);
         return null;
       }
@@ -218,7 +218,7 @@ export class WHEPPreview {
     } catch (error) {
       if (session.resourceURL) {
         try {
-          await deleteResource(session.resourceURL);
+          await deleteResource(session.resourceURL, session.cancelled);
         } catch {
         }
       }

@@ -2,14 +2,17 @@
 """Exercise the native GB management UI with Chrome and the SIP simulator."""
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
-from fanout_support import benchmark_head, stop_process, wait_for_listener
+from fanout_support import benchmark_head, stop_process, wait_for_listener, wait_for_stream
 from gb_signaling_verify import eventually
 from lifecycle_verify import request
 
@@ -23,7 +26,10 @@ def main():
     parser.add_argument("--ffmpeg", default="/home/gyl/bin/ffmpeg")
     parser.add_argument("--browser", default="/usr/bin/google-chrome")
     parser.add_argument("--port-base", type=int, default=43220)
-    parser.add_argument("--management-only", action="store_true")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--management-only", action="store_true")
+    scope.add_argument("--playback-only", action="store_true")
+    scope.add_argument("--rtsp-only", action="store_true")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     base = args.port_base
@@ -33,6 +39,8 @@ def main():
     result = {"head": benchmark_head(), "status": "FAIL", "checks": [], "page_errors": []}
     result["requests"] = []
     result["console"] = []
+    result["source_sha256"] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in [*Path("signaling/web").glob("*"), Path("signaling/media_server_http.go"), Path("signaling/source_control_http.go")]}
 
     def launch(name, command):
         command = list(map(str, command))
@@ -63,10 +71,27 @@ def main():
             const peer = uiPeers.at(-1), values = [...(await peer.getStats()).values()];
             const video = values.find(item => item.type === 'inbound-rtp' && item.kind === 'video');
             const codec = values.find(item => item.id === video.codecId);
+            const audio = values.find(item => item.type === 'inbound-rtp' && item.kind === 'audio');
+            const audioCodec = audio && values.find(item => item.id === audio.codecId);
             return {framesDecoded:video.framesDecoded, bytesReceived:video.bytesReceived,
-                codec:codec.mimeType, connectionState:peer.connectionState};
+                codec:codec.mimeType, connectionState:peer.connectionState, iceGatheringState:peer.iceGatheringState,
+                dtlsConnected:values.some(item => item.dtlsState === 'connected'),
+                audio:audio && {codec:audioCodec?.mimeType, samples:audio.totalSamplesReceived, bytesReceived:audio.bytesReceived}};
         }""")
 
+    def resource_gone(resource):
+        endpoint = urlsplit(resource)
+        eventually(lambda: request(endpoint.port, "GET", endpoint.path)[0] == 404)
+
+    def counters(sim):
+        summaries = [line for line in sim.log_path.read_text().splitlines() if "simulator summary" in line]
+        return {key: int(value) for key, value in re.findall(r"(\w+)=(\d+)(?=\s|$)", summaries[-1])} if summaries else {}
+
+    def start_simulator(name):
+        return launch(name, [args.simulator, "--platform-sip", f"127.0.0.1:{base+4}", "--listen", f"127.0.0.1:{base+5}",
+            "--media-file", fixture, "--duration", "5m", "--heartbeat", "1s", "--register-expires", "12s", "--media-workers", "1"])
+
+    started = time.monotonic()
     try:
         if not args.management_only:
             launch("media", [args.media, "--bind-address", "127.0.0.1", "--webrtc-address", "127.0.0.1",
@@ -77,19 +102,38 @@ def main():
             "--media-control-url", f"http://127.0.0.1:{base+2}", "--media-http-port", base+2])
         wait_for_listener("127.0.0.1", base+3)
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(executable_path=args.browser, headless=True)
+            browser = playwright.chromium.launch(executable_path=args.browser, headless=True,
+                args=["--autoplay-policy=document-user-activation-required"])
             result["browser_version"] = browser.version
             try:
-                page = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="zh-CN")
-                page.add_init_script("""window.uiPeers = []; const NativePeer = window.RTCPeerConnection;
-                    window.RTCPeerConnection = class extends NativePeer {
-                        constructor(...args) {super(...args); window.uiPeers.push(this);}
-                    };""")
-                page.on("pageerror", lambda error: result["page_errors"].append(str(error)))
-                page.on("console", lambda message: result["console"].append(message.text))
-                page.on("response", lambda response: result["requests"].append({"method": response.request.method,
-                    "url": response.url, "status": response.status, "location": response.headers.get("location")}))
-                page.goto(f"http://127.0.0.1:{base+3}/")
+                def open_page():
+                    item = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="zh-CN")
+                    item.resources = []
+                    item.add_init_script("""window.uiPeers = []; const NativePeer = window.RTCPeerConnection;
+                        window.RTCPeerConnection = class extends NativePeer {
+                            constructor(...args) {super(...args); window.uiPeers.push(this);}
+                        };""")
+                    item.on("pageerror", lambda error: result["page_errors"].append(str(error)))
+                    item.on("console", lambda message: result["console"].append(message.text))
+                    def response_record(response):
+                        location = response.headers.get("location")
+                        result["requests"].append({"method": response.request.method, "url": response.url,
+                            "status": response.status, "location": location})
+                        if response.request.method == "POST" and response.status == 201 and location:
+                            item.resources.append(location)
+                    item.on("response", response_record)
+                    item.goto(f"http://127.0.0.1:{base+3}/")
+                    return item
+
+                def select_device(item):
+                    item.locator(f"#device-list [data-device-id='{device}']").click()
+                    item.locator(f"[data-channel-id='{channel}'] [data-action='play']").wait_for()
+
+                def play_channel(item):
+                    item.locator(f"[data-channel-id='{channel}'] [data-action='play']").click()
+                    decoded(item)
+
+                page = open_page()
                 page.locator("#device-empty").wait_for(state="visible")
                 page.locator("#add-device-button").click()
                 page.locator("#device-id").fill("123")
@@ -115,45 +159,205 @@ def main():
                 page.get_by_text("设备离线", exact=True).wait_for()
                 assert page.locator("#selected-device-name").inner_text() == "测试摄像机"
                 mark("duplicate error and offline detail use Chinese text")
+                assert not any("/channels" in item["url"] for item in result["requests"])
                 fixture = args.output / "fixture.h264"
                 subprocess.run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
                     "-t", "5", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "25", "-bf", "0",
                     "-bsf:v", "h264_metadata=aud=insert", "-an", "-f", "h264", str(fixture)], check=True)
-                simulator = launch("simulator", [args.simulator, "--platform-sip", f"127.0.0.1:{base+4}", "--listen", f"127.0.0.1:{base+5}",
-                    "--media-file", fixture, "--duration", "5m", "--heartbeat", "1s", "--register-expires", "12s", "--media-workers", "1"])
+                simulator = start_simulator("simulator")
                 page.wait_for_function("document.querySelector('#selected-device-status').textContent.includes('在线')", timeout=15000)
                 page.locator(f"[data-channel-id='{channel}'] [data-action='play']").wait_for()
                 assert "在线" in device_button.inner_text()
                 page.screenshot(path=str(args.output / "devices-online.png"), full_page=True)
                 mark("REGISTER and Catalog appear through UI polling")
-                if not args.management_only:
+                if not args.management_only and not args.rtsp_only:
                     play = page.locator(f"[data-channel-id='{channel}'] [data-action='play']")
+                    channel_route = f"**{device_path}/channels"
+                    def offline_channel(route):
+                        response = route.fetch()
+                        payload = response.json()
+                        payload["channels"][0]["status"] = "OFF"
+                        route.fulfill(response=response, json=payload)
+                    page.route(channel_route, offline_channel)
+                    page.wait_for_function("document.querySelector('#channel-rows [data-action=play]').disabled")
+                    assert "离线" in page.locator(f"#channel-rows tr[data-channel-id='{channel}']").inner_text()
+                    page.unroute(channel_route, offline_channel)
+                    page.wait_for_function("!document.querySelector('#channel-rows [data-action=play]').disabled")
+                    mark("OFF channel cannot be played and offline device never polls channels")
                     play.click()
+                    assert play.is_disabled()
+                    play.evaluate("button => button.click()")
                     decoded(page)
+                    assert page.evaluate("uiPeers.length") == 1
                     before = stats(page)
                     page.wait_for_timeout(2000)
                     after = stats(page)
                     assert after["framesDecoded"] > before["framesDecoded"] and after["bytesReceived"] > before["bytesReceived"]
                     assert after["codec"] == "video/H264"
                     result["viewer_stats"] = {"before": before, "after": after}
+                    assert after["iceGatheringState"] == "complete" and after["dtlsConnected"]
                     live_id = channels()[0]["live"]["live_id"]
+                    assert live_id not in page.locator("body").inner_text()
+                    for item in result["requests"]:
+                        if item["method"] == "POST" and "/play/whep/" in item["url"]:
+                            assert urlsplit(item["url"]).path.split("/")[-1] not in page.locator("body").inner_text()
                     assert page.locator("#stop-live-button").is_enabled()
                     mark("UI play consumes ticket and Chrome H264 decoder advances")
+                    viewers = [page]
+                    if not args.playback_only:
+                        for _ in range(2):
+                            other = open_page()
+                            select_device(other)
+                            play_channel(other)
+                            viewers.append(other)
+                        before_all = [stats(item) for item in viewers]
+                        page.wait_for_timeout(2000)
+                        after_all = [stats(item) for item in viewers]
+                        assert all(b["framesDecoded"] > a["framesDecoded"] for a, b in zip(before_all, after_all))
+                        count = counters(simulator)
+                        assert count["invite"] == count["ack"] == count["live_active"] == 1, count
+                        result["multi_viewer"] = {"before": before_all, "after": after_all, "counters": count}
+                        mark("three independent UI viewers decode from one INVITE and one active upstream")
                     page.locator("#stop-preview-button").click()
                     page.locator(".preview-panel").wait_for(state="hidden")
+                    resource_gone(page.resources[-1])
                     assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
                     assert channels()[0]["live"]["live_id"] == live_id
                     play.click()
                     decoded(page)
                     assert channels()[0]["live"]["live_id"] == live_id
                     mark("closing viewer leaves shared live; replay rejoins the same generation")
+                    if not args.playback_only:
+                        invite_count = counters(simulator)["invite"]
+                        page.reload()
+                        resource_gone(page.resources[-1])
+                        select_device(page)
+                        page.locator(f"[data-channel-id='{channel}']").get_by_text("正在取流", exact=True).wait_for()
+                        play_channel(page)
+                        assert channels()[0]["live"]["live_id"] == live_id
+                        assert counters(simulator)["invite"] == invite_count
+                        mark("reload shows existing live and UI replay does not issue another INVITE")
                     page.locator("#stop-live-button").click()
                     eventually(lambda: channels()[0].get("live") is None)
                     page.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')")
+                    resource_gone(page.resources[-1])
+                    for other in viewers[1:]:
+                        other.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')", timeout=15000)
+                        assert other.evaluate("uiPeers.every(peer => peer.connectionState === 'closed')")
+                        resource_gone(other.resources[-1])
+                    if not args.playback_only:
+                        mark("stopping live ends all three UI viewers")
                     play.click()
                     decoded(page)
                     assert channels()[0]["live"]["live_id"] != live_id
                     mark("UI live stop ends player and replay creates a new generation")
+                    if not args.playback_only:
+                        stopped_generation = channels()[0]["live"]["live_id"]
+                        stop_process(simulator)
+                        assert simulator.returncode == 0
+                        page.wait_for_function("document.querySelector('#selected-device-status').textContent.includes('离线')", timeout=15000)
+                        page.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')")
+                        assert page.locator("#channel-rows tr").count() == 0 and channels() == []
+                        mark("Expires:0 clears channels and ends the UI player while device stays visible")
+                        simulator = start_simulator("simulator-reregister")
+                        page.wait_for_function("document.querySelector('#selected-device-status').textContent.includes('在线')", timeout=15000)
+                        play_channel(page)
+                        assert channels()[0]["live"]["live_id"] != stopped_generation
+                        mark("REGISTER after offline restores Catalog and UI playback")
+                        page.screenshot(path=str(args.output / "player.png"), full_page=True)
+                        page.set_viewport_size({"width": 600, "height": 950})
+                        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                        page.screenshot(path=str(args.output / "narrow.png"), full_page=True)
+                        page.set_viewport_size({"width": 1440, "height": 1000})
+
+                        # Hold a real ticket response until the server's 30 second expiry.
+                        held = []
+                        play_route = f"**{device_path}/channels/{channel}/play"
+                        def expired_ticket(route):
+                            if not held:
+                                held.append((route, route.fetch()))
+                            else:
+                                route.continue_()
+                        page.route(play_route, expired_ticket)
+                        expired_request_start = len(result["requests"])
+                        play.click()
+                        page.wait_for_timeout(31000)
+                        assert len(held) == 1 and play.is_disabled()
+                        held[0][0].fulfill(response=held[0][1])
+                        decoded(page)
+                        page.unroute(play_route, expired_ticket)
+                        expired_offers = [item for item in result["requests"][expired_request_start:]
+                            if item["method"] == "POST" and "/play/whep/" in item["url"]]
+                        assert [item["status"] for item in expired_offers] == [404, 201]
+                        assert len({item["url"] for item in expired_offers}) == 2
+                        result["ticket_expiry"] = {"wait_seconds": 31, "offer_statuses": [404, 201], "fresh_ticket_retries": 1}
+                        mark("real 30 second ticket expiry triggers one fresh ticket and UI playback recovers")
+
+                        failure_route = "**/play/whep/*"
+                        def invalid_ticket(route):
+                            route.fulfill(status=404)
+                        page.route(failure_route, invalid_ticket)
+                        request_start = len(result["requests"])
+                        play.click()
+                        page.wait_for_function("document.querySelector('#preview-state').textContent.includes('播放失败')")
+                        page.wait_for_timeout(2500)
+                        failed_offers = [item for item in result["requests"][request_start:]
+                            if item["method"] == "POST" and "/play/whep/" in item["url"]]
+                        assert len(failed_offers) == 2 and len({item["url"] for item in failed_offers}) == 2
+                        page.unroute(failure_route, invalid_ticket)
+                        mark("two invalid tickets stop with Chinese failure and no unbounded retry")
+                        play_channel(page)
+
+                        def delete_failure(route):
+                            if route.request.method == "DELETE": held_delete.append(route)
+                            else: route.continue_()
+                        held_delete = []
+                        page.route(f"**{device_path}", delete_failure)
+                        page.locator("#delete-device-button").click()
+                        page.locator("#confirm-action-button").click()
+                        page.wait_for_function("document.querySelector('#delete-device-button').disabled")
+                        page.wait_for_timeout(100)
+                        assert len(held_delete) == 1
+                        held_delete[0].fulfill(status=502, content_type="application/json", body='{"error":"device_delete_failed"}')
+                        page.get_by_text("设备暂时无法删除，媒体资源清理未完成，请稍后重试。", exact=True).wait_for()
+                        assert not page.locator("#device-detail").is_hidden() and request(base+3, "GET", device_path)[0] == 200
+                        assert page.evaluate("uiPeers.at(-1).connectionState") == "connected"
+                        page.unroute(f"**{device_path}", delete_failure)
+                        mark("delete pending disables controls; cleanup failure keeps device/detail/player")
+
+                        old_resource = page.resources[-1]
+                        delete_resource_route = "**/play/whep/session/*"
+                        def delete_viewer_failure(route):
+                            if route.request.method == "DELETE": route.fulfill(status=502)
+                            else: route.continue_()
+                        page.route(delete_resource_route, delete_viewer_failure)
+                        page.locator("#stop-preview-button").click()
+                        page.locator(".preview-panel").wait_for(state="hidden")
+                        assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
+                        assert page.evaluate("document.querySelector('#preview-video').srcObject === null")
+                        page.unroute(delete_resource_route, delete_viewer_failure)
+                        endpoint = urlsplit(old_resource)
+                        assert request(endpoint.port, "DELETE", endpoint.path)[0] in (204, 404)
+                        mark("viewer DELETE failure still closes local peer and clears video")
+
+                        held_offer = []
+                        def delayed_offer(route):
+                            if route.request.method == "POST": held_offer.append((route, route.fetch()))
+                            else: route.continue_()
+                        page.route(failure_route, delayed_offer)
+                        play.click()
+                        page.wait_for_timeout(500)
+                        assert len(held_offer) == 1 and held_offer[0][1].status == 201
+                        page.locator("#back-devices-button").click()
+                        assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
+                        late_resource = held_offer[0][1].headers["location"]
+                        held_offer[0][0].fulfill(response=held_offer[0][1])
+                        resource_gone(late_resource)
+                        assert page.locator(".preview-panel").is_hidden() and page.locator("#device-detail").is_hidden()
+                        page.unroute(failure_route, delayed_offer)
+                        select_device(page)
+                        play_channel(page)
+                        mark("back during pending offer closes peer and deletes the late resource without reviving player")
                 page.locator("#delete-device-button").click()
                 page.get_by_text("删除设备会停止该设备当前所有播放，是否继续？").wait_for()
                 page.locator("#confirm-action-button").click()
@@ -162,7 +366,75 @@ def main():
                 assert page.locator("#device-detail").is_hidden()
                 if not args.management_only:
                     assert page.evaluate("uiPeers.every(peer => peer.connectionState === 'closed')")
+                    assert page.locator(".preview-panel").is_hidden()
+                    if page.resources: resource_gone(page.resources[-1])
                 mark("UI deletion confirms and returns to empty device list")
+                if not args.management_only and not args.playback_only:
+                    stop_process(simulator)
+                    rejected = start_simulator("simulator-rejected")
+                    assert rejected.wait(timeout=10) != 0 and "REGISTER challenge status 403" in rejected.log_path.read_text()
+                    mark("deleted device REGISTER is rejected with 403")
+
+                    audio_fixture = args.output / "audio-video.mkv"
+                    subprocess.run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+                        "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000", "-t", "8", "-c:v", "libx264", "-preset", "ultrafast",
+                        "-tune", "zerolatency", "-g", "25", "-bf", "0", "-c:a", "aac", "-ac", "2", str(audio_fixture)], check=True)
+                    launch("audio-publisher", [args.ffmpeg, "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", audio_fixture,
+                        "-c", "copy", "-f", "flv", f"rtmp://127.0.0.1:{base}/live/ui-audio"])
+                    wait_for_stream("127.0.0.1", base+2, "live/ui-audio")
+                    page.locator("#tab-sources").click()
+                    page.locator("#add-source-button").click()
+                    page.locator("#source-stream-name").fill("rtsp/ui-audio")
+                    page.locator("#source-url").fill(f"rtsp://127.0.0.1:{base+1}/live/ui-audio")
+                    page.locator("#save-source-button").click()
+                    source_row = page.locator("#source-rows tr").filter(has_text="rtsp/ui-audio")
+                    source_row.locator("[data-action='edit']").click()
+                    page.locator("#source-stream-name").fill("rtsp/ui-audio-edited")
+                    page.locator("#save-source-button").click()
+                    source_row.locator("[data-action='start']").click()
+                    source_row.locator("[data-action='preview']").wait_for()
+                    source_row.locator("[data-action='preview']").click()
+                    decoded(page)
+                    eventually(lambda: ((stats(page).get("audio") or {}).get("samples", 0) or 0) > 0)
+                    before = stats(page)
+                    page.wait_for_timeout(2000)
+                    after = stats(page)
+                    assert after["framesDecoded"] > before["framesDecoded"] and after["audio"]["samples"] > before["audio"]["samples"]
+                    assert after["codec"] == "video/H264" and after["audio"]["codec"] == "audio/opus"
+                    assert not page.evaluate("document.querySelector('#preview-video').muted")
+                    result["audio_video"] = {"before": before, "after": after}
+                    mark("retained RTSP UI add/edit/start/preview uses the same H264/Opus player")
+                    autoplay = open_page()
+                    autoplay.goto(f"http://127.0.0.1:{base+3}/#sources")
+                    cdp = autoplay.context.new_cdp_session(autoplay)
+                    def without_gesture(expression):
+                        return cdp.send("Runtime.evaluate", {"expression": expression, "userGesture": False,
+                            "returnByValue": True, "awaitPromise": True})["result"].get("value")
+                    eventually(lambda: without_gesture("Boolean(document.querySelector('#source-rows [data-action=preview]'))"))
+                    assert not without_gesture("navigator.userActivation.hasBeenActive")
+                    without_gesture("document.querySelector('#source-rows [data-action=preview]').click()")
+                    eventually(lambda: without_gesture("!document.querySelector('#resume-playback-button').hidden"))
+                    autoplay.locator("#resume-playback-button").click()
+                    decoded(autoplay)
+                    autoplay.wait_for_function("!document.querySelector('#preview-video').paused")
+                    assert not autoplay.evaluate("document.querySelector('#preview-video').muted")
+                    autoplay.locator("#stop-preview-button").click()
+                    resource_gone(autoplay.resources[-1])
+                    mark("Chrome autoplay denial shows an explicit unmuted playback button")
+                    source_row.locator("[data-action='stop']").click()
+                    source_row.locator("[data-action='start']").wait_for()
+                    assert page.evaluate("uiPeers.every(peer => peer.connectionState === 'closed')")
+                    resource_gone(page.resources[-1])
+                    source_row.locator("[data-action='start']").click()
+                    source_row.locator("[data-action='preview']").click()
+                    decoded(page)
+                    source_resource = page.resources[-1]
+                    source_row.locator("[data-action='delete']").click()
+                    page.locator("#confirm-action-button").click()
+                    page.locator("#source-empty").wait_for()
+                    page.wait_for_function("uiPeers.every(peer => peer.connectionState === 'closed')", timeout=5000)
+                    resource_gone(source_resource)
+                    mark("RTSP UI stop/restart/delete preserve operations and release its viewer")
                 assert not result["page_errors"], result["page_errors"]
                 stop_process(simulator)
                 result["status"] = "PASS"
@@ -179,8 +451,15 @@ def main():
         for process in reversed(processes):
             stop_process(process)
         result["process_returncodes"] = {process.log_path.name: process.returncode for process in processes}
+        unexpected = {name: code for name, code in result["process_returncodes"].items()
+            if code not in ({1} if name == "simulator-rejected.log" else {0, 255} if name == "audio-publisher.log" else {0})}
+        if unexpected:
+            result["status"] = "FAIL"
+            result["cleanup_error"] = f"unexpected process exits: {unexpected}"
+        result["duration_seconds"] = time.monotonic() - started
         (args.output / "commands.json").write_text(json.dumps(commands, indent=2) + "\n")
         (args.output / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+        if unexpected: raise AssertionError(result["cleanup_error"])
 
 
 if __name__ == "__main__":
