@@ -89,12 +89,13 @@ async function postOffer(session, offer, retryNotReady) {
       throw new WHEPError(response.status, `whep_create_${response.status}`);
     }
     const location = response.headers.get("Location");
+    if (location) session.resourceURL = new URL(location, session.whepURL).toString();
     const contentType = response.headers.get("Content-Type") || "";
     const answer = await response.text();
     if (!location || !contentType.toLowerCase().startsWith("application/sdp") || !answer) {
       throw new WHEPError(response.status, "invalid_whep_response");
     }
-    return { answer, resourceURL: new URL(location, session.whepURL).toString() };
+    return answer;
   }
   throw abortError();
 }
@@ -112,20 +113,15 @@ export class WHEPPreview {
       canStop: Boolean(session && this.current === session),
       state,
       target: session ? session.label : "",
+      liveID: session?.liveID || "",
+      needsPlaybackGesture: session?.needsPlaybackGesture || false,
       error,
     });
   }
 
   async start(target, label) {
     const generation = ++this.generation;
-    try {
-      await this.stopCurrent(generation);
-    } catch (error) {
-      if (generation === this.generation) {
-        throw error;
-      }
-      return null;
-    }
+    await this.closeCurrent(generation);
     if (generation !== this.generation) {
       return null;
     }
@@ -134,6 +130,8 @@ export class WHEPPreview {
       controller: new AbortController(),
       generation,
       label,
+      target,
+      liveID: "",
       mediaStream: new MediaStream(),
       peer: null,
       resourceURL: "",
@@ -143,24 +141,28 @@ export class WHEPPreview {
     this.current = session;
     this.emit("preparing", session);
     try {
-      const preview = target.source_id
-        ? await api.startPreview(target, session.controller.signal)
-        : await api.playChannel(target.device_id, target.channel_id, session.controller.signal);
-      if (!this.isCurrent(session)) {
-        return null;
-      }
-      session.whepURL = preview.whep_url;
       session.peer = new RTCPeerConnection();
       session.peer.addTransceiver("video", { direction: "recvonly" });
       session.peer.addTransceiver("audio", { direction: "recvonly" });
       session.peer.addEventListener("track", (event) => {
+        if (!this.isCurrent(session)) return;
         if (![...session.mediaStream.getTracks()].some((track) => track.id === event.track.id)) {
           session.mediaStream.addTrack(event.track);
         }
         if (this.current === session) {
           this.video.srcObject = session.mediaStream;
-          void this.video.play().catch(() => {});
+          void this.video.play().catch(error => {
+            if (this.isCurrent(session) && error.name === "NotAllowedError") {
+              session.needsPlaybackGesture = true;
+              this.emit(session.streaming ? "streaming" : "negotiating", session);
+            }
+          });
         }
+        event.track.addEventListener("ended", () => {
+          if (session.mediaStream.getTracks().every(track => track.readyState === "ended")) {
+            void this.end(session);
+          }
+        });
       });
       session.peer.addEventListener("connectionstatechange", () => {
         if (this.current !== session) {
@@ -168,8 +170,8 @@ export class WHEPPreview {
         }
         if (session.peer.connectionState === "connected") {
           this.markStreaming(session);
-        } else if (session.peer.connectionState === "failed") {
-          void this.fail(session, "webrtc_connection_failed");
+        } else if (["failed", "closed"].includes(session.peer.connectionState)) {
+          void this.end(session);
         }
       });
 
@@ -181,14 +183,29 @@ export class WHEPPreview {
         return null;
       }
       this.emit("negotiating", session);
-      const result = await postOffer(session, session.peer.localDescription.sdp, Boolean(target.source_id));
-      session.resourceURL = result.resourceURL;
+      let answer;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const ticket = target.source_id
+          ? await api.startPreview(target, session.controller.signal)
+          : await api.playChannel(target.device_id, target.channel_id, session.controller.signal);
+        if (!this.isCurrent(session)) return null;
+        session.whepURL = ticket.whep_url;
+        session.liveID = ticket.live_id || "";
+        this.emit("negotiating", session);
+        try {
+          answer = await postOffer(session, session.peer.localDescription.sdp, Boolean(target.source_id));
+          break;
+        } catch (error) {
+          if (target.source_id || ![404, 409].includes(error.status) || attempt !== 0) throw error;
+          await waitForDelay(1000, session.controller.signal);
+        }
+      }
       if (!this.isCurrent(session)) {
         await deleteResource(session.resourceURL);
         this.closeLocal(session);
         return null;
       }
-      await session.peer.setRemoteDescription({ type: "answer", sdp: result.answer });
+      await session.peer.setRemoteDescription({ type: "answer", sdp: answer });
       if (!this.isCurrent(session)) {
         await deleteResource(session.resourceURL);
         this.closeLocal(session);
@@ -208,7 +225,7 @@ export class WHEPPreview {
       this.closeLocal(session);
       if (this.current === session) {
         this.current = null;
-        this.emit("idle", null);
+        this.emit(session.cancelled ? "idle" : "failed", session, session.cancelled ? "" : error.code || "network_error");
       }
       if (session.cancelled || error.name === "AbortError") {
         return null;
@@ -217,37 +234,35 @@ export class WHEPPreview {
     }
   }
 
-  async stop() {
+  async closeViewer() {
     const generation = ++this.generation;
-    return this.stopCurrent(generation);
+    return this.closeCurrent(generation);
   }
 
-  async stopCurrent(generation) {
+  async closeCurrent(generation) {
     const session = this.current;
     if (!session) {
+      if (generation === this.generation) this.emit("idle", null);
       return;
     }
     this.current = null;
     session.cancelled = true;
     session.controller.abort();
     this.emit("stopping", session);
+    const deletion = deleteResource(session.resourceURL);
+    this.closeLocal(session);
     let deleteError = null;
     try {
-      await deleteResource(session.resourceURL);
+      await deletion;
     } catch (error) {
       deleteError = error;
-    } finally {
-      this.closeLocal(session);
     }
     if (generation === this.generation && !this.current) {
       this.emit("idle", null, deleteError ? deleteError.code : "");
     }
-    if (deleteError && generation === this.generation) {
-      throw deleteError;
-    }
   }
 
-  stopForPageHide() {
+  closeForPageHide() {
     this.generation += 1;
     const session = this.current;
     if (!session) {
@@ -272,7 +287,7 @@ export class WHEPPreview {
   }
 
   isCurrent(session) {
-    return !session.cancelled && this.current === session && this.generation === session.generation;
+    return Boolean(session) && !session.cancelled && this.current === session && this.generation === session.generation;
   }
 
   markStreaming(session) {
@@ -283,7 +298,7 @@ export class WHEPPreview {
     this.emit("streaming", session);
   }
 
-  async fail(session, code) {
+  async end(session = this.current) {
     if (!this.isCurrent(session)) {
       return;
     }
@@ -292,12 +307,12 @@ export class WHEPPreview {
     session.cancelled = true;
     session.controller.abort();
     this.closeLocal(session);
-    this.emit("failed", session, code);
+    this.emit("ended", session, "media_ended");
     try {
       await deleteResource(session.resourceURL);
     } catch (error) {
       if (generation === this.generation && !this.current) {
-        this.emit("failed", session, error.code || code);
+        console.debug("播放器清理失败", error);
       }
     }
   }

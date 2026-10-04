@@ -207,7 +207,7 @@ def main():
                 }""", {"device_id": device, "channel_id": channel})
                 eventually(lambda: page.evaluate("""async () => preview.current && previewState === 'streaming' &&
                     [...(await preview.current.peer.getStats()).values()].some(item => item.framesDecoded > 0)"""))
-                page.evaluate("async () => preview.stop()")
+                page.evaluate("async () => preview.closeViewer()")
                 assert counters(simulator)["invite"] == 1
                 mark("embedded Web GB player uses play ticket and leaves shared upstream running after viewer stop")
                 expired = api("POST", play_path, expected=201)
