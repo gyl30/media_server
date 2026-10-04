@@ -102,3 +102,17 @@ E2E 在生命周期阶段提交前执行；保存的所有静态资源及两个�
 桌面优先、轻量中文 UI；无登录、RBAC、JWT、SSE/WebSocket、viewer count、live idle auto-stop。management API/UI 本身没有用户认证层，沿用受控管理网络假设。新增 GB 播放授权仅 WHEP；未新增 HLS/RTSP/HTTP-FLV UI 播放授权。GB live 仍仅 UDP，仍使用统一 SIP password。现有 RTSP 源管理/预览保留，不扩展其协议能力。
 
 没有新增 Go ui_state、selected_channel、player_open 或 viewer registry。`/internal/live/*`、GB start/stop/preview 旧 API 未恢复，由既有 `TestRetiredGBControlRoutesAreAbsent` 持续保护。
+
+## 播放器 correctness 复查
+
+本次 BASE_HEAD：`f6b26807fd6db715706e0b24002486c30ce59749`；CODE_HEAD：`9e4a47f932362c6bafae4b2a7b2eaf6da5f4ee55`。仅修改 `whep.js` 和 `app.js`，生产代码净 +14 行，Go 后端与 C++ 零修改。
+
+WebRTC `connectionState=failed` 表示当前 viewer 连接失败，显示「播放失败 / 连接中断，请重新播放」，使用已有 `webrtc_connection_failed`。复用小的资源清理函数，清空 current、关闭 PC/video，并尽力 DELETE WHEP resource。`closed` 不再推导业务结束。轨道结束、live 消失/换代及已有明确 source-end 仍显示「已结束 / 设备已离线或媒体已结束」，使用 `media_ended`。没有新增长期状态字段，也没有新增自动重连或重试。
+
+关闭播放器按钮直接使用 `emit().canStop`，依据实际 current viewer ownership。失败/结束清理后按钮禁用；播放器的停止取流按钮仍从 current.liveID 推导，viewer 消失后隐藏。当前 live 仍可从通道行停止，不保存旧 live_id。
+
+WHEP POST 等待审计：GB [代理](../signaling/play_http.go#L81) 设置读/写 deadline 为 media client timeout 的一倍/两倍；[client](../signaling/media_server_http.go#L56) 默认 timeout 为 3 秒，即默认读 3 秒、写 6 秒，上游 POST/响应体受同一 client timeout 限制。RTSP 预览直连 C++，[POST handler](../media/http/whep_http.cpp#L73) 同步查流、解析 SDP、创建 session 并返回 answer，[startup](../media/webrtc/whep_session.cpp#L165) 不等待 ICE/DTLS/媒体建立。[HTTP session](../media/http/http_session.cpp#L36) 已设置 Beast 30 秒 expiry；核对当前 Boost 1.92 的 basic_stream 文档，它覆盖随后异步读和响应写，直到被重设。该 I/O deadline 不抢占同步 C++ 执行，但没有发现等待媒体建立的阻塞路径或实际超限 RED；既有 RTSP 409 就绪重试不等于单个 POST 悬挂。因此未新增浏览器 timeout，保留迟到 201 的资源清理及 GB 单次 fresh-ticket 重试规则。
+
+现有 Browser E2E 增加真实已连接、已解码 PC 的 failed 事件边界注入，并观察 emit 时实际 current 与按钮的关系。RED 复现错误的 ended 文案与仍可点击的关闭按钮；GREEN 完整 24 项通过（82.20 秒），覆盖 idle/preparing/streaming/failed/ended/stopping ownership、真实 live DELETE/Expires:0、正常 viewer close。失败后 live 保留，RTP 计数 615→768；重播申请新票并复用 live，INVITE 1→1。原生 PC、媒体网络及解码保持真实执行。完整证据：`/tmp/media_server_player_followup-f6b2680/full-final/result.json`，摘要追加在 [验证 JSON](verification_results/gb28181_web_ui.json) 的 `player_lifecycle_followup`。
+
+本次 `go test -count=1 ./...`、`go vet ./...`、`go test -race -count=1 ./...`、normal build 与 CTest 14/14 全部通过；CTest 在 E2E 进程退出后执行。静态资源 SHA256 与 CODE_HEAD 核对一致。C++ 未修改，本次按要求没有重跑 ASan/UBSan。

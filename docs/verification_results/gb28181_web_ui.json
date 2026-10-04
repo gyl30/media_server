@@ -306,5 +306,82 @@
     ],
     "shared_sip_password": true,
     "management_network": "controlled"
+  },
+  "player_lifecycle_followup": {
+    "base_head": "f6b26807fd6db715706e0b24002486c30ce59749",
+    "code_head": "9e4a47f932362c6bafae4b2a7b2eaf6da5f4ee55",
+    "status": "PASS",
+    "raw_result": "/tmp/media_server_player_followup-f6b2680/full-final/result.json",
+    "red_result": "/tmp/media_server_player_followup-f6b2680/red/result.json",
+    "red": "failed event incorrectly displayed media_ended and left close button enabled without current viewer",
+    "browser_checks": 24,
+    "browser_duration_seconds": 82.19537801481783,
+    "transport_failure": {
+      "state": "播放失败",
+      "error": "连接中断，请重新播放",
+      "ownership": {
+        "state": "failed",
+        "hasCurrent": false,
+        "closeDisabled": true
+      },
+      "peer": "closed",
+      "videoCleared": true,
+      "stopLiveHidden": true,
+      "live_preserved": true,
+      "replay_same_live": true,
+      "invite_before": 1,
+      "invite_after_replay": 1,
+      "rtp_packets_before": 615,
+      "rtp_packets_after_failure": 768,
+      "fresh_ticket": true,
+      "injection": "connectionstatechange on a real connected/decoding peer; no PeerConnection replacement"
+    },
+    "ownership_states": [
+      "ended",
+      "failed",
+      "idle",
+      "negotiating",
+      "preparing",
+      "stopping",
+      "streaming"
+    ],
+    "source_hashes_match_code_head": true,
+    "go_test": {
+      "status": "PASS",
+      "log": "/tmp/media_server_player_followup-f6b2680/go-test.log"
+    },
+    "go_vet": {
+      "status": "PASS",
+      "log": "/tmp/media_server_player_followup-f6b2680/go-vet.log"
+    },
+    "go_race": {
+      "status": "PASS",
+      "log": "/tmp/media_server_player_followup-f6b2680/go-race.log"
+    },
+    "normal_build": {
+      "status": "PASS",
+      "log": "/tmp/media_server_player_followup-f6b2680/build.log"
+    },
+    "ctest": {
+      "status": "PASS",
+      "passed": 14,
+      "total": 14,
+      "after_e2e_exit": true,
+      "log": "/tmp/media_server_player_followup-f6b2680/ctest.log"
+    },
+    "whep_post_audit": {
+      "gb_client_timeout_seconds": 3,
+      "gb_read_deadline_seconds": 3,
+      "gb_write_deadline_seconds": 6,
+      "rtsp_synchronous_creation": true,
+      "rtsp_beast_read_write_expiry_seconds": 30,
+      "browser_timeout_added": false,
+      "reason": "No media/ICE establishment wait in POST or reproduced unbounded request; existing I/O deadlines retained"
+    },
+    "new_persistent_state_fields": false,
+    "production_net_lines": 14,
+    "go_backend_changed": false,
+    "cpp_changed": false,
+    "sanitizers_executed": false
   }
 }
