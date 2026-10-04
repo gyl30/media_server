@@ -694,7 +694,11 @@ func runFleet(ctx context.Context, cfg config, source *sharedMediaSource, logger
 		return err
 	}
 	defer func() {
-		unregisterContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		unregisterTimeout := 30 * time.Second
+		if cfg.registerRate > 0 {
+			unregisterTimeout += time.Duration(cfg.devices) * time.Second / time.Duration(cfg.registerRate)
+		}
+		unregisterContext, cancel := context.WithTimeout(context.Background(), unregisterTimeout)
 		err := runIndices(unregisterContext, cfg.devices, cfg.controlWorkers, cfg.registerRate, func(index int) error {
 			requestContext, stop := context.WithTimeout(unregisterContext, 3*time.Second)
 			defer stop()
