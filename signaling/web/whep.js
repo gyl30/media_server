@@ -170,8 +170,8 @@ export class WHEPPreview {
         }
         if (session.peer.connectionState === "connected") {
           this.markStreaming(session);
-        } else if (["failed", "closed"].includes(session.peer.connectionState)) {
-          void this.end(session);
+        } else if (session.peer.connectionState === "failed") {
+          void this.fail(session);
         }
       });
 
@@ -298,16 +298,30 @@ export class WHEPPreview {
     this.emit("streaming", session);
   }
 
-  async end(session = this.current) {
+  end(session = this.current) {
     if (!this.isCurrent(session)) {
       return;
     }
+    const cleanup = this.releaseCurrent(session);
+    this.emit("ended", session, "media_ended");
+    return cleanup;
+  }
+
+  fail(session) {
+    if (!this.isCurrent(session)) {
+      return;
+    }
+    const cleanup = this.releaseCurrent(session);
+    this.emit("failed", session, "webrtc_connection_failed");
+    return cleanup;
+  }
+
+  async releaseCurrent(session) {
     const generation = ++this.generation;
     this.current = null;
     session.cancelled = true;
     session.controller.abort();
     this.closeLocal(session);
-    this.emit("ended", session, "media_ended");
     try {
       await deleteResource(session.resourceURL);
     } catch (error) {

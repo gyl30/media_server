@@ -106,6 +106,22 @@ def main():
                 args=["--autoplay-policy=document-user-activation-required"])
             result["browser_version"] = browser.version
             try:
+                def observe_ownership(item):
+                    observer = item.context.new_cdp_session(item)
+                    observation = observer.send("Runtime.evaluate", {"expression": """(async () => {
+                        const {WHEPPreview} = await import('/whep.js');
+                        const emit = WHEPPreview.prototype.emit;
+                        window.uiOwnership = [];
+                        WHEPPreview.prototype.emit = function(...args) {
+                            emit.apply(this, args);
+                            uiOwnership.push({state:args[0], hasCurrent:this.current !== null,
+                                closeDisabled:document.querySelector('#stop-preview-button').disabled});
+                        };
+                        return document.querySelector('#stop-preview-button').disabled;
+                    })()""", "userGesture": False, "awaitPromise": True, "returnByValue": True})
+                    assert observation["result"].get("value") is True
+                    observer.detach()
+
                 def open_page():
                     item = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="zh-CN")
                     item.resources = []
@@ -123,6 +139,7 @@ def main():
                             item.resources.append(location)
                     item.on("response", response_record)
                     item.goto(f"http://127.0.0.1:{base+3}/")
+                    observe_ownership(item)
                     return item
 
                 def select_device(item):
@@ -218,10 +235,56 @@ def main():
                         assert count["invite"] == count["ack"] == count["live_active"] == 1, count
                         result["multi_viewer"] = {"before": before_all, "after": after_all, "counters": count}
                         mark("three independent UI viewers decode from one INVITE and one active upstream")
+                    failed_resource = page.resources[-1]
+                    before_failure = counters(simulator)
+                    invite_before_failure = before_failure["invite"]
+                    failed_ticket = next(item["url"] for item in reversed(result["requests"])
+                        if item["method"] == "POST" and item["location"] == failed_resource)
+                    requests_before_failure = len(result["requests"])
+                    page.evaluate("""() => {
+                        const peer = uiPeers.at(-1);
+                        Object.defineProperty(peer, 'connectionState', {configurable:true, get:() => 'failed'});
+                        peer.dispatchEvent(new Event('connectionstatechange'));
+                        delete peer.connectionState;
+                    }""")
+                    result["transport_failure"] = page.evaluate("""() => ({
+                        state:document.querySelector('#preview-state').textContent,
+                        error:document.querySelector('#preview-error').textContent,
+                        ownership:uiOwnership.at(-1), peer:uiPeers.at(-1).connectionState,
+                        videoCleared:document.querySelector('#preview-video').srcObject === null,
+                        stopLiveHidden:document.querySelector('#stop-live-button').hidden})""")
+                    failure = result["transport_failure"]
+                    assert "播放失败" in failure["state"] and failure["error"] == "连接中断，请重新播放", failure
+                    assert not failure["ownership"]["hasCurrent"] and failure["ownership"]["closeDisabled"], failure
+                    assert failure["peer"] == "closed" and failure["videoCleared"] and failure["stopLiveHidden"], failure
+                    resource_gone(failed_resource)
+                    page.wait_for_timeout(1500)
+                    assert channels()[0]["live"]["live_id"] == live_id
+                    eventually(lambda: counters(simulator)["rtp_packets"] > before_failure["rtp_packets"])
+                    count = counters(simulator)
+                    assert count["invite"] == invite_before_failure and count["live_active"] == 1
+                    assert not any(item["method"] == "DELETE" and "/api/lives/" in item["url"]
+                        for item in result["requests"][requests_before_failure:])
+                    page.locator(f"[data-channel-id='{channel}']").get_by_text("正在取流", exact=True).wait_for()
+                    play_channel(page)
+                    page.wait_for_timeout(1500)
+                    assert channels()[0]["live"]["live_id"] == live_id and counters(simulator)["invite"] == invite_before_failure
+                    assert page.resources[-1] != failed_resource
+                    replay_ticket = next(item["url"] for item in reversed(result["requests"])
+                        if item["method"] == "POST" and item["location"] == page.resources[-1])
+                    assert replay_ticket != failed_ticket
+                    failure.update({"live_preserved": True, "replay_same_live": True,
+                        "invite_before": invite_before_failure, "invite_after_replay": counters(simulator)["invite"],
+                        "rtp_packets_before": before_failure["rtp_packets"], "rtp_packets_after_failure": count["rtp_packets"],
+                        "fresh_ticket": True,
+                        "injection": "connectionstatechange on a real connected/decoding peer; no PeerConnection replacement"})
+                    mark("transport failure clears viewer with failure text; replay keeps live and INVITE unchanged")
                     page.locator("#stop-preview-button").click()
                     page.locator(".preview-panel").wait_for(state="hidden")
                     resource_gone(page.resources[-1])
                     assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
+                    assert page.evaluate("document.querySelector('#preview-video').srcObject === null")
+                    assert page.locator("#stop-preview-button").is_disabled()
                     assert channels()[0]["live"]["live_id"] == live_id
                     play.click()
                     decoded(page)
@@ -229,7 +292,9 @@ def main():
                     mark("closing viewer leaves shared live; replay rejoins the same generation")
                     if not args.playback_only:
                         invite_count = counters(simulator)["invite"]
+                        result["button_ownership"] = page.evaluate("uiOwnership")
                         page.reload()
+                        observe_ownership(page)
                         resource_gone(page.resources[-1])
                         select_device(page)
                         page.locator(f"[data-channel-id='{channel}']").get_by_text("正在取流", exact=True).wait_for()
@@ -240,9 +305,13 @@ def main():
                     page.locator("#stop-live-button").click()
                     eventually(lambda: channels()[0].get("live") is None)
                     page.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')")
+                    assert page.locator("#preview-error").inner_text() == "设备已离线或媒体已结束"
+                    assert page.locator("#stop-preview-button").is_disabled()
                     resource_gone(page.resources[-1])
                     for other in viewers[1:]:
                         other.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')", timeout=15000)
+                        assert other.locator("#preview-error").inner_text() == "设备已离线或媒体已结束"
+                        assert other.locator("#stop-preview-button").is_disabled()
                         assert other.evaluate("uiPeers.every(peer => peer.connectionState === 'closed')")
                         resource_gone(other.resources[-1])
                     if not args.playback_only:
@@ -257,6 +326,8 @@ def main():
                         assert simulator.returncode == 0
                         page.wait_for_function("document.querySelector('#selected-device-status').textContent.includes('离线')", timeout=15000)
                         page.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')")
+                        assert page.locator("#preview-error").inner_text() == "设备已离线或媒体已结束"
+                        assert page.locator("#stop-preview-button").is_disabled()
                         assert page.locator("#channel-rows tr").count() == 0 and channels() == []
                         mark("Expires:0 clears channels and ends the UI player while device stays visible")
                         simulator = start_simulator("simulator-reregister")
@@ -358,6 +429,11 @@ def main():
                         select_device(page)
                         play_channel(page)
                         mark("back during pending offer closes peer and deletes the late resource without reviving player")
+                    ownership = result.get("button_ownership", []) + page.evaluate("uiOwnership")
+                    assert {"idle", "preparing", "streaming", "failed", "ended", "stopping"} <= {item["state"] for item in ownership}
+                    assert all(item["closeDisabled"] == (not item["hasCurrent"]) for item in ownership), ownership
+                    result["button_ownership"] = ownership
+                    mark("close button follows actual current viewer ownership across lifecycle events")
                 page.locator("#delete-device-button").click()
                 page.get_by_text("删除设备会停止该设备当前所有播放，是否继续？").wait_for()
                 page.locator("#confirm-action-button").click()

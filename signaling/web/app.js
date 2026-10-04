@@ -516,7 +516,7 @@ function renderPreviewState(update) {
   elements.previewPanel.hidden = update.state === "idle";
   elements.previewState.replaceChildren(badge(label, toneForState(update.state)));
   elements.previewTarget.textContent = update.target || "";
-  elements.stopPreview.disabled = ["idle", "stopping"].includes(update.state);
+  elements.stopPreview.disabled = !update.canStop;
   elements.resumePlayback.hidden = !update.needsPlaybackGesture;
   renderPlayerButtons();
   elements.previewPlaceholder.hidden = update.state === "streaming";
