@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,7 @@ func testLivePeer(t *testing.T, s *infrastructureServer, deviceID, channelID str
 	contact := sip.Uri{Scheme: "sip", User: deviceID, Host: host, Port: port}
 	dialogs := sipgo.NewDialogServerCache(client, sip.ContactHeader{Address: contact})
 	invites := new(atomic.Int32)
+	var byeReceived atomic.Bool
 	server.OnInvite(func(request *sip.Request, transaction sip.ServerTransaction) {
 		invites.Add(1)
 		dialog, err := dialogs.ReadInvite(request, transaction)
@@ -53,11 +55,13 @@ func testLivePeer(t *testing.T, s *infrastructureServer, deviceID, channelID str
 		}
 	})
 	server.OnAck(func(request *sip.Request, transaction sip.ServerTransaction) {
-		if err := dialogs.ReadAck(request, transaction); err != nil {
+		// BYE may remove the dialog before sipgo dispatches a late ACK.
+		if err := dialogs.ReadAck(request, transaction); err != nil && !(byeReceived.Load() && errors.Is(err, sipgo.ErrDialogDoesNotExists)) {
 			t.Error(err)
 		}
 	})
 	server.OnBye(func(request *sip.Request, transaction sip.ServerTransaction) {
+		byeReceived.Store(true)
 		if len(byeStatus) != 0 {
 			_ = transaction.Respond(sip.NewResponseFromRequest(request, byeStatus[0], "Device unavailable", nil))
 			return
