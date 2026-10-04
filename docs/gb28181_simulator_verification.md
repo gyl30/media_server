@@ -6,7 +6,7 @@ BASE_HEAD：`ab236fcbef8e624930723c37e46fd1bfc3e4dc7b`。
 
 生产二进制源码：`112d7a4d0fb2ff383b76c182cb618ffd29ec3841`。后续阶段提交仅修改测试脚本；二进制 SHA256 与构建机逐项核对。最终文档提交通过 `git log -1 --format=%H -- docs/gb28181_simulator_verification.md` 定位，避免循环引用自身 SHA。
 
-当前是阶段性记录，尚未完成整个验证：基线、correctness、control 与 media 已验收，并记录 burst 与测试宿主 fd 边界；recovery、长期 soak 尚未验收。未完成阶段不计入通过结果。
+当前是阶段性记录，尚未完成整个验证：基线、correctness、control、media 与 recovery 已验收，并记录 burst 与测试宿主 fd 边界；长期 soak 正在运行，尚未验收。未完成阶段不计入通过结果。
 
 仅验证本产品与自有 simulator，**own-product simulator verification only**，不证明厂商互操作性，也不推导产品容量上限。控制面设备注册规模与媒体面同时 live 规模分开报告。
 
@@ -110,7 +110,7 @@ GB 基线三个 Chrome viewer 的 framesDecoded 分别从 52/27/2 增长到 121/
 
 ## Media、recovery 与长期 soak
 
-media 已完成两次运行组合覆盖；recovery 首次运行在 SIGKILL 清理断言处失败，正在定向复查，长期 soak 尚未运行。仍必须完成故障恢复、至少 30 分钟单 live/viewer 和 20 分钟多 live 才能结束整个 Goal。不能以运行中默认 `FAIL` 状态文件或一次采样判定任务终止。
+media 已完成两次运行组合覆盖；recovery 完成定向复查及完整 GREEN，长期 soak 正在运行。仍必须完成至少 30 分钟单 live/viewer 和 20 分钟多 live 才能结束整个 Goal。不能以运行中默认 `FAIL` 状态文件或一次采样判定任务终止。
 
 首次 media 阶段在 956.95 秒后因 500 路创建失败终止；此前 1/10/25/50/100/200 路均完成逐流前后真实 FLV 读取、10 秒稳态及清理。各档 media fd 为 28/46/76/126/226/426，停止后均回到 26，media UDP sockets 清零。该失败结果保留为 `gb-media-green/result.json`，没有覆盖为 PASS。
 
@@ -132,7 +132,28 @@ media 已完成两次运行组合覆盖；recovery 首次运行在 SIGKILL 清�
 
 500 路稳态 heartbeat_fail 为 0，注销完成后的 final summary 为 84，属于并行 heartbeat 在 Expires:0 后被拒绝，不混入稳态。media 日志匹配 34 条全部为真实 Chrome 主动关闭后的 DTLS close_notify 终止，无其他匹配项。500 路仅作短稳态及生命周期验证，不替代尚未执行的 100 路长期 soak，也不定义最大容量。
 
-新增环境记录后，构建机再次完成 Go test/vet/race、普通与 fresh build 目录构建，日志为 `go-test-fd.log`、`go-vet-fd.log`、`go-race-fd.log`、`normal-build-fd.log`、`build-fd.log`；二进制哈希未变。恢复阶段尚未 GREEN，最终 CTest 未执行，不提前验收。
+新增环境记录后，构建机再次完成 Go test/vet/race、普通与 fresh build 目录构建，日志为 `go-test-fd.log`、`go-vet-fd.log`、`go-race-fd.log`、`normal-build-fd.log`、`build-fd.log`；二进制哈希未变。最终 CTest 尚未执行，不提前验收。
+
+### 异常退出清理的 RED/GREEN
+
+recovery 首次运行 20.41 秒后在立即检查 receiver 缺失时失败，原结果保留为 `gb-recovery-fd-green/result.json`。源码时序是 expiry 先使设备 offline、清 channels，再逐个等待既有 3 秒 BYE timeout、删除 receiver；offline 不等于所有 active live 清理已结束。
+
+非侵入定向观测三轮，10 设备/3 live/1 Chrome，在 offline/channels 清空时仍有 7 个媒体 UDP ports；无需额外 DELETE，分别在 9.0003/9.0005/8.9992 秒后归零。随后三个 receiver 均返回 404、WHEP resource 自动消失为 404，持久设备仍为 10。证据为 `active-expiry-observation-run/result.json`。harness 仅把既有 `udp_released()` 等待前移到 receiver 缺失断言之前，没有延长产品超时、增加重试恢复或修改 signaling/C++。
+
+修正后完整 recovery 六项 GREEN，74.11 秒，10 个子进程退出均符合预期，其中媒体与 simulator 各一次故意 SIGKILL。结果为 `gb-recovery-cleanup-green/result.json`，SHA256 `24e153813a4c6842fc8b5f34e6bd15e85b3372b99ba480f08239be6ed98be265`。
+
+| Recovery 场景 | 实际结果 |
+| --- | --- |
+| simulator SIGKILL | 10 设备、3 live、1 viewer；16.17 秒内完成 expiry 与媒体清理，ticket/receiver 无残留，持久设备保留 |
+| media crash | 原三路 live 手动 stop 后 replay，新 live identity 不复用，三路 FLV 及 Chrome 均可消费；不自动恢复旧 generation |
+| signaling restart | 10 个 DB device 保留，registration/channel/live/ticket 不恢复；设备 refresh 后重新 Catalog 至累计 20，并可重新 play |
+| combined restart | 同样清除 runtime，仅持久设备保留；重新 REGISTER/Catalog 至累计 30、新 generation 媒体解码 |
+| signaling unavailable | 14 秒窗口出现 register_fail/heartbeat_fail，恢复后既有 refresh 使 10 设备 online、Catalog 累计 40；不新增重连机制 |
+| media unavailable | 10 个并发 play 全部 502，无残留 live；恢复媒体后 10 路重新 play/读取、停止及端口清理通过 |
+
+恢复日志分类：9 条失联或暂停设备的 BYE timeout、10 条注入媒体不可用的 create failure、2 条 Chrome close_notify，以及 6 条 sipgo shutdown 的 UDP reference 警告，没有未分类匹配。后者是实际观察到的第三方 shutdown 告警，不称为无错误日志；已阅读 sipgo 1.6.0 `UDPConnection.TryClose()`，负引用时记录告警并返回 `0,nil`，本次发生于 signaling 停止，不妨碍进程退出和新进程恢复，未修改依赖，保留为后续诊断候选。
+
+此次 harness 时序修改后，Go test/vet/race 与两个构建目录再次通过，日志使用 `*-cleanup.log` 后缀，二进制哈希未变。原 runner 已进入 1800 秒单 live/Chrome 与 1200 秒、100 live 的长期窗口，后续限速注销和最终 CTest 仍需完成。
 
 ## 已发现问题与分类
 
@@ -141,6 +162,7 @@ media 已完成两次运行组合覆盖；recovery 首次运行在 SIGKILL 清�
 3. **harness 时序问题**：设备 API 按 expiresAt 即时显示 offline，channels 在每秒 expiry sweep 清理。100 设备 SIGKILL 三次观测，offline 到清空延迟为 0.524/0.622/0.638 秒。`offline()` 分别等待两个真实最终条件，三次 GREEN；未通过延长产品 timeout 掩盖清理。
 4. **harness 断言范围问题**：控制 RED 的 5000 设备全部 registered/Catalog，无 live/RTP/send error，但空 media worker phase 一次未调度产生 `phase_drops=1`。源码确认该计数也包含没有活跃 session 的空 phase。仅在 active-media 阶段要求 phase_drops 为 0；control 保留原始计数且明确要求零 RTP。修正后完整 control 21 项 GREEN，并单独保留 burst 容量边界。该次 harness SHA256 为 `196b452ebc9c81ba331e0e6f1db0f2a42b9ebbb7c36adce7e0f7d843316bdc8a`。
 5. **测试宿主资源边界**：原 SSH shell 的 fd 软上限 1024，500 路创建时出现 `EMFILE`。定向 RED/GREEN 证明原因并验证清理；只调整测试子进程的限额并记录，不修改产品代码，不将原失败伪装成全通过。
+6. **harness active-live 清理时序**：SIGKILL 后 offline/channels 可见早于 BYE/receiver 清理。三轮真实观测证明正常 bounded cleanup；等待外部端口归还后再做缺失断言，完整 recovery GREEN，不修改产品状态或 timeout。
 
 日志错误按具体时序分类：设备删除后的 403 与故障注入退出是预期；delete/play 的取消返回已验证资源清理。Chrome 主动 peer.close 可产生 DTLS close_notify，底层 `SSL_ERROR_ZERO_RETURN` 被现有 session 记录为 `dtls failed` 并关闭 viewer，这不是媒体进程崩溃。不仅按字符串给所有日志一律 PASS，也不为了消除日志修改生产代码。
 

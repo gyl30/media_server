@@ -724,11 +724,11 @@ def recovery(run):
         run["processes"][-1] = (simulator, -signal.SIGKILL)
         started = time.monotonic()
         offline(run, count)
+        udp_released(run)
         for offset, ticket in enumerate(tickets):
             consume(run, ticket)
             receiver_gone(run, ticket, offset)
         close_viewer(run, page, index)
-        udp_released(run)
         mark(run, "simulator SIGKILL expiry cleanup", devices=count, elapsed_seconds=time.monotonic()-started,
             resources=sample(run, "simulator crash cleaned"))
         simulator = start_simulator(run, count, endpoints=4)

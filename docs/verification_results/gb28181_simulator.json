@@ -10335,7 +10335,752 @@
     }
   },
   "recovery": {
-    "status": "RED_HARNESS_TIMING_UNDER_REVIEW",
+    "status": "PASS",
+    "harness_fix": "Wait for existing external UDP socket release before checking receiver absence; do not issue extra DELETE to drive cleanup or extend product BYE timeout",
+    "green": {
+      "status": "PASS",
+      "head": "78c2934a3157fcea1e07702b316fd8413e216eac",
+      "harness_sha256": "a7fff801ca6ef06dd44de7c67651abeb847e5af5ec4d2fa70537eaa162bec30f",
+      "command": [
+        "/tmp/media-test-112d7a4-static/bench/gb_simulator_verify.py",
+        "--stage",
+        "recovery",
+        "--media",
+        "/tmp/media-test-112d7a4-static/media_server",
+        "--signaling",
+        "/tmp/media-test-112d7a4-static/signaling",
+        "--simulator",
+        "/tmp/media-test-112d7a4-static/simulator",
+        "--ffmpeg",
+        "/tmp/media-test-112d7a4-static/ffmpeg",
+        "--browser",
+        "/tmp/media-test-112d7a4-static/chrome/chrome",
+        "--output",
+        "/tmp/media-test-112d7a4-static/gb-recovery-cleanup-green",
+        "--port-base",
+        "44420"
+      ],
+      "duration_seconds": 74.11485103145242,
+      "process_returncodes": {
+        "0000-media.log": {
+          "actual": -9,
+          "expected": -9
+        },
+        "0001-signaling.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0002-simulator.log": {
+          "actual": -9,
+          "expected": -9
+        },
+        "0003-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0004-media.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0005-signaling.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0006-media.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0007-signaling.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0008-signaling.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0009-media.log": {
+          "actual": 0,
+          "expected": 0
+        }
+      },
+      "checks": [
+        {
+          "name": "simulator SIGKILL expiry cleanup",
+          "devices": 10,
+          "elapsed_seconds": 16.170425605028868,
+          "resources": {
+            "label": "simulator crash cleaned",
+            "elapsed_seconds": 22.900818400084972,
+            "processes": {
+              "media": {
+                "cpu": 0.11,
+                "rss_kib": 27136,
+                "vmsize_kib": 204352,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 21256,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 0.25,
+                "rss_kib": 17664,
+                "vmsize_kib": 2458432,
+                "thread_count": 17,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 19006,
+                "fd": 9,
+                "socket_count": 3,
+                "udp_ports": [
+                  44424
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 50,
+              "heartbeat_fail": 0,
+              "invite": 3,
+              "ack": 3,
+              "bye": 0,
+              "live_active": 3,
+              "rtp_packets": 906,
+              "rtp_bytes": 1082592,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2530992,
+              "gc": 3
+            },
+            "host": {
+              "mem_available_kib": 84314548,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "media crash manual stop/replay recovery",
+          "active_live": 3,
+          "automatic_recovery": false,
+          "resources": {
+            "label": "media restarted",
+            "elapsed_seconds": 30.846235241740942,
+            "processes": {
+              "media": {
+                "cpu": 0.1,
+                "rss_kib": 26880,
+                "vmsize_kib": 201792,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 21173,
+                "fd": 32,
+                "socket_count": 9,
+                "udp_ports": [
+                  49152,
+                  49153,
+                  49154,
+                  49155,
+                  49156,
+                  49157
+                ]
+              },
+              "signaling": {
+                "cpu": 0.39,
+                "rss_kib": 18688,
+                "vmsize_kib": 2605936,
+                "thread_count": 19,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 20568,
+                "fd": 9,
+                "socket_count": 3,
+                "udp_ports": [
+                  44424
+                ]
+              },
+              "simulator": {
+                "cpu": 1.33,
+                "rss_kib": 13824,
+                "vmsize_kib": 2665756,
+                "thread_count": 19,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 14612,
+                "fd": 41,
+                "socket_count": 36,
+                "udp_ports": [
+                  32000,
+                  32001,
+                  32002,
+                  32003,
+                  32004,
+                  32005,
+                  32006,
+                  32007,
+                  32008,
+                  32009,
+                  32010,
+                  32011,
+                  32012,
+                  32013,
+                  32014,
+                  32015,
+                  32016,
+                  32017,
+                  32018,
+                  32019,
+                  32020,
+                  32021,
+                  32022,
+                  32023,
+                  32024,
+                  32025,
+                  32026,
+                  32027,
+                  32028,
+                  32029,
+                  32030,
+                  32031,
+                  44520,
+                  44521,
+                  44522,
+                  44523
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 10,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 70,
+              "heartbeat_fail": 0,
+              "invite": 6,
+              "ack": 6,
+              "bye": 3,
+              "live_active": 3,
+              "rtp_packets": 1149,
+              "rtp_bytes": 1378461,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2301208,
+              "gc": 4
+            },
+            "host": {
+              "mem_available_kib": 84327508,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "signaling restart restores only persistent devices",
+          "devices": 10,
+          "catalog": 20,
+          "new_live": true,
+          "resources": {
+            "label": "signaling restarted",
+            "elapsed_seconds": 37.11539651080966,
+            "processes": {
+              "media": {
+                "cpu": 0.11,
+                "rss_kib": 27392,
+                "vmsize_kib": 201792,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 21673,
+                "fd": 32,
+                "socket_count": 9,
+                "udp_ports": [
+                  49152,
+                  49153,
+                  49154,
+                  49155,
+                  49156,
+                  49157
+                ]
+              },
+              "signaling": {
+                "cpu": 0.11,
+                "rss_kib": 17408,
+                "vmsize_kib": 2309600,
+                "thread_count": 15,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 17492,
+                "fd": 8,
+                "socket_count": 2,
+                "udp_ports": [
+                  44424
+                ]
+              },
+              "simulator": {
+                "cpu": 1.89,
+                "rss_kib": 13980,
+                "vmsize_kib": 2962012,
+                "thread_count": 23,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 14544,
+                "fd": 41,
+                "socket_count": 36,
+                "udp_ports": [
+                  32000,
+                  32001,
+                  32002,
+                  32003,
+                  32004,
+                  32005,
+                  32006,
+                  32007,
+                  32008,
+                  32009,
+                  32010,
+                  32011,
+                  32012,
+                  32013,
+                  32014,
+                  32015,
+                  32016,
+                  32017,
+                  32018,
+                  32019,
+                  32020,
+                  32021,
+                  32022,
+                  32023,
+                  32024,
+                  32025,
+                  32026,
+                  32027,
+                  32028,
+                  32029,
+                  32030,
+                  32031,
+                  44520,
+                  44521,
+                  44522,
+                  44523
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 20,
+              "register_fail": 0,
+              "catalog": 20,
+              "heartbeat_ok": 80,
+              "heartbeat_fail": 30,
+              "invite": 6,
+              "ack": 6,
+              "bye": 6,
+              "live_active": 0,
+              "rtp_packets": 1344,
+              "rtp_bytes": 1619631,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2090928,
+              "gc": 8
+            },
+            "host": {
+              "mem_available_kib": 84345752,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "combined backend restart",
+          "devices": 10,
+          "catalog": 30,
+          "resources": {
+            "label": "combined restart",
+            "elapsed_seconds": 46.14098855480552,
+            "processes": {
+              "media": {
+                "cpu": 0.05,
+                "rss_kib": 25344,
+                "vmsize_kib": 210496,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 19884,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 0.12,
+                "rss_kib": 16896,
+                "vmsize_kib": 2310376,
+                "thread_count": 15,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 17972,
+                "fd": 9,
+                "socket_count": 3,
+                "udp_ports": [
+                  44424
+                ]
+              },
+              "simulator": {
+                "cpu": 2.82,
+                "rss_kib": 15260,
+                "vmsize_kib": 3035760,
+                "thread_count": 24,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 15456,
+                "fd": 41,
+                "socket_count": 36,
+                "udp_ports": [
+                  32000,
+                  32001,
+                  32002,
+                  32003,
+                  32004,
+                  32005,
+                  32006,
+                  32007,
+                  32008,
+                  32009,
+                  32010,
+                  32011,
+                  32012,
+                  32013,
+                  32014,
+                  32015,
+                  32016,
+                  32017,
+                  32018,
+                  32019,
+                  32020,
+                  32021,
+                  32022,
+                  32023,
+                  32024,
+                  32025,
+                  32026,
+                  32027,
+                  32028,
+                  32029,
+                  32030,
+                  32031,
+                  44520,
+                  44521,
+                  44522,
+                  44523
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 30,
+              "register_fail": 0,
+              "catalog": 30,
+              "heartbeat_ok": 110,
+              "heartbeat_fail": 70,
+              "invite": 10,
+              "ack": 10,
+              "bye": 9,
+              "live_active": 1,
+              "rtp_packets": 1440,
+              "rtp_bytes": 1730278,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2163112,
+              "gc": 13
+            },
+            "host": {
+              "mem_available_kib": 84354484,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "existing REGISTER refresh recovers signaling outage",
+          "before_restore": {
+            "devices": 10,
+            "registered": 10,
+            "register_refresh": 30,
+            "register_fail": 10,
+            "catalog": 30,
+            "heartbeat_ok": 120,
+            "heartbeat_fail": 114,
+            "invite": 10,
+            "ack": 10,
+            "bye": 10,
+            "live_active": 0,
+            "rtp_packets": 1448,
+            "rtp_bytes": 1740078,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 78,
+            "heap_bytes": 2263960,
+            "gc": 17
+          },
+          "after_restore": {
+            "devices": 10,
+            "registered": 10,
+            "register_refresh": 40,
+            "register_fail": 10,
+            "catalog": 40,
+            "heartbeat_ok": 181,
+            "heartbeat_fail": 149,
+            "invite": 10,
+            "ack": 10,
+            "bye": 10,
+            "live_active": 0,
+            "rtp_packets": 1448,
+            "rtp_bytes": 1740078,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 78,
+            "heap_bytes": 2655528,
+            "gc": 21
+          }
+        },
+        {
+          "name": "multi-device unavailable media create rollback",
+          "devices": 10,
+          "failed_statuses": [
+            502,
+            502,
+            502,
+            502,
+            502,
+            502,
+            502,
+            502,
+            502,
+            502
+          ],
+          "recovered_live": 10,
+          "resources": {
+            "label": "media create recovered",
+            "elapsed_seconds": 73.74740767851472,
+            "processes": {
+              "media": {
+                "cpu": 0.33,
+                "rss_kib": 25088,
+                "vmsize_kib": 209472,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 19405,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 0.25,
+                "rss_kib": 18432,
+                "vmsize_kib": 2679436,
+                "thread_count": 20,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 19652,
+                "fd": 8,
+                "socket_count": 2,
+                "udp_ports": [
+                  44424
+                ]
+              },
+              "simulator": {
+                "cpu": 7.5,
+                "rss_kib": 14672,
+                "vmsize_kib": 3035800,
+                "thread_count": 24,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 15756,
+                "fd": 41,
+                "socket_count": 36,
+                "udp_ports": [
+                  32000,
+                  32001,
+                  32002,
+                  32003,
+                  32004,
+                  32005,
+                  32006,
+                  32007,
+                  32008,
+                  32009,
+                  32010,
+                  32011,
+                  32012,
+                  32013,
+                  32014,
+                  32015,
+                  32016,
+                  32017,
+                  32018,
+                  32019,
+                  32020,
+                  32021,
+                  32022,
+                  32023,
+                  32024,
+                  32025,
+                  32026,
+                  32027,
+                  32028,
+                  32029,
+                  32030,
+                  32031,
+                  44520,
+                  44521,
+                  44522,
+                  44523
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 50,
+              "register_fail": 10,
+              "catalog": 40,
+              "heartbeat_ok": 291,
+              "heartbeat_fail": 149,
+              "invite": 20,
+              "ack": 20,
+              "bye": 10,
+              "live_active": 10,
+              "rtp_packets": 9268,
+              "rtp_bytes": 11088308,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2387112,
+              "gc": 30
+            },
+            "host": {
+              "mem_available_kib": 84354088,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        }
+      ],
+      "log_findings": [
+        {
+          "log": "/tmp/media-test-112d7a4-static/gb-recovery-cleanup-green/0001-signaling.log",
+          "matching_lines": 9,
+          "examples": [
+            "time=2026-10-04T22:09:28.495+08:00 level=WARN msg=\"live BYE failed\" stream_id=fc11e858-86b0-4b10-ad7f-7cc89d219ac2 error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:09:31.498+08:00 level=WARN msg=\"live BYE failed\" stream_id=6943c98b-daee-4bbc-a1ea-ecb01181492c error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:09:34.499+08:00 level=WARN msg=\"live BYE failed\" stream_id=adb2623a-9869-4aa1-8921-2f1f7ba9a974 error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:09:45.555+08:00 level=WARN msg=\"live BYE failed\" stream_id=99cce44e-8743-4fb2-8d2a-acef9231b848 error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:09:45.555+08:00 level=WARN msg=\"live BYE failed\" stream_id=93e5dc27-3122-4b55-a086-a3cd1a97b364 error=\"context deadline exceeded\""
+          ]
+        },
+        {
+          "log": "/tmp/media-test-112d7a4-static/gb-recovery-cleanup-green/0004-media.log",
+          "matching_lines": 1,
+          "examples": [
+            "[2026-10-04 22:09:42.496] [error] webrtc dtls failed session 0f709b17d03b9412051f85244fd07712"
+          ]
+        },
+        {
+          "log": "/tmp/media-test-112d7a4-static/gb-recovery-cleanup-green/0005-signaling.log",
+          "matching_lines": 6,
+          "examples": [
+            "time=2026-10-04T22:09:51.824+08:00 level=WARN msg=\"live BYE failed\" stream_id=8abae5fb-330f-467a-a2b2-c7f4a8d07d5b error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:09:51.825+08:00 level=WARN msg=\"live BYE failed\" stream_id=dce379af-b010-4a6c-afc5-badac7abcb2e error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:09:51.825+08:00 level=WARN msg=\"live BYE failed\" stream_id=7f7bafe5-bac8-42bf-9878-fc63b5447b85 error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:09:51.826+08:00 level=WARN msg=\"UDP ref went negative on try close\" src=0.0.0.0:54519 ref=-1",
+            "time=2026-10-04T22:09:51.826+08:00 level=WARN msg=\"UDP ref went negative on try close\" src=0.0.0.0:41012 ref=-1"
+          ]
+        },
+        {
+          "log": "/tmp/media-test-112d7a4-static/gb-recovery-cleanup-green/0006-media.log",
+          "matching_lines": 1,
+          "examples": [
+            "[2026-10-04 22:09:57.787] [error] webrtc dtls failed session 5bb6a65a49d96e612ed4a3d119ebf6b0"
+          ]
+        },
+        {
+          "log": "/tmp/media-test-112d7a4-static/gb-recovery-cleanup-green/0008-signaling.log",
+          "matching_lines": 10,
+          "examples": [
+            "time=2026-10-04T22:10:13.712+08:00 level=ERROR msg=\"live start failed\" device_id=34020000001320000001 channel_id=34020000001320000002 error=\"media server request failed: Post \\\"http://127.0.0.1:44422/gb28181/receiver/create\\\": dial tcp 127.0.0.1:44422: connect: connection refused\"",
+            "time=2026-10-04T22:10:13.713+08:00 level=ERROR msg=\"live start failed\" device_id=34020000001320000002 channel_id=34020000001320000003 error=\"media server request failed: Post \\\"http://127.0.0.1:44422/gb28181/receiver/create\\\": dial tcp 127.0.0.1:44422: connect: connection refused\"",
+            "time=2026-10-04T22:10:13.713+08:00 level=ERROR msg=\"live start failed\" device_id=34020000001320000003 channel_id=34020000001320000004 error=\"media server request failed: Post \\\"http://127.0.0.1:44422/gb28181/receiver/create\\\": dial tcp 127.0.0.1:44422: connect: connection refused\"",
+            "time=2026-10-04T22:10:13.715+08:00 level=ERROR msg=\"live start failed\" device_id=34020000001320000005 channel_id=34020000001320000006 error=\"media server request failed: Post \\\"http://127.0.0.1:44422/gb28181/receiver/create\\\": dial tcp 127.0.0.1:44422: connect: connection refused\"",
+            "time=2026-10-04T22:10:13.715+08:00 level=ERROR msg=\"live start failed\" device_id=34020000001320000004 channel_id=34020000001320000005 error=\"media server request failed: Post \\\"http://127.0.0.1:44422/gb28181/receiver/create\\\": dial tcp 127.0.0.1:44422: connect: connection refused\""
+          ]
+        }
+      ],
+      "result_path": "/tmp/media-test-112d7a4-static/gb-recovery-cleanup-green/result.json",
+      "result_sha256": "24e153813a4c6842fc8b5f34e6bd15e85b3372b99ba480f08239be6ed98be265",
+      "log_classification": {
+        "expected_dead_or_paused_peer_bye_timeout": 9,
+        "observed_sipgo_shutdown_ref_warning": 6,
+        "expected_chrome_close_notify": 2,
+        "injected_media_unavailable": 10,
+        "unclassified": []
+      }
+    },
     "red_result_path": "/tmp/media-test-112d7a4-static/gb-recovery-fd-green/result.json",
     "red_result_sha256": "2313e849d93b13212eccdf15132e01abff80b2b22c4703177e4ec6b1329f705b",
     "red_duration_seconds": 20.41163022443652,
@@ -10448,7 +11193,8 @@
     }
   },
   "soak": {
-    "status": "NOT_RUN"
+    "status": "RUNNING_NOT_ACCEPTED",
+    "result_path": "/tmp/media-test-112d7a4-static/gb-soak-cleanup-green/result.json"
   },
   "sanitizer": {
     "executed": false,
