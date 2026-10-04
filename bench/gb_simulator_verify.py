@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 import re
+import resource
 import signal
 import sqlite3
 import subprocess
@@ -880,7 +881,8 @@ def system(args):
         "result": {"head": benchmark_head(), "status": "FAIL", "checks": [], "commands": [], "command": sys.argv,
             "environment": {"hostname": os.uname().nodename, "kernel": os.uname().release,
                 "cpu_count": os.cpu_count(), "os_release": Path('/etc/os-release').read_text(),
-                "python": sys.version, "meminfo": Path('/proc/meminfo').read_text()},
+                "python": sys.version, "meminfo": Path('/proc/meminfo').read_text(),
+                "rlimit_nofile": resource.getrlimit(resource.RLIMIT_NOFILE)},
             "binaries": {name: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                 for name, path in (("media", args.media), ("signaling", args.signaling), ("simulator", args.simulator))},
             "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}}

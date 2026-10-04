@@ -6,7 +6,7 @@ BASE_HEAD：`ab236fcbef8e624930723c37e46fd1bfc3e4dc7b`。
 
 生产二进制源码：`112d7a4d0fb2ff383b76c182cb618ffd29ec3841`。后续阶段提交仅修改测试脚本；二进制 SHA256 与构建机逐项核对。最终文档提交通过 `git log -1 --format=%H -- docs/gb28181_simulator_verification.md` 定位，避免循环引用自身 SHA。
 
-当前是阶段性记录，尚未完成整个验证：基线与 correctness 已验收；control 完整通过并记录 burst 容量边界；media 正在运行，recovery、长期 soak 尚未验收。未完成阶段不计入通过结果。
+当前是阶段性记录，尚未完成整个验证：基线、correctness、control 与 media 已验收，并记录 burst 与测试宿主 fd 边界；recovery、长期 soak 尚未验收。未完成阶段不计入通过结果。
 
 仅验证本产品与自有 simulator，**own-product simulator verification only**，不证明厂商互操作性，也不推导产品容量上限。控制面设备注册规模与媒体面同时 live 规模分开报告。
 
@@ -110,7 +110,29 @@ GB 基线三个 Chrome viewer 的 framesDecoded 分别从 52/27/2 增长到 121/
 
 ## Media、recovery 与长期 soak
 
-media 已在同一测试机运行，尚未完成整体验收；recovery 与 soak 尚未运行，按同一 runner 串行执行。必须完成多 live/viewer、packet loss、profile/worker、故障恢复、至少 30 分钟单 live/viewer 和 20 分钟多 live 才能结束整个 Goal。不能以运行中默认 `FAIL` 状态文件或一次采样判定任务终止。
+media 已完成两次运行组合覆盖；recovery 首次运行在 SIGKILL 清理断言处失败，正在定向复查，长期 soak 尚未运行。仍必须完成故障恢复、至少 30 分钟单 live/viewer 和 20 分钟多 live 才能结束整个 Goal。不能以运行中默认 `FAIL` 状态文件或一次采样判定任务终止。
+
+首次 media 阶段在 956.95 秒后因 500 路创建失败终止；此前 1/10/25/50/100/200 路均完成逐流前后真实 FLV 读取、10 秒稳态及清理。各档 media fd 为 28/46/76/126/226/426，停止后均回到 26，media UDP sockets 清零。该失败结果保留为 `gb-media-green/result.json`，没有覆盖为 PASS。
+
+定向 `strace` 复现证明测试 shell 的 `RLIMIT_NOFILE=1024` 是失败原因：创建 498 个 UDP receiver 后，下一次 `socket()` 返回 `EMFILE`。每条 receiver 使用 RTP/RTCP 两个 fd；相同二进制仅在测试子进程提高到 8192 后，500 个 receiver 全部创建成功，fd 为 1026。两次 probe 删除 receiver 后 fd 均回到 26、UDP sockets 清零，再创建成功，服务正常退出。证据为 `fd-boundary-red/result.json` 与 `fd-boundary-green/result.json`；这是测试宿主资源边界，不是产品媒体端口池硬上限，也不是媒体进程崩溃。
+
+后续通过测试 shell `ulimit -n 8192` 继续 500 路及尚未完成的 loss/profile/worker 场景，结果保存在新的 `gb-media-fd-green`；较低档位保留首次运行的真实证据，不要求重跑来抹去 RED。harness 现在记录实际 `rlimit_nofile`，未修改系统 limits、媒体端口范围或 queue capacity。恢复、soak、限速注销定向复验与最终 CTest 将在同一 runner 中串行执行。
+
+该次 media 续跑完整结束，16 项检查通过，1444.79 秒，16 个子进程均正常退出 0；与原运行已完成的六档较低 live 检查组成 22 项覆盖。结果 SHA256 为 `28d1a3afc927ee740f5c80ca6abac7186e76b6b33e661e6fd1549fb78637aec3`；harness SHA256 为 `b4b034fb183bc45ee388918d0aa2f6c5454d82d754e03fbe9def58e4332fa3ff`。
+
+| Media 场景 | 实际结果 |
+| --- | --- |
+| 真实 Chrome 1/3/8/16 viewer | 每个 viewer framesDecoded/bytesReceived 均增长，始终只有一次 INVITE/ACK、一路 upstream；16 viewer 初末分别为 377→424 至 4→51 帧 |
+| 500 active live | 每条流前后读取 4096 字节真实 FLV；10.09 秒稳态，500 INVITE/ACK、500 live，send_errors/phase_drops/UDP drops 为 0；累计 RTP 41286880 包、49197363152 字节，最后 500 BYE |
+| 500 live 资源与清理 | 稳态 media fd 1026/socket 1003、RSS 156464→156124 KiB、CPU 0.966 核；停止后 fd 26/socket 3、UDP sockets 清零、RSS 145376 KiB；旧 ticket 与 receiver 均不可再用 |
+| packet loss seed 42 | 0/1/5/10% 下 Chrome 最终 decoded 为 450/416/184/77，ICE/DTLS connected；100% 不建 viewer、不要求解码，RTP sent 为 0，stop/receiver/port cleanup 通过 |
+| normal/high profile | 直接使用 simulator 的既有 FFmpeg profile；各 10 秒窗 decoded 3→234、3→235，send_errors/phase_drops 为 0 |
+| simulator worker 组合 | 默认 16/16、1/1、32/32；各 10 路 live 前后真实读取、稳态和清理通过 |
+| 批量 Expires:0 | 10 路活跃媒体注销后 ticket/receiver/ports 清理，再注册与播放使用新的 live identity，媒体正常推进 |
+
+500 路稳态 heartbeat_fail 为 0，注销完成后的 final summary 为 84，属于并行 heartbeat 在 Expires:0 后被拒绝，不混入稳态。media 日志匹配 34 条全部为真实 Chrome 主动关闭后的 DTLS close_notify 终止，无其他匹配项。500 路仅作短稳态及生命周期验证，不替代尚未执行的 100 路长期 soak，也不定义最大容量。
+
+新增环境记录后，构建机再次完成 Go test/vet/race、普通与 fresh build 目录构建，日志为 `go-test-fd.log`、`go-vet-fd.log`、`go-race-fd.log`、`normal-build-fd.log`、`build-fd.log`；二进制哈希未变。恢复阶段尚未 GREEN，最终 CTest 未执行，不提前验收。
 
 ## 已发现问题与分类
 
@@ -118,6 +140,7 @@ media 已在同一测试机运行，尚未完成整体验收；recovery 与 soak
 2. **harness URI 问题**：测试机 Web RED 在直接 RTSP WHEP 的相对 `Location` 上错误连接端口 80。使用 `urljoin(response.url, location)` 后完整 24 项 GREEN；不修改产品路由或 WHEP resource。
 3. **harness 时序问题**：设备 API 按 expiresAt 即时显示 offline，channels 在每秒 expiry sweep 清理。100 设备 SIGKILL 三次观测，offline 到清空延迟为 0.524/0.622/0.638 秒。`offline()` 分别等待两个真实最终条件，三次 GREEN；未通过延长产品 timeout 掩盖清理。
 4. **harness 断言范围问题**：控制 RED 的 5000 设备全部 registered/Catalog，无 live/RTP/send error，但空 media worker phase 一次未调度产生 `phase_drops=1`。源码确认该计数也包含没有活跃 session 的空 phase。仅在 active-media 阶段要求 phase_drops 为 0；control 保留原始计数且明确要求零 RTP。修正后完整 control 21 项 GREEN，并单独保留 burst 容量边界。该次 harness SHA256 为 `196b452ebc9c81ba331e0e6f1db0f2a42b9ebbb7c36adce7e0f7d843316bdc8a`。
+5. **测试宿主资源边界**：原 SSH shell 的 fd 软上限 1024，500 路创建时出现 `EMFILE`。定向 RED/GREEN 证明原因并验证清理；只调整测试子进程的限额并记录，不修改产品代码，不将原失败伪装成全通过。
 
 日志错误按具体时序分类：设备删除后的 403 与故障注入退出是预期；delete/play 的取消返回已验证资源清理。Chrome 主动 peer.close 可产生 DTLS close_notify，底层 `SSL_ERROR_ZERO_RETURN` 被现有 session 记录为 `dtls failed` 并关闭 viewer，这不是媒体进程崩溃。不仅按字符串给所有日志一律 PASS，也不为了消除日志修改生产代码。
 

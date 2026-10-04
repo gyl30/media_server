@@ -5821,11 +5821,4631 @@
     ]
   },
   "media": {
-    "status": "RUNNING_NOT_ACCEPTED",
-    "result_path": "/tmp/media-test-112d7a4-static/gb-media-green/result.json"
+    "status": "PASS_COMBINED_RUNS_WITH_HOST_LIMIT_PRECONDITION",
+    "coverage": "six completed lower-live steps from the interrupted first run, plus sixteen continued checks; original FAIL remains recorded",
+    "completed_checks_total": 22,
+    "continued_result_path": "/tmp/media-test-112d7a4-static/gb-media-fd-green/result.json",
+    "continued_harness_sha256": "b4b034fb183bc45ee388918d0aa2f6c5454d82d754e03fbe9def58e4332fa3ff",
+    "nofile_precondition": {
+      "shell": "ulimit -n 8192",
+      "rlimit_nofile": [
+        8192,
+        8192
+      ],
+      "scope": "test subprocess tree only; no system or product capacity configuration changed"
+    },
+    "continued_attempt": {
+      "status": "PASS",
+      "head": "da881ce3ab784f300698346e2612d7eb61fb4d72",
+      "harness_sha256": "b4b034fb183bc45ee388918d0aa2f6c5454d82d754e03fbe9def58e4332fa3ff",
+      "command": [
+        "/tmp/media-test-112d7a4-static/bench/gb_simulator_verify.py",
+        "--stage",
+        "media",
+        "--media",
+        "/tmp/media-test-112d7a4-static/media_server",
+        "--signaling",
+        "/tmp/media-test-112d7a4-static/signaling",
+        "--simulator",
+        "/tmp/media-test-112d7a4-static/simulator",
+        "--ffmpeg",
+        "/tmp/media-test-112d7a4-static/ffmpeg",
+        "--browser",
+        "/tmp/media-test-112d7a4-static/chrome/chrome",
+        "--output",
+        "/tmp/media-test-112d7a4-static/gb-media-fd-green",
+        "--port-base",
+        "44420",
+        "--live-counts",
+        "500"
+      ],
+      "duration_seconds": 1444.7913693636656,
+      "browser_version": "153.0.8010.52",
+      "process_returncodes": {
+        "0000-media.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0001-signaling.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0002-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0003-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0004-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0005-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0006-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0007-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0008-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0009-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0010-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0011-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0012-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0013-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0014-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0015-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        }
+      },
+      "log_findings": [
+        {
+          "log": "/tmp/media-test-112d7a4-static/gb-media-fd-green/0000-media.log",
+          "matching_lines": 34,
+          "examples": [
+            "[2026-10-04 21:33:45.130] [error] webrtc dtls failed session cb56a3e5eca26b7b85539e58775c5610",
+            "[2026-10-04 21:33:50.806] [error] webrtc dtls failed session 50c436b59bf717f97d368aa7d6f56a8e",
+            "[2026-10-04 21:33:50.816] [error] webrtc dtls failed session 9b00780e44e23ba16d665434a7d58d14",
+            "[2026-10-04 21:33:50.826] [error] webrtc dtls failed session 620f4e9541999a9f5ce4e29b7d18143b",
+            "[2026-10-04 21:34:02.303] [error] webrtc dtls failed session e71f7c3684069b2a5e9d0127f7c1f6c7"
+          ]
+        }
+      ],
+      "result_path": "/tmp/media-test-112d7a4-static/gb-media-fd-green/result.json",
+      "result_sha256": "28d1a3afc927ee740f5c80ca6abac7186e76b6b33e661e6fd1549fb78637aec3",
+      "nofile": [
+        8192,
+        8192
+      ],
+      "checks": [
+        {
+          "name": "real Chrome viewers share upstream",
+          "viewers": 1,
+          "before": [
+            {
+              "framesDecoded": 1,
+              "bytesReceived": 11006,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          ],
+          "after": [
+            {
+              "framesDecoded": 47,
+              "bytesReceived": 188734,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          ],
+          "summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 0,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 4,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 0,
+            "live_active": 1,
+            "rtp_packets": 222,
+            "rtp_bytes": 268742,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 72,
+            "heap_bytes": 3069888,
+            "gc": 0
+          },
+          "resources": {
+            "processes": {
+              "media": {
+                "rss_kib": 25856,
+                "fd": 28,
+                "socket_count": 5,
+                "thread_count": 6,
+                "udp_drops": 0
+              },
+              "signaling": {
+                "rss_kib": 14848,
+                "fd": 9,
+                "socket_count": 3,
+                "thread_count": 9,
+                "udp_drops": 0
+              },
+              "simulator": {
+                "rss_kib": 11008,
+                "fd": 38,
+                "socket_count": 33,
+                "thread_count": 11,
+                "udp_drops": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "real Chrome viewers share upstream",
+          "viewers": 3,
+          "before": [
+            {
+              "framesDecoded": 52,
+              "bytesReceived": 196191,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 27,
+              "bytesReceived": 103542,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 2,
+              "bytesReceived": 13578,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          ],
+          "after": [
+            {
+              "framesDecoded": 96,
+              "bytesReceived": 367972,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 71,
+              "bytesReceived": 275323,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 46,
+              "bytesReceived": 185359,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          ],
+          "summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 1,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 9,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 0,
+            "live_active": 1,
+            "rtp_packets": 584,
+            "rtp_bytes": 702270,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 72,
+            "heap_bytes": 3016504,
+            "gc": 1
+          },
+          "resources": {
+            "processes": {
+              "media": {
+                "rss_kib": 27136,
+                "fd": 28,
+                "socket_count": 5,
+                "thread_count": 6,
+                "udp_drops": 0
+              },
+              "signaling": {
+                "rss_kib": 15104,
+                "fd": 9,
+                "socket_count": 3,
+                "thread_count": 9,
+                "udp_drops": 0
+              },
+              "simulator": {
+                "rss_kib": 12032,
+                "fd": 38,
+                "socket_count": 33,
+                "thread_count": 15,
+                "udp_drops": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "real Chrome viewers share upstream",
+          "viewers": 8,
+          "before": [
+            {
+              "framesDecoded": 177,
+              "bytesReceived": 682914,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 152,
+              "bytesReceived": 590265,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 127,
+              "bytesReceived": 500301,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 103,
+              "bytesReceived": 402934,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 78,
+              "bytesReceived": 299408,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 53,
+              "bytesReceived": 200115,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 28,
+              "bytesReceived": 107466,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 2,
+              "bytesReceived": 13578,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          ],
+          "after": [
+            {
+              "framesDecoded": 222,
+              "bytesReceived": 854146,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 197,
+              "bytesReceived": 765743,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 172,
+              "bytesReceived": 675779,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 148,
+              "bytesReceived": 578412,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 123,
+              "bytesReceived": 474886,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 98,
+              "bytesReceived": 375593,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 73,
+              "bytesReceived": 282944,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 48,
+              "bytesReceived": 192980,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          ],
+          "summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 3,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 21,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 0,
+            "live_active": 1,
+            "rtp_packets": 1454,
+            "rtp_bytes": 1736549,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 72,
+            "heap_bytes": 3114768,
+            "gc": 3
+          },
+          "resources": {
+            "processes": {
+              "media": {
+                "rss_kib": 29184,
+                "fd": 28,
+                "socket_count": 5,
+                "thread_count": 6,
+                "udp_drops": 0
+              },
+              "signaling": {
+                "rss_kib": 16640,
+                "fd": 9,
+                "socket_count": 3,
+                "thread_count": 16,
+                "udp_drops": 0
+              },
+              "simulator": {
+                "rss_kib": 12544,
+                "fd": 38,
+                "socket_count": 33,
+                "thread_count": 17,
+                "udp_drops": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "real Chrome viewers share upstream",
+          "viewers": 16,
+          "before": [
+            {
+              "framesDecoded": 377,
+              "bytesReceived": 1463707,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 352,
+              "bytesReceived": 1371058,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 327,
+              "bytesReceived": 1281094,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 303,
+              "bytesReceived": 1183727,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 278,
+              "bytesReceived": 1080201,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 253,
+              "bytesReceived": 980908,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 228,
+              "bytesReceived": 888259,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 203,
+              "bytesReceived": 798295,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 178,
+              "bytesReceived": 704213,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 153,
+              "bytesReceived": 600687,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 128,
+              "bytesReceived": 501394,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 103,
+              "bytesReceived": 408745,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 79,
+              "bytesReceived": 318781,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 54,
+              "bytesReceived": 221414,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 29,
+              "bytesReceived": 117888,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 4,
+              "bytesReceived": 18595,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          ],
+          "after": [
+            {
+              "framesDecoded": 424,
+              "bytesReceived": 1627358,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 399,
+              "bytesReceived": 1534709,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 374,
+              "bytesReceived": 1448397,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 349,
+              "bytesReceived": 1351030,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 324,
+              "bytesReceived": 1247504,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 299,
+              "bytesReceived": 1148211,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 275,
+              "bytesReceived": 1055562,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 250,
+              "bytesReceived": 965598,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 225,
+              "bytesReceived": 868231,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 200,
+              "bytesReceived": 764705,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 175,
+              "bytesReceived": 676418,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 150,
+              "bytesReceived": 583769,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 126,
+              "bytesReceived": 493805,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 101,
+              "bytesReceived": 396438,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 76,
+              "bytesReceived": 292912,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            {
+              "framesDecoded": 51,
+              "bytesReceived": 193619,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          ],
+          "summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 6,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 42,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 0,
+            "live_active": 1,
+            "rtp_packets": 2995,
+            "rtp_bytes": 3573981,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 72,
+            "heap_bytes": 2883680,
+            "gc": 7
+          },
+          "resources": {
+            "processes": {
+              "media": {
+                "rss_kib": 30464,
+                "fd": 28,
+                "socket_count": 5,
+                "thread_count": 6,
+                "udp_drops": 0
+              },
+              "signaling": {
+                "rss_kib": 16640,
+                "fd": 9,
+                "socket_count": 3,
+                "thread_count": 16,
+                "udp_drops": 0
+              },
+              "simulator": {
+                "rss_kib": 13052,
+                "fd": 38,
+                "socket_count": 33,
+                "thread_count": 18,
+                "udp_drops": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "multi-device active live",
+          "devices": 500,
+          "active_live": 500,
+          "each_stream_bytes_read": 4096,
+          "final_summary": {
+            "devices": 500,
+            "registered": 500,
+            "register_refresh": 35000,
+            "register_fail": 0,
+            "catalog": 500,
+            "heartbeat_ok": 113716,
+            "heartbeat_fail": 84,
+            "invite": 500,
+            "ack": 500,
+            "bye": 500,
+            "live_active": 0,
+            "rtp_packets": 41286880,
+            "rtp_bytes": 49197363152,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 77,
+            "heap_bytes": 7027472,
+            "gc": 593
+          },
+          "after": {
+            "elapsed_seconds": 1186.5210002958775,
+            "simulator": {
+              "devices": 500,
+              "registered": 500,
+              "register_refresh": 35000,
+              "register_fail": 0,
+              "catalog": 500,
+              "heartbeat_ok": 113716,
+              "heartbeat_fail": 84,
+              "invite": 500,
+              "ack": 500,
+              "bye": 500,
+              "live_active": 0,
+              "rtp_packets": 41286880,
+              "rtp_bytes": 49197363152,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 77,
+              "heap_bytes": 7027472,
+              "gc": 593
+            },
+            "processes": {
+              "media": {
+                "rss_kib": 145376,
+                "fd": 26,
+                "socket_count": 3,
+                "thread_count": 6,
+                "udp_drops": 0
+              },
+              "signaling": {
+                "rss_kib": 75404,
+                "fd": 8,
+                "socket_count": 2,
+                "thread_count": 37,
+                "udp_drops": 0
+              }
+            },
+            "media_udp_ports": []
+          },
+          "steady": {
+            "duration_seconds": 10.094250697642565,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 500,
+              "registered": 500,
+              "register_refresh": 17500,
+              "register_fail": 0,
+              "catalog": 500,
+              "heartbeat_ok": 57100,
+              "heartbeat_fail": 0,
+              "invite": 500,
+              "ack": 500,
+              "bye": 0,
+              "live_active": 500,
+              "rtp_packets": 20675596,
+              "rtp_bytes": 24638005480,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 8686592,
+              "gc": 307
+            },
+            "final_simulator": {
+              "devices": 500,
+              "registered": 500,
+              "register_refresh": 18000,
+              "register_fail": 0,
+              "catalog": 500,
+              "heartbeat_ok": 58100,
+              "heartbeat_fail": 0,
+              "invite": 500,
+              "ack": 500,
+              "bye": 0,
+              "live_active": 500,
+              "rtp_packets": 21041544,
+              "rtp_bytes": 25074491568,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 8966352,
+              "gc": 313
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 156464,
+                  "last": 156124,
+                  "min": 156124,
+                  "max": 156464,
+                  "median": 156294
+                },
+                "fd": {
+                  "first": 1026,
+                  "last": 1026,
+                  "min": 1026,
+                  "max": 1026,
+                  "median": 1026
+                },
+                "socket_count": {
+                  "first": 1003,
+                  "last": 1003,
+                  "min": 1003,
+                  "max": 1003,
+                  "median": 1003
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.9660357178012965,
+                  "min": 0.9660357178012965,
+                  "max": 0.9660357178012965,
+                  "median": 0.9660357178012965
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 73928,
+                  "last": 73928,
+                  "min": 73928,
+                  "max": 73928,
+                  "median": 73928
+                },
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8,
+                  "median": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2,
+                  "median": 2
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.10489529510769077,
+                  "min": 0.10489529510769077,
+                  "max": 0.10489529510769077,
+                  "median": 0.10489529510769077
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 24120,
+                  "last": 25080,
+                  "min": 24120,
+                  "max": 25080,
+                  "median": 24600
+                },
+                "fd": {
+                  "first": 41,
+                  "last": 41,
+                  "min": 41,
+                  "max": 41,
+                  "median": 41
+                },
+                "socket_count": {
+                  "first": 36,
+                  "last": 36,
+                  "min": 36,
+                  "max": 36,
+                  "median": 36
+                },
+                "thread_count": {
+                  "first": 35,
+                  "last": 35,
+                  "min": 35,
+                  "max": 35,
+                  "median": 35
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.9540476840747142,
+                  "min": 0.9540476840747142,
+                  "max": 0.9540476840747142,
+                  "median": 0.9540476840747142
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "deterministic packet loss lifecycle",
+          "percent": 0,
+          "seed": 42,
+          "viewer_before": {
+            "framesDecoded": 0,
+            "bytesReceived": 0,
+            "connectionState": "connecting",
+            "dtls": false
+          },
+          "viewer": {
+            "framesDecoded": 450,
+            "bytesReceived": 1748583,
+            "connectionState": "connected",
+            "dtls": true
+          },
+          "final_summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 3,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 23,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 1,
+            "live_active": 0,
+            "rtp_packets": 1602,
+            "rtp_bytes": 1909145,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 71,
+            "heap_bytes": 2150536,
+            "gc": 4
+          },
+          "steady": {
+            "duration_seconds": 20.064602471888065,
+            "sample_count": 3,
+            "initial_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 2,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 66,
+              "rtp_bytes": 81257,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 2339088,
+              "gc": 0
+            },
+            "final_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 3,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 22,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 1578,
+              "rtp_bytes": 1878587,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 73,
+              "heap_bytes": 1998264,
+              "gc": 4
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 138760,
+                  "last": 120536,
+                  "min": 120536,
+                  "max": 138760,
+                  "median": 120536
+                },
+                "fd": {
+                  "first": 29,
+                  "last": 29,
+                  "min": 29,
+                  "max": 29,
+                  "median": 29
+                },
+                "socket_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.008049330849117938,
+                  "min": 0.008049330849117938,
+                  "max": 0.009929229212109278,
+                  "median": 0.008989280030613608
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 75404,
+                  "last": 75404,
+                  "min": 75404,
+                  "max": 75404,
+                  "median": 75404
+                },
+                "fd": {
+                  "first": 9,
+                  "last": 9,
+                  "min": 9,
+                  "max": 9,
+                  "median": 9
+                },
+                "socket_count": {
+                  "first": 3,
+                  "last": 3,
+                  "min": 3,
+                  "max": 3,
+                  "median": 3
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.013080162629792341,
+                  "min": 0.0049646146060588715,
+                  "max": 0.013080162629792341,
+                  "median": 0.009022388617925606
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 10752,
+                  "last": 13044,
+                  "min": 10752,
+                  "max": 13044,
+                  "median": 12800
+                },
+                "fd": {
+                  "first": 38,
+                  "last": 38,
+                  "min": 38,
+                  "max": 38,
+                  "median": 38
+                },
+                "socket_count": {
+                  "first": 33,
+                  "last": 33,
+                  "min": 33,
+                  "max": 33,
+                  "median": 33
+                },
+                "thread_count": {
+                  "first": 11,
+                  "last": 18,
+                  "min": 11,
+                  "max": 18,
+                  "median": 16
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.15193111977680746,
+                  "min": 0.15193111977680746,
+                  "max": 0.15588889863025743,
+                  "median": 0.15391000920353243
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "deterministic packet loss lifecycle",
+          "percent": 1,
+          "seed": 42,
+          "viewer_before": {
+            "framesDecoded": 0,
+            "bytesReceived": 0,
+            "connectionState": "connecting",
+            "dtls": false
+          },
+          "viewer": {
+            "framesDecoded": 416,
+            "bytesReceived": 1709137,
+            "connectionState": "connected",
+            "dtls": true
+          },
+          "final_summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 3,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 23,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 1,
+            "live_active": 0,
+            "rtp_packets": 1669,
+            "rtp_bytes": 1988909,
+            "rtp_dropped": 8,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 71,
+            "heap_bytes": 2297456,
+            "gc": 4
+          },
+          "steady": {
+            "duration_seconds": 20.06118866056204,
+            "sample_count": 3,
+            "initial_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 2,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 66,
+              "rtp_bytes": 81270,
+              "rtp_dropped": 3,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 73,
+              "heap_bytes": 2351664,
+              "gc": 0
+            },
+            "final_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 3,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 23,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 1613,
+              "rtp_bytes": 1920908,
+              "rtp_dropped": 7,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 2010440,
+              "gc": 4
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 101712,
+                  "last": 89040,
+                  "min": 89040,
+                  "max": 102224,
+                  "median": 101712
+                },
+                "fd": {
+                  "first": 29,
+                  "last": 29,
+                  "min": 29,
+                  "max": 29,
+                  "median": 29
+                },
+                "socket_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.010068824415569331,
+                  "min": 0.007940973065273166,
+                  "max": 0.010068824415569331,
+                  "median": 0.00900489874042125
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 75404,
+                  "last": 75660,
+                  "min": 75404,
+                  "max": 75660,
+                  "median": 75404
+                },
+                "fd": {
+                  "first": 9,
+                  "last": 9,
+                  "min": 9,
+                  "max": 9,
+                  "median": 9
+                },
+                "socket_count": {
+                  "first": 3,
+                  "last": 3,
+                  "min": 3,
+                  "max": 3,
+                  "median": 3
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.002013764883110718,
+                  "min": 0.002013764883110718,
+                  "max": 0.019852432663201254,
+                  "median": 0.010933098773155986
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 10752,
+                  "last": 12488,
+                  "min": 10752,
+                  "max": 12488,
+                  "median": 12288
+                },
+                "fd": {
+                  "first": 38,
+                  "last": 38,
+                  "min": 38,
+                  "max": 38,
+                  "median": 38
+                },
+                "socket_count": {
+                  "first": 33,
+                  "last": 33,
+                  "min": 33,
+                  "max": 33,
+                  "median": 33
+                },
+                "thread_count": {
+                  "first": 10,
+                  "last": 18,
+                  "min": 10,
+                  "max": 18,
+                  "median": 17
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.1459979540255561,
+                  "min": 0.1459979540255561,
+                  "max": 0.14889324497400727,
+                  "median": 0.1474455994997817
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "deterministic packet loss lifecycle",
+          "percent": 5,
+          "seed": 42,
+          "viewer_before": {
+            "framesDecoded": 0,
+            "bytesReceived": 0,
+            "connectionState": "connecting",
+            "dtls": false
+          },
+          "viewer": {
+            "framesDecoded": 184,
+            "bytesReceived": 1314151,
+            "connectionState": "connected",
+            "dtls": true
+          },
+          "final_summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 3,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 24,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 1,
+            "live_active": 0,
+            "rtp_packets": 1570,
+            "rtp_bytes": 1862855,
+            "rtp_dropped": 74,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 71,
+            "heap_bytes": 2418536,
+            "gc": 4
+          },
+          "steady": {
+            "duration_seconds": 20.063014086335897,
+            "sample_count": 3,
+            "initial_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 2,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 59,
+              "rtp_bytes": 72906,
+              "rtp_dropped": 4,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 2324000,
+              "gc": 0
+            },
+            "final_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 3,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 22,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 1494,
+              "rtp_bytes": 1771900,
+              "rtp_dropped": 70,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 2008128,
+              "gc": 4
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 70048,
+                  "last": 70048,
+                  "min": 70048,
+                  "max": 70048,
+                  "median": 70048
+                },
+                "fd": {
+                  "first": 29,
+                  "last": 29,
+                  "min": 29,
+                  "max": 29,
+                  "median": 29
+                },
+                "socket_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.0060387665590811955,
+                  "min": 0.005955815866551307,
+                  "max": 0.0060387665590811955,
+                  "median": 0.005997291212816251
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 75660,
+                  "last": 75660,
+                  "min": 75660,
+                  "max": 75660,
+                  "median": 75660
+                },
+                "fd": {
+                  "first": 9,
+                  "last": 9,
+                  "min": 9,
+                  "max": 9,
+                  "median": 9
+                },
+                "socket_count": {
+                  "first": 3,
+                  "last": 3,
+                  "min": 3,
+                  "max": 3,
+                  "median": 3
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.0020129221863618286,
+                  "min": 0.0020129221863618286,
+                  "max": 0.0029779079332784746,
+                  "median": 0.0024954150598201514
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 10752,
+                  "last": 13056,
+                  "min": 10752,
+                  "max": 13056,
+                  "median": 12544
+                },
+                "fd": {
+                  "first": 38,
+                  "last": 38,
+                  "min": 38,
+                  "max": 38,
+                  "median": 38
+                },
+                "socket_count": {
+                  "first": 33,
+                  "last": 33,
+                  "min": 33,
+                  "max": 33,
+                  "median": 33
+                },
+                "thread_count": {
+                  "first": 10,
+                  "last": 18,
+                  "min": 10,
+                  "max": 18,
+                  "median": 17
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.1449303974180805,
+                  "min": 0.1449303974180805,
+                  "max": 0.14790276068615865,
+                  "median": 0.14641657905211958
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "deterministic packet loss lifecycle",
+          "percent": 10,
+          "seed": 42,
+          "viewer_before": {
+            "framesDecoded": 0,
+            "bytesReceived": 0,
+            "connectionState": "connecting",
+            "dtls": false
+          },
+          "viewer": {
+            "framesDecoded": 77,
+            "bytesReceived": 895786,
+            "connectionState": "connected",
+            "dtls": true
+          },
+          "final_summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 3,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 23,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 1,
+            "live_active": 0,
+            "rtp_packets": 1542,
+            "rtp_bytes": 1833578,
+            "rtp_dropped": 162,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 71,
+            "heap_bytes": 2359568,
+            "gc": 4
+          },
+          "steady": {
+            "duration_seconds": 20.062696054577827,
+            "sample_count": 3,
+            "initial_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 2,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 60,
+              "rtp_bytes": 73189,
+              "rtp_dropped": 9,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 2345528,
+              "gc": 0
+            },
+            "final_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 3,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 22,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 1478,
+              "rtp_bytes": 1753607,
+              "rtp_dropped": 157,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 2000592,
+              "gc": 4
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 70048,
+                  "last": 52672,
+                  "min": 52672,
+                  "max": 70048,
+                  "median": 70048
+                },
+                "fd": {
+                  "first": 29,
+                  "last": 29,
+                  "min": 29,
+                  "max": 29,
+                  "median": 29
+                },
+                "socket_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.006028353528404263,
+                  "min": 0.00397731361119899,
+                  "max": 0.006028353528404263,
+                  "median": 0.005002833569801627
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 75660,
+                  "last": 75916,
+                  "min": 75660,
+                  "max": 75916,
+                  "median": 75916
+                },
+                "fd": {
+                  "first": 9,
+                  "last": 9,
+                  "min": 9,
+                  "max": 9,
+                  "median": 9
+                },
+                "socket_count": {
+                  "first": 3,
+                  "last": 3,
+                  "min": 3,
+                  "max": 3,
+                  "median": 3
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.0020094511761285672,
+                  "min": 0.0020094511761285672,
+                  "max": 0.002982985208402069,
+                  "median": 0.002496218192265318
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 11008,
+                  "last": 13272,
+                  "min": 11008,
+                  "max": 13272,
+                  "median": 13272
+                },
+                "fd": {
+                  "first": 38,
+                  "last": 38,
+                  "min": 38,
+                  "max": 38,
+                  "median": 38
+                },
+                "socket_count": {
+                  "first": 33,
+                  "last": 33,
+                  "min": 33,
+                  "max": 33,
+                  "median": 33
+                },
+                "thread_count": {
+                  "first": 10,
+                  "last": 18,
+                  "min": 10,
+                  "max": 18,
+                  "median": 17
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.15171356379773704,
+                  "min": 0.15171356379773704,
+                  "max": 0.157103887642503,
+                  "median": 0.15440872572012002
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "deterministic packet loss lifecycle",
+          "percent": 100,
+          "seed": 42,
+          "viewer_before": null,
+          "viewer": null,
+          "final_summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 3,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 23,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 1,
+            "live_active": 0,
+            "rtp_packets": 0,
+            "rtp_bytes": 0,
+            "rtp_dropped": 1656,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 71,
+            "heap_bytes": 1748800,
+            "gc": 4
+          },
+          "steady": {
+            "duration_seconds": 20.062466260045767,
+            "sample_count": 3,
+            "initial_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 1,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 0,
+              "rtp_bytes": 0,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 73,
+              "heap_bytes": 2019256,
+              "gc": 0
+            },
+            "final_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 3,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 21,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 0,
+              "rtp_bytes": 0,
+              "rtp_dropped": 1571,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 3273112,
+              "gc": 3
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 52672,
+                  "last": 52672,
+                  "min": 52672,
+                  "max": 52672,
+                  "median": 52672
+                },
+                "fd": {
+                  "first": 28,
+                  "last": 28,
+                  "min": 28,
+                  "max": 28,
+                  "median": 28
+                },
+                "socket_count": {
+                  "first": 5,
+                  "last": 5,
+                  "min": 5,
+                  "max": 5,
+                  "median": 5
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 75916,
+                  "last": 75916,
+                  "min": 75916,
+                  "max": 75916,
+                  "median": 75916
+                },
+                "fd": {
+                  "first": 9,
+                  "last": 9,
+                  "min": 9,
+                  "max": 9,
+                  "median": 9
+                },
+                "socket_count": {
+                  "first": 3,
+                  "last": 3,
+                  "min": 3,
+                  "max": 3,
+                  "median": 3
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.0020064796749206812,
+                  "min": 0.0020064796749206812,
+                  "max": 0.0029873536626259206,
+                  "median": 0.0024969166687733007
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 10752,
+                  "last": 13568,
+                  "min": 10752,
+                  "max": 13568,
+                  "median": 12544
+                },
+                "fd": {
+                  "first": 38,
+                  "last": 38,
+                  "min": 38,
+                  "max": 38,
+                  "median": 38
+                },
+                "socket_count": {
+                  "first": 33,
+                  "last": 33,
+                  "min": 33,
+                  "max": 33,
+                  "median": 33
+                },
+                "thread_count": {
+                  "first": 11,
+                  "last": 19,
+                  "min": 11,
+                  "max": 19,
+                  "median": 17
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.1514892154565416,
+                  "min": 0.14837189857708177,
+                  "max": 0.1514892154565416,
+                  "median": 0.14993055701681168
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "existing generated media profile",
+          "profile": "normal",
+          "summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 1,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 14,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 1,
+            "live_active": 0,
+            "rtp_packets": 1387,
+            "rtp_bytes": 1743702,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 71,
+            "heap_bytes": 8713224,
+            "gc": 2
+          },
+          "steady": {
+            "duration_seconds": 10.07575324550271,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 3,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 213,
+              "rtp_bytes": 265000,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 7875344,
+              "gc": 1
+            },
+            "final_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 1,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 13,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 1323,
+              "rtp_bytes": 1667649,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 8404464,
+              "gc": 2
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 52928,
+                  "last": 53184,
+                  "min": 52928,
+                  "max": 53184,
+                  "median": 53056
+                },
+                "fd": {
+                  "first": 29,
+                  "last": 29,
+                  "min": 29,
+                  "max": 29,
+                  "median": 29
+                },
+                "socket_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.009989946781582191,
+                  "min": 0.009989946781582191,
+                  "max": 0.009989946781582191,
+                  "median": 0.009989946781582191
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 76172,
+                  "last": 37632,
+                  "min": 37632,
+                  "max": 76172,
+                  "median": 56902
+                },
+                "fd": {
+                  "first": 9,
+                  "last": 9,
+                  "min": 9,
+                  "max": 9,
+                  "median": 9
+                },
+                "socket_count": {
+                  "first": 3,
+                  "last": 3,
+                  "min": 3,
+                  "max": 3,
+                  "median": 3
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.006992962747114632,
+                  "min": 0.006992962747114632,
+                  "max": 0.006992962747114632,
+                  "median": 0.006992962747114632
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 16640,
+                  "last": 20992,
+                  "min": 16640,
+                  "max": 20992,
+                  "median": 18816
+                },
+                "fd": {
+                  "first": 38,
+                  "last": 38,
+                  "min": 38,
+                  "max": 38,
+                  "median": 38
+                },
+                "socket_count": {
+                  "first": 33,
+                  "last": 33,
+                  "min": 33,
+                  "max": 33,
+                  "median": 33
+                },
+                "thread_count": {
+                  "first": 15,
+                  "last": 16,
+                  "min": 15,
+                  "max": 16,
+                  "median": 15.5
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.14984920172386915,
+                  "min": 0.14984920172386915,
+                  "max": 0.14984920172386915,
+                  "median": 0.14984920172386915
+                }
+              }
+            },
+            "viewer_before": {
+              "framesDecoded": 3,
+              "bytesReceived": 25867,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            "viewer_after": {
+              "framesDecoded": 234,
+              "bytesReceived": 1388744,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          }
+        },
+        {
+          "name": "existing generated media profile",
+          "profile": "high",
+          "summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 1,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 14,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 1,
+            "live_active": 0,
+            "rtp_packets": 1794,
+            "rtp_bytes": 2320451,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 71,
+            "heap_bytes": 11003568,
+            "gc": 2
+          },
+          "steady": {
+            "duration_seconds": 10.07504615560174,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 3,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 272,
+              "rtp_bytes": 352162,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 10086376,
+              "gc": 1
+            },
+            "final_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 1,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 13,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 1710,
+              "rtp_bytes": 2211297,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 10583592,
+              "gc": 2
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 52656,
+                  "last": 52912,
+                  "min": 52656,
+                  "max": 52912,
+                  "median": 52784
+                },
+                "fd": {
+                  "first": 29,
+                  "last": 29,
+                  "min": 29,
+                  "max": 29,
+                  "median": 29
+                },
+                "socket_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.010988930507867511,
+                  "min": 0.010988930507867511,
+                  "max": 0.010988930507867511,
+                  "median": 0.010988930507867511
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 37632,
+                  "last": 37632,
+                  "min": 37632,
+                  "max": 37632,
+                  "median": 37632
+                },
+                "fd": {
+                  "first": 9,
+                  "last": 9,
+                  "min": 9,
+                  "max": 9,
+                  "median": 9
+                },
+                "socket_count": {
+                  "first": 3,
+                  "last": 3,
+                  "min": 3,
+                  "max": 3,
+                  "median": 3
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.0029969810475968745,
+                  "min": 0.0029969810475968745,
+                  "max": 0.0029969810475968745,
+                  "median": 0.0029969810475968745
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 19456,
+                  "last": 24320,
+                  "min": 19456,
+                  "max": 24320,
+                  "median": 21888
+                },
+                "fd": {
+                  "first": 38,
+                  "last": 38,
+                  "min": 38,
+                  "max": 38,
+                  "median": 38
+                },
+                "socket_count": {
+                  "first": 33,
+                  "last": 33,
+                  "min": 33,
+                  "max": 33,
+                  "median": 33
+                },
+                "thread_count": {
+                  "first": 15,
+                  "last": 16,
+                  "min": 15,
+                  "max": 16,
+                  "median": 15.5
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.1528460334274348,
+                  "min": 0.1528460334274348,
+                  "max": 0.1528460334274348,
+                  "median": 0.1528460334274348
+                }
+              }
+            },
+            "viewer_before": {
+              "framesDecoded": 3,
+              "bytesReceived": 39152,
+              "connectionState": "connected",
+              "dtls": true
+            },
+            "viewer_after": {
+              "framesDecoded": 235,
+              "bytesReceived": 1860028,
+              "connectionState": "connected",
+              "dtls": true
+            }
+          }
+        },
+        {
+          "name": "representative simulator workers",
+          "workers": "default 16/16",
+          "steady": {
+            "duration_seconds": 10.064967516809702,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 10,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 110,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 0,
+              "live_active": 10,
+              "rtp_packets": 7800,
+              "rtp_bytes": 9297820,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2410696,
+              "gc": 6
+            },
+            "final_simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 30,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 210,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 0,
+              "live_active": 10,
+              "rtp_packets": 15500,
+              "rtp_bytes": 18479900,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2363704,
+              "gc": 13
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 35780,
+                  "last": 35780,
+                  "min": 35780,
+                  "max": 35780,
+                  "median": 35780
+                },
+                "fd": {
+                  "first": 46,
+                  "last": 46,
+                  "min": 46,
+                  "max": 46,
+                  "median": 46
+                },
+                "socket_count": {
+                  "first": 23,
+                  "last": 23,
+                  "min": 23,
+                  "max": 23,
+                  "median": 23
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.026973049925985274,
+                  "min": 0.026973049925985274,
+                  "max": 0.026973049925985274,
+                  "median": 0.026973049925985274
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 29576,
+                  "last": 29832,
+                  "min": 29576,
+                  "max": 29832,
+                  "median": 29704
+                },
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8,
+                  "median": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2,
+                  "median": 2
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.00999001849110718,
+                  "min": 0.00999001849110718,
+                  "max": 0.00999001849110718,
+                  "median": 0.00999001849110718
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 13792,
+                  "last": 13752,
+                  "min": 13752,
+                  "max": 13792,
+                  "median": 13772
+                },
+                "fd": {
+                  "first": 41,
+                  "last": 41,
+                  "min": 41,
+                  "max": 41,
+                  "median": 41
+                },
+                "socket_count": {
+                  "first": 36,
+                  "last": 36,
+                  "min": 36,
+                  "max": 36,
+                  "median": 36
+                },
+                "thread_count": {
+                  "first": 21,
+                  "last": 21,
+                  "min": 21,
+                  "max": 21,
+                  "median": 21
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.17782232914169266,
+                  "min": 0.17782232914169266,
+                  "max": 0.17782232914169266,
+                  "median": 0.17782232914169266
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "representative simulator workers",
+          "workers": [
+            1,
+            1
+          ],
+          "steady": {
+            "duration_seconds": 10.062132027000189,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 10,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 121,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 0,
+              "live_active": 10,
+              "rtp_packets": 8380,
+              "rtp_bytes": 9996410,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 18,
+              "heap_bytes": 2108064,
+              "gc": 3
+            },
+            "final_simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 30,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 221,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 0,
+              "live_active": 10,
+              "rtp_packets": 15930,
+              "rtp_bytes": 18975720,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 19,
+              "heap_bytes": 3001152,
+              "gc": 5
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 36292,
+                  "last": 36292,
+                  "min": 36292,
+                  "max": 36292,
+                  "median": 36292
+                },
+                "fd": {
+                  "first": 46,
+                  "last": 46,
+                  "min": 46,
+                  "max": 46,
+                  "median": 46
+                },
+                "socket_count": {
+                  "first": 23,
+                  "last": 23,
+                  "min": 23,
+                  "max": 23,
+                  "median": 23
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.02996986647723521,
+                  "min": 0.02996986647723521,
+                  "max": 0.02996986647723521,
+                  "median": 0.02996986647723521
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 30088,
+                  "last": 30344,
+                  "min": 30088,
+                  "max": 30344,
+                  "median": 30216
+                },
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8,
+                  "median": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2,
+                  "median": 2
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.009989955492414103,
+                  "min": 0.009989955492414103,
+                  "max": 0.009989955492414103,
+                  "median": 0.009989955492414103
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 14080,
+                  "last": 14080,
+                  "min": 14080,
+                  "max": 14080,
+                  "median": 14080
+                },
+                "fd": {
+                  "first": 11,
+                  "last": 11,
+                  "min": 11,
+                  "max": 11,
+                  "median": 11
+                },
+                "socket_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "thread_count": {
+                  "first": 16,
+                  "last": 16,
+                  "min": 16,
+                  "max": 16,
+                  "median": 16
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.14185736799226817,
+                  "min": 0.14185736799226817,
+                  "max": 0.14185736799226817,
+                  "median": 0.14185736799226817
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "representative simulator workers",
+          "workers": [
+            32,
+            32
+          ],
+          "steady": {
+            "duration_seconds": 10.05551914125681,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 10,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 120,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 0,
+              "live_active": 10,
+              "rtp_packets": 8280,
+              "rtp_bytes": 9866540,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 142,
+              "heap_bytes": 2670392,
+              "gc": 6
+            },
+            "final_simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 30,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 220,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 0,
+              "live_active": 10,
+              "rtp_packets": 15780,
+              "rtp_bytes": 18785870,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 142,
+              "heap_bytes": 2819992,
+              "gc": 10
+            },
+            "resources": {
+              "media": {
+                "rss_kib": {
+                  "first": 37060,
+                  "last": 37060,
+                  "min": 37060,
+                  "max": 37060,
+                  "median": 37060
+                },
+                "fd": {
+                  "first": 46,
+                  "last": 46,
+                  "min": 46,
+                  "max": 46,
+                  "median": 46
+                },
+                "socket_count": {
+                  "first": 23,
+                  "last": 23,
+                  "min": 23,
+                  "max": 23,
+                  "median": 23
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6,
+                  "median": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.02499795051330739,
+                  "min": 0.02499795051330739,
+                  "max": 0.02499795051330739,
+                  "median": 0.02499795051330739
+                }
+              },
+              "signaling": {
+                "rss_kib": {
+                  "first": 30600,
+                  "last": 30600,
+                  "min": 30600,
+                  "max": 30600,
+                  "median": 30600
+                },
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8,
+                  "median": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2,
+                  "median": 2
+                },
+                "thread_count": {
+                  "first": 37,
+                  "last": 37,
+                  "min": 37,
+                  "max": 37,
+                  "median": 37
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.007999344164259615,
+                  "min": 0.007999344164259615,
+                  "max": 0.007999344164259615,
+                  "median": 0.007999344164259615
+                }
+              },
+              "simulator": {
+                "rss_kib": {
+                  "first": 13568,
+                  "last": 13808,
+                  "min": 13568,
+                  "max": 13808,
+                  "median": 13688
+                },
+                "fd": {
+                  "first": 73,
+                  "last": 73,
+                  "min": 73,
+                  "max": 73,
+                  "median": 73
+                },
+                "socket_count": {
+                  "first": 68,
+                  "last": 68,
+                  "min": 68,
+                  "max": 68,
+                  "median": 68
+                },
+                "thread_count": {
+                  "first": 22,
+                  "last": 22,
+                  "min": 22,
+                  "max": 22,
+                  "median": 22
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0,
+                  "median": 0
+                },
+                "cpu_cores": {
+                  "first": null,
+                  "last": 0.22098188253763731,
+                  "min": 0.22098188253763731,
+                  "max": 0.22098188253763731,
+                  "median": 0.22098188253763731
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "batch Expires:0 cleans active live/tickets and re-registration starts fresh media",
+          "devices": 10,
+          "active_live": 10
+        }
+      ],
+      "unexpected_exit": {}
+    },
+    "interrupted_attempt": {
+      "status": "FAIL",
+      "duration_seconds": 956.945888414979,
+      "error": "AssertionError: ('POST', '/api/devices/34020000001320000498/channels/34020000001320000499/play', 502, '{\"error\":\"live_start_failed\"}\\n')",
+      "result_path": "/tmp/media-test-112d7a4-static/gb-media-green/result.json",
+      "result_sha256": "562c3cda3232f884bddf174df0bf83e1a0fe785174f92e36325e60cd32908646",
+      "harness_sha256": "196b452ebc9c81ba331e0e6f1db0f2a42b9ebbb7c36adce7e0f7d843316bdc8a",
+      "process_returncodes": {
+        "0000-media.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0001-signaling.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0002-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0003-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0004-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0005-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0006-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0007-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0008-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0009-simulator.log": {
+          "actual": 0,
+          "expected": 0
+        }
+      },
+      "completed_checks": [
+        {
+          "name": "multi-device active live",
+          "devices": 1,
+          "active_live": 1,
+          "each_stream_bytes_read": 4096,
+          "final_summary": {
+            "devices": 1,
+            "registered": 1,
+            "register_refresh": 0,
+            "register_fail": 0,
+            "catalog": 1,
+            "heartbeat_ok": 4,
+            "heartbeat_fail": 0,
+            "invite": 1,
+            "ack": 1,
+            "bye": 1,
+            "live_active": 0,
+            "rtp_packets": 916,
+            "rtp_bytes": 1096466,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 71,
+            "heap_bytes": 2295616,
+            "gc": 2
+          },
+          "steady": {
+            "duration_seconds": 10.060229703783989,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 2,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 60,
+              "rtp_bytes": 74304,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 2290696,
+              "gc": 0
+            },
+            "final_simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 4,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 0,
+              "live_active": 1,
+              "rtp_packets": 813,
+              "rtp_bytes": 967983,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 72,
+              "heap_bytes": 1771544,
+              "gc": 2
+            },
+            "resources": {
+              "media": {
+                "fd": {
+                  "first": 28,
+                  "last": 28,
+                  "min": 28,
+                  "max": 28
+                },
+                "socket_count": {
+                  "first": 5,
+                  "last": 5,
+                  "min": 5,
+                  "max": 5
+                },
+                "rss_kib": {
+                  "first": 30208,
+                  "last": 30208,
+                  "min": 30208,
+                  "max": 30208
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "signaling": {
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2
+                },
+                "rss_kib": {
+                  "first": 17152,
+                  "last": 17152,
+                  "min": 17152,
+                  "max": 17152
+                },
+                "thread_count": {
+                  "first": 16,
+                  "last": 16,
+                  "min": 16,
+                  "max": 16
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "simulator": {
+                "fd": {
+                  "first": 38,
+                  "last": 38,
+                  "min": 38,
+                  "max": 38
+                },
+                "socket_count": {
+                  "first": 33,
+                  "last": 33,
+                  "min": 33,
+                  "max": 33
+                },
+                "rss_kib": {
+                  "first": 11264,
+                  "last": 13232,
+                  "min": 11264,
+                  "max": 13232
+                },
+                "thread_count": {
+                  "first": 8,
+                  "last": 17,
+                  "min": 8,
+                  "max": 17
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              }
+            }
+          },
+          "after": {
+            "label": "multi-live released",
+            "elapsed_seconds": 56.27849934250116,
+            "processes": {
+              "media": {
+                "cpu": 1.54,
+                "rss_kib": 30208,
+                "vmsize_kib": 236608,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 28636,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 0.25,
+                "rss_kib": 17152,
+                "vmsize_kib": 2383700,
+                "thread_count": 16,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 18711,
+                "fd": 8,
+                "socket_count": 2,
+                "udp_ports": [
+                  44424
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 1,
+              "registered": 1,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 1,
+              "heartbeat_ok": 4,
+              "heartbeat_fail": 0,
+              "invite": 1,
+              "ack": 1,
+              "bye": 1,
+              "live_active": 0,
+              "rtp_packets": 916,
+              "rtp_bytes": 1096466,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 71,
+              "heap_bytes": 2295616,
+              "gc": 2
+            },
+            "host": {
+              "mem_available_kib": 84625020,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "multi-device active live",
+          "devices": 10,
+          "active_live": 10,
+          "each_stream_bytes_read": 4096,
+          "final_summary": {
+            "devices": 10,
+            "registered": 10,
+            "register_refresh": 20,
+            "register_fail": 0,
+            "catalog": 10,
+            "heartbeat_ok": 76,
+            "heartbeat_fail": 0,
+            "invite": 10,
+            "ack": 10,
+            "bye": 10,
+            "live_active": 0,
+            "rtp_packets": 24180,
+            "rtp_bytes": 28808630,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 77,
+            "heap_bytes": 1931400,
+            "gc": 14
+          },
+          "steady": {
+            "duration_seconds": 10.050479270517826,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 0,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 32,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 0,
+              "live_active": 10,
+              "rtp_packets": 8250,
+              "rtp_bytes": 9827380,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2600656,
+              "gc": 4
+            },
+            "final_simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 10,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 52,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 0,
+              "live_active": 10,
+              "rtp_packets": 15780,
+              "rtp_bytes": 18785870,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2255840,
+              "gc": 8
+            },
+            "resources": {
+              "media": {
+                "fd": {
+                  "first": 46,
+                  "last": 46,
+                  "min": 46,
+                  "max": 46
+                },
+                "socket_count": {
+                  "first": 23,
+                  "last": 23,
+                  "min": 23,
+                  "max": 23
+                },
+                "rss_kib": {
+                  "first": 31744,
+                  "last": 31744,
+                  "min": 31744,
+                  "max": 31744
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "signaling": {
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2
+                },
+                "rss_kib": {
+                  "first": 18600,
+                  "last": 18600,
+                  "min": 18600,
+                  "max": 18600
+                },
+                "thread_count": {
+                  "first": 18,
+                  "last": 18,
+                  "min": 18,
+                  "max": 18
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "simulator": {
+                "fd": {
+                  "first": 41,
+                  "last": 41,
+                  "min": 41,
+                  "max": 41
+                },
+                "socket_count": {
+                  "first": 36,
+                  "last": 36,
+                  "min": 36,
+                  "max": 36
+                },
+                "rss_kib": {
+                  "first": 12800,
+                  "last": 13568,
+                  "min": 12800,
+                  "max": 13568
+                },
+                "thread_count": {
+                  "first": 20,
+                  "last": 20,
+                  "min": 20,
+                  "max": 20
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              }
+            }
+          },
+          "after": {
+            "label": "multi-live released",
+            "elapsed_seconds": 89.83324421942234,
+            "processes": {
+              "media": {
+                "cpu": 2.44,
+                "rss_kib": 31744,
+                "vmsize_kib": 236608,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 30300,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 0.53,
+                "rss_kib": 19624,
+                "vmsize_kib": 2532476,
+                "thread_count": 18,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 20799,
+                "fd": 8,
+                "socket_count": 2,
+                "udp_ports": [
+                  44424
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 10,
+              "registered": 10,
+              "register_refresh": 20,
+              "register_fail": 0,
+              "catalog": 10,
+              "heartbeat_ok": 76,
+              "heartbeat_fail": 0,
+              "invite": 10,
+              "ack": 10,
+              "bye": 10,
+              "live_active": 0,
+              "rtp_packets": 24180,
+              "rtp_bytes": 28808630,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 77,
+              "heap_bytes": 1931400,
+              "gc": 14
+            },
+            "host": {
+              "mem_available_kib": 84618176,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "multi-device active live",
+          "devices": 25,
+          "active_live": 25,
+          "each_stream_bytes_read": 4096,
+          "final_summary": {
+            "devices": 25,
+            "registered": 25,
+            "register_refresh": 75,
+            "register_fail": 0,
+            "catalog": 25,
+            "heartbeat_ok": 340,
+            "heartbeat_fail": 0,
+            "invite": 25,
+            "ack": 25,
+            "bye": 25,
+            "live_active": 0,
+            "rtp_packets": 120400,
+            "rtp_bytes": 143551925,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 77,
+            "heap_bytes": 2331208,
+            "gc": 36
+          },
+          "steady": {
+            "duration_seconds": 10.058456990867853,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 25,
+              "registered": 25,
+              "register_refresh": 25,
+              "register_fail": 0,
+              "catalog": 25,
+              "heartbeat_ok": 155,
+              "heartbeat_fail": 0,
+              "invite": 25,
+              "ack": 25,
+              "bye": 0,
+              "live_active": 25,
+              "rtp_packets": 50400,
+              "rtp_bytes": 60061800,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 3051024,
+              "gc": 15
+            },
+            "final_simulator": {
+              "devices": 25,
+              "registered": 25,
+              "register_refresh": 50,
+              "register_fail": 0,
+              "catalog": 25,
+              "heartbeat_ok": 205,
+              "heartbeat_fail": 0,
+              "invite": 25,
+              "ack": 25,
+              "bye": 0,
+              "live_active": 25,
+              "rtp_packets": 69800,
+              "rtp_bytes": 83199275,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2027688,
+              "gc": 21
+            },
+            "resources": {
+              "media": {
+                "fd": {
+                  "first": 76,
+                  "last": 76,
+                  "min": 76,
+                  "max": 76
+                },
+                "socket_count": {
+                  "first": 53,
+                  "last": 53,
+                  "min": 53,
+                  "max": 53
+                },
+                "rss_kib": {
+                  "first": 34296,
+                  "last": 34296,
+                  "min": 34296,
+                  "max": 34296
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "signaling": {
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2
+                },
+                "rss_kib": {
+                  "first": 21160,
+                  "last": 21160,
+                  "min": 21160,
+                  "max": 21160
+                },
+                "thread_count": {
+                  "first": 21,
+                  "last": 21,
+                  "min": 21,
+                  "max": 21
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "simulator": {
+                "fd": {
+                  "first": 41,
+                  "last": 41,
+                  "min": 41,
+                  "max": 41
+                },
+                "socket_count": {
+                  "first": 36,
+                  "last": 36,
+                  "min": 36,
+                  "max": 36
+                },
+                "rss_kib": {
+                  "first": 14680,
+                  "last": 15424,
+                  "min": 14680,
+                  "max": 15424
+                },
+                "thread_count": {
+                  "first": 22,
+                  "last": 22,
+                  "min": 22,
+                  "max": 22
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              }
+            }
+          },
+          "after": {
+            "label": "multi-live released",
+            "elapsed_seconds": 153.4952966235578,
+            "processes": {
+              "media": {
+                "cpu": 6.15,
+                "rss_kib": 34296,
+                "vmsize_kib": 236608,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 33426,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 1.22,
+                "rss_kib": 21136,
+                "vmsize_kib": 2902208,
+                "thread_count": 23,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 23382,
+                "fd": 8,
+                "socket_count": 2,
+                "udp_ports": [
+                  44424
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 25,
+              "registered": 25,
+              "register_refresh": 75,
+              "register_fail": 0,
+              "catalog": 25,
+              "heartbeat_ok": 340,
+              "heartbeat_fail": 0,
+              "invite": 25,
+              "ack": 25,
+              "bye": 25,
+              "live_active": 0,
+              "rtp_packets": 120400,
+              "rtp_bytes": 143551925,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 77,
+              "heap_bytes": 2331208,
+              "gc": 36
+            },
+            "host": {
+              "mem_available_kib": 84622808,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "multi-device active live",
+          "devices": 50,
+          "active_live": 50,
+          "each_stream_bytes_read": 4096,
+          "final_summary": {
+            "devices": 50,
+            "registered": 50,
+            "register_refresh": 350,
+            "register_fail": 0,
+            "catalog": 50,
+            "heartbeat_ok": 1240,
+            "heartbeat_fail": 0,
+            "invite": 50,
+            "ack": 50,
+            "bye": 50,
+            "live_active": 0,
+            "rtp_packets": 439100,
+            "rtp_bytes": 523483950,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 77,
+            "heap_bytes": 2216704,
+            "gc": 79
+          },
+          "steady": {
+            "duration_seconds": 10.054777842015028,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 50,
+              "registered": 50,
+              "register_refresh": 150,
+              "register_fail": 0,
+              "catalog": 50,
+              "heartbeat_ok": 600,
+              "heartbeat_fail": 0,
+              "invite": 50,
+              "ack": 50,
+              "bye": 0,
+              "live_active": 50,
+              "rtp_packets": 204900,
+              "rtp_bytes": 244172500,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 3244584,
+              "gc": 42
+            },
+            "final_simulator": {
+              "devices": 50,
+              "registered": 50,
+              "register_refresh": 200,
+              "register_fail": 0,
+              "catalog": 50,
+              "heartbeat_ok": 700,
+              "heartbeat_fail": 0,
+              "invite": 50,
+              "ack": 50,
+              "bye": 0,
+              "live_active": 50,
+              "rtp_packets": 242000,
+              "rtp_bytes": 288447400,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 2739208,
+              "gc": 48
+            },
+            "resources": {
+              "media": {
+                "fd": {
+                  "first": 126,
+                  "last": 126,
+                  "min": 126,
+                  "max": 126
+                },
+                "socket_count": {
+                  "first": 103,
+                  "last": 103,
+                  "min": 103,
+                  "max": 103
+                },
+                "rss_kib": {
+                  "first": 41180,
+                  "last": 41180,
+                  "min": 41180,
+                  "max": 41180
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "signaling": {
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2
+                },
+                "rss_kib": {
+                  "first": 23696,
+                  "last": 23696,
+                  "min": 23696,
+                  "max": 23696
+                },
+                "thread_count": {
+                  "first": 25,
+                  "last": 25,
+                  "min": 25,
+                  "max": 25
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "simulator": {
+                "fd": {
+                  "first": 41,
+                  "last": 41,
+                  "min": 41,
+                  "max": 41
+                },
+                "socket_count": {
+                  "first": 36,
+                  "last": 36,
+                  "min": 36,
+                  "max": 36
+                },
+                "rss_kib": {
+                  "first": 15640,
+                  "last": 15120,
+                  "min": 15120,
+                  "max": 15640
+                },
+                "thread_count": {
+                  "first": 28,
+                  "last": 28,
+                  "min": 28,
+                  "max": 28
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              }
+            }
+          },
+          "after": {
+            "label": "multi-live released",
+            "elapsed_seconds": 273.783389441669,
+            "processes": {
+              "media": {
+                "cpu": 18.28,
+                "rss_kib": 41644,
+                "vmsize_kib": 236608,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 40546,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 3.01,
+                "rss_kib": 24204,
+                "vmsize_kib": 3123692,
+                "thread_count": 26,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 27398,
+                "fd": 8,
+                "socket_count": 2,
+                "udp_ports": [
+                  44424
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 50,
+              "registered": 50,
+              "register_refresh": 350,
+              "register_fail": 0,
+              "catalog": 50,
+              "heartbeat_ok": 1240,
+              "heartbeat_fail": 0,
+              "invite": 50,
+              "ack": 50,
+              "bye": 50,
+              "live_active": 0,
+              "rtp_packets": 439100,
+              "rtp_bytes": 523483950,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 77,
+              "heap_bytes": 2216704,
+              "gc": 79
+            },
+            "host": {
+              "mem_available_kib": 84594944,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "multi-device active live",
+          "devices": 100,
+          "active_live": 100,
+          "each_stream_bytes_read": 4096,
+          "final_summary": {
+            "devices": 100,
+            "registered": 100,
+            "register_refresh": 1400,
+            "register_fail": 0,
+            "catalog": 100,
+            "heartbeat_ok": 4580,
+            "heartbeat_fail": 0,
+            "invite": 100,
+            "ack": 100,
+            "bye": 100,
+            "live_active": 0,
+            "rtp_packets": 1690839,
+            "rtp_bytes": 2014774519,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 77,
+            "heap_bytes": 3324400,
+            "gc": 144
+          },
+          "steady": {
+            "duration_seconds": 10.065350946038961,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 100,
+              "registered": 100,
+              "register_refresh": 600,
+              "register_fail": 0,
+              "catalog": 100,
+              "heartbeat_ok": 2280,
+              "heartbeat_fail": 0,
+              "invite": 100,
+              "ack": 100,
+              "bye": 0,
+              "live_active": 100,
+              "rtp_packets": 829000,
+              "rtp_bytes": 987952700,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 3373056,
+              "gc": 72
+            },
+            "final_simulator": {
+              "devices": 100,
+              "registered": 100,
+              "register_refresh": 700,
+              "register_fail": 0,
+              "catalog": 100,
+              "heartbeat_ok": 2480,
+              "heartbeat_fail": 0,
+              "invite": 100,
+              "ack": 100,
+              "bye": 0,
+              "live_active": 100,
+              "rtp_packets": 905100,
+              "rtp_bytes": 1078503700,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 3865320,
+              "gc": 79
+            },
+            "resources": {
+              "media": {
+                "fd": {
+                  "first": 226,
+                  "last": 226,
+                  "min": 226,
+                  "max": 226
+                },
+                "socket_count": {
+                  "first": 203,
+                  "last": 203,
+                  "min": 203,
+                  "max": 203
+                },
+                "rss_kib": {
+                  "first": 58724,
+                  "last": 58724,
+                  "min": 58724,
+                  "max": 58724
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "signaling": {
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2
+                },
+                "rss_kib": {
+                  "first": 30232,
+                  "last": 30232,
+                  "min": 30232,
+                  "max": 30232
+                },
+                "thread_count": {
+                  "first": 29,
+                  "last": 29,
+                  "min": 29,
+                  "max": 29
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "simulator": {
+                "fd": {
+                  "first": 41,
+                  "last": 41,
+                  "min": 41,
+                  "max": 41
+                },
+                "socket_count": {
+                  "first": 36,
+                  "last": 36,
+                  "min": 36,
+                  "max": 36
+                },
+                "rss_kib": {
+                  "first": 15944,
+                  "last": 14836,
+                  "min": 14836,
+                  "max": 15944
+                },
+                "thread_count": {
+                  "first": 26,
+                  "last": 26,
+                  "min": 26,
+                  "max": 26
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              }
+            }
+          },
+          "after": {
+            "label": "multi-live released",
+            "elapsed_seconds": 499.83163242042065,
+            "processes": {
+              "media": {
+                "cpu": 65,
+                "rss_kib": 57500,
+                "vmsize_kib": 262720,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 55278,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 8.35,
+                "rss_kib": 32280,
+                "vmsize_kib": 3419692,
+                "thread_count": 30,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 34722,
+                "fd": 8,
+                "socket_count": 2,
+                "udp_ports": [
+                  44424
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 100,
+              "registered": 100,
+              "register_refresh": 1400,
+              "register_fail": 0,
+              "catalog": 100,
+              "heartbeat_ok": 4580,
+              "heartbeat_fail": 0,
+              "invite": 100,
+              "ack": 100,
+              "bye": 100,
+              "live_active": 0,
+              "rtp_packets": 1690839,
+              "rtp_bytes": 2014774519,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 77,
+              "heap_bytes": 3324400,
+              "gc": 144
+            },
+            "host": {
+              "mem_available_kib": 84567108,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        },
+        {
+          "name": "multi-device active live",
+          "devices": 200,
+          "active_live": 200,
+          "each_stream_bytes_read": 4096,
+          "final_summary": {
+            "devices": 200,
+            "registered": 200,
+            "register_refresh": 5400,
+            "register_fail": 0,
+            "catalog": 200,
+            "heartbeat_ok": 17941,
+            "heartbeat_fail": 19,
+            "invite": 200,
+            "ack": 200,
+            "bye": 200,
+            "live_active": 0,
+            "rtp_packets": 6709925,
+            "rtp_bytes": 7996063748,
+            "rtp_dropped": 0,
+            "send_errors": 0,
+            "phase_drops": 0,
+            "goroutines": 77,
+            "heap_bytes": 3691968,
+            "gc": 256
+          },
+          "steady": {
+            "duration_seconds": 10.070456765592098,
+            "sample_count": 2,
+            "initial_simulator": {
+              "devices": 200,
+              "registered": 200,
+              "register_refresh": 2600,
+              "register_fail": 0,
+              "catalog": 200,
+              "heartbeat_ok": 8920,
+              "heartbeat_fail": 0,
+              "invite": 200,
+              "ack": 200,
+              "bye": 0,
+              "live_active": 200,
+              "rtp_packets": 3306600,
+              "rtp_bytes": 3940341000,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 3957384,
+              "gc": 132
+            },
+            "final_simulator": {
+              "devices": 200,
+              "registered": 200,
+              "register_refresh": 2800,
+              "register_fail": 0,
+              "catalog": 200,
+              "heartbeat_ok": 9320,
+              "heartbeat_fail": 0,
+              "invite": 200,
+              "ack": 200,
+              "bye": 0,
+              "live_active": 200,
+              "rtp_packets": 3460032,
+              "rtp_bytes": 4122414568,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 78,
+              "heap_bytes": 4685368,
+              "gc": 138
+            },
+            "resources": {
+              "media": {
+                "fd": {
+                  "first": 426,
+                  "last": 426,
+                  "min": 426,
+                  "max": 426
+                },
+                "socket_count": {
+                  "first": 403,
+                  "last": 403,
+                  "min": 403,
+                  "max": 403
+                },
+                "rss_kib": {
+                  "first": 89772,
+                  "last": 89772,
+                  "min": 89772,
+                  "max": 89772
+                },
+                "thread_count": {
+                  "first": 6,
+                  "last": 6,
+                  "min": 6,
+                  "max": 6
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "signaling": {
+                "fd": {
+                  "first": 8,
+                  "last": 8,
+                  "min": 8,
+                  "max": 8
+                },
+                "socket_count": {
+                  "first": 2,
+                  "last": 2,
+                  "min": 2,
+                  "max": 2
+                },
+                "rss_kib": {
+                  "first": 42728,
+                  "last": 41684,
+                  "min": 41684,
+                  "max": 42728
+                },
+                "thread_count": {
+                  "first": 35,
+                  "last": 35,
+                  "min": 35,
+                  "max": 35
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              },
+              "simulator": {
+                "fd": {
+                  "first": 41,
+                  "last": 41,
+                  "min": 41,
+                  "max": 41
+                },
+                "socket_count": {
+                  "first": 36,
+                  "last": 36,
+                  "min": 36,
+                  "max": 36
+                },
+                "rss_kib": {
+                  "first": 18624,
+                  "last": 19360,
+                  "min": 18624,
+                  "max": 19360
+                },
+                "thread_count": {
+                  "first": 29,
+                  "last": 29,
+                  "min": 29,
+                  "max": 29
+                },
+                "udp_drops": {
+                  "first": 0,
+                  "last": 0,
+                  "min": 0,
+                  "max": 0
+                }
+              }
+            }
+          },
+          "after": {
+            "label": "multi-live released",
+            "elapsed_seconds": 946.8753129765391,
+            "processes": {
+              "media": {
+                "cpu": 242.33,
+                "rss_kib": 86236,
+                "vmsize_kib": 309824,
+                "thread_count": 6,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 83494,
+                "fd": 26,
+                "socket_count": 3,
+                "udp_ports": []
+              },
+              "signaling": {
+                "cpu": 25.32,
+                "rss_kib": 43460,
+                "vmsize_kib": 3928748,
+                "thread_count": 36,
+                "udp_tx_queue_bytes": 0,
+                "udp_rx_queue_bytes": 0,
+                "udp_drops": 0,
+                "pss_kib": 46522,
+                "fd": 8,
+                "socket_count": 2,
+                "udp_ports": [
+                  44424
+                ]
+              }
+            },
+            "simulator": {
+              "devices": 200,
+              "registered": 200,
+              "register_refresh": 5400,
+              "register_fail": 0,
+              "catalog": 200,
+              "heartbeat_ok": 17941,
+              "heartbeat_fail": 19,
+              "invite": 200,
+              "ack": 200,
+              "bye": 200,
+              "live_active": 0,
+              "rtp_packets": 6709925,
+              "rtp_bytes": 7996063748,
+              "rtp_dropped": 0,
+              "send_errors": 0,
+              "phase_drops": 0,
+              "goroutines": 77,
+              "heap_bytes": 3691968,
+              "gc": 256
+            },
+            "host": {
+              "mem_available_kib": 84521032,
+              "swap_free_kib": 2097148,
+              "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=8088\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7942\n",
+              "swap_io": {
+                "pswpin": 0,
+                "pswpout": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "host_fd_limit_probes": {
+      "scope": "temporary direct media receiver API probe, not full live playback",
+      "red": {
+        "limit": 1024,
+        "status": "PASS",
+        "media_pid": 1565548,
+        "first_failure": {
+          "index": 498,
+          "status": 500,
+          "body": "{\"error\":\"operation_failed\"}"
+        },
+        "created": 498,
+        "fd_at_boundary": 1022,
+        "released": {
+          "socket_count": 3,
+          "udp_ports": []
+        },
+        "fd_after": 26,
+        "retry_after_cleanup": 201,
+        "returncode": 0,
+        "emfile": [
+          "socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) = -1 EMFILE (打开的文件过多)"
+        ],
+        "result_path": "/tmp/media-test-112d7a4-static/fd-boundary-red/result.json",
+        "result_sha256": "7be6429381e7f90f854021ce74a53f08d75129a773a7541207897ded9c761190"
+      },
+      "green": {
+        "limit": 8192,
+        "status": "PASS",
+        "media_pid": 1565557,
+        "created": 500,
+        "fd_at_boundary": 1026,
+        "released": {
+          "socket_count": 3,
+          "udp_ports": []
+        },
+        "fd_after": 26,
+        "retry_after_cleanup": 201,
+        "returncode": 0,
+        "emfile": [],
+        "result_path": "/tmp/media-test-112d7a4-static/fd-boundary-green/result.json",
+        "result_sha256": "8d4b12c3b48f054bf7dada104e2f59d64cd9d6d72025c69bf981e740fec9899a"
+      }
+    }
   },
   "recovery": {
-    "status": "NOT_RUN"
+    "status": "RED_HARNESS_TIMING_UNDER_REVIEW",
+    "red_result_path": "/tmp/media-test-112d7a4-static/gb-recovery-fd-green/result.json",
+    "red_result_sha256": "2313e849d93b13212eccdf15132e01abff80b2b22c4703177e4ec6b1329f705b",
+    "red_duration_seconds": 20.41163022443652,
+    "error": "immediate receiver_gone assertion after offline/channels; asynchronous BYE cleanup still running",
+    "observation": {
+      "status": "PASS",
+      "result_path": "/tmp/media-test-112d7a4-static/active-expiry-observation-run/result.json",
+      "result_sha256": "ccc02464fef29eeb49070484ea9f73feda95b39d77a99029e94c4646c4c40d9b",
+      "duration_seconds": 67.23490168899298,
+      "checks": [
+        {
+          "round": 1,
+          "cleanup_after_offline_seconds": 9.000299956649542,
+          "initial_udp_ports": [
+            49152,
+            49153,
+            49154,
+            49155,
+            49156,
+            49157,
+            49158
+          ],
+          "final_udp_ports": [],
+          "receiver_statuses": [
+            404,
+            404,
+            404
+          ],
+          "viewer_resource_status": 404,
+          "device_rows": 10
+        },
+        {
+          "round": 2,
+          "cleanup_after_offline_seconds": 9.000499837100506,
+          "initial_udp_ports": [
+            49152,
+            49153,
+            49154,
+            49155,
+            49156,
+            49158,
+            49159
+          ],
+          "final_udp_ports": [],
+          "receiver_statuses": [
+            404,
+            404,
+            404
+          ],
+          "viewer_resource_status": 404,
+          "device_rows": 10
+        },
+        {
+          "round": 3,
+          "cleanup_after_offline_seconds": 8.999219346791506,
+          "initial_udp_ports": [
+            49152,
+            49153,
+            49154,
+            49155,
+            49156,
+            49157,
+            49158
+          ],
+          "final_udp_ports": [],
+          "receiver_statuses": [
+            404,
+            404,
+            404
+          ],
+          "viewer_resource_status": 404,
+          "device_rows": 10
+        }
+      ],
+      "process_returncodes": {
+        "0000-media.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0001-signaling.log": {
+          "actual": 0,
+          "expected": 0
+        },
+        "0002-simulator.log": {
+          "actual": -9,
+          "expected": -9
+        },
+        "0003-simulator.log": {
+          "actual": -9,
+          "expected": -9
+        },
+        "0004-simulator.log": {
+          "actual": -9,
+          "expected": -9
+        }
+      },
+      "log_findings": [
+        {
+          "log": "/tmp/media-test-112d7a4-static/active-expiry-observation-run/0001-signaling.log",
+          "matching_lines": 9,
+          "examples": [
+            "time=2026-10-04T22:03:28.502+08:00 level=WARN msg=\"live BYE failed\" stream_id=395255d8-f53f-46f5-9bc4-1493e8062dbe error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:03:31.504+08:00 level=WARN msg=\"live BYE failed\" stream_id=18d9a073-ef08-42f4-880e-e8125eabf9f3 error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:03:34.506+08:00 level=WARN msg=\"live BYE failed\" stream_id=7cde2529-c5f0-4f07-90c9-48018cd9aa10 error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:03:50.501+08:00 level=WARN msg=\"live BYE failed\" stream_id=aac05a37-f7cc-4608-83e2-c569be28fa20 error=\"context deadline exceeded\"",
+            "time=2026-10-04T22:03:53.503+08:00 level=WARN msg=\"live BYE failed\" stream_id=8c9dae02-115d-44c4-8523-cf490af7ab69 error=\"context deadline exceeded\""
+          ]
+        }
+      ]
+    }
   },
   "soak": {
     "status": "NOT_RUN"
