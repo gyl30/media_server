@@ -8,7 +8,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -136,7 +136,7 @@ def main():
                         result["requests"].append({"method": response.request.method, "url": response.url,
                             "status": response.status, "location": location})
                         if response.request.method == "POST" and response.status == 201 and location:
-                            item.resources.append(location)
+                            item.resources.append(urljoin(response.url, location))
                     item.on("response", response_record)
                     item.goto(f"http://127.0.0.1:{base+3}/")
                     observe_ownership(item)
