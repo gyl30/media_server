@@ -1,0 +1,310 @@
+{
+  "base_head": "9239dcaf26ef68a4e144b1aa951b6a04290a53a9",
+  "code_head": "e8e03e6b0c257f57f6188caaec78578a07e2f022",
+  "final_head_resolution": "git log -1 --format=%H -- docs/gb28181_web_ui.md",
+  "status": "PASS",
+  "ui": {
+    "structure": [
+      "device_list",
+      "device_details_and_channels",
+      "shared_whep_player"
+    ],
+    "polling_ms": 2500,
+    "framework": null,
+    "rtsp_source_ui_preserved": true
+  },
+  "tests": {
+    "go_test": {
+      "command": "go test -count=1 ./...",
+      "status": "PASS",
+      "log": "/tmp/media_server_web_ui-9239dca/final-go-test.log"
+    },
+    "go_vet": {
+      "command": "go vet ./...",
+      "status": "PASS",
+      "log": "/tmp/media_server_web_ui-9239dca/final-go-vet.log"
+    },
+    "go_race": {
+      "command": "go test -race -count=1 ./...",
+      "status": "PASS",
+      "log": "/tmp/media_server_web_ui-9239dca/final-go-race.log"
+    },
+    "normal_build": {
+      "command": "cmake --build build -j12",
+      "status": "PASS",
+      "log": "/tmp/media_server_web_ui-9239dca/final-build.log"
+    },
+    "ctest": {
+      "command": "ctest --test-dir build --output-on-failure",
+      "status": "PASS",
+      "passed": 14,
+      "total": 14,
+      "duration_seconds": 22.8,
+      "after_e2e_exit": true,
+      "log": "/tmp/media_server_web_ui-9239dca/final-ctest.log"
+    },
+    "sanitizers": {
+      "executed": false,
+      "reason": "C++ production unchanged; explicitly not required for this Goal"
+    },
+    "ack_bye_fixture_regression": {
+      "before": "late ACK occasionally fails after BYE removed dialog",
+      "after": "20 targeted repetitions and final full/race PASS",
+      "production_changed": false
+    },
+    "rtsp_media_request_contract": {
+      "red": "media rejects extra source_id with 400",
+      "green": "Go contract test and real RTSP UI PASS",
+      "production_change": "omit source_id from media request; C++ unchanged"
+    }
+  },
+  "browser_e2e": {
+    "browser_version": "153.0.8010.52",
+    "duration_seconds": 78.47401497513056,
+    "checks": [
+      "UI adds persistent device and shows name/ID/offline",
+      "duplicate error and offline detail use Chinese text",
+      "REGISTER and Catalog appear through UI polling",
+      "OFF channel cannot be played and offline device never polls channels",
+      "UI play consumes ticket and Chrome H264 decoder advances",
+      "three independent UI viewers decode from one INVITE and one active upstream",
+      "closing viewer leaves shared live; replay rejoins the same generation",
+      "reload shows existing live and UI replay does not issue another INVITE",
+      "stopping live ends all three UI viewers",
+      "UI live stop ends player and replay creates a new generation",
+      "Expires:0 clears channels and ends the UI player while device stays visible",
+      "REGISTER after offline restores Catalog and UI playback",
+      "real 30 second ticket expiry triggers one fresh ticket and UI playback recovers",
+      "two invalid tickets stop with Chinese failure and no unbounded retry",
+      "delete pending disables controls; cleanup failure keeps device/detail/player",
+      "viewer DELETE failure still closes local peer and clears video",
+      "back during pending offer closes peer and deletes the late resource without reviving player",
+      "UI deletion confirms and returns to empty device list",
+      "deleted device REGISTER is rejected with 403",
+      "retained RTSP UI add/edit/start/preview uses the same H264/Opus player",
+      "Chrome autoplay denial shows an explicit unmuted playback button",
+      "RTSP UI stop/restart/delete preserve operations and release its viewer"
+    ],
+    "viewer_stats": {
+      "before": {
+        "framesDecoded": 3,
+        "bytesReceived": 17997,
+        "codec": "video/H264",
+        "connectionState": "connected",
+        "iceGatheringState": "complete",
+        "dtlsConnected": true,
+        "audio": null
+      },
+      "after": {
+        "framesDecoded": 51,
+        "bytesReceived": 202127,
+        "codec": "video/H264",
+        "connectionState": "connected",
+        "iceGatheringState": "complete",
+        "dtlsConnected": true,
+        "audio": null
+      }
+    },
+    "multi_viewer": {
+      "before": [
+        {
+          "framesDecoded": 101,
+          "bytesReceived": 389908,
+          "codec": "video/H264",
+          "connectionState": "connected",
+          "iceGatheringState": "complete",
+          "dtlsConnected": true,
+          "audio": null
+        },
+        {
+          "framesDecoded": 26,
+          "bytesReceived": 108002,
+          "codec": "video/H264",
+          "connectionState": "connected",
+          "iceGatheringState": "complete",
+          "dtlsConnected": true,
+          "audio": null
+        },
+        {
+          "framesDecoded": 1,
+          "bytesReceived": 10635,
+          "codec": "video/H264",
+          "connectionState": "connected",
+          "iceGatheringState": "complete",
+          "dtlsConnected": true,
+          "audio": null
+        }
+      ],
+      "after": [
+        {
+          "framesDecoded": 148,
+          "bytesReceived": 577811,
+          "codec": "video/H264",
+          "connectionState": "connected",
+          "iceGatheringState": "complete",
+          "dtlsConnected": true,
+          "audio": null
+        },
+        {
+          "framesDecoded": 73,
+          "bytesReceived": 295905,
+          "codec": "video/H264",
+          "connectionState": "connected",
+          "iceGatheringState": "complete",
+          "dtlsConnected": true,
+          "audio": null
+        },
+        {
+          "framesDecoded": 48,
+          "bytesReceived": 198538,
+          "codec": "video/H264",
+          "connectionState": "connected",
+          "iceGatheringState": "complete",
+          "dtlsConnected": true,
+          "audio": null
+        }
+      ],
+      "counters": {
+        "devices": 1,
+        "registered": 1,
+        "register_refresh": 2,
+        "register_fail": 0,
+        "catalog": 1,
+        "heartbeat_ok": 15,
+        "heartbeat_fail": 0,
+        "invite": 1,
+        "ack": 1,
+        "bye": 0,
+        "live_active": 1,
+        "rtp_packets": 618,
+        "rtp_bytes": 736216,
+        "rtp_dropped": 0,
+        "send_errors": 0,
+        "phase_drops": 0,
+        "goroutines": 43,
+        "heap_bytes": 2038664,
+        "gc": 2
+      }
+    },
+    "audio_video": {
+      "before": {
+        "framesDecoded": 2,
+        "bytesReceived": 13578,
+        "codec": "video/H264",
+        "connectionState": "connected",
+        "iceGatheringState": "complete",
+        "dtlsConnected": true,
+        "audio": {
+          "codec": "audio/opus",
+          "samples": 2400,
+          "bytesReceived": 902
+        }
+      },
+      "after": {
+        "framesDecoded": 52,
+        "bytesReceived": 214680,
+        "codec": "video/H264",
+        "connectionState": "connected",
+        "iceGatheringState": "complete",
+        "dtlsConnected": true,
+        "audio": {
+          "codec": "audio/opus",
+          "samples": 97920,
+          "bytesReceived": 19980
+        }
+      }
+    },
+    "ticket_expiry": {
+      "wait_seconds": 31,
+      "offer_statuses": [
+        404,
+        201
+      ],
+      "fresh_ticket_retries": 1
+    },
+    "page_errors": [],
+    "process_returncodes": {
+      "media.log": 0,
+      "signaling.log": 0,
+      "simulator.log": 0,
+      "simulator-reregister.log": 0,
+      "simulator-rejected.log": 1,
+      "audio-publisher.log": 255
+    },
+    "source_sha256": {
+      "signaling/web/whep.js": "0486689fb3f7a3a20289e9793fefb7b312ac23c2f0344d1e40d51801e3d1a887",
+      "signaling/web/icons.svg": "33ac0b0dba1a4dce71367b5da88f2708d3b42b3aa22fcdd661a7cc93ce7c1f82",
+      "signaling/web/favicon.svg": "2d1caa2db3e73847306b460c47c33da1950cdb55405700deb08fa723bea068b2",
+      "signaling/web/index.html": "de7fcc2d7a1b5b745ed7a73cbc03e1ad0996972428d856b65f7667ab8983b05d",
+      "signaling/web/api.js": "acfac44e9eed33b2654874434f8c81725f656e66c546120089ebf09158390644",
+      "signaling/web/style.css": "a2875fcb3a0b6c88d78b0f266d68600ae654fc2d2953a10aed4303195c9e46fc",
+      "signaling/web/app.js": "47c8d3fe2887daf14e63687aacd0d6dba25dbcfb242d90c0807f9b754772e604",
+      "signaling/media_server_http.go": "ee8d1de3a7f8748c89d5c97775be71ba58a1019d5cb3d3e4f8fd495493df5570",
+      "signaling/source_control_http.go": "8734de89a39f4591056dbc23b861f1f87de10180941a132f19ca48ed7e2bbfbc"
+    },
+    "execution_head_before_stage_commit": "3de890a78be9f60ec51002534f4b1d15ff5f4cfc",
+    "source_hashes_match_code_head": true,
+    "raw_result": "/tmp/media_server_web_ui-9239dca/full-final-2/result.json",
+    "command": "python3 bench/gb_web_ui_verify.py --signaling /tmp/media_server_web_ui-9239dca/signaling --simulator /tmp/media_server_web_ui-9239dca/simulator --output /tmp/media_server_web_ui-9239dca/full-final-2",
+    "autoplay_policy": "document-user-activation-required",
+    "autoplay_denial_test": "CDP Runtime.evaluate with userGesture=false; actual Chrome policy, no play() mock",
+    "fault_injection": [
+      "OFF channel response",
+      "two invalid WHEP tickets",
+      "device DELETE 502",
+      "WHEP resource DELETE 502",
+      "held successful offer response"
+    ],
+    "real_integration": [
+      "UI add/delete",
+      "REGISTER/Catalog",
+      "SIP INVITE/ACK/BYE",
+      "UDP RTP",
+      "WHEP H264 decode",
+      "three UI viewers/single upstream",
+      "refresh/rejoin",
+      "live stop/new generation",
+      "Expires:0/re-register",
+      "31 second ticket expiry",
+      "deleted device REGISTER 403",
+      "RTSP UI CRUD/start/stop/preview",
+      "H264/Opus decode",
+      "autoplay denial/resume"
+    ],
+    "expected_nonzero_exits": {
+      "simulator-rejected.log": "1: expected REGISTER 403",
+      "audio-publisher.log": "255: FFmpeg terminated by SIGTERM during cleanup"
+    }
+  },
+  "production_changes": {
+    "insertions": 391,
+    "deletions": 323,
+    "net_lines": 68,
+    "web_net_lines": 69,
+    "go_backend_net_lines": -1,
+    "cpp_files_changed": [],
+    "gb_signaling_live_ticket_changed": false,
+    "rtsp_minimal_contract_fix": [
+      "signaling/media_server_http.go",
+      "signaling/source_control_http.go"
+    ]
+  },
+  "mvp_boundaries": {
+    "desktop_first": true,
+    "user_auth": false,
+    "rbac": false,
+    "jwt": false,
+    "sse_websocket": false,
+    "viewer_count": false,
+    "idle_auto_stop": false,
+    "new_play_authorization": [
+      "WHEP"
+    ],
+    "hls_rtsp_flv_ui_authorization": false,
+    "gb_live_transport": [
+      "UDP"
+    ],
+    "shared_sip_password": true,
+    "management_network": "controlled"
+  }
+}
