@@ -454,9 +454,13 @@ def steady(run, seconds, label, count, live=0, page=None, viewer_index=None, pac
         assert online_count == count, (label, online_count, count)
         counters = record["simulator"]
         assert counters["registered"] == counters["catalog"] == count, (label, counters)
-        assert counters["register_fail"] == counters["heartbeat_fail"] == counters["send_errors"] == counters["phase_drops"] == 0, counters
+        assert counters["register_fail"] == counters["heartbeat_fail"] == counters["send_errors"] == 0, counters
         assert counters["live_active"] == live, counters
         assert counters["invite"] == counters["ack"] == live, counters
+        if live:
+            assert counters["phase_drops"] == 0, counters
+        else:
+            assert counters["rtp_packets"] == counters["rtp_dropped"] == 0, counters
         record["online"] = online_count
         if page is not None:
             record["viewer"] = viewer_stats(page, viewer_index)
