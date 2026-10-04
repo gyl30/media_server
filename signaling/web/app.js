@@ -3,6 +3,18 @@ import { WHEPPreview } from "/whep.js";
 
 const byID = (id) => document.getElementById(id);
 const elements = {
+  addDevice: byID("add-device-button"),
+  deviceDialog: byID("device-dialog"),
+  deviceForm: byID("device-form"),
+  deviceFormError: byID("device-form-error"),
+  deviceID: byID("device-id"),
+  deviceName: byID("device-name"),
+  saveDevice: byID("save-device-button"),
+  deleteDevice: byID("delete-device-button"),
+  deviceDetail: byID("device-detail"),
+  deviceWelcome: byID("device-welcome"),
+  selectedDeviceName: byID("selected-device-name"),
+  selectedDeviceStatus: byID("selected-device-status"),
   addSource: byID("add-source-button"),
   channelEmpty: byID("channel-empty"),
   channelRows: byID("channel-rows"),
@@ -18,8 +30,6 @@ const elements = {
   deviceList: byID("device-list"),
   globalStatus: byID("global-status"),
   lastUpdated: byID("last-updated"),
-  metricDevices: byID("metric-devices"),
-  metricSources: byID("metric-sources"),
   previewError: byID("preview-error"),
   previewPanel: document.querySelector(".preview-panel"),
   previewPlaceholder: byID("preview-placeholder"),
@@ -47,6 +57,8 @@ const state = {
   channels: [],
   channelsDeviceID: "",
   channelEpoch: 0,
+  channelController: null,
+  channelSyncUntil: 0,
   devices: [],
   pending: new Set(),
   refreshController: null,
@@ -150,12 +162,6 @@ function toneForState(value) {
   }
 }
 
-function shortID(value) {
-  if (!value || value.length <= 16) {
-    return value || "-";
-  }
-  return `${value.slice(0, 8)}...${value.slice(-4)}`;
-}
 
 function showStatus(message, tone = "info", timeout = 5000) {
   window.clearTimeout(statusTimer);
@@ -169,21 +175,18 @@ function showStatus(message, tone = "info", timeout = 5000) {
   }
 }
 
-function errorCode(error) {
-  if (error && typeof error.code === "string") {
-    return error.code;
-  }
-  if (error && error.name === "AbortError") {
-    return "request_cancelled";
-  }
-  return "network_error";
-}
-
-function renderMetrics() {
-  const activeSources = state.sources.filter((source) => source.session);
-  const onlineDevices = state.devices.filter((device) => device.online);
-  elements.metricSources.textContent = `${activeSources.length} / ${state.sources.length}`;
-  elements.metricDevices.textContent = `${onlineDevices.length} / ${state.devices.length}`;
+function errorMessage(error) {
+  console.debug("管理操作失败", error);
+  const messages = {
+    device_not_found: "设备不存在", device_exists: "设备已存在", device_offline: "设备当前离线",
+    device_stopping: "设备正在清理，请稍后重试", channel_not_found: "通道不存在", channel_offline: "通道当前不可播放",
+    play_not_found: "播放链接已失效，请重新播放", live_not_found: "设备取流已结束", live_stopping: "设备取流正在停止，请稍后重试",
+    device_delete_failed: "设备暂时无法删除，媒体资源清理未完成，请稍后重试。",
+    invalid_request: "输入有误，请检查后重试", conflict: "资源正在使用，请稍后重试", not_running: "媒体源尚未开始取流",
+    whep_create_404: "播放链接已失效，请重新播放", whep_create_409: "媒体尚未就绪，请稍后重新播放",
+    webrtc_connection_failed: "连接中断，请重新播放", network_error: "无法连接服务器，请稍后重试",
+  };
+  return messages[error?.code] || (error?.name === "AbortError" ? "操作已取消" : "操作失败，请稍后重试");
 }
 
 function sourceIsActive(source) {
@@ -198,29 +201,29 @@ function renderSources() {
     const pending = state.pending.has(`source:${source.source_id}`);
     const session = source.session;
     row.append(
-      textCell(source.stream_name, source.username ? `user: ${source.username}` : "no credentials"),
+      textCell(source.stream_name, source.username ? `用户：${source.username}` : "未设置认证"),
       textCell(source.url, "", { code: true }),
-      badgeCell(source.desired_state, toneForState(source.desired_state)),
+      badgeCell(source.desired_state === "running" ? "正在取流" : "已停止", toneForState(source.desired_state)),
       session
-        ? badgeCell(session.state, toneForState(session.state), shortID(session.stream_id))
-        : badgeCell("Absent", "neutral"),
+        ? badgeCell(liveLabel(session.state), toneForState(session.state))
+        : badgeCell("未取流", "neutral"),
     );
     const actions = document.createElement("td");
     actions.className = "row-actions";
     const buttons = [];
     if (active) {
-      buttons.push(actionButton("Stop", "stop", "square", "secondary", pending));
+      buttons.push(actionButton("停止取流", "stop", "square", "secondary", pending));
       if (session.state === "created") {
-        buttons.push(actionButton("Preview", "preview", "monitor-play", "secondary", pending));
+        buttons.push(actionButton("播放", "preview", "monitor-play", "secondary", pending));
       }
     } else {
-      buttons.push(actionButton("Start", "start", "play", "primary", pending));
+      buttons.push(actionButton("开始取流", "start", "play", "primary", pending));
       if (source.desired_state === "running") {
-        buttons.push(actionButton("Stop", "stop", "square", "secondary", pending));
+        buttons.push(actionButton("停止取流", "stop", "square", "secondary", pending));
       }
-      buttons.push(actionIconButton("Edit", "edit", "edit", "", pending));
+      buttons.push(actionIconButton("编辑", "edit", "edit", "", pending));
     }
-    buttons.push(actionIconButton("Delete", "delete", "trash", "danger-icon", pending));
+    buttons.push(actionIconButton("删除", "delete", "trash", "danger-icon", pending));
     for (const button of buttons) {
       button.dataset.sourceId = source.source_id;
       actions.append(button);
@@ -239,55 +242,59 @@ function renderDevices() {
     button.type = "button";
     button.className = `device-item${device.device_id === state.selectedDeviceID ? " is-selected" : ""}`;
     button.dataset.deviceId = device.device_id;
-    button.setAttribute("aria-pressed", device.device_id === state.selectedDeviceID ? "true" : "false");
+    button.setAttribute("aria-pressed", String(device.device_id === state.selectedDeviceID));
+    const name = document.createElement("strong");
+    name.textContent = device.name;
     const identity = document.createElement("span");
     identity.className = "device-identity mono";
     identity.textContent = device.device_id;
-    const status = badge(device.online ? "Online" : "Offline", device.online ? "success" : "neutral");
-    button.append(identity, status);
+    button.append(name, identity, badge(device.online ? "在线" : "离线", device.online ? "success" : "neutral"));
     elements.deviceList.append(button);
   }
   elements.deviceEmpty.hidden = state.devices.length !== 0;
-  elements.deviceCount.textContent = `${state.devices.length} ${state.devices.length === 1 ? "device" : "devices"}`;
+  elements.deviceCount.textContent = `${state.devices.length} 台设备`;
+}
+
+function liveLabel(value) {
+  return {preparing: "正在连接", inviting: "正在连接", starting: "正在连接", streaming: "正在取流", created: "正在取流", stopping: "正在停止", cleanup_pending: "正在清理", unresolved: "正在清理"}[value] || "未取流";
 }
 
 function renderChannels() {
   elements.channelRows.replaceChildren();
-  const device = state.devices.find((item) => item.device_id === state.selectedDeviceID);
-  const channels = state.channelsDeviceID === state.selectedDeviceID ? state.channels : [];
-  elements.selectedDevice.textContent = device ? device.device_id : "No device selected";
+  const device = state.devices.find(item => item.device_id === state.selectedDeviceID);
+  const deleting = state.pending.has(`device:${state.selectedDeviceID}`);
+  const channels = device?.online && state.channelsDeviceID === state.selectedDeviceID ? state.channels : [];
+  elements.deviceDetail.hidden = !device;
+  elements.deviceWelcome.hidden = Boolean(device);
+  elements.selectedDeviceName.textContent = device?.name || "";
+  elements.selectedDevice.textContent = device?.device_id || "";
+  elements.selectedDeviceStatus.replaceChildren(badge(device?.online ? "在线" : "离线", device?.online ? "success" : "neutral"));
+  elements.deleteDevice.disabled = deleting;
   for (const channel of channels) {
     const live = channel.live;
-    const pending = state.pending.has(`channel:${channel.device_id}:${channel.channel_id}`);
+    const pending = deleting || state.pending.has(`channel:${channel.device_id}:${channel.channel_id}`);
     const row = document.createElement("tr");
-    row.append(
-      textCell(channel.name || "Unnamed channel", channel.channel_id, { secondaryCode: true }),
-      badgeCell(channel.status, channel.status === "ON" ? "success" : "neutral", channel.parent_id || ""),
-      live ? badgeCell(live.state, toneForState(live.state), shortID(live.live_id)) : badgeCell("Idle", "neutral"),
-    );
+    row.dataset.channelId = channel.channel_id;
+    row.append(textCell(channel.name || "未命名通道", channel.channel_id, {secondaryCode: true}),
+      badgeCell(channel.status === "ON" ? "在线" : "离线", channel.status === "ON" ? "success" : "neutral"),
+      badgeCell(liveLabel(live?.state), toneForState(live?.state)));
     const actions = document.createElement("td");
     actions.className = "row-actions";
-    const buttons = [];
-    if (live) {
-      buttons.push(actionButton("Stop", "stop", "square", "secondary", pending || live.state === "stopping"));
-    }
-    buttons.push(actionButton("Play", "play", "play", "primary", pending || !device || !device.online || channel.status !== "ON" || Boolean(live && live.state !== "streaming")));
-    for (const button of buttons) {
+    if (live) actions.append(actionButton("停止取流", "stop", "square", "secondary", pending || live.state === "stopping"));
+    actions.append(actionButton("播放", "play", "play", "primary", pending || channel.status !== "ON" || Boolean(live && live.state !== "streaming")));
+    for (const button of actions.children) {
       button.dataset.deviceId = channel.device_id;
       button.dataset.channelId = channel.channel_id;
-      actions.append(button);
     }
     row.append(actions);
     elements.channelRows.append(row);
   }
-  const hasDevice = Boolean(device);
-  elements.channelEmpty.hidden = hasDevice && channels.length !== 0;
-  elements.channelEmpty.textContent = hasDevice ? "No channels reported." : "Select an online device.";
-  elements.channelRows.parentElement.hidden = !hasDevice || channels.length === 0;
+  elements.channelRows.parentElement.hidden = channels.length === 0;
+  elements.channelEmpty.hidden = channels.length !== 0;
+  elements.channelEmpty.textContent = !device?.online ? "设备离线" : Date.now() < state.channelSyncUntil ? "正在同步通道…" : "未发现通道";
 }
 
 function renderAll() {
-  renderMetrics();
   renderSources();
   renderDevices();
   renderChannels();
@@ -295,27 +302,28 @@ function renderAll() {
 
 async function refreshChannels(deviceID = state.selectedDeviceID) {
   const epoch = ++state.channelEpoch;
-  if (!deviceID) {
+  state.channelController?.abort();
+  const device = state.devices.find(item => item.device_id === deviceID);
+  if (!device?.online || document.querySelector(".app-layout").dataset.view !== "devices") {
     state.channels = [];
     state.channelsDeviceID = "";
     renderChannels();
     return;
   }
+  const controller = new AbortController();
+  state.channelController = controller;
   try {
-    const payload = await api.channels(deviceID);
-    if (epoch !== state.channelEpoch || state.selectedDeviceID !== deviceID) {
-      return;
-    }
+    const payload = await api.channels(deviceID, controller.signal);
+    if (epoch !== state.channelEpoch || state.selectedDeviceID !== deviceID) return;
     state.channels = payload.channels || [];
     state.channelsDeviceID = deviceID;
     renderChannels();
   } catch (error) {
-    if (epoch === state.channelEpoch && state.selectedDeviceID === deviceID) {
-      state.channels = [];
-      state.channelsDeviceID = deviceID;
-      renderChannels();
-      showStatus(`Channel refresh failed: ${errorCode(error)}`, "danger");
+    if (error.name !== "AbortError" && epoch === state.channelEpoch && state.selectedDeviceID === deviceID) {
+      showStatus(errorMessage(error), "danger");
     }
+  } finally {
+    if (epoch === state.channelEpoch) state.channelController = null;
   }
 }
 
@@ -335,11 +343,14 @@ async function refreshSnapshots(options = {}) {
     if (epoch !== state.refreshEpoch) {
       return;
     }
+    const previousDevice = state.devices.find(item => item.device_id === state.selectedDeviceID);
     state.sources = sources.sources || [];
     state.devices = devices.devices || [];
+    const currentDevice = state.devices.find(item => item.device_id === state.selectedDeviceID);
+    if (currentDevice?.online && !previousDevice?.online) state.channelSyncUntil = Date.now() + 7500;
     const previousDeviceID = state.selectedDeviceID;
     if (!state.devices.some((device) => device.device_id === state.selectedDeviceID)) {
-      state.selectedDeviceID = state.devices.length ? state.devices[0].device_id : "";
+      state.selectedDeviceID = "";
     }
     if (state.selectedDeviceID !== previousDeviceID) {
       state.channelEpoch += 1;
@@ -347,15 +358,15 @@ async function refreshSnapshots(options = {}) {
       state.channelsDeviceID = "";
     }
     elements.lastUpdated.dateTime = new Date().toISOString();
-    elements.lastUpdated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    elements.lastUpdated.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN")}`;
     renderAll();
     await refreshChannels();
     if (!options.quiet) {
-      showStatus("Snapshot refreshed", "success", 2500);
+      showStatus("已刷新", "success", 2500);
     }
   } catch (error) {
     if (error.name !== "AbortError" && epoch === state.refreshEpoch) {
-      showStatus(`Snapshot refresh failed: ${errorCode(error)}`, "danger", 0);
+      showStatus(errorMessage(error), "danger", 0);
     }
   } finally {
     if (epoch === state.refreshEpoch) {
@@ -375,7 +386,7 @@ async function runResourceAction(key, action, successMessage) {
     await action();
     showStatus(successMessage, "success");
   } catch (error) {
-    showStatus(`Operation failed: ${errorCode(error)}`, "danger", 0);
+    showStatus(errorMessage(error), "danger", 0);
   } finally {
     state.pending.delete(key);
     await refreshSnapshots({ quiet: true });
@@ -397,8 +408,8 @@ function openSourceDialog(source = null, trigger = null) {
   elements.sourcePassword.value = "";
   elements.clearPassword.checked = false;
   elements.clearPasswordField.hidden = !source;
-  elements.sourceDialogTitle.textContent = source ? "Edit source" : "Add source";
-  elements.saveSource.textContent = source ? "Save changes" : "Create source";
+  elements.sourceDialogTitle.textContent = source ? "编辑源" : "添加源";
+  elements.saveSource.textContent = source ? "保存" : "添加源";
   elements.sourceDialog.showModal();
   elements.sourceStreamName.focus();
 }
@@ -414,7 +425,7 @@ async function submitSourceForm(event) {
   const username = elements.sourceUsername.value;
   const password = elements.sourcePassword.value;
   if (!username && password) {
-    elements.sourceFormError.textContent = "password_requires_username";
+    elements.sourceFormError.textContent = "设置密码前请输入用户名";
     elements.sourceFormError.hidden = false;
     return;
   }
@@ -443,10 +454,10 @@ async function submitSourceForm(event) {
       await api.createSource(payload);
     }
     closeSourceDialog();
-    showStatus(editingID ? "Source updated" : "Source created", "success");
+    showStatus(editingID ? "已更新源" : "已添加源", "success");
     await refreshSnapshots({ quiet: true });
   } catch (error) {
-    elements.sourceFormError.textContent = errorCode(error);
+    elements.sourceFormError.textContent = errorMessage(error);
     elements.sourceFormError.hidden = false;
   } finally {
     elements.saveSource.disabled = false;
@@ -477,34 +488,35 @@ async function startPreview(target, label) {
     }
     const result = await pending;
     if (result) {
-      showStatus("Preview started", "success");
+      showStatus("正在播放", "success");
     }
   } catch (error) {
-    renderPreviewState({ state: "failed", target: label, error: errorCode(error) });
-    showStatus(`Preview failed: ${errorCode(error)}`, "danger", 0);
+    renderPreviewState({ state: "failed", target: label, error: errorMessage(error) });
+    showStatus(errorMessage(error), "danger", 0);
   }
 }
 
 function renderPreviewState(update) {
   const labels = {
-    failed: "Failed",
-    idle: "Idle",
-    negotiating: "Negotiating",
-    preparing: "Preparing",
-    stopping: "Stopping",
-    streaming: "Streaming",
+    failed: "播放失败",
+    idle: "未播放",
+    negotiating: "正在连接",
+    preparing: "正在连接",
+    stopping: "正在关闭",
+    streaming: "正在播放",
   };
   const label = labels[update.state] || update.state;
+  elements.previewPanel.hidden = update.state === "idle";
   elements.previewState.replaceChildren(badge(label, toneForState(update.state)));
   elements.previewTarget.textContent = update.target || "None";
   elements.stopPreview.disabled = !update.canStop;
   elements.previewPlaceholder.hidden = update.state === "streaming";
-  elements.previewError.textContent = update.error || "";
+  elements.previewError.textContent = update.error ? errorMessage({code: update.error}) : "";
   elements.previewError.hidden = !update.error;
 }
 
 function activateView(view, updateHash = true) {
-  const valid = ["overview", "sources", "devices"].includes(view) ? view : "overview";
+  const valid = ["sources", "devices"].includes(view) ? view : "devices";
   for (const tab of document.querySelectorAll(".view-tab")) {
     const selected = tab.dataset.view === valid;
     tab.classList.toggle("is-active", selected);
@@ -516,6 +528,7 @@ function activateView(view, updateHash = true) {
     panel.hidden = !selected;
     panel.classList.toggle("is-active", selected);
   }
+  document.querySelector(".app-layout").dataset.view = valid;
   if (updateHash && window.location.hash !== `#${valid}`) {
     history.replaceState(null, "", `#${valid}`);
   }
@@ -585,10 +598,10 @@ elements.sourceRows.addEventListener("click", async (event) => {
   const key = `source:${source.source_id}`;
   switch (button.dataset.action) {
     case "start":
-      await runResourceAction(key, () => api.startSource(source.source_id), "Source start accepted");
+      await runResourceAction(key, () => api.startSource(source.source_id), "已开始取流");
       break;
     case "stop":
-      await runResourceAction(key, () => api.stopSource(source.source_id), "Source stopped");
+      await runResourceAction(key, () => api.stopSource(source.source_id), "已停止取流");
       break;
     case "preview":
       await startPreview({ source_id: source.source_id }, source.stream_name);
@@ -597,25 +610,36 @@ elements.sourceRows.addEventListener("click", async (event) => {
       openSourceDialog(source, button);
       break;
     case "delete":
-      if (await confirmAction("Delete RTSP source", source.stream_name, "Delete source")) {
-        await runResourceAction(key, () => api.deleteSource(source.source_id), "Source deleted");
+      if (await confirmAction("删除 RTSP 源", source.stream_name, "删除源")) {
+        await runResourceAction(key, () => api.deleteSource(source.source_id), "已删除源");
       }
       break;
   }
 });
 
-elements.deviceList.addEventListener("click", (event) => {
+elements.deviceList.addEventListener("click", async event => {
   const button = event.target.closest("button[data-device-id]");
-  if (!button || button.dataset.deviceId === state.selectedDeviceID) {
-    return;
-  }
-  state.selectedDeviceID = button.dataset.deviceId;
+  if (!button || button.dataset.deviceId === state.selectedDeviceID) return;
+  const deviceID = button.dataset.deviceId;
+  state.selectedDeviceID = deviceID;
   state.channelEpoch += 1;
+  state.channelController?.abort();
   state.channels = [];
   state.channelsDeviceID = "";
+  state.channelSyncUntil = Date.now() + 7500;
   renderDevices();
   renderChannels();
-  void refreshChannels();
+  try {
+    await preview.stop();
+    const device = await api.device(deviceID);
+    if (state.selectedDeviceID !== deviceID) return;
+    const index = state.devices.findIndex(item => item.device_id === deviceID);
+    if (index >= 0) state.devices[index] = device;
+    renderChannels();
+    await refreshChannels(deviceID);
+  } catch (error) {
+    if (state.selectedDeviceID === deviceID) showStatus(errorMessage(error), "danger");
+  }
 });
 
 elements.channelRows.addEventListener("click", async (event) => {
@@ -633,7 +657,7 @@ elements.channelRows.addEventListener("click", async (event) => {
   switch (button.dataset.action) {
     case "stop":
       if (channel.live) {
-        await runResourceAction(key, () => api.stopLive(channel.live.live_id), "Channel stopped");
+        await runResourceAction(key, () => api.stopLive(channel.live.live_id), "已停止设备取流");
       }
       break;
     case "play":
@@ -645,15 +669,80 @@ elements.channelRows.addEventListener("click", async (event) => {
 elements.stopPreview.addEventListener("click", async () => {
   try {
     await preview.stop();
-    showStatus("Preview stopped", "success");
+    showStatus("已关闭播放器", "success");
   } catch (error) {
-    showStatus(`Preview cleanup failed: ${errorCode(error)}`, "danger", 0);
+    showStatus(errorMessage(error), "danger", 0);
   }
 });
 
 window.addEventListener("hashchange", () => activateView(window.location.hash.slice(1), false));
 window.addEventListener("pagehide", () => preview.stopForPageHide());
 
-activateView(window.location.hash.slice(1) || "overview", false);
+activateView(window.location.hash.slice(1) || "devices", false);
 renderPreviewState({ state: "idle", target: "", error: "" });
-await refreshSnapshots({ quiet: true });
+function openDeviceDialog() {
+  elements.deviceForm.reset();
+  elements.deviceFormError.hidden = true;
+  elements.deviceDialog.showModal();
+  elements.deviceID.focus();
+}
+
+elements.addDevice.addEventListener("click", openDeviceDialog);
+byID("empty-add-device-button").addEventListener("click", openDeviceDialog);
+for (const id of ["close-device-dialog", "cancel-device-dialog"]) byID(id).addEventListener("click", () => elements.deviceDialog.close());
+elements.deviceForm.noValidate = true;
+elements.deviceForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  if (elements.saveDevice.disabled) return;
+  const body = {device_id: elements.deviceID.value.trim(), name: elements.deviceName.value.trim()};
+  if (!/^[0-9]{20}$/.test(body.device_id) || !body.name) {
+    elements.deviceFormError.textContent = "输入有误，请填写 20 位设备编码和设备名称";
+    elements.deviceFormError.hidden = false;
+    return;
+  }
+  elements.saveDevice.disabled = true;
+  elements.deviceFormError.hidden = true;
+  try {
+    await api.createDevice(body);
+    elements.deviceDialog.close();
+    showStatus("已添加设备", "success");
+    await refreshSnapshots({quiet: true});
+  } catch (error) {
+    elements.deviceFormError.textContent = error.status === 400 ? "输入有误，请检查后重试" : error.status === 409 ? "设备已存在" : "添加失败，请稍后重试";
+    elements.deviceFormError.hidden = false;
+  } finally {
+    elements.saveDevice.disabled = false;
+  }
+});
+
+byID("back-devices-button").addEventListener("click", async () => {
+  state.selectedDeviceID = "";
+  state.channelEpoch += 1;
+  state.channelController?.abort();
+  state.channels = [];
+  renderDevices();
+  renderChannels();
+  await preview.stop().catch(error => console.debug(error));
+});
+
+elements.deleteDevice.addEventListener("click", async () => {
+  const deviceID = state.selectedDeviceID;
+  if (!deviceID || state.pending.has(`device:${deviceID}`)) return;
+  if (!await confirmAction("删除设备", "删除设备会停止该设备当前所有播放，是否继续？", "删除设备")) return;
+  await runResourceAction(`device:${deviceID}`, async () => {
+    await api.deleteDevice(deviceID);
+    if (state.selectedDeviceID === deviceID) state.selectedDeviceID = "";
+    await preview.stop().catch(error => console.debug(error));
+  }, "已删除设备");
+});
+
+const polling = window.setInterval(() => {
+  if (!state.refreshController) void refreshSnapshots({quiet: true});
+}, 2500);
+window.addEventListener("pagehide", () => {
+  clearInterval(polling);
+  state.refreshController?.abort();
+  state.channelController?.abort();
+});
+
+await refreshSnapshots({quiet: true});

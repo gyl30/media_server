@@ -254,11 +254,7 @@ a:focus-visible {
 }
 
 .app-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(330px, 400px);
-  align-items: start;
-  gap: 28px;
-  width: min(1600px, 100%);
+  width: min(1360px, 100%);
   margin: 0 auto;
   padding: 30px clamp(16px, 3vw, 40px) 52px;
 }
@@ -305,42 +301,6 @@ a:focus-visible {
   font-size: 11px;
   font-weight: 750;
   text-transform: uppercase;
-}
-
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(120px, 1fr));
-  gap: 10px;
-  margin-bottom: 30px;
-}
-
-.metric {
-  display: grid;
-  min-height: 112px;
-  padding: 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface);
-}
-
-.metric > span {
-  color: var(--color-muted);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.metric strong {
-  align-self: end;
-  color: var(--color-ink);
-  font-size: 25px;
-  line-height: 1;
-}
-
-.metric small {
-  align-self: end;
-  margin-top: 5px;
-  color: var(--color-muted);
-  font-size: 11px;
 }
 
 .data-section {
@@ -586,8 +546,9 @@ td {
 }
 
 .preview-panel {
-  position: sticky;
-  top: 133px;
+  position: static;
+  width: calc(100% - 294px);
+  margin: 26px 0 0 294px;
   scroll-margin-top: 133px;
   min-width: 0;
   padding: 17px;
@@ -859,7 +820,6 @@ dialog::backdrop {
   border-left: 3px solid var(--color-danger);
   background: var(--color-danger-soft);
   color: var(--color-danger);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -992,3 +952,20 @@ dialog::backdrop {
     transition-duration: 0.01ms !important;
   }
 }
+
+.view-tabs time { margin-left: auto; align-self: center; color: var(--color-muted); font-size: 12px; }
+.device-pane .section-heading { gap: 8px; margin: 0; }
+.device-pane .section-heading h1 { font-size: 20px; }
+.device-pane .count-label { margin: 8px 0 14px; }
+.device-item strong { font-size: 14px; color: var(--color-ink); }
+.device-item .state-badge { justify-self: start; }
+.detail-heading { margin: 20px 0 0; align-items: start; }
+.detail-heading p { color: var(--color-muted); }
+.channel-table table { min-width: 550px; }
+.welcome { align-self: start; margin-top: 24px; }
+.empty-state p { margin: 10px 0 16px; line-height: 1.7; }
+.player-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.app-layout[data-view="sources"] .preview-panel { margin-left: 0; width: 100%; }
+#resume-playback-button { margin-top: 12px; }
+@media (max-width: 1180px) { .preview-panel { width: calc(100% - 294px); } }
+@media (max-width: 780px) { .preview-panel { width: 100%; margin-left: 0; } .view-tabs time { display: none; } }

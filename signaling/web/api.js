@@ -45,6 +45,9 @@ function segment(value) {
 
 export const api = {
   sources: (signal) => request("/api/sources", { signal }),
+  device: (deviceID, signal) => request(`/api/devices/${segment(deviceID)}`, {signal}),
+  createDevice: (body) => request("/api/devices", {method: "POST", body}),
+  deleteDevice: (deviceID) => request(`/api/devices/${segment(deviceID)}`, {method: "DELETE"}),
   devices: (signal) => request("/api/devices", { signal }),
   channels: (deviceID, signal) => request(`/api/devices/${segment(deviceID)}/channels`, { signal }),
   createSource: (body) => request("/api/sources", { method: "POST", body }),

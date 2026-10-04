@@ -1,145 +1,79 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Media Control</title>
+  <title>设备管理 · Media Server</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <header class="app-header">
-    <a class="brand" href="#overview" aria-label="Media Control overview">
-      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span><strong>Media Control</strong><small>Control Plane</small></span>
-    </a>
-    <div class="header-actions">
-      <button id="refresh-button" class="button secondary" type="button">
-        <svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"></use></svg>
-        Refresh
-      </button>
-    </div>
+    <a class="brand" href="#devices" aria-label="返回设备管理"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>Media Server</strong></a>
+    <button id="refresh-button" class="button secondary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"></use></svg>刷新</button>
   </header>
-
-  <nav class="view-tabs" aria-label="Workspace" role="tablist">
-    <button class="view-tab is-active" id="tab-overview" type="button" role="tab" aria-selected="true" aria-controls="view-overview" data-view="overview">
-      <svg class="icon" aria-hidden="true"><use href="/icons.svg#server"></use></svg>
-      Overview
-    </button>
-    <button class="view-tab" id="tab-sources" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-sources" data-view="sources">
-      <svg class="icon" aria-hidden="true"><use href="/icons.svg#radio"></use></svg>
-      RTSP Sources
-    </button>
-    <button class="view-tab" id="tab-devices" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-devices" data-view="devices">
-      <svg class="icon" aria-hidden="true"><use href="/icons.svg#activity"></use></svg>
-      GB28181
-    </button>
+  <nav class="view-tabs" aria-label="管理入口" role="tablist">
+    <button class="view-tab is-active" id="tab-devices" type="button" role="tab" aria-selected="true" aria-controls="view-devices" data-view="devices">设备</button>
+    <button class="view-tab" id="tab-sources" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-sources" data-view="sources">RTSP 源</button>
+    <time id="last-updated">尚未刷新</time>
   </nav>
-
   <div id="global-status" class="global-status" role="status" aria-live="polite" hidden></div>
-
-  <main class="app-layout">
+  <main class="app-layout" data-view="devices">
     <div class="workspace">
-      <section class="view is-active" id="view-overview" role="tabpanel" aria-labelledby="tab-overview">
-        <div class="section-heading">
-          <div><p class="eyebrow">System</p><h1>Overview</h1></div>
-          <time id="last-updated">Not refreshed</time>
-        </div>
-        <div class="metric-grid" aria-label="System summary">
-          <article class="metric"><span>RTSP sources</span><strong id="metric-sources">0 / 0</strong><small>active / total</small></article>
-          <article class="metric"><span>GB devices</span><strong id="metric-devices">0 / 0</strong><small>online / total</small></article>
-        </div>
-      </section>
-
-      <section class="view" id="view-sources" role="tabpanel" aria-labelledby="tab-sources" hidden>
-        <div class="section-heading">
-          <div><p class="eyebrow">Inputs</p><h1>RTSP Sources</h1></div>
-          <button id="add-source-button" class="button primary" type="button">
-            <svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>
-            Add source
-          </button>
-        </div>
-        <section class="data-section" aria-label="RTSP sources">
-          <div class="table-wrap wide-table">
-            <table>
-              <thead><tr><th scope="col">Stream</th><th scope="col">Endpoint</th><th scope="col">Desired</th><th scope="col">Session</th><th scope="col" class="actions-heading">Actions</th></tr></thead>
-              <tbody id="source-rows"></tbody>
-            </table>
-          </div>
-          <p id="source-empty" class="empty-state">No RTSP sources configured.</p>
-        </section>
-      </section>
-
-      <section class="view" id="view-devices" role="tabpanel" aria-labelledby="tab-devices" hidden>
-        <div class="section-heading"><div><p class="eyebrow">Inputs</p><h1>GB28181</h1></div><span id="device-count" class="count-label">0 devices</span></div>
+      <section class="view is-active" id="view-devices" role="tabpanel" aria-labelledby="tab-devices">
         <div class="device-layout">
           <section class="device-pane" aria-labelledby="devices-title">
-            <div class="subheading"><h2 id="devices-title">Devices</h2></div>
+            <div class="section-heading"><h1 id="devices-title">设备</h1><button id="add-device-button" class="button primary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>添加设备</button></div>
+            <p id="device-count" class="count-label">0 台设备</p>
             <div id="device-list" class="device-list"></div>
-            <p id="device-empty" class="empty-state compact">No registered devices.</p>
+            <div id="device-empty" class="empty-state compact"><strong>还没有设备</strong><p>添加设备后，配置设备向本平台注册地址发起 GB28181 REGISTER。</p><button id="empty-add-device-button" class="button secondary" type="button">添加设备</button></div>
           </section>
-          <section class="channel-pane" aria-labelledby="channels-title">
-            <div class="subheading"><h2 id="channels-title">Channels</h2><span id="selected-device" class="count-label">No device selected</span></div>
-            <div class="table-wrap wide-table">
-              <table>
-                <thead><tr><th scope="col">Channel</th><th scope="col">Catalog</th><th scope="col">Live</th><th scope="col" class="actions-heading">Actions</th></tr></thead>
-                <tbody id="channel-rows"></tbody>
-              </table>
-            </div>
-            <p id="channel-empty" class="empty-state">Select an online device.</p>
+          <section class="channel-pane" id="device-detail" aria-labelledby="selected-device-name" hidden>
+            <button id="back-devices-button" class="button secondary compact" type="button">返回设备列表</button>
+            <div class="section-heading detail-heading"><div><h1 id="selected-device-name"></h1><p id="selected-device" class="mono"></p><span id="selected-device-status"></span></div><button id="delete-device-button" class="button danger subtle" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#trash"></use></svg>删除设备</button></div>
+            <div class="subheading"><h2 id="channels-title">通道</h2></div>
+            <div class="table-wrap channel-table"><table><thead><tr><th scope="col">名称 / 编码</th><th scope="col">状态</th><th scope="col">取流</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody id="channel-rows"></tbody></table></div>
+            <p id="channel-empty" class="empty-state">正在同步通道…</p>
           </section>
+          <div id="device-welcome" class="empty-state welcome"><strong>选择一台设备</strong><p>查看设备状态和通道，或开始播放。</p></div>
         </div>
       </section>
-
+      <section class="view" id="view-sources" role="tabpanel" aria-labelledby="tab-sources" hidden>
+        <div class="section-heading"><h1>RTSP 源</h1><button id="add-source-button" class="button primary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>添加源</button></div>
+        <section class="data-section" aria-label="RTSP 源">
+          <div class="table-wrap wide-table"><table><thead><tr><th scope="col">名称</th><th scope="col">地址</th><th scope="col">期望状态</th><th scope="col">取流状态</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody id="source-rows"></tbody></table></div>
+          <p id="source-empty" class="empty-state">还没有 RTSP 源</p>
+        </section>
+      </section>
     </div>
-
-    <aside class="preview-panel" aria-labelledby="preview-title">
-      <div class="preview-heading">
-        <div><p class="eyebrow">WebRTC output</p><h2 id="preview-title">WHEP Preview</h2></div>
-        <button id="stop-preview-button" class="button danger subtle" type="button" disabled>
-          <svg class="icon" aria-hidden="true"><use href="/icons.svg#square"></use></svg>
-          Stop
-        </button>
-      </div>
-      <div class="video-shell">
-        <video id="preview-video" autoplay playsinline controls></video>
-        <div id="preview-placeholder" class="video-placeholder">
-          <svg class="preview-icon" aria-hidden="true"><use href="/icons.svg#monitor-play"></use></svg>
-          <strong>No active preview</strong>
-        </div>
-      </div>
-      <dl class="preview-details">
-        <div><dt>Target</dt><dd id="preview-target">None</dd></div>
-        <div><dt>State</dt><dd id="preview-state"><span class="state-badge neutral"><span class="status-dot"></span>Idle</span></dd></div>
-      </dl>
+    <section class="preview-panel" aria-labelledby="preview-title" hidden>
+      <div class="preview-heading"><h2 id="preview-title">播放器</h2><div class="player-actions"><button id="stop-preview-button" class="button secondary" type="button" disabled>关闭播放器</button><button id="stop-live-button" class="button danger subtle" type="button" disabled>停止设备取流</button></div></div>
+      <div class="video-shell"><video id="preview-video" autoplay playsinline controls></video><div id="preview-placeholder" class="video-placeholder"><svg class="preview-icon" aria-hidden="true"><use href="/icons.svg#monitor-play"></use></svg><strong>正在连接</strong></div></div>
+      <button id="resume-playback-button" class="button primary" type="button" hidden>点击播放音视频</button>
+      <dl class="preview-details"><div><dt>播放内容</dt><dd id="preview-target"></dd></div><div><dt>状态</dt><dd id="preview-state"></dd></div></dl>
       <p id="preview-error" class="inline-error" role="alert" hidden></p>
-    </aside>
+    </section>
   </main>
-
+  <dialog id="device-dialog" class="source-dialog">
+    <form id="device-form">
+      <div class="dialog-heading"><h2>添加设备</h2><button id="close-device-dialog" class="icon-button" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
+      <div class="form-grid"><label class="field"><span>设备 ID</span><input id="device-id" name="device_id" type="text" inputmode="numeric" pattern="[0-9]{20}" minlength="20" maxlength="20" autocomplete="off" required aria-describedby="device-id-hint"><small id="device-id-hint">20 位 GB28181 设备编码</small></label><label class="field"><span>设备名称</span><input id="device-name" name="name" type="text" autocomplete="off" required></label></div>
+      <p id="device-form-error" class="inline-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="cancel-device-dialog" class="button secondary" type="button">取消</button><button id="save-device-button" class="button primary" type="submit">添加设备</button></div>
+    </form>
+  </dialog>
   <dialog id="source-dialog" class="source-dialog">
     <form id="source-form">
-      <div class="dialog-heading"><div><p class="eyebrow">RTSP input</p><h2 id="source-dialog-title">Add source</h2></div><button class="icon-button" id="close-source-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
+      <div class="dialog-heading"><h2 id="source-dialog-title">添加源</h2><button class="icon-button" id="close-source-dialog" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
       <input id="source-id" type="hidden">
-      <div class="form-grid">
-        <label class="field"><span>Stream name</span><input id="source-stream-name" name="stream_name" type="text" autocomplete="off" required></label>
-        <label class="field"><span>RTSP URL</span><input id="source-url" name="url" type="url" inputmode="url" autocomplete="off" placeholder="rtsp://camera.example/live" required></label>
-        <label class="field"><span>Username</span><input id="source-username" name="username" type="text" autocomplete="username"></label>
-        <label class="field"><span>Password</span><input id="source-password" name="password" type="password" autocomplete="new-password"></label>
-      </div>
-      <label id="clear-password-field" class="check-field" hidden><input id="clear-password" type="checkbox"><span>Clear saved password</span></label>
+      <div class="form-grid"><label class="field"><span>源名称</span><input id="source-stream-name" name="stream_name" type="text" autocomplete="off" required></label><label class="field"><span>RTSP 地址</span><input id="source-url" name="url" type="url" inputmode="url" autocomplete="off" placeholder="rtsp://camera.example/live" required></label><label class="field"><span>用户名</span><input id="source-username" name="username" type="text" autocomplete="username"></label><label class="field"><span>密码</span><input id="source-password" name="password" type="password" autocomplete="new-password"></label></div>
+      <label id="clear-password-field" class="check-field" hidden><input id="clear-password" type="checkbox"><span>清除已保存密码</span></label>
       <p id="source-form-error" class="inline-error" role="alert" hidden></p>
-      <div class="dialog-actions"><button id="cancel-source-dialog" class="button secondary" type="button">Cancel</button><button id="save-source-button" class="button primary" type="submit">Create source</button></div>
+      <div class="dialog-actions"><button id="cancel-source-dialog" class="button secondary" type="button">取消</button><button id="save-source-button" class="button primary" type="submit">添加源</button></div>
     </form>
   </dialog>
-
-  <dialog id="confirm-dialog" class="confirm-dialog">
-    <form method="dialog">
-      <h2 id="confirm-title">Confirm action</h2>
-      <p id="confirm-message"></p>
-      <div class="dialog-actions"><button class="button secondary" value="cancel">Cancel</button><button id="confirm-action-button" class="button danger" value="confirm">Delete</button></div>
-    </form>
-  </dialog>
+  <dialog id="confirm-dialog" class="confirm-dialog"><form method="dialog"><h2 id="confirm-title">确认操作</h2><p id="confirm-message"></p><div class="dialog-actions"><button class="button secondary" value="cancel">取消</button><button id="confirm-action-button" class="button danger" value="confirm">删除</button></div></form></dialog>
 </body>
 </html>
