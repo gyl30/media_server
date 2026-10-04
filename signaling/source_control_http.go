@@ -33,7 +33,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 	}
 
 	command := rtspPullCreateRequest{
-		StreamID: session.streamID, SourceID: source.sourceID, StreamName: source.streamName, URL: source.url,
+		StreamID: session.streamID, StreamName: source.streamName, URL: source.url,
 	}
 	if source.username != "" {
 		command.Username = &source.username
