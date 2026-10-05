@@ -99,8 +99,9 @@ def main():
     started = time.monotonic()
     try:
         if not args.management_only:
-            launch("media", [args.media, "--bind-address", "127.0.0.1", "--webrtc-address", "127.0.0.1",
-                "--rtmp-port", base, "--rtsp-port", base+1, "--http-port", base+2, "--threads", "6"])
+            media_command = [args.media, "--bind-address", "127.0.0.1", "--webrtc-address", "127.0.0.1",
+                "--rtmp-port", base, "--rtsp-port", base+1, "--http-port", base+2, "--threads", "6"]
+            media = launch("media", media_command)
             wait_for_listener("127.0.0.1", base+2)
         launch("signaling", [args.signaling, "--database", args.output / "devices.db", "--sip-listen", f"127.0.0.1:{base+4}",
             "--sip-advertise", f"127.0.0.1:{base+4}", "--http-listen", f"127.0.0.1:{base+3}",
@@ -643,6 +644,24 @@ def main():
                     assert all(not item["closeDisabled"] for item in ownership if item["state"] not in ("idle", "stopping")), ownership
                     result["button_ownership"] = ownership
                     mark("panel dismiss stays available after viewer release; stopping blocks repeated close")
+                    cleanup_live = channels()[0]["live"]["live_id"]
+                    stop_process(media)
+                    page.locator("#stop-preview-button").click()
+                    page.locator(".preview-panel").wait_for(state="hidden")
+                    page.locator("#channel-rows [data-action='stop']").click()
+                    page.get_by_text("取流暂时无法停止，请稍后重试", exact=True).wait_for()
+                    eventually(lambda: channels()[0]["live"]["state"] == "stopping")
+                    page.wait_for_function("document.querySelector('#channel-rows [data-action=stop]').parentElement.getAttribute('aria-busy') === 'false'")
+                    media = launch("media-restarted", media_command)
+                    wait_for_listener("127.0.0.1", base+2)
+                    assert page.locator("#channel-rows [data-action='stop']").is_enabled(), "failed cleanup must allow a user retry after media_server recovery"
+                    page.locator("#channel-rows [data-action='stop']").click()
+                    eventually(lambda: channels()[0].get("live") is None)
+                    play_channel(page)
+                    assert channels()[0]["live"]["live_id"] != cleanup_live
+                    result["stop_cleanup_retry"] = {"retained_state": "stopping", "retry_enabled": True,
+                        "old_live_removed": True, "replay_new_generation": True, "viewer_closed_before_retry": True}
+                    mark("real media outage retains live cleanup; recovery permits UI stop retry and a new generation")
                 page.locator("#delete-device-button").click()
                 page.get_by_text("删除设备会停止该设备当前所有播放，是否继续？").wait_for()
                 page.locator("#confirm-action-button").click()

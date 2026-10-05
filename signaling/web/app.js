@@ -312,7 +312,7 @@ function renderChannels() {
     const actions = document.createElement("td");
     actions.className = "row-actions";
     actions.setAttribute("aria-busy", String(state.pending.has(`channel:${channel.device_id}:${channel.channel_id}`)));
-    if (live) actions.append(actionButton("停止取流", "stop", "square", "secondary", pending || live.state === "stopping"));
+    if (live) actions.append(actionButton("停止取流", "stop", "square", "secondary", pending));
     actions.append(actionButton("播放", "play", "play", "primary", pending || channel.status !== "ON" || Boolean(live && live.state !== "streaming")));
     for (const button of actions.children) {
       button.dataset.deviceId = channel.device_id;
