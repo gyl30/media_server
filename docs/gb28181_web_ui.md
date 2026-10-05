@@ -116,3 +116,9 @@ WHEP POST 等待审计：GB [代理](../signaling/play_http.go#L81) 设置读/�
 现有 Browser E2E 增加真实已连接、已解码 PC 的 failed 事件边界注入，并观察 emit 时实际 current 与按钮的关系。RED 复现错误的 ended 文案与仍可点击的关闭按钮；GREEN 完整 24 项通过（82.20 秒），覆盖 idle/preparing/streaming/failed/ended/stopping ownership、真实 live DELETE/Expires:0、正常 viewer close。失败后 live 保留，RTP 计数 615→768；重播申请新票并复用 live，INVITE 1→1。原生 PC、媒体网络及解码保持真实执行。完整证据：`/tmp/media_server_player_followup-f6b2680/full-final/result.json`，摘要追加在 [验证 JSON](verification_results/gb28181_web_ui.json) 的 `player_lifecycle_followup`。
 
 本次 `go test -count=1 ./...`、`go vet ./...`、`go test -race -count=1 ./...`、normal build 与 CTest 14/14 全部通过；CTest 在 E2E 进程退出后执行。静态资源 SHA256 与 CODE_HEAD 核对一致。C++ 未修改，本次按要求没有重跑 ASan/UBSan。
+
+## Web UI 品质复查
+
+基于 `f35aad7`，在保留现有 API 与播放器 ownership 的前提下收敛列表、播放器、颜色、间距与请求反馈。设备侧栏可滚动，播放器位于详情上方；空/加载/离线/失败/结束有明确呈现，窄窗操作列保持可见。轮询与弹窗关闭的焦点恢复使用已有按钮身份，不增加播放器或后端状态。
+
+经过基线与五轮真实截图审查，最终呈现检查 19 项、真实媒体 E2E 25 项、Go test/vet/race 和 CTest 14/14 通过。失败与媒体结束、viewer close 与 live stop 的边界保留。详细观察、评分、故障注入范围及最终截图见 [Web UI 品质复查](web_ui_quality_verification.md) 与 [验证 JSON](verification_results/web_ui_quality.json)。本轮 UI、测试及验证产物一并提交。

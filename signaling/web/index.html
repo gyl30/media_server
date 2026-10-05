@@ -26,16 +26,16 @@
         <div class="device-layout">
           <section class="device-pane" aria-labelledby="devices-title">
             <div class="section-heading"><h1 id="devices-title">设备</h1><button id="add-device-button" class="button primary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>添加设备</button></div>
-            <p id="device-count" class="count-label">0 台设备</p>
-            <div id="device-list" class="device-list"></div>
-            <div id="device-empty" class="empty-state compact"><strong>还没有设备</strong><p>添加设备后，配置设备向本平台注册地址发起 GB28181 REGISTER。</p><button id="empty-add-device-button" class="button secondary" type="button">添加设备</button></div>
+            <p id="device-count" class="count-label">正在加载…</p>
+            <div id="device-list" class="device-list" aria-busy="true"></div>
+            <div id="device-empty" class="empty-state compact" data-kind="loading"><strong>正在加载设备</strong><p>正在获取最新状态</p></div>
           </section>
           <section class="channel-pane" id="device-detail" aria-labelledby="selected-device-name" hidden>
             <button id="back-devices-button" class="button secondary compact" type="button">返回设备列表</button>
             <div class="section-heading detail-heading"><div><h1 id="selected-device-name"></h1><p id="selected-device" class="mono"></p><span id="selected-device-status"></span></div><button id="delete-device-button" class="button danger subtle" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#trash"></use></svg>删除设备</button></div>
             <div class="subheading"><h2 id="channels-title">通道</h2></div>
             <div class="table-wrap channel-table"><table><thead><tr><th scope="col">名称 / 编码</th><th scope="col">状态</th><th scope="col">取流</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody id="channel-rows"></tbody></table></div>
-            <p id="channel-empty" class="empty-state">正在同步通道…</p>
+            <div id="channel-empty" class="empty-state" role="status" aria-live="polite"><strong>正在同步通道…</strong><p>设备上线后，通道会自动显示在这里</p></div>
           </section>
           <div id="device-welcome" class="empty-state welcome"><strong>选择一台设备</strong><p>查看设备状态和通道，或开始播放。</p></div>
         </div>
@@ -44,7 +44,7 @@
         <div class="section-heading"><h1>RTSP 源</h1><button id="add-source-button" class="button primary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>添加源</button></div>
         <section class="data-section" aria-label="RTSP 源">
           <div class="table-wrap wide-table"><table><thead><tr><th scope="col">名称</th><th scope="col">地址</th><th scope="col">期望状态</th><th scope="col">取流状态</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody id="source-rows"></tbody></table></div>
-          <p id="source-empty" class="empty-state">还没有 RTSP 源</p>
+          <div id="source-empty" class="empty-state" data-kind="loading"><strong>正在加载媒体源</strong><p>正在获取最新状态</p></div>
         </section>
       </section>
     </div>
@@ -56,15 +56,15 @@
       <p id="preview-error" class="inline-error" role="alert" hidden></p>
     </section>
   </main>
-  <dialog id="device-dialog" class="source-dialog">
+  <dialog id="device-dialog" class="source-dialog" aria-labelledby="device-dialog-title">
     <form id="device-form">
-      <div class="dialog-heading"><h2>添加设备</h2><button id="close-device-dialog" class="icon-button" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
+      <div class="dialog-heading"><h2 id="device-dialog-title">添加设备</h2><button id="close-device-dialog" class="icon-button" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
       <div class="form-grid"><label class="field"><span>设备 ID</span><input id="device-id" name="device_id" type="text" inputmode="numeric" pattern="[0-9]{20}" minlength="20" maxlength="20" autocomplete="off" required aria-describedby="device-id-hint"><small id="device-id-hint">20 位 GB28181 设备编码</small></label><label class="field"><span>设备名称</span><input id="device-name" name="name" type="text" autocomplete="off" required></label></div>
       <p id="device-form-error" class="inline-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="cancel-device-dialog" class="button secondary" type="button">取消</button><button id="save-device-button" class="button primary" type="submit">添加设备</button></div>
     </form>
   </dialog>
-  <dialog id="source-dialog" class="source-dialog">
+  <dialog id="source-dialog" class="source-dialog" aria-labelledby="source-dialog-title">
     <form id="source-form">
       <div class="dialog-heading"><h2 id="source-dialog-title">添加源</h2><button class="icon-button" id="close-source-dialog" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
       <input id="source-id" type="hidden">
@@ -74,6 +74,6 @@
       <div class="dialog-actions"><button id="cancel-source-dialog" class="button secondary" type="button">取消</button><button id="save-source-button" class="button primary" type="submit">添加源</button></div>
     </form>
   </dialog>
-  <dialog id="confirm-dialog" class="confirm-dialog"><form method="dialog"><h2 id="confirm-title">确认操作</h2><p id="confirm-message"></p><div class="dialog-actions"><button class="button secondary" value="cancel">取消</button><button id="confirm-action-button" class="button danger" value="confirm">删除</button></div></form></dialog>
+  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message"><form method="dialog"><h2 id="confirm-title">确认操作</h2><p id="confirm-message"></p><div class="dialog-actions"><button class="button secondary" value="cancel">取消</button><button id="confirm-action-button" class="button danger" value="confirm">删除</button></div></form></dialog>
 </body>
 </html>

@@ -184,20 +184,37 @@ function errorMessage(error) {
     device_stopping: "设备正在清理，请稍后重试", channel_not_found: "通道不存在", channel_offline: "通道当前不可播放",
     play_not_found: "播放链接已失效，请重新播放", live_not_found: "设备取流已结束", live_stopping: "设备取流正在停止，请稍后重试",
     device_delete_failed: "设备暂时无法删除，媒体资源清理未完成，请稍后重试。",
+    live_stop_failed: "取流暂时无法停止，请稍后重试", live_start_failed: "设备暂时无法连接，请稍后重试",
     invalid_request: "输入有误，请检查后重试", conflict: "资源正在使用，请稍后重试", not_running: "媒体源尚未开始取流",
     whep_create_404: "播放链接已失效，请重新播放", whep_create_409: "媒体尚未就绪，请稍后重新播放",
     media_ended: "设备已离线或媒体已结束", whep_delete_500: "播放器已关闭，服务器资源尚待清理",
     webrtc_connection_failed: "连接中断，请重新播放", network_error: "无法连接服务器，请稍后重试",
   };
-  return messages[error?.code] || (error?.name === "AbortError" ? "操作已取消" : "操作失败，请稍后重试");
+  return messages[error?.code] || (error?.name === "AbortError" ? "操作已取消" : error instanceof TypeError ? "无法连接服务器，请检查网络后重试" : "操作失败，请稍后重试");
 }
 
 function sourceIsActive(source) {
   return Boolean(source.session);
 }
 
+function restoreFocus(button) {
+  if (!button) return;
+  if (!button.isConnected) {
+    const identity = Object.entries(button.dataset);
+    button = identity.length ? [...document.querySelectorAll("button")].find(candidate =>
+      identity.every(([key, value]) => candidate.dataset[key] === value)) : null;
+  }
+  if (button && !button.disabled) button.focus({preventScroll: true});
+}
+
+function replaceContent(container, nodes) {
+  const active = container.contains(document.activeElement) ? document.activeElement : null;
+  container.replaceChildren(...nodes);
+  restoreFocus(active);
+}
+
 function renderSources() {
-  elements.sourceRows.replaceChildren();
+  const rows = [];
   for (const source of state.sources) {
     const row = document.createElement("tr");
     const active = sourceIsActive(source);
@@ -213,6 +230,7 @@ function renderSources() {
     );
     const actions = document.createElement("td");
     actions.className = "row-actions";
+    actions.setAttribute("aria-busy", String(pending));
     const buttons = [];
     if (active) {
       buttons.push(actionButton("停止取流", "stop", "square", "secondary", pending));
@@ -232,14 +250,18 @@ function renderSources() {
       actions.append(button);
     }
     row.append(actions);
-    elements.sourceRows.append(row);
+    rows.push(row);
   }
+  replaceContent(elements.sourceRows, rows);
+  elements.sourceEmpty.dataset.kind = "empty";
+  elements.sourceEmpty.querySelector("strong").textContent = "还没有 RTSP 源";
+  elements.sourceEmpty.querySelector("p").textContent = "添加摄像机或媒体源，按需取流与播放";
   elements.sourceEmpty.hidden = state.sources.length !== 0;
   elements.sourceRows.parentElement.hidden = state.sources.length === 0;
 }
 
 function renderDevices() {
-  elements.deviceList.replaceChildren();
+  const buttons = [];
   for (const device of state.devices) {
     const button = document.createElement("button");
     button.type = "button";
@@ -252,8 +274,12 @@ function renderDevices() {
     identity.className = "device-identity mono";
     identity.textContent = device.device_id;
     button.append(name, identity, badge(device.online ? "在线" : "离线", device.online ? "success" : "neutral"));
-    elements.deviceList.append(button);
+    buttons.push(button);
   }
+  replaceContent(elements.deviceList, buttons);
+  elements.deviceEmpty.dataset.kind = "empty";
+  elements.deviceEmpty.querySelector("strong").textContent = "还没有设备";
+  elements.deviceEmpty.querySelector("p").textContent = "添加设备并完成注册后，即可查看通道和播放画面";
   elements.deviceEmpty.hidden = state.devices.length !== 0;
   elements.deviceCount.textContent = `${state.devices.length} 台设备`;
 }
@@ -263,7 +289,7 @@ function liveLabel(value) {
 }
 
 function renderChannels() {
-  elements.channelRows.replaceChildren();
+  const rows = [];
   const device = state.devices.find(item => item.device_id === state.selectedDeviceID);
   const deleting = state.pending.has(`device:${state.selectedDeviceID}`);
   const channels = device?.online && state.channelsDeviceID === state.selectedDeviceID ? state.channels : [];
@@ -273,6 +299,8 @@ function renderChannels() {
   elements.selectedDevice.textContent = device?.device_id || "";
   elements.selectedDeviceStatus.replaceChildren(badge(device?.online ? "在线" : "离线", device?.online ? "success" : "neutral"));
   elements.deleteDevice.disabled = deleting;
+  elements.deleteDevice.setAttribute("aria-busy", String(deleting));
+  elements.deleteDevice.lastChild.textContent = deleting ? "正在删除" : "删除设备";
   for (const channel of channels) {
     const live = channel.live;
     const pending = deleting || state.pending.has(`channel:${channel.device_id}:${channel.channel_id}`);
@@ -283,6 +311,7 @@ function renderChannels() {
       badgeCell(liveLabel(live?.state), toneForState(live?.state)));
     const actions = document.createElement("td");
     actions.className = "row-actions";
+    actions.setAttribute("aria-busy", String(state.pending.has(`channel:${channel.device_id}:${channel.channel_id}`)));
     if (live) actions.append(actionButton("停止取流", "stop", "square", "secondary", pending || live.state === "stopping"));
     actions.append(actionButton("播放", "play", "play", "primary", pending || channel.status !== "ON" || Boolean(live && live.state !== "streaming")));
     for (const button of actions.children) {
@@ -290,11 +319,15 @@ function renderChannels() {
       button.dataset.channelId = channel.channel_id;
     }
     row.append(actions);
-    elements.channelRows.append(row);
+    rows.push(row);
   }
+  replaceContent(elements.channelRows, rows);
   elements.channelRows.parentElement.hidden = channels.length === 0;
   elements.channelEmpty.hidden = channels.length !== 0;
-  elements.channelEmpty.textContent = !device?.online ? "设备离线" : Date.now() < state.channelSyncUntil ? "正在同步通道…" : "未发现通道";
+  const syncing = device?.online && Date.now() < state.channelSyncUntil;
+  elements.channelEmpty.dataset.kind = syncing ? "loading" : "empty";
+  elements.channelEmpty.querySelector("strong").textContent = !device?.online ? "设备离线" : syncing ? "正在同步通道…" : "未发现通道";
+  elements.channelEmpty.querySelector("p").textContent = !device?.online ? "设备恢复在线后，可继续查看通道与播放" : syncing ? "设备上线后，通道会自动显示在这里" : "设备尚未上报通道，请检查设备配置";
 }
 
 function renderAll() {
@@ -311,11 +344,13 @@ async function refreshChannels(deviceID = state.selectedDeviceID) {
   if (!device?.online || document.querySelector(".app-layout").dataset.view !== "devices") {
     state.channels = [];
     state.channelsDeviceID = "";
+    elements.channelRows.setAttribute("aria-busy", "false");
     renderChannels();
     return;
   }
   const controller = new AbortController();
   state.channelController = controller;
+  elements.channelRows.setAttribute("aria-busy", "true");
   try {
     const payload = await api.channels(deviceID, controller.signal);
     if (epoch !== state.channelEpoch || state.selectedDeviceID !== deviceID) return;
@@ -331,9 +366,17 @@ async function refreshChannels(deviceID = state.selectedDeviceID) {
   } catch (error) {
     if (error.name !== "AbortError" && epoch === state.channelEpoch && state.selectedDeviceID === deviceID) {
       showStatus(errorMessage(error), "danger");
+      if (!elements.channelEmpty.hidden) {
+        elements.channelEmpty.dataset.kind = "error";
+        elements.channelEmpty.querySelector("strong").textContent = "通道暂时无法加载";
+        elements.channelEmpty.querySelector("p").textContent = "请检查网络连接后刷新";
+      }
     }
   } finally {
-    if (epoch === state.channelEpoch) state.channelController = null;
+    if (epoch === state.channelEpoch) {
+      state.channelController = null;
+      elements.channelRows.setAttribute("aria-busy", "false");
+    }
   }
 }
 
@@ -345,6 +388,8 @@ async function refreshSnapshots(options = {}) {
   const controller = new AbortController();
   state.refreshController = controller;
   elements.refresh.disabled = true;
+  elements.refresh.setAttribute("aria-busy", "true");
+  elements.deviceList.setAttribute("aria-busy", "true");
   try {
     const [sources, devices] = await Promise.all([
       api.sources(controller.signal),
@@ -381,11 +426,21 @@ async function refreshSnapshots(options = {}) {
   } catch (error) {
     if (error.name !== "AbortError" && epoch === state.refreshEpoch) {
       showStatus(errorMessage(error), "danger", 0);
+      if (!elements.lastUpdated.dateTime) {
+        elements.deviceCount.textContent = "暂时无法加载";
+        for (const empty of [elements.deviceEmpty, elements.sourceEmpty]) {
+          empty.dataset.kind = "error";
+          empty.querySelector("strong").textContent = "无法连接服务器";
+          empty.querySelector("p").textContent = "请检查网络连接后刷新";
+        }
+      }
     }
   } finally {
     if (epoch === state.refreshEpoch) {
       state.refreshController = null;
       elements.refresh.disabled = false;
+      elements.refresh.setAttribute("aria-busy", "false");
+      elements.deviceList.setAttribute("aria-busy", "false");
     }
   }
 }
@@ -460,6 +515,8 @@ async function submitSourceForm(event) {
   }
 
   elements.saveSource.disabled = true;
+  elements.saveSource.setAttribute("aria-busy", "true");
+  elements.saveSource.textContent = editingID ? "正在保存" : "正在添加";
   elements.sourceFormError.hidden = true;
   try {
     if (editingID) {
@@ -475,10 +532,13 @@ async function submitSourceForm(event) {
     elements.sourceFormError.hidden = false;
   } finally {
     elements.saveSource.disabled = false;
+    elements.saveSource.setAttribute("aria-busy", "false");
+    elements.saveSource.textContent = editingID ? "保存" : "添加源";
   }
 }
 
 function confirmAction(title, message, label) {
+  const trigger = document.activeElement;
   elements.confirmTitle.textContent = title;
   elements.confirmMessage.textContent = message;
   elements.confirmAction.textContent = label;
@@ -486,20 +546,10 @@ function confirmAction(title, message, label) {
   elements.confirmDialog.showModal();
   return new Promise((resolve) => {
     elements.confirmDialog.addEventListener("close", () => {
+      restoreFocus(trigger);
       resolve(elements.confirmDialog.returnValue === "confirm");
     }, { once: true });
   });
-}
-
-async function startPreview(target, label) {
-  const pending = preview.start(target, label);
-  if (window.matchMedia("(max-width: 1180px)").matches) {
-    elements.previewPanel.scrollIntoView({
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-      block: "start",
-    });
-  }
-  return pending;
 }
 
 function renderPreviewState(update) {
@@ -514,6 +564,13 @@ function renderPreviewState(update) {
   };
   const label = labels[update.state] || update.state;
   elements.previewPanel.hidden = update.state === "idle";
+  elements.previewPanel.dataset.state = update.state;
+  if (update.state === "preparing") {
+    elements.previewPanel.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "start",
+    });
+  }
   elements.previewState.replaceChildren(badge(label, toneForState(update.state)));
   elements.previewTarget.textContent = update.target || "";
   elements.stopPreview.disabled = !update.canStop;
@@ -573,9 +630,7 @@ elements.clearPassword.addEventListener("change", () => {
 elements.sourceDialog.addEventListener("close", () => {
   elements.sourcePassword.value = "";
   elements.sourcePassword.disabled = false;
-  if (state.sourceDialogTrigger) {
-    state.sourceDialogTrigger.focus();
-  }
+  restoreFocus(state.sourceDialogTrigger);
   state.sourceDialogTrigger = null;
 });
 
@@ -632,7 +687,7 @@ elements.sourceRows.addEventListener("click", async (event) => {
       }, "已停止取流");
       break;
     case "preview":
-      await runResourceAction(key, () => startPreview({ source_id: source.source_id }, source.stream_name), "播放器已连接");
+      await runResourceAction(key, () => preview.start({ source_id: source.source_id }, source.stream_name), "播放器已连接");
       break;
     case "edit":
       openSourceDialog(source, button);
@@ -693,7 +748,7 @@ elements.channelRows.addEventListener("click", async (event) => {
       break;
     case "play":
       const device = state.devices.find(item => item.device_id === deviceID);
-      await runResourceAction(key, () => startPreview({ device_id: deviceID, channel_id: channelID }, `${device?.name || "设备"} · ${channel.name || channelID}`), "播放器已连接");
+      await runResourceAction(key, () => preview.start({ device_id: deviceID, channel_id: channelID }, `${device?.name || "设备"} · ${channel.name || channelID}`), "播放器已连接");
       break;
   }
 });
@@ -734,7 +789,6 @@ function openDeviceDialog() {
 }
 
 elements.addDevice.addEventListener("click", openDeviceDialog);
-byID("empty-add-device-button").addEventListener("click", openDeviceDialog);
 for (const id of ["close-device-dialog", "cancel-device-dialog"]) byID(id).addEventListener("click", () => elements.deviceDialog.close());
 elements.deviceForm.noValidate = true;
 elements.deviceDialog.addEventListener("cancel", event => {
@@ -750,6 +804,8 @@ elements.deviceForm.addEventListener("submit", async event => {
     return;
   }
   elements.saveDevice.disabled = true;
+  elements.saveDevice.setAttribute("aria-busy", "true");
+  elements.saveDevice.textContent = "正在添加";
   for (const id of ["close-device-dialog", "cancel-device-dialog"]) byID(id).disabled = true;
   elements.deviceFormError.hidden = true;
   try {
@@ -762,6 +818,8 @@ elements.deviceForm.addEventListener("submit", async event => {
     elements.deviceFormError.hidden = false;
   } finally {
     elements.saveDevice.disabled = false;
+    elements.saveDevice.setAttribute("aria-busy", "false");
+    elements.saveDevice.textContent = "添加设备";
     for (const id of ["close-device-dialog", "cancel-device-dialog"]) byID(id).disabled = false;
   }
 });
