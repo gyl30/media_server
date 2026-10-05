@@ -120,9 +120,10 @@ def main():
                         WHEPPreview.prototype.emit = function(...args) {
                             emit.apply(this, args);
                             uiOwnership.push({state:args[0], hasCurrent:this.current !== null,
-                                closeDisabled:document.querySelector('#stop-preview-button').disabled});
+                                closeDisabled:document.querySelector('#stop-preview-button').disabled,
+                                panelHidden:document.querySelector('.preview-panel').hidden});
                         };
-                        return document.querySelector('#stop-preview-button').disabled;
+                        return document.querySelector('.preview-panel').hidden;
                     })()""", "userGesture": False, "awaitPromise": True, "returnByValue": True})
                     assert observation["result"].get("value") is True
                     observer.detach()
@@ -130,7 +131,10 @@ def main():
                 def open_page():
                     item = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="zh-CN")
                     item.resources = []
-                    item.add_init_script("""window.uiPeers = []; const NativePeer = window.RTCPeerConnection;
+                    item.add_init_script("""window.uiPeers = []; window.uiFocus = [];
+                        document.addEventListener('focusin', event => uiFocus.push({time:performance.now(),
+                            id:event.target.id, data:{...event.target.dataset}}));
+                        const NativePeer = window.RTCPeerConnection;
                         window.RTCPeerConnection = class extends NativePeer {
                             constructor(...args) {super(...args); window.uiPeers.push(this);}
                         };""")
@@ -154,18 +158,95 @@ def main():
                 def play_channel(item):
                     item.locator(f"[data-channel-id='{channel}'] [data-action='play']").click()
                     decoded(item)
+                    focused(item, f"[data-channel-id='{channel}'][data-action='play']")
+
+                def focused(item, selector):
+                    try:
+                        item.wait_for_function("selector => document.activeElement !== document.body && document.activeElement.matches(selector)", arg=selector, timeout=3000)
+                    except Exception:
+                        result["focus_failure"] = item.evaluate("""() => ({active:{id:document.activeElement.id,
+                            tag:document.activeElement.tagName, data:{...document.activeElement.dataset}},
+                            history:uiFocus.slice(-20),
+                            controls:[...document.querySelectorAll('button')].filter(button => button.checkVisibility())
+                                .map(button => ({id:button.id, data:{...button.dataset}, disabled:button.disabled}))})""")
+                        raise
+                    result.setdefault("focus_targets", []).append(selector)
+
+                def recover_poll(item, path, error_selector, error_text):
+                    def poll_failure(route):
+                        if route.request.method == "GET": route.fulfill(status=503, json={"error": "network_error"})
+                        else: route.continue_()
+                    item.route(path, poll_failure)
+                    item.locator("#global-status.danger").wait_for()
+                    last_update = item.locator("#last-updated").get_attribute("datetime")
+                    item.unroute(path, poll_failure)
+                    item.wait_for_function("previous => document.querySelector('#last-updated').dateTime !== previous", arg=last_update)
+                    item.locator("#global-status").wait_for(state="hidden", timeout=8000)
+                    assert item.locator(error_selector).inner_text() == error_text
+                    assert item.locator(error_selector).is_visible()
+                    mark(f"poll recovery expires transient danger while {error_selector} remains inline")
+
+                def submit_pending(item, kind, path):
+                    held = []
+                    def hold(route):
+                        if route.request.method == "POST": held.append(route)
+                        else: route.continue_()
+                    item.route(path, hold)
+                    item.locator(f"#save-{kind}-button").click()
+                    item.wait_for_function(f"document.querySelector('#save-{kind}-button').disabled")
+                    assert len(held) == 1
+                    for control in (f"save-{kind}-button", f"close-{kind}-dialog", f"cancel-{kind}-dialog"):
+                        assert item.locator(f"#{control}").is_disabled(), control
+                    item.keyboard.press("Escape")
+                    assert item.locator(f"#{kind}-dialog").is_visible()
+                    item.locator(f"#save-{kind}-button").evaluate("button => button.click()")
+                    assert len(held) == 1
+                    held[0].fulfill(response=held[0].fetch())
+                    item.locator(f"#{kind}-dialog").wait_for(state="hidden")
+                    item.wait_for_function(f"!document.querySelector('#save-{kind}-button').disabled && !document.querySelector('#refresh-button').disabled")
+                    item.unroute(path, hold)
+                    item.wait_for_function(f"document.activeElement.id === 'add-{kind}-button'")
+                    mark(f"{kind} submit blocks close/cancel/Esc/reentry and restores trigger focus")
 
                 page = open_page()
                 page.locator("#device-empty").wait_for(state="visible")
                 capture(page, "empty")
+                page.locator("#tab-sources").click()
+                page.locator("#add-source-button").click()
+                page.locator("#source-stream-name").fill("rtsp/dialog-check")
+                page.locator("#source-url").fill(f"rtsp://127.0.0.1:{base+1}/dialog-check")
+                page.locator("#source-password").fill("invalid-without-username")
+                page.locator("#save-source-button").click()
+                page.locator("#source-form-error").wait_for()
+                recover_poll(page, "**/api/sources", "#source-form-error", "设置密码前请输入用户名")
+                page.locator("#source-password").fill("")
+                submit_pending(page, "source", "**/api/sources")
+                page.locator("#source-rows [data-action='delete']").click()
+                page.keyboard.press("Escape")
+                page.locator("#confirm-dialog").wait_for(state="hidden")
+                focused(page, "#source-rows [data-action='delete']")
+                page.locator("#source-rows [data-action='delete']").click()
+                page.locator("#confirm-action-button").click()
+                page.locator("#source-empty").wait_for()
+                focused(page, "#add-source-button")
+                assert request(base+3, "POST", "/api/sources", {"stream_name": "rtsp/poll-removal",
+                    "url": f"rtsp://127.0.0.1:{base+1}/poll-removal"})[0] == 201
+                page.locator("#source-rows [data-action='edit']").wait_for()
+                page.locator("#source-rows [data-action='edit']").focus()
+                source_id = json.loads(request(base+3, "GET", "/api/sources")[2])["sources"][0]["source_id"]
+                assert request(base+3, "DELETE", f"/api/sources/{source_id}")[0] == 204
+                page.locator("#source-empty").wait_for()
+                focused(page, "#add-source-button")
+                mark("poll removal of a focused resource restores its list entry point")
+                page.evaluate("location.hash = 'devices'")
+                focused(page, "#tab-devices")
                 page.locator("#add-device-button").click()
                 page.locator("#device-id").fill("123")
                 page.locator("#device-name").fill("测试摄像机")
                 page.locator("#save-device-button").click()
                 page.get_by_text("输入有误，请填写 20 位设备编码和设备名称").wait_for()
                 page.locator("#device-id").fill(device)
-                page.locator("#save-device-button").click()
-                page.locator("#device-dialog").wait_for(state="hidden")
+                submit_pending(page, "device", "**/api/devices")
                 device_button = page.locator(f"#device-list [data-device-id='{device}']")
                 device_button.wait_for()
                 assert "测试摄像机" in device_button.inner_text() and "离线" in device_button.inner_text()
@@ -177,12 +258,17 @@ def main():
                 page.locator("#device-name").fill("重复设备")
                 page.locator("#save-device-button").click()
                 page.get_by_text("设备已存在", exact=True).wait_for()
+                recover_poll(page, "**/api/devices", "#device-form-error", "设备已存在")
                 page.locator("#cancel-device-dialog").click()
+                focused(page, "#add-device-button")
                 device_button.click()
                 page.get_by_text("设备离线", exact=True).wait_for()
                 assert page.locator("#selected-device-name").inner_text() == "测试摄像机"
                 capture(page, "offline")
                 mark("duplicate error and offline detail use Chinese text")
+                page.locator("#back-devices-button").click()
+                focused(page, f"#device-list [data-device-id='{device}']")
+                device_button.click()
                 assert not any("/channels" in item["url"] for item in result["requests"])
                 fixture = args.output / "fixture.h264"
                 subprocess.run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
@@ -195,6 +281,35 @@ def main():
                 capture(page, "devices-online")
                 mark("REGISTER and Catalog appear through UI polling")
                 if not args.management_only and not args.rtsp_only:
+                    ice_page = open_page()
+                    select_device(ice_page)
+                    await_start = len(result["requests"])
+                    ice_page.evaluate("""async () => {
+                        const {WHEPPreview} = await import('/whep.js');
+                        const local = RTCPeerConnection.prototype.setLocalDescription;
+                        const start = WHEPPreview.prototype.start;
+                        window.uiStartSettled = false;
+                        WHEPPreview.prototype.start = async function(...args) {
+                            try {return await start.apply(this, args);}
+                            finally {window.uiStartSettled = true;}
+                        };
+                        RTCPeerConnection.prototype.setLocalDescription = async function(...args) {
+                            await local.apply(this, args);
+                            Object.defineProperty(this, 'iceGatheringState', {configurable:true, get:() => 'gathering'});
+                            await new Promise(resolve => {window.uiReleaseLocal = resolve;});
+                        };
+                    }""")
+                    ice_page.locator(f"[data-channel-id='{channel}'] [data-action='play']").click()
+                    ice_page.wait_for_function("typeof uiReleaseLocal === 'function'")
+                    ice_page.locator("#stop-preview-button").click()
+                    ice_page.locator(".preview-panel").wait_for(state="hidden")
+                    ice_page.evaluate("uiReleaseLocal()")
+                    ice_page.wait_for_function("uiStartSettled", timeout=3000)
+                    assert ice_page.evaluate("uiPeers.at(-1).connectionState") == "closed"
+                    assert not ice_page.resources
+                    assert not any(item["method"] == "POST" for item in result["requests"][await_start:])
+                    ice_page.close()
+                    mark("cancel during native local-description await settles start without ICE events or POST")
                     play = page.locator(f"[data-channel-id='{channel}'] [data-action='play']")
                     channel_route = f"**{device_path}/channels"
                     def offline_channel(route):
@@ -212,6 +327,7 @@ def main():
                     assert play.is_disabled()
                     play.evaluate("button => button.click()")
                     decoded(page)
+                    focused(page, f"[data-channel-id='{channel}'][data-action='play']")
                     assert page.evaluate("uiPeers.length") == 1
                     before = stats(page)
                     page.wait_for_timeout(2000)
@@ -262,10 +378,18 @@ def main():
                         stopLiveHidden:document.querySelector('#stop-live-button').hidden})""")
                     failure = result["transport_failure"]
                     assert "播放失败" in failure["state"] and failure["error"] == "连接中断，请重新播放", failure
-                    assert not failure["ownership"]["hasCurrent"] and failure["ownership"]["closeDisabled"], failure
+                    assert not failure["ownership"]["hasCurrent"] and not failure["ownership"]["closeDisabled"], failure
                     assert failure["peer"] == "closed" and failure["videoCleared"] and failure["stopLiveHidden"], failure
                     capture(page, "transport-failed")
                     resource_gone(failed_resource)
+                    page.locator("#global-status").wait_for(state="hidden", timeout=7000)
+                    assert page.locator("#preview-error").is_visible()
+                    dismiss_start = len(result["requests"])
+                    page.locator("#stop-preview-button").click()
+                    page.locator(".preview-panel").wait_for(state="hidden")
+                    focused(page, "#add-device-button")
+                    assert not any(item["method"] == "DELETE" for item in result["requests"][dismiss_start:])
+                    mark("failed panel keeps inline error then dismisses without network cleanup")
                     page.wait_for_timeout(1500)
                     assert channels()[0]["live"]["live_id"] == live_id
                     eventually(lambda: counters(simulator)["rtp_packets"] > before_failure["rtp_packets"])
@@ -296,20 +420,65 @@ def main():
                     page.locator("#stop-preview-button").click()
                     page.wait_for_function("document.querySelector('#preview-state').textContent.includes('正在关闭')")
                     assert page.locator("#stop-preview-button").is_disabled()
+                    page.locator("#stop-preview-button").evaluate("button => button.click()")
+                    assert len(held_close) == 1
                     capture(page, "viewer-stopping")
                     assert len(held_close) == 1
                     held_close[0].fulfill(response=held_close[0].fetch())
                     page.unroute(close_route, delayed_close)
                     page.locator(".preview-panel").wait_for(state="hidden")
                     resource_gone(page.resources[-1])
+                    focused(page, f"[data-channel-id='{channel}'][data-action='play']")
                     assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
                     assert page.evaluate("document.querySelector('#preview-video').srcObject === null")
-                    assert page.locator("#stop-preview-button").is_disabled()
+                    assert page.locator(".preview-panel").is_hidden()
                     assert channels()[0]["live"]["live_id"] == live_id
                     play.click()
                     decoded(page)
                     assert channels()[0]["live"]["live_id"] == live_id
                     mark("closing viewer leaves shared live; replay rejoins the same generation")
+                    old_resource = page.resources[-1]
+                    def delete_viewer_failure(route):
+                        if route.request.method == "DELETE": route.fulfill(status=502)
+                        else: route.continue_()
+                    page.route(close_route, delete_viewer_failure)
+                    page.locator("#stop-preview-button").click()
+                    page.locator(".preview-panel").wait_for(state="hidden")
+                    assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
+                    assert page.evaluate("document.querySelector('#preview-video').srcObject === null")
+                    page.get_by_text("播放器已关闭，服务器资源尚待清理", exact=True).wait_for(timeout=3000)
+                    focused(page, f"[data-channel-id='{channel}'][data-action='play']")
+                    page.unroute(close_route, delete_viewer_failure)
+                    endpoint = urlsplit(old_resource)
+                    assert request(endpoint.port, "DELETE", endpoint.path)[0] in (204, 404)
+                    play_channel(page)
+                    mark("explicit viewer DELETE 502 closes locally, warns about cleanup and restores play focus")
+                    spare_device = "34020000001320000003"
+                    assert request(base+3, "POST", "/api/devices", {"device_id": spare_device, "name": "切换检查"})[0] == 201
+                    page.locator(f"#device-list [data-device-id='{spare_device}']").wait_for()
+                    for action in ("replay", "tab", "device"):
+                        old_resource = page.resources[-1]
+                        page.route(close_route, delete_viewer_failure)
+                        if action == "replay":
+                            play_channel(page)
+                        elif action == "tab":
+                            page.locator("#tab-sources").click()
+                            page.locator(".preview-panel").wait_for(state="hidden")
+                            focused(page, "#tab-sources")
+                            page.locator("#tab-devices").click()
+                            play_channel(page)
+                        else:
+                            page.locator(f"#device-list [data-device-id='{spare_device}']").click()
+                            page.locator(".preview-panel").wait_for(state="hidden")
+                            focused(page, f"#device-list [data-device-id='{spare_device}']")
+                            select_device(page)
+                            play_channel(page)
+                        assert page.locator("#global-status").inner_text() != "播放器已关闭，服务器资源尚待清理"
+                        page.unroute(close_route, delete_viewer_failure)
+                        endpoint = urlsplit(old_resource)
+                        assert request(endpoint.port, "DELETE", endpoint.path)[0] in (204, 404)
+                    assert request(base+3, "DELETE", f"/api/devices/{spare_device}")[0] == 204
+                    mark("automatic replay/tab/device cleanup ignores remote DELETE errors without stale UI or warnings")
                     if not args.playback_only:
                         invite_count = counters(simulator)["invite"]
                         result["button_ownership"] = page.evaluate("uiOwnership")
@@ -335,17 +504,26 @@ def main():
                     capture(page, "stop-error")
                     page.unroute(stop_route, stop_failure)
                     mark("stop request failure leaves the live and viewer usable")
-                    page.locator("#stop-live-button").click()
+                    page.locator("#channel-rows [data-action='stop']").click()
                     eventually(lambda: channels()[0].get("live") is None)
+                    focused(page, f"[data-channel-id='{channel}'][data-action='play']")
                     page.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')")
                     assert page.locator("#preview-error").inner_text() == "设备已离线或媒体已结束"
-                    assert page.locator("#stop-preview-button").is_disabled()
+                    assert page.locator("#stop-preview-button").is_enabled()
+                    page.locator("#global-status").wait_for(state="hidden", timeout=7000)
+                    assert page.locator("#preview-error").is_visible()
                     capture(page, "media-ended")
                     resource_gone(page.resources[-1])
+                    dismiss_start = len(result["requests"])
+                    page.locator("#stop-preview-button").click()
+                    page.locator(".preview-panel").wait_for(state="hidden")
+                    assert not any(item["method"] == "DELETE" for item in result["requests"][dismiss_start:])
+                    focused(page, "#add-device-button")
+                    mark("ended panel dismisses without a second viewer DELETE")
                     for other in viewers[1:]:
                         other.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')", timeout=15000)
                         assert other.locator("#preview-error").inner_text() == "设备已离线或媒体已结束"
-                        assert other.locator("#stop-preview-button").is_disabled()
+                        assert other.locator("#stop-preview-button").is_enabled()
                         assert other.evaluate("uiPeers.every(peer => peer.connectionState === 'closed')")
                         resource_gone(other.resources[-1])
                     if not args.playback_only:
@@ -361,8 +539,9 @@ def main():
                         page.wait_for_function("document.querySelector('#selected-device-status').textContent.includes('离线')", timeout=15000)
                         page.wait_for_function("document.querySelector('#preview-state').textContent.includes('已结束')")
                         assert page.locator("#preview-error").inner_text() == "设备已离线或媒体已结束"
-                        assert page.locator("#stop-preview-button").is_disabled()
+                        assert page.locator("#stop-preview-button").is_enabled()
                         assert page.locator("#channel-rows tr").count() == 0 and channels() == []
+                        focused(page, "#add-device-button")
                         mark("Expires:0 clears channels and ends the UI player while device stays visible")
                         simulator = start_simulator("simulator-reregister")
                         page.wait_for_function("document.querySelector('#selected-device-status').textContent.includes('在线')", timeout=15000)
@@ -427,27 +606,15 @@ def main():
                         page.wait_for_function("document.querySelector('#delete-device-button').disabled")
                         page.wait_for_timeout(100)
                         assert len(held_delete) == 1
+                        page.locator("#add-device-button").focus()
                         held_delete[0].fulfill(status=502, content_type="application/json", body='{"error":"device_delete_failed"}')
                         page.get_by_text("设备暂时无法删除，媒体资源清理未完成，请稍后重试。", exact=True).wait_for()
                         assert not page.locator("#device-detail").is_hidden() and request(base+3, "GET", device_path)[0] == 200
                         assert page.evaluate("uiPeers.at(-1).connectionState") == "connected"
+                        page.wait_for_function("!document.querySelector('#delete-device-button').disabled")
+                        focused(page, "#add-device-button")
                         page.unroute(f"**{device_path}", delete_failure)
                         mark("delete pending disables controls; cleanup failure keeps device/detail/player")
-
-                        old_resource = page.resources[-1]
-                        delete_resource_route = "**/play/whep/session/*"
-                        def delete_viewer_failure(route):
-                            if route.request.method == "DELETE": route.fulfill(status=502)
-                            else: route.continue_()
-                        page.route(delete_resource_route, delete_viewer_failure)
-                        page.locator("#stop-preview-button").click()
-                        page.locator(".preview-panel").wait_for(state="hidden")
-                        assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
-                        assert page.evaluate("document.querySelector('#preview-video').srcObject === null")
-                        page.unroute(delete_resource_route, delete_viewer_failure)
-                        endpoint = urlsplit(old_resource)
-                        assert request(endpoint.port, "DELETE", endpoint.path)[0] in (204, 404)
-                        mark("viewer DELETE failure still closes local peer and clears video")
 
                         held_offer = []
                         def delayed_offer(route):
@@ -459,6 +626,7 @@ def main():
                         assert len(held_offer) == 1 and held_offer[0][1].status == 201
                         capture(page, "connecting")
                         page.locator("#back-devices-button").click()
+                        focused(page, f"#device-list [data-device-id='{device}']")
                         assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
                         late_resource = held_offer[0][1].headers["location"]
                         held_offer[0][0].fulfill(response=held_offer[0][1])
@@ -470,14 +638,17 @@ def main():
                         mark("back during pending offer closes peer and deletes the late resource without reviving player")
                     ownership = result.get("button_ownership", []) + page.evaluate("uiOwnership")
                     assert {"idle", "preparing", "streaming", "failed", "ended", "stopping"} <= {item["state"] for item in ownership}
-                    assert all(item["closeDisabled"] == (not item["hasCurrent"]) for item in ownership), ownership
+                    assert all(item["panelHidden"] for item in ownership if item["state"] == "idle"), ownership
+                    assert all(item["closeDisabled"] for item in ownership if item["state"] == "stopping"), ownership
+                    assert all(not item["closeDisabled"] for item in ownership if item["state"] not in ("idle", "stopping")), ownership
                     result["button_ownership"] = ownership
-                    mark("close button follows actual current viewer ownership across lifecycle events")
+                    mark("panel dismiss stays available after viewer release; stopping blocks repeated close")
                 page.locator("#delete-device-button").click()
                 page.get_by_text("删除设备会停止该设备当前所有播放，是否继续？").wait_for()
                 page.locator("#confirm-action-button").click()
                 page.locator("#device-empty").wait_for()
                 assert request(base+3, "GET", device_path)[0] == 404
+                focused(page, "#add-device-button")
                 assert page.locator("#device-detail").is_hidden()
                 if not args.management_only:
                     assert page.evaluate("uiPeers.every(peer => peer.connectionState === 'closed')")
@@ -508,6 +679,7 @@ def main():
                     page.locator("#save-source-button").click()
                     source_row.locator("[data-action='start']").click()
                     source_row.locator("[data-action='preview']").wait_for()
+                    focused(page, "#source-rows [data-action='stop']")
                     source_row.locator("[data-action='preview']").click()
                     decoded(page)
                     eventually(lambda: ((stats(page).get("audio") or {}).get("samples", 0) or 0) > 0)
@@ -533,12 +705,14 @@ def main():
                     autoplay.locator("#resume-playback-button").click()
                     decoded(autoplay)
                     autoplay.wait_for_function("!document.querySelector('#preview-video').paused")
+                    focused(autoplay, "#stop-preview-button")
                     assert not autoplay.evaluate("document.querySelector('#preview-video').muted")
                     autoplay.locator("#stop-preview-button").click()
                     resource_gone(autoplay.resources[-1])
                     mark("Chrome autoplay denial shows an explicit unmuted playback button")
                     source_row.locator("[data-action='stop']").click()
                     source_row.locator("[data-action='start']").wait_for()
+                    focused(page, "#source-rows [data-action='start']")
                     assert page.evaluate("uiPeers.every(peer => peer.connectionState === 'closed')")
                     resource_gone(page.resources[-1])
                     source_row.locator("[data-action='start']").click()
@@ -548,6 +722,7 @@ def main():
                     source_row.locator("[data-action='delete']").click()
                     page.locator("#confirm-action-button").click()
                     page.locator("#source-empty").wait_for()
+                    focused(page, "#add-source-button")
                     page.wait_for_function("uiPeers.every(peer => peer.connectionState === 'closed')", timeout=5000)
                     resource_gone(source_resource)
                     mark("RTSP UI stop/restart/delete preserve operations and release its viewer")

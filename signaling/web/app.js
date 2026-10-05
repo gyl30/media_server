@@ -66,7 +66,6 @@ const state = {
   refreshController: null,
   refreshEpoch: 0,
   selectedDeviceID: "",
-  sourceDialogTrigger: null,
   sources: [],
 };
 
@@ -170,11 +169,9 @@ function showStatus(message, tone = "info", timeout = 5000) {
   elements.globalStatus.textContent = message;
   elements.globalStatus.className = `global-status ${tone}`;
   elements.globalStatus.hidden = false;
-  if (timeout > 0) {
-    statusTimer = window.setTimeout(() => {
-      elements.globalStatus.hidden = true;
-    }, timeout);
-  }
+  statusTimer = window.setTimeout(() => {
+    elements.globalStatus.hidden = true;
+  }, timeout);
 }
 
 function errorMessage(error) {
@@ -197,20 +194,23 @@ function sourceIsActive(source) {
   return Boolean(source.session);
 }
 
-function restoreFocus(button) {
-  if (!button) return;
-  if (!button.isConnected) {
+function restoreFocus(button, fallback = null) {
+  if (button && !button.isConnected) {
     const identity = Object.entries(button.dataset);
     button = identity.length ? [...document.querySelectorAll("button")].find(candidate =>
       identity.every(([key, value]) => candidate.dataset[key] === value)) : null;
   }
-  if (button && !button.disabled) button.focus({preventScroll: true});
+  if (!button || button.disabled || !button.checkVisibility()) button = fallback;
+  if (button && !button.disabled && button.checkVisibility()) button.focus({preventScroll: true});
 }
 
 function replaceContent(container, nodes) {
   const active = container.contains(document.activeElement) ? document.activeElement : null;
+  const pending = active && (state.pending.has(`source:${active.dataset.sourceId}`)
+    || state.pending.has(`channel:${active.dataset.deviceId}:${active.dataset.channelId}`)
+    || state.pending.has(`device:${active.dataset.deviceId}`));
   container.replaceChildren(...nodes);
-  restoreFocus(active);
+  restoreFocus(active, active && !pending ? (container === elements.sourceRows ? elements.addSource : elements.addDevice) : null);
 }
 
 function renderSources() {
@@ -425,7 +425,7 @@ async function refreshSnapshots(options = {}) {
     }
   } catch (error) {
     if (error.name !== "AbortError" && epoch === state.refreshEpoch) {
-      showStatus(errorMessage(error), "danger", 0);
+      showStatus(errorMessage(error), "danger");
       if (!elements.lastUpdated.dateTime) {
         elements.deviceCount.textContent = "暂时无法加载";
         for (const empty of [elements.deviceEmpty, elements.sourceEmpty]) {
@@ -449,16 +449,25 @@ async function runResourceAction(key, action, successMessage) {
   if (state.pending.has(key)) {
     return;
   }
+  const trigger = document.activeElement;
   state.pending.add(key);
   renderAll();
   try {
     const result = await action();
     if (result !== null) showStatus(successMessage, "success");
   } catch (error) {
-    showStatus(errorMessage(error), "danger", 0);
+    showStatus(errorMessage(error), "danger");
   } finally {
     state.pending.delete(key);
     await refreshSnapshots({ quiet: true });
+    if (document.activeElement === document.body || document.activeElement === trigger) {
+      const fallback = key.startsWith("source:")
+        ? elements.sourceRows.querySelector(`[data-source-id="${key.slice(7)}"]:not(:disabled)`) || elements.addSource
+        : key.startsWith("channel:")
+          ? elements.channelRows.querySelector(`button[data-channel-id="${key.split(":")[2]}"]:not(:disabled)`) || elements.addDevice
+          : elements.addDevice;
+      restoreFocus(trigger, fallback);
+    }
   }
 }
 
@@ -467,7 +476,7 @@ function sourceByID(sourceID) {
 }
 
 function openSourceDialog(source = null, trigger = null) {
-  state.sourceDialogTrigger = trigger;
+  if (elements.saveSource.disabled) return;
   elements.sourceForm.reset();
   elements.sourceFormError.hidden = true;
   elements.sourceID.value = source ? source.source_id : "";
@@ -479,6 +488,7 @@ function openSourceDialog(source = null, trigger = null) {
   elements.clearPasswordField.hidden = !source;
   elements.sourceDialogTitle.textContent = source ? "编辑源" : "添加源";
   elements.saveSource.textContent = source ? "保存" : "添加源";
+  elements.sourceDialog.addEventListener("close", () => restoreFocus(trigger), { once: true });
   elements.sourceDialog.showModal();
   elements.sourceStreamName.focus();
 }
@@ -489,6 +499,7 @@ function closeSourceDialog() {
 
 async function submitSourceForm(event) {
   event.preventDefault();
+  if (elements.saveSource.disabled) return;
   const editingID = elements.sourceID.value;
   const existing = editingID ? sourceByID(editingID) : null;
   const username = elements.sourceUsername.value;
@@ -515,6 +526,8 @@ async function submitSourceForm(event) {
   }
 
   elements.saveSource.disabled = true;
+  elements.closeSourceDialog.disabled = true;
+  byID("cancel-source-dialog").disabled = true;
   elements.saveSource.setAttribute("aria-busy", "true");
   elements.saveSource.textContent = editingID ? "正在保存" : "正在添加";
   elements.sourceFormError.hidden = true;
@@ -532,6 +545,8 @@ async function submitSourceForm(event) {
     elements.sourceFormError.hidden = false;
   } finally {
     elements.saveSource.disabled = false;
+    elements.closeSourceDialog.disabled = false;
+    byID("cancel-source-dialog").disabled = false;
     elements.saveSource.setAttribute("aria-busy", "false");
     elements.saveSource.textContent = editingID ? "保存" : "添加源";
   }
@@ -573,7 +588,7 @@ function renderPreviewState(update) {
   }
   elements.previewState.replaceChildren(badge(label, toneForState(update.state)));
   elements.previewTarget.textContent = update.target || "";
-  elements.stopPreview.disabled = !update.canStop;
+  elements.stopPreview.disabled = update.state === "stopping";
   elements.resumePlayback.hidden = !update.needsPlaybackGesture;
   renderPlayerButtons();
   elements.previewPlaceholder.hidden = update.state === "streaming";
@@ -597,6 +612,7 @@ async function stopLive(deviceID, channelID, liveID) {
 }
 
 function activateView(view, updateHash = true) {
+  const trigger = document.activeElement;
   const valid = ["sources", "devices"].includes(view) ? view : "devices";
   if (document.querySelector(".app-layout").dataset.view !== valid) void preview.closeViewer();
   for (const tab of document.querySelectorAll(".view-tab")) {
@@ -611,6 +627,7 @@ function activateView(view, updateHash = true) {
     panel.classList.toggle("is-active", selected);
   }
   document.querySelector(".app-layout").dataset.view = valid;
+  if (trigger !== document.body && !trigger.checkVisibility()) restoreFocus(byID(`tab-${valid}`));
   if (updateHash && window.location.hash !== `#${valid}`) {
     history.replaceState(null, "", `#${valid}`);
   }
@@ -621,6 +638,9 @@ elements.addSource.addEventListener("click", (event) => openSourceDialog(null, e
 elements.closeSourceDialog.addEventListener("click", closeSourceDialog);
 byID("cancel-source-dialog").addEventListener("click", closeSourceDialog);
 elements.sourceForm.addEventListener("submit", submitSourceForm);
+elements.sourceDialog.addEventListener("cancel", event => {
+  if (elements.saveSource.disabled) event.preventDefault();
+});
 elements.clearPassword.addEventListener("change", () => {
   elements.sourcePassword.disabled = elements.clearPassword.checked;
   if (elements.clearPassword.checked) {
@@ -630,8 +650,6 @@ elements.clearPassword.addEventListener("change", () => {
 elements.sourceDialog.addEventListener("close", () => {
   elements.sourcePassword.value = "";
   elements.sourcePassword.disabled = false;
-  restoreFocus(state.sourceDialogTrigger);
-  state.sourceDialogTrigger = null;
 });
 
 const tabList = document.querySelector(".view-tabs");
@@ -763,15 +781,25 @@ elements.resumePlayback.addEventListener("click", () => {
 });
 elements.previewVideo.addEventListener("playing", () => {
   if (preview.current) preview.current.needsPlaybackGesture = false;
+  if (document.activeElement === elements.resumePlayback) restoreFocus(elements.stopPreview);
   elements.resumePlayback.hidden = true;
 });
 
 elements.stopPreview.addEventListener("click", async () => {
+  const target = preview.current?.target;
+  const trigger = target?.source_id
+    ? elements.sourceRows.querySelector(`[data-source-id="${target.source_id}"][data-action="preview"]`)
+    : elements.channelRows.querySelector(`[data-channel-id="${target?.channel_id}"][data-action="play"]`);
   try {
-    await preview.closeViewer();
-    showStatus("已关闭播放器", "success");
+    const cleanupError = await preview.closeViewer();
+    if (cleanupError) showStatus(errorMessage({code: "whep_delete_500"}), "danger");
+    else showStatus("已关闭播放器", "success");
   } catch (error) {
-    showStatus(errorMessage(error), "danger", 0);
+    showStatus(errorMessage(error), "danger");
+  } finally {
+    if (document.activeElement === document.body || document.activeElement === elements.stopPreview) {
+      restoreFocus(trigger, document.querySelector(".app-layout").dataset.view === "sources" ? elements.addSource : elements.addDevice);
+    }
   }
 });
 
@@ -780,10 +808,12 @@ window.addEventListener("pagehide", () => preview.closeForPageHide());
 
 activateView(window.location.hash.slice(1) || "devices", false);
 renderPreviewState({ state: "idle", target: "", error: "" });
-function openDeviceDialog() {
+function openDeviceDialog(event) {
   if (elements.saveDevice.disabled) return;
+  const trigger = event.currentTarget;
   elements.deviceForm.reset();
   elements.deviceFormError.hidden = true;
+  elements.deviceDialog.addEventListener("close", () => restoreFocus(trigger), { once: true });
   elements.deviceDialog.showModal();
   elements.deviceID.focus();
 }
@@ -825,12 +855,14 @@ elements.deviceForm.addEventListener("submit", async event => {
 });
 
 byID("back-devices-button").addEventListener("click", async () => {
+  const trigger = elements.deviceList.querySelector(`[data-device-id="${state.selectedDeviceID}"]`);
   state.selectedDeviceID = "";
   state.channelEpoch += 1;
   state.channelController?.abort();
   state.channels = [];
   renderDevices();
   renderChannels();
+  restoreFocus(trigger, elements.addDevice);
   await preview.closeViewer().catch(error => console.debug(error));
 });
 

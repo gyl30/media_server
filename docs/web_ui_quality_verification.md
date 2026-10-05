@@ -70,3 +70,22 @@ Transport failure 后 live 保留，RTP 计数 **537→705**，重播 INVITE **1
 生产代码物理净行数 -717，其中 CSS 971→196 行包含选择器收敛和紧凑排版，不能将全部行差当作算法删除收益。实际删除了重复展示与未使用样式；新增 JavaScript 主要是焦点恢复、请求反馈和自然中文。没有修改媒体算法、线程、队列、网络或业务 ownership。
 
 这是 Chrome 下的桌面及窄窗验证，不声称所有浏览器认证，也不声称一定获得设计奖项。后续应由真实使用问题推动修改，不继续增加状态、框架或装饰效果。
+
+## 异步交互 correctness 复查
+
+本次 BASE_HEAD：`23e232847775d6d57d83626070b7cefbb791a6aa`。生产修改仅限 `app.js`、`whep.js`，新增 59 行、删除 24 行，净 +35。Go 后端、C++、CSS、HTML、API、数据库和 live/ticket 模型零修改。
+
+- resource action 用函数局部 trigger 跨越请求与 DOM 重建，完成后恢复同语义按钮；消失的 source/device 回到添加入口，停止操作回到该资源仍可操作的按钮。用户已转移到其他有效控件时不抢回焦点。polling 移除聚焦资源时也回到列表入口，用现有 pending Set 区分请求中的临时禁用。返回列表恢复设备项，hash/tab 切换恢复对应 tab，显式关闭 viewer 恢复原播放按钮或当前列表入口，autoplay 恢复按钮隐藏前移交焦点。
+- device/source dialog 用一次性 close listener 恢复 trigger，删除 `sourceDialogTrigger`。source 提交期间 save/close/cancel 均禁用，Esc 被阻止，重复提交和重新打开沿用 `saveSource.disabled` 防护；请求结束恢复控件。confirm 仍只确认操作，不拥有后台请求。
+- global status 全部自动消失，默认 5 秒；持续失败刷新同一个 timer，quiet polling 恢复后自然消退。表单、player 与通道错误仍属于各自 inline 组件。
+- viewer ownership 与 panel visibility 分开：failed/ended 时 current 已清空，但允许点击关闭收起面板，不再发送 DELETE；stopping 时关闭按钮禁用，idle 时面板隐藏。删除仅有一个调用点的 `canStop`。这替代前文历史验证中的「closeDisabled 等于没有 current」假设；停止上游仍只从 current.liveID 推导。
+- `closeCurrent()` 返回 null 或 DELETE 错误；无论远端结果如何，本地 PC/video/current 均先清理。显式关闭失败复用 `whep_delete_500` 文案「播放器已关闭，服务器资源尚待清理」，内部 replay/tab/device cleanup 忽略返回值。没有保存 cleanup error 成员。
+- ICE gathering 入口先检查 already-aborted，与已有 delay 等待一致。保留 `session.streaming`、pending Set 和 generation fencing；不新增状态字段、timeout、retry 或依赖。WHEP POST 仍不绑定取消信号，迟到 201 的实际 Location 继续用于删除资源。
+
+测试继续使用 `bench/gb_web_ui_verify.py`，通过正式 UI/API、HTTP response hold 与真实原生 PC 的事件边界验证。ICE 测试先调用原生 setLocalDescription，再暂停其返回并固定该测试 peer 的 gathering 观察值；关闭后释放 await，要求 start 在 3 秒内结束且不发 POST。未替换网络/解码实现，生产没有 test hook。
+
+原始 RED 与迭代失败均保留在 `/tmp/media_server_web_async-23e2328`。原缺陷覆盖 dialog pending、删除焦点、永久 status、failed dismiss、DELETE feedback、already-aborted ICE、hash/autoplay 焦点和 polling 删除焦点。本轮实现曾将 channel fallback 匹配到 tr，真实 GB stop 测试发现后限定为 button；没有隐藏失败。HTTP hold 测试改为等待提交后的真实刷新结束再移除 route，避免后继 GET 仍被测试拦截。
+
+最终 Chrome `153.0.8010.52` 完整真实媒体 E2E **34 项 PASS**，111.24 秒，33 次具体语义焦点断言，无 pageerror。结果为 `full-accepted/result.json`，摘要追加在既有 JSON 的 `async_interaction_followup`；静态资源、后端文件及测试文件哈希已核对。覆盖 GB 三 viewer、INVITE 复用、live stop/Expires:0、票据真实过期、迟到响应与 RTSP H264/Opus。transport failure 后 live 继续，RTP 615→771，重播 INVITE 1→1。
+
+最终 `go test -count=1 ./...`、`go vet ./...`、`go test -race -count=1 ./...`、normal build 与 CTest **14/14 PASS**。媒体 E2E 全部进程退出后才执行 CTest。C++ 零修改，按本 Goal 要求不重复 ASan/UBSan。JavaScript 语法、Python 编译、diff check 通过；没有永久 global danger、旧 ownership 测试假设或新增冗余状态字段。

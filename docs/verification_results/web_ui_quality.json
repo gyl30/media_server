@@ -1033,5 +1033,92 @@
     "scope_regression": "Go test/vet/race, normal build and CTest 14/14 PASS; no C++ change",
     "delivery": "28 final screenshots, Markdown report, JSON results and runnable verifiers preserved in the UI commit"
   },
-  "code_head_resolution": "git log -1 --format=%H -- signaling/web/app.js"
+  "code_head_resolution": "git log -1 --format=%H -- signaling/web/app.js",
+  "async_interaction_followup": {
+    "base_head": "23e232847775d6d57d83626070b7cefbb791a6aa",
+    "status": "PASS",
+    "raw_directory": "/tmp/media_server_web_async-23e2328",
+    "browser_e2e": {
+      "result_path": "/tmp/media_server_web_async-23e2328/full-accepted/result.json",
+      "browser_version": "153.0.8010.52",
+      "checks": 34,
+      "focus_assertions": 33,
+      "duration_seconds": 111.24028336070478,
+      "page_errors": [],
+      "focus_targets": [
+        "#source-rows [data-action='delete']",
+        "#add-source-button",
+        "#tab-devices",
+        "#add-device-button",
+        "#device-list [data-device-id='34020000001320000001']",
+        "[data-channel-id='34020000001320000002'][data-action='play']",
+        "#tab-sources",
+        "#device-list [data-device-id='34020000001320000003']",
+        "#source-rows [data-action='stop']",
+        "#stop-preview-button",
+        "#source-rows [data-action='start']"
+      ]
+    },
+    "invariants": {
+      "dialog_submit_close_cancel_escape_reentry": "PASS: held source/device POST; controls restored and trigger focused after real refresh",
+      "transient_status_and_inline_error": "PASS: source/device polling 503 recovers; global status expires; form/player error stays inline",
+      "failed_ended_dismiss": "PASS: current null, close enabled, idle hides panel without second DELETE",
+      "stopping": "PASS: held viewer DELETE disables repeated close",
+      "explicit_delete_502": "PASS: native peer closed, video cleared, panel hidden, existing cleanup warning displayed",
+      "automatic_cleanup": "PASS: replay/tab/device DELETE 502 ignored without stale UI or cleanup toast",
+      "already_aborted_ice": "PASS: native local-description await held; cancelled start settles within 3 seconds without ICE event or POST",
+      "late_201": "PASS: back closes peer; delayed actual Location deleted; player stays hidden",
+      "focus_ownership": "PASS: RTSP start/stop/delete, GB play/stop, device delete, back, dialogs, viewer close, hash/tab/autoplay, poll removal and preserving newly selected focus"
+    },
+    "transport_failure_live": {
+      "live_preserved": true,
+      "replay_same_live": true,
+      "invite_before": 1,
+      "invite_after_replay": 1,
+      "rtp_packets_before": 615,
+      "rtp_packets_after_failure": 771
+    },
+    "validation": {
+      "go test -count=1 ./...": "PASS: go-test.log",
+      "go vet ./...": "PASS: go-vet.log",
+      "go test -race -count=1 ./...": "PASS: go-race.log",
+      "cmake --build build -j12": "PASS: build.log",
+      "ctest --test-dir build --output-on-failure": "PASS: 14/14; ctest.log; after E2E processes exited",
+      "ASan/UBSan": "Not rerun: C++ production unchanged",
+      "JS syntax / Python compile / diff check": "PASS"
+    },
+    "scope": {
+      "web_js_added": 59,
+      "web_js_deleted": 24,
+      "web_js_net": 35,
+      "new_persistent_state_fields": 0,
+      "removed_persistent_state_fields": [
+        "sourceDialogTrigger"
+      ],
+      "go_backend_changes": 0,
+      "cpp_changes": 0,
+      "css_changes": 0,
+      "html_changes": 0,
+      "api_database_changes": 0,
+      "new_dependencies": 0,
+      "production_test_hooks": 0
+    },
+    "red_results": {
+      "red-dialog": "/tmp/media_server_web_async-23e2328/red-dialog/result.json",
+      "red-focus-2": "/tmp/media_server_web_async-23e2328/red-focus-2/result.json",
+      "red-transient": "/tmp/media_server_web_async-23e2328/red-transient/result.json",
+      "red-dismiss": "/tmp/media_server_web_async-23e2328/red-dismiss/result.json",
+      "red-cleanup": "/tmp/media_server_web_async-23e2328/red-cleanup/result.json",
+      "red-ice": "/tmp/media_server_web_async-23e2328/red-ice/result.json",
+      "red-navigation": "/tmp/media_server_web_async-23e2328/red-navigation/result.json",
+      "red-resume-focus": "/tmp/media_server_web_async-23e2328/red-resume-focus/result.json",
+      "red-poll-focus": "/tmp/media_server_web_async-23e2328/red-poll-focus/result.json"
+    },
+    "verification_sha256": {
+      "signaling/web/app.js": "366b78a0274c1721fce18988df494d0a222135e79ce0eea04a3811a27ce99db3",
+      "signaling/web/whep.js": "6a4334b38e6266c5dca981767edd0451bfeb0347692654a119851fc8f61a99c3",
+      "bench/gb_web_ui_verify.py": "b976263549c82c4f79dbfd93ade7f15812a5b4567ab83a61486f6866919b919c"
+    },
+    "code_head_resolution": "git log -1 --format=%H -- signaling/web/app.js"
+  }
 }

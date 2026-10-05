@@ -31,6 +31,9 @@ function waitForDelay(milliseconds, signal) {
 }
 
 function waitForICEGathering(peer, signal) {
+  if (signal.aborted) {
+    return Promise.reject(abortError());
+  }
   if (peer.iceGatheringState === "complete") {
     return Promise.resolve();
   }
@@ -110,7 +113,6 @@ export class WHEPPreview {
 
   emit(state, session = this.current, error = "") {
     this.onState({
-      canStop: Boolean(session && this.current === session),
       state,
       target: session ? session.label : "",
       liveID: session?.liveID || "",
@@ -243,7 +245,7 @@ export class WHEPPreview {
     const session = this.current;
     if (!session) {
       if (generation === this.generation) this.emit("idle", null);
-      return;
+      return null;
     }
     this.current = null;
     session.cancelled = true;
@@ -258,8 +260,9 @@ export class WHEPPreview {
       deleteError = error;
     }
     if (generation === this.generation && !this.current) {
-      this.emit("idle", null, deleteError ? deleteError.code : "");
+      this.emit("idle", null);
     }
+    return deleteError;
   }
 
   closeForPageHide() {
