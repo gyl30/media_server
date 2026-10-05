@@ -1,0 +1,513 @@
+{
+  "base_head": "5f2021618b3ee5a7451692054e69001f30434aad",
+  "tested_code_head": "093fd842b44409f452f52bb9779d05e7d69e7d82",
+  "result": "completed_with_documented_coverage_boundaries",
+  "environment": {
+    "chrome": "153.0.8010.52",
+    "headed": true,
+    "display": ":97",
+    "port_base": 47220,
+    "worker_threads": 6,
+    "network": "owned localhost SIP/RTP/PS/WHEP",
+    "binary_sha256": {
+      "/tmp/media_server_dogfood_5f20216/signaling-fixed": "0c8898000ac3e2b98da82932e95c61530525a982c418d719ab64d78213a05859",
+      "build/media_server": "391b504d001c74852b51117411524f7bdba1c355c383a7e12ddf2de9d430a60b",
+      "/tmp/media_server_dogfood_5f20216/simulator": "c10edb362f0d6c9359621c20180c25e5bfc95d814116932a6862a7dddc9da2ee"
+    },
+    "fixture_sha256": "38abf0d6ad0afbc794b6a580e156a796f71c36e0a299d828fd2922cad256e6c7"
+  },
+  "durations_minutes": {
+    "interactive": 32.209,
+    "baseline_soak_interrupted_for_P1": 35.142,
+    "fixed_active_soak": 120.977,
+    "real_hidden_tab": 12.806,
+    "normal_operations_after_recovery": 12.882
+  },
+  "fixed_soak_time_local": {
+    "start": "2026-10-05T23:40:43.487465",
+    "end": "2026-10-06T01:41:42.090337"
+  },
+  "coverage": {
+    "device_counts": [
+      1,
+      5,
+      20,
+      50
+    ],
+    "mixed_online_offline": [
+      46,
+      4
+    ],
+    "single_channel_per_device": true,
+    "independent_device_live_viewers": 3,
+    "shared_live_viewer_counts": [
+      2,
+      3,
+      5
+    ],
+    "rtsp_sources_observed": 2,
+    "mouse_and_keyboard": [
+      "Tab",
+      "Shift+Tab",
+      "Enter",
+      "Space",
+      "Esc",
+      "ArrowLeft",
+      "ArrowRight",
+      "Home"
+    ],
+    "dynamic_css_viewport_widths": [
+      1920,
+      1440,
+      1100,
+      800,
+      600,
+      480,
+      320
+    ],
+    "native_chrome_zoom_percent": [
+      80,
+      100,
+      125,
+      150,
+      200
+    ],
+    "signaling_restart_without_reload": true,
+    "media_SIGKILL_original_path_green": true,
+    "simulator_Expires0_SIGKILL_reregister": true
+  },
+  "production_fix": {
+    "commit": "093fd842b44409f452f52bb9779d05e7d69e7d82",
+    "issue": "P1 UI permanently disabled stop retry after cleanup failure",
+    "file": "signaling/web/app.js",
+    "change": "remove live.state===stopping from stop button disabled condition; retain pending",
+    "production_net_loc": 0,
+    "test_net_loc": 19,
+    "new_state_fields": 0,
+    "go_production_changes": 0,
+    "cpp_production_changes": 0,
+    "RED": "assertion failed cleanup must allow a user retry after media_server recovery; previous 20 checks passed"
+  },
+  "regression": {
+    "browser_E2E": {
+      "status": "PASS",
+      "checks": 35,
+      "page_errors": [],
+      "seconds": 114.436,
+      "recorded_head_before_commit": "5f2021618b3ee5a7451692054e69001f30434aad",
+      "app_sha256_matches_tested_commit": "b74630cc0bbcbdcd7e2e7b7184fed3998b0c23e94a55632ca567cc582991ea53"
+    },
+    "simulator_recovery": {
+      "status": "PASS",
+      "checks": 6,
+      "seconds": 73.28
+    },
+    "go_test": "PASS",
+    "go_vet": "PASS",
+    "go_race": "PASS",
+    "normal_build": "PASS",
+    "ctest": {
+      "passed": 14,
+      "total": 14,
+      "seconds": 22.65
+    },
+    "ASan_UBSan": "not run; C++ production unchanged",
+    "TSan": "not run"
+  },
+  "resource_points": [
+    {
+      "label": "fixed-soak t0",
+      "actual_minutes": 0.002,
+      "media": {
+        "rss_kib": 28948,
+        "cpu": 0.71,
+        "fd": 33,
+        "sockets": 10,
+        "thread_count": 6
+      },
+      "signaling": {
+        "rss_kib": 24032,
+        "cpu": 0.25,
+        "fd": 10,
+        "sockets": 4,
+        "thread_count": 20
+      },
+      "chrome": {
+        "rss_kib": 2159380,
+        "pss_kib": 732840,
+        "fd": 697,
+        "thread_count": 303,
+        "process_count": 14
+      }
+    },
+    {
+      "label": "fixed-soak t30",
+      "actual_minutes": 31.566,
+      "media": {
+        "rss_kib": 38560,
+        "cpu": 26.27,
+        "fd": 35,
+        "sockets": 12,
+        "thread_count": 8
+      },
+      "signaling": {
+        "rss_kib": 27020,
+        "cpu": 6.52,
+        "fd": 12,
+        "sockets": 6,
+        "thread_count": 24
+      },
+      "chrome": {
+        "rss_kib": 2282728,
+        "pss_kib": 858666,
+        "fd": 697,
+        "thread_count": 304,
+        "process_count": 14
+      }
+    },
+    {
+      "label": "fixed-soak t60",
+      "actual_minutes": 61.858,
+      "media": {
+        "rss_kib": 38772,
+        "cpu": 49.49,
+        "fd": 35,
+        "sockets": 12,
+        "thread_count": 8
+      },
+      "signaling": {
+        "rss_kib": 26516,
+        "cpu": 12.76,
+        "fd": 10,
+        "sockets": 4,
+        "thread_count": 25
+      },
+      "chrome": {
+        "rss_kib": 2436384,
+        "pss_kib": 984506,
+        "fd": 704,
+        "thread_count": 308,
+        "process_count": 14
+      }
+    },
+    {
+      "label": "fixed-soak t120",
+      "actual_minutes": 120.965,
+      "media": {
+        "rss_kib": 39032,
+        "cpu": 98.22,
+        "fd": 35,
+        "sockets": 12,
+        "thread_count": 9
+      },
+      "signaling": {
+        "rss_kib": 27400,
+        "cpu": 25.24,
+        "fd": 10,
+        "sockets": 4,
+        "thread_count": 26
+      },
+      "chrome": {
+        "rss_kib": 2790604,
+        "pss_kib": 1333785,
+        "fd": 704,
+        "thread_count": 308,
+        "process_count": 14
+      }
+    }
+  ],
+  "cpu_interval_cores": {
+    "media": [
+      0.013497,
+      0.012776,
+      0.013741
+    ],
+    "signaling": [
+      0.003311,
+      0.003433,
+      0.003519
+    ]
+  },
+  "simulator_counter_points_t0_t30_t60_t120": [
+    {
+      "group": "A",
+      "phase_drops": [
+        15,
+        15,
+        15,
+        15
+      ],
+      "goroutines": [
+        72,
+        72,
+        72,
+        72
+      ],
+      "heartbeat_fail": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "rtp_dropped": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "send_errors": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "group": "four",
+      "phase_drops": [
+        2,
+        2,
+        5,
+        19
+      ],
+      "goroutines": [
+        78,
+        78,
+        78,
+        78
+      ],
+      "heartbeat_fail": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "rtp_dropped": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "send_errors": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "group": "fifteen",
+      "phase_drops": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "goroutines": [
+        78,
+        78,
+        78,
+        78
+      ],
+      "heartbeat_fail": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "rtp_dropped": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "send_errors": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "group": "thirty",
+      "phase_drops": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "goroutines": [
+        78,
+        78,
+        78,
+        78
+      ],
+      "heartbeat_fail": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "rtp_dropped": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "send_errors": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "soak_new_phase_drops": 18,
+  "signaling_goroutines": "not measured; no existing metric; OS threads only",
+  "continuous_viewer": {
+    "samePeer": true,
+    "sameVideo": true,
+    "sameResource": true,
+    "peer": "connected",
+    "frames": 173866,
+    "video": [
+      {
+        "framesDecoded": 173866,
+        "framesDropped": 0,
+        "packetsReceived": 871924,
+        "packetsLost": 0,
+        "bytesReceived": 683046566,
+        "nackCount": 0,
+        "pliCount": 0,
+        "jitter": 0.001
+      }
+    ],
+    "soak_INVITE": 3
+  },
+  "chrome_explicit_GC_after_raw_t120": {
+    "before_pss_kib": 1333785,
+    "after_pss_kib": 1158305,
+    "before_rss_kib": 2790604,
+    "after_rss_kib": 2627880,
+    "conclusion": "partial reclamation observed; remaining growth is not attributed; no absolute browser/UI leak claim",
+    "before_JSHeapUsed_bytes": [
+      2630004,
+      2555336,
+      2921304,
+      1934872,
+      2628192
+    ],
+    "after_JSHeapUsed_bytes": [
+      2553868,
+      2375264,
+      2825588,
+      1824880,
+      2529272
+    ]
+  },
+  "console": {
+    "error": 179,
+    "debug": 41,
+    "pageerror": 0,
+    "warn": 0,
+    "HTTP_409": 92,
+    "HTTP_404": 46,
+    "connection_refused": 38,
+    "HTTP_502": 3,
+    "classification": "expected not-ready retry, explicit terminal cleanup, injected service outages; caught fetch failures retained",
+    "scope": "observed controlled browser pages; standalone background evidence stored separately"
+  },
+  "log_review": {
+    "fixed_media_dtls_failures": 19,
+    "all_followed_by_same_session_shutdown_and_final_GET404": true,
+    "fixed_signaling_errors_during_soak": 0,
+    "pre_soak_SIP_retransmission_INFO": 3,
+    "queue_full_or_media_port_exhaustion": 0
+  },
+  "cleanup": {
+    "fresh_ticket": {
+      "fresh_ticket_live_reused": true,
+      "after_stop_status": 404,
+      "age_seconds": 0.03925013542175293
+    },
+    "first_pass": {
+      "channels_checked": 50,
+      "no_live": true,
+      "old_current_receiver_delete_status": 404,
+      "UDP_ports": [],
+      "RTSP_desired_state": "stopped"
+    },
+    "port_reuse": {
+      "new_generation": true,
+      "ports": [
+        49156,
+        49158,
+        49159
+      ],
+      "reused_previous_ports": [
+        49156,
+        49158
+      ],
+      "second_udp_release": true,
+      "old_receiver_status": 404
+    },
+    "historical_WHEP_resources": {
+      "count": 56,
+      "statuses": {
+        "404": 56
+      },
+      "method": "non-destructive GET; known active control had returned 204"
+    },
+    "devices": {
+      "count": 50,
+      "online": 0,
+      "channels": 0
+    },
+    "idle_media": {
+      "rss_kib": 38904,
+      "fd": 26,
+      "sockets": 3,
+      "thread_count": 9,
+      "udp_drops": 0
+    },
+    "idle_signaling": {
+      "rss_kib": 27224,
+      "fd": 8,
+      "sockets": 2,
+      "thread_count": 26,
+      "udp_drops": 0
+    },
+    "fixture_returncodes": {
+      "simulator-a-fixed": 0,
+      "simulator-four-fixed": 0,
+      "simulator-fifteen-fixed": 0,
+      "simulator-thirty-fixed": 0,
+      "rtsp-publisher": 255
+    },
+    "service_returncodes": {
+      "signaling-fixed-after-restart": 0,
+      "media-fixed-after-sigkill": 0,
+      "xvfb": 0
+    },
+    "owned_fixture_processes_remaining": 0
+  },
+  "issues": {
+    "P0": [],
+    "P1": [
+      "fixed stop-cleanup retry UI ownership bug"
+    ],
+    "P2": [],
+    "P3": [
+      "300 CSS px at 600px/200% zoom below existing 320px html min-width: 20px horizontal overflow, controls accessible, reproduced 3/3; recorded without product change"
+    ]
+  },
+  "boundaries": [
+    "one cross-operation interval was 19.15 minutes; this is exploratory usage, not a strict periodic workload",
+    "simulator lacks 8/20+ channel and long-channel-name fixture; not extended",
+    "Chrome PSS growth recorded; GC reclaimed part only",
+    "loopback Chrome153 fixture result is not WAN/vendor/multichannel or absolute no-leak proof",
+    "Playwright actionability, hidden-selector, observer-reinstallation and asynchronous-channel probe errors retained and investigated"
+  ],
+  "raw_evidence_directory": "/tmp/media_server_dogfood_5f20216",
+  "recommended_next_step": "keep architecture and UI scope frozen; drive further changes by real requirements, reproducible bugs or interoperability evidence"
+}
