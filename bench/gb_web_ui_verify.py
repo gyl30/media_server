@@ -265,6 +265,7 @@ def main():
                 device_button.click()
                 page.get_by_text("设备离线", exact=True).wait_for()
                 assert page.locator("#selected-device-name").inner_text() == "测试摄像机"
+                assert "请检查设备网络与平台接入配置" in page.locator("#channel-empty").inner_text()
                 capture(page, "offline")
                 mark("duplicate error and offline detail use Chinese text")
                 page.locator("#back-devices-button").click()

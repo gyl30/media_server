@@ -327,7 +327,7 @@ function renderChannels() {
   const syncing = device?.online && Date.now() < state.channelSyncUntil;
   elements.channelEmpty.dataset.kind = syncing ? "loading" : "empty";
   elements.channelEmpty.querySelector("strong").textContent = !device?.online ? "设备离线" : syncing ? "正在同步通道…" : "未发现通道";
-  elements.channelEmpty.querySelector("p").textContent = !device?.online ? "设备恢复在线后，可继续查看通道与播放" : syncing ? "设备上线后，通道会自动显示在这里" : "设备尚未上报通道，请检查设备配置";
+  elements.channelEmpty.querySelector("p").textContent = !device?.online ? "请检查设备网络与平台接入配置，上线后可查看通道与播放" : syncing ? "设备上线后，通道会自动显示在这里" : "设备尚未上报通道，请检查设备配置";
 }
 
 function renderAll() {
