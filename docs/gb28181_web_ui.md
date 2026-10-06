@@ -122,3 +122,7 @@ WHEP POST 等待审计：GB [代理](../signaling/play_http.go#L81) 设置读/�
 基于 `f35aad7`，在保留现有 API 与播放器 ownership 的前提下收敛列表、播放器、颜色、间距与请求反馈。设备侧栏可滚动，播放器位于详情上方；空/加载/离线/失败/结束有明确呈现，窄窗操作列保持可见。轮询与弹窗关闭的焦点恢复使用已有按钮身份，不增加播放器或后端状态。
 
 经过基线与五轮真实截图审查，最终呈现检查 19 项、真实媒体 E2E 25 项、Go test/vet/race 和 CTest 14/14 通过。失败与媒体结束、viewer close 与 live stop 的边界保留。详细观察、评分、故障注入范围及最终截图见 [Web UI 品质复查](web_ui_quality_verification.md) 与 [验证 JSON](verification_results/web_ui_quality.json)。本轮 UI、测试及验证产物一并提交。
+
+## 用户式体验复查
+
+基于 `0e97831`，从空数据库正常使用69.70分钟，完成十次播放/关闭/重播/停止循环与1/5/20/50设备查找；修改后再正常使用10.10、10.64分钟。最小修正持续409的RTSP播放等待、离线设备下一步提示、运行中编辑前置提示和窄窗播放器遮挡源操作。没有增加长期状态、自动恢复或后端模型；失败/结束后的按钮仍可收起信息面板，viewer资源已清理。详见 [用户式体验审查](web_ui_user_experience_review.md) 及 [验证摘要](verification_results/web_ui_user_experience_review.json)。这是AI启发审阅，没有招募真人。用户要求清理当前及历史测试临时目录，因此只保留永久摘要，旧报告中的临时截图和日志路径可能已不存在。
