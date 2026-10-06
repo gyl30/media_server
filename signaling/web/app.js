@@ -242,8 +242,8 @@ function renderSources() {
       if (source.desired_state === "running") {
         buttons.push(actionButton("停止取流", "stop", "square", "secondary", pending));
       }
-      buttons.push(actionIconButton("编辑", "edit", "edit", "", pending));
     }
+    buttons.push(actionIconButton(active ? "停止取流后可编辑" : "编辑", "edit", "edit", "", pending || active));
     buttons.push(actionIconButton("删除", "delete", "trash", "danger-icon", pending));
     for (const button of buttons) {
       button.dataset.sourceId = source.source_id;

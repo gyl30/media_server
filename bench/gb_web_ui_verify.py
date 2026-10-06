@@ -700,6 +700,8 @@ def main():
                     source_row.locator("[data-action='start']").click()
                     source_row.locator("[data-action='preview']").wait_for()
                     focused(page, "#source-rows [data-action='stop']")
+                    assert source_row.locator("[data-action='edit']").is_disabled()
+                    assert source_row.locator("[data-action='edit']").get_attribute("title") == "停止取流后可编辑"
                     source_row.locator("[data-action='preview']").click()
                     decoded(page)
                     eventually(lambda: ((stats(page).get("audio") or {}).get("samples", 0) or 0) > 0)
@@ -733,6 +735,7 @@ def main():
                     source_row.locator("[data-action='stop']").click()
                     source_row.locator("[data-action='start']").wait_for()
                     focused(page, "#source-rows [data-action='start']")
+                    assert source_row.locator("[data-action='edit']").is_enabled()
                     assert page.evaluate("uiPeers.every(peer => peer.connectionState === 'closed')")
                     resource_gone(page.resources[-1])
                     source_row.locator("[data-action='edit']").click()
