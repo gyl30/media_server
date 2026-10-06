@@ -74,6 +74,7 @@ async function deleteResource(resourceURL, keepalive = false) {
 }
 
 async function postOffer(session, offer, retryNotReady) {
+  const retryDeadline = performance.now() + 30000;
   while (!session.cancelled) {
     const response = await fetch(session.whepURL, {
       method: "POST",
@@ -82,6 +83,9 @@ async function postOffer(session, offer, retryNotReady) {
     });
     if (response.status === 409 && retryNotReady) {
       await response.text();
+      if (performance.now() >= retryDeadline) {
+        throw new WHEPError(response.status, `whep_create_${response.status}`);
+      }
       const seconds = Number.parseInt(response.headers.get("Retry-After") || "1", 10);
       const delay = Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 5) : 1;
       await waitForDelay(delay * 1000, session.controller.signal);
