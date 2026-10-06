@@ -51,7 +51,7 @@ button { color: inherit; }
 .app-layout[data-view="sources"] { grid-template-columns: minmax(0, 1fr); }
 .app-layout[data-view="sources"] .workspace { display: block; grid-column: 1; grid-row: 1; min-width: 0; }
 .app-layout[data-view="sources"]:has(.preview-panel:not([hidden])) .workspace { grid-row: 2; }
-.app-layout[data-view="sources"] .preview-panel { grid-column: 1; width: min(1100px, 100%); justify-self: center; }
+.app-layout[data-view="sources"] .preview-panel { grid-column: 1; grid-row: 1; width: min(1100px, 100%); justify-self: center; }
 .section-heading, .subheading, .preview-heading, .dialog-heading, .dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .section-heading { margin-bottom: 24px; }
 h1, h2 { margin: 0; color: var(--ink); font-weight: 650; }
