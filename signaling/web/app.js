@@ -594,6 +594,9 @@ function renderPreviewState(update) {
   elements.previewPlaceholder.hidden = update.state === "streaming";
   elements.previewPlaceholder.querySelector("strong").textContent = label;
   elements.previewError.textContent = update.error ? errorMessage({code: update.error}) : "";
+  if (update.error === "whep_create_409" && update.liveID) {
+    elements.previewError.textContent += "；若持续失败，请点击通道中的“停止取流”后再播放（会影响该通道的其他观看者）。";
+  }
   elements.previewError.hidden = !update.error;
 }
 

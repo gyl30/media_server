@@ -645,6 +645,30 @@ def main():
                     assert all(not item["closeDisabled"] for item in ownership if item["state"] not in ("idle", "stopping")), ownership
                     result["button_ownership"] = ownership
                     mark("panel dismiss stays available after viewer release; stopping blocks repeated close")
+                    interrupted_live = channels()[0]["live"]["live_id"]
+                    stop_process(media)
+                    media = launch("media-restarted-viewing", media_command)
+                    wait_for_listener("127.0.0.1", base+2)
+                    outage_request_start = len(result["requests"])
+                    play.click()
+                    page.wait_for_function("document.querySelector('.preview-panel').dataset.state === 'failed'")
+                    outage_offers = [item for item in result["requests"][outage_request_start:]
+                        if item["method"] == "POST" and "/play/whep/" in item["url"]]
+                    assert [item["status"] for item in outage_offers] == [409, 409], outage_offers
+                    assert len({item["url"] for item in outage_offers}) == 2
+                    assert channels()[0]["live"]["live_id"] == interrupted_live
+                    assert page.evaluate("uiPeers.at(-1).connectionState") == "closed"
+                    assert page.locator("#preview-video").evaluate("video => video.srcObject === null")
+                    recovery_message = page.locator("#preview-error").inner_text()
+                    assert "停止取流" in recovery_message and "观看者" in recovery_message, recovery_message
+                    page.locator("#channel-rows [data-action='stop']").click()
+                    eventually(lambda: channels()[0].get("live") is None)
+                    play_channel(page)
+                    assert channels()[0]["live"]["live_id"] != interrupted_live
+                    result["media_restart_viewing_recovery"] = {"offer_statuses": [item["status"] for item in outage_offers],
+                        "fresh_ticket_once": True, "live_preserved_before_manual_stop": True,
+                        "recovery_message": recovery_message, "manual_stop_and_replay_decoded": True}
+                    mark("media restart playback failure explains manual shared-live stop and replay recovery")
                     cleanup_live = channels()[0]["live"]["live_id"]
                     stop_process(media)
                     page.locator("#stop-preview-button").click()
