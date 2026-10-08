@@ -1,0 +1,577 @@
+{
+  "base_head": "f5f383a9fe3b1ce5d3e4188f85f0dbef34aadd10",
+  "production_commit": "0ad82587a53f2038f3123adfdf02239fa6409997",
+  "kind": "AI角色演练，非真人可用性研究",
+  "initial_checkout": {
+    "clean": true,
+    "head_equals_actual_origin_main": true,
+    "independent_checkout": true,
+    "main_checkout_preexisting_changes_preserved": true
+  },
+  "environment": {
+    "self_constructed": true,
+    "initial_database": "empty SQLite",
+    "max_devices": 50,
+    "remaining_devices": 49,
+    "browser": "headed Chrome",
+    "peer_connection": "native",
+    "gb_fixture": "320x240 H264, visible location labels",
+    "rtsp_fixture": "H264/AAC, looped RTSP source",
+    "original_logs_committed": false
+  },
+  "phase1": {
+    "windows": [
+      [
+        "2026-10-06T15:42:18.762872+08:00",
+        "2026-10-06T16:17:26+08:00"
+      ],
+      [
+        "2026-10-06T19:10:26+08:00",
+        "2026-10-06T19:31:01.309546+08:00"
+      ],
+      [
+        "2026-10-07T17:42:30.147751+08:00",
+        "2026-10-07T18:47:24+08:00"
+      ]
+    ],
+    "observed_window_minutes": 120.60664871666667,
+    "conservative_tool_and_diagnosis_exclusion_minutes": 30,
+    "conservative_task_use_minutes": 90.60664871666667,
+    "unobserved_gaps_excluded": true,
+    "independent_parallel_exercises_not_added_twice": true,
+    "roles": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "journal_entries": 35,
+    "p0": 0,
+    "p1": 0,
+    "confirmed_p2": 1,
+    "production_changes": 0,
+    "kind": "AI role exercise, not human study",
+    "single_continuous_90_minute_claim": false
+  },
+  "phase2": {
+    "status": "PASS",
+    "full_stack_restart_after_phase1": true,
+    "overnight_unobserved_excluded": true,
+    "previous_confirmed_window": [
+      "2026-10-07T19:04:54.907703+08:00",
+      "2026-10-07T19:25:01+08:00"
+    ],
+    "resumed_start": "2026-10-08T09:03:15.879508+08:00",
+    "builds_and_automated_regressions_counted_as_use": false,
+    "parallel_agent_minutes_added_twice": false,
+    "independent_morning_duty": {
+      "start": "2026-10-08T09:06:15+08:00",
+      "end": "2026-10-08T09:22:34+08:00",
+      "elapsed_seconds": 978.6,
+      "background_away_seconds": 931.2,
+      "return_video_time": [
+        932.629,
+        935.63
+      ],
+      "return_size": [
+        320,
+        240
+      ],
+      "return_readyState": 4,
+      "switch_after_return_label": "Stairs",
+      "closed_viewer_kept_live": true,
+      "reload": false,
+      "visibility": "visible",
+      "hidden_tab_throttling_claim": false,
+      "added_twice_to_phase2_time": false,
+      "root_verified_key_screenshots": true
+    },
+    "primary_ordinary_work_return": {
+      "start": "2026-10-08T09:19:09.492981+08:00",
+      "end": "2026-10-08T09:34:45.310521+08:00",
+      "seconds": 935.81754,
+      "before": {
+        "time": 113.416,
+        "ready": 4,
+        "width": 320
+      },
+      "after": {
+        "time": 1049.234,
+        "ready": 4,
+        "width": 320,
+        "height": 240
+      },
+      "label": "Warehouse23",
+      "reload": false,
+      "visibility": "visible",
+      "hidden_tab_throttling_claim": false
+    },
+    "normal_shared_viewing": {
+      "contexts": 2,
+      "one_close_others_continue": true,
+      "one_stop_other_ended": true,
+      "uninformed_terminal_manual_replay_decoded": true,
+      "reload": false,
+      "tool_locator_error": "已结束文字同时出现在placeholder和status，strict-mode错误；截图和实际DOM已核对，不是产品失败"
+    },
+    "windows": [
+      {
+        "start": "2026-10-07T19:04:54.907703+08:00",
+        "end": "2026-10-07T19:25:01+08:00"
+      },
+      {
+        "start": "2026-10-08T09:03:15.879508+08:00",
+        "end": "2026-10-08T10:06:43.246155+08:00"
+      }
+    ],
+    "observed_window_minutes": 83.55764906666667,
+    "conservative_non_task_exclusion_minutes": 15,
+    "conservative_task_use_minutes": 68.55764906666667,
+    "normal_task_records": 16,
+    "normal_tasks_summary": [
+      "维护RTSP备用来源并恢复观看",
+      "抽查后门、仓库门口、17、23、43",
+      "退出抽查后保留列表位置",
+      "设备侧修复35接入后不reload观看",
+      "两终端关闭、停止和手动重播",
+      "离开15.60分钟返回继续观看"
+    ],
+    "page_errors": [],
+    "new_confirmed_p0_p1_p2": 0,
+    "single_continuous_human_attention_claim": false
+  },
+  "roles": [
+    "A 首次设备接入",
+    "B 日常值守",
+    "C RTSP源管理员",
+    "D 普通观看"
+  ],
+  "core_scenarios": [
+    "空数据库初次打开",
+    "接入首台GB设备",
+    "长期不上线",
+    "后来上线自动观察",
+    "首次视频",
+    "观看后退出",
+    "误停止后播放恢复",
+    "五位置巡视",
+    "二十设备抽查",
+    "五十设备十次指定查找",
+    "仅记设备编码",
+    "仅记名称片段",
+    "正常Expires0离线",
+    "异常断电",
+    "恢复上线手动播放",
+    "媒体服务故障恢复",
+    "管理服务故障恢复",
+    "HTTP短时不可达5/15/30秒",
+    "错误RTSP地址",
+    "地址错误后编辑",
+    "键盘完整来源操作",
+    "触屏600/480操作",
+    "播放期间动态resize",
+    "原生Chrome100/125/150/200缩放",
+    "运行中仅改显示名称",
+    "保存后忘记开始",
+    "三终端共享观看",
+    "别人停止后手动恢复",
+    "长时间离开返回",
+    "次日新浏览器打开",
+    "交班",
+    "只排查离线",
+    "错误编码修正与取消删除",
+    "刷新和更新时间",
+    "删除在线有live设备",
+    "删除运行中RTSP来源"
+  ],
+  "findings_count": {
+    "p0": 0,
+    "p1": 0,
+    "p2": 1,
+    "p2_fixed": 1,
+    "p3_residual_boundaries": 2,
+    "p3_new_correctness_bug_claim": false
+  },
+  "fixed": [
+    {
+      "id": "gb409-manual-recovery",
+      "classification": "D 信息表达",
+      "priority": "P2",
+      "story": "媒体服务恢复后，设备在线且旧通道取流仍在；只重播持续失败，页面原先未说明现有停止取流再播放恢复路径",
+      "clean_reproductions": 3,
+      "observed_offers_per_attempt": [
+        409,
+        409
+      ],
+      "original_live_preserved": true,
+      "existing_fresh_ticket_retry_count": 1,
+      "minimal_change": "GB whep_create_409 且现有liveID存在时追加共享取流恢复说明",
+      "red": {
+        "exit_code": 1,
+        "assertion": "停止取流 and 观看者 absent from persistent GB 409 error",
+        "actual_message": "媒体尚未就绪，请稍后重新播放"
+      },
+      "green": {
+        "offer_statuses": [
+          409,
+          409
+        ],
+        "fresh_ticket_once": true,
+        "live_preserved_before_manual_stop": true,
+        "recovery_message": "媒体尚未就绪，请稍后重新播放；若持续失败，请点击通道中的“停止取流”后再播放（会影响该通道的其他观看者）。",
+        "manual_stop_and_replay_decoded": true
+      },
+      "independent_user_task": {
+        "instructions_provided_recovery_answer": false,
+        "recovered_from_visible_hint": true,
+        "label": "Office",
+        "readyState": 4,
+        "size": [
+          320,
+          240
+        ],
+        "time_before": 0.399,
+        "time_after": 18.446,
+        "closed_viewer_kept_live": true
+      }
+    }
+  ],
+  "accepted_boundary": [
+    {
+      "subject": "设备配置创建与设备接入",
+      "evidence": "离线等待335.57秒后在设备侧接入，约1.8秒采样看到上线与通道，无需重新创建"
+    },
+    {
+      "subject": "播放/关闭播放器/停止取流",
+      "evidence": "关闭仅释放本页观看；误停止后手动播放可恢复；多次使用后范围稳定"
+    },
+    {
+      "subject": "异常断电先冻结后结束",
+      "evidence": "58.56秒采样仍播放，114.18秒采样已离线/结束；不是精确超时测量"
+    },
+    {
+      "subject": "编辑保存不自动开始",
+      "evidence": "保存后离开约4.47分钟，回来已停止状态和开始入口仍可见"
+    },
+    {
+      "subject": "共享观看结束",
+      "evidence": "其他终端结束后能手动播放，不新增自动重连或操作者通知"
+    },
+    {
+      "subject": "结束面板关闭",
+      "evidence": "failed/ended viewer已释放后，关闭按钮仍能收起面板，不产生额外DELETE"
+    }
+  ],
+  "p3_unfixed": [
+    {
+      "subject": "运行中RTSP编辑前提可发现性",
+      "classification": "F accessibility",
+      "known_before_this_goal": true,
+      "mouse_task": "停止后改名成功，未实际观察到原生tooltip",
+      "keyboard_task": "partial；添加/开始/播放成功，运行中编辑不可Tab聚焦，改名未完成",
+      "touch_task": "停止/改名/再开始成功，但报告读aria，不能证明无hover说明被用户看到",
+      "three_clean_user_blocking_reproductions": false,
+      "decision": "保持原入口，等待更强真人任务证据"
+    },
+    {
+      "subject": "运行中RTSP删除影响说明",
+      "classification": "D 信息表达",
+      "known_before_this_goal": true,
+      "confirmation": "只列来源名称",
+      "actual": "配置删除，播放器面板关闭，video.srcObject清空",
+      "reproductions": 1,
+      "observed_misoperations": 0,
+      "decision": "不升级P2，不扩展删除流程"
+    }
+  ],
+  "future_product_questions": [
+    {
+      "subject": "设备搜索/离线筛选",
+      "strong_enough_to_implement_now": false,
+      "trigger": "实际运维规模和重复查找/排查任务数据，或真人任务显著受阻"
+    },
+    {
+      "subject": "RTSP运行中仅改名",
+      "observed_cost": "停止、编辑、保存、开始、播放；本轮不开放热编辑"
+    },
+    {
+      "subject": "正常慢摄像机的30秒ready预算",
+      "evidence": "只有人工延迟35秒的冷启动例子，上游出现后仅重播仍失败，停止/开始/播放才恢复",
+      "trigger": "真实摄像机启动耗时与互操作数据",
+      "timeout_changed": false
+    }
+  ],
+  "rejected_findings": [
+    {
+      "subject": "failed/ended后关闭按钮可用是资源错误",
+      "reason": "关闭还承担收起结束面板；实测资源已释放且无额外DELETE"
+    },
+    {
+      "subject": "五十台设备必须立即加搜索",
+      "reason": "十次查找平均1.4次滚动，无误选；操作熟悉后摩擦下降"
+    },
+    {
+      "subject": "键盘任务误删是产品bug",
+      "reason": "演练误数Tab并确认了删除；属于测试者操作错误"
+    },
+    {
+      "subject": "切页时短暂未发现通道",
+      "reason": "两次瞬态截图后正常加载，未观察到任务阻碍，不升级P2"
+    }
+  ],
+  "lookup_50": {
+    "targets": [
+      "仓库43",
+      "仓库17",
+      "仓库08",
+      "仓库36",
+      "仓库24",
+      "仓库49",
+      "仓库12",
+      "仓库31",
+      "仓库06",
+      "仓库45"
+    ],
+    "scroll_counts": [
+      3,
+      2,
+      1,
+      2,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "mean_scrolls": 1.4,
+    "max_scrolls": 3,
+    "misselects": 0,
+    "seconds_including_tool_observation": [
+      53.79,
+      46.09,
+      24.31,
+      35.28,
+      20.63,
+      18.81,
+      22.83,
+      26.54,
+      34.88,
+      51.62
+    ],
+    "human_timing_claim": false,
+    "all_first_plays_succeeded": false,
+    "first_failure": "仓库24"
+  },
+  "offline_only": {
+    "screens_scanned": 7,
+    "scrolls": 6,
+    "found": [
+      "仓库23",
+      "仓库35",
+      "仓库48"
+    ],
+    "seconds_including_tool_observation": 193.56
+  },
+  "shared_live": {
+    "contexts": 3,
+    "initial_invites": 1,
+    "after_A_closed_viewer_others_kept_playing": true,
+    "after_live_stop_others_ended": true,
+    "manual_replay_new_generation": true,
+    "total_invites": 2,
+    "automatic_rejoin": false
+  },
+  "rtsp_ready_budget": {
+    "seconds": 30,
+    "changed": false,
+    "user_cancel_at_seconds": 20.13,
+    "synthetic_upstream_delay_seconds": 35,
+    "replay_alone_recovered_after_delay": false,
+    "manual_source_restart_recovered": true,
+    "inference_about_real_camera_startup": false
+  },
+  "test_results": {
+    "browser_e2e": {
+      "status": "PASS",
+      "checks": 37,
+      "duration_seconds": 149.63905672729015,
+      "page_errors": [],
+      "media_restart_viewing_recovery": {
+        "offer_statuses": [
+          409,
+          409
+        ],
+        "fresh_ticket_once": true,
+        "live_preserved_before_manual_stop": true,
+        "recovery_message": "媒体尚未就绪，请稍后重新播放；若持续失败，请点击通道中的“停止取流”后再播放（会影响该通道的其他观看者）。",
+        "manual_stop_and_replay_decoded": true
+      }
+    },
+    "simulator_recovery": {
+      "status": "PASS",
+      "checks": 6,
+      "duration_seconds": 72.06234781257808
+    },
+    "go": {
+      "test_parallel_exit": 1,
+      "race_parallel_exit": 1,
+      "test_serial_exit": 0,
+      "race_serial_exit": 0,
+      "vet_exit": 0,
+      "parallel_failure_explanation": "both testInfrastructure parse default SIP 127.0.0.1:5060 and newSIPServer uses WithClientConnectionAddr(cfg.sipListen); parallel interference inferred; serial passes"
+    },
+    "normal_build_exit": 0,
+    "ctest": {
+      "status": "PASS",
+      "tests": 14,
+      "duration_seconds": 22.71
+    },
+    "asan_ubsan": {
+      "run": false,
+      "reason": "C++ production changes = 0，本轮无需重跑"
+    }
+  },
+  "production": {
+    "files": [
+      "signaling/web/app.js"
+    ],
+    "added_lines": 3,
+    "removed_lines": 0,
+    "net_lines": 3,
+    "new_long_lived_state_fields": 0,
+    "new_helpers": 0,
+    "new_runtime_callbacks": 0,
+    "go_changed_files": 0,
+    "cpp_changed_files": 0,
+    "retry_policy_changed": false,
+    "backend_lifecycle_changed": false,
+    "test_added_lines": 24,
+    "test_file": "bench/gb_web_ui_verify.py"
+  },
+  "limitations": [
+    "AI角色演练不是普通真人研究，主代理已有项目知识",
+    "分段窗口总时长不等于连续90分钟，跨夜和未观察停顿排除",
+    "HTTP离线注入不能证明RTC UDP网络瞬断",
+    "后台离开期间visibility仍visible，未证明hidden-tab节流",
+    "早期部分raw因测试环境中断丢失，运行时记录与后续实测分开",
+    "两个独立任务的aria属性检查不等于用户实际看到提示",
+    "Go并行测试共享默认SIP端口干扰是推断，未抓包直接证明",
+    "最初Go normal/race并行运行各有失败，串行完整复验均通过",
+    "服务日志started/shutdown差额不能证明orphan或全部资源释放"
+  ],
+  "cleanup": {
+    "status": "PASS",
+    "phase1_unique_resources_checked": 30,
+    "phase1_resource_check_requests": 42,
+    "phase1_all_resource_checks_status": 404,
+    "phase1_live_deletes": 4,
+    "phase1_source_stops": 2,
+    "phase2_viewer_closes": 1,
+    "phase2_unique_resources_checked": 12,
+    "phase2_all_resource_checks_status": 404,
+    "phase2_live_deletes": 8,
+    "phase2_all_live_delete_status": 204,
+    "phase2_source_stops": 5,
+    "phase2_all_source_stop_status": 204,
+    "media_process_alive_during_port_check": true,
+    "udp_ports_rebound": [
+      49153,
+      49154
+    ],
+    "media_udp_sockets_after_cleanup": [],
+    "owned_processes_terminated": 53,
+    "camera_processes_terminated": 48,
+    "all_owned_processes_stopped": true,
+    "publishers_needed_sigkill_after_bounded_wait": [
+      "publisher",
+      "slow-publisher"
+    ],
+    "raw_logs_committed": false,
+    "temporary_directory_removal_point": "归档结论并推送后移除自己建立的临时目录；结果由最终交付时的文件检查确认"
+  },
+  "git": {
+    "verification_point": "最终验证记录提交前；文档提交后的最终SHA和推送结果由交付报告与git命令确认",
+    "production_commit_pushed": true,
+    "main_head_at_verification": "0ad82587a53f2038f3123adfdf02239fa6409997",
+    "origin_main_at_verification": "0ad82587a53f2038f3123adfdf02239fa6409997",
+    "head_equals_origin_main_at_verification": true,
+    "main_checkout_clean": false,
+    "main_checkout_preexisting_deletions_preserved": 53,
+    "audit_checkout_changes": "仅两份本轮审计文档尚未提交",
+    "preexisting_deletion_policy": "未覆盖、还原或混入本轮提交；是否单独提交仍需用户明确决定"
+  },
+  "recommended_next_step": "不继续扩展界面功能；由真人任务数据、真实互操作问题或可复现correctness问题驱动后续修改",
+  "initial_user_reaction": {
+    "natural_first_action": "先阅读，再添加设备",
+    "first_visible_entry": "添加设备突出，空状态说明注册后可查看通道",
+    "initial_refresh_used": false,
+    "configuration_then_device_side": "设备离线时检查网络与接入配置，未删重建",
+    "primary_had_prior_project_knowledge": true
+  },
+  "workflow_answers": {
+    "most_common_task": "找到位置，播放，切换或关闭",
+    "most_hesitant_operation": "运行中RTSP编辑前提及仅改名的停止成本",
+    "most_misleading_state": "媒体服务恢复后设备在线且旧通道正在取流，重播却持续409；P2已修提示",
+    "natural_recovery": "修正设备/地址后手工播放；持续GB409按提示通道停止再播放",
+    "play_close_stop_model": "重复使用后可以建立稳定范围：播放是本页看，关闭只退出本页，停止影响共享取流",
+    "rtsp_start_play_stop_edit_model": "一般任务可完成，保存后停止状态可见；运行中仅改名成本保留",
+    "running_edit_accessibility": "鼠标可推断停止；键盘不可聚焦的解释仍不足，触屏无hover说明的用户发现证据不足；不升级P2",
+    "rtsp_30s_budget": "错误地址可在预算内失败且可主动取消，真实慢摄像机分布未测，不调整",
+    "offline_recovery": "正常离线和重新接入自动更新，无需reload；异常断电有控制面检测延迟",
+    "multi_user": "一人关闭不影响别人，一人停止使其他人结束，手动播放恢复；不解释操作者身份",
+    "service_recovery_without_reload": "管理恢复自动poll；媒体恢复的旧GB取流按新指引手动停止再播放",
+    "search_filter": "有查找和离线扫描成本，目前不足以开发",
+    "refresh_actual_usage": "日常0次；管理不可达时手动1次，恢复由poll完成",
+    "update_time_value": "故障时冻结、恢复时推进，帮助区分缓存数据与最新数据"
+  },
+  "time_accounting": {
+    "observed_window_minutes": 204.16429778333332,
+    "conservative_non_task_deduction_minutes": 45,
+    "conservative_task_use_minutes": 159.16429778333332,
+    "unobserved_gaps_and_overnight_excluded": true,
+    "parallel_role_minutes_not_added_twice": true,
+    "background_away_is_explicit_return_scenario": true,
+    "human_continuous_attention_claim": false
+  },
+  "narrow_recovery_followup": {
+    "started": "2026-10-08T10:07:22.066409+08:00",
+    "viewport": {
+      "width": 480,
+      "height": 900
+    },
+    "counted_in_daily_use": false,
+    "page_errors_before": 0,
+    "message": "媒体尚未就绪，请稍后重新播放；若持续失败，请点击通道中的“停止取流”后再播放（会影响该通道的其他观看者）。",
+    "horizontal_layout": {
+      "scrollWidth": 465,
+      "innerWidth": 480
+    },
+    "stop_pointer_hit": {
+      "text": "停止取流",
+      "disabled": false
+    },
+    "video": {
+      "ready": 4,
+      "width": 320,
+      "height": 240,
+      "time": 0
+    },
+    "page_errors": [],
+    "tool_assertion_corrections": [
+      "播放失败文案同时在占位和状态出现，strict locator过宽，改为可见状态区域",
+      "手动新取流第一次ticket仍409，既有一次fresh ticket retry得到201，不能断言只有三次POST"
+    ],
+    "recovery_offer_statuses": [
+      409,
+      201
+    ],
+    "ended": "2026-10-08T10:08:06.340300+08:00",
+    "status": "PASS",
+    "failure_offer_statuses": [
+      409,
+      409
+    ],
+    "fresh_failure_ticket_urls_distinct": true
+  }
+}
