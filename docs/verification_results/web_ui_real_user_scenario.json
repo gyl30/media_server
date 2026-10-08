@@ -499,7 +499,8 @@
     "main_checkout_clean": false,
     "main_checkout_preexisting_deletions_preserved": 53,
     "audit_checkout_changes": "仅两份本轮审计文档尚未提交",
-    "preexisting_deletion_policy": "未覆盖、还原或混入本轮提交；是否单独提交仍需用户明确决定"
+    "preexisting_deletion_policy": "验证记录提交时未覆盖、还原或混入本轮生产修复；用户随后明确要求处理当前Git工作区并保持干净，53项既有删除另作独立清理提交",
+    "cleanup_followup": "最终clean和远端同步以独立清理提交后的实际git输出确认；以上verification_point仍是验证记录提交前的状态快照"
   },
   "recommended_next_step": "不继续扩展界面功能；由真人任务数据、真实互操作问题或可复现correctness问题驱动后续修改",
   "initial_user_reaction": {
