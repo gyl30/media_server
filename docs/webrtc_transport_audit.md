@@ -57,7 +57,7 @@ WHEP 必须保留 stream_、audio_egress_、waiting_video_track_、packetizer_ �
 
 startup 和 startup_media 还有局部共同步骤，但不是可以整体迁移的同构方法；未把它们算进上述 12 对。startup_media 的 WHEP:421 和 WHIP:347 都初始化 SRTP，主体分别创建 packetizer 与 media_receiver，须保留。id accessor 和 random_hex 不计入网络协调方法数。
 
-当前 ICE-Lite SDP 宣告在 webrtc_sdp 中，session 的 ICE controlled 行为表现为拒绝对端 ICE-CONTROLLED、要求 ICE-CONTROLLING、只在 USE-CANDIDATE 时 nomination，之后拒绝不同 endpoint 的 renomination。STUN 响应仍可能发往未 nomination 的 endpoint，不能将 UDP 所有写入固定成唯一 destination。
+当前 ICE-Lite SDP 宣告在 webrtc_sdp 中，session 的 ICE controlled 行为表现为拒绝对端 ICE-CONTROLLED、要求 ICE-CONTROLLING。自 `cc63c0d` 起，只有通过当前会话 USERNAME、MESSAGE-INTEGRITY 和 FINGERPRINT 验证、具备 PRIORITY 且带 USE-CANDIDATE 的请求才能建立或更新 nominated endpoint；未知必需属性和错误角色不更新 endpoint，普通连通性检查也不更新。DTLS/媒体仍只接受当前 nominated endpoint，此更新沿用同一会话凭据，不实现 ICE restart。STUN 响应仍可能发往未 nomination 的 endpoint，不能将 UDP 所有写入固定成唯一 destination。本文的方法行数及提取成本仍按开头的历史审计基线统计。
 
 ## 如果提取，最小候选接口
 

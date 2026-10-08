@@ -264,7 +264,7 @@ TCP/UDP 各只有一个 write_callback 类型（每对象一个注册回调）�
 
 ### CTest 注册
 
-当前 BUILD_TESTING 下 FFmpeg 可发现时 10 个：worker_sink_fanout、udp_transport、media_lifecycle、rtmp_decode、rtmp_hevc_decode、help、4 个 invalid 参数；无 FFmpeg 仍为 8 个。首次审计基线可发现 FFmpeg 时为 9 个，历史验证数量不改写。
+在本报告审计基线 `30c09f4`，BUILD_TESTING 下 FFmpeg 可发现时 10 个：worker_sink_fanout、udp_transport、media_lifecycle、rtmp_decode、rtmp_hevc_decode、help、4 个 invalid 参数；无 FFmpeg 为 8 个。首次审计基线可发现 FFmpeg 时为 9 个。这些是历史注册数量，不代表当前 checkout，历史验证数量不改写。
 
 缺口/限制：本轮只读注册/断言，未执行；不能宣称本轮 10/10。
 
@@ -324,7 +324,7 @@ Opus track metadata、H264/H265 与 AAC FFmpeg 解码断言、GB sender timer/er
 
 GB 分支经过服务器 sender→真实网络→receiver relay，再由 FFmpeg 经 RTSP 播放解码；这不是独立 GB 设备/SIP 平台互操作证明。脚本能力不等于所有 codec/输出组合已执行通过。本次不读取主工作区未提交版本来替代已提交基线，也不将既有产品测试运行归入本审计。
 
-历史结果见 [稳定性验证](stability_verification.md)、[UDP 验证](udp_transport_verification.md)、[fanout 验证](worker_sink_dispatcher_verification.md) 与 [性能基线](performance_baseline.md)。fanout 文档记录普通/ASan/UBSan 18 套真实协议回归及 WHEP 100/500/1000；也保留首轮 GB 测试源异步删除问题和容量竞争失败/复测。它们是既有验证，**本次没有再次声称 CTest、sanitizer PASS 或零丢包。**
+历史结果曾记录于 `docs/stability_verification.md`、`docs/udp_transport_verification.md`、`docs/worker_sink_dispatcher_verification.md` 与 `docs/performance_baseline.md`，这些历史报告已按清理要求移除，可在 Git 历史中查阅。fanout 文档当时记录普通/ASan/UBSan 18 套真实协议回归及 WHEP 100/500/1000；也保留首轮 GB 测试源异步删除问题和容量竞争失败/复测。它们是既有验证，**本次没有再次声称 CTest、sanitizer PASS 或零丢包。**
 
 测试缺口本身不证明抽象失败，不自动产生生产改造任务。未来实际修改 TCP、codec glue 或 lease 边界时，再围绕对应公共行为补测试。
 
@@ -341,4 +341,4 @@ GB 分支经过服务器 sender→真实网络→receiver relay，再由 FFmpeg 
 
 提交前校验 JSON、证据路径/行号、protected tracked 文件 SHA256 与 git diff/cached diff；提交后 fetch/status/HEAD 对 origin/main。隔离工作区按 clean/远端同步验收；原工作区三项既有测试工具改动单独核对内容未变，保留其 dirty 状态。最终提交 SHA、clean/远端同步结论在交付回报中给出，避免把文档自身 SHA 写回而产生循环提交。
 
-首次审计临时证据：`/tmp/media_server_infrastructure-acee8da`。本次证据：`/tmp/media_server_infrastructure_audit-30c09f4-evidence`（baseline/history、七类搜索及与原基线比较、protected-files manifest、原工作区改动 hash 与最终 git 检查）。JSON 是本报告的结构化结果，不代表新增运行时验证。
+首次审计临时证据：`/tmp/media_server_infrastructure-acee8da`。本次证据：`/tmp/media_server_infrastructure_audit-30c09f4-evidence`（baseline/history、七类搜索及与原基线比较、protected-files manifest、原工作区改动 hash 与最终 git 检查）。当时 JSON 是本报告的结构化结果，不代表新增运行时验证；上述临时证据与 `docs/verification_results/infrastructure_duplication_audit.json` 已按清理要求移除，路径仅用于定位历史记录。

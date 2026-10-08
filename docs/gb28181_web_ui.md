@@ -54,7 +54,7 @@ GB WHEP 首次 404 或 409 只允许在 1.5 秒后申请一张新票重试一次
 
 ## 测试与证据
 
-完整结果见 [gb28181_web_ui.json](verification_results/gb28181_web_ui.json)。原始运行目录：`/tmp/media_server_web_ui-9239dca/full-final-2`；日志、命令、截图和完整浏览器数据均保留在该目录。
+当时完整结果位于 `docs/verification_results/gb28181_web_ui.json`，原始运行目录为 `/tmp/media_server_web_ui-9239dca/full-final-2`。这些历史验证文件、日志、命令和截图已按清理要求移除；本文保留当时的结果记录，不代表当前复验。
 
 完整 Chrome E2E 通过 22 项检查，持续时间 78.47 秒，无 pageerror。测试主要通过真实页面点击操作，未以 import 播放器模块替代 UI 验收。RTCPeerConnection 只加观察用记录，不替换网络或解码。
 
@@ -113,7 +113,7 @@ WebRTC `connectionState=failed` 表示当前 viewer 连接失败，显示「播�
 
 WHEP POST 等待审计：GB [代理](../signaling/play_http.go#L81) 设置读/写 deadline 为 media client timeout 的一倍/两倍；[client](../signaling/media_server_http.go#L56) 默认 timeout 为 3 秒，即默认读 3 秒、写 6 秒，上游 POST/响应体受同一 client timeout 限制。RTSP 预览直连 C++，[POST handler](../media/http/whep_http.cpp#L73) 同步查流、解析 SDP、创建 session 并返回 answer，[startup](../media/webrtc/whep_session.cpp#L165) 不等待 ICE/DTLS/媒体建立。[HTTP session](../media/http/http_session.cpp#L36) 已设置 Beast 30 秒 expiry；核对当前 Boost 1.92 的 basic_stream 文档，它覆盖随后异步读和响应写，直到被重设。该 I/O deadline 不抢占同步 C++ 执行，但没有发现等待媒体建立的阻塞路径或实际超限 RED；既有 RTSP 409 就绪重试不等于单个 POST 悬挂。因此未新增浏览器 timeout，保留迟到 201 的资源清理及 GB 单次 fresh-ticket 重试规则。
 
-现有 Browser E2E 增加真实已连接、已解码 PC 的 failed 事件边界注入，并观察 emit 时实际 current 与按钮的关系。RED 复现错误的 ended 文案与仍可点击的关闭按钮；GREEN 完整 24 项通过（82.20 秒），覆盖 idle/preparing/streaming/failed/ended/stopping ownership、真实 live DELETE/Expires:0、正常 viewer close。失败后 live 保留，RTP 计数 615→768；重播申请新票并复用 live，INVITE 1→1。原生 PC、媒体网络及解码保持真实执行。完整证据：`/tmp/media_server_player_followup-f6b2680/full-final/result.json`，摘要追加在 [验证 JSON](verification_results/gb28181_web_ui.json) 的 `player_lifecycle_followup`。
+现有 Browser E2E 增加真实已连接、已解码 PC 的 failed 事件边界注入，并观察 emit 时实际 current 与按钮的关系。RED 复现错误的 ended 文案与仍可点击的关闭按钮；GREEN 完整 24 项通过（82.20 秒），覆盖 idle/preparing/streaming/failed/ended/stopping ownership、真实 live DELETE/Expires:0、正常 viewer close。失败后 live 保留，RTP 计数 615→768；重播申请新票并复用 live，INVITE 1→1。原生 PC、媒体网络及解码保持真实执行。当时完整证据位于 `/tmp/media_server_player_followup-f6b2680/full-final/result.json`，摘要位于 `docs/verification_results/gb28181_web_ui.json` 的 `player_lifecycle_followup`；这些历史证据现已清理。
 
 本次 `go test -count=1 ./...`、`go vet ./...`、`go test -race -count=1 ./...`、normal build 与 CTest 14/14 全部通过；CTest 在 E2E 进程退出后执行。静态资源 SHA256 与 CODE_HEAD 核对一致。C++ 未修改，本次按要求没有重跑 ASan/UBSan。
 
@@ -121,8 +121,8 @@ WHEP POST 等待审计：GB [代理](../signaling/play_http.go#L81) 设置读/�
 
 基于 `f35aad7`，在保留现有 API 与播放器 ownership 的前提下收敛列表、播放器、颜色、间距与请求反馈。设备侧栏可滚动，播放器位于详情上方；空/加载/离线/失败/结束有明确呈现，窄窗操作列保持可见。轮询与弹窗关闭的焦点恢复使用已有按钮身份，不增加播放器或后端状态。
 
-经过基线与五轮真实截图审查，最终呈现检查 19 项、真实媒体 E2E 25 项、Go test/vet/race 和 CTest 14/14 通过。失败与媒体结束、viewer close 与 live stop 的边界保留。详细观察、评分、故障注入范围及最终截图见 [Web UI 品质复查](web_ui_quality_verification.md) 与 [验证 JSON](verification_results/web_ui_quality.json)。本轮 UI、测试及验证产物一并提交。
+经过基线与五轮真实截图审查，最终呈现检查 19 项、真实媒体 E2E 25 项、Go test/vet/race 和 CTest 14/14 通过。失败与媒体结束、viewer close 与 live stop 的边界保留。当时详细观察、评分、故障注入范围及最终截图记录于 `docs/web_ui_quality_verification.md` 与 `docs/verification_results/web_ui_quality.json`。该轮 UI、测试及验证产物一并提交；历史报告与验证产物随后已按清理要求移除。
 
 ## 用户式体验复查
 
-基于 `0e97831`，从空数据库正常使用69.70分钟，完成十次播放/关闭/重播/停止循环与1/5/20/50设备查找；修改后再正常使用10.10、10.64分钟。最小修正持续409的RTSP播放等待、离线设备下一步提示、运行中编辑前置提示和窄窗播放器遮挡源操作。没有增加长期状态、自动恢复或后端模型；失败/结束后的按钮仍可收起信息面板，viewer资源已清理。详见 [用户式体验审查](web_ui_user_experience_review.md) 及 [验证摘要](verification_results/web_ui_user_experience_review.json)。这是AI启发审阅，没有招募真人。用户要求清理当前及历史测试临时目录，因此只保留永久摘要，旧报告中的临时截图和日志路径可能已不存在。
+基于 `0e97831`，从空数据库正常使用69.70分钟，完成十次播放/关闭/重播/停止循环与1/5/20/50设备查找；修改后再正常使用10.10、10.64分钟。最小修正持续409的RTSP播放等待、离线设备下一步提示、运行中编辑前置提示和窄窗播放器遮挡源操作。没有增加长期状态、自动恢复或后端模型；失败/结束后的按钮仍可收起信息面板，viewer资源已清理。当时报告为 `docs/web_ui_user_experience_review.md` 及 `docs/verification_results/web_ui_user_experience_review.json`。这是AI启发审阅，没有招募真人。用户要求清理当前及历史测试临时目录，随后历史报告和验证摘要也已移除；本文保留上述历史摘要，旧路径不作为当前可用证据。后续任务演练记录见 [Web 管理界面真实工作任务演练](web_ui_real_user_scenario_verification.md)。

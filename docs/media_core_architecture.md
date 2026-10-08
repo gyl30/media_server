@@ -31,8 +31,8 @@ public:
 
 sink 不读取历史、不拥有 cursor，也不等待媒体。tracks 由 consumer 启动时直接从 source 读取。网络输出自己的 write queue、背压和关闭策略仍由协议 session 负责；media core 不为慢 viewer 保存 replay history，也不反压 publisher。
 
-source end 在每个 worker 组内排在此前已经排队的 frame 之后，再调用 sink 的 `on_end()`。sink 可以在回调中关闭自身；stream 在 owner worker 串行处理注册和移除，跨 worker 的 queued callback 只依赖 sink 自身的 closed 状态。
+source end 在每个 worker 组内排在此前已经排队的 frame 之后，再调用 sink 的 `on_end()`。sink 可以在回调中关闭自身；stream 在 owner worker 串行处理注册和移除，跨 worker 的 queued callback 依赖 sink 自身的终态检查。
 
-HLS 是 source worker 上的普通 sink，继续保留 MPEG-TS 分段、playlist 和结束后的片段 retention。AAC→Opus 是按 source generation 与音频参数共享的派生 sink，输出新的 `media_stream`。MPEG-PS 是 GB28181 模块内的共享派生输出：一个 source generation 只创建一个 PS muxer，再把 PS frame 推送给多个 sender；每个 sender 独立维护 RTP、SSRC、sequence 和传输状态。
+HLS 是 source worker 上的普通 sink，继续保留 MPEG-TS 分段、playlist 和结束后的片段 retention。AAC→Opus 是按 source generation 与音频参数共享的派生 sink，输出新的 `media_stream`。MPEG-PS 是供 GB28181 使用的共享派生输出，位于 `media/ps/`：一个 source generation 只创建一个 PS muxer，再把 PS frame 推送给多个 sender；每个 sender 独立维护 RTP、SSRC、sequence 和传输状态。
 
 核心没有 reader、pull API、GOP replay、cursor、runtime track event、AV1 或通用 `Frame` template。协议层只接收真实媒体帧和 source end，任何 codec/config 变化都通过结束当前 generation 表达。

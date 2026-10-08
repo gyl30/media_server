@@ -134,7 +134,7 @@ Go 共 17 个顶层 Test，使用临时 SQLite、真实 UDP SIP peer 和系统 H
 
 最终执行目录：`/tmp/media_server_gb_mvp-f0c61cd/e2e-final`。机器：当前本机 loopback；Chrome `153.0.8010.52`，Playwright `1.58.0`，FFmpeg `7.1.1`。独立启动 media_server、signaling、设备 simulator 和真实 Chrome。
 
-最终 E2E 在 `d13e984` 工作区加最终 `1740fec` 改动后构建执行，结果 PASS；之后提交没有继续修改生产代码。结构化结果保存于 `docs/verification_results/gb28181_signaling_mvp.json`，原始 commands/result/日志留在上述目录。
+最终 E2E 在 `d13e984` 工作区加最终 `1740fec` 改动后构建执行，结果 PASS；之后提交没有继续修改生产代码。当时的结构化结果位于 `docs/verification_results/gb28181_signaling_mvp.json`，原始 commands/result/日志位于上述目录；这些历史验证文件与临时证据已按清理要求移除，本文保留当时的结果记录，不代表当前复验。
 
 | 场景 | 实际结果 |
 | --- | --- |
@@ -167,7 +167,7 @@ Go 共 17 个顶层 Test，使用临时 SQLite、真实 UDP SIP peer 和系统 H
 - `git diff --check`、`git diff --cached --check`：PASS。
 - ASan/UBSan 本轮未重跑：C++ 生产源码没有修改；不把 Go race 或 CTest 描述为 sanitizer 验证。
 
-构建沿用本机既有 `PKG_CONFIG_PATH=/tmp/libsrtp-2.7-prefix/lib/pkgconfig:/home/gyl/ffmpeg901/lib/pkgconfig`。
+当时构建沿用本机既有 `PKG_CONFIG_PATH=/tmp/libsrtp-2.7-prefix/lib/pkgconfig:/home/gyl/ffmpeg901/lib/pkgconfig`；这是历史环境记录，旧 libSRTP 临时目录已清理。自 `a7310e2` 起，当前构建由 `cmake/srtp.cmake` 编译 `third/libsrtp` 子模块源码，不再需要系统 libSRTP 的 pkg-config 路径；FFmpeg 仍按其实际安装位置配置。
 
 失败证据没有覆盖/隐藏：
 
