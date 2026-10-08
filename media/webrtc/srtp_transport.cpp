@@ -3,7 +3,7 @@
 #include <utility>
 #include <string_view>
 
-#include <srtp2/srtp.h>
+#include <srtp.h>
 #include <spdlog/spdlog.h>
 
 #include "media/webrtc/srtp_transport.h"

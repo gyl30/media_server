@@ -1,26 +1,8 @@
-find_package(PkgConfig REQUIRED)
+set(ENABLE_OPENSSL ON CACHE BOOL "Enable OpenSSL crypto engine" FORCE)
+set(ENABLE_MBEDTLS OFF CACHE BOOL "Enable MbedTLS crypto engine" FORCE)
+set(ENABLE_NSS OFF CACHE BOOL "Enable NSS crypto engine" FORCE)
+set(LIBSRTP_TEST_APPS OFF CACHE BOOL "Build libSRTP test applications" FORCE)
 
-# 复用构建目录切换加密后端时，旧的 pkg-config 结果和库路径不能继续参与链接。
-unset(__pkg_config_checked_SRTP CACHE)
-unset(pkgcfg_lib_SRTP_srtp2 CACHE)
-
-pkg_check_modules(
-    SRTP
-    REQUIRED
-    IMPORTED_TARGET
-    libsrtp2>=2.7.0
-)
-
-if(NOT "crypto" IN_LIST SRTP_STATIC_LIBRARIES)
-    message(FATAL_ERROR "libSRTP must use the OpenSSL crypto backend (libsrtp2.pc Libs.private must include -lcrypto)")
-endif()
-
-add_library(srtp_dependency INTERFACE)
-
-target_link_libraries(
-    srtp_dependency
-    INTERFACE
-        PkgConfig::SRTP
-)
-
-add_library(libSRTP::srtp2 ALIAS srtp_dependency)
+set(BUILD_SHARED_LIBS OFF)
+add_subdirectory(third/libsrtp EXCLUDE_FROM_ALL)
+unset(BUILD_SHARED_LIBS)
