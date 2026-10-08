@@ -304,7 +304,6 @@ void whip_session::handle_dtls(std::span<const std::uint8_t> packet)
     const bool was_connected = dtls_->connected();
     if (!dtls_->handle_datagram(packet))
     {
-        spdlog::error("webrtc dtls failed session {}", id_);
         shutdown();
         return;
     }

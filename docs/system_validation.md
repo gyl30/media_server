@@ -239,7 +239,7 @@ attestation SHA 为 `8c8280e1a5ad50d07341e358cacb88393f085cb2d3ee969b8dacada4c7a
 `bench-bind-build` 是 16 份证据文件，不是构建树，予以保留。摄像机私有测试凭据文件保持仓库外 0600，供后续人工处理认证。
 最终只清理本轮明确 owned 资源，不删除原仓库 build 或他人/历史资料。
 
-## 当前交付判断
+## 五阶段交付判断（定向修复前）
 
 已完成代表性真实媒体、跨机路径、混合长期运行、fresh 构建与有效 UBSan 回归。
 已确认正常 DTLS `close_notify` 经下层 terminal bool 统一映射到上层 error 日志；这是诊断准确性限制。
@@ -252,3 +252,23 @@ ASan 为环境阻塞；正常 DTLS close 日志误分类与 `4d60` profile parse
 30 分钟级受控测试不是多日稳定性证明，历史 18,000 路等容量不是本 HEAD 的新验收容量，没有同条件 A/B 的无退化结论。
 本轮没有证据要求新增生产架构或性能改造；摄像机浏览器目标若是实际部署必需项，需先独立解决可协商编码与 profile 兼容性。
 最终 Git、证据核对与清理状态以交付报告为准；仍逐项区分 PASS、FAIL、BLOCKED、NOT_RUN、ACCEPTED_DESIGN。
+
+## 后续定向排查（2026-10-08）
+
+以 `ac32d3fda9f5bf93be8f0b0db7467255cf2d9e0e` 为基线，修复正常 DTLS 关闭的日志误分类。
+`handle_datagram()` 的 false 仍使 session 立即关闭；真正错误在 DTLS 发生处记录，正常 `close_notify` 不再被上层统一打印成 error。
+没有新增状态、结束原因、回调或改变关闭时序。旧二进制在同一断言下 RED；修复后 Chrome WHEP/WHIP close-first GREEN，均只 shutdown 一次。
+错误 fingerprint probe 仍产生真实 error 并立即结束 session。WHIP 无后续关键帧的首次 probe 失败保留，显式 encoder pause/resume 后通过，不新增上游关键帧请求。
+普通 fresh RelWithDebInfo（`-O2 -g -DNDEBUG -Werror`）CTest 19/19、Go test/vet/race 均通过。
+
+开发机使用既有 Boost 1.92 源码在私有目录构建静态 ucontext Context，启用 ASan/UBSan，只通过 CMake 参数选择该库。
+原 compatibility guard 成功，无系统库、项目 CMake 或 third 源码修改。首次误选系统旧 FFmpeg 的环境失败保留；纠正为既定 FFmpeg SDK 后，fresh sanitizer CTest 19/19 通过。
+`detect_leaks=1:halt_on_error=1` / `UBSAN_OPTIONS=halt_on_error=1` 下，真实 Chrome WHEP/WHIP close-first 与 fingerprint negative probe 全部通过，ASan/LSan/UBSan 报告为 0。
+此结论仅覆盖本次开发机受测路径；不能声称所有外部静态依赖都插桩，也不替代跨机或长期 sanitizer 验收。
+
+已获取并核对 [RFC 6184 §8.1/8.2.2](https://www.rfc-editor.org/rfc/rfc6184#section-8.2.2)。Main 等价模式未包含 `4d60`，但表外组合可能代表其他共同子集，不能将该摄像机编码称为非法 H264。
+`level-asymmetry-allowed=1` 不会取消对端的接收能力限制；保存的源 Level 5.1 与 Chrome Main offer Level 3.1 仍不能据此无条件直通。
+未修改摄像机编码或伪造 SDP；真实 BUNDLE/mid 与 GB ingest SPS 的完整拒绝路径取证、音频/TCP/多 Chrome 验收仍未完成。
+正常 DTLS 关闭与 ASan 环境两项已收口，摄像机 PARTIAL、原 GB observer FAIL 及原性能 FAIL 均不改写。
+
+本次日志、命令、RED/GREEN 和构建元数据保存在开发机 `/tmp/media_server_followup_ac32d3f_na6OgvrA/`，不是仓库构建产物。

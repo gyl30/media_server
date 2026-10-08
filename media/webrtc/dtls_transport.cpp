@@ -203,6 +203,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
     const auto written = BIO_write(SSL_get_rbio(ssl_.get()), packet.data(), static_cast<int>(packet.size()));
     if (written != static_cast<int>(packet.size()))
     {
+        spdlog::error("webrtc dtls input buffering failed");
         reset();
         return false;
     }
@@ -211,6 +212,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
     const auto result = SSL_read(ssl_.get(), discarded.data(), static_cast<int>(discarded.size()));
     if (!pump_outgoing())
     {
+        spdlog::error("webrtc dtls output failed");
         reset();
         return false;
     }
@@ -225,7 +227,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
         }
         if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
         {
-            spdlog::debug("webrtc dtls read failed ssl_error {}", error);
+            spdlog::error("webrtc dtls read failed ssl_error {}", error);
             reset();
             return false;
         }
@@ -234,6 +236,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
 
     if (!connected() && SSL_is_init_finished(ssl_.get()) != 0 && !finish_handshake())
     {
+        spdlog::error("webrtc dtls handshake verification failed");
         reset();
         return false;
     }
