@@ -287,7 +287,7 @@ std::optional<h264_profile_level> parse_h264_profile_level(std::string_view text
         {0x58U, 0xcfU, 0xc0U, h264_profile::constrained_baseline},
         {0x42U, 0x4fU, 0x00U, h264_profile::baseline},
         {0x58U, 0xcfU, 0x80U, h264_profile::baseline},
-        {0x4dU, 0xafU, 0x00U, h264_profile::main},
+        {0x4dU, 0x8fU, 0x00U, h264_profile::main},
         {0x64U, 0xffU, 0x0cU, h264_profile::constrained_high},
         {0x64U, 0xffU, 0x00U, h264_profile::high},
         {0xf4U, 0xffU, 0x00U, h264_profile::predictive_high_444},
@@ -346,7 +346,10 @@ const webrtc_codec_offer* find_h264(const webrtc_media_offer& media, const h264_
                                            }
                                            const auto profile_level_id = parameter_value(codec.format_parameters, "profile-level-id");
                                            const auto offered = parse_h264_profile_level(profile_level_id.value_or("42000a"));
-                                           return offered && offered->profile == source.profile && source.level_rank <= offered->level_rank;
+                                           // 非对称 Level 采用宽松互通策略；answer 和媒体仍保留真实源 SPS，不保证接收端解码能力。
+                                           return offered && offered->profile == source.profile &&
+                                                  (source.level_rank <= offered->level_rank ||
+                                                   has_parameter(codec.format_parameters, "level-asymmetry-allowed", "1"));
                                        });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
