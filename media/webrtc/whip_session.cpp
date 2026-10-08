@@ -274,11 +274,6 @@ void whip_session::handle_stun(std::span<const std::uint8_t> packet, const boost
     {
         return;
     }
-    if (request->use_candidate && remote_endpoint_.has_value() && endpoint != *remote_endpoint_)
-    {
-        return;
-    }
-
     auto response = make_stun_binding_success_response(*request, endpoint, ice_pwd_);
     if (response.empty())
     {
