@@ -16,6 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
+    parser.add_argument("--ffmpeg-bin", type=Path, default=Path("/home/gyl/bin/ffmpeg"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--duration", type=int, default=30)
@@ -42,11 +43,15 @@ def main():
             output.mkdir(parents=True, exist_ok=True)
             script = "publish_only.py" if protocol == "publish_only" else f"{protocol}_fanout.py"
             command = [sys.executable, str(Path(__file__).with_name(script)), "--fixture", str(args.fixture),
-                       "--server-bin", str(args.build_dir / "media_server"), "--output", str(output),
+                       "--server-bin", str(args.build_dir / "media_server"), "--ffmpeg-bin", str(args.ffmpeg_bin),
+                       "--output", str(output),
                        "--warmup", str(args.warmup), "--duration", str(args.duration), "--workers", "6"]
             command += ["--sources", "1"] if protocol == "publish_only" else ["--viewers", str(viewers)]
             if protocol in ("rtmp", "rtsp", "whep"):
                 command += ["--client-bin", str(args.build_dir / f"{protocol}_fanout")]
+            if protocol == "whep":
+                # This baseline uses a 127.0.0.1 server; isolate same-host client UDP binding.
+                command += ["--client-bind-address", "127.0.0.2"]
             (output / "command.json").write_text(json.dumps(command, indent=2) + "\n")
             with (output / "runner.log").open("w") as log:
                 completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=args.warmup + args.duration + viewers / 10 + 120)

@@ -18,7 +18,7 @@ int main(int argc, char** argv)
                                                            : media_server::bench::webrtc_client_direction::play;
     std::cout << context->make_offer(direction) << "phase=offer_ready" << std::endl;
     const std::string answer{std::istreambuf_iterator<char>(std::cin), {}};
-    auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(io, context);
+    auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(io, context, boost::asio::ip::address_v4::any());
     std::string error;
     const bool established = peer->establish(answer, error);
     const auto local_port = peer->local_port();

@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--duration", type=int, default=20)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--client-bind-address", default="0.0.0.0", help="Native test client local UDP address; default preserves ANY binding")
     parser.add_argument("--rtmp-port", type=int, default=11935)
     parser.add_argument("--rtsp-port", type=int, default=18554)
     parser.add_argument("--http-port", type=int, default=18080)
@@ -58,6 +59,7 @@ def main():
                 wait_for_stream(args.host, args.http_port, f"live/perf{index}")
             client = subprocess.Popen(
                 [str(args.client_bin), "--whep-url", f"http://{args.host}:{args.http_port}/play/whep/live/perf0",
+                 "--bind-address", args.client_bind_address,
                  "--viewers", str(args.viewers), "--sources", str(args.sources), "--io-threads", str(args.client_threads),
                  "--ramp-per-second", str(args.ramp_per_second), "--warmup", str(args.warmup),
                  "--duration", str(args.duration)], stdout=client_log, stderr=client_error,
@@ -80,6 +82,7 @@ def main():
                     "head": benchmark_head(),
                     "fixture": str(args.fixture), "viewers": args.viewers, "sources": args.sources, "workers": args.workers,
                     "client_threads": args.client_threads, "ramp_per_second": args.ramp_per_second,
+                    "client_bind_address": args.client_bind_address,
                     "warmup_seconds": args.warmup, "duration_seconds": args.duration,
                     "kernel": platform.release(),
                 },

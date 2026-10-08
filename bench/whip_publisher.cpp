@@ -548,7 +548,7 @@ int main(int argc, char** argv)
             const auto stream_name = config.stream_prefix + std::to_string(index);
             const auto publish_url = config.whip_base_url + stream_name;
             auto& shard = *shards[index % shards.size()];
-            auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context);
+            auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context, boost::asio::ip::address_v4::any());
             media_server::bench::webrtc_http_response response;
             std::string error;
             if (!media_server::bench::post_webrtc_offer(publish_url, offer, response, error) || response.status != 201U ||

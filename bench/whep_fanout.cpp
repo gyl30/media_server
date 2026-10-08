@@ -34,6 +34,7 @@ using clock_type = std::chrono::steady_clock;
 struct configuration
 {
     std::string whep_url;
+    boost::asio::ip::address bind_address{boost::asio::ip::address_v4::any()};
     std::size_t viewers{};
     std::size_t sources{1};
     std::size_t ramp_per_second{100};
@@ -90,6 +91,10 @@ configuration parse_arguments(int argc, char** argv)
         if (argument == "--whep-url")
         {
             config.whep_url = argument_value(index, argc, argv, argument);
+        }
+        else if (argument == "--bind-address")
+        {
+            config.bind_address = boost::asio::ip::make_address(argument_value(index, argc, argv, argument));
         }
         else if (argument == "--viewers")
         {
@@ -409,7 +414,7 @@ int main(int argc, char** argv)
         {
             const auto started = clock_type::now();
             auto& shard = *shards[index % shards.size()];
-            auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context);
+            auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context, config.bind_address);
             media_server::bench::webrtc_http_response response;
             std::string error;
             const auto url = config.sources == 1U

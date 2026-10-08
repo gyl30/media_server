@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
 
 namespace media_server::bench
 {
@@ -51,7 +52,9 @@ class webrtc_client_peer final : public std::enable_shared_from_this<webrtc_clie
     using packet_handler = std::function<void(bool rtcp, std::span<const std::uint8_t> packet)>;
     using error_handler = std::function<void(const boost::system::error_code&)>;
 
-    webrtc_client_peer(boost::asio::io_context& io, std::shared_ptr<webrtc_client_context> context);
+    webrtc_client_peer(boost::asio::io_context& io,
+                       std::shared_ptr<webrtc_client_context> context,
+                       boost::asio::ip::address bind_address);
     ~webrtc_client_peer();
 
    public:
